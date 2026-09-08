@@ -74,6 +74,7 @@ describe("one-release RLS table enablement", () => {
       "passpilot_kiosk_sessions",
       ...rlsRegistry.inventories.classpilotRoadmapPostExpand.tables.filter(table =>
         !rlsRegistry.inventories.schoolPilot270PostExpand.tables.includes(table)),
+      "classpilot_coverage_group_categories",
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

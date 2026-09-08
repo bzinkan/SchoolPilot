@@ -154,6 +154,7 @@ export default function AdminScheduling() {
   const [section, setSection] = useState("profiles");
   const [advancedDirty, setAdvancedDirty] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
+  const [profileWorkspace, setProfileWorkspace] = useState(false);
   const query = useQuery({ queryKey: KEY, queryFn: () => apiRequest("GET", API) });
   if (query.isLoading) return <p className="flex items-center gap-2" role="status"><Loader2 className="h-4 w-4 animate-spin" />Loading school schedules…</p>;
   if (query.error) return <p role="alert" className="text-destructive">{message(query.error)}</p>;
@@ -162,8 +163,8 @@ export default function AdminScheduling() {
       <div><h2 className="text-2xl font-semibold">School scheduling</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Choose a task below. Everyday bells, special schedules and calendar dates each have their own place.</p></div>
       {query.data.schoolTimezone && <p className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="h-4 w-4" />{query.data.schoolTimezone}</p>}
     </div>
-    <Tabs value={section} onValueChange={setSection} orientation="vertical" className="grid items-start gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
-      <div className="space-y-5 lg:sticky lg:top-5">
+    <Tabs value={section} onValueChange={setSection} orientation="vertical" className={profileWorkspace && section === 'profiles' ? 'space-y-5' : 'grid items-start gap-6 lg:grid-cols-[240px_minmax(0,1fr)]'}>
+      <div hidden={profileWorkspace && section === 'profiles'} inert={(profileWorkspace && section === 'profiles') || undefined} className="space-y-5 lg:sticky lg:top-5">
         <TabsList aria-label="Scheduling tasks" className="flex h-auto w-full flex-col items-stretch gap-1 rounded-lg border bg-card p-2">
           {sections.map(({ value, label, description, icon }) => <TabsTrigger key={value} value={value} aria-label={label} className="justify-start gap-3 whitespace-normal px-3 py-3 text-left data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none">{createElement(icon, { className: "h-5 w-5 shrink-0", "aria-hidden": true })}<span><span className="block">{label}</span><span className="mt-1 block text-xs font-normal text-muted-foreground">{description}</span></span></TabsTrigger>)}
         </TabsList>
@@ -171,7 +172,7 @@ export default function AdminScheduling() {
         <div className="hidden space-y-2 px-2 text-sm lg:block"><h3 className="font-medium">Swapping two classes?</h3><p className="text-xs leading-relaxed text-muted-foreground">Schedule Changes handles a one-day exchange of class times and teacher approvals.</p>{advancedDirty || profileBusy ? <p className="text-xs text-muted-foreground">Finish or discard your draft before opening Schedule Changes.</p> : <Link to="/classpilot/admin/classes/schedule-changes" className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-4">Open Schedule Changes<ArrowRight className="h-3 w-3" /></Link>}</div>
       </div>
       <div className="min-w-0">
-        <TabsContent value="profiles" forceMount className={panelClass}><ScheduleProfiles blockedByAdvancedDraft={advancedDirty} onBusyChange={setProfileBusy} /></TabsContent>
+        <TabsContent value="profiles" forceMount className={panelClass}><ScheduleProfiles blockedByAdvancedDraft={advancedDirty} onBusyChange={setProfileBusy} onWorkspaceChange={setProfileWorkspace} /></TabsContent>
         <SchedulingEditor key={query.data.revision} initial={query.data} onDirtyChange={setAdvancedDirty} section={section} disabled={profileBusy} />
       </div>
     </Tabs>

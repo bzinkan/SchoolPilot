@@ -14,6 +14,7 @@ import {
   foreignKey,
 } from "drizzle-orm/pg-core";
 import { students } from "./students.js";
+import { schools } from "./core.js";
 
 // ============================================================================
 // Devices - ClassPilot Chromebook registration
@@ -1550,6 +1551,18 @@ export const classpilotCoverageAssignments = pgTable(
 export type ClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferSelect;
 export type InsertClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferInsert;
 
+export const classpilotCoverageGroupCategories = pgTable("classpilot_coverage_group_categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull().references(() => schools.id),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  check("classpilot_coverage_group_categories_name_check", sql`length(btrim(${table.name})) BETWEEN 1 AND 80`),
+  uniqueIndex("classpilot_coverage_categories_school_id_unique").on(table.schoolId, table.id),
+  uniqueIndex("classpilot_coverage_categories_name_unique").on(table.schoolId, sql`lower(btrim(${table.name}))`),
+]);
+
 export const classpilotCoverageScopeGroups = pgTable(
   "classpilot_coverage_scope_groups",
   {
@@ -1557,12 +1570,15 @@ export const classpilotCoverageScopeGroups = pgTable(
     schoolId: text("school_id").notNull(),
     name: text("name").notNull(),
     description: text("description"),
+    categoryId: varchar("category_id"),
     active: boolean("active").notNull().default(true),
     createdBy: text("created_by").notNull(),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   },
   (table) => [
+    foreignKey({ name: "classpilot_coverage_groups_category_school_fk", columns: [table.schoolId, table.categoryId], foreignColumns: [classpilotCoverageGroupCategories.schoolId, classpilotCoverageGroupCategories.id] }).onDelete("restrict"),
+    index("classpilot_coverage_groups_category_idx").on(table.schoolId, table.categoryId),
     index("classpilot_coverage_scope_groups_school_idx").on(
       table.schoolId,
       table.active

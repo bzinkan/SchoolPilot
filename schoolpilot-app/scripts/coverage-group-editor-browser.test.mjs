@@ -50,12 +50,17 @@ async function fixture(context, options = {}) {
   page.setDefaultTimeout(10_000);
   page.setDefaultNavigationTimeout(30_000);
   const state = { groups: structuredClone(options.groups || []), otherGroups: structuredClone(options.otherGroups || []), assignments: structuredClone(options.assignments || []), otherAssignments: [], writes: [], deletes: [], reads: [], errors: [], membershipMode: 'success', membershipReads: 0, releaseMembership: null, deleteGroupMode: 'success', deletePermissionMode: 'success', releaseDeletion: null, activeSchoolId: 'school', role: options.role || 'school_admin', canManageSupervisionSetup: options.canManageSupervisionSetup ?? true, groupsMode: options.groupsMode || 'success', assignmentsMode: options.assignmentsMode || 'success', releaseGroups: null, releaseAssignments: null };
-  const groupsReadStarted = new Promise(resolve => { state.groupsReadStarted = resolve; });
+  state.groupsReadStarted = () => {};
   const assignmentsReadStarted = new Promise(resolve => { state.assignmentsReadStarted = resolve; });
   state.failGroupStudents = false;
+  state.categories = structuredClone(options.categories || []);
+  state.categoryWrites = [];
+  state.categoryMode = 'success';
+  state.detailMode = 'success';
+  state.groupWriteMode = 'success';
   state.failAssignmentIds = new Set();
   state.holdAssignmentIds = new Set();
-  context.after(() => { state.releaseDeletion?.(); state.releaseGroups?.(); state.releaseAssignments?.(); state.releaseAssignmentWrite?.(); });
+  context.after(() => { state.releaseDeletion?.(); state.releaseGroups?.(); state.releaseAssignments?.(); state.releaseAssignmentWrite?.(); state.releaseGroupWrite?.(); });
   const staffPayload = id => ({ id, ...staff.find(person => person.userId === id) });
   const syncGroupStaff = (schoolId, groupId) => {
     const group = (schoolId === 'school' ? state.groups : state.otherGroups).find(item => item.id === groupId);
@@ -76,7 +81,7 @@ async function fixture(context, options = {}) {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const schoolId = request.headers()['x-school-id'] || state.activeSchoolId;
-    if (request.method() === 'GET') state.reads.push({ pathname, schoolId });
+    if (request.method() === 'GET') state.reads.push({ pathname, schoolId, search: new URL(request.url()).search });
     if (pathname.endsWith('/auth/me')) { state.activeSchoolId = schoolId; return route.fulfill({ json: { user: { id: 'admin', email: 'admin@fixture.example' }, activeSchoolId: schoolId, memberships: [{ id: 'membership', schoolId: 'school', role: state.role }, { id: 'other-membership', schoolId: 'other-school', role: state.role }], licenses: { classPilot: true } } }); }
     if (pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-csrf' } });
     if (pathname.endsWith('/admin/users') || pathname.endsWith('/coverage/setup/staff')) return route.fulfill({ json: { users: staff } });
@@ -92,6 +97,30 @@ async function fixture(context, options = {}) {
       if (state.membershipMode === 'pending') await new Promise(resolve => { state.releaseMembership = resolve; });
       if (state.membershipMode === 'error') return route.fulfill({ status: 503, json: { error: 'Class roster is temporarily unavailable.' } });
       return route.fulfill({ json: { students: students.filter(student => [...gradeFiveIds.slice(0, 12), 'g6-1'].includes(student.id)) } });
+    }
+    if (pathname.includes('/coverage/supervision-group-categories')) {
+      if (request.method() === 'GET') return route.fulfill({ status: state.categoryMode === 'error' ? 503 : 200, json: state.categoryMode === 'error' ? { error: 'Categories are temporarily unavailable.' } : { categories: state.categories.map(category => ({ ...category, groupCount: state.groups.filter(group => group.categoryId === category.id).length })) } });
+      const body = request.postDataJSON(), id = pathname.split('/').at(-1);
+      state.categoryWrites.push({ method: request.method(), pathname, body, schoolId });
+      if (state.categoryMode === 'stale') return route.fulfill({ status: 409, json: { error: 'This category changed. Refresh categories and review it again.', code: 'COVERAGE_CATEGORY_STALE' } });
+      if (request.method() === 'DELETE') { const movedGroupCount = state.groups.filter(group => group.categoryId === id).length; state.groups.forEach(group => { if (group.categoryId === id) { group.categoryId = null; group.category = null; } }); state.categories = state.categories.filter(category => category.id !== id); return route.fulfill({ json: { success: true, categoryId: id, movedGroupCount } }); }
+      const category = request.method() === 'POST' ? { id: `category-${state.categoryWrites.length}`, ...body, updatedAt: '2026-09-08T13:00:00.000Z' } : state.categories.find(category => category.id === id);
+      if (request.method() === 'POST') state.categories.push(category); else Object.assign(category, { name: body.name, updatedAt: '2026-09-08T13:00:00.001Z' });
+      return route.fulfill({ json: { category } });
+    }
+    if (pathname.endsWith('/coverage/supervision-groups/browse')) {
+      if (state.groupsMode === 'pending') await new Promise(resolve => { state.releaseGroups = resolve; state.groupsReadStarted?.(); });
+      if (state.groupsMode === 'error') return route.fulfill({ status: 503, json: { error: 'Supervision groups are temporarily unavailable.' } });
+      const all = (schoolId === 'school' ? state.groups : state.otherGroups).map(group => { const { students: members, ...summary } = group; const gradeCounts = group.gradeCounts || [...new Set((members || []).map(member => students.find(student => student.id === member.studentId)?.gradeLevel ?? null))].map(gradeLevel => ({ gradeLevel, count: (members || []).filter(member => (students.find(student => student.id === member.studentId)?.gradeLevel ?? null) === gradeLevel).length })); return { ...summary, category: state.categories.find(category => category.id === group.categoryId) || null, gradeCounts }; });
+      const params = new URL(request.url()).searchParams, search = (params.get('search') || '').toLowerCase(), category = params.get('categoryId'), grade = params.get('grade'), staffId = params.get('staffId'), active = params.get('active');
+      const filtered = all.filter(group => (!search || search.split(/\s+/).every(token => [group.name, group.description, ...(group.staff || []).flatMap(person => [person.displayName, person.email])].join(' ').toLowerCase().includes(token))) && (!category || (category === 'uncategorized' ? !group.categoryId : group.categoryId === category)) && (!grade || group.gradeCounts.some(item => String(item.gradeLevel ?? 'ungraded') === grade)) && (!staffId || (staffId === 'unassigned' ? !(group.staff || []).length : (group.staff || []).some(person => person.id === staffId))) && (!active || active === 'all' || String(group.active !== false) === active));
+      const totalPages = Math.max(1, Math.ceil(filtered.length / 25)), requested = Number(params.get('page') || 1), pageNumber = Math.max(1, Math.min(requested, totalPages));
+      return route.fulfill({ json: { groups: filtered.slice((pageNumber - 1) * 25, pageNumber * 25), page: pageNumber, pageSize: 25, total: filtered.length, totalPages, facets: { categories: state.categories, grades: [...new Set(all.flatMap(group => group.gradeCounts.map(item => item.gradeLevel)))].map(gradeLevel => ({ gradeLevel, count: 1 })), staff: [...new Map(all.flatMap(group => group.staff || []).map(person => [person.id, person])).values()] } } });
+    }
+    if (/\/coverage\/supervision-groups\/[^/]+$/.test(pathname) && request.method() === 'GET') {
+      if (state.detailMode === 'error') return route.fulfill({ status: 503, json: { error: 'This group could not load.' } });
+      const group = (schoolId === 'school' ? state.groups : state.otherGroups).find(group => group.id === decodeURIComponent(pathname.split('/').at(-1)));
+      return route.fulfill({ json: { group } });
     }
     if (pathname.endsWith('/coverage/supervision-groups') && request.method() === 'GET') {
       if (state.groupsMode === 'pending') await new Promise(resolve => { state.releaseGroups = resolve; state.groupsReadStarted?.(); });
@@ -129,7 +158,7 @@ async function fixture(context, options = {}) {
     }
     if (pathname.includes('/coverage/assignments') && ['POST', 'PATCH'].includes(request.method())) {
       const body = request.postDataJSON(), assignmentKey = schoolId === 'school' ? 'assignments' : 'otherAssignments';
-      state.writes.push({ method: request.method(), pathname, body });
+      state.writes.push({ method: request.method(), pathname, body, schoolId });
       const assignmentId = pathname.split('/').at(-1);
       if (state.holdAssignmentIds.has(assignmentId)) await new Promise(resolve => { state.releaseAssignmentWrite = resolve; state.assignmentWriteStarted?.(); });
       if (state.failAssignmentIds.has(assignmentId)) return route.fulfill({ status: 503, json: { error: 'A staff permission could not be saved.' } });
@@ -144,7 +173,8 @@ async function fixture(context, options = {}) {
     }
     if (pathname.includes('/coverage/supervision-groups') && request.method() !== 'GET') {
       const body = request.postDataJSON();
-      state.writes.push({ method: request.method(), pathname, body });
+      state.writes.push({ method: request.method(), pathname, body, schoolId });
+      if (state.groupWriteMode === 'pending') await new Promise(resolve => { state.releaseGroupWrite = resolve; state.groupWriteStarted?.(); });
       const groupKey = schoolId === 'school' ? 'groups' : 'otherGroups';
       let group = state[groupKey].find(item => item.id === pathname.split('/')[4]);
       if (request.method() === 'POST') {
@@ -152,7 +182,9 @@ async function fixture(context, options = {}) {
         state[groupKey].push(group);
         replaceGroupStaff(schoolId, group, body.staffIds);
       } else if (request.method() === 'PATCH') {
-        Object.assign(group, body);
+        if (state.failGroupStudents) return route.fulfill({ status: 503, json: { error: 'The group could not be saved. No changes were made.' } });
+        Object.assign(group, body, { students: body.studentIds.map(studentId => ({ studentId })), studentCount: body.studentIds.length, updatedAt: '2026-09-08T12:00:00.002Z' });
+        replaceGroupStaff(schoolId, group, body.staffIds);
         for (const assignment of (schoolId === 'school' ? state.assignments : state.otherAssignments).filter(item => item.scopeType === 'coverage_group' && item.scopeValue === group.id)) assignment.scopeLabel = `Supervision Group: ${group.name}`;
       } else if (pathname.endsWith('/students')) {
         if (state.failGroupStudents) return route.fulfill({ status: 503, json: { error: 'Student membership could not be saved.' } });
@@ -163,6 +195,7 @@ async function fixture(context, options = {}) {
       }
       return route.fulfill({ json: { group } });
     }
+    if (pathname.endsWith('/monitoring-interruptions')) return route.fulfill({ json: { asOf: new Date().toISOString(), lastScannedAt: new Date().toISOString(), scanStatus: 'healthy', counts: { open: 0, last24Hours: 0 } } });
     if (pathname.endsWith('/coverage/capabilities')) return route.fulfill({ json: { canManageSupervisionSetup: state.canManageSupervisionSetup } });
     if (pathname.endsWith('/coverage/summary')) return route.fulfill({ json: { claimedStudentCount: 0 } });
     return route.fulfill({ json: {} });
@@ -174,7 +207,6 @@ async function fixture(context, options = {}) {
     await page.getByRole('button', { name: 'New Group', exact: true }).click();
     await dialog.waitFor();
   } else if (options.groupsMode === 'pending' || options.assignmentsMode === 'pending') {
-    if (options.groupsMode === 'pending') await groupsReadStarted;
     if (options.assignmentsMode === 'pending') await assignmentsReadStarted;
   } else await page.waitForLoadState('networkidle');
   return { page, state, dialog };
@@ -260,11 +292,9 @@ test('group student bulk selection spans every filtered page, preserves other st
   await edit.waitFor({ state: 'hidden' });
   assert.deepEqual(state.writes.slice(1).map(write => [write.method, write.pathname]), [
     ['PATCH', '/api/coverage/supervision-groups/testing'],
-    ['PUT', '/api/coverage/supervision-groups/testing/students'],
-    ['PUT', '/api/coverage/supervision-groups/testing/staff'],
   ]);
-  assert.deepEqual([...state.writes[2].body.studentIds].sort(), [...gradeFiveIds.slice(9), 'g6-1'].sort(), 'Only the grade/class/search intersection is cleared; selections outside it remain');
-  assert.deepEqual(state.writes[3].body.staffIds, ['staff-12']);
+  assert.deepEqual([...state.writes[1].body.studentIds].sort(), [...gradeFiveIds.slice(9), 'g6-1'].sort(), 'Only the grade/class/search intersection is cleared; selections outside it remain');
+  assert.deepEqual(state.writes[1].body.staffIds, ['staff-12']);
   assert.deepEqual(state.errors, []);
 });
 
@@ -433,7 +463,7 @@ test('group deletion confirms the exact version, cancels without writes, retains
   assert.deepEqual(state.groups.map(group => group.id), ['retained-group']);
   assert.deepEqual(state.assignments, []);
   const refreshed = state.reads.slice(readsBefore).map(read => read.pathname);
-  assert(refreshed.includes('/api/coverage/supervision-groups') && refreshed.includes('/api/coverage/assignments') && refreshed.includes('/api/coverage/capabilities'));
+  assert(refreshed.includes('/api/coverage/supervision-groups/browse') && refreshed.includes('/api/coverage/assignments') && refreshed.includes('/api/coverage/capabilities'));
   assert.deepEqual(await page.evaluate(() => ['classpilot-schedule-profiles', 'classpilot-school-scheduling'].map(key => window.__coverageTestClient.getQueryState([key, 'school'])?.isInvalidated)), [true, true]);
   assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).evaluate(element => element === document.activeElement), true);
   await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
@@ -555,6 +585,8 @@ test('setup tabs show assigned names, preserve group search, and remain accessib
   await groupsTab.click();
   const groupsPanel = page.getByRole('tabpanel', { name: 'Supervision Groups', exact: true });
   const search = groupsPanel.getByRole('textbox', { name: 'Search supervision groups', exact: true });
+  assert.equal(await groupsPanel.getByLabel('Filter group status', { exact: true }).inputValue(), 'true');
+  await groupsPanel.getByLabel('Filter group status', { exact: true }).selectOption('all');
   const names = await groupsPanel.getByTestId('supervision-group-named').locator('p').filter({ hasText: /^Assigned staff:/ }).innerText();
   assert.equal(names.match(/Dr\. Alexandra Morgan-James/g)?.length, 1, 'Duplicate records for one staff ID are displayed once');
   assert(names.includes('long.supervision.staff.label@fixture.example'), 'Email replaces missing or ID-only names');
@@ -566,6 +598,7 @@ test('setup tabs show assigned names, preserve group search, and remain accessib
   assert.equal(await page.getByRole('button', { name: 'Give Staff Access', exact: true }).count(), 0, 'Permission controls are absent from the group tab');
 
   await search.fill('Morning assessment');
+  await groupsPanel.getByText('Showing 1–1 of 1 groups', { exact: true }).waitFor();
   assert.equal(await groupsPanel.locator('[data-testid^="supervision-group-"]').count(), 1, 'Existing description search still filters groups');
   await groupsTab.focus(); await page.keyboard.press('ArrowRight');
   await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).waitFor();
@@ -587,6 +620,7 @@ test('setup tabs show assigned names, preserve group search, and remain accessib
         await tab.click();
         const panel = page.getByRole('tabpanel', { name: label === 'groups' ? 'Supervision Groups' : 'Staff access', exact: true });
         await panel.waitFor();
+        if (label === 'groups') await panel.getByTestId('supervision-group-named').waitFor();
         assert.equal(await page.getByRole('tabpanel').count(), 1, `${label}/${size}/${theme}: only the selected panel is accessible`);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${label}/${size}/${theme}: page has no horizontal overflow`);
         assert.equal(await panel.evaluate(element => element.scrollWidth <= element.clientWidth), true, `${label}/${size}/${theme}: rows and actions stay inside the panel`);
@@ -643,10 +677,10 @@ test('group edits and staff access changes refresh the other tab and keep group 
   await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).getByRole('status').filter({ hasText: 'Supervision permissions for Staff 2 removed.' }).waitFor();
   await groupsTab.click();
   await groupRow.getByText('Assigned staff: No staff assigned', { exact: true }).waitFor();
-  await groupRow.getByText('2 students', { exact: true }).waitFor();
+  await groupRow.getByText(/^2 students ·/).waitFor();
   assert.equal(await page.getByText('Supervision permissions for Staff 2 removed.', { exact: true }).count(), 0, 'A permission removal notice belongs to Staff access');
   assert.deepEqual(state.groups[0].students, group.students);
-  assert.deepEqual(state.writes.map(write => write.method), ['PATCH', 'PUT', 'PUT', 'PATCH', 'PATCH', 'PATCH']);
+  assert.deepEqual(state.writes.map(write => write.method), ['PATCH', 'PATCH', 'PATCH', 'PATCH']);
   assert.equal(state.deletes.length, 1); assert.deepEqual(state.errors, []);
 });
 
@@ -735,16 +769,16 @@ test('partial setup saves retain drafts and refresh both views only after outsta
   state.failGroupStudents = true;
   const beforeGroupSave = state.reads.length;
   await groupEditor.getByRole('button', { name: 'Save', exact: true }).click();
-  await page.getByText('Could not save supervision group', { exact: true }).waitFor();
-  assert.equal(await groupEditor.isVisible(), true, 'A partial group save retains the editor');
+  await groupEditor.getByRole('alert').filter({ hasText: 'No changes were made.' }).waitFor();
+  assert.equal(await groupEditor.isVisible(), true, 'A failed atomic group save retains the editor');
   assert.equal(await groupEditor.getByPlaceholder('State testing - 8th grade').inputValue(), 'Partially Updated Testing');
   await groupEditor.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByTestId('supervision-group-partial').getByText('Partially Updated Testing', { exact: true }).waitFor();
+  await page.getByTestId('supervision-group-partial').getByText('Original Testing Name', { exact: true }).waitFor();
   await accessTab.click();
   const packageRow = page.getByTestId('staff-permissions-staff-1');
-  await packageRow.getByText('Supervision Group: Partially Updated Testing', { exact: true }).waitFor();
+  await packageRow.getByText('Supervision Group: Original Testing Name', { exact: true }).waitFor();
   const groupSaveReads = state.reads.slice(beforeGroupSave).map(read => read.pathname);
-  assert(groupSaveReads.includes('/api/coverage/supervision-groups') && groupSaveReads.includes('/api/coverage/assignments'));
+  assert(groupSaveReads.includes('/api/coverage/supervision-groups/browse') && groupSaveReads.includes('/api/coverage/assignments'));
   assert.deepEqual(state.groups[0].students, group.students);
 
   await packageRow.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -771,6 +805,174 @@ test('partial setup saves retain drafts and refresh both views only after outsta
   assert.equal(state.assignments.find(assignment => assignment.id === 'partial-grade').active, true);
   assert.equal(state.assignments.find(assignment => assignment.id === 'partial-group').active, false);
   const permissionSaveReads = state.reads.slice(beforePermissionSave).map(read => read.pathname);
-  assert(permissionSaveReads.includes('/api/coverage/supervision-groups') && permissionSaveReads.includes('/api/coverage/assignments'));
+  assert(permissionSaveReads.includes('/api/coverage/supervision-groups/browse') && permissionSaveReads.includes('/api/coverage/assignments'));
   assert.deepEqual(state.deletes, []); assert.deepEqual(state.errors, []);
+});
+
+
+test('group directory pages server results and combines category, grade, assigned staff, status and staff-name search without loading rosters', { timeout: 90_000 }, async context => {
+  const categories = [{ id: 'testing-category', name: 'Testing', updatedAt: '2026-09-08T12:00:00.000Z' }, { id: 'clubs-category', name: 'Clubs', updatedAt: '2026-09-08T12:00:00.000Z' }];
+  const groups = Array.from({ length: 52 }, (_, index) => ({ ...deletionGroup(`directory-${index + 1}`, `Room ${String(index + 1).padStart(2, '0')}`), categoryId: index < 30 ? 'testing-category' : index < 45 ? 'clubs-category' : null, active: index % 3 !== 0, gradeCounts: [{ gradeLevel: index % 2 ? '6' : '5', count: 2 }], staff: index % 4 ? [{ id: 'staff-12', displayName: 'Mr Fixture', email: 'fixture@school.example' }] : [] }));
+  const { page, state } = await fixture(context, { openCreate: false, groups, categories });
+  const heavyReads = () => state.reads.filter(read => ['/api/admin/users', '/api/admin/teacher-students', '/api/coverage/setup/classes', '/api/coverage/supervision-groups'].includes(read.pathname));
+  assert.deepEqual(heavyReads(), [], 'Coverage landing avoids roster-heavy setup reads');
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  const panel = page.getByRole('tabpanel', { name: 'Supervision Groups', exact: true });
+  const rows = panel.locator('[data-testid^="supervision-group-"]');
+  await panel.getByText('Showing 1–25 of 34 groups', { exact: true }).waitFor();
+  assert.equal(await panel.getByLabel('Filter group status', { exact: true }).inputValue(), 'true', 'The directory defaults to active groups');
+  assert.equal(await panel.getByTestId('supervision-group-directory-1').count(), 0, 'Disabled groups are excluded until requested');
+  await panel.getByLabel('Filter group status', { exact: true }).selectOption('all');
+  await panel.getByText('Showing 1–25 of 52 groups', { exact: true }).waitFor();
+  assert.equal(await rows.count(), 25);
+  await panel.getByRole('button', { name: 'Next groups', exact: true }).click();
+  await panel.getByText('Showing 26–50 of 52 groups', { exact: true }).waitFor();
+  await panel.getByLabel('Filter group category', { exact: true }).selectOption('testing-category');
+  await panel.getByText('Showing 1–25 of 30 groups', { exact: true }).waitFor();
+  await panel.getByLabel('Filter group grade', { exact: true }).selectOption('5');
+  await panel.getByText('Showing 1–15 of 15 groups', { exact: true }).waitFor();
+  await panel.getByLabel('Filter assigned staff', { exact: true }).selectOption('staff-12');
+  await panel.getByText('Showing 1–7 of 7 groups', { exact: true }).waitFor();
+  await panel.getByLabel('Filter group status', { exact: true }).selectOption('false');
+  await panel.getByText('Showing 1–2 of 2 groups', { exact: true }).waitFor();
+  assert.equal(await rows.count(), 2);
+  await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  assert.equal(await panel.getByLabel('Filter group category', { exact: true }).inputValue(), 'testing-category');
+  assert.equal(await panel.getByLabel('Filter group status', { exact: true }).inputValue(), 'false');
+  await panel.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  assert.equal(await panel.getByLabel('Filter group status', { exact: true }).inputValue(), 'true', 'Clear filters restores active groups');
+  await panel.getByLabel('Filter group status', { exact: true }).selectOption('all');
+  await panel.getByRole('textbox', { name: 'Search supervision groups', exact: true }).fill('Mr Fixture');
+  await panel.getByText('Showing 1–25 of 39 groups', { exact: true }).waitFor();
+  assert.equal(state.reads.some(read => read.pathname.endsWith('/browse') && new URLSearchParams(read.search).get('search') === 'Mr Fixture'), true, 'Staff search is sent to the server and reaches beyond the current page');
+  await panel.getByRole('textbox', { name: 'Search supervision groups', exact: true }).fill('No matching room');
+  await panel.getByText('No supervision groups match these filters.', { exact: true }).waitFor();
+  assert.deepEqual(heavyReads(), [], 'Directory filtering does not load group members, students, classes or the full group list');
+  await panel.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await panel.getByLabel('Filter group status', { exact: true }).selectOption('all');
+  await panel.getByRole('button', { name: 'Next groups', exact: true }).click();
+  await panel.getByRole('button', { name: 'Next groups', exact: true }).click();
+  await panel.getByText('Showing 51–52 of 52 groups', { exact: true }).waitFor();
+  for (const [name, showing] of [['Room 52', 'Showing 51–51 of 51 groups'], ['Room 51', 'Showing 26–50 of 50 groups']]) {
+    await panel.getByRole('button', { name: `Delete group ${name}`, exact: true }).click();
+    const confirm = page.getByRole('alertdialog', { name: 'Delete supervision group?', exact: true });
+    await confirm.getByRole('button', { name: 'Delete group', exact: true }).click();
+    await confirm.waitFor({ state: 'hidden' });
+    await panel.getByText(showing, { exact: true }).waitFor();
+  }
+  assert.equal(await panel.getByLabel('Filter group status', { exact: true }).inputValue(), 'all', 'Deleting the final row on a page preserves filters while returning to a populated page');
+  state.groups.splice(25);
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await panel.getByText('Showing 1–25 of 25 groups', { exact: true }).waitFor();
+  assert.equal(await panel.getByRole('button', { name: 'Next groups', exact: true }).isDisabled(), true, 'A shortened directory clamps a formerly valid last page');
+  assert.deepEqual(state.errors, []);
+});
+
+test('school categories create, rename and delete with reviewable consequences; group category saves atomically and refresh failure never resubmits', { timeout: 90_000 }, async context => {
+  const { page, state } = await fixture(context, { openCreate: false });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
+  await page.getByRole('button', { name: 'Manage categories', exact: true }).click();
+  const categories = page.getByRole('dialog', { name: 'Manage categories', exact: true });
+  await categories.getByRole('textbox', { name: 'New category', exact: true }).fill('Assessment');
+  await categories.getByRole('button', { name: 'Add category', exact: true }).click();
+  await categories.getByText('Category saved.', { exact: true }).waitFor();
+  const categoryId = state.categories[0].id;
+  await categories.getByRole('button', { name: 'Rename category Assessment', exact: true }).click();
+  await categories.getByRole('textbox', { name: 'Rename category', exact: true }).fill('Testing');
+  await categories.getByRole('button', { name: 'Save category', exact: true }).click();
+  await categories.getByRole('button', { name: 'Rename category Testing', exact: true }).waitFor();
+  const categoryArtifactDir = path.resolve(root, '..', 'soc2-evidence', 'validation', 'supervision-directory', 'browser');
+  await mkdir(categoryArtifactDir, { recursive: true });
+  for (const [size, viewport] of [['desktop', { width: 1365, height: 768 }], ['mobile', { width: 390, height: 667 }]]) {
+    await page.setViewportSize(viewport);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), theme === 'dark');
+      const bounds = await categories.boundingBox();
+      assert(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1);
+      assert.equal(await categories.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+      await page.screenshot({ path: path.join(categoryArtifactDir, `categories-${size}-${theme}.png`), animations: 'disabled' });
+    }
+  }
+  await page.setViewportSize({ width: 1365, height: 768 });
+
+  assert.deepEqual(state.categoryWrites[1].body, { name: 'Testing', updatedAt: '2026-09-08T13:00:00.000Z' });
+  await categories.getByRole('button', { name: 'Close categories', exact: true }).click();
+  await page.getByLabel('Filter group category', { exact: true }).selectOption('uncategorized');
+  await page.getByRole('button', { name: 'New Group', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Create Supervision Group', exact: true });
+  await editor.getByLabel('Name', { exact: true }).fill('Category Test Room');
+  await editor.getByLabel('Category', { exact: true }).selectOption(categoryId);
+  state.groupsMode = 'error';
+  await editor.getByRole('button', { name: 'Save', exact: true }).click();
+  await editor.waitFor({ state: 'hidden' });
+  await page.getByRole('status').filter({ hasText: 'Supervision group “Category Test Room” saved. Some lists could not refresh.' }).waitFor();
+  assert.equal(state.writes.length, 1, 'A committed save with failed refresh closes and reports success separately');
+  assert.equal(state.writes[0].body.categoryId, categoryId);
+  state.groupsMode = 'success';
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'The saved group is not on this page. Your filters are preserved' }).waitFor();
+  assert.equal(await page.getByLabel('Filter group category', { exact: true }).inputValue(), 'uncategorized', 'Saving outside a filter keeps the administrator’s current view');
+  await page.getByLabel('Filter group category', { exact: true }).selectOption('');
+  await page.getByTestId('supervision-group-testing').getByText(/0 students · Testing/).waitFor();
+  assert.equal(state.writes.length, 1, 'Refresh retries only reading the list');
+  state.detailMode = 'error';
+  const editOpener = page.getByTestId('supervision-group-testing').getByRole('button', { name: 'Edit', exact: true });
+  await editOpener.click();
+  const edit = page.getByRole('dialog', { name: 'Edit Supervision Group', exact: true });
+  await edit.getByText('This group could not load.', { exact: true }).waitFor();
+  assert.equal(await edit.getByRole('button', { name: 'Save', exact: true }).count(), 0, 'Editing never falls back to a rosterless summary');
+  state.detailMode = 'success';
+  await edit.getByRole('button', { name: 'Retry group', exact: true }).click();
+  await edit.getByLabel('Name', { exact: true }).waitFor();
+  assert.equal(await edit.getByLabel('Category', { exact: true }).inputValue(), categoryId);
+  await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(await editOpener.evaluate(element => element === document.activeElement), true, 'The detail loading step preserves the edit opener for focus restoration');
+  await page.getByRole('button', { name: 'Manage categories', exact: true }).click();
+  const deleteOpener = categories.getByRole('button', { name: 'Delete category Testing', exact: true });
+  await deleteOpener.click();
+  const confirm = page.getByRole('alertdialog', { name: 'Delete category?', exact: true });
+  await confirm.getByText(/Its 1 group will move to Uncategorized/).waitFor();
+  await confirm.getByRole('button', { name: 'Cancel', exact: true }).click();
+  assert.equal(state.categoryWrites.length, 2);
+  await deleteOpener.click();
+  state.categoryMode = 'stale';
+  await confirm.getByRole('button', { name: 'Delete category', exact: true }).click();
+  await confirm.getByRole('alert').filter({ hasText: 'This category changed.' }).waitFor();
+  assert.equal(state.groups.length, 1);
+  state.categoryMode = 'success';
+  await confirm.getByRole('button', { name: 'Delete category', exact: true }).click();
+  await confirm.waitFor({ state: 'hidden' });
+  await categories.getByText('Category deleted. Its groups are now Uncategorized.', { exact: true }).waitFor();
+  await categories.getByRole('button', { name: 'Close categories', exact: true }).click();
+  await page.getByTestId('supervision-group-testing').getByText(/0 students · Uncategorized/).waitFor();
+  assert.equal(state.groups.length, 1); assert.equal(state.groups[0].categoryId, null);
+  assert.deepEqual(state.errors, []);
+});
+
+
+test('a late group save stays scoped to its original school and cannot close or replace a new school group draft', { timeout: 60_000 }, async context => {
+  const otherGroup = deletionGroup('other-group', 'Other School Group');
+  const { page, state, dialog } = await fixture(context, { otherGroups: [otherGroup] });
+  await dialog.getByLabel('Name', { exact: true }).fill('Prior School Creation');
+  state.groupWriteMode = 'pending';
+  const started = new Promise(resolve => { state.groupWriteStarted = resolve; });
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await started;
+  assert.equal(state.writes[0].schoolId, 'school');
+  assert.equal(await dialog.getByRole('button', { name: 'Cancel', exact: true }).isDisabled(), true);
+  await page.keyboard.press('Escape'); assert.equal(await dialog.isVisible(), true);
+  await page.evaluate(() => window.__switchCoverageSchool('other-school'));
+  await dialog.waitFor({ state: 'hidden' });
+  await page.getByText(otherGroup.name, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'New Group', exact: true }).click();
+  await dialog.getByLabel('Name', { exact: true }).fill('Current School Draft');
+  const before = state.reads.filter(read => read.schoolId === 'other-school').length;
+  state.groupWriteMode = 'success'; state.releaseGroupWrite(); state.releaseGroupWrite = null;
+  await page.waitForLoadState('networkidle');
+  assert.equal(await dialog.getByLabel('Name', { exact: true }).inputValue(), 'Current School Draft');
+  assert.deepEqual(state.otherGroups, [otherGroup]);
+  assert.equal(state.groups[0].name, 'Prior School Creation');
+  assert.equal(state.reads.filter(read => read.schoolId === 'other-school').length, before, 'Original-school refresh cannot invalidate the new school editor data');
+  assert.equal(await page.getByText(/Prior School Creation.*saved/).count(), 0);
+  assert.deepEqual(state.errors, []);
 });

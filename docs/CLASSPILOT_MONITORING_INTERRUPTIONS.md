@@ -1,6 +1,10 @@
 # Monitoring interruptions
 
-**Coverage/Supervision** and **IT Readiness** show monitoring interruptions grouped by the class or supervision context. An interruption means expected telemetry stopped; its cause is unknown. It does not establish that a student disabled Wi-Fi, closed the extension or acted deliberately.
+**Coverage/Supervision** and **IT Readiness** show a compact monitoring summary. **View interruption history** opens the event details without leaving the page. An interruption means expected telemetry stopped; its cause is unknown. It does not establish that a student disabled Wi-Fi, closed the extension or acted deliberately.
+
+The summary separately counts **open interruptions** and **events detected in the last 24 hours**. These are event counts, not unique students; one student can have separate interruptions. An older open event counts as open but does not increase the last-24-hours count. Counts cover all retained events you are authorized to see, independently of the history page size.
+
+History has **Open** and **Last 24 hours** views with 50 events per page and Previous/Next controls. Open includes retained events older than a day; Last 24 hours includes open, recovered and ended events detected during that window. Refresh history starts again at the newest page. A pagination window expires after 15 minutes; refresh to continue. Teachers and office staff can open their authorized history directly from Coverage; administrator-only IT Readiness is not required.
 
 ## What qualifies
 
@@ -32,4 +36,4 @@ The registered migration creates tenant-scoped expectations, incidents, digest s
 
 The scan and digest jobs use the dedicated scheduler database pool and scheduler locks. No additional history queries or writes are added to the heartbeat request path. Inspect worker health when a panel remains uncertain for more than three minutes.
 
-Incident rows are independent of regenerated monitoring-report events and carry retention expiry. Verify: initial observation → missed telemetry → one open incident → exact-binding recovery; cache expiry; cache outage; sign-in replacement; absence and privacy exclusions; school mode changes; staff/tenant isolation; default-off digest; and one delivery per administrator/day. Browser display history is bounded to 500 retained visible incidents from the last day plus still-open incidents.
+Incident rows are independent of regenerated monitoring-report events and carry retention expiry. Verify: initial observation → missed telemetry → one open incident → exact-binding recovery; cache expiry; cache outage; sign-in replacement; absence and privacy exclusions; school mode changes; staff/tenant isolation; default-off digest; and one delivery per administrator/day. The summary read returns counts without student details; history returns 50 authorized events per page. The legacy API response remains available for older clients.
