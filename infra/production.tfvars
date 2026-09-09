@@ -29,9 +29,10 @@ redis_node_type     = "cache.t4g.small"
 redis_replica_count = 0
 
 # ECS — scheduler work remains isolated; API runs single-task in pilot mode
-# Current baseline. Adopt /readyz only after the guarded activation described in
-# docs/API_POOL_READINESS_OPERATIONS.md succeeds; no Terraform apply is needed.
-api_alb_health_check_path = "/livez"
+# Observed /readyz activation verified 2026-09-09 00:24 UTC after PR #414.
+# This adopts the live baseline; no Terraform apply is needed. See
+# docs/API_POOL_READINESS_OPERATIONS.md for activation and rollback.
+api_alb_health_check_path = "/readyz"
 ecs_desired_count         = 1
 # Three 512/2048 live API tasks are pre-warmed at 05:45 and held as the floor
 # for the whole weekday school day (measured 2026-09-03: after the former 10:00
