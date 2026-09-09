@@ -86,6 +86,134 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+test("shared preview dates survive legacy edits and scheduling round trips without activating the profile", async () => {
+  const data = await fixture();
+  const legacy = await save(data);
+  assert.equal(Object.hasOwn(legacy.profile, "previewDate"), false);
+  const saved = await scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: legacy.revision, id: legacy.profile.id, profileRevision: legacy.profile.revision,
+    definition: legacy.profile.definition, previewDate: "2000-01-01" }));
+  assert.equal(saved.profile.previewDate, "2000-01-01");
+  assert.equal(saved.profile.revision, legacy.profile.revision + 1);
+  assert.equal(saved.revision, legacy.revision + 1);
+  const editedByLegacyClient = await scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: saved.revision, id: saved.profile.id, profileRevision: saved.profile.revision,
+    definition: { ...saved.profile.definition, name: "MAP review" } }));
+  assert.equal(editedByLegacyClient.profile.previewDate, "2000-01-01");
+  const otherLegacyProfile = await save(data, { ...data.definition, name: "Legacy create" }, editedByLegacyClient.revision);
+  assert.equal(Object.hasOwn(otherLegacyProfile.profile, "previewDate"), false);
+
+  const before = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const calendarPreview = await scoped(data.schoolId, () => scheduling.previewSchoolScheduling({ schoolId: data.schoolId, config: before.config }));
+  assert.deepEqual(calendarPreview.blockers, []);
+  await scoped(data.schoolId, () => scheduling.saveSchoolScheduling({ schoolId: data.schoolId, actorId: data.adminId,
+    config: before.config, expectedRevision: before.revision, previewToken: calendarPreview.previewToken }));
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after.config.scheduleProfiles, before.config.scheduleProfiles);
+  assert.deepEqual(after.config.profileApplications, []);
+  assert.deepEqual(resolveClassBaseWindow({ id: data.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50",
+    scheduleRule: defaultClassScheduleRule() }, date, after.config, after.calendar), { startTime: "09:00", endTime: "09:50" });
+});
+
+test("date-only saves serialize, invalidate old reviews, and leave existing application snapshots unchanged", async () => {
+  const data = await fixture(), saved = await save(data);
+  const input = request(data, saved);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  assert.deepEqual(preview.blockers, []);
+  const attempts = await Promise.allSettled(["2026-09-14", "2035-12-31"].map(previewDate => scoped(data.schoolId,
+    () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision,
+      id: saved.profile.id, profileRevision: saved.profile.revision, definition: saved.profile.definition, previewDate }))));
+  assert.equal(attempts.filter(result => result.status === "fulfilled").length, 1);
+  for (const result of attempts) if (result.status === "rejected") assert.equal(result.reason.code, "SCHEDULE_PREVIEW_STALE");
+  const winner = attempts.find(result => result.status === "fulfilled");
+  assert.ok(winner?.status === "fulfilled");
+  const current = winner.value;
+  assert.equal(current.revision, saved.revision + 1);
+  assert.equal(current.profile.revision, saved.profile.revision + 1);
+  assert.deepEqual(current.profile.definition, saved.profile.definition);
+  await assert.rejects(scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: current.revision, id: current.profile.id, profileRevision: saved.profile.revision,
+    definition: current.profile.definition, previewDate: "2026-09-15" })), { code: "SCHEDULE_PREVIEW_STALE" });
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken })),
+    { code: "SCHEDULE_PREVIEW_STALE" });
+  const freshInput = request(data, current);
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...freshInput, previewToken: preview.previewToken })),
+    { code: "SCHEDULE_PREVIEW_STALE" });
+  const freshPreview = await scoped(data.schoolId, () => service.previewScheduleProfile(freshInput));
+  assert.notEqual(freshPreview.previewToken, preview.previewToken);
+  assert.deepEqual(freshPreview.changes, preview.changes);
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...freshInput, previewToken: freshPreview.previewToken }));
+  assert.deepEqual(applied.application.dates, [date]);
+  assert.equal(Object.hasOwn(applied.application, "previewDate"), false);
+  assert.equal(Object.hasOwn(applied.application.definition, "previewDate"), false);
+  await scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: applied.revision, id: current.profile.id, profileRevision: current.profile.revision,
+    definition: current.profile.definition, previewDate: "2000-01-01" }));
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after.config.profileApplications, [applied.application]);
+  assert.equal(after.config.scheduleProfiles?.[0]?.previewDate, "2000-01-01");
+});
+
+test("the save route shares preview dates with another administrator, audits them and rejects invalid or unauthorized writes", async () => {
+  const data = await fixture(), other = await fixture();
+  await pool.query("UPDATE school_memberships SET role='school_admin' WHERE school_id=$1 AND user_id=$2", [data.schoolId, data.specialistId]);
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot/admin/schedule-profiles", router);
+  app.use(((error, _req, res, _next) => {
+    const known = error as Error & { status?: number; code?: string };
+    res.status(known.status ?? 500).json({ error: known.message, code: known.code });
+  }) satisfies express.ErrorRequestHandler);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles`;
+  const call = (method: string, userId?: string, body?: unknown, schoolId = data.schoolId) => fetch(url, { method,
+    headers: { "content-type": "application/json", ...(userId ? { authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+  try {
+    const create = { revision: 0, definition: data.definition, previewDate: "2000-01-01" };
+    assert.equal((await call("POST", undefined, create)).status, 401);
+    assert.equal((await call("POST", data.teacherId, create)).status, 403);
+    assert.equal((await call("POST", data.adminId, create, other.schoolId)).status, 403);
+    const response = await call("POST", data.adminId, { ...create, schoolId: other.schoolId });
+    assert.equal(response.status, 201);
+    const saved = await response.json() as Awaited<ReturnType<typeof service.saveScheduleProfile>>;
+    assert.equal(saved.profile.previewDate, create.previewDate);
+    const read = await call("GET", data.specialistId);
+    assert.equal(read.status, 200); assert.equal(read.headers.get("cache-control"), "no-store");
+    const shared = await read.json() as Awaited<ReturnType<typeof service.getScheduleProfiles>>;
+    assert.deepEqual(shared.profiles, [saved.profile]);
+    assert.deepEqual(shared.applications, []);
+    const foreignRead = await call("GET", other.adminId, undefined, other.schoolId);
+    assert.equal(foreignRead.status, 200);
+    assert.deepEqual((await foreignRead.json() as Awaited<ReturnType<typeof service.getScheduleProfiles>>).profiles, []);
+    const edit = { revision: saved.revision, id: saved.profile.id, profileRevision: saved.profile.revision,
+      definition: saved.profile.definition };
+    for (const previewDate of [null, "", "2026-02-30", "2026-9-14", [date], 20260914]) {
+      const invalid = await call("POST", data.specialistId, { ...edit, previewDate });
+      assert.equal(invalid.status, 400);
+      assert.deepEqual(await invalid.json(), { error: "Preview date must be a real date in YYYY-MM-DD format.", code: "INVALID_SCHEDULE_PROFILE" });
+    }
+    const unchanged = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    assert.equal(unchanged.revision, saved.revision);
+    assert.deepEqual(unchanged.config.scheduleProfiles, [saved.profile]);
+    await pool.query("UPDATE settings SET instructional_calendar=$2::jsonb WHERE school_id=$1", [data.schoolId,
+      JSON.stringify({ [date.slice(0, 7)]: { nonInstructionalDates: [date] } })]);
+    const edited = await call("POST", data.specialistId, { ...edit, previewDate: date });
+    assert.equal(edited.status, 200);
+    const updated = await edited.json() as Awaited<ReturnType<typeof service.saveScheduleProfile>>;
+    assert.equal(updated.profile.previewDate, date);
+    const audit = await pool.query<{ user_id: string; metadata: { revision: number; previewDate: string } }>(
+      "SELECT user_id,metadata FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.saved' AND entity_id=$2 ORDER BY created_at,id",
+      [data.schoolId, saved.profile.id]);
+    assert.equal(audit.rows.length, 2);
+    assert.ok(audit.rows.some(row => row.user_id === data.specialistId && row.metadata.previewDate === date && row.metadata.revision === updated.profile.revision));
+    const reopened = await call("GET", data.adminId);
+    assert.deepEqual((await reopened.json() as Awaited<ReturnType<typeof service.getScheduleProfiles>>).profiles, [updated.profile]);
+  } finally {
+    server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 test("regular reference reads are school-scoped, preserve every stored schedule, and ignore applied/swap/frozen/skip-day state", async () => {
   const data = await fixture(), other = await fixture();
   const saved = await save(data), input = request(data, saved);

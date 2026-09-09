@@ -82,17 +82,17 @@ function isReferenceDate(value) {
 function RegularScheduleReference({ date, onDateChange, onRefresh, query, schedule, timezone, setup, hideControls = false }) {
   const validDate = isReferenceDate(date);
   return <section aria-label="Regular schedule reference" className="space-y-3 rounded-lg border bg-muted/30 p-4">
-    <div className="space-y-1"><h4 className="font-semibold">{setup ? 'Start from regular schedule' : 'Compare with the regular schedule'}</h4><p className="max-w-2xl text-sm text-muted-foreground">Use a reference day to build this profile. Choose application dates separately after saving.</p></div>
-    <div className="flex flex-wrap items-end gap-3">{!hideControls && <label className="w-full space-y-1 text-sm font-medium sm:w-56"><span>Reference date</span><input type="date" className={inputClass} value={date} onChange={event => onDateChange(event.target.value)} /></label>}<Button variant="outline" size="sm" disabled={!validDate || query.isFetching} onClick={onRefresh}>{query.isError ? 'Retry regular schedule' : 'Refresh regular schedule'}</Button></div>
-    {!validDate && <p className="text-sm text-muted-foreground">Choose a valid reference date to see regular class times.</p>}
+    <div className="space-y-1"><h4 className="font-semibold">{setup ? 'Start from regular schedule' : 'Compare with the regular schedule'}</h4><p className="max-w-2xl text-sm text-muted-foreground">Use a preview day to build this profile. Choose application dates separately after saving.</p></div>
+    <div className="flex flex-wrap items-end gap-3">{!hideControls && <label className="w-full space-y-1 text-sm font-medium sm:w-56"><span>Preview schedule for</span><input type="date" className={inputClass} value={date} onChange={event => onDateChange(event.target.value)} /></label>}<Button variant="outline" size="sm" disabled={!validDate || query.isFetching} onClick={onRefresh}>{query.isError ? 'Retry regular schedule' : 'Refresh regular schedule'}</Button></div>
+    {!validDate && <p className="text-sm text-muted-foreground">Choose a valid preview date to see regular class times.</p>}
     {validDate && query.isFetching && <p role="status" className="text-sm">Loading regular schedule…</p>}
     {validDate && query.isError && !query.isFetching && <p role="alert" className="text-sm text-destructive">Could not load the regular schedule. {errorMessage(query.error)}</p>}
     {schedule && <div className="space-y-2 text-sm">
       <p className="font-medium">{weekdays[new Date(`${date}T12:00:00Z`).getUTCDay()]}{schedule.day.cycleDay ? ` · ${schedule.day.cycleDay} day` : ''} · {schedule.day.bellProfile?.name || 'Class times'} · {schedule.schoolTimezone || timezone}</p>
       {schedule.day.overridden && <p className="text-muted-foreground">This date has a calendar exception{schedule.day.meetingWeekday !== new Date(`${date}T12:00:00Z`).getUTCDay() ? ` and follows ${weekdays[schedule.day.meetingWeekday]}'s classes` : ''}. The comparison includes its meeting rules and bells.</p>}
-      {!schedule.day.instructional ? <p role="status">This is a non-instructional day. Choose an instructional reference date to load classes.</p> : !schedule.classes.some(row => row.status === 'meets') && <p role="status">No scheduled classes meet on this reference date. Choose another date or start blank to add testing blocks.</p>}
+      {!schedule.day.instructional ? <p role="status">This is a non-instructional day. Choose an instructional preview date to load classes.</p> : !schedule.classes.some(row => row.status === 'meets') && <p role="status">No scheduled classes meet on this preview date. Choose another date or start blank to add testing blocks.</p>}
     </div>}
-    <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Regular times use the current school calendar and class settings. Applied profiles, swaps and recorded sessions are excluded. Changing this reference date keeps your selections and adjustments.</p>
+    <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Regular times use the current school calendar and class settings. Applied profiles, swaps and recorded sessions are excluded. Changing this preview date keeps your selections and adjustments.</p>
   </section>;
 }
 
@@ -141,7 +141,7 @@ function DefinitionEditor({ definition, onChange, catalog, disabled, regularSche
         {visible.map(row => {
           const included = selectedClass(definition, row), byGrade = definition.grades.includes(String(row.gradeLevel)), rule = rules.get(row.id);
           const regular = regularClasses.get(row.id), window = regular?.status === 'meets' ? regular.window : null;
-          const regularText = window ? timeText(window) : regular?.status === 'not_scheduled' ? 'Does not meet on this reference date' : regular?.status === 'schedule_off' ? 'Schedule off' : referenceLoading ? 'Loading…' : 'Regular time unavailable';
+          const regularText = window ? timeText(window) : regular?.status === 'not_scheduled' ? 'Does not meet on this preview date' : regular?.status === 'schedule_off' ? 'Schedule off' : referenceLoading ? 'Loading…' : 'Regular time unavailable';
           return <tr key={row.id} className="border-t" data-class-editor-id={row.id} tabIndex={-1}>
             <td className="p-3 align-top"><label className="flex items-start gap-2"><input type="checkbox" aria-label={`Include ${row.name}`} checked={included} disabled={byGrade} onChange={event => updateScope({ classIds: event.target.checked ? [...definition.classIds, row.id] : definition.classIds.filter(id => id !== row.id) })} /><span><span className="block font-medium">{row.name}</span><span className="text-xs text-muted-foreground">{gradeName(String(row.gradeLevel || 'unassigned'))}{row.teacherName ? ` · ${row.teacherName}` : ''}{byGrade ? ' · included by grade' : ''}</span></span></label></td>
             <td className="p-3 align-top text-muted-foreground">{regularText}{regular?.status === 'unavailable' && <p className="mt-1 text-xs text-destructive">{regular.message || 'Resolve this class’s period mapping in Bells & rotation.'}</p>}</td>
@@ -150,7 +150,7 @@ function DefinitionEditor({ definition, onChange, catalog, disabled, regularSche
               else if (event.target.value === 'skip') changeRule(row.id, { action: 'skip' });
               else if (window) changeRule(row.id, { action: 'time', ...window });
             }}><option value="keep">Keep existing schedule</option><option value="time" disabled={!window && rule?.action !== 'time'}>Custom time</option><option value="skip">Does not meet</option></select>
-              {rule?.action === 'time' ? <div className="flex gap-2"><input aria-label={`${row.name} profile start`} className={inputClass} type="time" value={rule.startTime} onChange={event => changeRule(row.id, { ...rule, startTime: event.target.value })} /><input aria-label={`${row.name} profile end`} className={inputClass} type="time" value={rule.endTime} onChange={event => changeRule(row.id, { ...rule, endTime: event.target.value })} /></div> : included && !window && !referenceLoading && <p className="text-xs text-muted-foreground">Choose a reference date with an available regular meeting to start custom times.</p>}
+              {rule?.action === 'time' ? <div className="flex gap-2"><input aria-label={`${row.name} profile start`} className={inputClass} type="time" value={rule.startTime} onChange={event => changeRule(row.id, { ...rule, startTime: event.target.value })} /><input aria-label={`${row.name} profile end`} className={inputClass} type="time" value={rule.endTime} onChange={event => changeRule(row.id, { ...rule, endTime: event.target.value })} /></div> : included && !window && !referenceLoading && <p className="text-xs text-muted-foreground">Choose a preview date with an available regular meeting to start custom times.</p>}
               <DraftReviewIssues compact issues={issuesByTarget.get(`class:${row.id}`)} review={draftReview} />
             </td>
           </tr>;
@@ -198,6 +198,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(null);
@@ -207,6 +208,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const [newName, setNewName] = useState('');
   const bodyRef = useRef(null);
   const workspaceRef = useRef(null);
+  const previewDateRef = useRef(null);
   const editorScroll = useRef(0);
   const openerRef = useRef(null);
   const reviewOpenerRef = useRef(null);
@@ -219,6 +221,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   useEffect(() => () => { onWorkspaceChange?.(false); onBusyChange?.(false); }, [onWorkspaceChange, onBusyChange]);
   const sessionId = session?.id, sessionMode = session?.mode, sessionSetup = session?.setup, focusTarget = session?.focusTarget, returnToEditor = session?.returnToEditor;
   const referenceDate = session?.referenceDate || '';
+  const previewDateDirty = Boolean(session && session.mode !== 'apply' && referenceDate !== session.initialPreviewDate);
   const regularQuery = useQuery({
     queryKey: [...KEY, 'regular-schedule', activeSchoolId, referenceDate],
     queryFn: ({ signal }) => apiRequest('GET', `${API}/regular-schedule`, undefined, { signal, params: { referenceDate } }),
@@ -236,11 +239,13 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     : meetingClasses.length > 500 ? 'This day has more than 500 classes. Choose Start blank and select a smaller set of grades or classes.'
       : meetingClasses.some(row => !catalogIds.has(row.classId)) ? 'The class list changed. Close this draft and refresh profiles before loading the whole day.' : '';
   const testingStatuses = useMemo(() => new Map((data?.testingStatuses || EMPTY).map(row => [`${row.applicationId}:${row.date}:${row.blockId}`, row])), [data?.testingStatuses]);
-  const dirty = Boolean(session && session.mode !== 'view' && (JSON.stringify(session.definition) !== session.original || session.customize || session.dates.join(',') !== session.initialDates || preview));
+  const dirty = previewDateDirty || Boolean(session && session.mode !== 'view' && (JSON.stringify(session.definition) !== session.original || session.customize || session.dates.join(',') !== session.initialDates || preview));
   useEffect(() => { onBusyChange?.(busy || dirty); }, [busy, dirty, onBusyChange]);
   useEffect(() => {
-    if (!sessionId || !bodyRef.current) return;
-    if (focusTarget?.applicationPreview) {
+    if (!sessionId || !bodyRef.current || busy) return;
+    if (focusTarget?.previewDate) {
+      previewDateRef.current?.focus({ preventScroll: true });
+    } else if (focusTarget?.applicationPreview) {
       const element = bodyRef.current.querySelector('[aria-label="Profile application preview"]');
       element?.focus(); element?.scrollIntoView({ block: 'start' });
     } else if (focusTarget) {
@@ -262,7 +267,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       const control = [...(workspace?.querySelectorAll('input:not([type="checkbox"]):not(:disabled), select:not(:disabled)') || [])].find(element => !element.closest('[hidden], [inert]'));
       (control || workspace?.querySelector('h2'))?.focus();
     }
-  }, [sessionId, sessionMode, sessionSetup, showingSchedule, focusTarget, returnToEditor]);
+  }, [sessionId, sessionMode, sessionSetup, showingSchedule, focusTarget, returnToEditor, busy]);
   useEffect(() => {
     if (!dirty) return undefined;
     const handler = event => { event.preventDefault(); event.returnValue = ''; };
@@ -273,17 +278,33 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     await Promise.all([client.invalidateQueries({ queryKey: KEY }), ...(scheduleChanged ? [client.invalidateQueries({ queryKey: ['classpilot-school-scheduling'] }), client.invalidateQueries({ queryKey: ['classpilot-admin-classes'] })] : [])]);
   };
   const open = (mode, profile, duplicate = false) => {
-    const definition = profile ? copy(profile.definition) : blankDefinition();
-    if (duplicate) definition.name = copyName(definition.name, ' (copy)');
-    const dates = mode === 'apply' && data.schoolLocalToday ? [data.schoolLocalToday] : [];
     openerRef.current = document.activeElement;
-    editorScroll.current = 0;
-    sectionPositions.current = {};
-    setSession({ section: 'classes', id: crypto.randomUUID(), mode, view: mode === 'view' ? 'schedule' : 'editor', profile: duplicate ? null : profile, definition, original: JSON.stringify(definition), revision: data.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !profile, referenceDate: data.schoolLocalToday, editorFilters: { viewGrade: 'all', search: '' }, reviewInitialized: mode === 'view', reviewFilters: { view: 'classes', grade: 'all', classId: 'all', teacher: 'all', conflictsOnly: false } });
-    setNewName(copyName(definition.name, ' (custom)')); setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError(''); setNotice('');
+    return execute(async () => {
+      // Fetch on open so another administrator's saved date and revision are used.
+      const { data: catalog } = await query.refetch({ throwOnError: true });
+      if (!mounted.current) return;
+      const latestProfile = profile ? catalog.profiles.find(row => row.id === profile.id) : null;
+      if (profile && !latestProfile) throw new Error('This profile is no longer available. Refresh the profile list.');
+      const definition = latestProfile ? copy(latestProfile.definition) : blankDefinition();
+      if (duplicate) definition.name = copyName(definition.name, ' (copy)');
+      const dates = mode === 'apply' && catalog.schoolLocalToday ? [catalog.schoolLocalToday] : [];
+      const previewDate = latestProfile?.previewDate || catalog.schoolLocalToday;
+      editorScroll.current = 0;
+      sectionPositions.current = {};
+      setSession({ section: 'classes', id: crypto.randomUUID(), mode, view: mode === 'view' ? 'schedule' : 'editor', profile: duplicate ? null : latestProfile, definition, original: JSON.stringify(definition), revision: catalog.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !latestProfile, referenceDate: previewDate, initialPreviewDate: previewDate, editorFilters: { viewGrade: 'all', search: '' }, reviewInitialized: mode === 'view', reviewFilters: { view: 'classes', grade: 'all', classId: 'all', teacher: 'all', conflictsOnly: false } });
+      setNewName(copyName(definition.name, ' (custom)')); setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError(''); setNotice('');
+    });
   };
   const close = () => { if (!busy && (!dirty || window.confirm('Discard these unsaved profile or application changes?'))) { setSession(null); setTestingPicker(false); setPreview(null); setError(''); requestAnimationFrame(() => openerRef.current?.isConnected && openerRef.current.focus()); } };
   const edit = change => { setSession(current => ({ ...current, ...change })); setPreview(null); setError(''); };
+  const changePreviewDate = value => {
+    setSession(current => ({ ...current, referenceDate: value, savedNotice: false }));
+    setError(''); setNotice('');
+  };
+  const discardPreviewDate = () => {
+    setSession(current => ({ ...current, referenceDate: current.initialPreviewDate, focusTarget: { previewDate: true } }));
+    setError(''); setNotice('');
+  };
   const showDraftSchedule = () => {
     editorScroll.current = window.scrollY;
     reviewOpenerRef.current = document.activeElement;
@@ -305,6 +326,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   };
   const editSaved = () => setSession(current => ({ ...current, mode: 'edit', view: 'editor', savedNotice: false, focusTarget: null }));
   const chooseDates = () => {
+    if (previewDateDirty) return;
     const dates = data.schoolLocalToday ? [data.schoolLocalToday] : [];
     setSession(current => ({ ...current, mode: 'apply', view: 'editor', dates, initialDates: dates.join(','), customize: false, focusTarget: null, savedNotice: false }));
     setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError('');
@@ -313,18 +335,34 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     if (!regularSchedule || loadProblem || !meetingClasses.length) return;
     edit({ setup: false, definition: { ...session.definition, grades: [], classIds: meetingClasses.map(row => row.classId), classRules: [] } });
   };
-  const execute = async operation => { setBusy(true); setError(''); try { await operation(); } catch (failure) { setError(errorMessage(failure)); if (failure?.response?.status === 409) { setPreview(null); await refresh(true); } } finally { setBusy(false); } };
-  const saveProfile = (asNew = false) => execute(async () => {
+  const execute = async operation => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true); setError('');
+    try { await operation(); }
+    catch (failure) {
+      if (mounted.current) {
+        setError(errorMessage(failure));
+        if (failure?.response?.status === 409) { setPreview(null); await refresh(true); }
+      }
+    } finally { busyRef.current = false; if (mounted.current) setBusy(false); }
+  };
+  const saveProfile = (asNew = false, dateOnly = false) => execute(async () => {
+    const savingSessionId = session.id;
+    const isCurrent = () => mounted.current && currentSessionId.current === savingSessionId;
+    if (dateOnly) setSession(current => ({ ...current, focusTarget: { previewDate: true } }));
+    if (!isReferenceDate(referenceDate)) throw new Error('Choose a valid preview date before saving.');
     const definition = { ...session.definition, name: (asNew ? newName : session.definition.name).trim() };
     const problem = validateDefinition(definition); if (problem) throw new Error(problem);
-    const result = await apiRequest('POST', API, { revision: session.revision, ...(!asNew && session.profile ? { id: session.profile.id, profileRevision: session.profile.revision } : {}), definition });
+    const result = await apiRequest('POST', API, { revision: session.revision, ...(!asNew && session.profile ? { id: session.profile.id, profileRevision: session.profile.revision } : {}), definition, previewDate: referenceDate }, { headers: { 'X-School-Id': activeSchoolId } });
+    if (!isCurrent()) return;
     // The save result is the exact normalized version to review, even if catalog refresh fails.
     client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, profiles: [...current.profiles.filter(profile => profile.id !== result.profile.id), result.profile] } : current);
     setSession(current => ({ ...current, mode: 'view', view: 'schedule', profile: copy(result.profile), definition: copy(result.profile.definition), original: JSON.stringify(result.profile.definition), revision: result.revision,
-      dates: [], initialDates: '', customize: false, setup: false, savedNotice: true, focusTarget: null, returnToEditor: false, reviewInitialized: true,
+      referenceDate: result.profile.previewDate || data.schoolLocalToday, initialPreviewDate: result.profile.previewDate || data.schoolLocalToday,
+      dates: [], initialDates: '', customize: false, setup: false, savedNotice: true, focusTarget: dateOnly ? { previewDate: true } : null, returnToEditor: false, reviewInitialized: true,
       reviewFilters: current.reviewInitialized ? current.reviewFilters : { ...current.reviewFilters, grade: current.editorFilters.viewGrade } }));
     setPreview(null);
-    setNotice('Profile saved. Existing applications keep their saved settings.');
+    setNotice(dateOnly ? 'Preview date saved for everyone using this profile. Application dates are unchanged.' : 'Profile and preview date saved. Existing applications keep their saved settings.');
     try { await refresh(true); } catch { setNotice('Profile saved. The profile list could not refresh; reopen it before making another change.'); }
   });
   const addDates = values => {
@@ -384,9 +422,9 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   };
   const actions = session && <fieldset disabled={busy} className="flex min-w-0 w-full max-w-full flex-wrap justify-end sm:w-auto gap-2 border-t bg-background pt-3">
         <Button variant="outline" onClick={close}>{session.mode === 'view' ? 'Close schedule' : 'Cancel'}</Button>
-        {session.mode === 'view' ? <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={editSaved}>Edit profile</Button><Button disabled={blockedByAdvancedDraft} onClick={chooseDates}>Choose dates & apply</Button></> : <>
+        {session.mode === 'view' ? <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={editSaved}>Edit profile</Button><Button disabled={blockedByAdvancedDraft || previewDateDirty} onClick={chooseDates}>Choose dates & apply</Button></> : <>
           {showingSchedule ? <Button variant="outline" onClick={backToEditor}>Back to editing</Button> : <Button data-review-draft-button variant="outline" disabled={session.setup} onClick={showDraftSchedule}>Review draft schedule</Button>}
-          {session.mode === 'edit' ? <Button disabled={session.setup || blockedByAdvancedDraft} onClick={() => saveProfile()}>{busy ? 'Saving…' : 'Save profile'}</Button> : <><Button variant="outline" onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && !showingSchedule && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}
+          {session.mode === 'edit' ? <Button disabled={session.setup || blockedByAdvancedDraft || !isReferenceDate(referenceDate)} onClick={() => saveProfile()}>{busy ? 'Saving…' : 'Save profile'}</Button> : <><Button variant="outline" onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && !showingSchedule && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}
         </>}
       </fieldset>;
   return <div data-testid="schedule-profiles"><Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="max-w-xl space-y-1.5"><CardTitle className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
@@ -410,17 +448,28 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {session && data && <section ref={workspaceRef} aria-label="Schedule profile workspace" className="min-w-0 space-y-5" data-testid="schedule-profile-workspace">
       <header className="sticky top-0 z-20 space-y-3 rounded-lg border bg-background p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 tabIndex={-1} className="text-xl font-semibold">{session.mode === 'view' ? `Schedule for ${session.definition.name}` : session.mode === 'apply' ? `Apply ${session.definition.name}` : session.profile ? 'Edit Schedule Profile' : 'Create Schedule Profile'}</h2><p className="text-sm text-muted-foreground">{session.mode === 'apply' ? 'Choose dates, preview the application, then apply the reviewed dates.' : 'Save a reusable draft. Choose dates separately to apply it.'}</p></div>{actions}</div>
-        <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_220px_auto]">{showEditor ? <label className="space-y-1 text-sm font-medium"><span>Profile name</span><input className={inputClass} maxLength={80} disabled={busy} value={session.definition.name} onChange={event => edit({ definition: { ...session.definition, name: event.target.value } })} /></label> : <p className="font-medium">{session.definition.name}</p>}<label className="space-y-1 text-sm font-medium"><span>Reference date</span><input type="date" className={inputClass} disabled={busy} value={referenceDate} onChange={event => setSession(current => ({ ...current, referenceDate: event.target.value }))} /></label><p className="text-xs text-muted-foreground">{data.schoolTimezone}<span className="block">Reference day only · not an application date</span></p></div>
+        <div className="grid items-end gap-3 lg:grid-cols-[minmax(0,1fr)_220px_minmax(200px,1fr)]">
+          {showEditor ? <label className="space-y-1 text-sm font-medium"><span>Profile name</span><input className={inputClass} maxLength={80} disabled={busy} value={session.definition.name} onChange={event => edit({ definition: { ...session.definition, name: event.target.value } })} /></label> : <p className="font-medium">{session.definition.name}</p>}
+          <label className="space-y-1 text-sm font-medium"><span>Preview schedule for</span><input ref={previewDateRef} type="date" className={inputClass} aria-describedby={`${session.id}-preview-date-help`} disabled={busy} value={referenceDate} onChange={event => changePreviewDate(event.target.value)} /></label>
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <p>{data.schoolTimezone}<span id={`${session.id}-preview-date-help`} className="block">{session.mode === 'apply' ? 'Preview for this application only. The saved profile date stays unchanged unless you save a new profile.' : 'Saved with this profile for everyone. Choose dates & apply separately to schedule it.'}</span></p>
+            {session.mode === 'view' && previewDateDirty && <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={busy || blockedByAdvancedDraft || !isReferenceDate(referenceDate)} onClick={() => saveProfile(false, true)}>{busy ? 'Saving…' : 'Save preview date'}</Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={discardPreviewDate}>Discard date change</Button>
+            </div>}
+            {previewDateDirty && <p role="status">Save or discard the changed preview date before choosing application dates.</p>}
+          </div>
+        </div>
         {!session.setup && (showEditor || showingSchedule) && <Tabs value={workspaceSection} onValueChange={changeWorkspaceSection}><TabsList aria-label="Profile workspace sections" className="flex h-auto flex-wrap justify-start"><TabsTrigger id={`${session.id}-classes-tab`} aria-controls={`${session.id}-classes-panel`} value="classes" disabled={busy || blockedByAdvancedDraft}>Classes</TabsTrigger><TabsTrigger id={`${session.id}-testing-tab`} aria-controls={`${session.id}-testing-panel`} value="testing" disabled={busy || blockedByAdvancedDraft}>Testing blocks</TabsTrigger><TabsTrigger id={`${session.id}-review-tab`} aria-controls={`${session.id}-review-panel`} value="review" disabled={busy}>Review day</TabsTrigger></TabsList></Tabs>}
       </header>
       {session && data && <><div ref={bodyRef} data-testid="schedule-profile-workspace-body" className="min-w-0 space-y-5"><fieldset disabled={busy} className="min-w-0 space-y-5">
-        {session.mode === 'view' && <div className="rounded-lg border bg-primary/5 p-3 text-sm"><p role="status" className="font-semibold">{session.savedNotice ? 'Profile saved — not applied' : 'Saved profile — reference-day view'}</p><p className="mt-1 text-muted-foreground">Saving does not activate these changes. Existing applications keep their saved settings.</p>{blockedByAdvancedDraft && <p className="mt-2 text-amber-800 dark:text-amber-300">Save or discard the bell, rotation, date-override or calendar draft before editing or applying this profile. This review uses saved school settings.</p>}</div>}
+        {session.mode === 'view' && <div className="rounded-lg border bg-primary/5 p-3 text-sm"><p role="status" className="font-semibold">{session.savedNotice ? 'Profile saved — not applied' : 'Saved profile — preview-day view'}</p><p className="mt-1 text-muted-foreground">Saving does not activate these changes. Existing applications keep their saved settings.</p>{blockedByAdvancedDraft && <p className="mt-2 text-amber-800 dark:text-amber-300">Save or discard the bell, rotation, date-override or calendar draft before editing or applying this profile. This review uses saved school settings.</p>}</div>}
         {session.mode === 'apply' && <div hidden={showingSchedule} inert={showingSchedule || undefined} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><label className="block space-y-1 text-sm"><span>Add an individual date</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={oneDate} onChange={event => setOneDate(event.target.value)} /></label><Button variant="outline" size="sm" disabled={!oneDate} onClick={() => addDates([oneDate])}>Add selected date</Button></div><div className="space-y-2"><div className="grid grid-cols-2 gap-2"><label className="space-y-1 text-sm"><span>Range starts</span><input type="date" className={inputClass} min={data.schoolLocalToday} value={rangeStart} onChange={event => setRangeStart(event.target.value)} /></label><label className="space-y-1 text-sm"><span>Range ends</span><input type="date" className={inputClass} min={rangeStart || data.schoolLocalToday} value={rangeEnd} onChange={event => setRangeEnd(event.target.value)} /></label></div><Button variant="outline" size="sm" disabled={!rangeStart || !rangeEnd} onClick={() => { try { addDates(dateRange(rangeStart, rangeEnd)); } catch (failure) { setError(failure.message); } }}>Add date range</Button></div></div>
           <div className="space-y-2"><p className="text-sm font-medium">Selected dates ({session.dates.length}/31)</p><div className="flex flex-wrap gap-2">{session.dates.map(date => <button key={date} type="button" className="rounded-full border bg-muted px-3 py-1 text-xs" aria-label={`Remove application date ${date}`} onClick={() => edit({ dates: session.dates.filter(value => value !== date) })}>{date} ×</button>)}</div><p className="text-xs text-muted-foreground">Date ranges include weekends. The preview identifies dates that cannot be applied.</p></div>
           <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={session.customize} onChange={event => { if (!event.target.checked && JSON.stringify(session.definition) !== session.original && !window.confirm('Discard the changes made for this use?')) return; edit({ customize: event.target.checked, definition: copy(session.profile.definition), referenceDate: session.dates[0] || data.schoolLocalToday }); }} />Customize this use</label><p className="text-xs text-muted-foreground">Changes here belong to this application. The saved profile stays unchanged.</p>
         </div>}
 
-        {(showEditor || showingSchedule) && <RegularScheduleReference date={referenceDate} onDateChange={value => setSession(current => ({ ...current, referenceDate: value }))} onRefresh={refreshReference} query={regularQuery} schedule={regularSchedule} timezone={data.schoolTimezone} setup={session.setup} hideControls />}
+        {(showEditor || showingSchedule) && <RegularScheduleReference date={referenceDate} onDateChange={changePreviewDate} onRefresh={refreshReference} query={regularQuery} schedule={regularSchedule} timezone={data.schoolTimezone} setup={session.setup} hideControls />}
         {!session.setup && <DraftReviewStatus review={{ ...draftReview, retry: refreshReference }} validDate={isReferenceDate(referenceDate)} saved={session.mode === 'view' && session.savedNotice} />}
         {showEditor && <div hidden={showingSchedule} inert={showingSchedule || undefined} className="space-y-5">
           {session.setup ? <div className="space-y-3">
@@ -428,7 +477,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
             {loadProblem && <p role="alert" className="text-sm text-destructive">{loadProblem}</p>}
             <div className="flex flex-wrap gap-2"><Button disabled={!regularSchedule || !meetingClasses.length || Boolean(loadProblem)} onClick={loadRegularSchedule}>Load regular schedule</Button><Button variant="outline" onClick={() => edit({ setup: false })}>Start blank</Button></div>
           </div> : <DefinitionEditor definition={session.definition} onChange={definition => edit({ definition })} catalog={data} disabled={busy} regularSchedule={regularSchedule} referenceLoading={regularQuery.isFetching} filters={session.editorFilters} onFiltersChange={editorFilters => setSession(current => ({ ...current, editorFilters }))} draftReview={draftReview.data} section={session.section || 'classes'} onAddGroups={() => setTestingPicker(true)} panelIdPrefix={session.id} />}
-          {session.mode === 'apply' && session.customize && <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted p-3"><label className="min-w-48 flex-1 space-y-1 text-sm"><span>Name for new profile</span><input className={inputClass} maxLength={80} value={newName} onChange={event => setNewName(event.target.value)} /></label><Button variant="outline" onClick={() => saveProfile(true)}>Save as new profile</Button><p className="w-full text-xs text-muted-foreground">Saves these settings as a separate draft. Select its dates separately afterward.</p></div>}
+          {session.mode === 'apply' && session.customize && <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted p-3"><label className="min-w-48 flex-1 space-y-1 text-sm"><span>Name for new profile</span><input className={inputClass} maxLength={80} value={newName} onChange={event => setNewName(event.target.value)} /></label><Button variant="outline" disabled={!isReferenceDate(referenceDate)} onClick={() => saveProfile(true)}>Save as new profile</Button><p className="w-full text-xs text-muted-foreground">Saves these settings and the preview date as a separate draft. Select its application dates separately afterward.</p></div>}
         </div>}
         {!session.setup && (showEditor || showingSchedule) && <>{!showEditor && ['classes', 'testing'].map(section => <div key={section} id={`${session.id}-${section}-panel`} role="tabpanel" aria-labelledby={`${session.id}-${section}-tab`} hidden inert />)}<div id={`${session.id}-review-panel`} role="tabpanel" aria-labelledby={`${session.id}-review-tab`} hidden={!showingSchedule} inert={!showingSchedule || undefined}>{showingSchedule && <ScheduleProfileDraftReview review={draftReview} filters={session.reviewFilters} onFiltersChange={reviewFilters => setSession(current => ({ ...current, reviewFilters }))} onEditIssue={blockedByAdvancedDraft ? undefined : editIssue} />}</div></>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

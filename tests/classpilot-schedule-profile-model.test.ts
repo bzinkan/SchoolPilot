@@ -42,6 +42,35 @@ describe("Reusable schedule profile contracts", () => {
     assert.deepEqual(resolveClassBaseWindow(fixed, "2026-09-01", result, {}), { startTime: "09:00", endTime: "09:50" });
   });
 
+  it("round-trips a shared preview date without changing profile rules or application snapshots", () => {
+    const snapshot = testingApplication();
+    const saved = { id: "profile-1", revision: 2, definition: definition(), updatedAt: "2026-09-01T12:00:00.000Z" };
+    const legacy = normalizeSavedScheduleProfile(saved);
+    assert.equal(Object.hasOwn(legacy, "previewDate"), false);
+    const profile = normalizeSavedScheduleProfile({ ...saved, previewDate: "2026-09-14" });
+    const normalized = normalizeSchoolSchedulingConfig({ ...emptySchoolSchedulingConfig(),
+      scheduleProfiles: [profile], profileApplications: [snapshot] });
+    const roundTrip = normalizeSchoolSchedulingConfig(JSON.parse(JSON.stringify(normalized)));
+    assert.equal(roundTrip.scheduleProfiles?.[0]?.previewDate, "2026-09-14");
+    assert.deepEqual(roundTrip.scheduleProfiles?.[0]?.definition, normalizeScheduleProfileDefinition(definition()));
+    assert.deepEqual(roundTrip.profileApplications, [normalizeScheduleProfileApplication(snapshot)]);
+    assert.deepEqual(resolveClassBaseWindow(fixed, "2026-09-01", roundTrip, {}), time);
+    assert.deepEqual(resolveClassBaseWindow(fixed, "2026-09-14", roundTrip, {}), { startTime: "09:00", endTime: "09:50" });
+    assert.throws(() => normalizeScheduleProfileDefinition({ ...definition(), previewDate: "2026-09-14" }), /unsupported field/);
+    assert.throws(() => normalizeScheduleProfileApplication({ ...snapshot, previewDate: "2026-09-14" }), /unsupported field/);
+  });
+
+  it("validates preview dates explicitly while allowing past, weekend and distant review dates", () => {
+    const saved = { id: "profile-1", revision: 1, definition: definition(), updatedAt: "2026-09-01T12:00:00Z" };
+    for (const previewDate of ["2000-01-01", "2024-02-29", "2026-09-06", "2035-12-31"]) {
+      assert.equal(normalizeSavedScheduleProfile({ ...saved, previewDate }).previewDate, previewDate);
+    }
+    for (const previewDate of [null, "", 20260914, ["2026-09-14"], "2026-9-14", "2026-02-29", "2026-02-30", "2026-13-01", "2026-09-14T00:00:00Z", " 2026-09-14 "]) {
+      assert.throws(() => normalizeSavedScheduleProfile({ ...saved, previewDate }),
+        { code: "INVALID_SCHEDULE_PROFILE", message: "Preview date must be a real date in YYYY-MM-DD format." });
+    }
+  });
+
   it("supports custom names and school grade labels while rejecting unsupported authority fields", () => {
     const result = normalizeScheduleProfileDefinition({ ...definition(), name: "  NWEA / Reading  ", grades: ["8", "K", "Pre-K"] });
     assert.equal(result.name, "NWEA / Reading");
