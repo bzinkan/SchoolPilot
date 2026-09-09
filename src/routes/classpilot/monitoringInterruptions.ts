@@ -4,14 +4,20 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
-import { getMonitoringInterruptionSettings, listMonitoringInterruptions, setMonitoringInterruptionSettings } from "../../services/classpilotMonitoringInterruptions.js";
+import { getMonitoringInterruptionSettings, getMonitoringInterruptionSummary, listMonitoringInterruptionHistory, listMonitoringInterruptions, setMonitoringInterruptionSettings } from "../../services/classpilotMonitoringInterruptions.js";
+import { invalidMonitoringHistory } from "../../services/classpilotMonitoringHistoryRules.js";
 import { logAudit } from "../../services/audit.js";
 const router = Router();
 router.use(authenticate, requireSchoolContext, requireClasspilotEntitlement, requireRole("admin", "school_admin", "teacher", "office_staff"));
 router.get("/", async (req, res, next) => {
   try {
     res.set("Cache-Control", "private, no-store");
-    res.json(await listMonitoringInterruptions({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, isAdmin: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) }));
+    const options = { schoolId: res.locals.schoolId!, actorId: req.authUser!.id, isAdmin: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) };
+    if (req.query.view === undefined) return res.json(await listMonitoringInterruptions(options));
+    if (req.query.view === "summary" && Object.keys(req.query).length === 1) return res.json(await getMonitoringInterruptionSummary(options));
+    if (req.query.view !== "history" || Object.keys(req.query).some((key) => !["view", "filter", "cursor"].includes(key))
+      || typeof req.query.filter !== "string" || !["open", "recent"].includes(req.query.filter) || (req.query.cursor !== undefined && (typeof req.query.cursor !== "string" || !req.query.cursor))) throw invalidMonitoringHistory();
+    return res.json(await listMonitoringInterruptionHistory({ ...options, filter: req.query.filter as "open" | "recent", cursor: req.query.cursor as string | undefined }));
   } catch (error) { next(error); }
 });
 router.get("/settings", requireRole("admin", "school_admin"), async (_req, res, next) => {

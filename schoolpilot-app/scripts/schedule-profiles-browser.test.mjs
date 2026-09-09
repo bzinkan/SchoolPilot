@@ -56,7 +56,8 @@ async function createDraftReviewFixture(context) {
     ],
   };
   const reviews = [], saves = [], previews = [], applies = [], errors = [];
-  const control = { reviewResponse: null, saveTransform: definition => definition, staleCatalog: false, failCatalogRefresh: false, catalogReadFailures: 0, failSavedReview: false };
+  const control = { reviewResponse: null, saveTransform: definition => definition, staleCatalog: false, failCatalogRefresh: false, catalogReadFailures: 0, failSavedReview: false, groupCreates: [], failGroupCreate: false, failDirectory: false };
+  const groupSummary = group => ({ id: group.id, schoolId: 'school', name: group.name, active: group.active !== false, updatedAt: '2026-09-08T12:00:00Z', studentCount: group.studentIds.length, inactiveStudentCount: 0, categoryId: 'map-category', category: { id: 'map-category', name: 'NWEA MAP' }, gradeCounts: [{ gradeLevel: '3', count: group.studentIds.length }], staff: group.staffIds.map(id => ({ id, displayName: catalog.staff.find(person => person.id === id)?.name || id })) });
   const project = body => {
     const result = draftReviewFixture(catalog, body.definition, body.referenceDate);
     const overlaps = (a, b) => a && b && a.startTime < b.endTime && b.startTime < a.endTime;
@@ -82,6 +83,28 @@ async function createDraftReviewFixture(context) {
     const request = route.request(), url = new URL(request.url());
     if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
     if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
+    if (url.pathname.endsWith('/coverage/supervision-groups/browse')) {
+      if (control.failDirectory) return route.fulfill({ status: 503, json: { error: 'Directory unavailable' } });
+      const search = (url.searchParams.get('search') || '').toLowerCase();
+      const groups = catalog.supervisionGroups.map(groupSummary).filter(group => group.active && group.name.toLowerCase().includes(search)).sort((a, b) => a.name.localeCompare(b.name));
+      const pageNumber = Number(url.searchParams.get('page') || 1);
+      return route.fulfill({ json: { groups: groups.slice((pageNumber - 1) * 25, pageNumber * 25), page: pageNumber, pageSize: 25, total: groups.length, totalPages: Math.ceil(groups.length / 25), facets: { categories: [{ id: 'map-category', name: 'NWEA MAP' }], grades: [{ gradeLevel: '3', count: groups.length }], staff: catalog.staff.map(person => ({ id: person.id, displayName: person.name })) } } });
+    }
+    if (url.pathname.includes('/coverage/supervision-groups/')) {
+      const group = catalog.supervisionGroups.find(row => row.id === url.pathname.split('/').at(-1));
+      return route.fulfill(group ? { json: { group: groupSummary(group) } } : { status: 404, json: { error: 'Group unavailable' } });
+    }
+    if (url.pathname.endsWith('/coverage/supervision-group-categories')) return route.fulfill({ json: { categories: [{ id: 'map-category', name: 'NWEA MAP', updatedAt: '2026-09-08T12:00:00Z' }] } });
+    if (url.pathname.endsWith('/coverage/setup/classes')) return route.fulfill({ json: { groups: catalog.classes } });
+    if (url.pathname.endsWith('/admin/users')) return route.fulfill({ json: { users: catalog.staff.map(person => ({ userId: person.id, displayName: person.name, email: `${person.id}@example.test`, role: 'teacher' })) } });
+    if (url.pathname.endsWith('/admin/teacher-students')) return route.fulfill({ json: { students: [{ id: 'new-student', studentName: 'Fixture Student', studentEmail: 'fixture@example.test', gradeLevel: '3' }] } });
+    if (url.pathname.endsWith('/coverage/supervision-groups') && request.method() === 'POST') {
+      const body = request.postDataJSON(); control.groupCreates.push(body);
+      if (control.failGroupCreate) return route.fulfill({ status: 503, json: { error: 'Could not create the group. No group was saved.' } });
+      const group = { id: 'new-inline-group', name: body.name, staffIds: body.staffIds, studentIds: body.studentIds };
+      catalog.supervisionGroups.push(group);
+      return route.fulfill({ json: { group: groupSummary(group) } });
+    }
     if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
     if (url.pathname.endsWith('/admin/scheduling')) return route.fulfill({ json: { revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, config: { schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null, cycleAnchorDay: 'A', periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {}, scheduleProfiles: catalog.profiles, profileApplications: [] } } });
     if (url.pathname.endsWith('/schedule-profiles/regular-schedule')) return route.fulfill({ json: { referenceDate: url.searchParams.get('referenceDate'), revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: null, overridden: false }, classes: catalog.classes.map(row => ({ classId: row.id, status: 'meets', window: { startTime: row.blockStartTime, endTime: row.blockEndTime } })) } });
@@ -102,7 +125,7 @@ async function createDraftReviewFixture(context) {
         control.savedProfile = profile;
         return route.fulfill({ json: { revision: catalog.revision, profile } });
       }
-      if (control.failCatalogRefresh && saves.length) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
+      if ((control.failCatalogRefresh && saves.length) || control.failGroupCatalogRefresh) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
       return route.fulfill({ json: catalog });
     }
     return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
@@ -112,11 +135,153 @@ async function createDraftReviewFixture(context) {
 }
 
 async function addTestingBlock(dialog, index, teacher) {
-  await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+  await dialog.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
   await dialog.getByLabel(`Testing block ${index} name`, { exact: true }).fill(`${teacher[0].toUpperCase()}${teacher.slice(1)} MAP`);
-  await dialog.getByLabel(`Testing block ${index} Coverage group`, { exact: true }).selectOption(`${teacher}-group`);
+  await dialog.getByLabel(`Testing block ${index} Supervision group`, { exact: true }).selectOption(`${teacher}-group`);
   await dialog.getByLabel(`Testing block ${index} assigned staff`, { exact: true }).selectOption(teacher);
 }
+
+test('Testing groups retain explicit page selections, enforce the total limit, and add one editable block per group', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, saves } = await createDraftReviewFixture(context);
+  try {
+    for (let index = 0; index < 28; index++) catalog.supervisionGroups.push({ id: `team-${index}`, name: `Team ${String(index).padStart(2, '0')}`, staffIds: ['zinkan'], studentIds: [`fixture-${index}`] });
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Whole-school MAP');
+    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    await workspace.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
+    assert.equal(await workspace.getByLabel('Include Zinkan Math').isVisible(), false, 'Inactive classes must not be reachable while testing blocks are selected');
+    await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
+    await picker.getByRole('button', { name: 'Select this page', exact: true }).click();
+    await picker.getByText('25 groups selected', { exact: false }).waitFor();
+    await picker.getByRole('button', { name: 'Next groups', exact: true }).click();
+    await picker.getByRole('button', { name: 'Select this page', exact: true }).click();
+    await picker.getByText('Select no more than 30 groups.', { exact: false }).waitFor();
+    assert.equal(await picker.getByRole('button', { name: 'Add 31 testing blocks', exact: true }).isDisabled(), true);
+    await picker.getByRole('button', { name: 'Remove selected group Team 27', exact: true }).click();
+    await picker.getByLabel('Find a supervision group or staff', { exact: true }).fill('Mixed');
+    await picker.getByText('1 matching groups', { exact: false }).waitFor();
+    await picker.getByText('30 groups selected', { exact: false }).waitFor();
+    await picker.getByLabel('Common testing start', { exact: true }).fill('09:00');
+    await picker.getByLabel('Common testing end', { exact: true }).fill('10:45');
+    const add = picker.getByRole('button', { name: 'Add 30 testing blocks', exact: true });
+    await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] button')].some(button => button.textContent.includes('Add 30 testing blocks') && !button.disabled));
+    await add.evaluate(button => { button.click(); button.click(); });
+    await picker.waitFor({ state: 'hidden' });
+    assert.equal(await workspace.locator('[data-block-editor-id]').count(), 30);
+    assert.equal(await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).isDisabled(), true);
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0].definition.testingBlocks.length, 30);
+    assert.equal(new Set(saves[0].definition.testingBlocks.map(block => block.id)).size, 30);
+    assert.ok(saves[0].definition.testingBlocks.every(block => block.startTime === '09:00' && block.endTime === '10:45'));
+    assert.deepEqual(saves[0].definition.classRules, [], 'Bulk testing must not invent ordinary class changes');
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Workspace keyboard navigation and current staff choices preserve independent testing windows', { timeout: 90_000 }, async context => {
+  const { root, browser, vite, page, catalog, saves } = await createDraftReviewFixture(context);
+  try {
+    // The directory may have fresher assignments than the already-loaded profile catalog.
+    catalog.supervisionGroups[0].staffIds = ['zinkan', 'burba'];
+    catalog.supervisionGroups[1].staffIds = [];
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await page.waitForFunction(() => document.activeElement?.closest('[data-testid="schedule-profile-workspace"]'));
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Two testing windows');
+    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    const classesTab = workspace.getByRole('tab', { name: 'Classes', exact: true });
+    const testingTab = workspace.getByRole('tab', { name: 'Testing blocks', exact: true });
+    await classesTab.focus(); await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[data-testid="schedule-profile-workspace"] [role="tab"][aria-selected="true"]')?.textContent === 'Testing blocks');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Classes' && document.activeElement?.getAttribute('aria-selected') === 'true');
+    assert.equal(await classesTab.evaluate(el => document.getElementById(el.getAttribute('aria-controls'))?.getAttribute('role')), 'tabpanel');
+    await testingTab.click();
+    const opener = workspace.getByRole('button', { name: 'Add testing groups', exact: true });
+    const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
+    await opener.click(); await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Add testing groups');
+    await opener.click(); await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Add testing groups');
+    await opener.click();
+    await picker.getByRole('checkbox', { name: /Mixed MAP group/ }).check();
+    await picker.getByRole('checkbox', { name: /Reading MAP group/ }).check();
+    assert.equal(await picker.getByLabel('Mixed MAP group — assigned staff').inputValue(), '');
+    assert.equal(await picker.getByRole('button', { name: 'Add 2 testing blocks', exact: true }).isDisabled(), true);
+    await picker.getByRole('button', { name: 'Remove selected group Reading MAP group', exact: true }).click();
+    await picker.getByLabel('Mixed MAP group — assigned staff').selectOption('burba');
+    const evidence = path.resolve(root, '../soc2-evidence/schedule-workspace/browser'); await mkdir(evidence, { recursive: true });
+    for (const theme of ['light', 'dark']) for (const [device, viewport] of Object.entries({ desktop: { width: 1365, height: 950 }, mobile: { width: 390, height: 844 } })) {
+      await page.setViewportSize(viewport); await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await page.waitForFunction(() => { const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect(); return box && box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; }, undefined, { timeout: 2500 });
+      const bounds = await picker.evaluate(el => { const box = el.getBoundingClientRect(); return { right: box.right, left: box.left, top: box.top, bottom: box.bottom, width: innerWidth, height: innerHeight, maxHeight: getComputedStyle(el).maxHeight }; });
+      assert.ok(bounds.right <= bounds.width && bounds.left >= 0 && bounds.top >= 0 && bounds.bottom <= bounds.height, `The picker stays inside the viewport: ${device}/${theme} ${JSON.stringify(bounds)}`);
+      await page.screenshot({ path: path.join(evidence, `bulk-${device}-${theme}.png`) });
+    }
+    await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.textContent === 'Add testing groups');
+    assert.equal(await workspace.getByLabel('Testing block 1 assigned staff').inputValue(), 'burba', 'Fresh directory assignments remain visible in the editor');
+    await opener.click(); await picker.getByRole('checkbox', { name: /Mixed MAP group/ }).check();
+    await picker.getByLabel('Mixed MAP group — assigned staff').selectOption('zinkan');
+    await picker.getByLabel('Common testing start').fill('11:00'); await picker.getByLabel('Common testing end').fill('12:00');
+    await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
+    assert.equal(await workspace.getByLabel('Testing block 1 start').inputValue(), '09:00');
+    assert.equal(await workspace.getByLabel('Testing block 2 start').inputValue(), '11:00');
+    for (const theme of ['light', 'dark']) for (const [device, viewport] of Object.entries({ desktop: { width: 1365, height: 950 }, mobile: { width: 390, height: 844 } })) {
+      await page.setViewportSize(viewport); await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await page.evaluate(() => window.scrollTo({ top: 0 }));
+      await page.screenshot({ path: path.join(evidence, `workspace-${device}-${theme}.png`), fullPage: true });
+    }
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.equal(saves[0].definition.testingBlocks.length, 2);
+    assert.notEqual(saves[0].definition.testingBlocks[0].id, saves[0].definition.testingBlocks[1].id);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Inline group creation preserves the profile and picker drafts through cancel, failed save, and refresh failure', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, control, saves } = await createDraftReviewFixture(context);
+  try {
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Inline MAP draft');
+    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    await workspace.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
+    await picker.getByLabel('Common testing start', { exact: true }).fill('09:30');
+    await picker.getByRole('button', { name: 'Create group', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Create Supervision Group', exact: true });
+    await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(await picker.getByLabel('Common testing start', { exact: true }).inputValue(), '09:30');
+    await picker.getByRole('button', { name: 'Create group', exact: true }).click();
+    await editor.getByLabel('Name', { exact: true }).fill('New inline MAP');
+    await editor.getByRole('group', { name: 'Group staff', exact: true }).getByRole('checkbox', { name: /Ms. Zinkan/ }).check();
+    await editor.getByRole('button', { name: 'Select all 1 matching students', exact: true }).click();
+    control.failGroupCreate = true;
+    await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await editor.getByText('Could not create the group. No group was saved.', { exact: true }).waitFor();
+    assert.equal(await editor.getByLabel('Name', { exact: true }).inputValue(), 'New inline MAP');
+    control.failGroupCreate = false; control.failDirectory = true; control.failGroupCatalogRefresh = true;
+    await editor.getByRole('button', { name: 'Save', exact: true }).click();
+    await picker.getByText('Group saved; list refresh unavailable.', { exact: false }).waitFor();
+    assert.equal(control.groupCreates.length, 2, 'Only the deliberate failed save and successful retry submit creation');
+    await picker.getByRole('button', { name: 'Retry group refresh', exact: true }).waitFor();
+    control.failDirectory = false; control.failGroupCatalogRefresh = false;
+    await picker.getByRole('button', { name: 'Retry groups', exact: true }).click();
+    await picker.getByRole('button', { name: 'Retry group refresh', exact: true }).click();
+    await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
+    assert.equal(await workspace.getByLabel('Profile name', { exact: true }).inputValue(), 'Inline MAP draft');
+    assert.equal(await workspace.getByLabel('Testing block 1 start', { exact: true }).inputValue(), '09:30');
+    assert.equal(await workspace.getByLabel('Testing block 1 assigned staff', { exact: true }).inputValue(), 'zinkan');
+    assert.equal(saves.length, 0, 'Creating a reusable group does not save the profile');
+    assert.equal(control.groupCreates.length, 2, 'Refreshing never repeats the successful group creation');
+  } finally { await browser.close(); await vite.close(); }
+});
 
 test('Schedule Profiles saves drafts, reviews exact dates and temporary testing, and protects unsaved changes', { timeout: 90_000 }, async context => {
   const { root, vite, browser, page, url: fixtureUrl } = await createProfileFixture(context);
@@ -175,7 +340,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.goto(fixtureUrl);
     await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
-    let dialog = page.getByRole('dialog');
+    let dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByLabel('Profile name', { exact: true }).fill('MAP morning');
     await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();
     await dialog.getByRole('button', { name: 'Select grades 1–8', exact: true }).click();
@@ -190,9 +355,10 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await dialog.getByLabel('Grade 3 Math profile start').fill('08:15');
     await dialog.getByLabel('Grade 3 Math profile end').fill('09:00');
     await dialog.getByLabel('Grade 3 Reading schedule action').selectOption('skip');
+    await dialog.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
     await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
     await dialog.getByLabel('Testing block 1 name', { exact: true }).fill('MAP testing');
-    await dialog.getByLabel('Testing block 1 Coverage group', { exact: true }).selectOption('map');
+    await dialog.getByLabel('Testing block 1 Supervision group', { exact: true }).selectOption('map');
     assert.deepEqual(await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).locator('option').allTextContents(), ['Choose group staff', 'Ms. Rivera', 'Mr. Lane']);
     await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).selectOption('rivera');
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
@@ -202,11 +368,11 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     assert.deepEqual(saves[0].definition.classRules, [{ classId: 'math', action: 'time', startTime: '08:15', endTime: '09:00' }, { classId: 'reading', action: 'skip' }]);
     assert.equal(saves[0].definition.testingBlocks[0].coverageGroupId, 'map'); assert.equal(saves[0].definition.testingBlocks[0].assignedStaffId, 'rivera');
 
-    await page.getByRole('button', { name: 'Duplicate MAP morning', exact: true }).click();
-    dialog = page.getByRole('dialog'); await dialog.getByLabel('Profile name', { exact: true }).fill('Early release');
+    await page.getByRole('button', { name: 'More actions for MAP morning', exact: true }).click(); await page.getByRole('menuitem', { name: 'Duplicate MAP morning', exact: true }).click();
+    dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true }); await dialog.getByLabel('Profile name', { exact: true }).fill('Early release');
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.equal(saves[1].id, undefined); assert.equal(saves[1].definition.name, 'Early release');
-    await page.getByRole('button', { name: 'Choose dates & apply MAP morning', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP morning', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByLabel('Range starts', { exact: true }).fill('2026-09-09'); await dialog.getByLabel('Range ends', { exact: true }).fill('2026-10-15');
     await dialog.getByRole('button', { name: 'Add date range', exact: true }).click(); await dialog.getByText('Choose no more than 31 dates per application.', { exact: true }).waitFor();
     await dialog.getByLabel('Range ends', { exact: true }).fill('2026-09-10'); await dialog.getByRole('button', { name: 'Add date range', exact: true }).click();
@@ -227,7 +393,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
     assert.equal(applies[0].previewToken, 'preview-2'); assert.deepEqual(applies[0].dates, previews[1].dates); assert.deepEqual(applies[0].definition, previews[1].definition);
     await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Applied · Today', { exact: true }).waitFor();
-    await page.getByText('The Coverage group roster changed.', { exact: true }).waitFor();
+    await page.getByText('The Supervision group roster changed.', { exact: true }).waitFor();
     const recoveryHint = 'Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.';
     await page.getByText(recoveryHint, { exact: true }).waitFor();
     for (const [code, expected] of [
@@ -252,7 +418,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.getByText('The testing window elapsed before it could start.', { exact: true }).waitFor();
     assert.equal(await page.getByText(recoveryHint, { exact: true }).isVisible(), true);
 
-    await page.getByRole('button', { name: 'Edit MAP morning', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'More actions for MAP morning', exact: true }).click(); await page.getByRole('menuitem', { name: 'Edit MAP morning', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByLabel('Profile name', { exact: true }).fill('MAP revised');
     page.once('dialog', prompt => prompt.dismiss()); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); assert.equal(await dialog.isVisible(), true);
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
@@ -264,18 +430,19 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await page.getByText('Completed', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Cancel application Previous testing day', exact: true }).count(), 0);
 
-    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByRole('button', { name: 'Preview application', exact: true }).click(); await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor(); staleApply = true;
     await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).click(); await dialog.getByRole('alert').filter({ hasText: 'Reopen this profile' }).waitFor();
     assert.equal(await dialog.isVisible(), true); assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
-    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check(); await dialog.getByLabel('Name for new profile', { exact: true }).fill('MAP afternoon');
     await dialog.getByRole('button', { name: 'Save as new profile', exact: true }).click(); await closeSavedReview(dialog); assert.equal(saves.at(-1).id, undefined); assert.equal(saves.at(-1).definition.name, 'MAP afternoon');
     await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: path.join(artifactDir, 'profiles-mobile.png'), fullPage: true, animations: 'disabled' });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-    await page.getByRole('button', { name: 'Choose dates & apply MAP afternoon', exact: true }).click(); dialog = page.getByRole('dialog');
+    await page.getByRole('button', { name: 'Choose dates & apply MAP afternoon', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await dialog.getByRole('checkbox', { name: 'Customize this use', exact: true }).check();
     await page.screenshot({ path: path.join(artifactDir, 'application-mobile.png'), animations: 'disabled' });
+    if (await dialog.evaluate(e => e.scrollWidth > e.clientWidth)) context.diagnostic(JSON.stringify(await dialog.evaluate(e => [...e.querySelectorAll('*')].filter(n => n.getBoundingClientRect().right > e.getBoundingClientRect().right + 1).slice(0,8).map(n => ({ tag:n.tagName, cls:n.className, width:n.getBoundingClientRect().width, text:n.textContent.slice(0,60) })))));
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     page.once('dialog', prompt => prompt.accept()); await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
     await page.getByRole('tab', { name: 'Bells & rotation', exact: true }).click();
@@ -349,7 +516,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     });
     await page.goto(fixtureUrl);
     await page.waitForLoadState('networkidle');
-    const dialog = page.getByRole('dialog');
+    const dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     const row = name => dialog.getByRole('row').filter({ has: page.getByLabel(`Include ${name}`, { exact: true }) });
     const reference = dialog.getByLabel('Reference date', { exact: true });
     const openNew = async name => {
@@ -372,6 +539,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     const artifactDir = path.join(root, 'artifacts', 'schedule-profiles'); await mkdir(artifactDir, { recursive: true });
     await page.screenshot({ path: path.join(artifactDir, 'regular-setup-desktop-light.png'), animations: 'disabled' });
     await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => document.documentElement.classList.add('dark'));
+    if (await dialog.evaluate(e => e.scrollWidth > e.clientWidth)) context.diagnostic(JSON.stringify(await dialog.evaluate(e => [...e.querySelectorAll('*')].filter(n => n.getBoundingClientRect().right > e.getBoundingClientRect().right + 1).slice(0,8).map(n => ({ tag:n.tagName, cls:n.className, width:n.getBoundingClientRect().width, text:n.textContent.slice(0,60) })))));
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     await page.screenshot({ path: path.join(artifactDir, 'regular-setup-mobile-dark.png'), animations: 'disabled' });
     await page.evaluate(() => document.documentElement.classList.remove('dark')); await page.setViewportSize({ width: 1365, height: 950 });
@@ -410,7 +578,8 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
           const inputBounds = await start.boundingBox(), dialogBounds = await dialog.boundingBox();
           assert.ok(inputBounds.x >= dialogBounds.x && inputBounds.x + inputBounds.width <= dialogBounds.x + dialogBounds.width, 'Focused controls must scroll into the mobile dialog viewport');
         }
-        assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
+        if (await dialog.evaluate(e => e.scrollWidth > e.clientWidth)) context.diagnostic(JSON.stringify(await dialog.evaluate(e => [...e.querySelectorAll('*')].filter(n => n.getBoundingClientRect().right > e.getBoundingClientRect().right + 1).slice(0,8).map(n => ({ tag:n.tagName, cls:n.className, width:n.getBoundingClientRect().width, text:n.textContent.slice(0,60) })))));
+    assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
         await page.screenshot({ path: path.join(artifactDir, `regular-day-${size}-${theme}.png`), animations: 'disabled' });
       }
@@ -431,7 +600,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.deepEqual(saves[0].definition.classRules, [], 'Keeping every class saves no frozen time or skip overrides');
     assert.equal(JSON.stringify(saves[0]).includes('referenceDate'), false);
 
-    await page.getByRole('button', { name: 'Edit Whole day', exact: true }).click();
+    await page.getByRole('button', { name: 'More actions for Whole day', exact: true }).click(); await page.getByRole('menuitem', { name: 'Edit Whole day', exact: true }).click();
     await page.waitForLoadState('networkidle');
     await dialog.getByLabel('Fixed Math schedule action').selectOption('time');
     assert.equal(await dialog.getByLabel('Fixed Math profile start').inputValue(), '09:10', 'The comparison must not seed from raw stored block columns');
@@ -457,7 +626,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.deepEqual(saves[1].definition.classIds.slice().sort(), ['math', 'reading']);
     assert.deepEqual(saves[1].definition.classRules, [{ classId: 'math', action: 'time', startTime: '08:00', endTime: '08:30' }]);
     assert.equal(JSON.stringify(saves[1]).includes('referenceDate'), false);
-    await page.getByRole('button', { name: 'Duplicate Whole day', exact: true }).click();
+    await page.getByRole('button', { name: 'More actions for Whole day', exact: true }).click(); await page.getByRole('menuitem', { name: 'Duplicate Whole day', exact: true }).click();
     await dialog.getByRole('columnheader', { name: 'Regular schedule', exact: true }).waitFor();
     assert.equal(await dialog.getByLabel('Fixed Math profile start').inputValue(), '08:00'); await cancel();
     await page.getByRole('button', { name: 'Choose dates & apply Whole day', exact: true }).click();
@@ -498,7 +667,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
 
 test('Draft review keeps conflicts advisory, shows the whole day and partial groups, and preserves editing context', { timeout: 120_000 }, async context => {
   const { root, vite, browser, page, reviews, saves, previews, applies, errors } = await createDraftReviewFixture(context);
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
   const check = dialog.getByRole('region', { name: 'Draft schedule check', exact: true });
   const review = dialog.getByRole('region', { name: 'Draft schedule review', exact: true });
   const reviewRow = name => review.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
@@ -530,7 +699,8 @@ test('Draft review keeps conflicts advisory, shows the whole day and partial gro
     await check.getByText('3 conflicts need attention', { exact: true }).waitFor();
     assert.equal(await page.getByRole('alertdialog').count(), 0, 'Advisory conflicts must never interrupt typing with another modal');
     assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).isEnabled(), true, 'Complete drafts remain saveable while conflicts remain');
-    await dialog.getByText(/other students keep their regular class/).first().waitFor();
+    await dialog.getByRole('region', { name: 'Testing blocks', exact: true }).getByText(/other students keep their regular class/).first().waitFor();
+    await dialog.getByRole('tab', { name: 'Classes', exact: true }).click();
     await dialog.getByRole('combobox', { name: 'View grade', exact: true }).selectOption('3');
     await dialog.getByLabel('Find a class or teacher', { exact: true }).fill('Zinkan');
     await dialog.getByLabel('Reference date', { exact: true }).fill('2026-09-09');
@@ -546,7 +716,7 @@ test('Draft review keeps conflicts advisory, shows the whole day and partial gro
     await reviewRow('Art Studio').waitFor(); await reviewRow('Zinkan MAP').waitFor();
     assert.equal(await reviewRow('Burba MAP').count(), 0, 'Class filtering excludes unrelated groups');
     assert.equal(await reviewRow('Vatter MAP').count(), 0);
-    assert.match(await reviewRow('Zinkan MAP').innerText(), /2.*24|2 of 24/, 'A partial Coverage group remains visible for its participating class');
+    assert.match(await reviewRow('Zinkan MAP').innerText(), /2.*24|2 of 24/, 'A partial Supervision group remains visible for its participating class');
     await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('all');
     await review.getByRole('combobox', { name: 'Review class', exact: true }).selectOption('all');
     await review.getByRole('combobox', { name: 'Schedule view', exact: true }).selectOption('teachers');
@@ -599,7 +769,7 @@ test('Draft review keeps conflicts advisory, shows the whole day and partial gro
     await capture('saved-review', review);
     await closeSavedReview(dialog);
     assert.equal(await page.getByRole('button', { name: 'Apply Testing review', exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'View schedule for Testing review', exact: true }).click();
+    await page.getByRole('button', { name: 'Open profile Testing review', exact: true }).click();
     await dialog.getByRole('heading', { name: 'Schedule for Testing review', exact: true }).waitFor();
     assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).count(), 0);
     await dialog.getByRole('button', { name: 'Close schedule', exact: true }).click();
@@ -610,20 +780,21 @@ test('Draft review keeps conflicts advisory, shows the whole day and partial gro
 
 test('Draft review discards stale date and definition responses and keeps incomplete or failed checks honest', { timeout: 90_000 }, async context => {
   const { vite, browser, page, catalog, control, reviews, saves, errors } = await createDraftReviewFixture(context);
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
   const check = dialog.getByRole('region', { name: 'Draft schedule check', exact: true });
   const pending = [];
   try {
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     await dialog.getByLabel('Profile name', { exact: true }).fill('Draft checks');
     await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();
+    await dialog.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
     await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
     await check.getByText('Draft review is incomplete.', { exact: true }).waitFor();
     assert.equal(await check.getByText('No blocking conflicts on this reference date.', { exact: true }).count(), 0);
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
     await dialog.getByRole('alert').filter({ hasText: 'Each testing block needs a name' }).waitFor(); assert.equal(saves.length, 0);
     await dialog.getByLabel('Testing block 1 name', { exact: true }).fill('Zinkan MAP');
-    await dialog.getByLabel('Testing block 1 Coverage group', { exact: true }).selectOption('zinkan-group');
+    await dialog.getByLabel('Testing block 1 Supervision group', { exact: true }).selectOption('zinkan-group');
     await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).selectOption('zinkan');
     await check.getByText(/1 conflict.*need/).waitFor();
     control.reviewResponse = async (body, result) => {
@@ -671,7 +842,7 @@ test('Draft review discards stale date and definition responses and keeps incomp
 
 test('Saving opens the exact returned profile even if catalog refresh or saved review fails, while apply still requires new dated preview', { timeout: 90_000 }, async context => {
   const { vite, browser, page, catalog, control, reviews, saves, previews, applies, errors } = await createDraftReviewFixture(context);
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
   try {
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     await dialog.getByLabel('Profile name', { exact: true }).fill('Before server normalization');
@@ -715,6 +886,24 @@ test('Saving opens the exact returned profile even if catalog refresh or saved r
     await dialog.getByRole('button', { name: 'Preview application', exact: true }).click(); await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
     assert.equal(previews.at(-1).definition.classRules[0].startTime, '10:25');
     assert.deepEqual(previews.at(-1).dates, ['2026-09-08', '2026-09-09']);
+    const beforeGroup = structuredClone(previews.at(-1)), reviewsBeforeGroup = reviews.length;
+    control.failCatalogRefresh = false;
+    await dialog.getByRole('tab', { name: 'Testing blocks', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add testing groups', exact: true }).click();
+    const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
+    await picker.getByRole('button', { name: 'Create group', exact: true }).click();
+    const groupEditor = page.getByRole('dialog', { name: 'Create Supervision Group', exact: true });
+    await groupEditor.getByLabel('Name', { exact: true }).fill('Reusable group during customization');
+    await groupEditor.getByRole('group', { name: 'Group staff', exact: true }).getByRole('checkbox', { name: /Ms. Zinkan/ }).check();
+    await groupEditor.getByRole('button', { name: 'Select all 1 matching students', exact: true }).click();
+    await groupEditor.getByRole('button', { name: 'Save', exact: true }).click();
+    await picker.getByText('Group saved.', { exact: false }).waitFor();
+    await picker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0, 'Independent group creation invalidates dated approval');
+    await dialog.getByRole('button', { name: 'Preview application', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    assert.deepEqual(previews.at(-1), beforeGroup, 'Group metadata refresh preserves the profile definition, dates and captured revisions');
+    assert.ok(reviews.length > reviewsBeforeGroup, 'Group changes rerun advisory review without a scheduling revision change');
     assert.equal(applies.length, 0); assert.equal(saves.length, 1); assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
 });

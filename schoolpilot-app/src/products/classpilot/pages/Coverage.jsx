@@ -1,5 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
+import SupervisionGroupEditor from "../components/SupervisionGroupEditor";
+import { refreshSupervisionSetup } from "../components/supervisionGroupQueries";
+import SupervisionGroupDirectory from "../components/SupervisionGroupDirectory";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -62,7 +65,6 @@ const releaseReasons = [
 ];
 
 const ALL_FILTER = "all";
-const PICKER_PAGE_SIZE = 8;
 
 function defaultEndTime() {
   const d = new Date(Date.now() + 60 * 60 * 1000);
@@ -104,14 +106,6 @@ function contextTypeLabel(type) {
 
 function normalizeScopeValue(value) {
   return String(value || "").trim();
-}
-
-function rosterGradeKey(value) {
-  const compact = normalizeScopeValue(value).toLowerCase().replace(/^grade\s*/, "").replace(/[\s-]+/g, "");
-  if (["pk", "prek", "prekindergarten", "prekindergarden"].includes(compact)) return "pk";
-  if (["k", "kg", "kindergarten", "kindergarden"].includes(compact)) return "k";
-  const numeric = compact.replace(/(st|nd|rd|th)$/, "");
-  return /^\d+$/.test(numeric) ? String(Number(numeric)) : compact;
 }
 
 function gradeSortValue(grade) {
@@ -157,31 +151,6 @@ function matchesTokens(value, query) {
   return tokens.every((token) => haystack.includes(token));
 }
 
-function paginate(items, page, pageSize = PICKER_PAGE_SIZE) {
-  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
-  const currentPage = Math.min(Math.max(page, 1), pageCount);
-  const start = (currentPage - 1) * pageSize;
-  return {
-    currentPage,
-    pageCount,
-    items: items.slice(start, start + pageSize),
-  };
-}
-
-function assignedStaffNames(staff = []) {
-  const seen = new Set();
-  return staff.filter((person) => {
-    if (!person) return false;
-    if (!person.id) return true;
-    if (seen.has(person.id)) return false;
-    seen.add(person.id);
-    return true;
-  }).map((person) => {
-    const name = String(person.displayName || "").trim();
-    return (name && name !== person.id ? name : String(person.email || "").trim()) || "Unavailable staff member";
-  }).join(", ");
-}
-
 export default function Coverage() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -219,13 +188,7 @@ export default function Coverage() {
   const [studentPickerSearch, setStudentPickerSearch] = useState("");
   const [assignmentStaffSearch, setAssignmentStaffSearch] = useState("");
   const [scopeGroupOpen, setScopeGroupOpen] = useState(false);
-  const [scopeGroupSearch, setScopeGroupSearch] = useState("");
-  const [scopeGroupStaffSearch, setScopeGroupStaffSearch] = useState("");
-  const [scopeGroupStaffPage, setScopeGroupStaffPage] = useState(1);
-  const [scopeGroupStudentSearch, setScopeGroupStudentSearch] = useState("");
-  const [scopeGroupStudentPage, setScopeGroupStudentPage] = useState(1);
-  const [scopeGroupStudentGradeFilter, setScopeGroupStudentGradeFilter] = useState(ALL_FILTER);
-  const [scopeGroupStudentClassFilter, setScopeGroupStudentClassFilter] = useState(ALL_FILTER);
+  const [scopeGroupId, setScopeGroupId] = useState(null);
   const [contextForm, setContextForm] = useState({
     contextType: "state_testing",
     name: "State Testing",
@@ -246,15 +209,6 @@ export default function Coverage() {
     studentIds: [],
     active: true,
   });
-  const [scopeGroupForm, setScopeGroupForm] = useState({
-    id: "",
-    name: "",
-    description: "",
-    studentIds: [],
-    staffIds: [],
-    active: true,
-  });
-
   const unassignedQuery = useQuery({
     queryKey: ["/api/coverage/unassigned"],
     queryFn: () => apiRequest("GET", "/coverage/unassigned"),
@@ -296,14 +250,14 @@ export default function Coverage() {
     queryKey: [isAdmin ? "/api/admin/users" : "/api/coverage/setup/staff"],
     queryFn: () => apiRequest("GET", isAdmin ? "/admin/users" : "/coverage/setup/staff"),
     select: (data) => data?.users || [],
-    enabled: canManageSupervisionSetup,
+    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const groupsQuery = useQuery({
     queryKey: ["/api/coverage/setup/classes"],
     queryFn: () => apiRequest("GET", "/coverage/setup/classes"),
     select: (data) => data?.groups || [],
-    enabled: canManageSupervisionSetup,
+    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const assignmentsQuery = useQuery({
@@ -317,21 +271,14 @@ export default function Coverage() {
     queryKey: ["/api/coverage/supervision-groups", schoolId],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/supervision-groups", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
-    enabled: canManageSupervisionSetup && !!schoolId,
+    enabled: canManageSupervisionSetup && !!schoolId && (assignmentOpen || contextOpen),
   });
 
   const adminStudentsQuery = useQuery({
     queryKey: [isAdmin ? "/api/admin/teacher-students" : "/api/coverage/setup/students"],
     queryFn: () => apiRequest("GET", isAdmin ? "/admin/teacher-students" : "/coverage/setup/students"),
     select: (data) => data?.students || [],
-    enabled: canManageSupervisionSetup,
-  });
-
-  const scopeGroupClassStudentsQuery = useQuery({
-    queryKey: ["/api/groups", scopeGroupStudentClassFilter, "students", "scope-group-picker"],
-    queryFn: () => apiRequest("GET", `/groups/${scopeGroupStudentClassFilter}/students`),
-    select: (data) => Array.isArray(data) ? data : data?.students || [],
-    enabled: canManageSupervisionSetup && scopeGroupOpen && scopeGroupStudentClassFilter !== ALL_FILTER,
+    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const flightPathsQuery = useQuery({
@@ -405,55 +352,6 @@ export default function Coverage() {
     }),
     [groupsQuery.data]
   );
-  const scopeGroupClassChoices = useMemo(
-    () => classManagementGroups.filter((group) => scopeGroupStudentGradeFilter === ALL_FILTER
-      || rosterGradeKey(group.gradeLevel) === rosterGradeKey(scopeGroupStudentGradeFilter)),
-    [classManagementGroups, scopeGroupStudentGradeFilter]
-  );
-  const filteredScopeGroupStaff = useMemo(() => {
-    return (staffQuery.data || []).filter((staff) => {
-      const searchText = [
-        displayName(staff),
-        staff.email,
-        staff.user?.email,
-        staff.role,
-      ].filter(Boolean).join(" ");
-      return matchesTokens(searchText, scopeGroupStaffSearch);
-    });
-  }, [scopeGroupStaffSearch, staffQuery.data]);
-  const pagedScopeGroupStaff = useMemo(
-    () => paginate(filteredScopeGroupStaff, scopeGroupStaffPage),
-    [filteredScopeGroupStaff, scopeGroupStaffPage]
-  );
-  const scopeGroupClassStudentIds = useMemo(() => {
-    if (scopeGroupStudentClassFilter === ALL_FILTER) return null;
-    return new Set((scopeGroupClassStudentsQuery.data || []).map((student) => student.id));
-  }, [scopeGroupClassStudentsQuery.data, scopeGroupStudentClassFilter]);
-  const filteredScopeGroupStudents = useMemo(() => {
-    return adminStudents.filter((student) => {
-      const grade = normalizeScopeValue(student.gradeLevel);
-      if (scopeGroupStudentGradeFilter !== ALL_FILTER && grade !== scopeGroupStudentGradeFilter) return false;
-      if (scopeGroupClassStudentIds && !scopeGroupClassStudentIds.has(student.id)) return false;
-      const searchText = [
-        student.studentName,
-        student.studentEmail,
-        student.email,
-        student.gradeLevel ? `grade ${student.gradeLevel}` : "",
-      ].filter(Boolean).join(" ");
-      return matchesTokens(searchText, scopeGroupStudentSearch);
-    });
-  }, [adminStudents, scopeGroupClassStudentIds, scopeGroupStudentGradeFilter, scopeGroupStudentSearch]);
-  const pagedScopeGroupStudents = useMemo(
-    () => paginate(filteredScopeGroupStudents, scopeGroupStudentPage),
-    [filteredScopeGroupStudents, scopeGroupStudentPage]
-  );
-  const scopeGroupStudentsLoading = adminStudentsQuery.isPending || adminStudentsQuery.isFetching
-    || (scopeGroupStudentClassFilter !== ALL_FILTER && (scopeGroupClassStudentsQuery.isPending || scopeGroupClassStudentsQuery.isFetching));
-  const scopeGroupStudentsError = adminStudentsQuery.isError
-    || (scopeGroupStudentClassFilter !== ALL_FILTER && scopeGroupClassStudentsQuery.isError);
-  const scopeGroupStudentsUnavailable = scopeGroupStudentsLoading || scopeGroupStudentsError;
-  const selectedScopeGroupStudentIds = useMemo(() => new Set(scopeGroupForm.studentIds), [scopeGroupForm.studentIds]);
-  const selectedMatchingStudentCount = filteredScopeGroupStudents.filter((student) => selectedScopeGroupStudentIds.has(student.id)).length;
   const filteredPickerStudents = useMemo(() => {
     const q = studentPickerSearch.trim().toLowerCase();
     if (!q) return adminStudents;
@@ -461,13 +359,6 @@ export default function Coverage() {
       return `${student.studentName || ""} ${student.studentEmail || ""} ${student.gradeLevel || ""}`.toLowerCase().includes(q);
     });
   }, [adminStudents, studentPickerSearch]);
-  const filteredScopeGroups = useMemo(() => {
-    const q = scopeGroupSearch.trim().toLowerCase();
-    return (scopeGroupsQuery.data || []).filter((group) => {
-      if (!q) return true;
-      return `${group.name || ""} ${group.description || ""}`.toLowerCase().includes(q);
-    });
-  }, [scopeGroupsQuery.data, scopeGroupSearch]);
   const manageableContexts = useMemo(
     () => contexts.filter((context) => context.canManage && context.status === "active"),
     [contexts]
@@ -578,6 +469,7 @@ export default function Coverage() {
   };
   const refreshCoverage = () => {
     invalidateCoverage();
+    void refreshSupervisionSetup(queryClient, schoolId);
     for (const queryKey of [["/api/coverage/assignments"], ["/api/coverage/capabilities"], ["/api/coverage/summary"], ["classpilot-schedule-profiles"], ["classpilot-school-scheduling"]]) {
       void queryClient.invalidateQueries({ queryKey });
     }
@@ -634,10 +526,7 @@ export default function Coverage() {
     onError: (error) => toast({ variant: "destructive", title: "Could not send command", description: error.message }),
   });
 
-  const refreshSetupLists = () => Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] }),
-    queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups"] }),
-  ]);
+  const refreshSetupLists = () => refreshSupervisionSetup(queryClient, schoolId);
 
   const saveAssignmentMutation = useMutation({
     mutationFn: async ({ staffId, payloads }) => {
@@ -696,35 +585,6 @@ export default function Coverage() {
     onSettled: refreshSetupLists,
   });
 
-  const saveScopeGroupMutation = useMutation({
-    mutationFn: async ({ id, payload }) => {
-      if (!id) {
-        return apiRequest("POST", "/coverage/supervision-groups", payload);
-      }
-      const updated = await apiRequest("PATCH", `/coverage/supervision-groups/${id}`, {
-        name: payload.name,
-        description: payload.description,
-        active: payload.active,
-      });
-      await apiRequest("PUT", `/coverage/supervision-groups/${id}/students`, { studentIds: payload.studentIds });
-      await apiRequest("PUT", `/coverage/supervision-groups/${id}/staff`, { staffIds: payload.staffIds });
-      return updated;
-    },
-    onSuccess: () => {
-      setScopeGroupOpen(false);
-      setScopeGroupSearch("");
-      setScopeGroupStaffSearch("");
-      setScopeGroupStaffPage(1);
-      setScopeGroupStudentSearch("");
-      setScopeGroupStudentPage(1);
-      setScopeGroupStudentGradeFilter(ALL_FILTER);
-      setScopeGroupStudentClassFilter(ALL_FILTER);
-      toast({ title: "Supervision group saved" });
-    },
-    onError: (error) => toast({ variant: "destructive", title: "Could not save supervision group", description: error.message }),
-    onSettled: refreshSetupLists,
-  });
-
   const deleteSetupMutation = useMutation({
     retry: false,
     mutationFn: (target) => {
@@ -747,6 +607,7 @@ export default function Coverage() {
         queryClient.setQueryData(["/api/coverage/assignments", target.scope.schoolId], (current) => current ? { ...current, assignments: (current.assignments || []).filter((assignment) => !removedIds.has(assignment.id)) } : current);
       }
       const originalSchoolRefreshes = await Promise.allSettled([
+        ["/api/coverage/supervision-groups/browse", target.scope.schoolId], ["/api/coverage/supervision-groups/detail", target.scope.schoolId],
         ["/api/coverage/assignments", target.scope.schoolId], ["/api/coverage/supervision-groups", target.scope.schoolId],
         ["/api/coverage/capabilities", target.scope.schoolId], ["classpilot-schedule-profiles", target.scope.schoolId],
       ].map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
@@ -768,13 +629,14 @@ export default function Coverage() {
       setSetupDeletion((current) => current?.scope === target.scope && current.id === target.id && current.kind === target.kind
         ? { ...current, error: error.response?.data?.error || error.message || "This item could not be removed. Try again.", errorCode: error.response?.data?.code, dependencies: error.response?.data?.dependencies || [] } : current);
       if (error.response?.status === 409) {
+        void refreshSupervisionSetup(queryClient, target.scope.schoolId);
         void queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments", target.scope.schoolId] });
         void queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups", target.scope.schoolId] });
       }
     },
   });
   const setupDeletionBusy = deleteSetupMutation.isPending && deleteSetupMutation.variables?.scope === setupScope;
-  const setupWriteBusy = setupDeletionBusy || saveAssignmentMutation.isPending || deactivateAssignmentMutation.isPending || saveScopeGroupMutation.isPending;
+  const setupWriteBusy = setupDeletionBusy || saveAssignmentMutation.isPending || deactivateAssignmentMutation.isPending;
   const visibleSetupDeletion = isAdmin && setupDeletion?.scope === setupScope ? setupDeletion : null;
   const permissionPackageName = (permissionPackage) => {
     const staff = permissionPackage.staff || staffQuery.data?.find((person) => person.userId === permissionPackage.staffId);
@@ -877,38 +739,7 @@ export default function Coverage() {
     setAssignmentOpen(true);
   };
 
-  const resetScopeGroupForm = () => {
-    setScopeGroupForm({ id: "", name: "", description: "", studentIds: [], staffIds: [], active: true });
-    setScopeGroupStaffSearch("");
-    setScopeGroupStaffPage(1);
-    setScopeGroupStudentSearch("");
-    setScopeGroupStudentPage(1);
-    setScopeGroupStudentGradeFilter(ALL_FILTER);
-    setScopeGroupStudentClassFilter(ALL_FILTER);
-  };
-
-  const openScopeGroupDialog = (group = null) => {
-    if (!group) {
-      resetScopeGroupForm();
-      setScopeGroupOpen(true);
-      return;
-    }
-    setScopeGroupForm({
-      id: group.id,
-      name: group.name || "",
-      description: group.description || "",
-      studentIds: (group.students || []).map((student) => student.studentId),
-      staffIds: (group.staff || []).map((staff) => staff.id),
-      active: group.active !== false,
-    });
-    setScopeGroupStaffSearch("");
-    setScopeGroupStaffPage(1);
-    setScopeGroupStudentSearch("");
-    setScopeGroupStudentPage(1);
-    setScopeGroupStudentGradeFilter(ALL_FILTER);
-    setScopeGroupStudentClassFilter(ALL_FILTER);
-    setScopeGroupOpen(true);
-  };
+  const openScopeGroupDialog = group => { setScopeGroupId(group?.id || null); setScopeGroupOpen(true); };
 
   const toggleAssignmentStudent = (studentId) => {
     setAssignmentForm((prev) => {
@@ -925,36 +756,6 @@ export default function Coverage() {
       if (selected.has(scopeValue)) selected.delete(scopeValue);
       else selected.add(scopeValue);
       return { ...prev, [field]: Array.from(selected) };
-    });
-  };
-
-  const toggleScopeGroupStudent = (studentId) => {
-    setScopeGroupForm((prev) => {
-      const selected = new Set(prev.studentIds);
-      if (selected.has(studentId)) selected.delete(studentId);
-      else selected.add(studentId);
-      return { ...prev, studentIds: Array.from(selected) };
-    });
-  };
-
-  const selectMatchingScopeGroupStudents = (include) => {
-    if (scopeGroupStudentsUnavailable) return;
-    setScopeGroupForm((prev) => {
-      const selected = new Set(prev.studentIds);
-      for (const student of filteredScopeGroupStudents) {
-        if (include) selected.add(student.id);
-        else selected.delete(student.id);
-      }
-      return { ...prev, studentIds: Array.from(selected) };
-    });
-  };
-
-  const toggleScopeGroupStaff = (staffId) => {
-    setScopeGroupForm((prev) => {
-      const selected = new Set(prev.staffIds);
-      if (selected.has(staffId)) selected.delete(staffId);
-      else selected.add(staffId);
-      return { ...prev, staffIds: Array.from(selected) };
     });
   };
 
@@ -1038,19 +839,6 @@ export default function Coverage() {
       return;
     }
     saveAssignmentMutation.mutate({ staffId: assignmentForm.staffId, payloads });
-  };
-
-  const submitScopeGroup = () => {
-    saveScopeGroupMutation.mutate({
-      id: scopeGroupForm.id,
-      payload: {
-        name: scopeGroupForm.name.trim(),
-        description: scopeGroupForm.description.trim(),
-        studentIds: scopeGroupForm.studentIds,
-        staffIds: scopeGroupForm.staffIds,
-        active: scopeGroupForm.active,
-      },
-    });
   };
 
   const sendCoverageCommand = (commandType, commandPayload = {}) => {
@@ -1416,53 +1204,7 @@ export default function Coverage() {
             </div>
           </TabsContent>
 
-          {canManageSupervisionSetup && (
-            <TabsContent value="settings" className="space-y-4 mt-4">
-              {setupDeletionNotice?.scope === setupScope && setupDeletionNotice.kind === "group" && <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm">{setupDeletionNotice.message}</p>}
-              {scopeGroupsQuery.isError && <p role="alert" className="rounded-md border p-3 text-sm text-destructive">Supervision groups could not load. Use Refresh to retry before deleting a group.</p>}
-              {scopeGroupsQuery.isFetching && !scopeGroupsQuery.isPending && <p role="status" className="text-sm text-muted-foreground">Refreshing supervision groups… Deletion is available when the refresh finishes.</p>}
-              <Card className="min-w-0">
-                <CardHeader className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:flex-wrap">
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="text-base">Supervision Groups</CardTitle>
-                    <CardDescription>Choose students and assign staff for testing, library, office, makeup work, and events.</CardDescription>
-                  </div>
-                  <Button variant="outline" disabled={setupWriteBusy} onClick={() => openScopeGroupDialog()}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    New Group
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="relative">
-                    <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                    <Input className="pl-9" aria-label="Search supervision groups" placeholder="Search supervision groups" value={scopeGroupSearch} onChange={(e) => setScopeGroupSearch(e.target.value)} />
-                  </div>
-                  <div className="rounded-md border overflow-hidden">
-                    {filteredScopeGroups.length === 0 ? (
-                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">{scopeGroupsQuery.isPending ? "Loading supervision groups…" : scopeGroupsQuery.isError ? "Supervision groups are unavailable." : "No supervision groups"}</div>
-                    ) : filteredScopeGroups.map((group) => (
-                      <div key={group.id} data-testid={`supervision-group-${group.id}`} className="flex min-w-0 flex-col items-start justify-between gap-3 border-t first:border-t-0 px-4 py-3 text-sm sm:flex-row">
-                        <div className="min-w-0">
-                          <p className="break-words font-medium">{group.name}</p>
-                          <p className="break-words text-xs text-muted-foreground">
-                            {group.studentCount} student{group.studentCount === 1 ? "" : "s"}
-                          </p>
-                          <p className="mt-1 break-words text-sm"><span className="font-medium">Assigned staff:</span> {assignedStaffNames(group.staff) || "No staff assigned"}</p>
-                          {group.description && <p className="mt-1 break-words text-xs text-muted-foreground">{group.description}</p>}
-                          {isAdmin && !group.updatedAt && <p className="mt-1 text-xs text-muted-foreground">Refresh groups before deleting this group.</p>}
-                        </div>
-                        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
-                          <Badge variant={group.active ? "secondary" : "outline"}>{group.active ? "Active" : "Disabled"}</Badge>
-                          <Button variant="outline" size="sm" disabled={setupWriteBusy} onClick={() => openScopeGroupDialog(group)}>Edit</Button>
-                          {isAdmin && <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" disabled={setupWriteBusy || !schoolId || !group.updatedAt || scopeGroupsQuery.isFetching || scopeGroupsQuery.isError} aria-label={`Delete group ${group.name}`} onClick={(event) => openSetupDeletion({ kind: "group", id: group.id, name: group.name, updatedAt: group.updatedAt, studentCount: group.studentCount, staffCount: group.staff?.length || 0 }, event)}><Trash2 className="mr-2 h-3.5 w-3.5 shrink-0" />Delete group</Button>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          )}
+          {canManageSupervisionSetup && <TabsContent value="settings" forceMount hidden={visibleTab !== "settings"} inert={visibleTab !== "settings" || undefined} className={`space-y-4 mt-4 ${visibleTab !== "settings" ? "hidden" : ""}`}><SupervisionGroupDirectory key={`${schoolId}:${currentUser?.id}:${currentUser?.role}:${isAdmin}`} schoolId={schoolId} active={visibleTab === "settings"} isAdmin={isAdmin} busy={setupWriteBusy} onEdit={openScopeGroupDialog} savedGroupId={setupDeletionNotice?.scope === setupScope ? setupDeletionNotice.savedGroupId : null} notice={setupDeletionNotice?.scope === setupScope && setupDeletionNotice.kind === "group" ? setupDeletionNotice.message : ""} onDelete={(group, event) => openSetupDeletion({ kind: "group", id: group.id, name: group.name, updatedAt: group.updatedAt, studentCount: group.studentCount, staffCount: group.staff?.length || 0 }, event)} /></TabsContent>}
 
           {isAdmin && (
             <TabsContent value="staff-access" className="space-y-4 mt-4">
@@ -1808,218 +1550,7 @@ export default function Coverage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={canManageSupervisionSetup && scopeGroupOpen} onOpenChange={setScopeGroupOpen}>
-        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl flex-col overflow-hidden">
-          <DialogHeader className="shrink-0 pr-6">
-            <DialogTitle>{scopeGroupForm.id ? "Edit Supervision Group" : "Create Supervision Group"}</DialogTitle>
-            <DialogDescription>Supervision Groups do not change class rosters.</DialogDescription>
-          </DialogHeader>
-          <div data-testid="supervision-group-editor-body" className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-1">
-            <div className="grid gap-2">
-              <Label htmlFor="supervision-group-name">Name</Label>
-              <Input id="supervision-group-name" value={scopeGroupForm.name} onChange={(e) => setScopeGroupForm((f) => ({ ...f, name: e.target.value }))} placeholder="State testing - 8th grade" />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="supervision-group-description">Description</Label>
-              <Textarea id="supervision-group-description" value={scopeGroupForm.description} onChange={(e) => setScopeGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional note for admins" />
-            </div>
-            <div role="group" aria-label="Group staff" className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label>Staff</Label>
-                <Badge variant="secondary">{scopeGroupForm.staffIds.length} selected</Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">Selected staff can claim and manage this group. No separate access grant is needed.</p>
-              <div className="relative">
-                <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="Search staff by name, email, or role"
-                  value={scopeGroupStaffSearch}
-                  onChange={(e) => {
-                    setScopeGroupStaffSearch(e.target.value);
-                    setScopeGroupStaffPage(1);
-                  }}
-                />
-              </div>
-              <div className="rounded-md border overflow-hidden">
-                {filteredScopeGroupStaff.length === 0 ? (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">No staff found</div>
-                ) : pagedScopeGroupStaff.items.map((staff) => (
-                  <label key={staff.userId} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                    <Checkbox checked={scopeGroupForm.staffIds.includes(staff.userId)} onCheckedChange={() => toggleScopeGroupStaff(staff.userId)} />
-                    <span className="min-w-0 flex-1 break-words">
-                      <span className="block font-medium">{displayName(staff)}</span>
-                      <span className="block text-xs text-muted-foreground">{[staff.user?.email || staff.email, staff.role || "Staff"].filter(Boolean).join(" - ")}</span>
-                    </span>
-                  </label>
-                ))}
-                {filteredScopeGroupStaff.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
-                    <span>
-                      Showing {(pagedScopeGroupStaff.currentPage - 1) * PICKER_PAGE_SIZE + 1}-{Math.min(pagedScopeGroupStaff.currentPage * PICKER_PAGE_SIZE, filteredScopeGroupStaff.length)} of {filteredScopeGroupStaff.length}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setScopeGroupStaffPage((page) => Math.max(1, page - 1))}
-                        disabled={pagedScopeGroupStaff.currentPage <= 1}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setScopeGroupStaffPage((page) => Math.min(pagedScopeGroupStaff.pageCount, page + 1))}
-                        disabled={pagedScopeGroupStaff.currentPage >= pagedScopeGroupStaff.pageCount}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div role="group" aria-label="Group students" className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label>Students</Label>
-                <Badge variant="secondary">{scopeGroupForm.studentIds.length} selected</Badge>
-              </div>
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="grid gap-1">
-                  <Label htmlFor="supervision-group-grade" className="text-xs text-muted-foreground">Roster grade</Label>
-                  <Select
-                    value={scopeGroupStudentGradeFilter}
-                    onValueChange={(value) => {
-                      setScopeGroupStudentGradeFilter(value);
-                      const selectedClass = classManagementGroups.find((group) => group.id === scopeGroupStudentClassFilter);
-                      if (value !== ALL_FILTER && selectedClass && rosterGradeKey(selectedClass.gradeLevel) !== rosterGradeKey(value)) {
-                        setScopeGroupStudentClassFilter(ALL_FILTER);
-                      }
-                      setScopeGroupStudentPage(1);
-                    }}
-                  >
-                    <SelectTrigger id="supervision-group-grade"><SelectValue placeholder="All grades" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_FILTER}>All grades</SelectItem>
-                      {rosterGrades.map((grade) => (
-                        <SelectItem key={grade.value} value={grade.value}>Grade {grade.value} ({grade.count})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-1">
-                  <Label htmlFor="supervision-group-class" className="text-xs text-muted-foreground">Class Management class</Label>
-                  <Select
-                    value={scopeGroupStudentClassFilter}
-                    onValueChange={(value) => {
-                      setScopeGroupStudentClassFilter(value);
-                      setScopeGroupStudentPage(1);
-                    }}
-                  >
-                    <SelectTrigger id="supervision-group-class" className="min-w-0 [&>span]:truncate"><SelectValue placeholder="All classes" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_FILTER}>All classes</SelectItem>
-                      {scopeGroupClassChoices.map((group) => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {[group.name, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ")}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">The class list follows the selected roster grade. Changing filters keeps your student selections.</p>
-              <div className="relative">
-                <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="Search students by name or email"
-                  value={scopeGroupStudentSearch}
-                  onChange={(e) => {
-                    setScopeGroupStudentSearch(e.target.value);
-                    setScopeGroupStudentPage(1);
-                  }}
-                />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" disabled={scopeGroupStudentsUnavailable || filteredScopeGroupStudents.length === 0 || selectedMatchingStudentCount === filteredScopeGroupStudents.length} onClick={() => selectMatchingScopeGroupStudents(true)}>
-                  {scopeGroupStudentsUnavailable ? 'Select all matching students' : `Select all ${filteredScopeGroupStudents.length} matching students`}
-                </Button>
-                <Button type="button" variant="ghost" size="sm" disabled={scopeGroupStudentsUnavailable || selectedMatchingStudentCount === 0} onClick={() => selectMatchingScopeGroupStudents(false)}>
-                  Clear matching students
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">Selection applies to all matching students across every page. Students selected outside these filters stay selected.</p>
-              {!scopeGroupStudentsUnavailable && <p role="status" className="text-xs text-muted-foreground">{selectedMatchingStudentCount} of {filteredScopeGroupStudents.length} matching students selected · {scopeGroupForm.studentIds.length} total selected</p>}
-              <div className="rounded-md border overflow-hidden">
-                {scopeGroupStudentsLoading ? (
-                  <div role="status" className="px-4 py-8 text-center text-sm text-muted-foreground">Loading student roster...</div>
-                ) : scopeGroupStudentsError ? (
-                  <div role="alert" className="space-y-2 px-4 py-6 text-center text-sm">
-                    <p>Could not load the student roster. Your selections are preserved.</p>
-                    <Button type="button" variant="outline" size="sm" onClick={() => {
-                      if (adminStudentsQuery.isError) adminStudentsQuery.refetch();
-                      if (scopeGroupStudentClassFilter !== ALL_FILTER && scopeGroupClassStudentsQuery.isError) scopeGroupClassStudentsQuery.refetch();
-                    }}>Retry student roster</Button>
-                  </div>
-                ) : filteredScopeGroupStudents.length === 0 ? (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students match these filters</div>
-                ) : pagedScopeGroupStudents.items.map((student) => (
-                  <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                    <Checkbox checked={selectedScopeGroupStudentIds.has(student.id)} onCheckedChange={() => toggleScopeGroupStudent(student.id)} />
-                    <span className="min-w-0 flex-1 break-words">
-                      <span className="block font-medium">{student.studentName}</span>
-                      <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
-                    </span>
-                  </label>
-                ))}
-                {!scopeGroupStudentsUnavailable && filteredScopeGroupStudents.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
-                    <span>
-                      Showing {(pagedScopeGroupStudents.currentPage - 1) * PICKER_PAGE_SIZE + 1}-{Math.min(pagedScopeGroupStudents.currentPage * PICKER_PAGE_SIZE, filteredScopeGroupStudents.length)} of {filteredScopeGroupStudents.length}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setScopeGroupStudentPage((page) => Math.max(1, page - 1))}
-                        disabled={pagedScopeGroupStudents.currentPage <= 1}
-                      >
-                        Previous
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setScopeGroupStudentPage((page) => Math.min(pagedScopeGroupStudents.pageCount, page + 1))}
-                        disabled={pagedScopeGroupStudents.currentPage >= pagedScopeGroupStudents.pageCount}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {scopeGroupForm.id && (
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={scopeGroupForm.active} onCheckedChange={(checked) => setScopeGroupForm((f) => ({ ...f, active: checked === true }))} />
-                Active supervision group
-              </label>
-            )}
-          </div>
-          <DialogFooter className="shrink-0 gap-2 border-t pt-4">
-            <Button variant="outline" onClick={() => setScopeGroupOpen(false)}>Cancel</Button>
-            <Button onClick={submitScopeGroup} disabled={saveScopeGroupMutation.isPending || !scopeGroupForm.name.trim()}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SupervisionGroupEditor open={canManageSupervisionSetup && scopeGroupOpen} schoolId={schoolId} groupId={scopeGroupId} onOpenChange={setScopeGroupOpen} onSaved={({ group, refreshWarning }) => setSetupDeletionNotice({ scope: setupScope, kind: "group", savedGroupId: group.id, message: `Supervision group “${group.name}” saved.${refreshWarning ? " Some lists could not refresh. Use Refresh to reload them." : ""}` })} />
 
       <Dialog open={!!commandDialog} onOpenChange={(open) => !open && setCommandDialog(null)}>
         <DialogContent>

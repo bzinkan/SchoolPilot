@@ -7,6 +7,7 @@ import { auditLogs } from "../schema/shared.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { lockStaffAssignmentLifecycleSchool, type StaffAssignmentLifecycleLockDb } from "./staffAssignmentLifecycleLock.js";
 import { localDateTimeUtc } from "../util/schoolTime.js";
+import { touchCoverageCategories } from "./classpilotCoverageCategoryVersions.js";
 
 type Transaction = StaffAssignmentLifecycleLockDb;
 type Assignment = typeof classpilotCoverageAssignments.$inferSelect;
@@ -126,6 +127,7 @@ export async function deleteCoverageSupervisionGroup(options: { schoolId: string
     const removedAssignments = await tx.delete(classpilotCoverageAssignments).where(and(eq(classpilotCoverageAssignments.schoolId, options.schoolId), eq(classpilotCoverageAssignments.scopeType, "coverage_group"), eq(classpilotCoverageAssignments.scopeValue, groupId))).returning({ id: classpilotCoverageAssignments.id });
     const removedMembers = await tx.delete(classpilotCoverageScopeGroupMembers).where(and(eq(classpilotCoverageScopeGroupMembers.schoolId, options.schoolId), eq(classpilotCoverageScopeGroupMembers.coverageGroupId, groupId))).returning({ id: classpilotCoverageScopeGroupMembers.id });
     await tx.delete(classpilotCoverageScopeGroups).where(and(eq(classpilotCoverageScopeGroups.schoolId, options.schoolId), eq(classpilotCoverageScopeGroups.id, groupId)));
+    await touchCoverageCategories(tx, options.schoolId, [group.categoryId]);
     await tx.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId, action: "coverage.supervision_group.delete", entityType: "coverage_scope_group", entityId: groupId, entityName: group.name, changes: { deletedAssignments: removedAssignments.length, deletedMembers: removedMembers.length } });
     return { deleted: true, groupId, deletedAssignments: removedAssignments.length, deletedMembers: removedMembers.length };
   });

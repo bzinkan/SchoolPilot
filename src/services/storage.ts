@@ -63,6 +63,7 @@ import {
 } from "./staffAssignmentLifecycle.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { CoverageDeletionError, touchCoverageGroups, assertCoverageAssignmentReview, type CoverageAssignmentReview } from "./classpilotCoverageDeletion.js";
+import { touchCoverageCategories } from "./classpilotCoverageCategoryVersions.js";
 import { preserveManualRosterMemberships } from "./rosterManualOwnership.js";
 import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "./classpilotMonitoringSettings.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
@@ -20849,7 +20850,7 @@ export async function getClasspilotFabAuthoritySnapshot(
   return db.transaction(async (tx) => resolveSnapshot(tx as unknown as typeof db));
 }
 
-async function lockActiveSchoolStudentsForOperationalWrite(
+export async function lockActiveSchoolStudentsForOperationalWrite(
   schoolId: string,
   studentIds: readonly string[],
   dbInstance: typeof db
@@ -22284,10 +22285,11 @@ function activeSupervisionCondition(schoolId: string) {
 
 export async function listCoverageScopeGroups(
   schoolId: string,
-  options: { activeOnly?: boolean } = {}
+  options: { activeOnly?: boolean; groupId?: string } = {}
 ): Promise<CoverageScopeGroupWithMembers[]> {
   const conditions: SQL[] = [eq(classpilotCoverageScopeGroups.schoolId, schoolId)];
   if (options.activeOnly) conditions.push(eq(classpilotCoverageScopeGroups.active, true));
+  if (options.groupId) conditions.push(eq(classpilotCoverageScopeGroups.id, options.groupId));
 
   const groupsRows = await db
     .select()
@@ -22333,8 +22335,8 @@ export async function getCoverageScopeGroupByIdAndSchool(
   schoolId: string,
   groupId: string
 ): Promise<CoverageScopeGroupWithMembers | undefined> {
-  const groups = await listCoverageScopeGroups(schoolId, { activeOnly: false });
-  return groups.find((group) => group.id === groupId);
+  const groups = await listCoverageScopeGroups(schoolId, { activeOnly: false, groupId });
+  return groups[0];
 }
 
 export async function createCoverageScopeGroup(options: {
@@ -22367,6 +22369,7 @@ export async function createCoverageScopeGroup(options: {
       );
     }
 
+    await touchCoverageCategories(tx, group.schoolId, [group.categoryId]);
     return group;
   });
 
@@ -22549,21 +22552,11 @@ export async function getActiveCoverageAssignmentsForScopeGroups(
     .orderBy(classpilotCoverageAssignments.createdAt);
 }
 
-export async function replaceCoverageScopeGroupStaff(options: {
-  schoolId: string;
-  groupId: string;
-  staffIds: string[];
-  createdBy: string;
-  coverageSetupReview?: CoverageAssignmentReview;
-}): Promise<ClasspilotCoverageAssignment[]> {
+export async function replaceCoverageScopeGroupStaffInTransaction(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  options: { schoolId: string; groupId: string; staffIds: string[]; createdBy: string }
+) {
   const staffIds = Array.from(new Set(options.staffIds.map(String).filter(Boolean)));
-  await db.transaction(async (tx) => {
-    const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
-      tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
-      options.schoolId
-    );
-    if (!lifecycleLocked) throw new Error("School not found");
-    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageSetupReview, "setup");
     await assertCoverageScopeGroupExists(tx, options.schoolId, options.groupId);
     for (const staffId of staffIds) {
       await assertActiveSchoolStaffMembership(
@@ -22632,8 +22625,20 @@ export async function replaceCoverageScopeGroupStaff(options: {
       );
     }
     await touchCoverageGroups(tx, options.schoolId, [options.groupId]);
-  });
+}
 
+export async function replaceCoverageScopeGroupStaff(options: {
+  schoolId: string;
+  groupId: string;
+  staffIds: string[];
+  createdBy: string;
+  coverageSetupReview?: CoverageAssignmentReview;
+}): Promise<ClasspilotCoverageAssignment[]> {
+  await db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageSetupReview, "setup");
+    await replaceCoverageScopeGroupStaffInTransaction(tx, options);
+  });
   return getActiveCoverageAssignmentsForScopeGroup(options.schoolId, options.groupId);
 }
 

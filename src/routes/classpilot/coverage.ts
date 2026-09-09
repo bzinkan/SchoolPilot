@@ -81,6 +81,7 @@ import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.
 import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
 import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 import { CoverageDeletionError, deleteCoverageStaffAssignments, deleteCoverageSupervisionGroup, type CoverageAssignmentReview } from "../../services/classpilotCoverageDeletion.js";
+import { browseCoverageGroups, getCoverageGroupDetail, listCoverageCategories, mutateCoverageCategory, saveCoverageDirectoryGroup } from "../../services/classpilotCoverageDirectory.js";
 
 const router = Router();
 
@@ -625,6 +626,7 @@ function coverageScopeGroupPayload(group: any) {
     createdBy: group.createdBy,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
+    categoryId: group.categoryId ?? null,
     studentCount: group.members.length,
     students: group.members.map((member: any) => ({
       studentId: member.studentId,
@@ -1564,6 +1566,33 @@ router.put("/coverage/scope-groups/:id/students", ...auth, async (req, res, next
   }
 });
 
+router.get("/coverage/supervision-groups/browse", ...auth, async (req, res, next) => {
+  try { res.json(await browseCoverageGroups({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, query: req.query })); }
+  catch (error) { next(error); }
+});
+router.get("/coverage/supervision-groups/:id", ...auth, async (req, res, next) => {
+  try {
+    if (req.query.view !== undefined && req.query.view !== "summary") return res.status(400).json({ error: "Unknown group view" });
+    res.json(await getCoverageGroupDetail({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, groupId: String(req.params.id), summaryOnly: req.query.view === "summary" }));
+  } catch (error) { next(error); }
+});
+router.get("/coverage/supervision-group-categories", ...auth, async (req, res, next) => {
+  try { res.json(await listCoverageCategories({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id })); }
+  catch (error) { next(error); }
+});
+router.post("/coverage/supervision-group-categories", ...auth, async (req, res, next) => {
+  try { res.status(201).json(await mutateCoverageCategory({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, body: req.body })); }
+  catch (error) { next(error); }
+});
+router.patch("/coverage/supervision-group-categories/:id", ...auth, async (req, res, next) => {
+  try { res.json(await mutateCoverageCategory({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, categoryId: String(req.params.id), body: req.body })); }
+  catch (error) { next(error); }
+});
+router.delete("/coverage/supervision-group-categories/:id", ...auth, async (req, res, next) => {
+  try { res.json(await mutateCoverageCategory({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, categoryId: String(req.params.id), remove: true, body: req.body })); }
+  catch (error) { next(error); }
+});
+
 router.get("/coverage/supervision-groups", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
@@ -1588,84 +1617,13 @@ router.get("/coverage/supervision-groups", ...auth, async (req, res, next) => {
 });
 
 router.post("/coverage/supervision-groups", ...auth, async (req, res, next) => {
-  try {
-    const access = await setupAccessForRequest(req, res);
-    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
-    const schoolId = res.locals.schoolId!;
-    const name = String(req.body.name || "").trim();
-    if (!name) return res.status(400).json({ error: "name is required" });
-    const studentIds = normalizeStudentIds(req.body.studentIds);
-    const staffIds = normalizeStudentIds(req.body.staffIds);
-    await assertStudentsWithinSetupAccess(schoolId, access, studentIds);
-    for (const staffId of staffIds) {
-      const membership = await getMembershipByUserAndSchool(staffId, schoolId);
-      if (!membership || membership.status !== "active") {
-        return res.status(404).json({ error: "One or more staff members were not found in this school" });
-      }
-    }
-    const group = await createCoverageScopeGroup({
-      coverageSetupReview: access.isAdmin ? undefined : access.assignments,
-      group: {
-        schoolId,
-        name,
-        description: req.body.description ? String(req.body.description) : null,
-        active: true,
-        createdBy: req.authUser!.id,
-      },
-      studentIds,
-    });
-    await replaceCoverageScopeGroupStaff({ schoolId, groupId: group.id, staffIds, createdBy: req.authUser!.id, coverageSetupReview: access.isAdmin ? undefined : access.assignments });
-    await logAudit({
-      schoolId,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "coverage.supervision_group.create",
-      entityType: "coverage_scope_group",
-      entityId: group.id,
-      changes: { name, studentIds, staffIds },
-    });
-    const refreshed = await getCoverageScopeGroupByIdAndSchool(schoolId, group.id);
-    return res.status(201).json({ group: await supervisionGroupPayload(schoolId, refreshed || group) });
-  } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
-    next(err);
-  }
+  try { res.status(201).json(await saveCoverageDirectoryGroup({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, body: req.body })); }
+  catch (error) { next(error); }
 });
 
 router.patch("/coverage/supervision-groups/:id", ...auth, async (req, res, next) => {
-  try {
-    const access = await setupAccessForRequest(req, res);
-    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
-    const schoolId = res.locals.schoolId!;
-    const groupId = String(req.params.id);
-    if (!(await canManageSupervisionGroupWithinSetupAccess(schoolId, access, groupId))) {
-      return res.status(403).json({ error: "Supervision group is outside your setup scope" });
-    }
-    const data: { name?: string; description?: string | null; active?: boolean } = {};
-    if (req.body.name !== undefined) {
-      const name = String(req.body.name || "").trim();
-      if (!name) return res.status(400).json({ error: "name is required" });
-      data.name = name;
-    }
-    if (req.body.description !== undefined) data.description = String(req.body.description || "");
-    if (req.body.active !== undefined) data.active = req.body.active !== false;
-    const group = await updateCoverageScopeGroup({ schoolId, groupId, ...data, coverageSetupReview: access.isAdmin ? undefined : access.assignments });
-    if (!group) return res.status(404).json({ error: "Supervision group not found" });
-    await logAudit({
-      schoolId,
-      userId: req.authUser!.id,
-      userEmail: req.authUser!.email,
-      userRole: res.locals.membershipRole,
-      action: "coverage.supervision_group.update",
-      entityType: "coverage_scope_group",
-      entityId: group.id,
-      changes: data,
-    });
-    return res.json({ group: await supervisionGroupPayload(schoolId, group) });
-  } catch (err) {
-    next(err);
-  }
+  try { res.json(await saveCoverageDirectoryGroup({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, groupId: String(req.params.id), body: req.body })); }
+  catch (error) { next(error); }
 });
 
 router.put("/coverage/supervision-groups/:id/students", ...auth, async (req, res, next) => {

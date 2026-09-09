@@ -145,3 +145,63 @@ test("digest is default off, opt-in is revisioned, and one reviewed operational 
   assert.equal(messages.length, 1); assert.match(messages[0]!.subject, /monitoring interruptions/i);
   assert.doesNotMatch(messages[0]!.text!, /Test Student|device_id|student_session_id/);
 });
+
+test("summary counts every authorized event before pagination and keeps old open events separate from recent history", async () => {
+  const { sql } = await import("drizzle-orm");
+  const now = at(2000);
+  const options = { schoolId: ids.school, actorId: ids.teacher, isAdmin: false, now };
+  const baseline = await scoped(() => service.getMonitoringInterruptionSummary(options));
+  const records = Array.from({ length: 530 }, (_, index) => ({ id: randomUUID(), expectationId: randomUUID(),
+    detectedAt: new Date(now.getTime() - 1000 - Math.floor(index / 3) * 1000).toISOString(),
+    endedAt: index < 520 ? null : now.toISOString(), expiresAt: at(86400).toISOString() }));
+  const oldOpen = { id: randomUUID(), expectationId: randomUUID(), detectedAt: at(-90000).toISOString(), endedAt: null, expiresAt: at(86400).toISOString() };
+  const excluded = [
+    { ...oldOpen, id: randomUUID(), expectationId: randomUUID(), endedAt: at(-89900).toISOString() },
+    { ...records[0]!, id: randomUUID(), expectationId: randomUUID(), expiresAt: now.toISOString() },
+  ];
+  const fixture = [...records, oldOpen, ...excluded];
+  try {
+    await scoped(() => database.execute(sql`INSERT INTO classpilot_monitoring_interruptions(id,expectation_id,school_id,student_id,student_session_id,device_id,scope_type,scope_id,scope_name,last_observed_at,detected_at,ended_at,end_reason,retention_expires_at)
+      SELECT x.id,x.expectation_id,${ids.school},${ids.student},${ids.nextSession},${nextDeviceId},'teaching_session',${ids.teaching},'Monitored class',x.detected_at-interval '61 seconds',x.detected_at,x.ended_at,CASE WHEN x.ended_at IS NOT NULL THEN 'scope_or_binding_ended' END,x.expires_at
+      FROM jsonb_to_recordset(${JSON.stringify(fixture.map(row => ({ id: row.id, expectation_id: row.expectationId, detected_at: row.detectedAt, ended_at: row.endedAt, expires_at: row.expiresAt })))}::jsonb)
+      AS x(id text,expectation_id text,detected_at timestamptz,ended_at timestamptz,expires_at timestamptz)`));
+    const summary = await scoped(() => service.getMonitoringInterruptionSummary(options));
+    assert.deepEqual(summary.counts, { open: baseline.counts.open + 521, last24Hours: baseline.counts.last24Hours + 530 });
+    assert.doesNotMatch(JSON.stringify(summary), /student|device|scopeId|incidents|Test Student/);
+    assert.equal(summary.scanStatus, "uncertain", "old scanner state cannot report a healthy zero");
+    const unrelated = await scoped(() => service.getMonitoringInterruptionSummary({ ...options, actorId: ids.otherTeacher }));
+    assert.deepEqual(unrelated.counts, { open: 0, last24Hours: 0 });
+    const otherSchool = await withTenant({ schoolId: ids.otherSchool }, () => service.getMonitoringInterruptionSummary({ ...options, schoolId: ids.otherSchool, isAdmin: true }));
+    assert.deepEqual(otherSchool.counts, { open: 0, last24Hours: 0 });
+    const admin = await scoped(() => service.getMonitoringInterruptionSummary({ ...options, actorId: ids.admin, isAdmin: true }));
+    assert.deepEqual(admin.counts, summary.counts);
+    for (const filter of ["open", "recent"] as const) {
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      let pages = 0;
+      do {
+        const page = await scoped(() => service.listMonitoringInterruptionHistory({ ...options, filter, cursor }));
+        assert.ok(page.incidents.length <= 50);
+        for (const incident of page.incidents) {
+          assert.equal(seen.has(String(incident.id)), false, "tied timestamps must not duplicate or skip records across pages");
+          seen.add(String(incident.id));
+        }
+        assert.doesNotMatch(JSON.stringify(page), /studentSessionId|deviceId|student_session_id|device_id/);
+        cursor = page.nextCursor ?? undefined;
+        pages++;
+      } while (cursor && pages < 20);
+      assert.ok(pages > 10, "history must remain reachable beyond 500 records");
+      assert.equal(seen.has(oldOpen.id), filter === "open");
+      for (const row of records) assert.equal(seen.has(row.id), filter === "recent" || row.endedAt === null);
+      for (const row of excluded) assert.equal(seen.has(row.id), false);
+    }
+    const first = await scoped(() => service.listMonitoringInterruptionHistory({ ...options, filter: "open" }));
+    assert.ok(first.nextCursor);
+    await assert.rejects(scoped(() => service.listMonitoringInterruptionHistory({ ...options, actorId: ids.otherTeacher, filter: "open", cursor: first.nextCursor! })), /invalid or expired/);
+    const legacy = await scoped(() => service.listMonitoringInterruptions(options));
+    assert.equal(legacy.incidents.length, 500); assert.equal(legacy.truncated, true);
+    assert.deepEqual((await scoped(() => service.getMonitoringInterruptionSummary(options))).counts, summary.counts, "reads do not change counts");
+  } finally {
+    await scoped(() => database.execute(sql`DELETE FROM classpilot_monitoring_interruptions WHERE school_id=${ids.school} AND id IN (SELECT jsonb_array_elements_text(${JSON.stringify(fixture.map(row => row.id))}::jsonb))`));
+  }
+});

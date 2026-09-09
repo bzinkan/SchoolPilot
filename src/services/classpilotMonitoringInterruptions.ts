@@ -13,6 +13,7 @@ import { decideMonitoringInterruption } from "./classpilotMonitoringInterruption
 export { decideMonitoringInterruption, MONITORING_INTERRUPTION_TOLERANCE_MS } from "./classpilotMonitoringInterruptionRules.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
 import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
+import { decodeMonitoringHistoryCursor, encodeMonitoringHistoryCursor, monitoringHistoryScope, MONITORING_HISTORY_PAGE_SIZE, type MonitoringHistoryFilter } from "./classpilotMonitoringHistoryRules.js";
 
 type Expectation = Omit<typeof expectations.$inferSelect, "teachingSessionId" | "supervisionContextId">;
 type Scope = { student_id: string; student_session_id: string; device_id: string; scope_type: string; scope_id: string; scope_name: string; scope_started_at: Date; scope_ends_at: Date | null };
@@ -142,9 +143,7 @@ export async function setMonitoringInterruptionSettings(schoolId: string, actorI
 export async function listMonitoringInterruptions(options: { schoolId: string; actorId: string; isAdmin: boolean; now?: Date }) {
   const now = options.now ?? new Date();
   const [health] = await db.select({ status: preferences.scanStatus, lastScannedAt: preferences.lastScannedAt }).from(preferences).where(eq(preferences.schoolId, options.schoolId)).limit(1);
-  const authorization = options.isAdmin ? sql`true` : sql`(
-    (i.scope_type='teaching_session' AND EXISTS(SELECT 1 FROM classpilot_session_staff staff WHERE staff.school_id=i.school_id AND staff.teaching_session_id=i.scope_id AND staff.staff_id=${options.actorId}))
-    OR (i.scope_type='supervision_context' AND EXISTS(SELECT 1 FROM classpilot_supervision_contexts c WHERE c.school_id=i.school_id AND c.id=i.scope_id AND c.assigned_staff_id=${options.actorId})))`;
+  const authorization = monitoringHistoryAuthorization(options);
   const rows = (await db.execute(sql`SELECT i.id,i.student_id,i.scope_type,i.scope_id,i.scope_name,i.last_observed_at,i.detected_at,i.recovered_at,i.ended_at,i.end_reason,i.uncertain_since,
     concat_ws(' ',s.first_name,s.last_name) AS student_name
     FROM classpilot_monitoring_interruptions i JOIN students s ON s.school_id=i.school_id AND s.id=i.student_id
@@ -156,4 +155,54 @@ export async function listMonitoringInterruptions(options: { schoolId: string; a
     incidents: rows.slice(0, 500).map((row) => ({ id: row.id, studentId: row.student_id, studentName: row.student_name, scopeType: row.scope_type, scopeId: row.scope_id, scopeName: row.scope_name,
       lastObservedAt: row.last_observed_at, detectedAt: row.detected_at, recoveredAt: row.recovered_at, endedAt: row.ended_at, endReason: row.end_reason,
       status: row.ended_at ? row.recovered_at ? "recovered" : "ended" : row.uncertain_since || stale || health?.status === "uncertain" ? "uncertain" : "open" })) };
+}
+
+type MonitoringReadOptions = { schoolId: string; actorId: string; isAdmin: boolean; now?: Date };
+function monitoringHistoryAuthorization(options: MonitoringReadOptions) {
+  return options.isAdmin ? sql`true` : sql`(
+    (i.scope_type='teaching_session' AND EXISTS(SELECT 1 FROM classpilot_session_staff staff WHERE staff.school_id=i.school_id AND staff.teaching_session_id=i.scope_id AND staff.staff_id=${options.actorId}))
+    OR (i.scope_type='supervision_context' AND EXISTS(SELECT 1 FROM classpilot_supervision_contexts c WHERE c.school_id=i.school_id AND c.id=i.scope_id AND c.assigned_staff_id=${options.actorId})))`;
+}
+
+/** Counts are independent of history page limits and never hydrate student names or rosters. */
+export async function getMonitoringInterruptionSummary(options: MonitoringReadOptions) {
+  const now = options.now ?? new Date();
+  const windowStart = new Date(now.getTime() - 86400_000);
+  const rows = (await db.execute(sql`SELECT p.scan_status,p.last_scanned_at,
+    (SELECT count(*)::int FROM classpilot_monitoring_interruptions i WHERE i.school_id=${options.schoolId}
+      AND i.retention_expires_at>${now.toISOString()}::timestamptz AND i.detected_at<=${now.toISOString()}::timestamptz
+      AND i.ended_at IS NULL AND ${monitoringHistoryAuthorization(options)}) AS open_count,
+    (SELECT count(*)::int FROM classpilot_monitoring_interruptions i WHERE i.school_id=${options.schoolId}
+      AND i.retention_expires_at>${now.toISOString()}::timestamptz AND i.detected_at>=${windowStart.toISOString()}::timestamptz
+      AND i.detected_at<=${now.toISOString()}::timestamptz AND ${monitoringHistoryAuthorization(options)}) AS recent_count
+    FROM (SELECT 1) anchor LEFT JOIN classpilot_monitoring_interruption_settings p ON p.school_id=${options.schoolId}`)).rows as Array<{ scan_status: string | null; last_scanned_at: Date | null; open_count: number; recent_count: number }>;
+  const row = rows[0]!;
+  const lastScannedAt = row.last_scanned_at ? new Date(row.last_scanned_at) : null;
+  const stale = !lastScannedAt || now.getTime() - lastScannedAt.getTime() > 180_000;
+  return { asOf: now.toISOString(), windowStart: windowStart.toISOString(), scanStatus: stale ? "uncertain" : row.scan_status ?? "unknown",
+    lastScannedAt: lastScannedAt?.toISOString() ?? null, counts: { open: Number(row.open_count), last24Hours: Number(row.recent_count) } };
+}
+
+export async function listMonitoringInterruptionHistory(options: MonitoringReadOptions & { filter: MonitoringHistoryFilter; cursor?: string }) {
+  const now = options.now ?? new Date();
+  const scope = monitoringHistoryScope(options.schoolId, options.actorId, options.isAdmin);
+  const cursor = decodeMonitoringHistoryCursor(options.cursor, scope, options.filter, now);
+  const asOf = cursor?.asOf ?? now.toISOString();
+  const windowStart = new Date(Date.parse(asOf) - 86400_000).toISOString();
+  const summary = await getMonitoringInterruptionSummary({ ...options, now });
+  const rows = (await db.execute(sql`SELECT i.id,i.student_id,i.scope_type,i.scope_id,i.scope_name,i.last_observed_at,i.detected_at,
+    i.recovered_at,i.ended_at,i.end_reason,i.uncertain_since,concat_ws(' ',s.first_name,s.last_name) AS student_name
+    FROM classpilot_monitoring_interruptions i JOIN students s ON s.school_id=i.school_id AND s.id=i.student_id
+    WHERE i.school_id=${options.schoolId} AND i.retention_expires_at>${now.toISOString()}::timestamptz AND ${monitoringHistoryAuthorization(options)}
+      AND i.detected_at<=${asOf}::timestamptz
+      AND ${options.filter === "open" ? sql`i.ended_at IS NULL` : sql`i.detected_at>=${windowStart}::timestamptz`}
+      AND ${cursor ? sql`(i.detected_at,i.id)<(${cursor.detectedAt}::timestamptz,${cursor.id})` : sql`true`}
+    ORDER BY i.detected_at DESC,i.id DESC LIMIT ${MONITORING_HISTORY_PAGE_SIZE + 1}`)).rows as Array<Record<string, unknown>>;
+  const page = rows.slice(0, MONITORING_HISTORY_PAGE_SIZE);
+  const last = page.at(-1);
+  return { ...summary, filter: options.filter, historyAsOf: asOf, historyWindowStart: windowStart,
+    nextCursor: rows.length > MONITORING_HISTORY_PAGE_SIZE && last ? encodeMonitoringHistoryCursor({ scope, filter: options.filter, asOf, detectedAt: (last.detected_at instanceof Date ? last.detected_at : new Date(String(last.detected_at))).toISOString(), id: String(last.id) }) : null,
+    incidents: page.map((row) => ({ id: row.id, studentId: row.student_id, studentName: row.student_name, scopeType: row.scope_type, scopeId: row.scope_id, scopeName: row.scope_name,
+      lastObservedAt: row.last_observed_at, detectedAt: row.detected_at, recoveredAt: row.recovered_at, endedAt: row.ended_at, endReason: row.end_reason,
+      status: row.ended_at ? row.recovered_at ? "recovered" : "ended" : row.uncertain_since || !["healthy", "not_expected"].includes(summary.scanStatus) ? "uncertain" : "open" })) };
 }

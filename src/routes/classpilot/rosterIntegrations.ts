@@ -17,7 +17,9 @@ router.use(authenticate,requireSchoolContext,requireClasspilotEntitlement,requir
 const mutationLimit=rateLimit({windowMs:15*60_000,limit:100,standardHeaders:true,legacyHeaders:false});
 const id=z.string().trim().min(1).max(256);
 const mapping=z.object({organizationIds:z.array(id).min(1).max(100),people:z.record(id).optional(),classes:z.record(id).optional(),adoptPeople:z.array(id).max(10000).optional(),adoptClasses:z.array(id).max(10000).optional()}).strict();
-const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:ROSTER_LIMITS.compressedBytes,files:1,fields:0,parts:1}});
+// Busboy emits partsLimit at the terminating boundary when parts is 1.
+// Leave room for that boundary; files:1 and fields:0 reject extra content.
+const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:ROSTER_LIMITS.compressedBytes,files:1,fields:0,parts:2}});
 const scope=(req:any,res:any)=>({schoolId:String(res.locals.schoolId),userId:String(req.authUser.id)});
 const parse=<T>(schema:z.ZodType<T>,value:unknown):T=>{const result=schema.safeParse(value);if(!result.success)throw rosterError("ROSTER_INPUT_INVALID",result.error.issues.map(issue=>`${issue.path.join(".")}: ${issue.message}`).slice(0,5).join(" "));return result.data;};
 router.get("/",async(req,res,next)=>{try{return res.json({connections:await listRosterConnections(scope(req,res).schoolId)});}catch(error){next(error);}});
