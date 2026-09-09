@@ -3,6 +3,7 @@ import { getRuntimeMetadata } from "./runtimeMetadata.js";
 const INTERVAL_MS = 60_000;
 const COUNTER_NAMES = [
   "tenantCheckouts", "poolAcquisitionSuccess", "poolAcquisitionFailure", "auditWriteFailure",
+  "apiPoolReadinessStalled", "apiPoolReadinessRecovered", "apiPoolReadinessProbeDeferred",
   "aiProviderCalls", "aiProviderFailures", "aiProviderTimeouts", "aiProviderSaturated",
   "dailyRollupSchools", "studentWebSocketAuthAttempt", "studentWebSocketAuthSuccess",
   "studentWebSocketAuthDenied", "studentWebSocketAuthServiceFailure", "studentWebSocketAuthSocketClosed",
