@@ -15,6 +15,8 @@ export type SavedScheduleProfile = {
   id: string;
   revision: number;
   definition: ScheduleProfileDefinition;
+  /** Shared review context only; application dates remain separate. */
+  previewDate?: string;
   updatedAt: string;
 };
 export type ScheduleProfileTestingWindow = {
@@ -78,11 +80,14 @@ function unique<T>(values: T[], field: string): T[] {
 function ids(value: unknown, max: number, field: string): string[] {
   return unique(list(value, max, field).map(normalizeScheduleProfileId), field).sort();
 }
-function date(value: unknown): string {
+function date(value: unknown, message = "Application dates must be real dates in YYYY-MM-DD format."): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)
     || !Number.isFinite(Date.parse(`${value}T12:00:00Z`))
-    || new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) !== value) throw invalid("Application dates must be real dates in YYYY-MM-DD format.");
+    || new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) !== value) throw invalid(message);
   return value;
+}
+export function normalizeScheduleProfilePreviewDate(value: unknown): string {
+  return date(value, "Preview date must be a real date in YYYY-MM-DD format.");
 }
 function timestamp(value: unknown): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?Z$/.test(value)
@@ -132,14 +137,15 @@ export function normalizeScheduleProfileDefinition(value: unknown): ScheduleProf
 
 export function normalizeSavedScheduleProfile(value: unknown): SavedScheduleProfile {
   const row = object(value, "Saved schedule profile");
-  keys(row, ["id", "revision", "definition", "updatedAt"], "Saved schedule profile");
-  return { id: normalizeScheduleProfileId(row.id), revision: revision(row.revision), definition: normalizeScheduleProfileDefinition(row.definition), updatedAt: timestamp(row.updatedAt) };
+  keys(row, ["id", "revision", "definition", "previewDate", "updatedAt"], "Saved schedule profile");
+  return { id: normalizeScheduleProfileId(row.id), revision: revision(row.revision), definition: normalizeScheduleProfileDefinition(row.definition),
+    ...(row.previewDate !== undefined ? { previewDate: normalizeScheduleProfilePreviewDate(row.previewDate) } : {}), updatedAt: timestamp(row.updatedAt) };
 }
 
 export function normalizeScheduleProfileApplication(value: unknown): ScheduleProfileApplication {
   const row = object(value, "Schedule profile application");
   keys(row, ["id", "profileId", "profileName", "profileRevision", "dates", "definition", "classWindows", "testingWindows", "status", "createdBy", "createdAt"], "Schedule profile application");
-  const dates = unique(list(row.dates, SCHEDULE_PROFILE_LIMITS.dates, "Application dates").map(date), "Application dates").sort();
+  const dates = unique(list(row.dates, SCHEDULE_PROFILE_LIMITS.dates, "Application dates").map(value => date(value)), "Application dates").sort();
   if (!dates.length) throw invalid("Choose at least one application date.");
   const dateSet = new Set(dates);
   const definition = normalizeScheduleProfileDefinition(row.definition);

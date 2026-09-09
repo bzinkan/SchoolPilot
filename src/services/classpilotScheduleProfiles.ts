@@ -8,7 +8,7 @@ import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { getSchoolSchedulingContext, previewSchoolScheduling } from "./classpilotScheduling.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
 import { normalizeSchoolSchedulingConfig, resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError, isSchedulingDate, datePlusDays, type SchoolSchedulingConfig, type BellWindow } from "./classpilotSchedulingRules.js";
-import { normalizeScheduleProfileDefinition, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
+import { normalizeScheduleProfileDefinition, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup } from "./storage.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
@@ -100,9 +100,10 @@ async function persist(schoolId: string, actorId: string, config: SchoolScheduli
     .onConflictDoUpdate({ target: classpilotSchoolSchedules.schoolId, set: { config: normalized, revision: expected + 1, updatedBy: actorId, updatedAt: new Date() } });
   return expected + 1;
 }
-export async function saveScheduleProfile(options: { schoolId: string; actorId: string; revision: number; id?: string; profileRevision?: number; definition: unknown }) {
+export async function saveScheduleProfile(options: { schoolId: string; actorId: string; revision: number; id?: string; profileRevision?: number; definition: unknown; previewDate?: unknown }) {
   revision(options.revision);
   const definition = normalizeScheduleProfileDefinition(options.definition);
+  const suppliedPreviewDate = options.previewDate === undefined ? undefined : normalizeScheduleProfilePreviewDate(options.previewDate);
   return locked(options.schoolId, options.actorId, async (database) => {
     const data = await catalog(options.schoolId, database);
     if (data.context.revision !== options.revision) fail("Schedules changed. Reload before saving the profile.", "SCHEDULE_PREVIEW_STALE", 409);
@@ -112,7 +113,10 @@ export async function saveScheduleProfile(options: { schoolId: string; actorId: 
     const previous = options.id ? profiles.find((p) => p.id === options.id) : undefined;
     if (options.id && !previous) fail("Schedule profile not found.", "NOT_FOUND", 404);
     if (previous && previous.revision !== options.profileRevision) fail("This profile was edited. Reload it before saving.", "SCHEDULE_PREVIEW_STALE", 409);
-    const profile: SavedScheduleProfile = { id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, definition, updatedAt: new Date().toISOString() };
+    // Older clients omit this metadata; editing through them must retain it.
+    const previewDate = suppliedPreviewDate ?? previous?.previewDate;
+    const profile: SavedScheduleProfile = { id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, definition,
+      ...(previewDate !== undefined ? { previewDate } : {}), updatedAt: new Date().toISOString() };
     const config = { ...data.context.config, scheduleProfiles: [...profiles.filter((p) => p.id !== profile.id), profile] };
     return { profile, revision: await persist(options.schoolId, options.actorId, config, options.revision, database) };
   });

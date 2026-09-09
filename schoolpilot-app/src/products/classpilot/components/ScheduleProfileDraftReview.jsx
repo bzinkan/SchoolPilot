@@ -24,19 +24,19 @@ export function DraftReviewIssues({ issues = EMPTY, review, onEditIssue, compact
 export function DraftReviewStatus({ review, validDate, saved = false }) {
   const data = review.data;
   return <section aria-label="Draft schedule check" className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
-    <p className="font-medium">Reference-day check</p>
+    <p className="font-medium">Preview-day check</p>
     <div role="status" aria-live="polite">
-      {!validDate ? <p>Choose a valid instructional reference date to review this draft.</p>
+      {!validDate ? <p>Choose a valid instructional preview date to review this draft.</p>
         : review.pending ? <p>Checking draft schedule…</p>
           : review.error ? <p>{saved ? 'Profile saved; schedule review unavailable.' : 'Could not review this draft schedule.'}</p>
             : data ? <>
               {!data.complete && <p className="text-amber-800 dark:text-amber-300">Draft review is incomplete.</p>}
-              {data.counts?.conflicts > 0 ? <p className="text-amber-800 dark:text-amber-300">{data.counts.conflicts} {data.counts.conflicts === 1 ? 'conflict needs' : 'conflicts need'} attention</p> : data.complete && <p>No blocking conflicts on this reference date.</p>}
+              {data.counts?.conflicts > 0 ? <p className="text-amber-800 dark:text-amber-300">{data.counts.conflicts} {data.counts.conflicts === 1 ? 'conflict needs' : 'conflicts need'} attention</p> : data.complete && <p>No blocking conflicts on this preview date.</p>}
               {data.counts?.overlaps > 0 && <p className="text-muted-foreground">{data.counts.overlaps} allowed {data.counts.overlaps === 1 ? 'overlap' : 'overlaps'}</p>}
             </> : <p>Review this draft after loading a regular day or choosing Start blank.</p>}
     </div>
     {review.error && <><p className="text-xs text-muted-foreground">{review.error?.response?.data?.error || review.error.message}</p><Button size="sm" variant="outline" onClick={review.retry}>Retry draft review</Button></>}
-    <p className="text-xs leading-relaxed text-muted-foreground">You can keep editing and save with schedule conflicts. Resolve blocking conflicts when you preview the actual application dates. A reference-day check does not approve an application.</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">You can keep editing and save with schedule conflicts. Resolve blocking conflicts when you preview the actual application dates. A preview-day check does not approve an application.</p>
   </section>;
 }
 
@@ -89,7 +89,7 @@ export default function ScheduleProfileDraftReview({ review, filters, onFiltersC
               {type === 'testing' && filters.classId !== 'all' && row.classParticipation?.filter(item => item.classId === filters.classId).map(item => <p key={item.classId} className="text-xs text-muted-foreground">{item.count} of {item.total} class students participate</p>)}
               {onEditIssue && <Button size="sm" variant="ghost" aria-label={type === 'class' ? `Edit affected class ${row.name}` : `Edit testing block ${row.name || 'Untitled testing block'}`} onClick={() => onEditIssue(type === 'class' ? { classId: id } : { blockId: id })}>Edit</Button>}
             </td>
-            <td className="p-3 align-top text-muted-foreground">{type === 'testing' ? 'Additional testing supervision' : row.status === 'unavailable' ? 'Regular time unavailable' : row.status === 'schedule_off' ? 'Schedule off' : row.regularWindow ? timeText(row.regularWindow) : 'Does not meet on this reference date'}</td>
+            <td className="p-3 align-top text-muted-foreground">{type === 'testing' ? 'Additional testing supervision' : row.status === 'unavailable' ? 'Regular time unavailable' : row.status === 'schedule_off' ? 'Schedule off' : row.regularWindow ? timeText(row.regularWindow) : 'Does not meet on this preview date'}</td>
             <td className="p-3 align-top">{type === 'testing' ? row.startTime && row.endTime ? `${row.startTime}–${row.endTime}` : 'Times incomplete' : row.proposedStatus === 'incomplete' || (row.action === 'time' && row.status === 'meets' && !row.proposedWindow) ? 'Custom time incomplete' : row.status === 'unavailable' ? 'Schedule unavailable' : timeText(row.proposedWindow)}</td>
             <td className="space-y-2 p-3 align-top">
               {type === 'testing' ? <><Badge variant="secondary">Testing supervision</Badge>{row.status !== 'ready' && <p className="text-xs text-amber-800 dark:text-amber-300">Testing block needs review</p>}</> : <Badge variant="secondary">{row.proposedStatus === 'incomplete' ? 'Not checked yet' : row.status === 'not_scheduled' || row.status === 'schedule_off' ? 'Not meeting on this date' : row.action === 'skip' ? 'Skipped' : row.action === 'time' ? 'Custom time' : 'Unchanged'}</Badge>}

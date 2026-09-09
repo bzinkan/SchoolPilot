@@ -25,8 +25,8 @@ router.get("/", async (_req, res, next) => {
 });
 router.post("/", async (req, res, next) => {
   try {
-    const result = await saveScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, id: req.body.id, profileRevision: req.body.profileRevision, definition: req.body.definition });
-    await logAudit({ schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.schedule_profile.saved", entityType: "schedule_profile", entityId: result.profile.id, metadata: { revision: result.profile.revision, classRules: result.profile.definition.classRules.length, testingBlocks: result.profile.definition.testingBlocks.length } });
+    const result = await saveScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, id: req.body.id, profileRevision: req.body.profileRevision, definition: req.body.definition, previewDate: req.body.previewDate });
+    await logAudit({ schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.schedule_profile.saved", entityType: "schedule_profile", entityId: result.profile.id, metadata: { revision: result.profile.revision, classRules: result.profile.definition.classRules.length, testingBlocks: result.profile.definition.testingBlocks.length, ...(result.profile.previewDate !== undefined ? { previewDate: result.profile.previewDate } : {}) } });
     res.status(req.body.id ? 200 : 201).json(result);
   } catch (error) { next(error); }
 });
