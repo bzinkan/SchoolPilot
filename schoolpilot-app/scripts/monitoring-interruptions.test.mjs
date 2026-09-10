@@ -114,6 +114,7 @@ test("compact exact counts load without student details; history pages and diges
   assert.equal(await dialog.getByRole("button", { name: "Next page" }).isDisabled(), true);
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
+  await page.waitForFunction(el => el === document.activeElement, await opener.elementHandle());
   assert.equal(await opener.evaluate(el => el === document.activeElement), true);
   const toggle = page.getByRole("switch", { name: "Daily monitoring interruption digest" });
   await toggle.click(); await page.waitForFunction(() => document.getElementById("monitoring-digest-enabled")?.getAttribute("data-state") === "checked");

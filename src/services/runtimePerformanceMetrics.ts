@@ -1,4 +1,5 @@
 import { getRuntimeMetadata } from "./runtimeMetadata.js";
+import { STUDENT_SIGN_IN_COUNTER_NAMES } from "./classpilotStudentSignInDiagnosticsContract.js";
 
 const INTERVAL_MS = 60_000;
 const COUNTER_NAMES = [
@@ -10,6 +11,7 @@ const COUNTER_NAMES = [
   "studentWebSocketRevalidationFailure",
   "safetyAlertsCreated", "safetyObservationsMerged", "safetyExceptionsApplied",
   "safetyEmailsSent", "safetyFollowupsSent", "safetyEmailFailures", "safetyEmailUnknown",
+  ...STUDENT_SIGN_IN_COUNTER_NAMES,
 ] as const;
 
 export type RuntimePerformanceCounter = typeof COUNTER_NAMES[number];
@@ -37,6 +39,19 @@ export class RuntimePerformanceMetrics {
     if (!Number.isFinite(increment) || increment <= 0) return;
     this.flush();
     this.counters.set(name, (this.counters.get(name) ?? 0) + increment);
+  }
+
+  /** One terminal outcome and its reason must land in the same interval. */
+  recordCounters(increments: Partial<Record<RuntimePerformanceCounter, number>>): void {
+    const entries = Object.entries(increments).filter(([name, increment]) =>
+      COUNTER_NAMES.includes(name as RuntimePerformanceCounter)
+      && typeof increment === "number" && Number.isFinite(increment) && increment > 0
+    ) as Array<[RuntimePerformanceCounter, number]>;
+    if (entries.length === 0) return;
+    this.flush();
+    for (const [name, increment] of entries) {
+      this.counters.set(name, (this.counters.get(name) ?? 0) + increment);
+    }
   }
 
   recordTiming(name: RuntimePerformanceTiming, durationMs: number): void {
@@ -113,6 +128,9 @@ export class RuntimePerformanceMetrics {
 const metrics = new RuntimePerformanceMetrics();
 export function recordRuntimePerformanceCounter(name: RuntimePerformanceCounter, increment = 1): void {
   metrics.recordCounter(name, increment);
+}
+export function recordRuntimePerformanceCounters(increments: Partial<Record<RuntimePerformanceCounter, number>>): void {
+  metrics.recordCounters(increments);
 }
 export function recordRuntimePerformanceTiming(name: RuntimePerformanceTiming, durationMs: number): void {
   metrics.recordTiming(name, durationMs);

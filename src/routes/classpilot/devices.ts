@@ -21,6 +21,12 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import {
+  markStudentSignInStage,
+  markStudentSignInMethod,
+  markStudentSignInFailure,
+  markStudentSignInError,
+} from "../../services/classpilotStudentSignInDiagnostics.js";
+import {
   getDeviceById,
   getDevicesBySchool,
   createDevice,
@@ -350,10 +356,12 @@ async function hasCurrentClassPilotLicense(schoolId: string): Promise<boolean> {
 
 async function requireUncachedClasspilotEntitlementForIssuance(
   res: Response,
-  schoolId: string
+  schoolId: string,
+  onDenied?: () => void
 ): Promise<boolean> {
   const entitlement = await resolveClasspilotEntitlement(schoolId);
   if (entitlement.entitled) return true;
+  onDenied?.();
   res.status(403).json({
     error: "school_not_entitled",
     code: "CLASSPILOT_NOT_ENTITLED",
@@ -480,6 +488,14 @@ const extensionLoginLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
   message: { error: "Too many login attempts, please wait" },
+  handler: async (req, res, _next, options) => {
+    markStudentSignInFailure(req, "STUDENT_LOGIN_RATE_LIMIT");
+    res.status(options.statusCode);
+    const message = typeof options.message === "function"
+      ? await options.message(req, res)
+      : options.message;
+    if (!res.writableEnded) res.send(message);
+  },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => [
@@ -1409,6 +1425,7 @@ async function completeStudentDeviceLogin<
     capabilities?: unknown;
     extensionCapabilities?: unknown;
   };
+  onDiagnosticsStage?: (stage: "response_preparation") => void;
 }, sendResponse: (login: ClasspilotStudentDeviceLoginResponse) => T): Promise<T> {
   if (!options.student) {
     throw new Error("Student required");
@@ -1475,6 +1492,7 @@ async function completeStudentDeviceLogin<
       reason: "login_completion_failed",
     }),
     finalize: async () => {
+  options.onDiagnosticsStage?.("response_preparation");
   const studentEmail = student.email || undefined;
   if (options.authKind === "manual_shared") {
     recordHeartbeatHotPathCounter("manualSessionLoginIssued");
@@ -2659,8 +2677,10 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
 // POST /api/classpilot/extension/student-login - Shared Chromebook fallback login
 router.post("/extension/student-login", extensionLoginLimiter, async (req, res, next) => {
   try {
+    markStudentSignInStage(req, "request_validation");
     setClassPilotNoStore(res);
     if (!classpilotManualSharedSessionIssuanceEnabled()) {
+      markStudentSignInFailure(req, "MANUAL_ISSUANCE_DISABLED");
       return res.status(503).json({
         error: "Manual student sign-in is temporarily unavailable",
         code: "CLASSPILOT_MANUAL_SESSION_ISSUANCE_UNAVAILABLE",
@@ -2689,50 +2709,67 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
 
     if (!deviceId && !managedDeviceAuthorizationPresented) {
+      markStudentSignInFailure(req, "DEVICE_BINDING_MISSING");
       return res.status(400).json({ error: "deviceId required" });
     }
 
     // Upper-grade fallback: email + Student ID Number.
     if (studentEmail || studentIdNumber) {
+      markStudentSignInMethod(req, "email_id");
       const emailLc = String(studentEmail || "").trim().toLowerCase();
       const idNumber = String(studentIdNumber || "").trim();
       if (!emailLc || !idNumber) {
+        markStudentSignInFailure(req, "EMAIL_ID_FIELDS_MISSING");
         return res.status(400).json({ error: "Email and Student ID are required" });
       }
 
+      markStudentSignInStage(req, "school_resolution");
       const resolved = await resolveSchoolForStudent(emailLc);
       if (!resolved) {
+        markStudentSignInFailure(req, "EMAIL_SCHOOL_UNRESOLVED");
         return res.status(401).json({ error: "Invalid student credentials" });
       }
       if (explicitSchoolId && String(explicitSchoolId) !== resolved.school.id) {
+        markStudentSignInFailure(req, "SCHOOL_CONTEXT_MISMATCH");
         return res.status(403).json({ error: "School context does not match student email" });
       }
       if (schoolSlug) {
         const explicitSchool = await getSchoolBySlug(String(schoolSlug));
         if (!explicitSchool || explicitSchool.id !== resolved.school.id) {
+          markStudentSignInFailure(req, "SCHOOL_CONTEXT_MISMATCH");
           return res.status(403).json({ error: "School context does not match student email" });
         }
       }
 
-      if (!(await requireUncachedClasspilotEntitlementForIssuance(res, resolved.school.id))) {
+      markStudentSignInStage(req, "entitlement");
+      if (!(await requireUncachedClasspilotEntitlementForIssuance(res, resolved.school.id,
+        () => markStudentSignInFailure(req, "ENTITLEMENT_DENIED")))) {
         return;
       }
 
+      markStudentSignInStage(req, "tenant_checkout");
       await runWithTenantContext({ schoolId: resolved.school.id }, async () => {
+        markStudentSignInStage(req, "school_configuration");
         const regSettings = await getSettingsForSchool(resolved.school.id);
         if (!regSettings?.sharedChromebookSignInEnabled) {
+          markStudentSignInFailure(req, "SHARED_SIGNIN_DISABLED");
           return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
         }
         if (effectiveSharedChromebookLoginMethod(regSettings) !== "email_id") {
+          markStudentSignInFailure(req, "LOGIN_METHOD_DISABLED");
           return res.status(403).json({ error: "Email + Student ID login is not enabled for this school" });
         }
 
+        markStudentSignInStage(req, "enrollment_key");
         const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
           requireConfiguredKey: true,
         });
         if (!keyCheck.ok) {
+          markStudentSignInFailure(req, keyCheck.status === 403
+            ? "ENROLLMENT_NOT_CONFIGURED" : "ENROLLMENT_KEY_INVALID_OR_MISSING");
           return res.status(keyCheck.status).json({ error: keyCheck.error });
         }
+        markStudentSignInStage(req, "continuity");
         const managedDeviceContinuity = managedDeviceProofToken
           ? verifyClasspilotManagedDeviceContinuityProof({
               token: managedDeviceProofToken,
@@ -2740,6 +2777,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
             })
           : null;
         if (managedDeviceAuthorizationPresented && !managedDeviceContinuity) {
+          markStudentSignInFailure(req, "MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED");
           return res.status(401).json({
             error: "Managed-device continuity authorization failed",
             code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
@@ -2749,12 +2787,14 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           res.locals.managedDeviceContinuityAccepted = true;
         }
 
+        markStudentSignInStage(req, "credential_validation");
         const student = await getStudentByEmail(resolved.school.id, emailLc);
-        if (
-          !student ||
-          student.status !== "active" ||
-          String(student.studentIdNumber || "").trim() !== idNumber
-        ) {
+        const credentialFailure = !student ? "STUDENT_NOT_FOUND"
+          : student.status !== "active" ? "STUDENT_INACTIVE"
+          : String(student.studentIdNumber || "").trim() !== idNumber
+            ? "STUDENT_ID_NUMBER_MISMATCH" : undefined;
+        if (credentialFailure) {
+          markStudentSignInFailure(req, credentialFailure);
           return res.status(401).json({
             error: "Invalid student credentials",
             ...(managedDeviceContinuity
@@ -2763,6 +2803,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           });
         }
 
+        markStudentSignInStage(req, "session_issuance");
         const login = await completeStudentDeviceLogin({
           schoolId: resolved.school.id,
           deviceId,
@@ -2773,6 +2814,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           reclaimRecoveryToken: recoveryToken,
           managedDeviceContinuity,
           protocolPayload: req.body,
+          onDiagnosticsStage: (stage) => markStudentSignInStage(req, stage),
         }, (prepared) => res.json(prepared));
         return login;
       });
@@ -2780,8 +2822,10 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     }
 
     // Optional fallback: roster-selected student + 4-digit PIN.
+    markStudentSignInMethod(req, "name_pin");
     const selectedStudentId = String(studentId || "").trim();
     const enteredPin = String(pin || "").trim();
+    markStudentSignInStage(req, "school_resolution");
     const school = explicitSchoolId
       ? await getSchoolById(String(explicitSchoolId))
       : schoolSlug
@@ -2789,28 +2833,40 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         : undefined;
 
     if (!school || !selectedStudentId || !/^\d{4}$/.test(enteredPin)) {
+      markStudentSignInFailure(req, !school ? "SCHOOL_CONTEXT_MISSING"
+        : !selectedStudentId ? "STUDENT_SELECTION_MISSING" : "PIN_FORMAT_INVALID");
       return res.status(401).json({ error: "Invalid student credentials" });
     }
 
-    if (!(await requireUncachedClasspilotEntitlementForIssuance(res, school.id))) {
+    markStudentSignInStage(req, "entitlement");
+    if (!(await requireUncachedClasspilotEntitlementForIssuance(res, school.id,
+      () => markStudentSignInFailure(req, "ENTITLEMENT_DENIED")))) {
       return;
     }
 
+    markStudentSignInStage(req, "tenant_checkout");
     await runWithTenantContext({ schoolId: school.id }, async () => {
+      markStudentSignInStage(req, "school_configuration");
       const regSettings = await getSettingsForSchool(school.id);
       if (!regSettings?.sharedChromebookSignInEnabled) {
+        markStudentSignInFailure(req, "SHARED_SIGNIN_DISABLED");
         return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
       }
       if (effectiveSharedChromebookLoginMethod(regSettings) !== "name_pin") {
+        markStudentSignInFailure(req, "LOGIN_METHOD_DISABLED");
         return res.status(403).json({ error: "PIN login is not enabled for this school" });
       }
 
+      markStudentSignInStage(req, "enrollment_key");
       const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
         requireConfiguredKey: true,
       });
       if (!keyCheck.ok) {
+        markStudentSignInFailure(req, keyCheck.status === 403
+          ? "ENROLLMENT_NOT_CONFIGURED" : "ENROLLMENT_KEY_INVALID_OR_MISSING");
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
+      markStudentSignInStage(req, "continuity");
       const managedDeviceContinuity = managedDeviceProofToken
         ? verifyClasspilotManagedDeviceContinuityProof({
             token: managedDeviceProofToken,
@@ -2818,6 +2874,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
           })
         : null;
       if (managedDeviceAuthorizationPresented && !managedDeviceContinuity) {
+        markStudentSignInFailure(req, "MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED");
         return res.status(401).json({
           error: "Managed-device continuity authorization failed",
           code: "CLASSPILOT_MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED",
@@ -2827,9 +2884,12 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         res.locals.managedDeviceContinuityAccepted = true;
       }
 
+      markStudentSignInStage(req, "credential_validation");
       const student = await getStudentById(selectedStudentId);
+      markStudentSignInStage(req, "pin_lockout");
       const lockout = await getPinLockout(school.id, selectedStudentId);
       if (!lockout.ok) {
+        markStudentSignInFailure(req, "PIN_LOCKOUT");
         return res.status(429).json({
           error: "Too many PIN attempts. Try again later.",
           retryAfterSeconds: lockout.retryAfterSeconds,
@@ -2838,14 +2898,18 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
             : {}),
         });
       }
-      if (
-        !student ||
-        student.schoolId !== school.id ||
-        student.status !== "active" ||
-        !student.classpilotPinHash ||
-        !(await comparePassword(enteredPin, student.classpilotPinHash))
-      ) {
+      markStudentSignInStage(req, "credential_validation");
+      // Preserve the existing short-circuit order and single comparison. The
+      // reason describes the failed check, never the student's intended choice.
+      const credentialFailure = !student ? "STUDENT_NOT_FOUND"
+        : student.schoolId !== school.id ? "STUDENT_SCHOOL_MISMATCH"
+        : student.status !== "active" ? "STUDENT_INACTIVE"
+        : !student.classpilotPinHash ? "PIN_NOT_CONFIGURED"
+        : !(await comparePassword(enteredPin, student.classpilotPinHash))
+          ? "PIN_MISMATCH" : undefined;
+      if (credentialFailure) {
         await recordPinFailure(school.id, selectedStudentId);
+        markStudentSignInFailure(req, credentialFailure);
         return res.status(401).json({
           error: "Invalid student credentials",
           ...(managedDeviceContinuity
@@ -2855,6 +2919,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
       }
       await clearPinFailures(school.id, selectedStudentId);
 
+      markStudentSignInStage(req, "session_issuance");
       const login = await completeStudentDeviceLogin({
         schoolId: school.id,
         deviceId,
@@ -2865,10 +2930,12 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         reclaimRecoveryToken: recoveryToken,
         managedDeviceContinuity,
         protocolPayload: req.body,
+        onDiagnosticsStage: (stage) => markStudentSignInStage(req, stage),
       }, (prepared) => res.json(prepared));
       return login;
     });
   } catch (err) {
+    markStudentSignInError(req, err);
     next(err);
   }
 });

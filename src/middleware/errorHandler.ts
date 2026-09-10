@@ -2,6 +2,7 @@ import type { ErrorRequestHandler } from "express";
 import errorMonitor from "../services/errorMonitor.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { getDatabaseErrorDetails } from "../util/databaseError.js";
+import { markStudentSignInError } from "../services/classpilotStudentSignInDiagnostics.js";
 
 const DATABASE_CONTRACT_ERRORS: Record<string, { status: number; code: string; message: string }> = {
   classpilot_active_staff_assignment_membership: {
@@ -107,6 +108,7 @@ const DATABASE_CONTRACT_ERRORS: Record<string, { status: number; code: string; m
 };
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  markStudentSignInError(req, err);
   const reqId = req.requestId;
   // Prefix the log with the correlation id so it's greppable in CloudWatch.
   console.error(`Error [req:${reqId ?? "n/a"}]:`, safeErrorMetadata(err));

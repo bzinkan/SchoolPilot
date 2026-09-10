@@ -11,6 +11,7 @@ import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
 import { createRedisReadyWaiter } from "../util/redisReadyWaiter.js";
 import { verifyUserToken } from "../services/jwt.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
+import { markStudentSignInFailure } from "../services/classpilotStudentSignInDiagnostics.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -128,6 +129,14 @@ export const apiLimiter = rateLimit({
   store: redisStore("rl:api:"),
   passOnStoreError: true,
   keyGenerator: (req: Request) => apiRateLimitIdentity(req).key,
+  async handler(req, res, _next, options) {
+    markStudentSignInFailure(req, "GLOBAL_API_RATE_LIMIT");
+    res.status(options.statusCode);
+    const message = typeof options.message === "function"
+      ? await options.message(req, res)
+      : options.message;
+    if (!res.writableEnded) res.send(message);
+  },
 });
 
 // Workspace Security Audit — expensive: each call fans out to ~10 Google APIs
