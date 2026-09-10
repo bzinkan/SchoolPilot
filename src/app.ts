@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import { sessionPool, apiPoolReadiness } from "./db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestId } from "./middleware/requestId.js";
+import { studentSignInDiagnostics } from "./services/classpilotStudentSignInDiagnostics.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
@@ -93,6 +94,7 @@ export function createApp() {
 
   // Correlation id on every request (first, so all downstream logs/errors carry it)
   app.use(requestId);
+  app.use(studentSignInDiagnostics);
 
   // Security headers
   app.use(
