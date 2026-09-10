@@ -3529,55 +3529,66 @@ exit 0
             $rdsSpikeCase.result.failures -notcontains "rds_cpu") "A delayed RDS CPU spike must remain visible to cumulative acceptance without replacing the latest-only runtime sample."
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL,Env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE -ErrorAction SilentlyContinue
 
-        $runtimeBaseNow = [DateTimeOffset]::UtcNow.ToUniversalTime()
+        function Set-RdsRuntimeSeriesFixtureClock {
+            param($CaseConfig, [int]$BaseMinutesAgo = 3, [int]$BoundaryMinutesAfterBase = 0)
+            # Keep exact 60-second spacing without losing up to 59 seconds of
+            # freshness to minute rounding before a slow owned child starts.
+            $base = [DateTimeOffset]::UtcNow.ToUniversalTime().AddMinutes(-$BaseMinutesAgo)
+            $CaseConfig | Add-Member -NotePropertyName testRuntimeSeriesNotBeforeUtc `
+                -NotePropertyValue $base.AddMinutes($BoundaryMinutesAfterBase).ToString("o") -Force
+            $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $base.ToString("o")
+        }
+
         $runtimeMinuteTicks = [TimeSpan]::TicksPerMinute
-        $runtimeBase = [DateTimeOffset]::new(
-            $runtimeBaseNow.Ticks - ($runtimeBaseNow.Ticks % $runtimeMinuteTicks),
-            [TimeSpan]::Zero
-        ).AddMinutes(-3)
         $runtimeSeriesConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
-        $runtimeSeriesConfig.minimumWallClockSeconds = 10
+        # These cases exercise runtime breaches and the iteration ceiling, not
+        # cumulative acceptance. Slow mock sweeps must not reach acceptance first.
+        # maxIterations still ends each case; this adds no wait and leaves the
+        # production three-breach and 240-second RDS freshness thresholds intact.
+        $runtimeSeriesConfig.minimumWallClockSeconds = [int][Math]::Ceiling(
+            $script:MonitorCompletionWatchdogMilliseconds / 1000.0
+        )
         $runtimeSeriesConfig.maxIterations = 1
-        $runtimeSeriesConfig | Add-Member -NotePropertyName testRuntimeSeriesNotBeforeUtc -NotePropertyValue $runtimeBase.ToString("o") -Force
-        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $runtimeBase.ToString("o")
 
         $runtimeSeriesConfig.runId = "rds-cpu-delayed-single-runtime"
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "one"
+        Set-RdsRuntimeSeriesFixtureClock $runtimeSeriesConfig
         $singleRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-single-runtime" $runtimeSeriesConfig
         Assert-Condition ($singleRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
             $singleRuntimeCase.result.failures -notcontains "rds_cpu") "One delayed RDS CPU spike must not trigger the three-consecutive-minute runtime gate."
 
         $runtimeSeriesConfig.runId = "rds-cpu-delayed-three-runtime"
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "three"
+        Set-RdsRuntimeSeriesFixtureClock $runtimeSeriesConfig
         $threeRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-three-runtime" $runtimeSeriesConfig
         Assert-Condition ($threeRuntimeCase.exitCode -eq 2 -and
             $threeRuntimeCase.result.failures -contains "rds_cpu") "Three consecutive delayed RDS CPU breach datapoints returned together must trigger the runtime gate."
 
         $runtimeSeriesConfig.runId = "rds-cpu-delayed-gap-runtime"
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "gapped"
+        Set-RdsRuntimeSeriesFixtureClock $runtimeSeriesConfig
         $gappedRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-gap-runtime" $runtimeSeriesConfig
         Assert-Condition ($gappedRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
             $gappedRuntimeCase.result.failures -notcontains "rds_cpu") "A missing one-minute RDS datapoint must reset the consecutive runtime breach counter."
 
         $historicalRuntimeConfig = $runtimeSeriesConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $historicalRuntimeConfig.runId = "rds-cpu-pre-monitor-history"
-        $historicalRuntimeConfig.testRuntimeSeriesNotBeforeUtc = $runtimeBase.AddMinutes(3).ToString("o")
         $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "historical"
+        Set-RdsRuntimeSeriesFixtureClock $historicalRuntimeConfig -BoundaryMinutesAfterBase 3
         $historicalRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-pre-monitor-history" $historicalRuntimeConfig
         $historicalRuntimeSample = $historicalRuntimeCase.lastEvidence | ConvertFrom-Json -Depth 30
         Assert-Condition ($historicalRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
             $historicalRuntimeCase.result.failures -notcontains "rds_cpu" -and
             $historicalRuntimeSample.metrics.rdsCpuPercent -eq 10) "Pre-monitor RDS breach history must not trigger the active phase rollback when the current datapoint is healthy."
 
-        $boundaryRuntimeBase = $runtimeBase.AddMinutes(1)
         $boundaryStepFile = Join-Path $childRoot "rds-cpu-boundary-step.txt"
         $boundaryRuntimeConfig = $runtimeSeriesConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
-        $boundaryRuntimeConfig.testRuntimeSeriesNotBeforeUtc = $boundaryRuntimeBase.ToString("o")
         $boundaryRuntimeConfig.maxIterations = 3
-        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $boundaryRuntimeBase.ToString("o")
+        $boundaryRuntimeConfig | Add-Member -NotePropertyName testMinimumIterationsBeforeAcceptance -NotePropertyValue 3 -Force
         $env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE = $boundaryStepFile
         Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
         $boundaryRuntimeConfig.runId = "rds-cpu-boundary-two-post-start"
+        Set-RdsRuntimeSeriesFixtureClock $boundaryRuntimeConfig -BaseMinutesAgo 2
         $boundaryTwoCase = Invoke-ChildMonitorCase "rds-cpu-boundary-two-post-start" $boundaryRuntimeConfig
         Assert-Condition ($boundaryTwoCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
             $boundaryTwoCase.result.failures -notcontains "rds_cpu") "A pre-monitor RDS breach plus only two post-start breaches must not trigger rollback."
@@ -3585,9 +3596,23 @@ exit 0
         Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
         $boundaryRuntimeConfig.runId = "rds-cpu-boundary-three-post-start"
         $boundaryRuntimeConfig.maxIterations = 4
+        $boundaryRuntimeConfig.testMinimumIterationsBeforeAcceptance = 4
+        Set-RdsRuntimeSeriesFixtureClock $boundaryRuntimeConfig -BaseMinutesAgo 2
         $boundaryThreeCase = Invoke-ChildMonitorCase "rds-cpu-boundary-three-post-start" $boundaryRuntimeConfig
+        $boundaryThreeSample = $boundaryThreeCase.lastEvidence | ConvertFrom-Json -DateKind String -Depth 30
+        $boundaryThreeContext = [ordered]@{
+            exitCode = $boundaryThreeCase.exitCode
+            status = $boundaryThreeCase.result.status
+            failures = if ($boundaryThreeCase.result.PSObject.Properties["failures"]) { @($boundaryThreeCase.result.failures) } else { @() }
+            sampleCount = @(Get-Content -LiteralPath (Join-Path $childEvidence "rds-cpu-boundary-three-post-start-aws-monitor.jsonl")).Count
+            lastSampleUtc = $boundaryThreeSample.timestamp
+            lastRdsCpuPercent = $boundaryThreeSample.metrics.rdsCpuPercent
+        }
         Assert-Condition ($boundaryThreeCase.exitCode -eq 2 -and
-            $boundaryThreeCase.result.failures -contains "rds_cpu") "The third consecutive post-start RDS breach must trigger even when an earlier pre-monitor breach was ignored."
+            $boundaryThreeCase.result.failures -contains "rds_cpu") (
+                "The third consecutive post-start RDS breach must trigger even when an earlier pre-monitor breach was ignored. " +
+                "Context: $($boundaryThreeContext | ConvertTo-Json -Compress -Depth 5)"
+            )
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -ErrorAction SilentlyContinue
