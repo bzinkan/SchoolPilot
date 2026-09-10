@@ -84,35 +84,43 @@ Use a completed, half-open UTC time window and replace the release placeholder
 with the exact deployed 40-character Git SHA. Use only projected safe fields,
 never raw log messages or request exports.
 
+Runtime summaries exceed the [200-field automatic JSON discovery limit](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_AnalyzeLogData-discoverable-fields.html).
+Use [`jsonParse(@message)` and scalar map attributes](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CWL_QuerySyntax-operations-functions.html#structure-types)
+instead of relying on automatically discovered fields. Parse within the query;
+return only the safe aggregate fields below, never `@message` or the whole map.
+
 Detailed examples (sampled when the budget is exceeded):
 
 ```text
-fields timestampUtc, Release, InstanceId, method, stage, reason, httpStatus, elapsedMs
-| filter event = "student_signin_failure" and Release = "<deployed-sha>"
-| stats count(*) as retainedRecords, max(elapsedMs) as maxElapsedMs
-  by bin(5m), Release, InstanceId, method, stage, reason, httpStatus
+fields jsonParse(@message) as j
+| filter j.event = "student_signin_failure" and j.Release = "<deployed-sha>"
+| stats count(*) as retainedRecords, max(j.elapsedMs) as maxElapsedMs
+  by bin(5m), j.Release as Release, j.InstanceId as InstanceId,
+    j.method as method, j.stage as stage, j.reason as reason, j.httpStatus as httpStatus
 ```
 
 Counter totals for complete, unique intervals:
 
 ```text
-filter event = "schoolpilot_runtime_performance_summary"
-  and Release = "<deployed-sha>" and Service = "api" and intervalSeconds = 60
-| filter intervalStartedAtUtc >= "<from-UTC-ISO>"
-  and intervalEndedAtUtc <= "<cutoff-UTC-ISO>"
+fields jsonParse(@message) as j
+| filter j.event = "schoolpilot_runtime_performance_summary"
+  and j.Release = "<deployed-sha>" and j.Service = "api" and j.intervalSeconds = 60
+| filter j.intervalStartedAtUtc >= "<from-UTC-ISO>"
+  and j.intervalEndedAtUtc <= "<cutoff-UTC-ISO>"
 | stats count(*) as copies,
-    max(counters.studentSignInCompleted) as completed,
-    max(counters.studentSignInSuccess) as successfulResponses,
-    max(counters.studentSignInFailure) as failures,
-    max(counters.studentSignInReasonPinMismatch) as pinMismatch,
-    max(counters.studentSignInReasonStudentNotFound) as studentNotFound,
-    max(counters.studentSignInReasonStudentIdNumberMismatch) as idMismatch,
-    max(counters.studentSignInReasonPinLockout) as pinLockout,
-    max(counters.studentSignInReasonStudentLoginRateLimit) as loginLimit,
-    max(counters.studentSignInReasonGlobalApiRateLimit) as apiLimit,
-    max(counters.studentSignInDiagnosticSuppressed) as suppressed,
-    max(counters.studentSignInDiagnosticSinkFailure) as sinkFailures
-  by Release, InstanceId, intervalStartedAtUtc, intervalEndedAtUtc
+    max(j.counters.studentSignInCompleted) as completed,
+    max(j.counters.studentSignInSuccess) as successfulResponses,
+    max(j.counters.studentSignInFailure) as failures,
+    max(j.counters.studentSignInReasonPinMismatch) as pinMismatch,
+    max(j.counters.studentSignInReasonStudentNotFound) as studentNotFound,
+    max(j.counters.studentSignInReasonStudentIdNumberMismatch) as idMismatch,
+    max(j.counters.studentSignInReasonPinLockout) as pinLockout,
+    max(j.counters.studentSignInReasonStudentLoginRateLimit) as loginLimit,
+    max(j.counters.studentSignInReasonGlobalApiRateLimit) as apiLimit,
+    max(j.counters.studentSignInDiagnosticSuppressed) as suppressed,
+    max(j.counters.studentSignInDiagnosticSinkFailure) as sinkFailures
+  by j.Release as Release, j.InstanceId as InstanceId,
+    j.intervalStartedAtUtc as intervalStartedAtUtc, j.intervalEndedAtUtc as intervalEndedAtUtc
 | filter copies = 1
 | stats count(*) as coveredIntervals, sum(completed) as completed,
     sum(successfulResponses) as successfulResponses, sum(failures) as failures,
