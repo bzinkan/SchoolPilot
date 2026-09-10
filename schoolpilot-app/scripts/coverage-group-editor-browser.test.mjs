@@ -431,6 +431,7 @@ test('group deletion confirms the exact version, cancels without writes, retains
       await page.keyboard.press('Tab'); assert.equal(await cancel.evaluate(element => element === document.activeElement), true, 'Keyboard focus remains inside the confirmation');
       await page.screenshot({ path: path.join(artifactDir, `delete-group-${size}-${theme}.png`), animations: 'disabled' });
       await page.keyboard.press('Enter'); await confirm.waitFor({ state: 'hidden' });
+      await page.waitForFunction(element => element === document.activeElement, await opener.elementHandle());
       assert.equal(await opener.evaluate(element => element === document.activeElement), true, 'Cancel restores focus to the original group');
     }
   }
@@ -465,6 +466,7 @@ test('group deletion confirms the exact version, cancels without writes, retains
   const refreshed = state.reads.slice(readsBefore).map(read => read.pathname);
   assert(refreshed.includes('/api/coverage/supervision-groups/browse') && refreshed.includes('/api/coverage/assignments') && refreshed.includes('/api/coverage/capabilities'));
   assert.deepEqual(await page.evaluate(() => ['classpilot-schedule-profiles', 'classpilot-school-scheduling'].map(key => window.__coverageTestClient.getQueryState([key, 'school'])?.isInvalidated)), [true, true]);
+  await page.waitForFunction(element => element === document.activeElement, await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).elementHandle());
   assert.equal(await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).evaluate(element => element === document.activeElement), true);
   await page.getByRole('tab', { name: 'Staff access', exact: true }).click();
   await page.getByRole('tabpanel', { name: 'Staff access', exact: true }).waitFor();
@@ -500,6 +502,7 @@ test('removing an orphaned staff permission package sends active and inactive ID
       assert.equal(await confirm.evaluate(element => element.scrollWidth <= element.clientWidth), true);
       await page.screenshot({ path: path.join(artifactDir, `remove-permissions-${size}-${theme}.png`), animations: 'disabled' });
       await page.keyboard.press('Escape'); await confirm.waitFor({ state: 'hidden' });
+      await page.waitForFunction(element => element === document.activeElement, await opener.elementHandle());
       assert.equal(await opener.evaluate(element => element === document.activeElement), true);
     }
   }
@@ -514,6 +517,7 @@ test('removing an orphaned staff permission package sends active and inactive ID
   state.deletePermissionMode = 'success';
   await confirm.getByRole('button', { name: 'Retry removal', exact: true }).click();
   await confirm.waitFor({ state: 'hidden' }); await opener.waitFor({ state: 'hidden' });
+  await page.waitForFunction(element => element === document.activeElement, await page.getByRole('tab', { name: 'Staff access', exact: true }).elementHandle());
   assert.equal(await page.getByRole('tab', { name: 'Staff access', exact: true }).evaluate(element => element === document.activeElement), true, 'Permission removal returns focus to Staff access');
   await page.getByRole('button', { name: 'Remove permissions for Remaining Staff', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Remove permissions for Mixed Staff', exact: true }).click();
@@ -934,6 +938,7 @@ test('school categories create, rename and delete with reviewable consequences; 
   await edit.getByLabel('Name', { exact: true }).waitFor();
   assert.equal(await edit.getByLabel('Category', { exact: true }).inputValue(), categoryId);
   await edit.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.waitForFunction(element => element === document.activeElement, await editOpener.elementHandle());
   assert.equal(await editOpener.evaluate(element => element === document.activeElement), true, 'The detail loading step preserves the edit opener for focus restoration');
   await page.getByRole('button', { name: 'Manage categories', exact: true }).click();
   const deleteOpener = categories.getByRole('button', { name: 'Delete category Testing', exact: true });
