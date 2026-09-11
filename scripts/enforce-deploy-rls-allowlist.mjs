@@ -22,6 +22,9 @@ export const CLASSPILOT_FAB_RLS_TABLES = frozenRegistryRequest("classpilotFabRea
 export const SCHOOLPILOT_270_ADDITIVE_RLS_TABLES = frozenRegistryRequest(
   "schoolPilot270AdditivePersistence"
 );
+export const CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES = frozenRegistryRequest(
+  "classpilotSupervisionActivityReports"
+);
 
 const REVIEWED_RLS_ENABLEMENT_REQUESTS = Object.freeze([
   ...Object.keys(rlsRegistry.reviewedEnablementRequests).map(frozenRegistryRequest),

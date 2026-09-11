@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 import { emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
 import { localDateInTimeZone } from "../src/util/schoolTime.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
@@ -271,4 +272,35 @@ test("the additive metadata migration rejects partial identity and invalid outco
   await assert.rejects(statement(sql`INSERT INTO classpilot_supervision_contexts(school_id,context_type,name,assigned_staff_id,created_by,ends_at,schedule_profile_application_id) VALUES(${ids.school},'supervision_group','Invalid',${ids.teacher},${ids.teacher},now()+interval '1 hour','partial')`), pgError("23514"));
   await assert.rejects(statement(sql`UPDATE classpilot_school_schedules SET profile_activation_outcomes='[]'::jsonb WHERE school_id=${ids.school}`), pgError("23514"));
   assert.equal((await contexts()).length, 0);
+});
+
+test("testing activation records its actual supervisor and cancellation queues one activity summary", async () => {
+  await pool.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+  const previousCutoff = process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+  process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = new Date(now.getTime() - 3_600_000).toISOString();
+  try {
+    const app = application();
+    await save([app]);
+    const beforeActivation = await statement(sql`SELECT count(*)::int AS count FROM classpilot_supervision_report_segments WHERE school_id=${ids.school}`);
+    assert.equal(beforeActivation.rows[0]?.count, 0, "Saving an applied plan alone is not observed supervision");
+    await scan();
+    const context = (await contexts())[0]!;
+    const started = await statement(sql`SELECT staff_id,state FROM classpilot_supervision_report_segments WHERE school_id=${ids.school}`);
+    assert.deepEqual(started.rows, [{ staff_id: ids.teacher, state: "active" }]);
+    const queuedBeforeEnd = await statement(sql`SELECT count(*)::int AS count FROM classpilot_supervision_summary_deliveries WHERE school_id=${ids.school}`);
+    assert.equal(queuedBeforeEnd.rows[0]?.count, 0);
+    app.status = "cancelled";
+    await save([app]);
+    await scoped(() => service.cancelProfileSupervision(ids.school, app.id));
+    await scoped(() => service.cancelProfileSupervision(ids.school, app.id));
+    const completed = await statement(sql`SELECT state,window_start,window_end FROM classpilot_supervision_report_segments WHERE school_id=${ids.school} AND context_id=${context.id}`);
+    assert.equal(completed.rows.length, 1);
+    assert.equal(completed.rows[0]?.state, "pending");
+    assert.ok(new Date(String(completed.rows[0]?.window_end)) > new Date(String(completed.rows[0]?.window_start)));
+    const deliveries = await statement(sql`SELECT recipient_staff_id,state FROM classpilot_supervision_summary_deliveries WHERE school_id=${ids.school}`);
+    assert.deepEqual(deliveries.rows, [{ recipient_staff_id: ids.teacher, state: "waiting_report" }]);
+  } finally {
+    if (previousCutoff === undefined) delete process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM;
+    else process.env.CLASSPILOT_SUPERVISION_REPORTS_CAPTURE_FROM = previousCutoff;
+  }
 });

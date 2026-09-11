@@ -413,6 +413,22 @@ test("report v2 freezes exact-bound evidence availability and human review label
     }],
   });
   assert.equal(mismatched?.safetyAlerts[0]?.evidenceAvailability, "unavailable");
+
+  const [delegated] = materializeStudents(typedSessionReport, {
+    ...baseInput,
+    exclusions: [{ studentId: "student", start: at(10), end: at(30), source: "delegated_supervision" }],
+  });
+  assert.deepEqual(delegated?.safetyAlerts, [], "Class summaries exclude safety activity owned by a covering teacher");
+  const [returned] = materializeStudents(typedSessionReport, {
+    ...baseInput,
+    exclusions: [{ studentId: "student", start: at(0), end: at(10), source: "delegated_supervision" }],
+  });
+  assert.equal(returned?.safetyAlerts.length, 1, "The event at the exact return boundary belongs to the regular class");
+  const [otherStudents] = materializeStudents(typedSessionReport, {
+    ...baseInput,
+    exclusions: [{ studentId: "another-student", start: at(0), end: at(60), source: "delegated_supervision" }],
+  });
+  assert.equal(otherStudents?.safetyAlerts.length, 1, "Partial-class testing does not remove other students' activity");
 });
 
 test("tracking policy handles cross-midnight windows and DST wall-clock boundaries", () => {

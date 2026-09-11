@@ -48,6 +48,7 @@ import { CLASSPILOT_CONTENT_CATEGORIES_SQL } from "./db/classpilotContentCategor
 import { CLASSPILOT_MONITORING_INTERRUPTION_SQL } from "./db/classpilotMonitoringInterruptionsMigration.js";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "./db/classpilotScheduleProfileSupervisionMigration.js";
 import { CLASSPILOT_COVERAGE_CATEGORIES_SQL } from "./db/classpilotCoverageCategoriesMigration.js";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "./db/classpilotSupervisionReportsMigration.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -4955,6 +4956,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_MONITORING_INTERRUPTION_SQL);
   await pool.query(CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL);
   await pool.query(CLASSPILOT_COVERAGE_CATEGORIES_SQL);
+  await pool.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
 }
 
 async function startServer(): Promise<void> {

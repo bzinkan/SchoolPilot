@@ -14,6 +14,8 @@ export { decideMonitoringInterruption, MONITORING_INTERRUPTION_TOLERANCE_MS } fr
 import { localDateInTimeZone } from "../util/schoolTime.js";
 import { classpilotRetentionExpiresAt } from "../util/classpilotRetention.js";
 import { decodeMonitoringHistoryCursor, encodeMonitoringHistoryCursor, monitoringHistoryScope, MONITORING_HISTORY_PAGE_SIZE, type MonitoringHistoryFilter } from "./classpilotMonitoringHistoryRules.js";
+import { supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
+import { supervisionEventOwnershipSql } from "./classpilotSupervisionHistory.js";
 
 type Expectation = Omit<typeof expectations.$inferSelect, "teachingSessionId" | "supervisionContextId">;
 type Scope = { student_id: string; student_session_id: string; device_id: string; scope_type: string; scope_id: string; scope_name: string; scope_started_at: Date; scope_ends_at: Date | null };
@@ -159,9 +161,14 @@ export async function listMonitoringInterruptions(options: { schoolId: string; a
 
 type MonitoringReadOptions = { schoolId: string; actorId: string; isAdmin: boolean; now?: Date };
 function monitoringHistoryAuthorization(options: MonitoringReadOptions) {
+  const now = options.now ?? new Date();
+  const supervisionOwnership = supervisionActivityReportingEnabled(now)
+    ? supervisionEventOwnershipSql({ schoolId: options.schoolId, contextId: sql`i.scope_id`, staffId: options.actorId,
+      studentId: sql`i.student_id`, occurredAt: sql`i.detected_at`, now })
+    : sql`EXISTS(SELECT 1 FROM classpilot_supervision_contexts c WHERE c.school_id=i.school_id AND c.id=i.scope_id AND c.assigned_staff_id=${options.actorId})`;
   return options.isAdmin ? sql`true` : sql`(
     (i.scope_type='teaching_session' AND EXISTS(SELECT 1 FROM classpilot_session_staff staff WHERE staff.school_id=i.school_id AND staff.teaching_session_id=i.scope_id AND staff.staff_id=${options.actorId}))
-    OR (i.scope_type='supervision_context' AND EXISTS(SELECT 1 FROM classpilot_supervision_contexts c WHERE c.school_id=i.school_id AND c.id=i.scope_id AND c.assigned_staff_id=${options.actorId})))`;
+    OR (i.scope_type='supervision_context' AND ${supervisionOwnership}))`;
 }
 
 /** Counts are independent of history page limits and never hydrate student names or rosters. */

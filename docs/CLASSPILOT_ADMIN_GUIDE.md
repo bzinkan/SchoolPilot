@@ -127,10 +127,11 @@ Set school-wide defaults without confusing them with an individual administrator
 
 1. **Set core boundaries.** Review school identity, retention, tab limits, allowed domains and blocked domains. Every active school administrator receives distinct safety alerts; this is managed through Safety Center.
 2. **Set monitoring hours.** Configure school-local tracking hours and the after-hours choice: Off, Safety only, or Full. Safety only retains actual unsuppressed safety alerts without ordinary browsing history, screenshots or teacher presence; unsupported clients stop after-hours monitoring.
-3. **Configure shared sign-in.** Enable shared Chromebook sign-in only when the school’s device model requires it, then manage setup keys as protected configuration.
-4. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
-5. **Set workflow policy.** Review the schedule-change policy and other school-level controls before teachers depend on them.
-6. **Respect data boundaries.** Use retention and access controls according to school policy. Do not copy student browsing or sign-in details into general-purpose notes.
+3. **Choose an optional summary copy.** The Central Email Recipient setting can receive a copy of completed class, testing and Coverage activity summaries. Each supervisor still receives only the students and time intervals they supervised. This setting does not replace Safety Center notifications or announce schedule changes.
+4. **Configure shared sign-in.** Enable shared Chromebook sign-in only when the school’s device model requires it, then manage setup keys as protected configuration.
+5. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
+6. **Set workflow policy.** Review the schedule-change policy and other school-level controls before teachers depend on them.
+7. **Respect data boundaries.** Use retention and access controls according to school policy. Do not copy student browsing or sign-in details into general-purpose notes.
 
 > **Flight note:** Flight Paths displayed in School Settings belong to the signed-in administrator’s teaching profile; they are not a school-wide library.
 
@@ -191,7 +192,9 @@ Define who can temporarily supervise students and preserve clear ownership throu
 5. **Assign exact students.** Create the assignment with its intended staff, students, and time boundary. Do not use missing targets as a broader fallback.
 6. **Watch ownership transitions.** Claim, reroute, and release operations update who controls the student. Wait for the new context before sending actions.
 7. **Review controls and history.** Coverage exposes a bounded control set. Use history to confirm who claimed, acted, and released an assignment.
-8. **Remove unused setup.** In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff access, Disable retains permission entries for later use; Remove permissions removes the displayed permissions for that staff member, including disabled entries, without deleting supervision groups. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting.
+8. **Receive completed activity summaries.** After testing or Coverage ends, the staff member who actually supervised receives an activity summary for that assignment. A staff handoff closes the outgoing supervisor's period; the replacement receives a separate summary for their own period. Late arrivals, early releases and returning students contribute only their supervised intervals. Extending the same assignment delays its summary, and releasing only some students does not send an extra email.
+9. **Read unavailable data honestly.** Summaries allow at least 30 seconds for final observations to settle. They distinguish recorded activity from missing or unavailable observations; no data is not proof that a student stayed on task. A testing block that never started produces no activity summary. Saving or applying a profile does not itself send an activity summary or a new scheduling announcement.
+10. **Remove unused setup.** In Supervision Groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff access, Disable retains permission entries for later use; Remove permissions removes the displayed permissions for that staff member, including disabled entries, without deleting supervision groups. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting.
 
 [Open Coverage](/classpilot/coverage)
 
