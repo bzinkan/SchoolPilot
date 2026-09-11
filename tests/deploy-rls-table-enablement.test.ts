@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import {
   CLASSPILOT_FAB_RLS_TABLES,
   CLASSPILOT_SCHEDULE_CHANGE_RLS_TABLES,
+  CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES,
   GOPILOT_CHILD_RLS_TABLES,
   REVIEWED_RLS_TABLE_ENABLEMENTS,
   SCHOOLPILOT_270_ADDITIVE_RLS_TABLES,
@@ -75,6 +76,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.inventories.classpilotRoadmapPostExpand.tables.filter(table =>
         !rlsRegistry.inventories.schoolPilot270PostExpand.tables.includes(table)),
       "classpilot_coverage_group_categories",
+      ...CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
@@ -199,6 +201,41 @@ describe("one-release RLS table enablement", () => {
         /must match one exact reviewed singleton or ordered bundle/
       );
     }
+  });
+
+  it("adds the complete supervision activity report bundle while preserving prior settings", () => {
+    const api = taskDefinition("api");
+    const worker = taskDefinition("scheduler-worker");
+    const emergency = taskDefinition("api");
+    const bundle = CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES.join(",");
+    assert.deepEqual(CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES, [
+      "classpilot_supervision_report_segments", "classpilot_supervision_student_reports", "classpilot_supervision_summary_deliveries",
+    ]);
+    assert.deepEqual(verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle }), {
+      previousTables: ["students", "teaching_sessions"], addedTables: CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES,
+    });
+    const candidates = [
+      { taskDefinition: api, containerName: "api" },
+      { taskDefinition: emergency, containerName: "api" },
+      { taskDefinition: worker, containerName: "scheduler-worker" },
+    ];
+    for (const candidate of candidates) {
+      addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table: bundle });
+      assert.equal(environmentValue(candidate.taskDefinition, "RLS_ENABLED_TABLES"), `students,teaching_sessions,${bundle}`);
+      assert.equal(environmentValue(candidate.taskDefinition, "UNCHANGED"), "preserved");
+      assert.equal(environmentValue(candidate.taskDefinition, "RLS_GUC_ENABLED"), "true");
+    }
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table: bundle, expectedPreviousTables: ["students", "teaching_sessions"] });
+    for (const invalid of [
+      CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES[0],
+      CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES.slice(0, 2).join(","),
+      [...CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES].reverse().join(","),
+    ]) {
+      assert.throws(() => verifyLiveRlsEnablementSources({
+        apiTaskDefinition: taskDefinition("api"), workerTaskDefinition: taskDefinition("scheduler-worker"), table: invalid,
+      }), /must match one exact reviewed singleton or ordered bundle/);
+    }
+    assert.throws(() => verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle }), /already enabled/);
   });
 
   it("adds the exact reviewed ClassPilot FAB state bundle atomically", () => {

@@ -33,6 +33,8 @@ import {
 import { settings } from "../schema/shared.js";
 import { students } from "../schema/students.js";
 import { materializeStudents } from "./classpilotMonitoringReports.js";
+import { supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
+import { supervisionContextHasReportsSql } from "./classpilotSupervisionHistory.js";
 import { classpilotSessionReportVersionForNewRow } from "../config/classpilotSessionReportRollout.js";
 import {
   CLASSPILOT_STUDENT_DATA_CACHE_BUCKET_MS,
@@ -697,17 +699,40 @@ export async function getClasspilotStudentHistoryAuthority(options:{schoolId:str
     WHERE staff.school_id=${options.schoolId} AND staff.staff_id=${options.actorId} AND session.roster_snapshot_completed_at IS NOT NULL AND ${retainedSessionAuthoritySql(options)}
     ORDER BY session.start_time DESC,session.id LIMIT 5001
   `);
-  const supervision=await database.execute<{assigned_staff_id:string;start:Date;end:Date}>(sql`
-    SELECT context.assigned_staff_id,GREATEST(member.assigned_at,context.starts_at) AT TIME ZONE 'UTC' AS start,
+  const tenureEnabled = supervisionActivityReportingEnabled(options.now);
+  const legacyOwnership = tenureEnabled
+    ? sql`NOT ${supervisionContextHasReportsSql(options.schoolId, sql`context.id`)}`
+    : sql`true`;
+  const supervision=await database.execute<{assigned_staff_id:string;legacy_ownership:boolean;start:Date;end:Date}>(sql`
+    SELECT context.assigned_staff_id,${legacyOwnership} AS legacy_ownership,
+      GREATEST(member.assigned_at,context.starts_at) AT TIME ZONE 'UTC' AS start,
       LEAST(COALESCE(member.released_at,'infinity'::timestamp),COALESCE(context.ended_at,'infinity'::timestamp),context.ends_at,${options.now.toISOString()}::timestamp) AT TIME ZONE 'UTC' AS end
     FROM ${classpilotSupervisionStudents} AS member INNER JOIN ${classpilotSupervisionContexts} AS context ON context.school_id=${options.schoolId} AND context.id=member.context_id
     WHERE member.school_id=${options.schoolId} AND member.student_id=${options.studentId}
       AND member.assigned_at<${options.now.toISOString()}::timestamp AND context.ends_at>=${options.retentionCutoff.toISOString()}::timestamp
     ORDER BY member.assigned_at DESC LIMIT 5001
   `);
-  if(sessions.rows.length>5000||supervision.rows.length>5000)throw new ClasspilotStudentDataUnavailableError();
+  const recorded = tenureEnabled ? await database.execute<{start:Date;end:Date}>(sql`
+    SELECT GREATEST(tenure.window_start,(participation.value->>'start')::timestamptz,${options.retentionCutoff.toISOString()}::timestamptz) AS start,
+      LEAST(COALESCE((participation.value->>'end')::timestamptz,'infinity'::timestamptz),
+        COALESCE(tenure.window_end,'infinity'::timestamptz),
+        COALESCE(context.ended_at AT TIME ZONE 'UTC','infinity'::timestamptz),
+        context.ends_at AT TIME ZONE 'UTC',${options.now.toISOString()}::timestamptz) AS end
+    FROM classpilot_supervision_report_segments AS tenure
+    INNER JOIN classpilot_supervision_student_reports AS detail ON detail.school_id=tenure.school_id AND detail.report_id=tenure.id
+    INNER JOIN classpilot_supervision_contexts AS context ON context.school_id=tenure.school_id AND context.id=tenure.context_id
+    CROSS JOIN LATERAL jsonb_array_elements(detail.participation_intervals) AS participation(value)
+    WHERE tenure.school_id=${options.schoolId} AND tenure.staff_id=${options.actorId}
+      AND detail.student_id=${options.studentId} AND tenure.detail_expired_at IS NULL
+      AND tenure.state <> 'expired' AND (tenure.expires_at IS NULL OR tenure.expires_at>${options.now.toISOString()}::timestamptz)
+    ORDER BY tenure.window_start DESC LIMIT 5001
+  `) : { rows: [] };
+  if(sessions.rows.length>5000||supervision.rows.length>5000||recorded.rows.length>5000)throw new ClasspilotStudentDataUnavailableError();
   const coverage=supervision.rows.map(row=>({start:new Date(row.start),end:new Date(row.end)}));
-  const ownCoverage=supervision.rows.filter(row=>row.assigned_staff_id===options.actorId).map(row=>({start:new Date(row.start),end:new Date(row.end)}));
+  const ownCoverage=[
+    ...supervision.rows.filter(row=>row.legacy_ownership && row.assigned_staff_id===options.actorId),
+    ...recorded.rows,
+  ].map(row=>({start:new Date(row.start),end:new Date(row.end)})).filter(row=>row.end>row.start);
   const classWindows=sessions.rows.map(row=>({start:new Date(row.start),end:new Date(row.end)}));
   return {windows:mergeHistoryWindows([...subtractHistoryWindows(classWindows,coverage),...ownCoverage]),sessions:sessions.rows.map(row=>({id:row.id,start:new Date(row.aggregate_start),end:new Date(row.aggregate_end),timeZone:row.time_zone,final:row.is_final})),hasSupervision:ownCoverage.length>0};
 }

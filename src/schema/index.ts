@@ -20,3 +20,4 @@ export * from "./classpilotScheduling.js";
 export * from "./rosterIntegrations.js";
 export * from "./classpilotSchoolWebsitePolicy.js";
 export * from "./classpilotMonitoringInterruptions.js";
+export * from "./classpilotSupervisionReports.js";

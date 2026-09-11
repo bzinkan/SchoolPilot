@@ -246,6 +246,8 @@ async function eventList(req: any, res: any, next: any, scope: ClasspilotMonitor
     const rows = await listClasspilotMonitoringEvents({
       schoolId: res.locals.schoolId,
       scope,
+      supervisionStaffId: scope.kind === "supervision_context" && !isAdmin(req, res)
+        ? req.authUser!.id : undefined,
       studentId: typeof req.query.studentId === "string" ? req.query.studentId : undefined,
       eventTypes,
       before: cursor,

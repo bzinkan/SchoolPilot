@@ -14,6 +14,7 @@ import { classpilotContentCategoriesMigration } from "./classpilotContentCategor
 import { classpilotMonitoringInterruptionsMigration } from "./classpilotMonitoringInterruptionsMigration.js";
 import { classpilotScheduleProfileSupervisionMigration } from "./classpilotScheduleProfileSupervisionMigration.js";
 import { classpilotCoverageCategoriesMigration } from "./classpilotCoverageCategoriesMigration.js";
+import { classpilotSupervisionReportsMigration } from "./classpilotSupervisionReportsMigration.js";
 
 export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
 
@@ -473,6 +474,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotMonitoringInterruptionsMigration,
   classpilotScheduleProfileSupervisionMigration,
   classpilotCoverageCategoriesMigration,
+  classpilotSupervisionReportsMigration,
   staffIdentityIntegrityMigration,
 ];
 

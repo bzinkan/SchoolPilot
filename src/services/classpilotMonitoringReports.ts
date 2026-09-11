@@ -20,6 +20,14 @@ import { classpilotSessionReportV2Mode } from "../config/classpilotSessionReport
 
 const REPORT_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 
+// Supervision reports share calculation inputs, never teaching-session rows.
+export type ClasspilotActivityReportWindow = Pick<ClasspilotSessionReport, "windowStart" | "windowEnd" | "reportVersion">;
+export type ClasspilotActivityReportInput = Omit<ClasspilotSessionReportInput, "session">;
+
+function ownsObservation(intervals: readonly CoverageInterval[], occurredAt: Date): boolean {
+  return intervals.some((interval) => interval.start <= occurredAt && occurredAt < interval.end);
+}
+
 function metadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -47,7 +55,7 @@ function reportSafetyReviewStatus(
 }
 
 export function serverTrackingDisabledIntervals(
-  input: ClasspilotSessionReportInput,
+  input: ClasspilotActivityReportInput,
   studentId: string,
   windowStart: Date,
   windowEnd: Date
@@ -77,8 +85,8 @@ export function serverTrackingDisabledIntervals(
 }
 
 export function materializeV1Students(
-  report: ClasspilotSessionReport,
-  input: ClasspilotSessionReportInput
+  report: ClasspilotActivityReportWindow,
+  input: ClasspilotActivityReportInput
 ): MaterializedClasspilotStudentReport[] {
   const policyDisabled = trackingPolicyDisabledIntervals(
     input.trackingPolicy,
@@ -119,7 +127,7 @@ export function materializeV1Students(
     });
     const eventCounts: Record<string, number> = {};
     for (const event of input.monitoringEvents) {
-      if (event.studentId !== rosterStudent.studentId) continue;
+      if (event.studentId !== rosterStudent.studentId || !ownsObservation(coverage.eligibleIntervals, event.occurredAt)) continue;
       eventCounts[event.eventType] = (eventCounts[event.eventType] || 0) + 1;
     }
     if (coverage.gaps.length > 0) {
@@ -164,8 +172,8 @@ export function materializeV1Students(
 }
 
 export function materializeV2Students(
-  report: ClasspilotSessionReport,
-  input: ClasspilotSessionReportInput
+  report: ClasspilotActivityReportWindow,
+  input: ClasspilotActivityReportInput
 ): MaterializedClasspilotStudentReport[] {
   const policyDisabled = trackingPolicyDisabledIntervals(
     input.trackingPolicy,
@@ -227,14 +235,15 @@ export function materializeV2Students(
     });
     const eventCounts: Record<string, number> = {};
     for (const event of input.monitoringEvents) {
-      if (event.studentId !== rosterStudent.studentId) continue;
+      if (event.studentId !== rosterStudent.studentId || !ownsObservation(coverage.eligibleIntervals, event.occurredAt)) continue;
       eventCounts[event.eventType] = (eventCounts[event.eventType] || 0) + 1;
     }
     if (coverage.gaps.length > 0) {
       eventCounts.monitoring_gap = coverage.gaps.length;
     }
     const safetyCandidates = input.heartbeats
-      .filter((heartbeat) => heartbeat.studentId === rosterStudent.studentId)
+      .filter((heartbeat) => heartbeat.studentId === rosterStudent.studentId
+        && ownsObservation(coverage.eligibleIntervals, heartbeat.timestamp))
       .flatMap((heartbeat) => {
         const decision = decisionByHeartbeatId.get(heartbeat.id);
         const category = decision?.safetyAlert || heartbeat.safetyAlert;
@@ -323,8 +332,8 @@ export function materializeV2Students(
 
 /** Persisted materialization is selected only by the immutable row version. */
 export function materializeStudents(
-  report: ClasspilotSessionReport,
-  input: ClasspilotSessionReportInput
+  report: ClasspilotActivityReportWindow,
+  input: ClasspilotActivityReportInput
 ): MaterializedClasspilotStudentReport[] {
   return report.reportVersion >= 2
     ? materializeV2Students(report, input)

@@ -18,6 +18,9 @@ const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = process.env.SENDGRID_FROM || "noreply@school-pilot.net";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 
+/** Durable workers must not mistake the development no-op for delivery. */
+export function emailProviderConfigured(): boolean { return SENDGRID_API_KEY.length > 0; }
+
 if (SENDGRID_API_KEY) {
   sgMail.setApiKey(SENDGRID_API_KEY);
 }
@@ -413,6 +416,7 @@ export type SessionSummaryEmailOptions = {
     coverageStatus?: "complete" | "partial" | "none" | "not_expected" | "unavailable";
     coveragePercent?: number | null;
     gapMinutes?: number;
+    participationWindows?: Array<{ start: string; end: string }>;
   }>;
   copyNotice?: string;
   deliveryId?: string;
@@ -461,6 +465,12 @@ function renderTopSitesCell(student: SessionSummaryEmailOptions["students"][numb
     .join(", ");
 }
 
+function renderParticipationWindows(student: SessionSummaryEmailOptions["students"][number]): string {
+  if (!student.participationWindows?.length) return "";
+  return `<div style="font-size: 12px; color: #64748b; margin-top: 4px;">Supervised: ${student.participationWindows
+    .map((window) => `${escapeEmailHtml(window.start)}–${escapeEmailHtml(window.end)}`).join(", ")}</div>`;
+}
+
 function buildSessionSummaryEmailV1(options: SessionSummaryEmailOptions): { subject: string; html: string } {
   const { teacherName, className, date, startTime, endTime, duration, studentCount, students, copyNotice } = options;
   const safeTeacherName = escapeEmailHtml(teacherName);
@@ -497,7 +507,7 @@ function buildSessionSummaryEmailV1(options: SessionSummaryEmailOptions): { subj
           : `${Math.max(0, Math.min(100, Number(s.coveragePercent) || 0))}%${s.gapMinutes ? ` (${s.gapMinutes}m gap)` : ""}`;
       return `
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}${renderParticipationWindows(s)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${s.totalMinutes}m</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${escapeEmailHtml(coverageLabel)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #6b7280;">${domains || "No observed browser telemetry"}</td>
@@ -576,7 +586,7 @@ function buildSessionSummaryEmailV2(options: SessionSummaryEmailOptions): { subj
           : `${Math.max(0, Math.min(100, Number(s.coveragePercent) || 0))}%${s.gapMinutes ? ` (${s.gapMinutes}m gap)` : ""}`;
       return `
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${escapeEmailHtml(s.name)}${renderParticipationWindows(s)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${s.totalMinutes}m</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${escapeEmailHtml(coverageLabel)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${Math.max(0, Number(s.unclassifiedMinutes) || 0)}m</td>

@@ -158,7 +158,7 @@ export const teacherGuideTopics = [
     phase: "Monitor",
     title: "Work an assigned Coverage session",
     summary: "Claim only assigned students, use the coverage tool set, and release them when supervision ends.",
-    keywords: ["coverage", "claim", "release", "send to", "supervision group"],
+    keywords: ["coverage", "claim", "release", "send to", "supervision group", "testing", "activity summary", "email"],
     role: "Staff member with a Coverage assignment",
     route: "/classpilot/coverage",
     routeLabel: "Open Coverage",
@@ -167,7 +167,9 @@ export const teacherGuideTopics = [
       { title: "Confirm Claimed", body: "Wait for the claimed context to load before sending an action. The class owner and exact student bindings remain authoritative." },
       { title: "Use coverage controls", body: "Send resources, manage allowed tabs and restrictions, message students, or apply the controls shown in Coverage. Tools not shown are not part of Coverage authority." },
       { title: "Release cleanly", body: "Release the students when supervision ends so control returns to the correct class context." },
+      { title: "Review your activity summary", body: "When your testing or Coverage assignment ends, an email summarizes the students and time intervals you actually supervised. A handoff gives each staff member a separate summary. Late arrivals, early releases and returning students are limited to their actual supervision intervals. An extension keeps the same assignment open; releasing only some students does not send another email." },
     ],
+    tips: ["Allow at least 30 seconds after supervision ends for final observations to settle, plus normal processing and email delivery time. Missing or unavailable observations do not establish that a student stayed on task. Your school may configure a central recipient to receive a copy."],
   },
   {
     id: "wrap-up-and-troubleshoot",

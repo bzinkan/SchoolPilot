@@ -26,6 +26,7 @@ type Registry = {
     schoolPilot270PostExpand: RegistryInventory;
     classpilotRoadmapPostExpand: RegistryInventory;
     classpilotSupervisionWorkspacePostExpand: RegistryInventory;
+    classpilotSupervisionActivityReportsPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -140,8 +141,12 @@ describe("semantic RLS registry", () => {
     assert.equal(new Set(production).size, 90);
     // Preserve observed runtime CSV order; the registry target has its own immutable order.
     assert.deepEqual(new Set(production), new Set(expected));
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotSupervisionWorkspacePostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotSupervisionActivityReportsPostExpand.tables);
     assert.deepEqual(registry.inventories.classpilotSupervisionWorkspacePostExpand.tables, [...expected, "classpilot_coverage_group_categories"]);
+    assert.deepEqual(registry.inventories.classpilotSupervisionActivityReportsPostExpand.tables, [
+      ...registry.inventories.classpilotSupervisionWorkspacePostExpand.tables,
+      "classpilot_supervision_report_segments", "classpilot_supervision_student_reports", "classpilot_supervision_summary_deliveries",
+    ]);
     assert.match(terraformMain, /src\/config\/rlsRegistry\.json/);
     assert.match(terraformMain, /check "rls_registry_contract"/);
     assert.match(terraformMain, /setsubtract/);

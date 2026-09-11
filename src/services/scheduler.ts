@@ -32,6 +32,8 @@ import {
   finalizeClasspilotSession,
 } from "./classpilotSessionLifecycle.js";
 import { materializeDueClasspilotSessionReports } from "./classpilotMonitoringReports.js";
+import { materializeDueClasspilotSupervisionReports, dispatchDueClasspilotSupervisionSummaries } from "./classpilotSupervisionReports.js";
+import { reconcileSupervisionActivityReports, purgeExpiredSupervisionActivityReports } from "./classpilotSupervisionReportLifecycle.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
@@ -981,6 +983,11 @@ async function purgeExpiredHeartbeats() {
       const schoolSettings = await getSettingsForSchool(school.id, schedulerDb);
       const retentionDays = parseClasspilotRetentionDays(schoolSettings?.retentionHours);
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      await purgeExpiredSupervisionActivityReports({ schoolId: school.id, cutoff, limit: 5000 }, schedulerDb).catch((error) => {
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "purgeExpiredHeartbeats", errorCode: "SUPERVISION_REPORT_RETENTION_FAILED",
+        });
+      });
       let cutoffLocalDate: string;
       try {
         cutoffLocalDate = localDateInTimeZone(
@@ -1472,6 +1479,24 @@ export async function reconcileClasspilotScheduledSessions(now = new Date(), sch
     console.error("[ClassPilot] Scheduled session reconciliation failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "reconcileClasspilotScheduledSessions" });
   } finally {
+    // Supervision reports use actual staff/student assignment intervals, independently
+    // of teaching-session rows. Isolate every stage so poison input cannot prevent
+    // unrelated class or coverage summaries from being processed.
+    await reconcileSupervisionActivityReports({ schoolId, limit: 100 }, schedulerDb).catch((error) => {
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions", errorCode: "SUPERVISION_REPORT_RECONCILIATION_FAILED",
+      });
+    });
+    await materializeDueClasspilotSupervisionReports({ dbInstance: schedulerDb, schoolId, now, limit: 100 }).catch((error) => {
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions", errorCode: "SUPERVISION_REPORT_MATERIALIZATION_FAILED",
+      });
+    });
+    await dispatchDueClasspilotSupervisionSummaries({ dbInstance: schedulerDb, schoolId, limit: 100 }).catch((error) => {
+      errorMonitor.trackError("scheduler_failure", error as Error, {
+        job: "reconcileClasspilotScheduledSessions", errorCode: "SUPERVISION_SUMMARY_DISPATCH_FAILED",
+      });
+    });
     // 4. Freeze coverage after the 30-second settlement window, then dispatch
     // only deliveries whose immutable report is ready. A poison report or
     // scheduling row must not hold unrelated summaries hostage.

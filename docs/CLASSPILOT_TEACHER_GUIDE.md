@@ -161,6 +161,9 @@ Claim only assigned students, use the coverage tool set, and release them when s
 2. **Confirm Claimed.** Wait for the claimed context to load before sending an action. The class owner and exact student bindings remain authoritative.
 3. **Use coverage controls.** Send resources, manage allowed tabs and restrictions, message students, or apply the controls shown in Coverage. Tools not shown are not part of Coverage authority.
 4. **Release cleanly.** Release the students when supervision ends so control returns to the correct class context.
+5. **Review your activity summary.** When your testing or Coverage assignment ends, an email summarizes the students and time intervals you actually supervised. A handoff gives each staff member a separate summary. Late arrivals, early releases and returning students are limited to their actual supervision intervals. An extension keeps the same assignment open; releasing only some students does not send another email.
+
+> **Flight note:** Allow at least 30 seconds after supervision ends for final observations to settle, plus normal processing and email delivery time. Missing or unavailable observations do not establish that a student stayed on task. Your school may configure a central recipient to receive a copy.
 
 [Open Coverage](/classpilot/coverage)
 ## Wrap Up

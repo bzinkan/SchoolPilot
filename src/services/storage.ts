@@ -20,6 +20,8 @@ import {
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { syncSupervisionActivityReports, supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
+import { retainedSupervisionStaffSql, supervisionContextHasReportsSql, supervisionEventOwnershipSql } from "./classpilotSupervisionHistory.js";
 import {
   emptyClasspilotRestrictions,
   classpilotControlStateHasAuthRelevantRestriction,
@@ -12814,6 +12816,7 @@ export async function finalizeTeachingSession(
         ));
       const contextIds = contexts.map((context) => context.id);
       if (contextIds.length > 0) {
+        const summaryClosedAt = new Date();
         const releasedSupervisionStudents = await tx
           .update(classpilotSupervisionStudents)
           .set({ releasedAt: endTime, releaseReason: options.reason })
@@ -12830,6 +12833,9 @@ export async function finalizeTeachingSession(
             eq(classpilotSupervisionContexts.schoolId, options.schoolId),
             inArray(classpilotSupervisionContexts.id, contextIds)
           ));
+        await syncSupervisionActivityReports({
+          schoolId: options.schoolId, contextIds, now: summaryClosedAt,
+        }, transactionDb);
         for (const context of contexts) {
           const restored = await restoreClasspilotStudentControlStatesAfterSupervision({
             schoolId: options.schoolId,
@@ -14303,6 +14309,7 @@ export type ClasspilotMonitoringEventView = {
 export async function listClasspilotMonitoringEvents(options: {
   schoolId: string;
   scope: ClasspilotMonitoringScope;
+  supervisionStaffId?: string;
   studentId?: string;
   eventTypes?: string[];
   before?: { occurredAt: Date; id: string };
@@ -14316,6 +14323,14 @@ export async function listClasspilotMonitoringEvents(options: {
       : eq(classpilotMonitoringEvents.supervisionContextId, options.scope.id),
   ];
   if (options.studentId) conditions.push(eq(classpilotMonitoringEvents.studentId, options.studentId));
+  if (options.scope.kind === "supervision_context" && options.supervisionStaffId
+    && supervisionActivityReportingEnabled()) {
+    conditions.push(supervisionEventOwnershipSql({
+      schoolId: options.schoolId, contextId: options.scope.id, staffId: options.supervisionStaffId,
+      studentId: sql`${classpilotMonitoringEvents.studentId}`,
+      occurredAt: sql`${classpilotMonitoringEvents.occurredAt}`, now: new Date(),
+    }));
+  }
   if (options.eventTypes?.length) conditions.push(inArray(classpilotMonitoringEvents.eventType, options.eventTypes));
   if (options.before) {
     conditions.push(or(
@@ -14363,6 +14378,14 @@ export async function isAuthorizedClasspilotSupervisionStaff(
   staffId: string,
   dbInstance: typeof db = db
 ): Promise<boolean> {
+  const now = new Date();
+  if (supervisionActivityReportingEnabled(now)) {
+    const result = await dbInstance.execute<{ tracked: boolean; authorized: boolean }>(sql`
+      SELECT ${supervisionContextHasReportsSql(schoolId, contextId)} AS tracked,
+        ${retainedSupervisionStaffSql({ schoolId, contextId, staffId, now })} AS authorized
+    `);
+    if (result.rows[0]?.tracked) return result.rows[0].authorized;
+  }
   const [context] = await dbInstance
     .select({ id: classpilotSupervisionContexts.id })
     .from(classpilotSupervisionContexts)
@@ -14975,6 +14998,7 @@ export async function upsertScheduledClassConflictForOccurrence(
       const contextIds = contexts.map((context) => context.id);
       if (contextIds.length > 0) {
         const releasedAt = occurrence.endTime || new Date();
+        const summaryClosedAt = new Date();
         const released = await tx
           .update(classpilotSupervisionStudents)
           .set({ releasedAt, releaseReason: "scheduled_occurrence_finalized" })
@@ -14992,6 +15016,9 @@ export async function upsertScheduledClassConflictForOccurrence(
             eq(classpilotSupervisionContexts.schoolId, data.schoolId),
             inArray(classpilotSupervisionContexts.id, contextIds)
           ));
+        await syncSupervisionActivityReports({
+          schoolId: data.schoolId, contextIds, now: summaryClosedAt,
+        }, transactionDb);
         for (const context of contexts) {
           await restoreClasspilotStudentControlStatesAfterSupervision({
             schoolId: data.schoolId,
@@ -15238,6 +15265,9 @@ export async function resolveScheduledConflictForStartedOccurrence(
       ));
     const contextIds = contexts.map((context) => context.id);
     if (contextIds.length > 0) {
+      await syncSupervisionActivityReports({
+        schoolId: options.schoolId, contextIds, now: endedAt,
+      }, transactionDb);
       const released = await tx
         .update(classpilotSupervisionStudents)
         .set({ releasedAt: endedAt, releaseReason: "scheduled_teacher_started" })
@@ -15254,6 +15284,9 @@ export async function resolveScheduledConflictForStartedOccurrence(
           eq(classpilotSupervisionContexts.schoolId, options.schoolId),
           inArray(classpilotSupervisionContexts.id, contextIds)
         ));
+      await syncSupervisionActivityReports({
+        schoolId: options.schoolId, contextIds, now: endedAt,
+      }, transactionDb);
       for (const context of contexts) {
         await restoreClasspilotStudentControlStatesAfterSupervision({
           schoolId: options.schoolId,
@@ -23692,6 +23725,9 @@ export async function claimScheduledCoverageStudents(options: {
     }
 
     const now = new Date();
+    const summaryContextIds = await captureSupervisionSummarySources(
+      options.schoolId, uniqueStudentIds, existing ? [existing.id] : [], now, transactionDb
+    );
     let context: ClasspilotSupervisionContext;
     if (existing) {
       const [updated] = await tx
@@ -23743,6 +23779,7 @@ export async function claimScheduledCoverageStudents(options: {
             studentId,
             source: "scheduled_coverage_claim",
             assignedBy: options.actorId,
+            assignedAt: now,
           })))
           .returning()
       : [];
@@ -23785,6 +23822,12 @@ export async function claimScheduledCoverageStudents(options: {
         eq(classpilotScheduledConflicts.schoolId, options.schoolId),
         inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
       ));
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId,
+      contextIds: [...summaryContextIds, context.id],
+      newContextIds: existing ? [] : [context.id],
+      now,
+    }, transactionDb);
     return { context, assignments };
   });
 }
@@ -23856,6 +23899,28 @@ export async function listSupervisionStudentsForContexts(
   return rows.map((row) => ({ ...row.assignment, student: row.student }));
 }
 
+/** Snapshot outgoing coverage before assignment rows are moved to another context. */
+async function captureSupervisionSummarySources(
+  schoolId: string,
+  studentIds: string[],
+  contextIds: string[],
+  now: Date,
+  database: typeof db
+): Promise<string[]> {
+  if (!supervisionActivityReportingEnabled(now)) return contextIds;
+  const assignments = studentIds.length ? await database
+    .select({ contextId: classpilotSupervisionStudents.contextId })
+    .from(classpilotSupervisionStudents)
+    .where(and(
+      eq(classpilotSupervisionStudents.schoolId, schoolId),
+      inArray(classpilotSupervisionStudents.studentId, studentIds),
+      isNull(classpilotSupervisionStudents.releasedAt)
+    )) : [];
+  const affected = [...new Set([...contextIds, ...assignments.map((row) => row.contextId)])].sort();
+  await syncSupervisionActivityReports({ schoolId, contextIds: affected, now }, database);
+  return affected;
+}
+
 export async function createSupervisionContextWithStudents(options: {
   context: InsertClasspilotSupervisionContext;
   studentIds: string[];
@@ -23890,6 +23955,10 @@ export async function createSupervisionContextWithStudents(options: {
       uniqueStudentIds,
       tx as unknown as typeof db
     );
+    const summaryAt = new Date();
+    const summaryContextIds = await captureSupervisionSummarySources(
+      options.context.schoolId, uniqueStudentIds, [], summaryAt, transactionDb
+    );
     const [context] = await tx
       .insert(classpilotSupervisionContexts)
       .values(options.context)
@@ -23899,7 +23968,7 @@ export async function createSupervisionContextWithStudents(options: {
     if (uniqueStudentIds.length > 0) {
       await tx
         .update(classpilotSupervisionStudents)
-        .set({ releasedAt: new Date(), releaseReason: "reassigned" })
+        .set({ releasedAt: summaryAt, releaseReason: "reassigned" })
         .where(
           and(
             eq(classpilotSupervisionStudents.schoolId, context.schoolId),
@@ -23914,6 +23983,7 @@ export async function createSupervisionContextWithStudents(options: {
           studentId,
           source: options.source || "manual",
           assignedBy: options.assignedBy,
+          assignedAt: summaryAt,
         }))
       );
       await initializeClasspilotSupervisionControlStates({
@@ -23923,6 +23993,12 @@ export async function createSupervisionContextWithStudents(options: {
       }, tx as unknown as typeof db);
     }
 
+    await syncSupervisionActivityReports({
+      schoolId: context.schoolId,
+      contextIds: [...summaryContextIds, context.id],
+      newContextIds: [context.id],
+      now: summaryAt,
+    }, transactionDb);
     return context;
   });
 }
@@ -23938,6 +24014,9 @@ export async function assignStudentsToSupervisionContext(options: {
   if (uniqueStudentIds.length === 0) return [];
 
   return db.transaction(async (tx) => {
+    // Transfers and scheduled coverage claims share this lock before student
+    // and context locks, including transfers of different students.
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
     await lockClasspilotStudentControlAuthorities(
       options.schoolId,
       uniqueStudentIds,
@@ -23948,9 +24027,13 @@ export async function assignStudentsToSupervisionContext(options: {
       uniqueStudentIds,
       tx as unknown as typeof db
     );
+    const summaryAt = new Date();
+    const summaryContextIds = await captureSupervisionSummarySources(
+      options.schoolId, uniqueStudentIds, [options.contextId], summaryAt, tx as unknown as typeof db
+    );
     await tx
       .update(classpilotSupervisionStudents)
-      .set({ releasedAt: new Date(), releaseReason: "reassigned" })
+      .set({ releasedAt: summaryAt, releaseReason: "reassigned" })
       .where(
         and(
           eq(classpilotSupervisionStudents.schoolId, options.schoolId),
@@ -23968,6 +24051,7 @@ export async function assignStudentsToSupervisionContext(options: {
           studentId,
           source: options.source || "reroute",
           assignedBy: options.assignedBy,
+          assignedAt: summaryAt,
         }))
       )
       .returning();
@@ -23975,6 +24059,9 @@ export async function assignStudentsToSupervisionContext(options: {
       schoolId: options.schoolId,
       supervisionContextId: options.contextId,
       studentIds: uniqueStudentIds,
+    }, tx as unknown as typeof db);
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds: summaryContextIds, now: summaryAt,
     }, tx as unknown as typeof db);
     return assignments;
   });
@@ -23996,7 +24083,7 @@ export async function releaseSupervisionStudents(options: {
   }
 
   return dbInstance.transaction(async (tx) => {
-    const releasedAt = new Date();
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
     const releasing = await tx
       .select({ studentId: classpilotSupervisionStudents.studentId })
       .from(classpilotSupervisionStudents)
@@ -24006,6 +24093,10 @@ export async function releaseSupervisionStudents(options: {
       releasing.map((row) => row.studentId),
       tx as unknown as typeof db
     );
+    const releasedAt = new Date();
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds: [options.contextId], now: releasedAt,
+    }, tx as unknown as typeof db);
     const released = await tx
       .update(classpilotSupervisionStudents)
       .set({
@@ -24045,6 +24136,9 @@ export async function releaseSupervisionStudents(options: {
       restoredAt: releasedAt,
     }, tx as unknown as typeof db);
 
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds: [options.contextId], now: releasedAt,
+    }, tx as unknown as typeof db);
     return released;
   });
 }
@@ -24108,6 +24202,11 @@ export async function extendSupervisionContext(options: {
       studentIds,
       tx as unknown as typeof db
     );
+    const summaryAt = new Date();
+    data.updatedAt = summaryAt;
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds: [options.contextId], now: summaryAt,
+    }, transactionDb);
     const [row] = await tx
       .update(classpilotSupervisionContexts)
       .set(data)
@@ -24119,6 +24218,9 @@ export async function extendSupervisionContext(options: {
         )
       )
       .returning();
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds: [options.contextId], now: summaryAt,
+    }, transactionDb);
     if (!row || !options.endsAt) return row;
 
     if (studentIds.length > 0) {
@@ -24149,7 +24251,7 @@ export async function releaseScheduledConflictSupervision(
   dbInstance: typeof db = db
 ): Promise<ClasspilotSupervisionStudent[]> {
   return dbInstance.transaction(async (tx) => {
-    const releasedAt = new Date();
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
     const contexts = await tx
       .select()
       .from(classpilotSupervisionContexts)
@@ -24175,6 +24277,10 @@ export async function releaseScheduledConflictSupervision(
       releasing.map((row) => row.studentId),
       tx as unknown as typeof db
     );
+    const releasedAt = new Date();
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds, now: releasedAt,
+    }, tx as unknown as typeof db);
     const released = await tx
       .update(classpilotSupervisionStudents)
       .set({
@@ -24198,6 +24304,9 @@ export async function releaseScheduledConflictSupervision(
           inArray(classpilotSupervisionContexts.id, contextIds)
         )
       );
+    await syncSupervisionActivityReports({
+      schoolId: options.schoolId, contextIds, now: releasedAt,
+    }, tx as unknown as typeof db);
     for (const context of contexts) {
       await restoreClasspilotStudentControlStatesAfterSupervision({
         schoolId: options.schoolId,
@@ -24267,6 +24376,12 @@ export async function releaseExpiredClasspilotSupervisionContexts(
       .for("update", { skipLocked: true });
     if (contexts.length === 0) return [];
     const contextIds = contexts.map((context) => context.id);
+    const reportSchoolIds = [...new Set(contexts.map((context) => context.schoolId))].sort();
+    for (const schoolId of reportSchoolIds) {
+      await syncSupervisionActivityReports({
+        schoolId, contextIds: contexts.filter((context) => context.schoolId === schoolId).map((context) => context.id), now: endedAt,
+      }, tx as unknown as typeof db);
+    }
     const released = await tx
       .update(classpilotSupervisionStudents)
       .set({ releasedAt: endedAt, releaseReason: "supervision_window_ended" })
@@ -24281,6 +24396,11 @@ export async function releaseExpiredClasspilotSupervisionContexts(
       .where(inArray(classpilotSupervisionContexts.id, contextIds));
 
     const transactionDb = tx as unknown as typeof db;
+    for (const schoolId of reportSchoolIds) {
+      await syncSupervisionActivityReports({
+        schoolId, contextIds: contexts.filter((context) => context.schoolId === schoolId).map((context) => context.id), now: endedAt,
+      }, transactionDb);
+    }
     for (const context of contexts) {
       await restoreClasspilotStudentControlStatesAfterSupervision({
         schoolId: context.schoolId,

@@ -28,6 +28,8 @@ ClassPilot monitoring, class schedules and this digest use the timezone on the s
 
 The digest groups incident and student counts by scope. It contains no browsing URLs or student safety content. It is independent of Safety Center notifications. Disabling it cancels pending deliveries. Known temporary failures retry with a limit; an uncertain provider submission is recorded as unknown and is not blindly resent.
 
+Completed testing and Coverage assignments have a separate [supervision activity summary](CLASSPILOT_SUPERVISION_ACTIVITY_SUMMARIES.md), sent to the actual supervisor and the optional central recipient. It summarizes each student's recorded activity within that supervisor's participation intervals. It does not change interruption detection, this optional daily digest, or Safety Center alerts. Missing observations in an activity summary are not a confirmed healthy monitoring result.
+
 Digest eligibility follows the instructional calendar and explicit makeup weekdays used by monitoring. A Saturday that follows Monday can send Monday's tracking-day digest; a closed instructional date does not. Overnight windows keep their start date even when the following day is closed. Queued deliveries recheck the current calendar before submission.
 
 ## Operator verification
