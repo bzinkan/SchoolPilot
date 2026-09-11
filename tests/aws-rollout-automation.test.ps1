@@ -1549,6 +1549,9 @@ $rh=Join-Path $c.evidenceDirectory "$($c.runId)-rollback-heartbeat.json"
 $mr=Join-Path $c.evidenceDirectory "$($c.runId)-monitor-result.json"
 '@
     [IO.File]::WriteAllText($fakeSlowRollbackMonitor, $fakeMonitorPreamble + "`n" + @'
+# Prove child startup may exceed the deliberately short five-second ongoing
+# watchdog without releasing the traffic gate before the first heartbeat.
+Start-Sleep -Seconds 6
 $gate=Join-Path $c.evidenceDirectory "$($c.runId)-harness-start.json"
 $gateDeadline=[DateTimeOffset]::UtcNow.AddSeconds(30)
 $iteration=0

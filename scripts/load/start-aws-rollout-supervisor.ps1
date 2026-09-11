@@ -5419,6 +5419,11 @@ if ($monitorHeartbeatStaleSeconds -lt 1 -or $rollbackHeartbeatStaleSeconds -lt 1
 if (-not $testMode -and ($monitorHeartbeatStaleSeconds -ne 180 -or $rollbackHeartbeatStaleSeconds -ne 45 -or $supervisorPollSeconds -ne 5 -or $generatorIpCheckSeconds -ne 60)) {
     throw "Production supervisor watchdog thresholds are immutable."
 }
+# Isolated watchdog tests shorten heartbeat freshness to seconds. Windows CI
+# can take longer than that to launch a child process, before it can publish
+# any heartbeat. Allow the suite's existing 60-second startup budget without
+# changing ongoing freshness checks or any production threshold.
+$processStartupSeconds = if ($testMode) { [math]::Max(60, $monitorHeartbeatStaleSeconds) } else { $monitorHeartbeatStaleSeconds }
 
 $runtimeHarnessScript = $harnessScript
 $runtimeMonitorScript = $monitorScript
@@ -5706,7 +5711,7 @@ try {
             LOAD_EXTERNAL_SUMMARY_PATH           = $summaryPath
             LOAD_SUPERVISOR_READY_PATH            = $harnessReadyPath
             LOAD_SUPERVISOR_START_GATE_PATH       = $harnessStartGatePath
-            LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS = [string](($monitorHeartbeatStaleSeconds + 30) * 1000)
+            LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS = [string](($processStartupSeconds + 30) * 1000)
             LOAD_WORKLOAD_SCHEMA_VERSION            = $script:RequiredWorkloadSchemaVersion
             LOAD_TILE_HISTORY_PATH                  = "/api/classpilot/tiles/history"
             LOAD_TILE_SCREENSHOTS_PATH              = "/api/classpilot/tiles/screenshots"
@@ -5721,7 +5726,7 @@ try {
         # operator-owned start gate before opening progress output or emitting
         # traffic. Prove that exact PID reached the gate before binding it into
         # the monitor configuration.
-        $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds($monitorHeartbeatStaleSeconds)
+        $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds($processStartupSeconds)
         $ready = $null
         while ($null -eq $ready -and [DateTimeOffset]::UtcNow -lt $readyDeadline) {
             $harness.Refresh()
@@ -5781,7 +5786,7 @@ try {
         # Do not release traffic merely because the monitor process exists. Its
         # first complete sample proves AWS access, immutable config, heartbeat
         # output, and the bound harness identity before the gate can open.
-        $armedDeadline = [DateTimeOffset]::UtcNow.AddSeconds($monitorHeartbeatStaleSeconds)
+        $armedDeadline = [DateTimeOffset]::UtcNow.AddSeconds($processStartupSeconds)
         $armedHeartbeat = $null
         $lastArmingHeartbeatWrite = [DateTimeOffset]::MinValue
         while ($null -eq $armedHeartbeat -and [DateTimeOffset]::UtcNow -lt $armedDeadline) {
