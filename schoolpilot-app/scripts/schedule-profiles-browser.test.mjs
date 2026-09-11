@@ -788,6 +788,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     await dialog.getByLabel('Fixed Math profile start').fill('08:00'); await dialog.getByLabel('Fixed Math profile end').fill('08:30');
     await scienceSelection.uncheck(); await dialog.getByLabel('Include B-day Reading', { exact: true }).check();
     await changeDate('2026-09-09');
+    await row('Period Science').getByText('Does not meet on this preview date', { exact: true }).waitFor();
     assert.match(await row('Period Science').innerText(), /Does not meet on this preview date/);
     assert.equal(await dialog.getByLabel('Fixed Math profile start').inputValue(), '08:00');
     assert.equal(await scienceSelection.isChecked(), false); assert.equal(await dialog.getByLabel('Include B-day Reading', { exact: true }).isChecked(), true);
