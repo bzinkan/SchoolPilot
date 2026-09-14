@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, Copy, MoreHorizontal, Plus, Trash2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Plus, Undo2 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { apiRequest } from '../../../lib/queryClient';
 import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from '../../../components/ui/alert-dialog';
 import ScheduleTestingGroupPicker from './ScheduleTestingGroupPicker';
 import { DraftReviewStatus } from './ScheduleProfileDraftReview';
 import ScheduleDayPlanner from './ScheduleDayPlanner';
+import ScheduleProfilesOverview from './ScheduleProfilesOverview';
+import { cancellationState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
 import { useScheduleProfileDraftReview } from './useScheduleProfileDraftReview';
 
 const API = '/classpilot/admin/schedule-profiles';
@@ -20,11 +20,9 @@ const inputClass = 'min-w-0 w-full rounded-md border bg-background px-3 py-2 tex
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const copy = value => structuredClone(value);
 const errorMessage = error => error?.response?.data?.error || error?.message || 'The schedule profile action failed.';
-const selectedClass = (definition, row) => definition.classIds.includes(row.id) || definition.grades.includes(String(row.gradeLevel));
 const timeText = value => !value || value.action === 'skip' || value.meets === false ? 'Does not meet' : typeof value === 'string' ? value : `${value.startTime || '—'}–${value.endTime || '—'}`;
 const blankDefinition = () => ({ name: '', grades: [], classIds: [], classRules: [], testingBlocks: [] });
 const copyName = (name, suffix) => `${name.slice(0, 80 - suffix.length)}${suffix}`;
-const testingStatusLabels = { pending: 'Awaiting start', active: 'Active', ended: 'Finished', failed: 'Could not start', missed: 'Missed', cancelled: 'Cancelled', releasing: 'Ending' };
 const testingStatusReasons = {
   COVERAGE_GROUP_UNAVAILABLE: 'The Supervision group is unavailable.',
   STAFF_MEMBERSHIP_UNAVAILABLE: 'The assigned staff member is unavailable.',
@@ -46,8 +44,8 @@ const testingStatusReasons = {
 };
 function applicationStatus(application, today) {
   if (application.status === 'cancelled') return 'Cancelled';
-  if (today && application.dates.every(date => date < today)) return 'Completed';
-  return application.dates.includes(today) ? 'Applied · Today' : 'Scheduled';
+  if (today && application.dates.every(date => date < today)) return 'Past date';
+  return application.dates.includes(today) ? 'Applied today' : 'Scheduled';
 }
 
 function dateRange(start, end) {
@@ -115,7 +113,7 @@ export default function ScheduleProfiles(props) {
 function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, onWorkspaceChange }) {
   const client = useQueryClient();
   const { activeSchoolId, user } = useAuth();
-  const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: ({ signal }) => apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }), refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
+  const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: async ({ signal }) => { const overviewRequestStartedAt = performance.now(); const result = await apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }); return { ...result, overviewRequestStartedAt, overviewReceivedAt: performance.now() }; }, refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
   const [session, setSession] = useState(null);
   const currentSessionId = useRef(null);
   useEffect(() => { currentSessionId.current = session?.id; }, [session?.id]);
@@ -125,6 +123,10 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const listScroll = useRef(0);
   const listHeading = useRef(null);
   const [deleting, setDeleting] = useState(null);
+  const [cancelling, setCancelling] = useState(null);
+  const [cancelError, setCancelError] = useState('');
+  const [cancelStale, setCancelStale] = useState(false);
+  const cancelOpener = useRef(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleteStale, setDeleteStale] = useState(false);
   const [deleteRefreshFailed, setDeleteRefreshFailed] = useState(false);
@@ -147,6 +149,10 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const openerRef = useRef(null);
   const handledFocus = useRef(null);
   const data = query.data;
+  const { serverNow, latestServerNow, dateStale } = useScheduleOverviewClock({ data, onRefresh: query.refetch });
+  const statusUnavailable = Boolean(query.error || dateStale);
+  const cancelAvailability = cancelling ? cancellationState(cancelling.application, data?.applicationSummaries?.[cancelling.application.id], serverNow, statusUnavailable, latestServerNow) : null;
+  const cancellationChanged = Boolean(cancelling && (cancelStale || cancelling.revision !== data?.revision));
   const showEditor = Boolean(session && (session.mode === 'edit' || session.customize));
   const workspaceOpen = Boolean(session);
   useEffect(() => { onWorkspaceChange?.(workspaceOpen); }, [workspaceOpen, onWorkspaceChange]);
@@ -170,7 +176,11 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const loadProblem = unavailableClasses.length ? 'Some regular times are unavailable. Resolve their class times or period mappings, or choose Start blank to select only classes with available times.'
     : meetingClasses.length > 500 ? 'This day has more than 500 classes. Choose Start blank and select a smaller set of grades or classes.'
       : meetingClasses.some(row => !catalogIds.has(row.classId)) ? 'The class list changed. Close this draft and refresh profiles before loading the whole day.' : '';
-  const testingStatuses = useMemo(() => new Map((data?.testingStatuses || EMPTY).map(row => [`${row.applicationId}:${row.date}:${row.blockId}`, row])), [data?.testingStatuses]);
+  const testingStatuses = useMemo(() => {
+    const statuses = new Map();
+    for (const row of data?.testingStatuses || EMPTY) { const key = `${row.applicationId}:${row.date}:${row.blockId}`; statuses.set(key, statuses.has(key) ? null : row); }
+    return statuses;
+  }, [data?.testingStatuses]);
   const definitionDirty = Boolean(session && JSON.stringify(session.definition) !== session.original);
   const reusableDirty = Boolean(session && session.mode !== 'apply' && (definitionDirty || previewDateDirty));
   const dirty = reusableDirty || Boolean(session?.mode === 'apply' && (session.customize || session.dates.join(',') !== session.initialDates || preview));
@@ -224,7 +234,11 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const close = () => {
     if (busy || (dirty && !window.confirm('Discard these unsaved profile or application changes?'))) return;
     setSession(null); setTestingPicker(false); setPreview(null); setError(''); editGroup.current = null;
-    requestAnimationFrame(() => { (openerRef.current?.isConnected ? openerRef.current : listHeading.current)?.focus({ preventScroll: true }); window.scrollTo({ top: listScroll.current }); });
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: listScroll.current });
+      // A saved rename can move the opener in the alphabetical profile list.
+      (openerRef.current?.isConnected ? openerRef.current : listHeading.current)?.focus();
+    });
   };
   const edit = (change, editKey) => {
     const coalesce = Boolean(editKey && editGroup.current === editKey);
@@ -349,17 +363,38 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     try { await refresh(true); }
     catch { if (mounted.current) { setNotice('Schedule applied; list refresh unavailable.'); setCommittedRefreshNotice('Schedule profile applied to the reviewed dates.'); } }
   });
-  const cancel = application => {
-    if (!window.confirm(`Cancel ${application.profileName} on ${application.dates.join(', ')}? Before its first class or testing window starts, cancellation restores the previous schedule.`)) return;
-    execute(async () => {
-      const result = await apiRequest('POST', `${API}/applications/${encodeURIComponent(application.id)}/cancel`, { revision: data.revision }, { headers: { 'X-School-Id': activeSchoolId } });
-      if (!mounted.current) return;
-      client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, applications: current.applications.map(row => row.id === application.id ? { ...row, status: 'cancelled' } : row) } : current);
-      setNotice('Schedule application cancelled.'); setCommittedRefreshNotice(null);
-      try { await refresh(true); }
-      catch { if (mounted.current) { setNotice('Schedule application cancelled; list refresh unavailable.'); setCommittedRefreshNotice('Schedule application cancelled.'); } }
-    });
+  const requestCancel = (application, opener) => {
+    if (busyRef.current || blockedByAdvancedDraft || !cancellationState(application, data.applicationSummaries?.[application.id], serverNow, statusUnavailable, latestServerNow).canRequest) return;
+    cancelOpener.current = opener;
+    setCancelError(''); setCancelStale(false);
+    setCancelling({ application: copy(application), revision: data.revision, schoolId: activeSchoolId, actorId: user.id });
   };
+  const cancelApplication = () => execute(async () => {
+    const captured = cancelling;
+    if (!captured || captured.schoolId !== activeSchoolId || captured.actorId !== user.id || cancellationChanged || !cancelAvailability?.canRequest || blockedByAdvancedDraft) return;
+    let result;
+    try {
+      result = await apiRequest('POST', `${API}/applications/${encodeURIComponent(captured.application.id)}/cancel`, { revision: captured.revision }, { headers: { 'X-School-Id': captured.schoolId } });
+    } catch (failure) {
+      if (!mounted.current) return;
+      setCancelError(errorMessage(failure));
+      if (failure?.response?.status === 409) {
+        setCancelStale(true); setPreview(null);
+        try { await refresh(true); } catch { if (mounted.current) setCancelError(`${errorMessage(failure)} Status could not refresh. Close this confirmation and retry the read.`); }
+      }
+      return;
+    }
+    if (!mounted.current) return;
+    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision,
+      applications: current.applications.map(row => row.id === captured.application.id ? { ...row, status: 'cancelled' } : row),
+      // Cancellation may still be releasing contexts. Discard the old summary until reread.
+      applicationSummaries: Object.fromEntries(Object.entries(current.applicationSummaries || {}).filter(([id]) => id !== captured.application.id)),
+    } : current);
+    setCancelling(null); setPreview(null);
+    setNotice('Schedule application cancelled.'); setCommittedRefreshNotice(null);
+    try { await refresh(true); }
+    catch { if (mounted.current) { setNotice('Schedule application cancelled; list refresh unavailable.'); setCommittedRefreshNotice('Schedule application cancelled.'); } }
+  });
   const seedGroupMetadata = groups => {
     const byId = new Map(groups.map(group => [group.id, group]));
     const people = new Map(groups.flatMap(group => group.staff || []).map(person => [person.id, person]));
@@ -440,7 +475,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {session.mode !== 'apply' && session.profile && <Button disabled={blockedByAdvancedDraft || reusableDirty} onClick={chooseDates}>Choose dates & apply</Button>}
     {session.mode === 'apply' && <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}
   </fieldset>;
-  return <div data-testid="schedule-profiles"><Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="max-w-xl space-y-1.5"><CardTitle ref={listHeading} tabIndex={-1} className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
+  return <div data-testid="schedule-profiles"><Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-60 flex-1 space-y-1.5"><CardTitle ref={listHeading} tabIndex={-1} className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
     <details open={!data?.profiles?.length}><summary className="cursor-pointer text-sm font-medium">How profiles work</summary><ol aria-label="Schedule profile workflow" className="grid gap-4 rounded-md bg-muted/40 p-4 text-sm sm:grid-cols-3">
       <li><p className="font-medium">1. Build, review & save</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Edit classes and testing directly in Day planner, then save work in progress.</p></li>
       <li><p className="font-medium">2. Choose dates</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Choose dates & apply opens date selection. Customize that use if needed.</p></li>
@@ -451,11 +486,8 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {blockedByAdvancedDraft && <p className="text-sm text-amber-700 dark:text-amber-300">Save or discard the bell, rotation, date-override or calendar draft before changing profiles or their applications.</p>}
     {notice && <p role="status" className="text-sm text-green-700 dark:text-green-400">{notice}</p>}{deleteRefreshFailed && <Button size="sm" variant="outline" disabled={busy} onClick={retryDeletedList}>Retry profile list refresh</Button>}{committedRefreshNotice && <Button size="sm" variant="outline" disabled={busy} onClick={retryCommittedList}>Retry schedule list refresh</Button>}
     {!session && error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not activate it or change an existing application.</p>{data.profiles?.length > 0 && <div className="grid gap-3 lg:grid-cols-2">{(data.profiles || EMPTY).map(profile => <article key={profile.id} className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{profile.definition.name}</h3><p className="text-sm text-muted-foreground">{data.classes.filter(row => selectedClass(profile.definition, row)).length} classes included · {profile.definition.testingBlocks.length} testing blocks</p><p className="text-xs text-muted-foreground">{profile.definition.classRules.filter(rule => rule.action === 'time').length} custom-time rules · {profile.definition.classRules.filter(rule => rule.action === 'skip').length} skipped-class rules</p><p className="text-xs">{(data.applications || EMPTY).filter(application => application.profileId === profile.id && !['cancelled', 'completed'].includes(application.status) && application.dates.some(date => date >= data.schoolLocalToday)).length} upcoming applications · Saved edits do not change applied schedules.</p><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" aria-label={`Open profile ${profile.definition.name}`} disabled={busy} onClick={() => open('view', profile)}>Open profile</Button><Button size="sm" aria-label={`Choose dates & apply ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onClick={() => open('apply', profile)}><CalendarDays className="mr-2 h-3.5 w-3.5" />Choose dates & apply</Button><DropdownMenu><DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} aria-label={`More actions for ${profile.definition.name}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem aria-label={`Edit ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onSelect={() => open('edit', profile)}>Edit profile</DropdownMenuItem><DropdownMenuItem aria-label={`Duplicate ${profile.definition.name}`} disabled={busy || blockedByAdvancedDraft} onSelect={() => open('edit', profile, true)}><Copy className="mr-2 h-4 w-4" />Duplicate</DropdownMenuItem><DropdownMenuItem aria-label={`Delete profile ${profile.definition.name}`} className="text-destructive focus:text-destructive" disabled={busy || blockedByAdvancedDraft} onSelect={() => requestDelete(profile)}><Trash2 className="mr-2 h-4 w-4" />Delete profile</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></article>)}</div>}{!data.profiles?.length && <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No profiles yet. Create your first special-day plan, then apply it to the dates you need.</p>}
-      {(data.applications || EMPTY).length > 0 && <section className="space-y-3" aria-label="Schedule profile applications"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Applied schedules</h3><Button size="sm" variant="ghost" disabled={busy || query.isFetching} onClick={() => query.refetch()}>Refresh status</Button></div><p className="text-xs text-muted-foreground">Cancel before the first affected class or testing window starts. After it starts, use Release or Extend in Coverage to manage testing supervision.</p>{data.applications.map(application => <div key={application.id} className="space-y-2 rounded-md border p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{application.profileName}</span><Badge variant="secondary">{applicationStatus(application, data.schoolLocalToday)}</Badge>{!data.profiles.some(profile => profile.id === application.profileId) && <Badge variant="outline">Saved profile deleted</Badge>}</div>{['active', 'applied', 'scheduled'].includes(application.status) && applicationStatus(application, data.schoolLocalToday) !== 'Completed' && <Button size="sm" variant="outline" disabled={busy || blockedByAdvancedDraft} onClick={() => cancel(application)}>Cancel application<span className="sr-only"> {application.profileName}</span></Button>}</div><p className="text-xs text-muted-foreground">{application.dates.join(' · ')}</p>{(application.testingWindows || EMPTY).map((window, index) => {
-        const status = testingStatuses.get(`${application.id}:${window.date}:${window.blockId}`);
-        return <div key={`${window.date}-${window.blockId}-${index}`} className="rounded bg-muted p-2 text-xs"><p>{window.date} · {window.name} · {window.startTime}–{window.endTime} · <span className="font-medium">{testingStatusLabels[status?.status] || 'Status unavailable'}</span></p>{['failed', 'missed'].includes(status?.status) && <><p className="mt-1 text-destructive">{testingStatusReasons[status.code] || testingStatusReasons.ACTIVATION_FAILED}</p><p className="mt-1 text-muted-foreground">Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.</p></>}</div>;
-      })}</div>)}</section>}
+    {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not schedule it.</p>
+      <ScheduleProfilesOverview data={data} busy={busy} blocked={blockedByAdvancedDraft} refreshing={query.isFetching} statusUnavailable={statusUnavailable} serverNow={serverNow} latestServerNow={latestServerNow} testingStatuses={testingStatuses} statusReasons={testingStatusReasons} onOpen={open} onDelete={requestDelete} onCancel={requestCancel} onRefresh={query.refetch} />
     </>}
   </CardContent></Card>
     {session && data && <section ref={workspaceRef} aria-label="Schedule profile workspace" className="min-w-0 space-y-5" data-testid="schedule-profile-workspace" onBlurCapture={() => { editGroup.current = null; }}>
@@ -505,6 +537,17 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       seedGroupMetadata(groups);
       edit({ definition: { ...session.definition, testingBlocks: [...session.definition.testingBlocks, ...blocks] }, activeTarget: blocks[0] ? { blockId: blocks[0].id } : null, focusTarget: blocks[0] ? { blockId: blocks[0].id } : null });
     }} onGroupSaved={refreshCreatedGroup} />}
+
+    <AlertDialog open={Boolean(cancelling)} onOpenChange={open => { if (!open && !busyRef.current) setCancelling(null); }}>
+      <AlertDialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => (cancelOpener.current?.isConnected ? cancelOpener.current : listHeading.current)?.focus()); }}>
+        <AlertDialogHeader><AlertDialogTitle>Cancel application?</AlertDialogTitle><AlertDialogDescription asChild><div className="space-y-2"><p>Cancel <strong>{cancelling?.application.profileName}</strong> on all the dates below?</p><p>This cancels the entire application, including every testing block and class adjustment on these dates. The previous schedule will be restored if validation succeeds.</p></div></AlertDialogDescription></AlertDialogHeader>
+        <ul className="max-h-48 list-inside list-disc overflow-y-auto text-sm">{cancelling?.application.dates.map(date => <li key={date}>{scheduleDateText(date)}</li>)}</ul>
+        {cancellationChanged && <p role="alert" className="text-sm text-destructive">Scheduling changed. Close this confirmation, refresh status, and reopen it before cancelling.</p>}
+        {!cancellationChanged && cancelling && !cancelAvailability?.canRequest && <p role="alert" className="text-sm text-destructive">{cancelAvailability?.reason === 'started' ? 'The first affected window has started. Cancellation is no longer available.' : 'Cancellation availability could not be confirmed. Close this confirmation and refresh status.'}</p>}
+        {cancelError && <p role="alert" className="text-sm text-destructive">{cancelError}</p>}
+        <AlertDialogFooter><AlertDialogCancel disabled={busy}>Keep application</AlertDialogCancel><Button variant="destructive" disabled={busy || blockedByAdvancedDraft || cancellationChanged || !cancelAvailability?.canRequest} onClick={cancelApplication}>{busy ? 'Cancelling…' : 'Cancel all applied dates'}</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <AlertDialog open={Boolean(deleting)} onOpenChange={open => { if (!open && !busyRef.current) setDeleting(null); }}>
       <AlertDialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => (deleteOpener.current?.isConnected ? deleteOpener.current : listHeading.current)?.focus()); }}>

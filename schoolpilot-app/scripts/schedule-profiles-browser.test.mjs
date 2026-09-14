@@ -13,6 +13,7 @@ async function createProfileFixture(context) {
   await vite.listen();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1365, height: 950 } });
+  await page.clock.setFixedTime(new Date('2026-09-08T12:00:00Z'));
   // A failed Vite module load should be visible in CI instead of only surfacing
   // later as a missing first-render button. API errors are exercised separately.
   page.on('requestfailed', request => {
@@ -70,6 +71,59 @@ async function editTesting(workspace, name) {
   await scheduleRow(workspace, name).getByRole('button', { name: `Edit testing block ${name}`, exact: true }).click();
 }
 
+const applicationRow = (page, id) => page.locator(`[data-application-id="${id}"]`);
+const profileRow = (page, id) => page.locator(`[data-profile-id="${id}"]`);
+
+async function showApplicationDetails(page, application) {
+  const row = applicationRow(page, application.id);
+  const expand = row.getByRole('button', { name: `View details ${application.profileName} ${application.dates.join(', ')}`, exact: true });
+  if (await expand.isVisible()) await expand.click();
+  return row;
+}
+
+async function showEarlierApplications(page) {
+  const summary = page.locator('summary').filter({ hasText: /^Earlier and cancelled applications/ });
+  if (!await summary.locator('..').evaluate(element => element.open)) await summary.click();
+}
+
+async function confirmCancellation(page, name) {
+  await page.getByRole('button', { name: `Cancel application ${name}`, exact: true }).click();
+  const dialog = page.getByRole('alertdialog', { name: 'Cancel application?', exact: true });
+  await dialog.getByRole('button', { name: 'Cancel all applied dates', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
+}
+
+// Supply the additive, authoritative overview projection in fixtures. Specific
+// overview scenarios override these records rather than asking the UI to infer
+// lifecycle or cancellation permission from mutable profile definitions.
+function overviewCatalog(catalog) {
+  const applicationSummaries = Object.fromEntries((catalog.applications || []).map(application => {
+    const dates = application.dates.map(date => {
+      const testing = (application.testingWindows || []).filter(window => window.date === date);
+      const rules = application.definition?.classRules || [];
+      const testingOutcomes = { pending: 0, active: 0, ended: 0, failed: 0, missed: 0, cancelled: 0, releasing: 0, unknown: 0 };
+      const testingStatusByBlock = {};
+      for (const window of testing) {
+        const outcome = (catalog.testingStatuses || []).find(status => status.applicationId === application.id && status.date === date && status.blockId === window.blockId)?.status;
+        const key = application.status === 'cancelled' ? 'cancelled' : outcome || (date > catalog.schoolLocalToday ? 'pending' : 'unknown');
+        testingOutcomes[Object.hasOwn(testingOutcomes, key) ? key : 'unknown']++;
+        testingStatusByBlock[window.blockId] = Object.hasOwn(testingOutcomes, key) ? key : 'unknown';
+      }
+      return { date, phase: application.status === 'cancelled' ? 'cancelled' : date > catalog.schoolLocalToday ? 'future' : date === catalog.schoolLocalToday ? 'today' : 'past', customTimeCount: rules.filter(rule => rule.action === 'time').length, skippedClassCount: rules.filter(rule => rule.action === 'skip').length, testingBlockCount: testing.length, testingOutcomes, testingStatusByBlock };
+    });
+    const canRequest = application.status !== 'cancelled' && dates.some(date => ['today', 'future'].includes(date.phase));
+    return [application.id, { dates, nextFutureDate: dates.filter(date => date.phase === 'future').map(date => date.date).sort()[0] || null, appliedToday: dates.some(date => date.phase === 'today'), cancellation: { canRequest, cutoffAt: canRequest ? `${application.dates.slice().sort()[0]}T13:00:00Z` : null, reason: canRequest ? null : application.status === 'cancelled' ? 'cancelled' : 'started' } }];
+  }));
+  return { ...catalog, applications: catalog.applications.map(application => ({ classWindows: {}, ...application })), applicationSummaries: { ...applicationSummaries, ...catalog.applicationSummaries }, summariesCheckedAt: catalog.summariesCheckedAt || '2026-09-08T12:00:00Z', nextSchoolDateAt: catalog.nextSchoolDateAt || '2026-09-09T04:00:00Z' };
+}
+
+function appliedSnapshot(profile, id, dates, options = {}) {
+  const definition = structuredClone(profile.definition);
+  return { id, profileId: profile.id, profileName: definition.name, status: 'scheduled', dates, definition,
+    classWindows: Object.fromEntries(dates.map(date => [date, Object.fromEntries(definition.classRules.map(rule => [rule.classId, rule.action === 'skip' ? null : { startTime: rule.startTime, endTime: rule.endTime }]))])),
+    testingWindows: dates.flatMap(date => definition.testingBlocks.map(block => ({ date, blockId: block.id, name: block.name, startTime: block.startTime, endTime: block.endTime, assignedStaffId: block.assignedStaffId, coverageGroupId: block.coverageGroupId }))), ...options };
+}
+
 async function createDraftReviewFixture(context) {
   const fixture = await createProfileFixture(context);
   const { page } = fixture;
@@ -88,7 +142,7 @@ async function createDraftReviewFixture(context) {
     ],
   };
   const reviews = [], saves = [], previews = [], applies = [], deletions = [], cancellations = [], errors = [];
-  const control = { reviewResponse: null, saveResponse: null, saveTransform: definition => definition, previewDateTransform: value => value, staleCatalog: false, failCatalogRefresh: false, catalogReadFailures: 0, failSavedReview: false, groupCreates: [], failGroupCreate: false, failDirectory: false, deleteResponse: null, failDeleteRefresh: false, failApplicationRefresh: false, failCancellationRefresh: false, activeSchool: 'school' };
+  const control = { reviewResponse: null, saveResponse: null, saveTransform: definition => definition, previewDateTransform: value => value, staleCatalog: false, failCatalogRefresh: false, failOverviewRead: false, catalogResponse: null, catalogReads: [], catalogReadFailures: 0, failSavedReview: false, groupCreates: [], failGroupCreate: false, failDirectory: false, deleteResponse: null, cancelResponse: null, failDeleteRefresh: false, failApplicationRefresh: false, failCancellationRefresh: false, activeSchool: 'school' };
   const groupSummary = group => ({ id: group.id, schoolId: 'school', name: group.name, active: group.active !== false, updatedAt: '2026-09-08T12:00:00Z', studentCount: group.studentIds.length, inactiveStudentCount: 0, categoryId: 'map-category', category: { id: 'map-category', name: 'NWEA MAP' }, gradeCounts: [{ gradeLevel: '3', count: group.studentIds.length }], staff: group.staffIds.map(id => ({ id, displayName: catalog.staff.find(person => person.id === id)?.name || id })) });
   const project = body => {
     const result = draftReviewFixture(catalog, body.definition, body.referenceDate);
@@ -150,12 +204,17 @@ async function createDraftReviewFixture(context) {
     if (url.pathname.endsWith('/schedule-profiles/apply')) {
       const body = request.postDataJSON(); applies.push(body);
       const profile = catalog.profiles.find(row => row.id === body.profileId) || control.savedProfile;
-      const application = { id: 'applied', profileId: profile.id, profileName: profile.definition.name, dates: body.dates, status: 'scheduled', definition: structuredClone(body.definition || profile.definition), testingWindows: [] };
+      const application = appliedSnapshot({ ...profile, definition: body.definition || profile.definition }, 'applied', body.dates);
       catalog.applications.push(application);
       return route.fulfill({ json: { revision: ++catalog.revision, application } });
     }
     if (url.pathname.includes('/schedule-profiles/applications/') && url.pathname.endsWith('/cancel')) {
-      cancellations.push(request.postDataJSON()); catalog.applications[0].status = 'cancelled';
+      const id = url.pathname.split('/').at(-2), body = request.postDataJSON();
+      cancellations.push(body);
+      const response = await control.cancelResponse?.(id, body);
+      if (response) return route.fulfill(response);
+      catalog.applications.find(application => application.id === id).status = 'cancelled';
+      if (catalog.applicationSummaries?.[id]) delete catalog.applicationSummaries[id];
       return route.fulfill({ json: { revision: ++catalog.revision } });
     }
     if (request.method() === 'DELETE' && /\/schedule-profiles\/[^/]+$/.test(url.pathname)) {
@@ -182,8 +241,12 @@ async function createDraftReviewFixture(context) {
         control.savedProfile = profile;
         return route.fulfill({ json: { revision: catalog.revision, profile } });
       }
-      if ((control.failCatalogRefresh && saves.length) || control.failGroupCatalogRefresh || (control.failDeleteRefresh && deletions.length) || (control.failApplicationRefresh && applies.length) || (control.failCancellationRefresh && cancellations.length)) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
-      return route.fulfill({ json: control.activeSchool === 'school' ? catalog : { ...catalog, profiles: [], applications: [], testingStatuses: [], classes: [], staff: [], supervisionGroups: [] } });
+      const schoolId = request.headers()['x-school-id'] || 'school';
+      control.catalogReads.push({ schoolId });
+      const response = await control.catalogResponse?.(schoolId);
+      if (response) return route.fulfill(response);
+      if (control.failOverviewRead || (control.failCatalogRefresh && saves.length) || control.failGroupCatalogRefresh || (control.failDeleteRefresh && deletions.length) || (control.failApplicationRefresh && applies.length) || (control.failCancellationRefresh && cancellations.length)) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
+      return route.fulfill({ json: overviewCatalog(schoolId === 'school' ? catalog : { ...catalog, profiles: [], applications: [], testingStatuses: [], applicationSummaries: {}, classes: [], staff: [], supervisionGroups: [] }) });
     }
     return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
   };
@@ -549,7 +612,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
         const body = request.postDataJSON(); applies.push(body);
         if (staleApply) { staleApply = false; catalog.revision++; return route.fulfill({ status: 409, json: { error: 'The schedule changed. Reopen this profile and preview its dates again.' } }); }
         const profile = catalog.profiles.find(row => row.id === body.profileId);
-        const application = { id: `application-${applies.length}`, profileId: profile.id, profileName: profile.definition.name, dates: body.dates, status: 'scheduled', testingWindows: [{ date: body.dates[0], blockId: 'testing', name: 'MAP testing', startTime: '09:00', endTime: '10:00' }] };
+        const application = { id: `application-${applies.length}`, profileId: profile.id, profileName: profile.definition.name, dates: body.dates, status: 'scheduled', definition: structuredClone(body.definition || profile.definition), classWindows: Object.fromEntries(body.dates.map(date => [date, { math: { startTime: '08:10', endTime: '09:00' }, reading: null }])), testingWindows: [{ date: body.dates[0], blockId: 'testing', name: 'MAP testing', startTime: '09:00', endTime: '10:00' }] };
         catalog.testingStatuses.push({ applicationId: application.id, date: body.dates[0], blockId: 'testing', status: 'failed', code: 'COVERAGE_ROSTER_CHANGED' });
         catalog.applications.push(application); config.profileApplications = structuredClone(catalog.applications); catalog.revision++; return route.fulfill({ json: { application, revision: catalog.revision } });
       }
@@ -564,7 +627,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
           else catalog.profiles.push({ id: `profile-${saves.length}`, revision: 1, definition: body.definition, previewDate: body.previewDate, updatedAt: '2026-09-08T12:00:00Z' });
           config.scheduleProfiles = structuredClone(catalog.profiles); catalog.revision++; return route.fulfill({ json: { revision: catalog.revision, profile: existing || catalog.profiles.at(-1) } });
         }
-        return route.fulfill({ json: catalog });
+        return route.fulfill({ json: overviewCatalog(catalog) });
       }
       return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
     });
@@ -631,7 +694,8 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.screenshot({ path: path.join(artifactDir, 'review-desktop.png'), animations: 'disabled' });
     await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
     assert.equal(applies[0].previewToken, 'preview-2'); assert.deepEqual(applies[0].dates, previews[1].dates); assert.deepEqual(applies[0].definition, previews[1].definition);
-    await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Applied · Today', { exact: true }).waitFor();
+    await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Applied today', { exact: true }).first().waitFor();
+    await showApplicationDetails(page, catalog.applications[0]);
     await page.getByText('The Supervision group roster changed.', { exact: true }).waitFor();
     const recoveryHint = 'Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.';
     await page.getByText(recoveryHint, { exact: true }).waitFor();
@@ -662,11 +726,14 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     page.once('dialog', prompt => prompt.dismiss()); await dialog.getByRole('button', { name: 'Back to scheduling', exact: true }).click(); assert.equal(await dialog.isVisible(), true);
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click(); await closeSavedReview(dialog);
     assert.equal(saves[2].id, 'profile-1'); assert.equal(saves[2].profileRevision, 1); assert.equal(catalog.applications[0].profileName, 'MAP morning');
-    page.once('dialog', prompt => prompt.accept()); await page.getByRole('button', { name: 'Cancel application MAP morning', exact: true }).click();
+    await confirmCancellation(page, 'MAP morning');
+    await showEarlierApplications(page);
     await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Cancelled', { exact: true }).first().waitFor(); assert.equal(cancellations.length, 1);
     assert.equal(await page.getByText(recoveryHint, { exact: true }).count(), 0);
-    catalog.applications.push({ id: 'previous-application', profileId: 'profile-1', profileName: 'Previous testing day', dates: ['2026-09-07'], status: 'scheduled', testingWindows: [] }); config.profileApplications = structuredClone(catalog.applications);
-    await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await page.getByText('Completed', { exact: true }).waitFor();
+    catalog.applications.push({ id: 'previous-application', profileId: 'profile-1', profileName: 'Previous testing day', dates: ['2026-09-07'], status: 'scheduled', classWindows: { '2026-09-07': { math: { startTime: '08:10', endTime: '09:00' } } }, testingWindows: [] }); config.profileApplications = structuredClone(catalog.applications);
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await showEarlierApplications(page);
+    await page.getByText('Past date', { exact: true }).first().waitFor();
     assert.equal(await page.getByRole('button', { name: 'Cancel application Previous testing day', exact: true }).count(), 0);
 
     await page.getByRole('button', { name: 'Choose dates & apply MAP revised', exact: true }).click(); dialog = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
@@ -749,7 +816,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
           catalog.revision++;
           return route.fulfill({ json: { revision: catalog.revision, profile: existing || catalog.profiles.at(-1) } });
         }
-        return route.fulfill({ json: catalog });
+        return route.fulfill({ json: overviewCatalog(catalog) });
       }
       return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
     });
@@ -1169,9 +1236,10 @@ test('Deleting a reusable profile retains every applied snapshot and restores li
     assert.equal(catalog.profiles.length, 0);
     assert.deepEqual(catalog.applications, applications); assert.deepEqual(catalog.testingStatuses, statuses);
     assert.equal(await page.getByRole('button', { name: 'Open profile Old MAP profile', exact: true }).count(), 0);
+    await page.waitForFunction(() => document.activeElement?.textContent.trim() === 'Schedule profiles');
+    await showEarlierApplications(page);
     assert.equal(await page.getByText('Saved profile deleted', { exact: true }).count(), 4);
     assert.equal(await page.getByRole('button', { name: 'Cancel application Old MAP profile', exact: true }).count(), 2, 'Dated applications remain independently manageable');
-    await page.waitForFunction(() => document.activeElement?.textContent.trim() === 'Schedule profiles');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
 });
@@ -1368,8 +1436,8 @@ test('Committed applications and cancellations survive list failures with read-o
     await page.getByText('Schedule profile applied to the reviewed dates.', { exact: true }).waitFor();
     assert.equal(applies.length, 1, 'Recovering the list never repeats the application');
     control.failCancellationRefresh = true;
-    page.once('dialog', prompt => prompt.accept());
-    await page.getByRole('button', { name: 'Cancel application Old MAP profile', exact: true }).click();
+    await confirmCancellation(page, 'Old MAP profile');
+    await showEarlierApplications(page);
     await page.getByText('Schedule application cancelled; list refresh unavailable.', { exact: true }).waitFor();
     await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Cancelled', { exact: true }).waitFor();
     assert.equal(cancellations.length, 1); assert.equal(catalog.applications[0].status, 'cancelled');
@@ -1429,5 +1497,303 @@ test('Grade collapse survives display changes and issue navigation reveals its c
     assert.equal(prompts, 0, 'Opening a row without making changes requires no discard prompt');
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open profile Old MAP profile');
     assert.equal(saves.length, 0); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+
+test('Scheduling overview separates reusable changes from dated snapshots and preserves expanded details on return', { timeout: 120_000 }, async context => {
+  const { root, browser, vite, page, catalog, errors } = await createDraftReviewFixture(context);
+  try {
+    const alpha = deletableProfile(); alpha.id = 'alpha'; alpha.definition.name = 'Alpha MAP';
+    alpha.definition.classIds.push('reading');
+    alpha.definition.classRules.push({ classId: 'reading', action: 'time', startTime: '10:45', endTime: '11:30' });
+    const application = appliedSnapshot(alpha, 'alpha-dates', ['2026-09-08', '2026-09-10']);
+    const empty = { id: 'zulu', revision: 1, definition: { name: 'Zulu unchanged', grades: ['3', '4'], classIds: [], classRules: [], testingBlocks: [] } };
+    const duplicate = structuredClone(alpha); duplicate.id = 'alpha-2';
+    catalog.profiles = [empty, duplicate, alpha];
+    const cancelled = appliedSnapshot(alpha, 'cancelled-nearer-date', ['2026-09-09'], { status: 'cancelled' });
+    const past = appliedSnapshot(alpha, 'earlier', ['2026-09-07']);
+    const noChange = appliedSnapshot(alpha, 'no-change', ['2026-09-09'], { classWindows: {}, testingWindows: [] });
+    catalog.applications = [cancelled, application, past, noChange];
+    catalog.testingStatuses = [
+      { applicationId: application.id, date: '2026-09-08', blockId: 'old-block', status: 'active' },
+      { applicationId: application.id, date: '2026-09-10', blockId: 'old-block', status: 'pending' },
+    ];
+    const emptySummary = overviewCatalog(catalog).applicationSummaries[noChange.id];
+    emptySummary.dates = emptySummary.dates.map(day => ({ ...day, phase: 'no_changes', customTimeCount: 0, skippedClassCount: 0, testingBlockCount: 0 }));
+    emptySummary.nextFutureDate = null; emptySummary.appliedToday = false;
+    emptySummary.cancellation = { canRequest: false, cutoffAt: null, reason: 'no_changes' };
+    const activeSummary = overviewCatalog(catalog).applicationSummaries[application.id];
+    activeSummary.cancellation = { canRequest: false, cutoffAt: '2026-09-08T13:00:00Z', reason: 'started' };
+    catalog.summariesCheckedAt = '2026-09-08T13:30:00Z';
+    catalog.applicationSummaries = { [noChange.id]: emptySummary, [application.id]: activeSummary };
+    // A later profile edit must not rewrite the dated display or its counts.
+    alpha.definition.classRules[1].startTime = '11:00';
+    alpha.definition.classIds.push('science');
+    alpha.definition.classRules.push({ classId: 'science', action: 'time', startTime: '12:00', endTime: '12:45' });
+    alpha.definition.testingBlocks.push({ ...alpha.definition.testingBlocks[0], id: 'newer-block', name: 'Later profile-only block' });
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('region', { name: 'Saved profiles', exact: true }).waitFor();
+    assert.deepEqual(await page.locator('[data-profile-id]').evaluateAll(rows => rows.map(row => row.dataset.profileId)), ['alpha', 'alpha-2', 'zulu'], 'Alphabetical names use a stable ID tie-breaker');
+    const reusable = profileRow(page, 'alpha');
+    assert.match(await reusable.innerText(), /2 testing blocks/);
+    assert.match(await reusable.innerText(), /2 custom class times/);
+    assert.match(await reusable.innerText(), /1 skipped class/);
+    assert.match(await reusable.innerText(), /September 10, 2026/);
+    assert.doesNotMatch(await reusable.innerText(), /September 9, 2026/);
+    await reusable.getByText('Applied today', { exact: true }).waitFor();
+    await profileRow(page, 'zulu').getByText('No schedule changes configured', { exact: true }).waitFor();
+    await profileRow(page, 'zulu').getByText('4 classes included', { exact: true }).waitFor();
+    await profileRow(page, 'zulu').getByText('No future dates', { exact: true }).waitFor();
+    const applied = applicationRow(page, application.id);
+    assert.equal(await applied.getByRole('region', { name: 'Applied date 2026-09-08', exact: true }).count(), 0, 'Collapsed details are absent from accessible navigation');
+    assert.equal(await applicationRow(page, 'earlier').isVisible(), false);
+    assert.equal(await applicationRow(page, cancelled.id).isVisible(), false);
+    const toggle = applied.getByRole('button', { name: /^View details/ });
+    await toggle.focus(); await page.keyboard.press('Enter');
+    assert.equal(await applied.getByRole('button', { name: /^Hide details/ }).getAttribute('aria-expanded'), 'true');
+    const day = applied.getByRole('region', { name: 'Applied date 2026-09-08', exact: true });
+    assert.match(await day.innerText(), /10:45 AM/);
+    assert.doesNotMatch(await day.innerText(), /11:00 AM|Later profile-only block/);
+    assert.match(await applied.innerText(), /2 custom class times/);
+    assert.doesNotMatch(await applied.innerText(), /4 custom class times/);
+    const savedSnapshot = structuredClone(application);
+    await reusable.getByRole('button', { name: 'Open profile Alpha MAP', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByRole('button', { name: 'Back to scheduling', exact: true }).click();
+    await workspace.waitFor({ state: 'hidden' });
+    assert.equal(await applied.getByRole('button', { name: /^Hide details/ }).getAttribute('aria-expanded'), 'true');
+    assert.equal(await reusable.getByRole('button', { name: 'Open profile Alpha MAP', exact: true }).evaluate(button => button === document.activeElement), true);
+    assert.deepEqual(catalog.applications.find(row => row.id === application.id), savedSnapshot);
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await day.waitFor();
+    assert.equal(await applied.getByRole('button', { name: /^Hide details/ }).getAttribute('aria-expanded'), 'true');
+    await showEarlierApplications(page);
+    assert.equal(await applicationRow(page, 'earlier').isVisible(), true);
+    assert.equal(await applicationRow(page, cancelled.id).isVisible(), true);
+    const artifactDir = path.join(root, 'artifacts', 'scheduling-overview'); await mkdir(artifactDir, { recursive: true });
+    await applied.getByRole('button', { name: /^Hide details/ }).click();
+    await page.locator('summary').filter({ hasText: /^Earlier and cancelled applications/ }).click();
+    for (const [size, viewport] of [['desktop', { width: 1440, height: 1000 }], ['mobile', { width: 390, height: 844 }]]) {
+      await page.setViewportSize(viewport);
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: path.join(artifactDir, size + '-' + theme + '.png'), fullPage: true, animations: 'disabled' });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, size + ' ' + theme + ' has no page overflow');
+        assert.equal(await reusable.getByRole('button', { name: 'More actions for Alpha MAP', exact: true }).isVisible(), true);
+      }
+    }
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Applied date summaries expose failures and unknown outcomes without declaring the whole schedule finished', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, errors } = await createDraftReviewFixture(context);
+  try {
+    const profile = deletableProfile(); profile.definition.name = 'Mixed testing outcomes';
+    const states = ['pending', 'active', 'ended', 'failed', 'missed', 'cancelled', 'releasing', 'unknown'];
+    profile.definition.testingBlocks = states.map((status, index) => ({ ...profile.definition.testingBlocks[0], id: 'block-' + index, name: status + ' testing' }));
+    profile.definition.classRules = [{ classId: 'math', action: 'time', startTime: '13:00', endTime: '14:00' }];
+    const application = appliedSnapshot(profile, 'mixed-outcomes', ['2026-09-08']);
+    catalog.profiles = [profile]; catalog.applications = [application];
+    catalog.testingStatuses = states.flatMap((status, index) => status === 'unknown' ? [] : [{ applicationId: application.id, date: '2026-09-08', blockId: 'block-' + index, status, code: status === 'failed' ? 'COVERAGE_ROSTER_CHANGED' : status === 'missed' ? 'WINDOW_ELAPSED' : undefined }]);
+    const summary = overviewCatalog(catalog).applicationSummaries[application.id];
+    summary.cancellation = { canRequest: false, cutoffAt: '2026-09-08T11:00:00Z', reason: 'started' };
+    catalog.applicationSummaries = { [application.id]: summary };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const row = applicationRow(page, application.id);
+    for (const label of ['awaiting start', 'active', 'finished', 'could not start', 'missed', 'cancelled', 'ending', 'status unavailable']) await row.getByText('1 testing block ' + label, { exact: true }).waitFor();
+    await row.getByText('Applied today', { exact: true }).waitFor();
+    assert.equal(await row.getByText('Completed', { exact: true }).count(), 0);
+    assert.equal(await row.getByRole('button', { name: /^Cancel application/ }).count(), 0);
+    assert.match(await page.getByRole('region', { name: 'Schedule profile applications', exact: true }).innerText(), /Testing status is separate from class changes/);
+    await showApplicationDetails(page, application);
+    await row.getByText('The Supervision group roster changed.', { exact: true }).waitFor();
+    await row.getByText('The testing window elapsed before it could start.', { exact: true }).waitFor();
+    assert.match(await row.getByRole('region', { name: 'Applied date 2026-09-08', exact: true }).innerText(), /1:00 PM.*2:00 PM/);
+    assert.equal(await row.getByText('Status unavailable', { exact: true }).count(), 1);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Cancellation confirms every date, prevents stale resubmission, and expires an open confirmation at the server cutoff', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, control, cancellations, errors } = await createDraftReviewFixture(context);
+  try {
+    const profile = deletableProfile(); const application = appliedSnapshot(profile, 'cutoff-application', ['2026-09-08', '2026-09-10']);
+    catalog.profiles = [profile]; catalog.applications = [application]; catalog.revision = 21;
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const opener = applicationRow(page, application.id).getByRole('button', { name: 'Cancel application Old MAP profile', exact: true });
+    await opener.click();
+    const dialog = page.getByRole('alertdialog', { name: 'Cancel application?', exact: true });
+    assert.match(await dialog.innerText(), /September 8, 2026/); assert.match(await dialog.innerText(), /September 10, 2026/);
+    await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    assert.equal(await opener.evaluate(button => button === document.activeElement), true); assert.equal(cancellations.length, 0);
+    await opener.click();
+    control.cancelResponse = () => { catalog.revision++; return { status: 409, json: { error: 'The schedule changed. Refresh status before cancelling.' } }; };
+    const confirm = dialog.getByRole('button', { name: 'Cancel all applied dates', exact: true });
+    await confirm.evaluate(button => { button.click(); button.click(); });
+    await dialog.getByRole('alert').filter({ hasText: 'Scheduling changed.' }).waitFor();
+    assert.equal(cancellations.length, 1, 'Repeated confirmations send one mutation');
+    assert.equal(cancellations[0].revision, 21); assert.equal(await confirm.isDisabled(), true);
+    await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    const summary = overviewCatalog(catalog).applicationSummaries[application.id];
+    summary.cancellation = { canRequest: true, cutoffAt: '2026-09-08T12:01:00Z', reason: null };
+    catalog.applicationSummaries = { [application.id]: summary };
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await page.waitForLoadState('networkidle');
+    await opener.click();
+    control.failOverviewRead = true;
+    const readsBefore = control.catalogReads.length;
+    await page.clock.setSystemTime(new Date('2026-09-08T12:00:00Z'));
+    await page.clock.fastForward(61_000);
+    await page.waitForFunction(() => document.querySelector('[role="alertdialog"] button:last-child')?.disabled === true);
+    assert.ok(control.catalogReads.length > readsBefore, 'The known cutoff triggers a status read without another user action');
+    assert.equal(await confirm.isDisabled(), true);
+    assert.equal(cancellations.length, 1, 'An expired confirmation never posts another cancellation');
+    await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    assert.equal(await opener.count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Overview read failures remain explicit and delayed old-school status cannot populate another school', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, control, cancellations, errors } = await createDraftReviewFixture(context);
+  let finishRead;
+  try {
+    const profile = deletableProfile(); const application = appliedSnapshot(profile, 'read-failure', ['2026-09-10']);
+    catalog.profiles = [profile]; catalog.applications = [application];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await showApplicationDetails(page, application);
+    control.failOverviewRead = true;
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await page.getByText('Current application status is unavailable. Refresh status to check again.', { exact: true }).waitFor();
+    await profileRow(page, profile.id).getByText('Schedule dates unavailable', { exact: true }).waitFor();
+    assert.equal(await applicationRow(page, application.id).getByRole('button', { name: /^Cancel application/ }).count(), 0);
+    assert.equal(await applicationRow(page, application.id).getByText('No testing blocks', { exact: true }).count(), 0);
+    control.failOverviewRead = false;
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await profileRow(page, profile.id).getByText('September 10, 2026', { exact: true }).waitFor();
+    assert.equal(await applicationRow(page, application.id).getByRole('button', { name: /^Hide details/ }).getAttribute('aria-expanded'), 'true');
+    catalog.applicationSummaries = { [application.id]: null };
+    const missingSummaryRead = page.waitForResponse(response => response.url().endsWith('/schedule-profiles') && response.request().method() === 'GET');
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    assert.equal((await (await missingSummaryRead).json()).applicationSummaries[application.id], null);
+    await profileRow(page, profile.id).getByText('Schedule dates unavailable', { exact: true }).waitFor();
+    await applicationRow(page, application.id).getByText('Date status unavailable', { exact: true }).waitFor();
+    assert.equal(await applicationRow(page, application.id).getByRole('button', { name: /^Cancel application/ }).count(), 0, 'A missing additive summary does not imply cancellation permission');
+    catalog.applicationSummaries = {};
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await profileRow(page, profile.id).getByText('September 10, 2026', { exact: true }).waitFor();
+    const captured = overviewCatalog(catalog);
+    control.catalogResponse = async schoolId => {
+      if (schoolId !== 'school') return null;
+      await new Promise(resolve => { finishRead = resolve; });
+      return { json: captured };
+    };
+    const read = page.waitForRequest(request => request.url().endsWith('/schedule-profiles') && request.method() === 'GET');
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await read;
+    await page.evaluate(() => window.switchFixtureSchool('other-school'));
+    await page.getByRole('region', { name: 'Saved profiles', exact: true }).getByText(/No profiles yet/).waitFor();
+    finishRead(); finishRead = null; await page.waitForLoadState('networkidle');
+    assert.equal(await page.locator('[data-profile-id]').count(), 0); assert.equal(await page.locator('[data-application-id]').count(), 0);
+    assert.equal(await page.getByText('Old MAP profile', { exact: true }).count(), 0);
+    assert.equal(cancellations.length, 0); assert.deepEqual(errors, []);
+  } finally { finishRead?.(); await browser.close(); await vite.close(); }
+});
+
+
+test('Unavailable cancellation cutoffs and a slow status response cannot extend the cancellation window', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, cancellations, errors } = await createDraftReviewFixture(context);
+  let finishRead;
+  try {
+    const profile = deletableProfile(); const application = appliedSnapshot(profile, 'uncertain-cutoff', ['2026-09-08']);
+    catalog.profiles = [profile]; catalog.applications = [application];
+    const summary = overviewCatalog(catalog).applicationSummaries[application.id];
+    summary.cancellation = { canRequest: true, cutoffAt: null, reason: null };
+    catalog.applicationSummaries = { [application.id]: summary };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const row = applicationRow(page, application.id);
+    await row.getByText('Cancellation availability could not be checked. Refresh status to try again.', { exact: true }).waitFor();
+    assert.equal(await row.getByRole('button', { name: /^Cancel application/ }).count(), 0, 'A missing cutoff is unknown even if canRequest was true');
+    summary.cancellation.cutoffAt = '2026-09-08T12:00:05Z';
+    const captured = overviewCatalog(catalog);
+    control.catalogResponse = async () => {
+      await new Promise(resolve => { finishRead = resolve; });
+      return { json: captured };
+    };
+    const response = page.waitForResponse(response => response.url().endsWith('/schedule-profiles') && response.request().method() === 'GET');
+    const request = page.waitForRequest(request => request.url().endsWith('/schedule-profiles') && request.method() === 'GET');
+    await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await request;
+    await page.clock.fastForward(6_000);
+    finishRead(); finishRead = null; await response;
+    await page.getByRole('button', { name: 'Refresh status', exact: true, disabled: false }).waitFor();
+    assert.equal(await row.getByRole('button', { name: /^Cancel application/ }).count(), 0, 'Time spent waiting for a response cannot create five extra seconds of cancellation');
+    await row.getByText('Cancellation availability could not be checked. Refresh status to try again.', { exact: true }).waitFor();
+    control.catalogResponse = null; control.failOverviewRead = true;
+    await page.clock.fastForward(16 * 60 * 60 * 1000);
+    await page.getByText('Current application status is unavailable. Refresh status to check again.', { exact: true }).waitFor();
+    await profileRow(page, profile.id).getByText('Schedule dates unavailable', { exact: true }).waitFor();
+    assert.equal(await row.getByText('Applied today', { exact: true }).count(), 0, 'An unrefreshed school-date boundary does not present yesterday as today');
+    assert.equal(cancellations.length, 0); assert.deepEqual(errors, []);
+  } finally { finishRead?.(); await browser.close(); await vite.close(); }
+});
+
+
+test('A cancellation response arriving after a school switch cannot update or navigate the new school', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, cancellations, errors } = await createDraftReviewFixture(context);
+  let finishCancel;
+  try {
+    const profile = deletableProfile(); const application = appliedSnapshot(profile, 'scope-cancellation', ['2026-09-10']);
+    catalog.profiles = [profile]; catalog.applications = [application];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await applicationRow(page, application.id).getByRole('button', { name: 'Cancel application Old MAP profile', exact: true }).click();
+    const dialog = page.getByRole('alertdialog', { name: 'Cancel application?', exact: true });
+    control.cancelResponse = async () => {
+      await new Promise(resolve => { finishCancel = resolve; });
+      application.status = 'cancelled';
+      return { json: { revision: ++catalog.revision } };
+    };
+    const submission = page.waitForRequest(request => request.url().endsWith('/cancel') && request.method() === 'POST');
+    await dialog.getByRole('button', { name: 'Cancel all applied dates', exact: true }).click();
+    const submitted = await submission; assert.equal(submitted.headers()['x-school-id'], 'school');
+    await page.evaluate(() => window.switchFixtureSchool('other-school'));
+    await dialog.waitFor({ state: 'hidden' });
+    finishCancel(); finishCancel = null; await page.waitForLoadState('networkidle');
+    assert.equal(cancellations.length, 1);
+    assert.equal(await page.locator('[data-application-id]').count(), 0);
+    assert.equal(await page.getByText(/Schedule application cancelled/).count(), 0, 'The successful old-school action must not write a new-school notice');
+    await page.getByRole('region', { name: 'Saved profiles', exact: true }).getByText(/No profiles yet/).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { finishCancel?.(); await browser.close(); await vite.close(); }
+});
+
+
+test('Back to scheduling keeps the renamed profile opener focused and visible after alphabetical reordering', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, saves, errors } = await createDraftReviewFixture(context);
+  try {
+    const definition = { name: '', grades: [], classIds: ['math'], classRules: [], testingBlocks: [] };
+    catalog.profiles = Array.from({ length: 32 }, (_, index) => ({ id: 'list-profile-' + index, revision: 1, previewDate: '2026-09-14', definition: { ...structuredClone(definition), name: 'Map plan ' + String(index + 1).padStart(2, '0') } }));
+    catalog.profiles.push({ id: 'moving-profile', revision: 4, previewDate: '2026-09-14', definition: { ...structuredClone(definition), name: 'Zulu testing plan' } });
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const originalOpener = profileRow(page, 'moving-profile').getByRole('button', { name: 'Open profile Zulu testing plan', exact: true });
+    await originalOpener.scrollIntoViewIfNeeded();
+    const initialScroll = await page.evaluate(() => ({ top: window.scrollY, height: window.innerHeight }));
+    assert.ok(initialScroll.top > initialScroll.height * 2, 'The originating row begins several screens below the top');
+    await originalOpener.click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByRole('button', { name: 'Edit profile', exact: true }).click();
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Aardvark testing plan');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await closeSavedReview(workspace);
+    const renamedOpener = profileRow(page, 'moving-profile').getByRole('button', { name: 'Open profile Aardvark testing plan', exact: true });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open profile Aardvark testing plan');
+    assert.equal(await page.locator('[data-profile-id]').first().getAttribute('data-profile-id'), 'moving-profile', 'The saved rename moves the originating profile from the final row to the first');
+    // Reading the bounds must not scroll the element: focus alone is insufficient
+    // if restoring the former scroll offset hides the newly reordered row.
+    const bounds = await renamedOpener.evaluate(button => { const rect = button.getBoundingClientRect(); return { focused: button === document.activeElement, top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: window.innerWidth, height: window.innerHeight }; });
+    assert.equal(bounds.focused, true);
+    assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height && bounds.left >= 0 && bounds.right <= bounds.width, 'The focused originating button remains in the viewport: ' + JSON.stringify(bounds));
+    assert.equal(saves.length, 1); assert.equal(saves[0].id, 'moving-profile');
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
 });

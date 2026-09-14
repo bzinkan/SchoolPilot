@@ -87,6 +87,99 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+test("overview summaries use committed dated snapshots and never write their metadata into the schedule", async () => {
+  const data = await fixture();
+  let noMeeting = datePlusDays(date, 1);
+  while ([0, 6].includes(dateWeekday(noMeeting))) noMeeting = datePlusDays(noMeeting, 1);
+  let later = datePlusDays(noMeeting, 1);
+  while ([0, 6].includes(dateWeekday(later))) later = datePlusDays(later, 1);
+  await pool.query("UPDATE groups SET schedule_rule=jsonb_set(schedule_rule,'{weekdays}',$2::jsonb) WHERE school_id=$1", [data.schoolId,
+    JSON.stringify([1, 2, 3, 4, 5].filter((weekday) => weekday !== dateWeekday(noMeeting)))]);
+  const definition: ScheduleProfileDefinition = { ...data.definition, classRules: [
+    ...data.definition.classRules, { classId: data.nextClassId, action: "skip" },
+  ] };
+  const saved = await save(data, definition), input = { ...request(data, saved), dates: [date, noMeeting, later] };
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  assert.deepEqual(preview.blockers, []);
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const before = (await pool.query("SELECT config,revision,profile_activation_outcomes,updated_at FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  const loaded = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.deepEqual(loaded.applications, [applied.application]);
+  const summary = loaded.applicationSummaries[applied.application.id];
+  assert.ok(summary);
+  assert.deepEqual(summary.dates.map((row) => [row.date, row.phase, row.customTimeCount, row.skippedClassCount, row.testingBlockCount]), [
+    [date, "future", 1, 1, 0], [noMeeting, "no_changes", 0, 0, 0], [later, "future", 1, 1, 0],
+  ]);
+  assert.equal(summary.nextFutureDate, date);
+  assert.equal(summary.appliedToday, false);
+  assert.deepEqual(summary.cancellation, { canRequest: true, cutoffAt: localDateTimeUtc(date, "09:00", "America/New_York").toISOString(), reason: null });
+  assert.ok(Number.isFinite(Date.parse(loaded.summariesCheckedAt)));
+  assert.equal(loaded.nextSchoolDateAt, localDateTimeUtc(datePlusDays(loaded.schoolLocalToday, 1), "00:00", loaded.schoolTimezone).toISOString());
+  const after = (await pool.query("SELECT config,revision,profile_activation_outcomes,updated_at FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  assert.deepEqual(after, before);
+
+  const deleted = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: applied.revision }));
+  const withoutSource = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.deepEqual(withoutSource.applications, loaded.applications);
+  assert.deepEqual(withoutSource.applicationSummaries, loaded.applicationSummaries);
+  const cancelled = await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId, actorId: data.adminId, applicationId: applied.application.id, revision: deleted.revision }));
+  const final = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.equal(final.revision, cancelled.revision);
+  const finalSummary = final.applicationSummaries[applied.application.id];
+  assert.ok(finalSummary);
+  assert.equal(finalSummary.cancellation.reason, "cancelled");
+  assert.equal(finalSummary.nextFutureDate, null);
+  assert.ok(finalSummary.dates.every((row) => row.phase === "cancelled"));
+});
+
+test("overview and cancellation share the original-time cutoff and fail closed for unavailable class dependencies", async () => {
+  const data = await fixture(), saved = await save(data), input = request(data, saved);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const cancel = { schoolId: data.schoolId, actorId: data.adminId, applicationId: applied.application.id, revision: applied.revision };
+  const loaded = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  const cutoffAt = loaded.applicationSummaries[applied.application.id]?.cancellation.cutoffAt;
+  assert.ok(cutoffAt);
+  await assert.rejects(scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ ...cancel, now: new Date(cutoffAt) })), { code: "SCHEDULE_APPLICATION_STARTED", status: 409 });
+  const before = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  await pool.query("UPDATE groups SET status='archived' WHERE id=$1", [data.classId]);
+  const unavailable = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.deepEqual(unavailable.applicationSummaries[applied.application.id]?.cancellation, { canRequest: false, cutoffAt: null, reason: "unavailable" });
+  await assert.rejects(scoped(data.schoolId, () => service.cancelScheduleProfileApplication(cancel)), { code: "SCHEDULE_APPLICATION_TIMING_UNAVAILABLE", status: 409 });
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after, before, "unavailable timing cannot cancel or increment the scheduling revision");
+});
+
+test("overview metadata remains administrator-only and school-scoped through the existing route", async () => {
+  const data = await fixture(), other = await fixture(), saved = await save(data), input = request(data, saved);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot/admin/schedule-profiles", router);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles`;
+  const call = (userId?: string, schoolId = data.schoolId) => fetch(url, { headers: userId ? {
+    authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId,
+  } : {} });
+  try {
+    assert.equal((await call()).status, 401);
+    assert.equal((await call(data.teacherId)).status, 403);
+    assert.equal((await call(data.adminId, other.schoolId)).status, 403);
+    const response = await call(data.adminId);
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    const own = await response.json() as Awaited<ReturnType<typeof service.getScheduleProfiles>>;
+    assert.deepEqual(Object.keys(own.applicationSummaries), [applied.application.id]);
+    const foreign = await call(other.adminId, other.schoolId);
+    assert.equal(foreign.status, 200);
+    const foreignBody = await foreign.json() as Awaited<ReturnType<typeof service.getScheduleProfiles>>;
+    assert.deepEqual(foreignBody.applicationSummaries, {});
+  } finally {
+    server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test("deleting an obsolete profile removes only its catalog entry and records its exact revision", async () => {
   const data = await fixture();
   const definition = { ...data.definition, testingBlocks: [{ id: "map", name: "MAP", coverageGroupId: data.scopeId,
