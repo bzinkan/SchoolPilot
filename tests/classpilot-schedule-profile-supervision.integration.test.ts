@@ -85,7 +85,7 @@ beforeEach(async () => {
   await statement(sql`DELETE FROM classpilot_student_control_states WHERE school_id=${ids.school}`);
   await statement(sql`DELETE FROM classpilot_supervision_students WHERE school_id=${ids.school}`);
   await statement(sql`DELETE FROM classpilot_supervision_contexts WHERE school_id=${ids.school}`);
-  await statement(sql`UPDATE classpilot_school_schedules SET profile_activation_outcomes='{}'::jsonb WHERE school_id=${ids.school}`);
+  await statement(sql`UPDATE classpilot_school_schedules SET profile_activation_outcomes='{}'::jsonb,revision=7 WHERE school_id=${ids.school}`);
   await statement(sql`UPDATE classpilot_coverage_scope_groups SET active=true WHERE id=${ids.group}`);
   await statement(sql`UPDATE classpilot_coverage_assignments SET active=true WHERE school_id=${ids.school}`);
   await statement(sql`UPDATE students SET status='active' WHERE school_id=${ids.school}`);
@@ -126,6 +126,46 @@ test("concurrent workers activate exactly once, freeze targets, and keep the sch
   assert.equal(schedule?.revision, 7); assert.equal(Object.keys(schedule!.profileActivationOutcomes).length, 1);
   assert.deepEqual(await withTenant({ schoolId: ids.otherSchool }, () => service.getScheduledProfileSupervisionStatuses(ids.otherSchool)), []);
   await assert.rejects(scoped(() => database.insert(classpilotSupervisionContexts).values({ ...context, id: randomUUID() })), pgError("23505"));
+});
+
+for (const deleteBeforeStart of [true, false]) test(`deleting the reusable profile ${deleteBeforeStart ? "before activation" : "during testing"} preserves applied supervision`, async () => {
+  const app = application();
+  await save([app]);
+  const profile = { id: app.profileId, revision: app.profileRevision, definition: app.definition, updatedAt: now.toISOString() };
+  await statement(sql`UPDATE classpilot_school_schedules SET config=jsonb_set(config,'{scheduleProfiles}',${JSON.stringify([profile])}::jsonb) WHERE school_id=${ids.school}`);
+  await pool.query("UPDATE school_memberships SET role='school_admin' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
+  try {
+    if (!deleteBeforeStart) assert.equal((await scan()).started, 1);
+    const beforeContexts = await contexts(), beforeControls = await controls();
+    const beforeStudents = await statement(sql`SELECT * FROM classpilot_supervision_students WHERE school_id=${ids.school} ORDER BY id`);
+    const [beforeSchedule] = await scoped(() => database.select().from(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, ids.school)));
+    const { deleteScheduleProfile } = await import("../src/services/classpilotScheduleProfiles.js");
+    const removed = await scoped(() => deleteScheduleProfile({ schoolId: ids.school, actorId: ids.teacher,
+      profileId: profile.id, profileRevision: profile.revision, revision: 7 }));
+    assert.deepEqual(removed, { deleted: true, profileId: profile.id, revision: 8 });
+    const [afterSchedule] = await scoped(() => database.select().from(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, ids.school)));
+    assert.deepEqual(afterSchedule?.config.profileApplications, beforeSchedule?.config.profileApplications);
+    assert.deepEqual(afterSchedule?.profileActivationOutcomes, beforeSchedule?.profileActivationOutcomes);
+    assert.deepEqual(await contexts(), beforeContexts);
+    assert.deepEqual(await controls(), beforeControls);
+    assert.deepEqual((await statement(sql`SELECT * FROM classpilot_supervision_students WHERE school_id=${ids.school} ORDER BY id`)).rows, beforeStudents.rows);
+    assert.equal((await scan()).started, deleteBeforeStart ? 1 : 0);
+    const active = await contexts();
+    assert.equal(active.length, 1); assert.equal(active[0]?.status, "active");
+    assert.equal(active[0]?.scheduleProfileApplicationId, app.id);
+    assert.equal((await statuses())[0]?.status, "active");
+    assert.equal((await scan()).started, 0, "a deleted source never reactivates existing testing");
+    const { cancelScheduleProfileApplication } = await import("../src/services/classpilotScheduleProfiles.js");
+    await assert.rejects(scoped(() => cancelScheduleProfileApplication({ schoolId: ids.school, actorId: ids.teacher,
+      revision: 8, applicationId: app.id, now })), { code: "SCHEDULE_APPLICATION_STARTED" });
+    const deletion = await import("../src/services/classpilotCoverageDeletion.js");
+    const stamp = (await scoped(() => storage.getCoverageScopeGroupByIdAndSchool(ids.school, ids.group)))!.updatedAt.toISOString();
+    await assert.rejects(scoped(() => deletion.deleteCoverageSupervisionGroup({ schoolId: ids.school, actorId: ids.teacher,
+      groupId: ids.group, body: { updatedAt: stamp } })), { code: "COVERAGE_DELETE_IN_USE" });
+  } finally {
+    await pool.query("UPDATE school_memberships SET role='teacher' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
+    await statement(sql`DELETE FROM audit_logs WHERE school_id=${ids.school} AND action='classpilot.schedule_profile.deleted'`);
+  }
 });
 
 test("coverage summary distinguishes the current supervisor from school-wide administrator visibility", async () => {

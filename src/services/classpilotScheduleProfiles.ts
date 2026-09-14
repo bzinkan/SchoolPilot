@@ -5,10 +5,11 @@ import { schools, schoolMemberships } from "../schema/core.js";
 import { students } from "../schema/students.js";
 import { groups, groupStudents, groupTeachers, teachingSessions, classpilotCoverageScopeGroups, classpilotCoverageScopeGroupMembers, classpilotCoverageAssignments, classpilotSupervisionContexts, classpilotSupervisionStudents } from "../schema/classpilot.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
+import { auditLogs } from "../schema/shared.js";
 import { getSchoolSchedulingContext, previewSchoolScheduling } from "./classpilotScheduling.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
 import { normalizeSchoolSchedulingConfig, resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError, isSchedulingDate, datePlusDays, type SchoolSchedulingConfig, type BellWindow } from "./classpilotSchedulingRules.js";
-import { normalizeScheduleProfileDefinition, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
+import { normalizeScheduleProfileDefinition, normalizeScheduleProfileId, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup } from "./storage.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
@@ -119,6 +120,31 @@ export async function saveScheduleProfile(options: { schoolId: string; actorId: 
       ...(previewDate !== undefined ? { previewDate } : {}), updatedAt: new Date().toISOString() };
     const config = { ...data.context.config, scheduleProfiles: [...profiles.filter((p) => p.id !== profile.id), profile] };
     return { profile, revision: await persist(options.schoolId, options.actorId, config, options.revision, database) };
+  });
+}
+/** Remove the reusable definition only. Dated applications and live supervision own their snapshots. */
+export async function deleteScheduleProfile(options: { schoolId: string; actorId: string; profileId: string; revision: number; profileRevision: number }) {
+  const profileId = normalizeScheduleProfileId(options.profileId);
+  revision(options.revision);
+  if (!Number.isSafeInteger(options.profileRevision) || options.profileRevision < 1) fail("A current profile revision is required.");
+  return locked(options.schoolId, options.actorId, async database => {
+    // Deleting an obsolete profile must not depend on its current roster, group,
+    // staff assignments, or schedule eligibility still being available.
+    const context = await getSchoolSchedulingContext(options.schoolId, database);
+    const profile = context.config.scheduleProfiles?.find(entry => entry.id === profileId);
+    if (!profile) fail("Schedule profile not found.", "NOT_FOUND", 404);
+    if (context.revision !== options.revision || profile.revision !== options.profileRevision) {
+      fail("Schedules or this profile changed. Reload and reopen Delete profile before deleting.", "SCHEDULE_PREVIEW_STALE", 409);
+    }
+    const config = { ...context.config, scheduleProfiles: context.config.scheduleProfiles!.filter(entry => entry.id !== profileId) };
+    const nextRevision = await persist(options.schoolId, options.actorId, config, options.revision, database);
+    // Audit failure rolls back the deletion and its revision. Do not record a
+    // second best-effort audit in the route after the transaction commits.
+    await database.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
+      action: "classpilot.schedule_profile.deleted", entityType: "schedule_profile", entityId: profileId, entityName: profile.definition.name,
+      metadata: { profileRevision: profile.revision, revision: nextRevision,
+        retainedApplications: (context.config.profileApplications ?? []).filter(application => application.profileId === profileId).length } });
+    return { deleted: true as const, profileId, revision: nextRevision };
   });
 }
 function applicationId(options: ProfileRequest, definition: ScheduleProfileDefinition, dates: string[]) {

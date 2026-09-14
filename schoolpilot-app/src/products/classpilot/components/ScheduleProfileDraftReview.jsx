@@ -26,8 +26,8 @@ export function DraftReviewStatus({ review, validDate, saved = false }) {
   return <section aria-label="Draft schedule check" className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
     <p className="font-medium">Preview-day check</p>
     <div role="status" aria-live="polite">
-      {!validDate ? <p>Choose a valid instructional preview date to review this draft.</p>
-        : review.pending ? <p>Checking draft schedule…</p>
+      {!validDate ? <p>Choose a valid preview date to review this draft.</p>
+        : review.pending ? <p>Checking changes…</p>
           : review.error ? <p>{saved ? 'Profile saved; schedule review unavailable.' : 'Could not review this draft schedule.'}</p>
             : data ? <>
               {!data.complete && <p className="text-amber-800 dark:text-amber-300">Draft review is incomplete.</p>}

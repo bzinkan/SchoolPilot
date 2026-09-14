@@ -13,7 +13,7 @@ export function useScheduleProfileDraftReview({ enabled, schoolId, sessionId, re
     const timer = window.setTimeout(async () => {
       const { referenceDate: date, definition: draft } = JSON.parse(requestKey);
       try {
-        const data = await apiRequest('POST', '/classpilot/admin/schedule-profiles/draft-review', { referenceDate: date, definition: draft }, { signal: controller.signal });
+        const data = await apiRequest('POST', '/classpilot/admin/schedule-profiles/draft-review', { referenceDate: date, definition: draft }, { signal: controller.signal, headers: { 'X-School-Id': schoolId } });
         if (current && data.referenceDate === date) setResult({ key: requestKey, data });
         else if (current) setResult({ key: requestKey, error: new Error('The review returned a different reference date. Retry this review.') });
       } catch (error) {
@@ -21,7 +21,7 @@ export function useScheduleProfileDraftReview({ enabled, schoolId, sessionId, re
       }
     }, 300);
     return () => { current = false; window.clearTimeout(timer); controller.abort(); };
-  }, [requestKey]);
+  }, [requestKey, schoolId]);
   const matching = Boolean(requestKey && result?.key === requestKey);
   return {
     data: matching ? result.data : null,

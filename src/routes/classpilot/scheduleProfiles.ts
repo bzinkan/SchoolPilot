@@ -3,7 +3,8 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getScheduleProfiles, saveScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication } from "../../services/classpilotScheduleProfiles.js";
+import { getScheduleProfiles, saveScheduleProfile, deleteScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication } from "../../services/classpilotScheduleProfiles.js";
+import { schedulingError } from "../../services/classpilotSchedulingRules.js";
 import { getClasspilotRegularSchedule } from "../../services/classpilotRegularSchedule.js";
 import { getScheduleDraftReview } from "../../services/classpilotScheduleDraftReview.js";
 import { logAudit } from "../../services/audit.js";
@@ -33,6 +34,18 @@ router.post("/", async (req, res, next) => {
 router.post("/preview", async (req, res, next) => {
   try { res.json(await previewScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, profileId: req.body.profileId, profileRevision: req.body.profileRevision, dates: req.body.dates, definition: req.body.definition })); }
   catch (error) { next(error); }
+});
+router.delete("/:id", async (req, res, next) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)
+      || Object.keys(req.body).some(key => key !== "revision" && key !== "profileRevision")) {
+      throw schedulingError("Provide the scheduling and profile revisions from the current profile.", "SCHEDULE_PROFILE_INVALID", 400);
+    }
+    const result = await deleteScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id,
+      profileId: String(req.params.id), revision: req.body.revision, profileRevision: req.body.profileRevision });
+    await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, revision: result.revision }).catch(() => undefined);
+    res.json(result);
+  } catch (error) { next(error); }
 });
 router.post("/apply", async (req, res, next) => {
   try {
