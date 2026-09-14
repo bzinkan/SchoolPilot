@@ -29,17 +29,19 @@ test('the Claimed Students card counts students, never supervision contexts', ()
   );
 });
 
-test('the coverage summary is read from the same cache entry the dashboard uses', () => {
-  // Sharing the queryKey with the dashboard is what keeps the two surfaces from
-  // disagreeing, and it means the extra card costs no additional round trip.
+test('coverage and dashboard summaries share an invalidation prefix while automatic ownership is scoped', () => {
   assert.match(
     coverageSource,
     /queryKey:\s*\["\/api\/coverage\/summary"\]/,
-    'the summary query must use the shared /api/coverage/summary cache key',
+    'the summary query must use the shared /api/coverage/summary invalidation prefix',
   );
   assert.match(
     coverageSource,
     /queryFn:\s*\(\)\s*=>\s*apiRequest\("GET",\s*"\/coverage\/summary"\)/,
     'the summary query must call the coverage summary endpoint',
   );
+  const dashboardSummary = readFileSync(
+    new URL('../src/products/classpilot/lib/useScheduledTestingView.js', import.meta.url), 'utf8',
+  );
+  assert.match(dashboardSummary, /\['\/api\/coverage\/summary', schoolId, viewerId\]/);
 });

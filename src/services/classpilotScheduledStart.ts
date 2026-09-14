@@ -1,6 +1,7 @@
+import { and, eq, inArray } from "drizzle-orm";
 import db from "../db.js";
 import { getSchoolSchedulingContext, getClasspilotInstructionalDateStatus as getInstructionalDateStatus } from "./classpilotScheduling.js";
-import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
+import { resolveClassBaseWindow, resolveSchoolScheduleDay } from "./classpilotSchedulingRules.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
@@ -8,7 +9,7 @@ import {
   isClasspilotStaffUserConnected,
   type ClasspilotStaffPresenceStore,
 } from "../realtime/classpilotStaffPresence.js";
-import type { ClasspilotScheduledConflict, Group, TeachingSession } from "../schema/classpilot.js";
+import { groups, type ClasspilotScheduledConflict, type Group, type TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -195,10 +196,11 @@ function assertCompleteApprovedSwapContext(context: {
 }
 
 /**
- * Candidate selection deliberately overlays approved schedule-change legs in
- * one batch. The authoritative single-group resolver is called again under the
- * school/date lock before an occurrence is created, so approval/cancellation
- * races still have one deterministic winner.
+ * Discover approved swaps and due applied-profile windows even when a fixed
+ * class's original clocks are outside the current window. Extra group reads
+ * are school-scoped and batched. The authoritative single-group resolver is
+ * called again under the school/date lock before an occurrence is created, so
+ * approval/cancellation races still have one deterministic winner.
  */
 export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
   schoolId: string;
@@ -210,8 +212,9 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
 }): Promise<Group[]> {
   let baseCandidates: Group[];
   let approvedLegs: Awaited<ReturnType<typeof getApprovedScheduleChangeLegsForSchoolDate>>;
+  let scheduling: Awaited<ReturnType<typeof getSchoolSchedulingContext>>;
   try {
-    [baseCandidates, approvedLegs] = await Promise.all([
+    [baseCandidates, approvedLegs, scheduling] = await Promise.all([
       getScheduledGroupsReadyToStart(
         options.schoolId,
         options.currentTimeHHMM,
@@ -223,6 +226,7 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
         scheduledDate: options.scheduledDate,
         dbInstance: options.dbInstance,
       }),
+      getSchoolSchedulingContext(options.schoolId, options.dbInstance),
     ]);
   } catch (error) {
     emitEffectiveWindowFailure(error);
@@ -244,17 +248,30 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
       status: 409,
     });
   }
-  await Promise.all(approvedLegs.map(async (leg) => {
-    if (candidatesById.has(leg.groupId)) return;
-    const group = await getGroupByIdAndSchool(
-      leg.groupId,
-      options.schoolId,
-      options.dbInstance
-    );
-    if (group) candidatesById.set(group.id, group);
-  }));
+  const extraCandidateIds = new Set(approvedLegs.map((leg) => leg.groupId));
+  for (const application of scheduling.config.profileApplications ?? []) {
+    if (application.status !== "scheduled" || !application.dates.includes(options.scheduledDate)) continue;
+    for (const [classId, window] of Object.entries(application.classWindows[options.scheduledDate] ?? {})) {
+      if (window && window.startTime <= options.currentTimeHHMM && window.endTime > options.currentTimeHHMM) {
+        extraCandidateIds.add(classId);
+      }
+    }
+  }
+  const missingIds = [...extraCandidateIds].filter((id) => !candidatesById.has(id));
+  const database = options.dbInstance ?? db;
+  for (let offset = 0; offset < missingIds.length; offset += 500) {
+    const extraGroups = await database.select().from(groups).where(and(
+      eq(groups.schoolId, options.schoolId), inArray(groups.id, missingIds.slice(offset, offset + 500))
+    ));
+    for (const group of extraGroups) candidatesById.set(group.id, group);
+  }
   const approvedByGroupId = new Map(approvedLegs.map((leg) => [leg.groupId, leg]));
-  const scheduling = await getSchoolSchedulingContext(options.schoolId, options.dbInstance);
+  const month = options.scheduledDate.slice(0, 7);
+  const calendar = options.includeNonInstructionalCandidates ? { ...scheduling.calendar, [month]: {
+    ...scheduling.calendar[month], nonInstructionalDates: (scheduling.calendar[month]?.nonInstructionalDates ?? []).filter((date) => date !== options.scheduledDate),
+  } } : scheduling.calendar;
+  const day = resolveSchoolScheduleDay(options.scheduledDate, scheduling.config, calendar);
+  const effectiveStarts = new Map<string, string>();
   return Array.from(candidatesById.values())
     .filter((group) => {
       if (
@@ -265,19 +282,16 @@ export async function getClasspilotGroupsReadyAtEffectiveWindow(options: {
         || group.scheduleSkippedDate === options.scheduledDate
       ) return false;
       const leg = approvedByGroupId.get(group.id);
-      const month = options.scheduledDate.slice(0, 7);
-      const calendar = options.includeNonInstructionalCandidates ? { ...scheduling.calendar, [month]: {
-        ...scheduling.calendar[month], nonInstructionalDates: (scheduling.calendar[month]?.nonInstructionalDates ?? []).filter((date) => date !== options.scheduledDate),
-      } } : scheduling.calendar;
-      const base = resolveClassBaseWindow(group, options.scheduledDate, scheduling.config, calendar);
+      const base = resolveClassBaseWindow(group, options.scheduledDate, scheduling.config, calendar, day);
       if (!base) return false;
       const start = leg?.effectiveStartTime || base.startTime;
       const end = leg?.effectiveEndTime || base.endTime;
+      effectiveStarts.set(group.id, start);
       return start <= options.currentTimeHHMM && end > options.currentTimeHHMM;
     })
     .sort((left, right) => {
-      const leftStart = approvedByGroupId.get(left.id)?.effectiveStartTime || left.blockStartTime!;
-      const rightStart = approvedByGroupId.get(right.id)?.effectiveStartTime || right.blockStartTime!;
+      const leftStart = effectiveStarts.get(left.id)!;
+      const rightStart = effectiveStarts.get(right.id)!;
       return leftStart.localeCompare(rightStart) || left.id.localeCompare(right.id);
     });
 }

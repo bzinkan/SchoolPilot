@@ -1,12 +1,17 @@
 import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import express from "express";
+import { WebSocket, WebSocketServer } from "ws";
 import { eq, sql } from "drizzle-orm";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
 import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 import { emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
 import { localDateInTimeZone } from "../src/util/schoolTime.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
+import type { ClasspilotCoverageSummary } from "../src/services/classpilotCoverageSummary.js";
 import { classpilotSchoolSchedules } from "../src/schema/classpilotScheduling.js";
 import { classpilotSupervisionContexts, classpilotStudentControlStates } from "../src/schema/classpilot.js";
 
@@ -121,6 +126,107 @@ test("concurrent workers activate exactly once, freeze targets, and keep the sch
   assert.equal(schedule?.revision, 7); assert.equal(Object.keys(schedule!.profileActivationOutcomes).length, 1);
   assert.deepEqual(await withTenant({ schoolId: ids.otherSchool }, () => service.getScheduledProfileSupervisionStatuses(ids.otherSchool)), []);
   await assert.rejects(scoped(() => database.insert(classpilotSupervisionContexts).values({ ...context, id: randomUUID() })), pgError("23505"));
+});
+
+test("coverage summary distinguishes the current supervisor from school-wide administrator visibility", async () => {
+  const app = application(); await save([app]); await scan();
+  const [context] = await contexts(); assert.ok(context);
+  // A membership's source can change after a handoff. The scheduled context is authoritative.
+  await statement(sql`UPDATE classpilot_supervision_students SET source='manual' WHERE school_id=${ids.school}`);
+  const { default: coverageRouter } = await import("../src/routes/classpilot/coverage.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const httpApp = express(); httpApp.use("/api", coverageRouter);
+  const server = createServer(httpApp);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const summary = async (viewerId: string, schoolId = ids.school) => {
+    const token = signUserToken({ userId: viewerId, email: `${viewerId}@${ids.school}.example.edu` });
+    return fetch(`http://127.0.0.1:${address.port}/api/coverage/summary`, {
+      headers: { authorization: `Bearer ${token}`, "x-school-id": schoolId },
+    });
+  };
+  const readSummary = async (viewerId: string): Promise<ClasspilotCoverageSummary> => {
+    const response = await summary(viewerId);
+    assert.equal(response.status, 200);
+    return await response.json() as ClasspilotCoverageSummary;
+  };
+  try {
+    await pool.query("UPDATE school_memberships SET role='admin' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.otherTeacher]);
+    const adminSummary = await readSummary(ids.otherTeacher);
+    assert.equal(adminSummary.schoolId, ids.school); assert.equal(adminSummary.viewerId, ids.otherTeacher);
+    assert.equal(adminSummary.activeContextCount, 1); assert.equal(adminSummary.claimedStudentCount, 2);
+    assert.deepEqual(adminSummary.ownTestingContexts, []);
+    const teacherSummary = await readSummary(ids.teacher);
+    assert.equal(teacherSummary.schoolId, ids.school); assert.equal(teacherSummary.viewerId, ids.teacher);
+    assert.deepEqual(teacherSummary.ownTestingContexts, [{ id: context.id, name: context.name, endsAt: context.endsAt.toISOString(), activeStudentCount: 2 }]);
+    assert.deepEqual(Object.keys(teacherSummary).sort(), ["activeContextCount", "availableStudentCount", "claimedStudentCount", "ownTestingContexts", "revision", "schoolId", "viewerId"]);
+    for (const privateId of [ids.student, ids.secondStudent, ids.group, app.id, app.testingWindows[0]!.blockId]) {
+      assert.equal(JSON.stringify(teacherSummary).includes(privateId), false);
+    }
+    await pool.query("UPDATE school_memberships SET role='admin' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
+    assert.deepEqual((await readSummary(ids.teacher)).ownTestingContexts, teacherSummary.ownTestingContexts);
+    assert.equal((await summary(ids.teacher, ids.otherSchool)).status, 403);
+    await scoped(() => storage.releaseSupervisionStudents({ schoolId: ids.school, contextId: context.id, studentIds: [ids.student] }));
+    assert.equal((await readSummary(ids.teacher)).ownTestingContexts[0]?.activeStudentCount, 1);
+    await scoped(() => storage.releaseSupervisionStudents({ schoolId: ids.school, contextId: context.id }));
+    assert.deepEqual((await readSummary(ids.teacher)).ownTestingContexts, []);
+  } finally {
+    await pool.query("UPDATE school_memberships SET role='teacher' WHERE school_id=$1", [ids.school]);
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("scheduled activation and cancellation notify staff only after commit, never after rollback", async () => {
+  const { registerWsClient, authenticateWsClient, removeWsClient } = await import("../src/realtime/ws-broadcast.js");
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const accepted = once(server, "connection");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(client, "open");
+  const [socket] = await accepted;
+  registerWsClient(socket);
+  authenticateWsClient(socket, { role: "teacher", schoolId: ids.school, userId: ids.teacher });
+  const frames: Record<string, unknown>[] = [];
+  client.on("message", (data) => { frames.push(JSON.parse(data.toString())); });
+  const triggerName = `testing_commit_${randomUUID().replaceAll("-", "")}`;
+  let triggerInstalled = false;
+  try {
+    const failed = application(); await save([failed]);
+    // Reject the final receipt write after context creation to exercise a real outer rollback.
+    await statement(sql`CREATE FUNCTION ${sql.identifier(triggerName)}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'testing commit rejected'; END $$`);
+    await statement(sql`CREATE TRIGGER ${sql.identifier(triggerName)} BEFORE UPDATE OF profile_activation_outcomes ON classpilot_school_schedules FOR EACH ROW WHEN (NEW.school_id = ${sql.raw(`'${ids.school}'`)}) EXECUTE FUNCTION ${sql.identifier(triggerName)}()`);
+    triggerInstalled = true;
+    await assert.rejects(scan(), pgError("P0001"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(frames.length, 0);
+    assert.deepEqual(await contexts(), []);
+    await statement(sql`DROP TRIGGER ${sql.identifier(triggerName)} ON classpilot_school_schedules`);
+    triggerInstalled = false;
+
+    const notification = once(client, "message", { signal: AbortSignal.timeout(5_000) });
+    await scan(); await notification;
+    const [context] = await contexts(); assert.ok(context);
+    assert.equal((await statuses(failed.id))[0]?.status, "active");
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0]?.type, "coverage-summary-updated");
+    assert.deepEqual(Object.keys(frames[0]!).sort(), ["revision", "type"]);
+    await scan();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(frames.length, 1, "An already-active block must not emit another invalidation");
+
+    failed.status = "cancelled"; await save([failed]);
+    const cancellation = once(client, "message", { signal: AbortSignal.timeout(5_000) });
+    await scoped(() => service.cancelProfileSupervision(ids.school, failed.id)); await cancellation;
+    assert.equal((await contexts())[0]?.status, "ended");
+    assert.equal(frames.length, 2);
+  } finally {
+    if (triggerInstalled) await statement(sql`DROP TRIGGER ${sql.identifier(triggerName)} ON classpilot_school_schedules`);
+    await statement(sql`DROP FUNCTION IF EXISTS ${sql.identifier(triggerName)}()`);
+    removeWsClient(socket);
+    client.terminate(); socket.terminate();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("early and partial release never reclaim students or reopen an ended testing block", async () => {

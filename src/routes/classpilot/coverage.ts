@@ -70,6 +70,7 @@ import { localDateInTimeZone, localDateStartUtc } from "../../util/schoolTime.js
 import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
 import {
   classpilotCoverageSummaryRevision,
+  ownScheduledTestingContexts,
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
@@ -1249,6 +1250,8 @@ router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async 
     const availableStudentIds = visibleUnassigned.map((row) => row.student.id);
     const claimedStudentIds = claimedRows.map((row) => row.studentId);
     return res.json({
+      schoolId,
+      viewerId: req.authUser!.id,
       revision: classpilotCoverageSummaryRevision({
         availableStudentIds,
         claimedStudentIds,
@@ -1257,6 +1260,12 @@ router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async 
       availableStudentCount: new Set(availableStudentIds).size,
       claimedStudentCount: new Set(claimedStudentIds).size,
       activeContextCount: visibleContexts.length,
+      ownTestingContexts: ownScheduledTestingContexts({
+        schoolId,
+        viewerId: req.authUser!.id,
+        contexts: visibleContexts,
+        activeStudents: claimedRows,
+      }),
     });
   } catch (err) {
     next(err);

@@ -50,6 +50,7 @@ import { runDueRosterIntegrationJobs } from "./rosterIntegrationJobs.js";
 import { runClasspilotMonitoringInterruptionScan } from "./classpilotMonitoringInterruptions.js";
 import { dispatchClasspilotMonitoringDigests } from "./classpilotMonitoringDigests.js";
 import { reconcileScheduledProfileSupervision } from "./classpilotScheduleProfileSupervision.js";
+import { publishClasspilotCoverageSummaryUpdated } from "./classpilotCoverageSummary.js";
 import { getClasspilotInstructionalDateStatus } from "./classpilotScheduling.js";
 import { schools, productLicenses } from "../schema/core.js";
 import {
@@ -640,6 +641,8 @@ async function expireClasspilotSupervisionContexts() {
       studentIds.add(assignment.studentId);
       studentsBySchool.set(assignment.schoolId, studentIds);
     }
+    // Expiry committed above; connected dashboards can now recheck ownership.
+    for (const schoolId of studentsBySchool.keys()) publishClasspilotCoverageSummaryUpdated(schoolId);
     await Promise.all([...studentsBySchool].map(([schoolId, studentIds]) =>
       syncClasspilotControlStatesToActiveDevices(schoolId, [...studentIds])
     ));

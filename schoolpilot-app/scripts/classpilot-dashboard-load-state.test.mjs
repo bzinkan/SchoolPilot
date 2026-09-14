@@ -114,6 +114,7 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
   let scopedResponse = scoped;
   const waiters = new Set();
   const requests = [];
+  const completedRequests = [];
 
   const wakePendingRequests = () => {
     for (const resolve of waiters) resolve();
@@ -131,6 +132,7 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
 
   return {
     requests,
+    completedRequests,
     setSchoolResponse(next) {
       schoolResponse = next;
       wakePendingRequests();
@@ -141,12 +143,14 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
     },
     async fulfill(route, url) {
       const teachingSessionId = url.searchParams.get("teachingSessionId");
-      requests.push({ teachingSessionId, url: url.toString() });
+      const request = { teachingSessionId, url: url.toString() };
+      requests.push(request);
       const response = await waitUntilResolved(() => (
         teachingSessionId ? scopedResponse : schoolResponse
       ));
       if (response.kind === "success") {
         await route.fulfill({ status: 200, json: response.body });
+        completedRequests.push(request);
         return;
       }
       await route.fulfill({
@@ -156,6 +160,7 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
           ? { "x-request-id": response.headerRequestId }
           : undefined,
       });
+      completedRequests.push(request);
     },
   };
 }
@@ -215,6 +220,8 @@ async function configureDashboard(page, {
   historyTiles = { tiles: [] },
   observationLeaseResponse = { renewAfterSeconds: 30 },
   claimedStudents = [],
+  coverageSummary = { activeContextCount: 0, availableStudentCount: 0, claimedStudentCount: 0, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, ownTestingContexts: [] },
+  authentication = null,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -224,6 +231,7 @@ async function configureDashboard(page, {
   const observationLeaseRequests = [];
   const sessionRequests = [];
   const claimedRosterRequests = [];
+  const coverageSummaryRequests = [];
   const pageErrors = [];
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -262,7 +270,7 @@ async function configureDashboard(page, {
     }
 
     if (pathname === "/api/auth/me") {
-      await route.fulfill({ json: authResponse(userRole) });
+      await route.fulfill({ json: typeof authentication === 'function' ? await authentication(request) : authentication || authResponse(userRole) });
       return;
     }
     if (pathname === "/api/auth/csrf") {
@@ -273,7 +281,7 @@ async function configureDashboard(page, {
       await route.fulfill({
         json: {
           settings: {
-            ...(activeSession ? {
+            ...(activeSession && typeof activeSession !== 'function' ? {
               activeSessionId: activeSession.id,
               handRaisingEnabled: true,
               studentMessagingEnabled: true,
@@ -295,7 +303,7 @@ async function configureDashboard(page, {
     }
     if (pathname === "/api/sessions/active") {
       sessionRequests.push(pathname);
-      await route.fulfill({ json: { session: activeSession } });
+      await route.fulfill({ json: { session: typeof activeSession === 'function' ? await activeSession(request) : activeSession } });
       return;
     }
     if (pathname === "/api/teacher/groups") {
@@ -308,13 +316,11 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === "/api/coverage/summary") {
-      await route.fulfill({
-        json: {
-          activeContextCount: 0,
-          availableCount: 0,
-          claimedCount: 0,
-        },
-      });
+      coverageSummaryRequests.push({ schoolId: request.headers()['x-school-id'], pathname });
+      const response = typeof coverageSummary === 'function' ? await coverageSummary(request) : coverageSummary;
+      await route.fulfill(Number(response?.status) >= 400
+        ? { status: response.status, json: response.body || { error: 'Coverage summary unavailable' } }
+        : { json: response });
       return;
     }
     if (pathname === "/api/coverage/capabilities") {
@@ -323,7 +329,7 @@ async function configureDashboard(page, {
     }
     if (pathname === '/api/coverage/claimed-students') {
       claimedRosterRequests.push(pathname);
-      await route.fulfill({ json: { students: claimedStudents } });
+      await route.fulfill({ json: { students: typeof claimedStudents === 'function' ? await claimedStudents(request) : claimedStudents } });
       return;
     }
     if (pathname === "/api/students-aggregated") {
@@ -428,8 +434,11 @@ async function configureDashboard(page, {
     tileRequests,
     sessionRequests,
     claimedRosterRequests,
+    coverageSummaryRequests,
     setActiveSession(session) { activeSession = session; },
     setAllSessions(sessions) { allSessions = sessions; },
+    setCoverageSummary(summary) { coverageSummary = summary; },
+    setClaimedStudents(students) { claimedStudents = students; },
     async authenticateWebSocket() {
       await waitUntil(
         () => Boolean(dashboardSocket),
@@ -1242,7 +1251,15 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       () => detailsRevocationAggregate.requests.length > delegatedRecheckStart,
       "delegated authority must remain closed across reconciliation",
     );
-    await detailsRevocationPage.waitForTimeout(150);
+    const delegatedRecheck = detailsRevocationAggregate.requests[delegatedRecheckStart];
+    await waitUntil(
+      () => detailsRevocationAggregate.completedRequests.includes(delegatedRecheck),
+      "the delegated authority response must finish before restoring the fixture",
+    );
+    await detailsRevocationPage.waitForFunction(async () => {
+      const { queryClient } = await import('/src/lib/queryClient.js');
+      return queryClient.isFetching({ queryKey: ['/api/students-aggregated'] }) === 0;
+    });
     assert.equal(
       detailHistoryRequestCount(),
       detailRequestsAfterDelegation,
@@ -2863,5 +2880,349 @@ test('a pending observation acknowledgement preserves the first exact-bound prev
     await page.close().catch(() => {});
     await browser.close();
     await vite.close();
+  }
+});
+
+const OWN_TESTING_CONTEXT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const OTHER_TESTING_CONTEXT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const SECOND_SCHOOL_ID = '12121212-1212-4212-8212-121212121212';
+const TESTING_TIME = new Date('2026-09-14T12:40:00Z');
+
+function ownTestingSummary(contextIds = [], { schoolId = SCHOOL_ID, viewerId = ADMIN_ID } = {}) {
+  return {
+    revision: contextIds.join(':') || 'empty', schoolId, viewerId,
+    availableStudentCount: 0, claimedStudentCount: contextIds.length + 1,
+    activeContextCount: contextIds.length + 1,
+    ownTestingContexts: contextIds.map(id => ({ id, name: `Assigned testing ${id.slice(0, 4)}`, endsAt: '2026-09-14T16:00:00Z', activeStudentCount: 1 })),
+  };
+}
+
+function testingStudent(studentId, contextId, assignedStaffId = ADMIN_ID) {
+  return student({
+    studentId, studentName: `Testing student ${studentId.slice(0, 4)}`,
+    contextId, contextName: `Testing ${contextId.slice(0, 4)}`, supervisionState: 'claimed',
+    assignedStaff: { id: assignedStaffId, displayName: assignedStaffId === ADMIN_ID ? 'Alex Admin' : 'Other Teacher' },
+    lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString(),
+  });
+}
+
+async function assertPickupView(page, view) {
+  await page.waitForFunction(value => document.querySelector(`[data-testid="button-view-${value}-students"]`)?.getAttribute('aria-pressed') === 'true', view);
+}
+
+async function assignedTestingBrowser(context, options = {}) {
+  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, ...options });
+  await vite.listen();
+  let browser;
+  context.after(async () => { await browser?.close(); await vite.close(); });
+  browser = await chromium.launch({ headless: true });
+  return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
+}
+
+test('assigned testing opens only the own roster and respects explicit view choices without changing assignments', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const own = testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID);
+  const other = testingStudent(SIGNED_OUT_STUDENT_ID, OTHER_TESTING_CONTEXT_ID, OTHER_TEACHER_ID);
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), coverageSummary: ownTestingSummary([OWN_TESTING_CONTEXT_ID]),
+    claimedStudents: [own, other],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('assigned-testing-notice').waitFor();
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0, 'Automatic selection filters out another administrator-visible testing group');
+  assert.equal((await page.getByTestId('text-online-count').innerText()).trim(), '1');
+  await harness.authenticateWebSocket();
+
+  await page.getByTestId('button-view-claimed-students').click();
+  await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  for (const choice of ['available', 'class', 'claimed']) {
+    await page.getByTestId(`button-view-${choice}-students`).click();
+    await assertPickupView(page, choice);
+    const before = harness.coverageSummaryRequests.length;
+    await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+    await waitUntil(() => harness.coverageSummaryRequests.length > before, 'Summary notification must reconcile while an explicit view is selected');
+    await page.clock.fastForward(10_100);
+    await assertPickupView(page, choice);
+    assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0, `Manual ${choice} survives notification and polling`);
+  }
+  harness.setCoverageSummary(ownTestingSummary([]));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.clock.fastForward(10_100);
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert.deepEqual(harness.coverageMutationRequests, [], 'Opening and changing dashboard views must never create, claim, or release supervision');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('assigned testing reacts to activation, updated rosters, closure and polling while the dashboard stays open', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), userRole: 'teacher', coverageSummary: ownTestingSummary([]),
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'class');
+  await harness.authenticateWebSocket();
+  assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0, 'Other staff having active contexts does not trigger my testing view');
+  harness.setClaimedStudents([testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)]);
+  harness.setCoverageSummary(ownTestingSummary([OWN_TESTING_CONTEXT_ID]));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.getByTestId('assigned-testing-notice').waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await assertPickupView(page, 'claimed');
+
+  harness.setClaimedStudents([testingStudent(SIGNED_OUT_STUDENT_ID, OWN_TESTING_CONTEXT_ID)]);
+  const rosterReads = harness.claimedRosterRequests.length;
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await waitUntil(() => harness.claimedRosterRequests.length > rosterReads, 'Claim notifications must refresh the currently assigned roster');
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+
+  harness.setCoverageSummary(ownTestingSummary([]));
+  harness.setClaimedStudents([]);
+  harness.setActiveSession(teachingSession());
+  harness.setAllSessions([teachingSession()]);
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await assertPickupView(page, 'class');
+  await page.getByTestId('badge-active-session').waitFor();
+  await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0, 'Ended assignments do not leave their roster visible');
+
+  harness.setClaimedStudents([testingStudent(MOVED_CLASS_STUDENT_ID, OTHER_TESTING_CONTEXT_ID)]);
+  harness.setCoverageSummary(ownTestingSummary([OTHER_TESTING_CONTEXT_ID]));
+  const summaryReads = harness.coverageSummaryRequests.length;
+  await page.clock.fastForward(10_100);
+  await waitUntil(() => harness.coverageSummaryRequests.length > summaryReads, 'A connected WebSocket must not disable the bounded summary reconciliation');
+  await page.getByTestId('assigned-testing-notice').waitFor();
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  await assertPickupView(page, 'claimed');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('assigned testing takes precedence over a regular class while preserving manual Class and administrator Observe choices', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  for (const resolvedSession of [null, teachingSession()]) {
+    const page = await browser.newPage();
+    await page.clock.install({ time: TESTING_TIME });
+    let resolveSession;
+    const gate = new Promise(resolve => { resolveSession = resolve; });
+    context.after(() => resolveSession(resolvedSession));
+    const harness = await configureDashboard(page, {
+      userRole: 'teacher',
+      aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID })]) }),
+      activeSession: () => gate, allSessions: resolvedSession ? [resolvedSession] : [],
+      coverageSummary: ownTestingSummary([OWN_TESTING_CONTEXT_ID]),
+      claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    await waitUntil(() => harness.coverageSummaryRequests.length > 0 && harness.sessionRequests.includes('/api/sessions/active'), 'Both independent lookups must be in flight');
+    await page.getByTestId('assigned-testing-notice').waitFor();
+    await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+    await assertPickupView(page, 'claimed');
+    assert(harness.claimedRosterRequests.length > 0, 'An authoritative testing assignment can load while the regular class lookup is pending');
+    resolveSession(resolvedSession);
+    if (resolvedSession) {
+      assert.equal(await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).count(), 0, 'Assigned testing takes precedence over the overlapping regular class roster');
+      await page.getByTestId('button-view-class-students').click();
+      await harness.authenticateWebSocket();
+      await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+      await page.clock.fastForward(10_100);
+      await assertPickupView(page, 'class');
+      await page.getByTestId('badge-active-session').waitFor();
+      assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
+    }
+    assert.deepEqual(harness.coverageMutationRequests, []);
+    assert.deepEqual(harness.pageErrors, []);
+    await page.close();
+  }
+
+  const page = await browser.newPage();
+  const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID })]) }),
+    allSessions: [observed], coverageSummary: ownTestingSummary([]),
+    claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+  await page.getByTestId('observe-read-only-banner').waitFor();
+  await harness.authenticateWebSocket();
+  harness.setCoverageSummary(ownTestingSummary([OWN_TESTING_CONTEXT_ID]));
+  const before = harness.coverageSummaryRequests.length;
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await waitUntil(() => harness.coverageSummaryRequests.length > before, 'Observe receives the current testing summary without changing its selected class');
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), OBSERVED_SESSION_ID);
+  assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
+  await assertObserveEntryPointsUnavailable(page, harness.commandPosts, [MOVED_CLASS_STUDENT_ID], harness.coverageMutationRequests);
+  assert.deepEqual(harness.claimedRosterRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('assigned testing rejects delayed summary and roster responses after school and viewer changes', { timeout: 75_000 }, async context => {
+  const entry = `
+    import React from 'react';
+    import {createRoot} from 'react-dom/client';
+    import {MemoryRouter} from 'react-router-dom';
+    import {QueryClientProvider} from '@tanstack/react-query';
+    import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
+    import {LicenseProvider} from '/src/contexts/LicenseContext.jsx';
+    import {ThemeProvider} from '/src/contexts/ThemeContext.jsx';
+    import {queryClient} from '/src/lib/queryClient.js';
+    import Dashboard from '/src/products/classpilot/pages/Dashboard.jsx';
+    import '/src/index.css';
+    function IdentityBridge(){const auth=useAuth();React.useEffect(()=>{window.__switchTestingSchool=auth.switchSchool;window.__refreshTestingUser=auth.refetchUser;},[auth.switchSchool,auth.refetchUser]);return React.createElement('div',{'data-testid':'testing-viewer'},auth.activeSchoolId+':'+auth.user?.id);}
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(LicenseProvider,null,React.createElement(ThemeProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(IdentityBridge),React.createElement(Dashboard))))))));
+  `;
+  const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: [{
+    name: 'assigned-testing-identity-fixture',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (req.url !== '/__assigned-testing-identity') return next();
+        res.setHeader('Content-Type', 'text/html');
+        res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><body><div id="root"></div><script type="module" src="/__assigned-testing-entry.jsx"></script></body></html>'));
+      });
+    },
+    resolveId(id) { if (id === '/__assigned-testing-entry.jsx') return '\0assigned-testing-entry'; },
+    load(id) { if (id === '\0assigned-testing-entry') return entry; },
+  }] });
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let viewerId = ADMIN_ID;
+  let secondSchoolTesting = false;
+  let resolveOldSummary;
+  let resolveOldRoster;
+  const oldSummaryGate = new Promise(resolve => { resolveOldSummary = resolve; });
+  const oldRosterGate = new Promise(resolve => { resolveOldRoster = resolve; });
+  context.after(() => { resolveOldSummary(); resolveOldRoster(); });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    authentication: request => {
+      const schoolId = request.headers()['x-school-id'] || SCHOOL_ID;
+      return { ...authResponse(), user: { ...authResponse().user, id: viewerId }, activeSchoolId: schoolId,
+        memberships: [SCHOOL_ID, SECOND_SCHOOL_ID].map(id => ({ schoolId: id, role: 'admin', schoolName: `School ${id.slice(0, 4)}`, schoolTimezone: 'America/New_York' })) };
+    },
+    coverageSummary: async request => {
+      const schoolId = request.headers()['x-school-id'] || SCHOOL_ID;
+      const responseViewerId = viewerId;
+      if (schoolId === SCHOOL_ID) {
+        await oldSummaryGate;
+        return ownTestingSummary([OWN_TESTING_CONTEXT_ID], { schoolId, viewerId: responseViewerId });
+      }
+      return ownTestingSummary(secondSchoolTesting && responseViewerId === ADMIN_ID ? [OWN_TESTING_CONTEXT_ID] : [], { schoolId, viewerId: responseViewerId });
+    },
+    claimedStudents: async () => {
+      if (viewerId !== ADMIN_ID) return [];
+      await oldRosterGate;
+      return [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)];
+    },
+  });
+  await page.goto(`${baseURL}/__assigned-testing-identity`);
+  await waitUntil(() => harness.coverageSummaryRequests.some(request => request.schoolId === SCHOOL_ID), 'School A summary must be pending before switching');
+  await page.evaluate(schoolId => window.__switchTestingSchool(schoolId), SECOND_SCHOOL_ID);
+  await page.waitForFunction(expected => document.querySelector('[data-testid="testing-viewer"]')?.textContent === expected, `${SECOND_SCHOOL_ID}:${ADMIN_ID}`);
+  await waitUntil(() => harness.coverageSummaryRequests.some(request => request.schoolId === SECOND_SCHOOL_ID), 'School B obtains its own summary');
+  resolveOldSummary();
+  await page.clock.fastForward(10_100);
+  await assertPickupView(page, 'class');
+  assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
+  assert.deepEqual(harness.claimedRosterRequests, [], 'Late school A summary cannot launch a claimed-roster read in school B');
+
+  secondSchoolTesting = true;
+  await page.clock.fastForward(10_100);
+  await page.getByTestId('assigned-testing-notice').waitFor();
+  await waitUntil(() => harness.claimedRosterRequests.length > 0, 'Viewer A roster must be pending before identity changes');
+  viewerId = OTHER_TEACHER_ID;
+  await page.evaluate(() => window.__refreshTestingUser());
+  await page.waitForFunction(expected => document.querySelector('[data-testid="testing-viewer"]')?.textContent === expected, `${SECOND_SCHOOL_ID}:${OTHER_TEACHER_ID}`);
+  resolveOldRoster();
+  await page.clock.fastForward(10_100);
+  await assertPickupView(page, 'class');
+  assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0, 'Late prior-viewer students cannot populate the current viewer');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('assigned testing expires at its known end even when summary refresh fails and returns to the current class', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const endsAt = new Date(TESTING_TIME.getTime() + 60_000).toISOString();
+  const summary = ownTestingSummary([OWN_TESTING_CONTEXT_ID]);
+  summary.ownTestingContexts[0].endsAt = endsAt;
+  let summaryUnavailable = false;
+  const nextClass = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: ADMIN_ID });
+  const classStudent = student({ studentId: MOVED_CLASS_STUDENT_ID, lastSeenAt: TESTING_TIME.toISOString(), realtimeObservedAt: TESTING_TIME.toISOString() });
+  const harness = await configureDashboard(page, {
+    userRole: 'teacher',
+    aggregate: aggregateController({ scoped: success([classStudent]) }),
+    activeSession: teachingSession(),
+    coverageSummary: () => summaryUnavailable ? { status: 500, body: { error: 'Temporary summary failure' } } : summary,
+    claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('assigned-testing-notice').waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  summaryUnavailable = true;
+  const failedRefresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/coverage/summary' && response.status() === 500);
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await failedRefresh;
+  await assertPickupView(page, 'claimed');
+  assert.equal(await page.getByTestId('assigned-testing-notice').isVisible(), true, 'A temporary refresh failure before the known end retains the active assignment');
+  harness.setActiveSession(nextClass);
+  const classReadsBeforeEnd = harness.sessionRequests.length;
+  const millisecondsToEnd = await page.evaluate(end => Math.max(0, Date.parse(end) - Date.now()) + 100, endsAt);
+  await page.clock.fastForward(millisecondsToEnd);
+  await assertPickupView(page, 'class');
+  await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
+  await waitUntil(() => harness.sessionRequests.length > classReadsBeforeEnd, 'The active class is reconciled at the testing boundary');
+  await page.getByTestId('badge-active-session').getByText('Biology', { exact: true }).waitFor();
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0, 'Expired cached testing must not strand its students on the dashboard');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('assigned testing ignores legacy, missing, malformed and failed ownership metadata without removing manual Claimed access', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const ownRow = testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID);
+  const invalidSummaries = [
+    { activeContextCount: 1, claimedStudentCount: 1 },
+    { ownTestingContexts: ownTestingSummary([OWN_TESTING_CONTEXT_ID]).ownTestingContexts },
+    { ...ownTestingSummary([OWN_TESTING_CONTEXT_ID]), ownTestingContexts: [{ id: OWN_TESTING_CONTEXT_ID, activeStudentCount: 1, endsAt: 'invalid' }] },
+    { status: 500, body: { error: 'Summary unavailable' } },
+  ];
+  for (const summary of invalidSummaries) {
+    const page = await browser.newPage();
+    await page.clock.install({ time: TESTING_TIME });
+    const harness = await configureDashboard(page, {
+      aggregate: aggregateController(), coverageSummary: summary, claimedStudents: [ownRow],
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    await assertPickupView(page, 'class');
+    await waitUntil(() => harness.coverageSummaryRequests.length > 0, 'The summary must be requested before checking its safe fallback');
+    await page.clock.fastForward(1_100);
+    await assertPickupView(page, 'class');
+    assert.equal(await page.getByTestId('assigned-testing-notice').count(), 0);
+    assert.deepEqual(harness.claimedRosterRequests, []);
+    await page.getByTestId('button-view-claimed-students').click();
+    await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+    await assertPickupView(page, 'claimed');
+    assert.deepEqual(harness.coverageMutationRequests, []);
+    assert.deepEqual(harness.commandPosts, []);
+    assert.deepEqual(harness.pageErrors, []);
+    await page.close();
   }
 });

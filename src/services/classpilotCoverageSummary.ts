@@ -1,13 +1,52 @@
 import { createHash } from "node:crypto";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
+import type { ClasspilotSupervisionContext, ClasspilotSupervisionStudent } from "../schema/classpilot.js";
+
+export type OwnTestingContextSummary = {
+  id: string;
+  name: string;
+  endsAt: string;
+  activeStudentCount: number;
+};
 
 export type ClasspilotCoverageSummary = {
+  schoolId: string;
+  viewerId: string;
   revision: string;
   availableStudentCount: number;
   claimedStudentCount: number;
   activeContextCount: number;
+  ownTestingContexts: OwnTestingContextSummary[];
 };
+
+/** Navigation hints only: admin visibility never becomes a personal assignment. */
+export function ownScheduledTestingContexts(options: {
+  schoolId: string;
+  viewerId: string;
+  contexts: readonly Pick<ClasspilotSupervisionContext,
+    "id" | "schoolId" | "name" | "assignedStaffId" | "status" | "startsAt" | "endsAt"
+    | "scheduleProfileApplicationId" | "scheduleProfileDate" | "scheduleProfileBlockId">[];
+  activeStudents: readonly Pick<ClasspilotSupervisionStudent, "schoolId" | "contextId" | "studentId">[];
+  now?: Date;
+}): OwnTestingContextSummary[] {
+  const now = options.now ?? new Date();
+  const studentsByContext = new Map<string, Set<string>>();
+  for (const row of options.activeStudents) {
+    if (row.schoolId !== options.schoolId) continue;
+    const studentIds = studentsByContext.get(row.contextId) ?? new Set<string>();
+    studentIds.add(row.studentId);
+    studentsByContext.set(row.contextId, studentIds);
+  }
+  return options.contexts.flatMap((context) => {
+    const activeStudentCount = studentsByContext.get(context.id)?.size ?? 0;
+    if (context.schoolId !== options.schoolId || context.assignedStaffId !== options.viewerId
+      || context.status !== "active" || context.startsAt > now || context.endsAt <= now
+      || !context.scheduleProfileApplicationId || !context.scheduleProfileDate || !context.scheduleProfileBlockId
+      || activeStudentCount === 0) return [];
+    return [{ id: context.id, name: context.name, endsAt: context.endsAt.toISOString(), activeStudentCount }];
+  }).sort((left, right) => left.endsAt.localeCompare(right.endsAt) || left.id.localeCompare(right.id));
+}
 
 export function classpilotCoverageSummaryRevision(options: {
   availableStudentIds: readonly string[];
