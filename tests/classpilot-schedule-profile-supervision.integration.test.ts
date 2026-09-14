@@ -156,10 +156,12 @@ test("coverage summary distinguishes the current supervisor from school-wide adm
     assert.equal(adminSummary.schoolId, ids.school); assert.equal(adminSummary.viewerId, ids.otherTeacher);
     assert.equal(adminSummary.activeContextCount, 1); assert.equal(adminSummary.claimedStudentCount, 2);
     assert.deepEqual(adminSummary.ownTestingContexts, []);
+    assert.deepEqual(adminSummary.ownSupervisionContexts, []);
     const teacherSummary = await readSummary(ids.teacher);
     assert.equal(teacherSummary.schoolId, ids.school); assert.equal(teacherSummary.viewerId, ids.teacher);
     assert.deepEqual(teacherSummary.ownTestingContexts, [{ id: context.id, name: context.name, endsAt: context.endsAt.toISOString(), activeStudentCount: 2 }]);
-    assert.deepEqual(Object.keys(teacherSummary).sort(), ["activeContextCount", "availableStudentCount", "claimedStudentCount", "ownTestingContexts", "revision", "schoolId", "viewerId"]);
+    assert.deepEqual(teacherSummary.ownSupervisionContexts, [{ id: context.id, name: context.name, contextType: context.contextType, startsAt: context.startsAt.toISOString(), endsAt: context.endsAt.toISOString(), activeStudentCount: 2 }]);
+    assert.deepEqual(Object.keys(teacherSummary).sort(), ["activeContextCount", "availableStudentCount", "claimedStudentCount", "ownSupervisionContexts", "ownTestingContexts", "revision", "schoolId", "viewerId"]);
     for (const privateId of [ids.student, ids.secondStudent, ids.group, app.id, app.testingWindows[0]!.blockId]) {
       assert.equal(JSON.stringify(teacherSummary).includes(privateId), false);
     }

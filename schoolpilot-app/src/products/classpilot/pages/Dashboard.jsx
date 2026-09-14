@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw, ChevronDown } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
@@ -31,6 +31,7 @@ import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
+import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
@@ -398,6 +399,7 @@ function AvailableStudentActivity({ student, nowMs }) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { currentUser, school, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
@@ -480,7 +482,9 @@ export default function Dashboard() {
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
   const {
     studentView, setStudentView, coverageSummary, summaryQueryKey,
-    ownTestingContexts, automaticallyShowingTesting,
+    ownSupervisionContexts, displaySupervisionContexts, automaticallyShowingSupervision,
+    showOwnSupervision, supervisionSummaryError, supervisionSummaryRefreshing,
+    pendingSupervisionConfirmation, retrySupervisionSummary,
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
@@ -489,10 +493,15 @@ export default function Dashboard() {
     [activeSchoolId, currentUser?.id],
   );
   const claimedStudentsQueryKey = useMemo(
-    () => ['/api/coverage/claimed-students', activeSchoolId, currentUser?.id],
+    () => ['/api/coverage/claimed-students', activeSchoolId, currentUser?.id, 'mine'],
     [activeSchoolId, currentUser?.id],
   );
   const coverageKeysRef = useRef({ summaryQueryKey, claimedStudentsQueryKey });
+  const supervisionScopeRef = useRef(classReaderKey);
+  const supervisionNoticeRef = useRef(null);
+  const focusSupervisionNoticeRef = useRef(false);
+  const previousAutomaticSupervisionRef = useRef(false);
+  const [confirmedOwnStart, setConfirmedOwnStart] = useState(null);
   const [showRerouteDialog, setShowRerouteDialog] = useState(false);
   const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
   const [rerouteNote, setRerouteNote] = useState("");
@@ -816,20 +825,24 @@ export default function Dashboard() {
   const manageableCoverageCount = Number(coverageSummary.activeContextCount || 0);
 
   const { data: coverageCapabilities = {} } = useQuery({
-    queryKey: ['/api/coverage/capabilities'],
-    queryFn: () => apiRequest('GET', '/coverage/capabilities'),
-    enabled: staffCoverageEnabled,
+    queryKey: ['/api/coverage/capabilities', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/coverage/capabilities', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
+    enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id,
   });
   const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
 
   const { data: availablePickupData = EMPTY_PICKUP_DATA } = useQuery({
-    queryKey: ['/api/coverage/available-students'],
-    queryFn: () => apiRequest('GET', '/coverage/available-students'),
+    queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/coverage/available-students', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
     select: (data) => ({
       students: data?.students || [],
       scheduledCoverageGroups: data?.scheduledCoverageGroups || [],
     }),
-    enabled: staffCoverageEnabled && studentView === 'available',
+    enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'available',
     refetchInterval: coverageFallbackInterval,
   });
   const availablePickupStudents = availablePickupData.students;
@@ -839,28 +852,33 @@ export default function Dashboard() {
     data: allClaimedPickupStudents = EMPTY_LIST,
     isLoading: claimedStudentsLoading,
     isError: claimedStudentsQueryError,
+    dataUpdatedAt: claimedStudentsUpdatedAt,
   } = useQuery({
     queryKey: claimedStudentsQueryKey,
-    queryFn: ({ signal }) => apiRequest('GET', '/coverage/claimed-students', undefined, {
+    queryFn: ({ signal }) => apiRequest('GET', '/coverage/claimed-students?scope=mine', undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
     }),
     select: (data) => data?.students || [],
-    enabled: staffCoverageEnabled && studentView === 'claimed',
+    enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'claimed',
     refetchInterval: 10000,
   });
   const claimedPickupStudents = useMemo(() => {
-    if (!automaticallyShowingTesting) return allClaimedPickupStudents;
-    const contextIds = new Set(ownTestingContexts.map((context) => context.id));
-    return allClaimedPickupStudents.filter((student) => (
-      contextIds.has(student.contextId) && student.assignedStaff?.id === currentUser?.id
-    ));
-  }, [allClaimedPickupStudents, automaticallyShowingTesting, ownTestingContexts, currentUser?.id]);
+    const contextIds = new Set(displaySupervisionContexts.map(context => context.id));
+    return [...new Map(allClaimedPickupStudents.filter(student => (
+      // The endpoint is personal, including for admins. Keep a second check
+      // when ownership metadata is present, and never use admin canManage.
+      (!student.assignedStaff?.id || student.assignedStaff.id === currentUser?.id)
+      && (!automaticallyShowingSupervision || contextIds.has(student.contextId))
+    )).map(student => [student.studentId, student])).values()];
+  }, [allClaimedPickupStudents, automaticallyShowingSupervision, displaySupervisionContexts, currentUser?.id]);
 
   const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/coverage/reroute-targets'],
-    queryFn: () => apiRequest('GET', '/coverage/reroute-targets'),
+    queryKey: ['/api/coverage/reroute-targets', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/coverage/reroute-targets', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
     select: (data) => data?.targets || data?.contexts || [],
-    enabled: staffCoverageEnabled && showRerouteDialog,
+    enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && showRerouteDialog,
     refetchInterval: false,
   });
 
@@ -1092,7 +1110,7 @@ export default function Dashboard() {
         try {
           const response = await queryClient.fetchQuery({
             queryKey: coverageKeysRef.current.claimedStudentsQueryKey, staleTime: 0,
-            queryFn: ({ signal, queryKey }) => apiRequest('GET', '/coverage/claimed-students', undefined, {
+            queryFn: ({ signal, queryKey }) => apiRequest('GET', '/coverage/claimed-students?scope=mine', undefined, {
               signal, headers: { 'X-School-Id': queryKey[1] },
             }),
           });
@@ -1324,15 +1342,16 @@ export default function Dashboard() {
     aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
     activeSchoolIdRef.current = activeSchoolId;
     coverageKeysRef.current = { summaryQueryKey, claimedStudentsQueryKey };
+    supervisionScopeRef.current = classReaderKey;
     pendingRealtimeEventsRef.current = [];
     if (realtimeFlushTimeoutRef.current) {
       clearTimeout(realtimeFlushTimeoutRef.current);
       realtimeFlushTimeoutRef.current = null;
     }
-  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey]);
+  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey]);
 
-  const automaticTestingTargetKey = automaticallyShowingTesting
-    ? ownTestingContexts.map((context) => context.id).sort().join(',')
+  const automaticTestingTargetKey = automaticallyShowingSupervision
+    ? displaySupervisionContexts.map((context) => context.id).sort().join(',')
     : '';
   useLayoutEffect(() => {
     setSelectedStudentIds(new Set());
@@ -1342,6 +1361,51 @@ export default function Dashboard() {
     setSearchQuery('');
     clearStudentDetails();
   }, [classReaderKey, studentView, automaticTestingTargetKey, clearStudentDetails]);
+
+  const openOwnSupervision = useCallback((contexts = []) => {
+    if (contexts.length) setConfirmedOwnStart({ scopeKey: classReaderKey, baselineUpdatedAt: claimedStudentsUpdatedAt });
+    setAdminObservedSessionId(null);
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
+    setSelectedSubgroupId('');
+    setSearchQuery('');
+    clearStudentDetails();
+    focusSupervisionNoticeRef.current = true;
+    void queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+    void showOwnSupervision(contexts);
+    requestAnimationFrame(() => {
+      if (supervisionScopeRef.current === classReaderKey && supervisionNoticeRef.current) {
+        supervisionNoticeRef.current.focus();
+        focusSupervisionNoticeRef.current = false;
+      }
+    });
+  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision]);
+
+  useEffect(() => {
+    if (!activeSchoolId || !currentUser?.id || !hasSupervisionDashboardIntent(location.state)) return;
+    const intent = consumeSupervisionDashboardIntent(location.state, {
+      schoolId: activeSchoolId, viewerId: currentUser.id,
+    });
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true, state: withoutSupervisionDashboardIntent(location.state),
+    });
+    if (intent) openOwnSupervision(intent.contexts);
+  }, [activeSchoolId, currentUser?.id, location, navigate, openOwnSupervision]);
+
+  useEffect(() => {
+    if (automaticallyShowingSupervision && focusSupervisionNoticeRef.current) {
+      supervisionNoticeRef.current?.focus();
+      focusSupervisionNoticeRef.current = false;
+    }
+    if (previousAutomaticSupervisionRef.current && !automaticallyShowingSupervision && studentView === 'class') {
+      // Resolve today's authoritative active session, including applied custom
+      // times. Never restore the class ID that preceded supervision.
+      void queryClient.invalidateQueries({ queryKey: activeSessionQueryKey, exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+    }
+    previousAutomaticSupervisionRef.current = automaticallyShowingSupervision;
+  }, [automaticallyShowingSupervision, studentView, activeSessionQueryKey]);
 
   useLayoutEffect(() => {
     // A detail drawer is an authority-bound view. Never let a selected row or
@@ -1934,7 +1998,7 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.summaryQueryKey, exact: true });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               if (studentViewRef.current === 'available') {
-                queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'], exact: true });
+                queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students', activeSchoolIdRef.current] });
               }
               if (studentViewRef.current === 'claimed') {
                 queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.claimedStudentsQueryKey, exact: true });
@@ -4376,7 +4440,8 @@ export default function Dashboard() {
   });
 
   const claimPickupMutation = useMutation({
-    mutationFn: async ({ students: studentsToClaim }) => {
+    retry: false,
+    mutationFn: async ({ students: studentsToClaim, scope }) => {
       const byScheduled = studentsToClaim.reduce((map, student) => {
         const scheduled = student.matchingScheduledCoverage;
         if (!scheduled?.id) return map;
@@ -4398,39 +4463,53 @@ export default function Dashboard() {
       if (byScheduled.size === 0 && byGroup.size === 0 && directScopeStudents.length === 0) {
         throw new Error("No supervision permission is available for the selected students.");
       }
-      const requests = Array.from(byScheduled.entries()).map(([scheduledConflictId, rows]) =>
-        apiRequest('POST', '/coverage/claim', {
-          scheduledConflictId,
-          studentIds: rows.map((student) => student.studentId),
-        })
-      );
-      requests.push(...Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) =>
-        apiRequest('POST', '/coverage/claim', {
-          supervisionGroupId,
-          studentIds: rows.map((student) => student.studentId),
-        })
-      ));
+      const requests = Array.from(byScheduled.entries()).map(([scheduledConflictId, rows]) => ({
+        scheduledConflictId, studentIds: rows.map(student => student.studentId),
+      }));
+      requests.push(...Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) => ({
+        supervisionGroupId, studentIds: rows.map(student => student.studentId),
+      })));
       if (directScopeStudents.length > 0) {
-        requests.push(apiRequest('POST', '/coverage/claim', {
+        requests.push({
           studentIds: directScopeStudents.map((student) => student.studentId),
-        }));
+        });
       }
-      return Promise.all(requests);
+      const outcomes = await Promise.allSettled(requests.map(payload => apiRequest('POST', '/coverage/claim', payload, {
+        headers: { 'X-School-Id': scope.schoolId },
+      })));
+      const successes = outcomes.flatMap((outcome, index) => outcome.status === 'fulfilled'
+        ? [{ context: outcome.value?.context, studentIds: requests[index].studentIds }] : []);
+      const failures = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+      if (successes.length === 0) throw failures[0] || new Error('Students could not be claimed.');
+      return {
+        contexts: successes.map(success => success.context).filter(Boolean),
+        claimedCount: new Set(successes.flatMap(success => success.studentIds)).size,
+        failedCount: new Set(requests.filter((_, index) => outcomes[index].status === 'rejected').flatMap(request => request.studentIds)).size,
+        failures,
+      };
     },
-    onSuccess: (_, variables) => {
+    onSuccess: (result, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       clearSelection();
-      if (!dashboardCapabilities.observedOtherClass) setStudentView("claimed");
+      if (!dashboardCapabilities.observedOtherClass) openOwnSupervision(result.contexts);
       const isQuickClaim = variables?.quickClaimStudentId && variables?.students?.length === 1;
       toast({
-        title: isQuickClaim ? "Student claimed" : "Students claimed",
-        description: isQuickClaim ? "The student is now in your claimed view." : "They are now in your claimed view.",
+        variant: result.failures.length ? 'destructive' : undefined,
+        title: result.failures.length ? `${result.claimedCount} student${result.claimedCount === 1 ? '' : 's'} claimed; ${result.failedCount} could not be confirmed` : isQuickClaim ? "Student claimed" : "Students claimed",
+        description: result.failures.length
+          ? `${result.failures[0]?.response?.data?.error || result.failures[0]?.message || 'Some claims failed.'} Successful claims are shown on your dashboard. Refresh Available before trying remaining students again.`
+          : "Your supervised students are now shown on the dashboard.",
       });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
+      queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
+      queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
       if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
@@ -4443,13 +4522,15 @@ export default function Dashboard() {
       }
       toast({ variant: "destructive", title: "Could not claim students", description: error.response?.data?.error || error.message });
     },
-    onSettled: () => {
+    onSettled: (_data, _error, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
       setQuickClaimStudentId(null);
     },
   });
 
   const rerouteMutation = useMutation({
-    mutationFn: async ({ targetId, studentIds, note }) => {
+    retry: false,
+    mutationFn: async ({ targetId, studentIds, note, scope }) => {
       const target = rerouteCoverageTargets.find((entry) => entry.id === targetId);
       if (!target) throw new Error("Choose where to send these students.");
       return apiRequest('POST', '/coverage/send', {
@@ -4457,9 +4538,11 @@ export default function Dashboard() {
         assignedStaffId: target.assignedStaffId,
         studentIds,
         note,
-      });
+      }, { headers: { 'X-School-Id': scope.schoolId } });
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
+      queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/reroute-targets'] });
@@ -4471,14 +4554,18 @@ export default function Dashboard() {
       clearSelection();
       toast({ title: "Students sent", description: "Selected students were assigned to supervision." });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
       toast({ variant: "destructive", title: "Could not send students", description: error.response?.data?.error || error.message });
     },
   });
 
   const returnToClassMutation = useMutation({
-    mutationFn: async ({ studentIds }) => apiRequest('POST', '/coverage/return-to-class', { studentIds }),
+    retry: false,
+    mutationFn: async ({ studentIds, scope }) => apiRequest('POST', '/coverage/return-to-class', { studentIds }, { headers: { 'X-School-Id': scope.schoolId } }),
     onSuccess: (_, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
+      queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
@@ -4500,7 +4587,8 @@ export default function Dashboard() {
       });
       toast({ title: "Returned to class", description: "The student can now be monitored in this class session." });
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (supervisionScopeRef.current !== variables.scope.key) return;
       toast({ variant: "destructive", title: "Could not return student", description: error.response?.data?.error || error.message });
     },
   });
@@ -4512,7 +4600,10 @@ export default function Dashboard() {
       return;
     }
     setQuickClaimStudentId(options.quickClaimStudentId || null);
-    claimPickupMutation.mutate({ students: studentsToClaim, quickClaimStudentId: options.quickClaimStudentId || null });
+    claimPickupMutation.mutate({
+      students: studentsToClaim, quickClaimStudentId: options.quickClaimStudentId || null,
+      scope: { key: classReaderKey, schoolId: activeSchoolId, viewerId: currentUser?.id },
+    });
   };
 
   const handleStartScheduledConflict = (conflictId) => {
@@ -4540,7 +4631,10 @@ export default function Dashboard() {
       toast({ variant: "destructive", title: "Choose where to send them" });
       return;
     }
-    rerouteMutation.mutate({ targetId: selectedCoverageContextId, studentIds, note: rerouteNote.trim() });
+    rerouteMutation.mutate({
+      targetId: selectedCoverageContextId, studentIds, note: rerouteNote.trim(),
+      scope: { key: classReaderKey, schoolId: activeSchoolId },
+    });
   };
 
   const handleReturnToClass = (student) => {
@@ -4549,7 +4643,7 @@ export default function Dashboard() {
       toast({ variant: "destructive", title: "Start a class first", description: "Only an active class teacher can return a student from supervision." });
       return;
     }
-    returnToClassMutation.mutate({ studentIds: [student.studentId] });
+    returnToClassMutation.mutate({ studentIds: [student.studentId], scope: { key: classReaderKey, schoolId: activeSchoolId } });
   };
 
   const stopImpersonateMutation = useMutation({
@@ -5511,10 +5605,27 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {automaticallyShowingTesting ? (
-          <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="assigned-testing-notice">
-            <p className="font-semibold">Testing: {ownTestingContexts.map((context) => context.name).join(', ')}</p>
-            <p className="mt-1">Showing your assigned testing students. When testing ends, Class follows your applied schedule. You can switch views at any time.</p>
+        {automaticallyShowingSupervision ? (
+          <div ref={supervisionNoticeRef} tabIndex={-1} className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="assigned-testing-notice">
+            <p className="font-semibold" data-testid="assigned-supervision-notice">Supervising: {displaySupervisionContexts.map(context => `${context.name} — ends ${new Date(context.endsAt).toLocaleTimeString([], {
+              hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York',
+            })}`).join('; ')}</p>
+            <p className="mt-1" data-testid="supervised-student-counts">{claimedStudentsLoading || claimedStudentsQueryError
+              ? 'Student counts are unavailable while the roster loads.'
+              : `${claimedPickupStudents.length} supervised · ${claimedPickupStudents.filter(student => ['online', 'idle'].includes(deriveStudentMonitoringDisplay(student, freshnessNowMs).kind)).length} online`} · {school?.schoolTimezone || school?.timezone || 'America/New_York'}</p>
+            <p className="mt-1">Showing your supervised students, including those offline. When supervision ends, Class follows your applied schedule. You can switch views at any time.</p>
+            {supervisionSummaryError ? <div className="mt-2" role="alert">
+              <p>{pendingSupervisionConfirmation ? 'Supervision started; students could not load.' : 'Supervision status could not refresh.'}</p>
+              <Button variant="outline" size="sm" className="mt-2" disabled={supervisionSummaryRefreshing} onClick={() => {
+                void retrySupervisionSummary();
+                void queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+              }}>Retry supervision refresh</Button>
+            </div> : null}
+          </div>
+        ) : ownSupervisionContexts.length > 0 ? (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 text-sm" role="status" data-testid="supervision-other-view-notice">
+            <p>You are supervising {ownSupervisionContexts.reduce((count, context) => count + context.activeStudentCount, 0)} students.</p>
+            <Button variant="outline" size="sm" onClick={() => openOwnSupervision()}>View supervised students</Button>
           </div>
         ) : null}
 
@@ -5965,7 +6076,7 @@ export default function Dashboard() {
           </div>
         ) : studentView === 'claimed' && claimedStudentsQueryError ? (
           <div className="py-20 text-center" role="alert">
-            <h3 className="text-xl font-semibold mb-2">Supervision students could not load</h3>
+            <h3 className="text-xl font-semibold mb-2">{confirmedOwnStart?.scopeKey === classReaderKey && claimedStudentsUpdatedAt <= confirmedOwnStart.baselineUpdatedAt ? 'Supervision started; students could not load' : 'Supervision students could not load'}</h3>
             <p className="text-sm text-muted-foreground">Refresh to check your current assignments.</p>
             <Button variant="outline" className="mt-4" onClick={() => queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true })}>Try again</Button>
           </div>

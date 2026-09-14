@@ -32,12 +32,12 @@ test('the Claimed Students card counts students, never supervision contexts', ()
 test('coverage and dashboard summaries share an invalidation prefix while automatic ownership is scoped', () => {
   assert.match(
     coverageSource,
-    /queryKey:\s*\["\/api\/coverage\/summary"\]/,
-    'the summary query must use the shared /api/coverage/summary invalidation prefix',
+    /queryKey:\s*\["\/api\/coverage\/summary", schoolId, currentUser\?\.id\]/,
+    'the summary query must use the shared invalidation prefix and isolate school and viewer',
   );
   assert.match(
     coverageSource,
-    /queryFn:\s*\(\)\s*=>\s*apiRequest\("GET",\s*"\/coverage\/summary"\)/,
+    /queryFn:\s*\(\{ signal \}\)\s*=>\s*apiRequest\("GET",\s*"\/coverage\/summary", undefined, \{ signal, headers: \{ "X-School-Id": schoolId \}/,
     'the summary query must call the coverage summary endpoint',
   );
   const dashboardSummary = readFileSync(

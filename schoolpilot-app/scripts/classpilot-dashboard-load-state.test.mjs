@@ -220,6 +220,8 @@ async function configureDashboard(page, {
   historyTiles = { tiles: [] },
   observationLeaseResponse = { renewAfterSeconds: 30 },
   claimedStudents = [],
+  availableStudents = [],
+  claimResponse = null,
   coverageSummary = { activeContextCount: 0, availableStudentCount: 0, claimedStudentCount: 0, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, ownTestingContexts: [] },
   authentication = null,
 } = {}) {
@@ -329,7 +331,19 @@ async function configureDashboard(page, {
     }
     if (pathname === '/api/coverage/claimed-students') {
       claimedRosterRequests.push(pathname);
-      await route.fulfill({ json: { students: typeof claimedStudents === 'function' ? await claimedStudents(request) : claimedStudents } });
+      const response = typeof claimedStudents === 'function' ? await claimedStudents(request) : claimedStudents;
+      await route.fulfill(Number(response?.status) >= 400
+        ? { status: response.status, json: response.body || { error: 'Supervision students unavailable' } }
+        : { json: { students: response } });
+      return;
+    }
+    if (pathname === '/api/coverage/available-students') {
+      await route.fulfill({ json: { students: typeof availableStudents === 'function' ? await availableStudents(request) : availableStudents } });
+      return;
+    }
+    if (pathname === '/api/coverage/claim' && request.method() === 'POST' && claimResponse) {
+      const response = await claimResponse(request);
+      await route.fulfill({ status: response.status || 201, json: response.body || response });
       return;
     }
     if (pathname === "/api/students-aggregated") {
@@ -2888,6 +2902,225 @@ const OTHER_TESTING_CONTEXT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const SECOND_SCHOOL_ID = '12121212-1212-4212-8212-121212121212';
 const TESTING_TIME = new Date('2026-09-14T12:40:00Z');
 
+function ownSupervisionSummary(contexts = []) {
+  return {
+    ...ownTestingSummary([]),
+    ownSupervisionContexts: contexts.map(context => ({
+      startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z',
+      activeStudentCount: 1, ...context,
+    })),
+  };
+}
+
+test('supervision navigation intents are personal, one-use, and contain no student roster', async () => {
+  const { createSupervisionDashboardIntent, consumeSupervisionDashboardIntent, withoutSupervisionDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
+  const context = { id: OWN_TESTING_CONTEXT_ID, name: 'Other', assignedStaffId: ADMIN_ID, endsAt: '2099-01-01T00:00:00Z', studentIds: ['private-student'] };
+  const state = createSupervisionDashboardIntent({ schoolId: SCHOOL_ID, viewerId: ADMIN_ID, contexts: [context] });
+  assert.equal(JSON.stringify(state).includes('private-student'), false);
+  assert.deepEqual(consumeSupervisionDashboardIntent(state, { schoolId: SCHOOL_ID, viewerId: ADMIN_ID }).contexts.map(item => item.id), [OWN_TESTING_CONTEXT_ID]);
+  assert.equal(consumeSupervisionDashboardIntent(state, { schoolId: SCHOOL_ID, viewerId: ADMIN_ID }), null);
+  const wrongSchool = createSupervisionDashboardIntent({ schoolId: SCHOOL_ID, viewerId: ADMIN_ID, contexts: [context] });
+  assert.equal(consumeSupervisionDashboardIntent(wrongSchool, { schoolId: SECOND_SCHOOL_ID, viewerId: ADMIN_ID }), null);
+  assert.equal(consumeSupervisionDashboardIntent(wrongSchool, { schoolId: SCHOOL_ID, viewerId: ADMIN_ID }), null, 'A stale foreign-school intent is discarded permanently');
+  assert.deepEqual(withoutSupervisionDashboardIntent({ ...state, kept: true }), { kept: true });
+});
+
+test('manual supervision displays normal offline tiles from every own context and returns to the current custom class', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const rows = Array.from({ length: 20 }, (_, index) => testingStudent(
+    `eeeeeeee-eeee-4eee-8eee-${String(index).padStart(12, '0')}`,
+    index < 10 ? OWN_TESTING_CONTEXT_ID : OTHER_TESTING_CONTEXT_ID,
+  )).map(row => ({ ...row, status: 'offline', online: false, isOnline: false, realtimeStatus: 'offline', lastSeenAt: null, realtimeObservedAt: null, currentUrl: null, activeTabUrl: null }));
+  const summary = ownSupervisionSummary([
+    { id: OWN_TESTING_CONTEXT_ID, name: 'Other', contextType: 'other', activeStudentCount: 10 },
+    { id: OTHER_TESTING_CONTEXT_ID, name: 'Library', contextType: 'supervision_group', activeStudentCount: 10 },
+  ]);
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID })]) }),
+    userRole: 'teacher', coverageSummary: summary,
+    claimedStudents: [...rows, rows[0], testingStudent(STUDENT_ID, 'someone-elses-context', OTHER_TEACHER_ID)],
+  });
+  const personalRequests = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/coverage/claimed-students') personalRequests.push(request.url());
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId(`card-student-${rows.at(-1).studentId}`).waitFor();
+  assert.equal(await page.locator('[data-testid^="card-student-"]').count(), 20, 'Offline students remain normal Dashboard tiles; duplicate roster rows do not duplicate tiles');
+  assert.match(await page.getByTestId('assigned-supervision-notice').innerText(), /Other.*Library/);
+  assert(personalRequests.every(url => new URL(url).searchParams.get('scope') === 'mine'));
+  await harness.authenticateWebSocket();
+  await page.getByTestId('button-view-class-students').click();
+  await page.getByTestId('supervision-other-view-notice').waitFor();
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await assertPickupView(page, 'class');
+  await page.getByRole('button', { name: 'View supervised students', exact: true }).click();
+  await assertPickupView(page, 'claimed');
+  await page.waitForFunction(() => document.activeElement?.dataset.testid === 'assigned-testing-notice');
+
+  harness.setCoverageSummary(ownSupervisionSummary([{ id: OTHER_TESTING_CONTEXT_ID, name: 'Library', activeStudentCount: 10 }]));
+  harness.setClaimedStudents(rows.slice(10));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.getByTestId(`card-student-${rows[0].studentId}`).waitFor({ state: 'hidden' });
+  await assertPickupView(page, 'claimed');
+  harness.setCoverageSummary(ownSupervisionSummary([]));
+  harness.setClaimedStudents([]);
+  harness.setActiveSession({ ...teachingSession(), lifecycle: { kind: 'scheduled', state: 'active' } });
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await assertPickupView(page, 'class');
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('confirmed Coverage navigation survives failed reads, retries only reads, and consumes the intent', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  await page.addInitScript(({ schoolId, viewerId, contextId }) => {
+    if (location.pathname !== '/classpilot') return;
+    history.replaceState({ ...history.state, usr: { classpilotSupervisionDashboard: {
+      id: 'confirmed-own-coverage-navigation', schoolId, viewerId,
+      contexts: [{ id: contextId, name: 'Other', assignedStaffId: viewerId, endsAt: '2026-09-14T16:00:00Z' }],
+    } } }, '');
+  }, { schoolId: SCHOOL_ID, viewerId: ADMIN_ID, contextId: OWN_TESTING_CONTEXT_ID });
+  let unavailable = true;
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    coverageSummary: () => unavailable
+      ? { status: 503, body: { error: 'Temporary summary failure' } }
+      : ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other' }]),
+    claimedStudents: () => unavailable
+      ? { status: 503, body: { error: 'Temporary roster failure' } }
+      : [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'claimed');
+  await page.clock.fastForward(2_000);
+  await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.dataset.testid === 'assigned-testing-notice');
+  assert.equal(await page.evaluate(() => !!history.state?.usr?.classpilotSupervisionDashboard), false);
+  unavailable = false;
+  await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await assertPickupView(page, 'claimed');
+  assert.deepEqual(harness.coverageMutationRequests, [], 'Retrying a successful claim only repeats reads');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Dashboard claims keep partial successes visible and automatic return remains enabled', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const available = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((id, index) => ({
+    ...testingStudent(id, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned',
+    matchingGroups: [{ id: `claim-group-${index}`, name: `Claim group ${index}` }],
+  }));
+  const claimRequests = [];
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), userRole: 'teacher', availableStudents: available,
+    coverageSummary: ownSupervisionSummary([]),
+    claimResponse: async request => {
+      const body = request.postDataJSON();
+      claimRequests.push({ body, schoolId: request.headers()['x-school-id'] });
+      if (body.supervisionGroupId === 'claim-group-1') {
+        return { status: 409, body: { error: 'Another teacher already claimed this student.' } };
+      }
+      harness.setCoverageSummary(ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Claim group 0' }]));
+      harness.setClaimedStudents([testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)]);
+      return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Claim group 0', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
+    },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('button-view-available-students').click();
+  await page.getByTestId('button-claim-all-students').click();
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await page.getByTestId('assigned-supervision-notice').waitFor();
+  assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
+  assert.equal(claimRequests.length, 2);
+  assert(claimRequests.every(request => request.schoolId === SCHOOL_ID));
+  await harness.authenticateWebSocket();
+  harness.setCoverageSummary(ownSupervisionSummary([]));
+  harness.setClaimedStudents([]);
+  harness.setActiveSession(teachingSession());
+  harness.setAllSessions([teachingSession()]);
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await assertPickupView(page, 'class');
+  await page.getByTestId('badge-active-session').waitFor();
+  await page.clock.fastForward(10_100);
+  assert.equal(claimRequests.length, 2, 'Settling a partial claim never retries either mutation automatically');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('a delayed own claim cannot switch the Dashboard after the teacher changes schools', { timeout: 75_000 }, async context => {
+  const entry = `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {MemoryRouter} from 'react-router-dom';
+    import {QueryClientProvider} from '@tanstack/react-query';
+    import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
+    import {LicenseProvider} from '/src/contexts/LicenseContext.jsx';
+    import {ThemeProvider} from '/src/contexts/ThemeContext.jsx';
+    import {queryClient} from '/src/lib/queryClient.js';
+    import Dashboard from '/src/products/classpilot/pages/Dashboard.jsx'; import '/src/index.css';
+    function Bridge(){const auth=useAuth();React.useEffect(()=>{window.__switchClaimSchool=auth.switchSchool;},[auth.switchSchool]);return React.createElement('div',{'data-testid':'claim-school'},auth.activeSchoolId);}
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(LicenseProvider,null,React.createElement(ThemeProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(Bridge),React.createElement(Dashboard))))))));
+  `;
+  const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: [{
+    name: 'delayed-claim-school-fixture',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (req.url !== '/__delayed-claim-school') return next();
+        res.setHeader('Content-Type', 'text/html');
+        res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><body><div id="root"></div><script type="module" src="/__delayed-claim-entry.jsx"></script></body></html>'));
+      });
+    },
+    resolveId(id) { if (id === '/__delayed-claim-entry.jsx') return '\0delayed-claim-entry'; },
+    load(id) { if (id === '\0delayed-claim-entry') return entry; },
+  }] });
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let completeClaim;
+  const claimGate = new Promise(resolve => { completeClaim = resolve; });
+  context.after(() => completeClaim());
+  let claimSchool = null;
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), userRole: 'teacher',
+    authentication: request => {
+      const schoolId = request.headers()['x-school-id'] || SCHOOL_ID;
+      return { ...authResponse(), activeSchoolId: schoolId,
+        memberships: [SCHOOL_ID, SECOND_SCHOOL_ID].map(id => ({ schoolId: id, role: 'teacher', schoolName: `School ${id.slice(0, 4)}`, schoolTimezone: 'America/New_York' })) };
+    },
+    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
+    coverageSummary: request => ({ ...ownSupervisionSummary([]), schoolId: request.headers()['x-school-id'] || SCHOOL_ID }),
+    claimResponse: async request => {
+      claimSchool = request.headers()['x-school-id'];
+      await claimGate;
+      return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Old school claim', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
+    },
+  });
+  await page.goto(`${baseURL}/__delayed-claim-school`);
+  await page.getByTestId('button-view-available-students').click();
+  await page.getByTestId('button-claim-all-students').click();
+  await waitUntil(() => claimSchool === SCHOOL_ID, 'The original claim is submitted under school A');
+  await page.evaluate(schoolId => window.__switchClaimSchool(schoolId), SECOND_SCHOOL_ID);
+  await page.waitForFunction(id => document.querySelector('[data-testid="claim-school"]')?.textContent === id, SECOND_SCHOOL_ID);
+  await assertPickupView(page, 'class');
+  const response = page.waitForResponse(reply => new URL(reply.url()).pathname === '/api/coverage/claim');
+  completeClaim();
+  await response;
+  await page.clock.fastForward(500);
+  await assertPickupView(page, 'class');
+  assert.equal(await page.getByTestId('assigned-supervision-notice').count(), 0);
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
+  assert.equal(harness.coverageMutationRequests.filter(request => request.pathname.endsWith('/claim')).length, 1);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 function ownTestingSummary(contextIds = [], { schoolId = SCHOOL_ID, viewerId = ADMIN_ID } = {}) {
   return {
     revision: contextIds.join(':') || 'empty', schoolId, viewerId,
@@ -2939,7 +3172,7 @@ test('assigned testing opens only the own roster and respects explicit view choi
 
   await page.getByTestId('button-view-claimed-students').click();
   await page.getByTestId('assigned-testing-notice').waitFor({ state: 'hidden' });
-  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0, 'Manual Claimed remains personal for administrators');
   for (const choice of ['available', 'class', 'claimed']) {
     await page.getByTestId(`button-view-${choice}-students`).click();
     await assertPickupView(page, choice);
@@ -2954,7 +3187,7 @@ test('assigned testing opens only the own roster and respects explicit view choi
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await page.clock.fastForward(10_100);
   await assertPickupView(page, 'claimed');
-  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
   assert.deepEqual(harness.coverageMutationRequests, [], 'Opening and changing dashboard views must never create, claim, or release supervision');
   assert.deepEqual(harness.commandPosts, []);
   assert.deepEqual(harness.pageErrors, []);

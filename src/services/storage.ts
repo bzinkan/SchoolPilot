@@ -17592,6 +17592,42 @@ export async function getGroupStudentIdsForGroups(
   return result;
 }
 
+export type CoverageStudentClass = { id: string; name: string; gradeLevel: string | null };
+
+/** Only enrich students already authorized by a Coverage read; never fetch class rosters. */
+export async function getCoverageStudentClasses(
+  schoolId: string,
+  studentIds: readonly string[]
+): Promise<Map<string, CoverageStudentClass[]>> {
+  const uniqueIds = [...new Set(studentIds.map(String).filter(Boolean))];
+  const result = new Map<string, CoverageStudentClass[]>(uniqueIds.map((id) => [id, []]));
+  if (uniqueIds.length === 0) return result;
+  if (uniqueIds.length > 5000) throw Object.assign(new Error("Too many students to load Coverage class filters. Narrow the supervision context and try again."), {
+    status: 422, code: "COVERAGE_STUDENT_LIMIT_EXCEEDED",
+  });
+  const rows = await db.select({
+    studentId: groupStudents.studentId,
+    id: groups.id,
+    name: groups.name,
+    gradeLevel: groups.gradeLevel,
+  }).from(groupStudents)
+    .innerJoin(groups, and(
+      eq(groups.id, groupStudents.groupId), eq(groups.schoolId, schoolId),
+      eq(groups.groupType, "admin_class"), eq(groups.status, "active")
+    ))
+    .innerJoin(students, and(eq(students.id, groupStudents.studentId), eq(students.schoolId, schoolId)))
+    .where(inArray(groupStudents.studentId, uniqueIds))
+    .orderBy(groups.name, groups.id)
+    .limit(50001);
+  if (rows.length > 50000) throw Object.assign(new Error("Coverage class filter information exceeds the supported read limit."), {
+    status: 422, code: "COVERAGE_CLASS_LIMIT_EXCEEDED",
+  });
+  for (const { studentId, ...membership } of rows) {
+    result.get(studentId)?.push(membership);
+  }
+  return result;
+}
+
 export async function addGroupStudentsDetailed(
   groupId: string,
   studentIds: string[],
@@ -23853,19 +23889,51 @@ export async function listActiveSupervisionContextsForScheduledConflict(
 
 export async function listSupervisionContexts(
   schoolId: string,
-  options: { activeOnly?: boolean } = {}
+  options: { activeOnly?: boolean; assignedStaffId?: string; requireComplete?: boolean } = {}
 ): Promise<ClasspilotSupervisionContext[]> {
   const conditions: SQL[] = [eq(classpilotSupervisionContexts.schoolId, schoolId)];
+  if (options.assignedStaffId) conditions.push(eq(classpilotSupervisionContexts.assignedStaffId, options.assignedStaffId));
   if (options.activeOnly) {
     conditions.push(eq(classpilotSupervisionContexts.status, "active"));
     conditions.push(sql`${classpilotSupervisionContexts.endsAt} > now()`);
   }
-  return db
+  const rows = await db
     .select()
     .from(classpilotSupervisionContexts)
     .where(and(...conditions))
-    .orderBy(desc(classpilotSupervisionContexts.createdAt))
-    .limit(200);
+    .orderBy(desc(classpilotSupervisionContexts.createdAt), classpilotSupervisionContexts.id)
+    .limit(options.requireComplete ? 201 : 200);
+  if (options.requireComplete && rows.length > 200) throw Object.assign(new Error("Too many supervision contexts to load completely. End unused supervision contexts and try again."), {
+    status: 422, code: "COVERAGE_CONTEXT_LIMIT_EXCEEDED",
+  });
+  return rows;
+}
+
+/** Counts school-wide visibility without loading every context or student roster. */
+export async function getActiveCoverageCounts(schoolId: string, assignedStaffId?: string) {
+  const [row] = await db.select({
+    activeContextCount: sql<number>`count(distinct ${classpilotSupervisionContexts.id})::int`,
+    claimedStudentCount: sql<number>`count(distinct ${students.id})::int`,
+    revision: sql<string>`md5(coalesce(string_agg(
+      ${classpilotSupervisionContexts.id} || ':' || ${classpilotSupervisionContexts.updatedAt}::text || ':' ||
+      coalesce(${classpilotSupervisionStudents.id}, '') || ':' || coalesce(${students.id}, ''),
+      ',' order by ${classpilotSupervisionContexts.id}, ${classpilotSupervisionStudents.id}
+    ), ''))`,
+  }).from(classpilotSupervisionContexts)
+    .leftJoin(classpilotSupervisionStudents, and(
+      eq(classpilotSupervisionStudents.schoolId, schoolId),
+      eq(classpilotSupervisionStudents.contextId, classpilotSupervisionContexts.id),
+      isNull(classpilotSupervisionStudents.releasedAt)
+    ))
+    .leftJoin(students, and(
+      eq(students.id, classpilotSupervisionStudents.studentId), eq(students.schoolId, schoolId), eq(students.status, "active")
+    ))
+    .where(and(
+      eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.status, "active"),
+      sql`${classpilotSupervisionContexts.endsAt} > now()`,
+      assignedStaffId ? eq(classpilotSupervisionContexts.assignedStaffId, assignedStaffId) : undefined
+    ));
+  return row ?? { activeContextCount: 0, claimedStudentCount: 0, revision: "empty" };
 }
 
 export async function listSupervisionStudentsForContexts(

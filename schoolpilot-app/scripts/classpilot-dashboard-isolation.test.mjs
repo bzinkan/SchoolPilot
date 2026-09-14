@@ -724,7 +724,7 @@ test('A to B switches replace the complete realtime routing context before queue
     'utf8',
   );
   const routingLayoutEffect = dashboard.match(
-    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveSessionIdRef\.current = effectiveSessionId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey\]\);/,
+    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveSessionIdRef\.current = effectiveSessionId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey\]\);/,
   );
   assert.ok(
     routingLayoutEffect,

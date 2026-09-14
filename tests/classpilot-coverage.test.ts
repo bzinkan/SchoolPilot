@@ -60,6 +60,7 @@ import {
   getRecentMessagesForStudent,
   getGroupStudents,
   getGroupStudentIdsForGroups,
+  getCoverageStudentClasses,
   getGroupTeacherIdsForGroups,
   getSettingsForSchool,
   getOnlineUnassignedStudents,
@@ -70,6 +71,7 @@ import {
   getScheduledGroupsReadyToEnd,
   isAuthorizedClasspilotSessionStaff,
   listCoverageScopeGroups,
+  listSupervisionContexts,
   linkStudentDevice,
   markClasspilotCommandTargetsSent,
   replaceCoverageScopeGroupMembers,
@@ -601,6 +603,112 @@ after(async () => {
 });
 
 describe("ClassPilot supervision coverage storage contracts", () => {
+  it("returns canonical class filters only for authorized available and claimed students without setup access", async () => {
+    const staff = await createUser({ email: `filter-staff@${TAG}.example.edu`, firstName: "Filter", lastName: "Teacher" });
+    await createMembership({ schoolId: school.id, userId: staff.id, role: "teacher", status: "active" });
+    const filterStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id, firstName: "Filter", lastName: "Student", gradeLevel: "5", status: "active",
+    }));
+    const noClassStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id, firstName: "No", lastName: "Class", status: "active",
+    }));
+    const classA = await inSchool(school.id, () => createGroup({ schoolId: school.id, teacherId: teacher.id, name: "Filter Homeroom", groupType: "admin_class", gradeLevel: "5" }));
+    const classB = await inSchool(school.id, () => createGroup({ schoolId: school.id, teacherId: teacher.id, name: "Filter Math", groupType: "admin_class", gradeLevel: "5" }));
+    const archived = await inSchool(school.id, () => createGroup({ schoolId: school.id, teacherId: teacher.id, name: "Archived filter class", groupType: "admin_class", status: "archived" }));
+    const teacherGroup = await inSchool(school.id, () => createGroup({ schoolId: school.id, teacherId: teacher.id, name: "Private small group", groupType: "teacher_small_group" }));
+    await inSchool(school.id, async () => {
+      for (const group of [classA, classB, archived, teacherGroup]) await addGroupStudentsDetailed(group.id, [filterStudent.id]);
+      await createCoverageAssignment({ schoolId: school.id, staffId: staff.id, scopeType: "students", scopeValue: filterStudent.id, permissions: { claim: true, setup: false }, active: true, createdBy: admin.id });
+      const deviceId = `${TAG}-filter-device`;
+      await createDevice({ schoolId: school.id, deviceId, classId: "default" });
+      await linkStudentDevice({ studentId: filterStudent.id, deviceId });
+      await setActiveStudentForDevice(deviceId, filterStudent.id);
+    });
+    const staffAuth = authFor(staff, school.id);
+    assert.equal((await requestJson("GET", "/coverage/setup/classes", undefined, staffAuth)).status, 403);
+    const available = await requestJson("GET", "/coverage/unassigned", undefined, staffAuth);
+    assert.equal(available.status, 200);
+    assert.equal(available.body.schoolId, school.id);
+    assert.equal(available.body.viewerId, staff.id);
+    assert.deepEqual(available.body.students.map((row: { studentId: string }) => row.studentId), [filterStudent.id]);
+    const expectedClasses = [
+      { id: classA.id, name: classA.name, gradeLevel: "5" },
+      { id: classB.id, name: classB.name, gradeLevel: "5" },
+    ];
+    assert.deepEqual(available.body.students[0].classes, expectedClasses);
+    expectNoDeviceIds(available.body);
+    const classes = await inSchool(school.id, () => getCoverageStudentClasses(school.id, [filterStudent.id, filterStudent.id, noClassStudent.id]));
+    assert.deepEqual(classes.get(filterStudent.id), expectedClasses);
+    assert.deepEqual(classes.get(noClassStudent.id), []);
+    assert.equal(classes.size, 2);
+    const context = await requestJson("POST", "/coverage/contexts", {
+      studentIds: [filterStudent.id, noClassStudent.id], assignedStaffId: staff.id, contextType: "other", name: "Filter test",
+      endsAt: new Date(Date.now() + 3600000).toISOString(),
+    }, authFor(admin, school.id));
+    assert.equal(context.status, 201);
+    assert.equal(context.body.context.activeStudentCount, 2);
+    const claimed = await requestJson("GET", `/coverage/contexts/${context.body.context.id}/students`, undefined, staffAuth);
+    assert.equal(claimed.status, 200);
+    assert.equal(claimed.body.schoolId, school.id);
+    assert.equal(claimed.body.viewerId, staff.id);
+    assert.deepEqual(claimed.body.students.find((row: { studentId: string }) => row.studentId === filterStudent.id).classes, expectedClasses);
+    const offline = claimed.body.students.find((row: { studentId: string }) => row.studentId === noClassStudent.id);
+    assert.deepEqual(offline.classes, []);
+    assert.equal(offline.isLoggedIn, false);
+    assert.equal((await requestJson("GET", `/coverage/contexts/${context.body.context.id}/students`, undefined, authFor(teacher, school.id))).status, 403);
+    const release = await requestJson("POST", `/coverage/contexts/${context.body.context.id}/release`, {
+      studentIds: [noClassStudent.id], releaseReason: "done",
+    }, staffAuth);
+    assert.equal(release.status, 200);
+    assert.equal((await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, noClassStudent.id))), undefined);
+    expectNoDeviceIds(claimed.body);
+    await assert.rejects(() => inSchool(school.id, () => getCoverageStudentClasses(school.id, Array.from({ length: 5001 }, (_, index) => `too-many-${index}`))), { code: "COVERAGE_STUDENT_LIMIT_EXCEEDED" });
+    await inSchool(school.id, () => releaseSupervisionStudents({ schoolId: school.id, contextId: context.body.context.id, releaseReason: "test_complete" }));
+  });
+
+  it("filters personal supervision before the context limit and keeps exact school-wide summary counts", async () => {
+    const ownStudent = await inSchool(school.id, () => createStudent({ schoolId: school.id, firstName: "Own", lastName: "Offline", status: "active" }));
+    const own = await requestJson("POST", "/coverage/contexts", {
+      name: "Own manual supervision", contextType: "other", assignedStaffId: admin.id,
+      studentIds: [ownStudent.id], endsAt: new Date(Date.now() + 3600000).toISOString(),
+    }, authFor(admin, school.id));
+    assert.equal(own.status, 201);
+    assert.equal(own.body.context.activeStudentCount, 1);
+    const prefix = `${TAG}-context-limit-`;
+    await inSchool(school.id, () => db.execute(sql`
+      INSERT INTO classpilot_supervision_contexts (id, school_id, name, context_type, status, assigned_staff_id, created_by, ends_at)
+      SELECT ${prefix} || entry::text, ${school.id}, 'Unrelated context', 'other', 'active', ${coverageStaff.id}, ${admin.id}, now() + interval '1 hour'
+      FROM generate_series(1, 201) entry
+    `));
+    try {
+      const personal = await requestJson("GET", "/coverage/claimed-students?scope=mine", undefined, authFor(admin, school.id));
+      assert.equal(personal.status, 200);
+      assert.equal(personal.body.schoolId, school.id);
+      assert.equal(personal.body.viewerId, admin.id);
+      assert.ok(personal.body.students.some((row: { studentId: string; contextId: string }) => row.studentId === ownStudent.id && row.contextId === own.body.context.id));
+      assert.ok(personal.body.students.every((row: { assignedStaff: { id: string } }) => row.assignedStaff.id === admin.id));
+      const all = await requestJson("GET", "/coverage/claimed-students", undefined, authFor(admin, school.id));
+      assert.equal(all.status, 422);
+      assert.equal(all.body.code, "COVERAGE_CONTEXT_LIMIT_EXCEEDED");
+      const invalid = await requestJson("GET", "/coverage/claimed-students?scope=everyone", undefined, authFor(admin, school.id));
+      assert.equal(invalid.status, 400);
+      const summary = await requestJson("GET", "/coverage/summary", undefined, authFor(admin, school.id));
+      assert.equal(summary.status, 200);
+      assert.ok(summary.body.activeContextCount >= 202);
+      assert.ok(summary.body.claimedStudentCount >= 1);
+      assert.ok(summary.body.ownSupervisionContexts.some((context: { id: string; contextType: string }) => context.id === own.body.context.id && context.contextType === "other"));
+      assert.ok(!summary.body.ownTestingContexts.some((context: { id: string }) => context.id === own.body.context.id));
+      expectNoDeviceIds(summary.body);
+      assert.ok(!JSON.stringify(summary.body).includes(ownStudent.id));
+      await assert.rejects(() => inSchool(school.id, () => listSupervisionContexts(school.id, { activeOnly: true, assignedStaffId: coverageStaff.id, requireComplete: true })), { code: "COVERAGE_CONTEXT_LIMIT_EXCEEDED" });
+    } finally {
+      await inSchool(school.id, async () => {
+        await db.execute(sql`DELETE FROM classpilot_supervision_contexts WHERE school_id = ${school.id} AND id LIKE ${`${prefix}%`}`);
+        await releaseSupervisionStudents({ schoolId: school.id, contextId: own.body.context.id, releaseReason: "test_complete" });
+      });
+    }
+  });
+
   it("returns an additive unavailable-context code without falling back to an unscoped roster", async () => {
     for (const viewer of [teacher, admin]) {
       const response = await requestJson(
