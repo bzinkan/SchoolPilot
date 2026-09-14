@@ -3002,12 +3002,17 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   await assertPickupView(page, 'claimed');
   await page.clock.fastForward(2_000);
   await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
   await page.waitForFunction(() => document.activeElement?.dataset.testid === 'assigned-testing-notice');
   assert.equal(await page.evaluate(() => !!history.state?.usr?.classpilotSupervisionDashboard), false);
   unavailable = false;
   await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await assertPickupView(page, 'claimed');
+  await waitForSupervisionBadges(page, { claimed: 1, coverage: 1 });
   assert.deepEqual(harness.coverageMutationRequests, [], 'Retrying a successful claim only repeats reads');
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -3151,6 +3156,290 @@ async function assignedTestingBrowser(context, options = {}) {
   browser = await chromium.launch({ headless: true });
   return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }
+
+async function numericSupervisionBadge(page, testId) {
+  return page.getByTestId(testId).locator(':scope > span').allTextContents()
+    .then(values => values.map(value => value.trim()).filter(value => /^\d+$/.test(value)).map(Number));
+}
+
+async function waitForSupervisionBadges(page, { claimed, coverage }) {
+  await page.waitForFunction(expected => {
+    const count = id => {
+      const button = document.querySelector(`[data-testid="${id}"]`);
+      if (!button || button.querySelector('[aria-label$="count unavailable"]')) return null;
+      return Array.from(button.querySelectorAll(':scope > span'))
+        .map(span => span.textContent.trim()).filter(text => /^\d+$/.test(text)).map(Number);
+    };
+    const matches = (actual, value) => actual !== null && (value === 0 ? actual.length === 0 || actual.every(item => item === 0) : actual.length === 1 && actual[0] === value);
+    return matches(count('button-view-claimed-students'), expected.claimed)
+      && matches(count('button-coverage-tab'), expected.coverage);
+  }, { claimed, coverage });
+}
+
+test('supervision badge counts update on Class after partial and final release without reopening Claimed', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    ...testingStudent(`ffffffff-ffff-4fff-8fff-${String(index).padStart(12, '0')}`, OWN_TESTING_CONTEXT_ID),
+    status: 'offline', loginState: 'not_logged_in', isLoggedIn: false, commandable: false,
+    activityState: 'signed_out', monitoringState: 'not_expected',
+    lastSeenAt: null, realtimeObservedAt: null, realtimeBinding: null,
+  }));
+  const summary = count => ({
+    ...ownSupervisionSummary(count ? [{ id: OWN_TESTING_CONTEXT_ID, name: 'Other', activeStudentCount: count }] : []),
+    claimedStudentCount: count, activeContextCount: count ? 1 : 0,
+  });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), coverageSummary: summary(20), claimedStudents: rows,
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${rows.at(-1).studentId}`).waitFor();
+  await waitForSupervisionBadges(page, { claimed: 20, coverage: 1 });
+  await harness.authenticateWebSocket();
+  await page.getByTestId('button-view-class-students').click();
+  await assertPickupView(page, 'class');
+  const readsBeforeRelease = harness.claimedRosterRequests.length;
+  // Keep the former roster cached: the fresh summary must control badges even
+  // when this view has not fetched the later roster yet.
+  harness.setCoverageSummary(summary(7));
+  harness.setClaimedStudents(rows.slice(0, 7));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await waitForSupervisionBadges(page, { claimed: 7, coverage: 1 });
+  await assertPickupView(page, 'class');
+
+  harness.setCoverageSummary(summary(0));
+  harness.setClaimedStudents([]);
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
+  await page.clock.fastForward(10_100);
+  await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
+  await assertPickupView(page, 'class');
+  assert.equal(harness.claimedRosterRequests.length, readsBeforeRelease, 'Class updates its badges without polling an invisible student roster');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('supervision badges do not resurrect an expired cached context while refresh is unavailable', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const endsAt = new Date(TESTING_TIME.getTime() + 30_000).toISOString();
+  const summary = {
+    ...ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other', endsAt, activeStudentCount: 1 }]),
+    activeContextCount: 1, claimedStudentCount: 1,
+  };
+  let unavailable = false;
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    coverageSummary: () => unavailable ? { status: 503, body: { error: 'Temporary summary failure' } } : summary,
+    claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await waitForSupervisionBadges(page, { claimed: 1, coverage: 1 });
+  await harness.authenticateWebSocket();
+  await page.getByTestId('button-view-class-students').click();
+  unavailable = true;
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.clock.fastForward(31_500);
+  await page.waitForFunction(() => !Array.from(document.querySelector('[data-testid="button-view-claimed-students"]')?.querySelectorAll(':scope > span') || []).some(span => /^\s*[1-9]\d*\s*$/.test(span.textContent)));
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'Expired personal assignments cannot return through cached roster length');
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), [], 'A failed summary cannot keep claiming that an expired Coverage context is active');
+  await assertPickupView(page, 'class');
+  await page.clock.fastForward(20_000);
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('personal supervision badge uses owned counts rather than schoolwide administrator totals', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    coverageSummary: { ...ownSupervisionSummary([]), activeContextCount: 9, claimedStudentCount: 180 },
+    claimedStudents: [testingStudent(STUDENT_ID, OTHER_TESTING_CONTEXT_ID, OTHER_TEACHER_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await waitForSupervisionBadges(page, { claimed: 0, coverage: 9 });
+  await assertPickupView(page, 'class');
+  assert.deepEqual(harness.claimedRosterRequests, [], 'Schoolwide administrator context counts do not launch a personal roster');
+  harness.setCoverageSummary({
+    ...ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other', activeStudentCount: 2 }]),
+    activeContextCount: 9, claimedStudentCount: 180,
+  });
+  harness.setClaimedStudents([testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), testingStudent(SIGNED_OUT_STUDENT_ID, OWN_TESTING_CONTEXT_ID)]);
+  await harness.authenticateWebSocket();
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await waitForSupervisionBadges(page, { claimed: 2, coverage: 9 });
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('supervision badge read failures are unknown and Retry keeps the selected Class view', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let unavailable = true;
+  let count = 2;
+  const summary = () => ({
+    ...ownSupervisionSummary(count ? [{ id: OWN_TESTING_CONTEXT_ID, name: 'Other', activeStudentCount: count }] : []),
+    activeContextCount: count ? 1 : 0, claimedStudentCount: count,
+  });
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    coverageSummary: () => unavailable ? { status: 503, body: { error: 'Temporary summary failure' } } : summary(),
+    claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), testingStudent(SIGNED_OUT_STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'class');
+  await waitUntil(() => harness.coverageSummaryRequests.length > 0, 'Summary must be requested');
+  await page.clock.fastForward(2_000);
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), []);
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
+  await page.getByText('Supervision counts could not refresh.', { exact: true }).waitFor();
+
+  // Selecting Class explicitly must survive both retry and a later failure.
+  await page.getByTestId('button-view-class-students').click();
+  unavailable = false;
+  await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
+  await waitForSupervisionBadges(page, { claimed: 2, coverage: 1 });
+  await assertPickupView(page, 'class');
+  await harness.authenticateWebSocket();
+  unavailable = true;
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.clock.fastForward(2_000);
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'A cached positive count is visibly uncertain after a failed refresh');
+  count = 0;
+  unavailable = false;
+  await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
+  await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
+  await assertPickupView(page, 'class');
+  assert.equal(await page.getByLabel('Claimed student count unavailable', { exact: true }).count(), 0);
+  assert.deepEqual(harness.coverageMutationRequests, [], 'Retry repeats reads only');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('supervision badge remains unknown for legacy or malformed own metadata while manual Claimed stays accessible', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  for (const ownership of [{}, { ownSupervisionContexts: [{ id: OWN_TESTING_CONTEXT_ID, activeStudentCount: 'bad', endsAt: 'invalid' }] }]) {
+    const page = await browser.newPage();
+    await page.clock.install({ time: TESTING_TIME });
+    const harness = await configureDashboard(page, {
+      aggregate: aggregateController(),
+      coverageSummary: { schoolId: SCHOOL_ID, viewerId: ADMIN_ID, activeContextCount: 3, claimedStudentCount: 99, ...ownership },
+      claimedStudents: [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)],
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    await assertPickupView(page, 'class');
+    assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), [3]);
+    assert.deepEqual(harness.claimedRosterRequests, []);
+    await page.getByTestId('button-view-claimed-students').click();
+    await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+    await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+    assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'The cached manually loaded roster is not substituted for unknown ownership metadata');
+    assert.deepEqual(harness.coverageMutationRequests, []);
+    assert.deepEqual(harness.pageErrors, []);
+    await page.close();
+  }
+});
+
+test('the first valid supervision summary refreshes a manually loaded roster after unavailable metadata', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let ready = false;
+  const rows = [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), testingStudent(SIGNED_OUT_STUDENT_ID, OWN_TESTING_CONTEXT_ID)];
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    coverageSummary: () => ready ? {
+      ...ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other', activeStudentCount: 2 }]),
+      activeContextCount: 1, claimedStudentCount: 2,
+    } : { status: 503, body: { error: 'Summary not yet available' } },
+    claimedStudents: () => ready ? rows : rows.slice(0, 1),
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'class');
+  await page.clock.fastForward(2_000);
+  await page.getByTestId('button-view-claimed-students').click();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  const earlierReads = harness.claimedRosterRequests.length;
+  ready = true;
+  // Refresh just the lightweight summary, as its independent polling does.
+  // A socket event also invalidates the roster and would conceal this race.
+  await page.evaluate(async ({ schoolId, viewerId }) => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.refetchQueries({ queryKey: ['/api/coverage/summary', schoolId, viewerId], exact: true });
+  }, { schoolId: SCHOOL_ID, viewerId: ADMIN_ID });
+  await waitForSupervisionBadges(page, { claimed: 2, coverage: 1 });
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert(harness.claimedRosterRequests.length > earlierReads, 'The first authoritative metadata refreshes the old manual roster without waiting for polling');
+  await assertPickupView(page, 'claimed');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('a confirmed Dashboard claim keeps supervision badges unknown until its summary settles and retries only reads', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let phase = 'initial';
+  let pendingSummaryStarted = false;
+  let releaseSummary;
+  const summaryGate = new Promise(resolve => { releaseSummary = resolve; });
+  context.after(() => releaseSummary());
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(),
+    availableStudents: [{ ...testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID), supervisionState: 'online_unassigned' }],
+    coverageSummary: async () => {
+      if (phase === 'initial') return { ...ownSupervisionSummary([]), activeContextCount: 0, claimedStudentCount: 0 };
+      if (phase === 'pending') {
+        pendingSummaryStarted = true;
+        await summaryGate;
+        return { status: 503, body: { error: 'The committed supervision summary could not refresh' } };
+      }
+      return { ...ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Other' }]), activeContextCount: 1, claimedStudentCount: 1 };
+    },
+    claimedStudents: () => phase === 'ready' ? [testingStudent(STUDENT_ID, OWN_TESTING_CONTEXT_ID)]
+      : { status: 503, body: { error: 'The committed supervision roster could not refresh' } },
+    claimResponse: async () => {
+      phase = 'pending';
+      return { context: { id: OWN_TESTING_CONTEXT_ID, name: 'Other', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' } };
+    },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await waitForSupervisionBadges(page, { claimed: 0, coverage: 0 });
+  await page.getByTestId('button-view-available-students').click();
+  await page.getByTestId('button-claim-all-students').click();
+  await assertPickupView(page, 'claimed');
+  await waitUntil(() => pendingSummaryStarted, 'The committed claim must request a fresh supervision summary');
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-view-claimed-students'), [], 'The previous confirmed zero is no longer authoritative after the claim commits');
+  assert.deepEqual(await numericSupervisionBadge(page, 'button-coverage-tab'), []);
+  releaseSummary();
+  await page.clock.fastForward(2_000);
+  await page.getByText('Supervision started; students could not load.', { exact: false }).waitFor();
+  await page.getByLabel('Claimed student count unavailable', { exact: true }).waitFor();
+  await page.getByLabel('Active supervision count unavailable', { exact: true }).waitFor();
+  phase = 'ready';
+  await page.getByRole('button', { name: 'Retry supervision refresh', exact: true }).click();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await waitForSupervisionBadges(page, { claimed: 1, coverage: 1 });
+  await assertPickupView(page, 'claimed');
+  assert.equal(harness.coverageMutationRequests.length, 1, 'The successful claim is never repeated while recovering its read state');
+  assert.equal(harness.coverageMutationRequests[0].pathname, '/api/coverage/claim');
+  assert.deepEqual(harness.pageErrors, []);
+});
 
 test('assigned testing opens only the own roster and respects explicit view choices without changing assignments', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);

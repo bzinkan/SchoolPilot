@@ -481,10 +481,11 @@ export default function Dashboard() {
   const [pollResults, setPollResults] = useState([]);
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
   const {
-    studentView, setStudentView, coverageSummary, summaryQueryKey,
+    studentView, setStudentView, summaryQueryKey,
     ownSupervisionContexts, displaySupervisionContexts, automaticallyShowingSupervision,
+    ownSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
     showOwnSupervision, supervisionSummaryError, supervisionSummaryRefreshing,
-    pendingSupervisionConfirmation, retrySupervisionSummary,
+    pendingSupervisionConfirmation, retrySupervisionSummary, refreshSupervisionSummary,
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
@@ -497,6 +498,7 @@ export default function Dashboard() {
     [activeSchoolId, currentUser?.id],
   );
   const coverageKeysRef = useRef({ summaryQueryKey, claimedStudentsQueryKey });
+  const claimedRosterRevisionRef = useRef(null);
   const supervisionScopeRef = useRef(classReaderKey);
   const supervisionNoticeRef = useRef(null);
   const focusSupervisionNoticeRef = useRef(false);
@@ -822,7 +824,6 @@ export default function Dashboard() {
 
   const staffCoverageEnabled = isAdmin || isTeacher;
   const coverageFallbackInterval = wsAuthenticated ? false : 10000;
-  const manageableCoverageCount = Number(coverageSummary.activeContextCount || 0);
 
   const { data: coverageCapabilities = {} } = useQuery({
     queryKey: ['/api/coverage/capabilities', activeSchoolId, currentUser?.id],
@@ -868,9 +869,20 @@ export default function Dashboard() {
       // The endpoint is personal, including for admins. Keep a second check
       // when ownership metadata is present, and never use admin canManage.
       (!student.assignedStaff?.id || student.assignedStaff.id === currentUser?.id)
-      && (!automaticallyShowingSupervision || contextIds.has(student.contextId))
+      && (!(hasOwnSupervisionRoster || automaticallyShowingSupervision) || contextIds.has(student.contextId))
     )).map(student => [student.studentId, student])).values()];
-  }, [allClaimedPickupStudents, automaticallyShowingSupervision, displaySupervisionContexts, currentUser?.id]);
+  }, [allClaimedPickupStudents, automaticallyShowingSupervision, hasOwnSupervisionRoster, displaySupervisionContexts, currentUser?.id]);
+  useEffect(() => {
+    const previous = claimedRosterRevisionRef.current;
+    claimedRosterRevisionRef.current = { scope: classReaderKey, revision: supervisionRosterRevision };
+    if (previous?.scope === classReaderKey && supervisionRosterRevision !== null
+      && previous.revision !== supervisionRosterRevision) {
+      // A changed summary can remove students without changing the context.
+      // Discard the old roster and abort its in-flight read. Disabled queries
+      // remain idle; only the visible Claimed view requests a replacement.
+      void queryClient.resetQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+    }
+  }, [classReaderKey, supervisionRosterRevision, claimedStudentsQueryKey]);
 
   const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/reroute-targets', activeSchoolId, currentUser?.id],
@@ -2529,6 +2541,9 @@ export default function Dashboard() {
   };
   const handleStudentViewChange = (view) => {
     if (dashboardCapabilities.observedOtherClass && view !== 'class') return;
+    if (view === 'claimed' && studentView !== 'claimed') {
+      void queryClient.resetQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+    }
     setStudentView(view);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
@@ -4010,7 +4025,6 @@ export default function Dashboard() {
         break;
     }
   }
-  const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
   const claimedTargetContextCount = new Set(targetStudents.map((student) => student.contextId).filter(Boolean)).size;
   const claimedSearchDisclosure = studentView === 'claimed' && filteredClaimedStudents.length !== claimedPickupStudents.length
     ? ` · ${filteredClaimedStudents.length} currently shown by search`
@@ -5585,9 +5599,9 @@ export default function Dashboard() {
             userRole={isAdmin ? 'admin' : 'teacher'}
             schoolId={activeSchoolId}
             viewerId={currentUser?.id}
-            coverageCount={manageableCoverageCount || claimedContextCount}
+            coverageCount={activeCoverageCount}
             availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
-            claimedCount={claimedPickupStudents.length}
+            claimedCount={ownSupervisionStudentCount}
             pickupView={studentView}
             showCoverageRail={!dashboardCapabilities.observedOtherClass}
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
@@ -5624,8 +5638,15 @@ export default function Dashboard() {
           </div>
         ) : ownSupervisionContexts.length > 0 ? (
           <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 text-sm" role="status" data-testid="supervision-other-view-notice">
-            <p>You are supervising {ownSupervisionContexts.reduce((count, context) => count + context.activeStudentCount, 0)} students.</p>
+            <p>{ownSupervisionStudentCount === null ? 'Your supervision status needs a refresh.' : `You are supervising ${ownSupervisionStudentCount} students.`}</p>
             <Button variant="outline" size="sm" onClick={() => openOwnSupervision()}>View supervised students</Button>
+          </div>
+        ) : null}
+
+        {supervisionSummaryError && !automaticallyShowingSupervision ? (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 text-sm" role="alert">
+            <p>Supervision counts could not refresh.</p>
+            <Button variant="outline" size="sm" disabled={supervisionSummaryRefreshing} onClick={() => void refreshSupervisionSummary()}>Retry supervision refresh</Button>
           </div>
         ) : null}
 
