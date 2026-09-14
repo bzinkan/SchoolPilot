@@ -117,12 +117,13 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("claimed")}
                       data-testid="button-view-claimed-students"
+                      title={claimedCount === null ? 'Claimed student count unavailable' : `${claimedCount} personally supervised student${claimedCount === 1 ? '' : 's'}`}
                       aria-pressed={pickupView === 'claimed'}
                       className={coverageRailButtonClass(pickupView === "claimed")}
                     >
                       Claimed
-                      {claimedCount > 0 && (
-                        <span className={coverageCountClass}>{claimedCount}</span>
+                      {(claimedCount === null || claimedCount > 0) && (
+                        <span className={coverageCountClass} aria-label={claimedCount === null ? 'Claimed student count unavailable' : undefined}>{claimedCount ?? '—'}</span>
                       )}
                     </Button>
                   </div>
@@ -133,13 +134,13 @@ function RemoteControlToolbar({
                     variant="ghost"
                     onClick={onOpenCoverage}
                     data-testid="button-coverage-tab"
-                    title={coverageCount > 0 ? `${coverageCount} active supervision group${coverageCount === 1 ? "" : "s"}` : "Open coverage setup"}
+                    title={coverageCount === null ? 'Active supervision count unavailable' : coverageCount > 0 ? `${coverageCount} active supervision group${coverageCount === 1 ? "" : "s"}` : "Open coverage setup"}
                     className={coverageActionButtonClass}
                   >
                     <ClipboardCheck className="h-4 w-4 mr-2" />
                     Coverage
-                    {coverageCount > 0 && (
-                      <span className={coverageCountClass}>{coverageCount}</span>
+                    {(coverageCount === null || coverageCount > 0) && (
+                      <span className={coverageCountClass} aria-label={coverageCount === null ? 'Active supervision count unavailable' : undefined}>{coverageCount ?? '—'}</span>
                     )}
                   </Button>
                 )}
