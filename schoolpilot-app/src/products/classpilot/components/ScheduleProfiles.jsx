@@ -234,7 +234,11 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const close = () => {
     if (busy || (dirty && !window.confirm('Discard these unsaved profile or application changes?'))) return;
     setSession(null); setTestingPicker(false); setPreview(null); setError(''); editGroup.current = null;
-    requestAnimationFrame(() => { (openerRef.current?.isConnected ? openerRef.current : listHeading.current)?.focus({ preventScroll: true }); window.scrollTo({ top: listScroll.current }); });
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: listScroll.current });
+      // A saved rename can move the opener in the alphabetical profile list.
+      (openerRef.current?.isConnected ? openerRef.current : listHeading.current)?.focus();
+    });
   };
   const edit = (change, editKey) => {
     const coalesce = Boolean(editKey && editGroup.current === editKey);

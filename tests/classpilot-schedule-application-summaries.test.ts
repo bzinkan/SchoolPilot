@@ -89,6 +89,22 @@ test("date-specific bells and rotation determine the original cancellation cutof
   assert.equal(applicationCancellation(app, resolve(app), now).cutoffAt, "2026-09-14T12:15:00.000Z");
 });
 
+test("one resolver reuses timezone conversions for repeated windows without leaking between school timezones", (t) => {
+  const formatter = t.mock.method(Intl.DateTimeFormat.prototype, "formatToParts");
+  const resolve = timing();
+  const first = application({ testingWindows: [block("first")] });
+  const expected = resolve(first), callsAfterFirst = formatter.mock.callCount();
+  assert.ok(callsAfterFirst > 0, "the first application resolves its school-local clock instants");
+  for (let index = 0; index < 100; index++) {
+    const repeated = application({ id: `repeat-${index}`, status: index % 2 ? "cancelled" : "scheduled", testingWindows: [block(`block-${index}`)] });
+    assert.deepEqual(resolve(repeated), expected);
+  }
+  assert.equal(formatter.mock.callCount(), callsAfterFirst, "repeated class/testing clock instants require no additional timezone conversions");
+  const pacific = timing({ schoolTimezone: "America/Los_Angeles" })(first);
+  assert.equal(pacific.earliestKnownStart, present(expected.earliestKnownStart ?? undefined) + 3 * 60 * 60 * 1000);
+  assert.ok(formatter.mock.callCount() > callsAfterFirst, "another school's resolver has its own timezone-bound cache");
+});
+
 test("cancelled and no-effect dates never imply a next scheduled date or applied today", () => {
   const cancelled = application({ status: "cancelled", dates: [date, "2026-09-15"] });
   const empty = application({ id: "empty", classWindows: {} });

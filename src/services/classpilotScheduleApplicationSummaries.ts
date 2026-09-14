@@ -37,6 +37,20 @@ export function createApplicationTimingResolver(options: {
   const baselineConfig = { ...options.config, profileApplications: [] };
   const days = new Map<string, ReturnType<typeof resolveSchoolScheduleDay>>();
   const baselines = new Map<string, BellWindow | null>();
+  const starts = new Map<string, number | null>();
+  const startFor = (date: string, time: string) => {
+    const key = `${date}:${time}`;
+    if (starts.has(key)) return starts.get(key)!;
+    let start: number | null = null;
+    try {
+      const instant = localDateTimeUtc(date, time, options.schoolTimezone).getTime();
+      if (Number.isFinite(instant)) start = instant;
+    } catch {
+      // Cache unavailable instants too; each application still fails its own time gate.
+    }
+    starts.set(key, start);
+    return start;
+  };
   const baselineFor = (date: string, id: string) => {
     const key = `${date}:${id}`;
     if (baselines.has(key)) return baselines.get(key)!;
@@ -57,11 +71,9 @@ export function createApplicationTimingResolver(options: {
   return (application: ScheduleProfileApplication): ApplicationTiming => {
     let earliestKnownStart: number | null = null, unavailable = false, hasChanges = false;
     const include = (date: string, startTime: string) => {
-      try {
-        const start = localDateTimeUtc(date, startTime, options.schoolTimezone).getTime();
-        if (!Number.isFinite(start)) { unavailable = true; return; }
-        earliestKnownStart = earliestKnownStart === null ? start : Math.min(earliestKnownStart, start);
-      } catch { unavailable = true; }
+      const start = startFor(date, startTime);
+      if (start === null) { unavailable = true; return; }
+      earliestKnownStart = earliestKnownStart === null ? start : Math.min(earliestKnownStart, start);
     };
     for (const window of application.testingWindows) {
       hasChanges = true;

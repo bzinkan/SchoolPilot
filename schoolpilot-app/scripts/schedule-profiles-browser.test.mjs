@@ -1766,3 +1766,34 @@ test('A cancellation response arriving after a school switch cannot update or na
     assert.deepEqual(errors, []);
   } finally { finishCancel?.(); await browser.close(); await vite.close(); }
 });
+
+
+test('Back to scheduling keeps the renamed profile opener focused and visible after alphabetical reordering', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, saves, errors } = await createDraftReviewFixture(context);
+  try {
+    const definition = { name: '', grades: [], classIds: ['math'], classRules: [], testingBlocks: [] };
+    catalog.profiles = Array.from({ length: 32 }, (_, index) => ({ id: 'list-profile-' + index, revision: 1, previewDate: '2026-09-14', definition: { ...structuredClone(definition), name: 'Map plan ' + String(index + 1).padStart(2, '0') } }));
+    catalog.profiles.push({ id: 'moving-profile', revision: 4, previewDate: '2026-09-14', definition: { ...structuredClone(definition), name: 'Zulu testing plan' } });
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const originalOpener = profileRow(page, 'moving-profile').getByRole('button', { name: 'Open profile Zulu testing plan', exact: true });
+    await originalOpener.scrollIntoViewIfNeeded();
+    const initialScroll = await page.evaluate(() => ({ top: window.scrollY, height: window.innerHeight }));
+    assert.ok(initialScroll.top > initialScroll.height * 2, 'The originating row begins several screens below the top');
+    await originalOpener.click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByRole('button', { name: 'Edit profile', exact: true }).click();
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Aardvark testing plan');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await closeSavedReview(workspace);
+    const renamedOpener = profileRow(page, 'moving-profile').getByRole('button', { name: 'Open profile Aardvark testing plan', exact: true });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Open profile Aardvark testing plan');
+    assert.equal(await page.locator('[data-profile-id]').first().getAttribute('data-profile-id'), 'moving-profile', 'The saved rename moves the originating profile from the final row to the first');
+    // Reading the bounds must not scroll the element: focus alone is insufficient
+    // if restoring the former scroll offset hides the newly reordered row.
+    const bounds = await renamedOpener.evaluate(button => { const rect = button.getBoundingClientRect(); return { focused: button === document.activeElement, top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: window.innerWidth, height: window.innerHeight }; });
+    assert.equal(bounds.focused, true);
+    assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height && bounds.left >= 0 && bounds.right <= bounds.width, 'The focused originating button remains in the viewport: ' + JSON.stringify(bounds));
+    assert.equal(saves.length, 1); assert.equal(saves[0].id, 'moving-profile');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
