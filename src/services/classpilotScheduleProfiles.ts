@@ -14,6 +14,7 @@ import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersed
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
+import { applicationCancellation, createApplicationTimingResolver, summarizeScheduleApplications } from "./classpilotScheduleApplicationSummaries.js";
 
 type Database = typeof db;
 type Blocker = { code: string; message: string; date?: string };
@@ -77,12 +78,20 @@ function definitionReferences(definition: ScheduleProfileDefinition, data: Catal
   return blockers;
 }
 export async function getScheduleProfiles(schoolId: string) {
-  const data = await catalog(schoolId);
-  const { getScheduledProfileSupervisionStatuses } = await import("./classpilotScheduleProfileSupervision.js");
-  return { revision: data.context.revision, schoolTimezone: data.schoolTimezone, schoolLocalToday: localDateInTimeZone(new Date(), data.schoolTimezone),
-    profiles: data.context.config.scheduleProfiles ?? [], applications: data.context.config.profileApplications ?? [],
-    classes: data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime, teacherName: data.staff.find((s) => s.id === g.teacherId)?.name })),
-    staff: data.staff, supervisionGroups: data.supervisionGroups, testingStatuses: await getScheduledProfileSupervisionStatuses(schoolId) };
+  return db.transaction(async (tx) => {
+    const database = tx as unknown as Database;
+    const data = await catalog(schoolId, database);
+    const { getScheduledProfileSupervisionStatuses } = await import("./classpilotScheduleProfileSupervision.js");
+    const testingStatuses = await getScheduledProfileSupervisionStatuses(schoolId, undefined, database);
+    const now = new Date();
+    const applications = data.context.config.profileApplications ?? [];
+    const summaries = summarizeScheduleApplications({ applications, testingStatuses, now, schoolTimezone: data.schoolTimezone,
+      timing: createApplicationTimingResolver({ classes: data.classes, config: data.context.config, calendar: data.context.calendar, schoolTimezone: data.schoolTimezone }) });
+    return { revision: data.context.revision, schoolTimezone: data.schoolTimezone, schoolLocalToday: localDateInTimeZone(now, data.schoolTimezone),
+      profiles: data.context.config.scheduleProfiles ?? [], applications, ...summaries,
+      classes: data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime, teacherName: data.staff.find((s) => s.id === g.teacherId)?.name })),
+      staff: data.staff, supervisionGroups: data.supervisionGroups, testingStatuses };
+  }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
 async function locked<T>(schoolId: string, actorId: string, operation: (database: Database) => Promise<T>) {
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
@@ -248,18 +257,14 @@ export async function cancelScheduleProfileApplication(options: { schoolId: stri
     if (context.revision !== options.revision) fail("Schedules changed. Reload before cancelling.", "SCHEDULE_PREVIEW_STALE", 409);
     const data = await catalog(options.schoolId, database);
     const validationStarted = Date.now(), now = options.now ?? new Date();
-    const starts = application.testingWindows.map((w) => localDateTimeUtc(w.date, w.startTime, data.schoolTimezone));
-    for (const [date, windows] of Object.entries(application.classWindows)) for (const [id, window] of Object.entries(windows)) {
-      const row = data.classes.find((c) => c.id === id);
-      const baseline = row ? resolveClassBaseWindow(row, date, { ...context.config, profileApplications: [] }, context.calendar) : null;
-      if (window) starts.push(localDateTimeUtc(date, window.startTime, data.schoolTimezone));
-      if (baseline) starts.push(localDateTimeUtc(date, baseline.startTime, data.schoolTimezone));
-    }
-    if (starts.some((start) => start <= now)) fail("This application has started. Release or extend active testing in Coverage; recorded class schedules are preserved.", "SCHEDULE_APPLICATION_STARTED", 409);
+    const timing = createApplicationTimingResolver({ classes: data.classes, config: context.config, calendar: context.calendar, schoolTimezone: data.schoolTimezone })(application);
+    const cancellation = applicationCancellation(application, timing, now);
+    if (cancellation.reason === "started") fail("This application has started. Release or extend active testing in Coverage; recorded class schedules are preserved.", "SCHEDULE_APPLICATION_STARTED", 409);
+    if (!cancellation.canRequest) fail("The original class timing is unavailable. Refresh or restore its schedule dependencies before cancelling this application.", "SCHEDULE_APPLICATION_TIMING_UNAVAILABLE", 409);
     const config = { ...context.config, profileApplications: context.config.profileApplications!.map((a) => a.id === application.id ? { ...a, status: "cancelled" as const } : a) };
     const preview = await previewSchoolScheduling({ schoolId: options.schoolId, config, dbInstance: database, now });
     if (preview.blockers[0]) fail(preview.blockers[0].message, preview.blockers[0].code, 409);
-    if (starts.some((start) => start.getTime() <= now.getTime() + Date.now() - validationStarted)) fail("This application has started. Use Coverage to manage active testing.", "SCHEDULE_APPLICATION_STARTED", 409);
+    if (!applicationCancellation(application, timing, new Date(now.getTime() + Date.now() - validationStarted)).canRequest) fail("This application has started. Use Coverage to manage active testing.", "SCHEDULE_APPLICATION_STARTED", 409);
     const nextRevision = await persist(options.schoolId, options.actorId, config, options.revision, database);
     const affectedClasses = new Set(Object.values(application.classWindows).flatMap((windows) => Object.keys(windows)));
     for (const classId of affectedClasses) await supersedePendingScheduleChangesForGroup({ schoolId: options.schoolId, groupId: classId, actorId: options.actorId, reason: "class_configuration_changed", dbInstance: database });
