@@ -163,6 +163,7 @@ export const teacherGuideTopics = [
     route: "/classpilot/coverage",
     routeLabel: "Open Coverage",
     steps: [
+      { title: "Follow scheduled testing", body: "When your applied testing block starts, the dashboard automatically shows your assigned testing students in Claimed, including when a regular class overlaps. After testing ends, it returns to Class and the current class started by the school schedule, including applied custom times. A view you deliberately select stays selected; refresh the dashboard to resume automatic view selection." },
       { title: "Open Available", body: "Review students made available to your supervision group and claim only the assignment you are taking." },
       { title: "Confirm Claimed", body: "Wait for the claimed context to load before sending an action. The class owner and exact student bindings remain authoritative." },
       { title: "Use coverage controls", body: "Send resources, manage allowed tabs and restrictions, message students, or apply the controls shown in Coverage. Tools not shown are not part of Coverage authority." },

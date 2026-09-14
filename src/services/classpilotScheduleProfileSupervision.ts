@@ -18,6 +18,7 @@ import { createSupervisionContextWithStudents, releaseSupervisionStudents, getHe
 import { classpilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
+import { publishClasspilotCoverageSummaryUpdated } from "./classpilotCoverageSummary.js";
 
 export type ProfileSupervisionOutcome = {
   applicationId: string; date: string; blockId: string;
@@ -203,6 +204,8 @@ async function reconcileWindow(schoolId: string, candidate: { applicationId: str
     await saveOutcome(locked, schoolId, receipt, schedule);
     return receipt;
   });
+  // The transaction has committed before staff refresh their assigned testing view.
+  if (changedStudents.length) publishClasspilotCoverageSummaryUpdated(schoolId);
   pushControls(schoolId, changedStudents);
   return outcome;
 }

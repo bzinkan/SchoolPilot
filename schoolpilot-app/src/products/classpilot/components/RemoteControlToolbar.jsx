@@ -92,6 +92,7 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("class")}
                       data-testid="button-view-class-students"
+                      aria-pressed={pickupView === 'class'}
                       className={coverageRailButtonClass(pickupView === "class")}
                     >
                       Class
@@ -102,6 +103,7 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("available")}
                       data-testid="button-view-available-students"
+                      aria-pressed={pickupView === 'available'}
                       className={coverageRailButtonClass(pickupView === "available")}
                     >
                       Available
@@ -115,6 +117,7 @@ function RemoteControlToolbar({
                       variant="ghost"
                       onClick={() => onPickupViewChange("claimed")}
                       data-testid="button-view-claimed-students"
+                      aria-pressed={pickupView === 'claimed'}
                       className={coverageRailButtonClass(pickupView === "claimed")}
                     >
                       Claimed
@@ -130,7 +133,7 @@ function RemoteControlToolbar({
                     variant="ghost"
                     onClick={onOpenCoverage}
                     data-testid="button-coverage-tab"
-                    title={coverageCount > 0 ? `${coverageCount} claimed group${coverageCount === 1 ? "" : "s"} assigned to you` : "Open coverage setup"}
+                    title={coverageCount > 0 ? `${coverageCount} active supervision group${coverageCount === 1 ? "" : "s"}` : "Open coverage setup"}
                     className={coverageActionButtonClass}
                   >
                     <ClipboardCheck className="h-4 w-4 mr-2" />

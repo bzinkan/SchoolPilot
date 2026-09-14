@@ -19,6 +19,7 @@ const scheduling = await import("../src/services/classpilotScheduling.js");
 const regularSchedule = await import("../src/services/classpilotRegularSchedule.js");
 const draftReview = await import("../src/services/classpilotScheduleDraftReview.js");
 const { getEffectiveClasspilotScheduleWindow } = await import("../src/services/classpilotScheduleChanges.js");
+const { getClasspilotGroupsReadyAtEffectiveWindow, processScheduledClassAutoStart } = await import("../src/services/classpilotScheduledStart.js");
 const schoolIds: string[] = [], userIds: string[] = [];
 const scoped = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
 let date = datePlusDays(localDateInTimeZone(new Date(), "America/New_York"), 14);
@@ -33,7 +34,7 @@ after(async () => {
     // Child deletion and parent deletion must commit together for the deferred
     // exactly-two-legs constraint, just like swap creation below.
     await fixtureTransaction(async (client) => {
-      for (const table of ["classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
       await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
@@ -434,16 +435,87 @@ test("a loaded profile preserves Keep as no rule so later regular edits apply wh
   assert.deepEqual(resolveClassBaseWindow(changed, datePlusDays(date, 7), context.config, context.calendar), { startTime: "10:15", endTime: "11:05" });
 });
 
+test("scheduler discovers fixed classes moved outside their original clocks and starts each applied occurrence once", async () => {
+  for (const [startTime, endTime] of [["08:00", "08:45"], ["11:00", "11:50"]]) {
+    assert.ok(startTime && endTime);
+    const data = await fixture();
+    const saved = await save(data, { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime, endTime }] });
+    const input = request(data, saved);
+    const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+    assert.deepEqual(preview.blockers, []);
+    const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+    const ready = (clock: string, scheduledDate = date) => scoped(data.schoolId, () => getClasspilotGroupsReadyAtEffectiveWindow({ schoolId: data.schoolId, scheduledDate, currentTimeHHMM: clock }));
+    assert.equal((await ready("09:15")).some(group => group.id === data.classId), false, "the original window is suppressed");
+    assert.equal((await ready(endTime)).some(group => group.id === data.classId), false, "the applied end is exclusive");
+    assert.equal((await ready(startTime, datePlusDays(date, 7))).some(group => group.id === data.classId), false, "application clocks cannot leak onto another date");
+    assert.equal((await ready("09:15", datePlusDays(date, 7))).some(group => group.id === data.classId), true);
+    const candidates = await ready(startTime);
+    const group = candidates.find(row => row.id === data.classId);
+    assert.ok(group, "a shifted fixed-time class must be discovered even outside its original window");
+    const now = localDateTimeUtc(date, startTime, "America/New_York");
+    const started = await scoped(data.schoolId, () => processScheduledClassAutoStart({ group, scheduledDate: date, now, scheduledTeacherConnectedOverride: true }));
+    assert.equal(started.status, "started");
+    assert.ok(started.status === "started");
+    assert.equal(started.session.scheduledStartAt?.toISOString(), now.toISOString());
+    assert.equal(started.session.scheduledEndAt?.toISOString(), localDateTimeUtc(date, endTime, "America/New_York").toISOString());
+    const repeated = await scoped(data.schoolId, () => processScheduledClassAutoStart({ group, scheduledDate: date, now, scheduledTeacherConnectedOverride: true }));
+    assert.equal(repeated.status, "already_live");
+    const count = await pool.query("SELECT count(*)::int n FROM teaching_sessions WHERE school_id=$1 AND group_id=$2 AND scheduled_date=$3", [data.schoolId, data.classId, date]);
+    assert.equal(count.rows[0].n, 1);
+    const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    assert.deepEqual(context.config.profileApplications, [applied.application], "runtime discovery must not mutate applied snapshots");
+    assert.equal(group.blockStartTime, "09:00", "the recurring class clocks remain unchanged");
+  }
+  await (await import("../src/services/classpilotLifecyclePushes.js")).classpilotLifecyclePushes.flush();
+});
+
+test("applied candidate discovery still requires current active, unskipped, instructional class eligibility", async () => {
+  const data = await fixture();
+  const saved = await save(data), input = request(data, saved);
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const ready = () => scoped(data.schoolId, () => getClasspilotGroupsReadyAtEffectiveWindow({ schoolId: data.schoolId, scheduledDate: date, currentTimeHHMM: "11:15" }));
+  const [candidate] = await ready();
+  assert.equal(candidate?.id, data.classId);
+  assert.ok(candidate);
+  for (const [column, invalid, restored] of [["status", "archived", "active"], ["schedule_enabled", false, true], ["schedule_skipped_date", date, null]] as const) {
+    await pool.query(`UPDATE groups SET ${column}=$1 WHERE id=$2`, [invalid, data.classId]);
+    assert.deepEqual(await ready(), [], column);
+    await pool.query(`UPDATE groups SET ${column}=$1 WHERE id=$2`, [restored, data.classId]);
+  }
+  for (const rule of [
+    { ...defaultClassScheduleRule(), weekdays: [(dateWeekday(date) + 1) % 7] },
+    { ...defaultClassScheduleRule(), startsOn: datePlusDays(date, 1) },
+    { ...defaultClassScheduleRule(), endsOn: datePlusDays(date, -1) },
+    { ...defaultClassScheduleRule(), cycleDay: "B" },
+  ]) {
+    await pool.query("UPDATE groups SET schedule_rule=$1::jsonb WHERE id=$2", [JSON.stringify(rule), data.classId]);
+    assert.deepEqual(await ready(), [], "profile windows cannot bypass meeting rules");
+  }
+  await pool.query("UPDATE groups SET schedule_rule=$1::jsonb WHERE id=$2", [JSON.stringify(defaultClassScheduleRule()), data.classId]);
+  await pool.query("UPDATE settings SET instructional_calendar=$1::jsonb WHERE school_id=$2", [JSON.stringify({ [date.slice(0, 7)]: { nonInstructionalDates: [date] } }), data.schoolId]);
+  assert.deepEqual(await ready(), [], "profile windows cannot open a closed school date");
+  await pool.query("UPDATE settings SET instructional_calendar='{}'::jsonb WHERE school_id=$1", [data.schoolId]);
+  await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId, actorId: data.adminId, revision: applied.revision, applicationId: applied.application.id }));
+  assert.deepEqual(await ready(), [], "a cancelled time override is no longer a candidate");
+  const stale = await scoped(data.schoolId, () => processScheduledClassAutoStart({ group: candidate, scheduledDate: date,
+    now: localDateTimeUtc(date, "11:15", "America/New_York"), scheduledTeacherConnectedOverride: true }));
+  assert.deepEqual(stale, { status: "skipped", reason: "outside_schedule_window" }, "a pre-cancellation candidate cannot authorize a stale start");
+});
+
 test("customize this use leaves its reusable profile unchanged and cancel restores future regular times", async () => {
   const data = await fixture(); const saved = await save(data); const input = { ...request(data, saved), definition: { ...data.definition, classRules: [{ classId: data.classId, action: "skip" as const }] } };
   const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
   assert.deepEqual(preview.blockers, []); assert.equal(preview.changes[0]?.after, null);
   const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const ready = () => scoped(data.schoolId, () => getClasspilotGroupsReadyAtEffectiveWindow({ schoolId: data.schoolId, scheduledDate: date, currentTimeHHMM: "09:15" }));
+  assert.equal((await ready()).some(group => group.id === data.classId), false, "an applied skip suppresses the regular occurrence");
   let context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
   assert.equal(context.config.scheduleProfiles?.[0]?.definition.classRules[0]?.action, "time");
   const cancelled = await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId, actorId: data.adminId, revision: applied.revision, applicationId: applied.application.id }));
   context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
   assert.equal(context.config.profileApplications?.[0]?.status, "cancelled"); assert.equal(cancelled.revision, applied.revision + 1);
+  assert.equal((await ready()).some(group => group.id === data.classId), true, "cancelling the application restores regular discovery");
 });
 test("preview detects class overlaps and dated applications cannot overlap or edit recorded occurrences", async () => {
   const data = await fixture(); const saved = await save(data);

@@ -30,6 +30,7 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
@@ -477,7 +478,21 @@ export default function Dashboard() {
   const [activePoll, setActivePoll] = useState(null);
   const [pollResults, setPollResults] = useState([]);
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
-  const [studentView, setStudentView] = useState("class");
+  const {
+    studentView, setStudentView, coverageSummary, summaryQueryKey,
+    ownTestingContexts, automaticallyShowingTesting,
+  } = useScheduledTestingView({
+    schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
+  });
+  const activeSessionQueryKey = useMemo(
+    () => ['/api/sessions/active', activeSchoolId, currentUser?.id],
+    [activeSchoolId, currentUser?.id],
+  );
+  const claimedStudentsQueryKey = useMemo(
+    () => ['/api/coverage/claimed-students', activeSchoolId, currentUser?.id],
+    [activeSchoolId, currentUser?.id],
+  );
+  const coverageKeysRef = useRef({ summaryQueryKey, claimedStudentsQueryKey });
   const [showRerouteDialog, setShowRerouteDialog] = useState(false);
   const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
   const [rerouteNote, setRerouteNote] = useState("");
@@ -703,10 +718,12 @@ export default function Dashboard() {
   });
 
   const { data: activeSession } = useQuery({
-    queryKey: ['/api/sessions/active'],
-    queryFn: () => apiRequest('GET', '/sessions/active'),
+    queryKey: activeSessionQueryKey,
+    queryFn: ({ signal }) => apiRequest('GET', '/sessions/active', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
     select: (data) => data?.session !== undefined ? data.session : data ?? null,
-    refetchInterval: wsAuthenticated ? false : 10000,
+    refetchInterval: 10000,
   });
 
   const { data: groups = EMPTY_LIST, isSuccess: groupsLoaded } = useQuery({
@@ -777,8 +794,10 @@ export default function Dashboard() {
     coalescedRefreshRef.current(`sessions:${classReaderKey}`, async () => {
       const [active, all] = await Promise.all([
         queryClient.fetchQuery({
-          queryKey: ['/api/sessions/active'], staleTime: 0,
-          queryFn: () => apiRequest('GET', '/sessions/active'),
+          queryKey: activeSessionQueryKey, staleTime: 0,
+          queryFn: ({ signal }) => apiRequest('GET', '/sessions/active', undefined, {
+            signal, headers: { 'X-School-Id': activeSchoolId },
+          }),
         }),
         isAdmin ? queryClient.fetchQuery({
           queryKey: ['/api/sessions/all'], staleTime: 0,
@@ -790,16 +809,10 @@ export default function Dashboard() {
         all: Array.isArray(all) ? all : all?.sessions || EMPTY_LIST,
       };
     })
-  ), [classReaderKey, isAdmin]);
+  ), [activeSchoolId, activeSessionQueryKey, classReaderKey, isAdmin]);
 
   const staffCoverageEnabled = isAdmin || isTeacher;
   const coverageFallbackInterval = wsAuthenticated ? false : 10000;
-  const { data: coverageSummary = {} } = useQuery({
-    queryKey: ['/api/coverage/summary'],
-    queryFn: () => apiRequest('GET', '/coverage/summary'),
-    enabled: staffCoverageEnabled,
-    refetchInterval: coverageFallbackInterval,
-  });
   const manageableCoverageCount = Number(coverageSummary.activeContextCount || 0);
 
   const { data: coverageCapabilities = {} } = useQuery({
@@ -823,16 +836,25 @@ export default function Dashboard() {
   const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups;
 
   const {
-    data: claimedPickupStudents = EMPTY_LIST,
+    data: allClaimedPickupStudents = EMPTY_LIST,
     isLoading: claimedStudentsLoading,
     isError: claimedStudentsQueryError,
   } = useQuery({
-    queryKey: ['/api/coverage/claimed-students'],
-    queryFn: () => apiRequest('GET', '/coverage/claimed-students'),
+    queryKey: claimedStudentsQueryKey,
+    queryFn: ({ signal }) => apiRequest('GET', '/coverage/claimed-students', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
     select: (data) => data?.students || [],
     enabled: staffCoverageEnabled && studentView === 'claimed',
-    refetchInterval: coverageFallbackInterval,
+    refetchInterval: 10000,
   });
+  const claimedPickupStudents = useMemo(() => {
+    if (!automaticallyShowingTesting) return allClaimedPickupStudents;
+    const contextIds = new Set(ownTestingContexts.map((context) => context.id));
+    return allClaimedPickupStudents.filter((student) => (
+      contextIds.has(student.contextId) && student.assignedStaff?.id === currentUser?.id
+    ));
+  }, [allClaimedPickupStudents, automaticallyShowingTesting, ownTestingContexts, currentUser?.id]);
 
   const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
     queryKey: ['/api/coverage/reroute-targets'],
@@ -1069,8 +1091,10 @@ export default function Dashboard() {
         setReadsRetrying(true);
         try {
           const response = await queryClient.fetchQuery({
-            queryKey: ['/api/coverage/claimed-students'], staleTime: 0,
-            queryFn: () => apiRequest('GET', '/coverage/claimed-students'),
+            queryKey: coverageKeysRef.current.claimedStudentsQueryKey, staleTime: 0,
+            queryFn: ({ signal, queryKey }) => apiRequest('GET', '/coverage/claimed-students', undefined, {
+              signal, headers: { 'X-School-Id': queryKey[1] },
+            }),
           });
           if (historyReadRetryContextRef.current?.key !== historyContext.key
             || studentViewRef.current !== 'claimed' || !Array.isArray(response?.students)) return;
@@ -1299,12 +1323,25 @@ export default function Dashboard() {
     effectiveSessionIdRef.current = effectiveSessionId;
     aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
     activeSchoolIdRef.current = activeSchoolId;
+    coverageKeysRef.current = { summaryQueryKey, claimedStudentsQueryKey };
     pendingRealtimeEventsRef.current = [];
     if (realtimeFlushTimeoutRef.current) {
       clearTimeout(realtimeFlushTimeoutRef.current);
       realtimeFlushTimeoutRef.current = null;
     }
-  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId]);
+  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey]);
+
+  const automaticTestingTargetKey = automaticallyShowingTesting
+    ? ownTestingContexts.map((context) => context.id).sort().join(',')
+    : '';
+  useLayoutEffect(() => {
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
+    setSelectedSubgroupId('');
+    setSearchQuery('');
+    clearStudentDetails();
+  }, [classReaderKey, studentView, automaticTestingTargetKey, clearStudentDetails]);
 
   useLayoutEffect(() => {
     // A detail drawer is an authority-bound view. Never let a selected row or
@@ -1506,7 +1543,7 @@ export default function Dashboard() {
         && String(messageSchoolId) !== String(activeSchoolIdRef.current)
       ) return false;
       return aggregateSnapshotHasStudent(
-        queryClient.getQueryData(['/api/coverage/claimed-students']),
+        queryClient.getQueryData(coverageKeysRef.current.claimedStudentsQueryKey),
         message?.studentId || message?.data?.studentId,
       );
     };
@@ -1543,7 +1580,7 @@ export default function Dashboard() {
       // Coverage telemetry is delivered to the assigned staff member, not to a
       // teaching-session subscription. Update only rows already granted by the
       // claimed-students response; socket messages can never add visibility.
-      queryClient.setQueryData(['/api/coverage/claimed-students'], (old) => (
+      queryClient.setQueryData(coverageKeysRef.current.claimedStudentsQueryKey, (old) => (
         applyStudentRealtimeEvents(old, coverageEvents, { schoolId: scope.schoolId })
       ));
     };
@@ -1567,7 +1604,7 @@ export default function Dashboard() {
         if (!isCurrentGeneration()) return;
         const queryKey = aggregatedStudentsQueryKeyRef.current;
         if (queryKey) queryClient.invalidateQueries({ queryKey, exact: true });
-        queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
+        queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.claimedStudentsQueryKey, exact: true });
         invalidateTimeoutRef.current = null;
       }, 300);
     };
@@ -1831,7 +1868,7 @@ export default function Dashboard() {
                 && queryKey
                 && nextClassSnapshot !== currentClassSnapshot,
               );
-              const coverageQueryKey = ['/api/coverage/claimed-students'];
+              const coverageQueryKey = coverageKeysRef.current.claimedStudentsQueryKey;
               const currentCoverageSnapshot = coverageEligible
                 ? queryClient.getQueryData(coverageQueryKey)
                 : undefined;
@@ -1885,19 +1922,22 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'scheduled-class-conflict-updated') {
-              queryClient.invalidateQueries({ queryKey: ['/api/coverage/summary'], exact: true });
+              queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.summaryQueryKey, exact: true });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'coverage-summary-updated') {
-              queryClient.invalidateQueries({ queryKey: ['/api/coverage/summary'], exact: true });
+              const messageSchoolId = message.schoolId || message.data?.schoolId;
+              if (messageSchoolId && String(messageSchoolId) !== String(activeSchoolIdRef.current)) return;
+              queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.summaryQueryKey, exact: true });
+              queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               if (studentViewRef.current === 'available') {
                 queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'], exact: true });
               }
               if (studentViewRef.current === 'claimed') {
-                queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'], exact: true });
+                queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.claimedStudentsQueryKey, exact: true });
               }
             }
             if (message.type === 'schedule-change-updated' || message.type === 'classpilot-schedule-change-updated') {
@@ -5471,6 +5511,13 @@ export default function Dashboard() {
           </div>
         ) : null}
 
+        {automaticallyShowingTesting ? (
+          <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="assigned-testing-notice">
+            <p className="font-semibold">Testing: {ownTestingContexts.map((context) => context.name).join(', ')}</p>
+            <p className="mt-1">Showing your assigned testing students. When testing ends, Class follows your applied schedule. You can switch views at any time.</p>
+          </div>
+        ) : null}
+
         {studentView === 'class' && effectiveSessionId ? (
           <p className="mb-4 text-xs text-muted-foreground" data-testid="screenshot-refresh-disclosure">
             Screen previews update automatically while this class is open. They are recent screenshots, not live video.
@@ -5916,6 +5963,14 @@ export default function Dashboard() {
             </Button>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
           </div>
+        ) : studentView === 'claimed' && claimedStudentsQueryError ? (
+          <div className="py-20 text-center" role="alert">
+            <h3 className="text-xl font-semibold mb-2">Supervision students could not load</h3>
+            <p className="text-sm text-muted-foreground">Refresh to check your current assignments.</p>
+            <Button variant="outline" className="mt-4" onClick={() => queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true })}>Try again</Button>
+          </div>
+        ) : studentView === 'claimed' && claimedStudentsLoading ? (
+          <div className="py-20 text-center" role="status">Loading supervision students...</div>
         ) : classStudentDataUnavailable ? (
           <div className="py-20 text-center" role="alert" data-testid="students-query-error">
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-red-500/10 flex items-center justify-center"><AlertTriangle className="h-10 w-10 text-red-500" /></div>
