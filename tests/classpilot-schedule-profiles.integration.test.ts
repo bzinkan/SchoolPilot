@@ -87,6 +87,180 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+test("deleting an obsolete profile removes only its catalog entry and records its exact revision", async () => {
+  const data = await fixture();
+  const definition = { ...data.definition, testingBlocks: [{ id: "map", name: "MAP", coverageGroupId: data.scopeId,
+    assignedStaffId: data.specialistId, startTime: "09:00", endTime: "09:45" }] };
+  const saved = await save(data, definition), other = await save(data, { ...data.definition, name: "Keep this profile" }, saved.revision);
+  // Deletion does not depend on the referenced setup still being usable.
+  await pool.query("UPDATE groups SET status='archived',schedule_enabled=false WHERE id=$1", [data.classId]);
+  await pool.query("UPDATE classpilot_coverage_scope_groups SET active=false WHERE id=$1", [data.scopeId]);
+  await pool.query("UPDATE school_memberships SET status='disabled' WHERE school_id=$1 AND user_id=$2", [data.schoolId, data.specialistId]);
+  const before = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const result = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: other.revision }));
+  assert.deepEqual(result, { deleted: true, profileId: saved.profile.id, revision: other.revision + 1 });
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after.config, { ...before.config, scheduleProfiles: [other.profile] });
+  assert.equal(after.revision, result.revision);
+  for (const [table, expected] of [["groups", 2], ["group_students", 2], ["classpilot_coverage_scope_groups", 1], ["classpilot_coverage_scope_group_members", 1], ["classpilot_coverage_assignments", 1]] as const) {
+    const rows = table === "group_students"
+      ? await pool.query("SELECT count(*)::int n FROM group_students WHERE student_id=$1", [data.studentId])
+      : await pool.query(`SELECT count(*)::int n FROM ${table} WHERE school_id=$1`, [data.schoolId]);
+    assert.equal(rows.rows[0].n, expected, `${table} is not deleted with the profile`);
+  }
+  const audit = await pool.query("SELECT user_id,entity_name,metadata FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId]);
+  assert.deepEqual(audit.rows, [{ user_id: data.adminId, entity_name: saved.profile.definition.name,
+    metadata: { profileRevision: saved.profile.revision, revision: result.revision, retainedApplications: 0 } }]);
+  await assert.rejects(scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: result.revision })), { status: 404, code: "NOT_FOUND" });
+  assert.equal((await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId))).revision, result.revision);
+});
+
+test("profile deletion preserves dated snapshots and group dependencies; their existing cancellation still works", async () => {
+  const data = await fixture();
+  const saved = await save(data, { ...data.definition, testingBlocks: [{ id: "map", name: "MAP", coverageGroupId: data.scopeId,
+    assignedStaffId: data.specialistId, startTime: "09:00", endTime: "09:45" }] });
+  const input = request(data, saved), preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  assert.deepEqual(preview.blockers, []);
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  const result = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...input, revision: applied.revision }));
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after.config.scheduleProfiles, []);
+  assert.deepEqual(after.config.profileApplications, [applied.application]);
+  assert.equal(resolveClassBaseWindow({ id: data.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50",
+    scheduleRule: defaultClassScheduleRule() }, date, after.config, after.calendar)?.startTime, "11:00");
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, revision: result.revision, previewToken: preview.previewToken })), { code: "NOT_FOUND" });
+  await assert.rejects(scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId,
+    revision: result.revision, id: saved.profile.id, profileRevision: saved.profile.revision, definition: saved.profile.definition })), { code: "NOT_FOUND" });
+  const deletion = await import("../src/services/classpilotCoverageDeletion.js");
+  const { getCoverageScopeGroupByIdAndSchool } = await import("../src/services/storage.js");
+  const stamp = (await scoped(data.schoolId, () => getCoverageScopeGroupByIdAndSchool(data.schoolId, data.scopeId)))!.updatedAt.toISOString();
+  const deleteGroup = () => scoped(data.schoolId, () => deletion.deleteCoverageSupervisionGroup({ schoolId: data.schoolId,
+    actorId: data.adminId, groupId: data.scopeId, body: { updatedAt: stamp } }));
+  await assert.rejects(deleteGroup(), { code: "COVERAGE_DELETE_IN_USE" });
+  const cancelled = await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId,
+    actorId: data.adminId, revision: result.revision, applicationId: applied.application.id }));
+  assert.equal(cancelled.revision, result.revision + 1);
+  const final = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(final.config.profileApplications, [{ ...applied.application, status: "cancelled" }]);
+  await deleteGroup();
+  assert.deepEqual((await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId))).config.profileApplications, final.config.profileApplications);
+});
+
+test("deleting a profile retains past, cancelled and future applications and activation outcomes unchanged", async () => {
+  const data = await fixture(), saved = await save(data);
+  const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const applications: ScheduleProfileApplication[] = [
+    { date: "2000-01-03", status: "scheduled" as const }, { date: "2000-01-04", status: "cancelled" as const }, { date, status: "scheduled" as const },
+  ].map(item => ({ id: randomUUID(), profileId: saved.profile.id, profileRevision: saved.profile.revision,
+    profileName: saved.profile.definition.name, definition: saved.profile.definition, dates: [item.date],
+    classWindows: { [item.date]: { [data.classId]: { startTime: "11:00", endTime: "11:50" } } }, testingWindows: [],
+    status: item.status, createdBy: data.adminId, createdAt: new Date().toISOString() })).sort((a, b) => a.id.localeCompare(b.id));
+  const outcomes = { retained: { applicationId: applications[0]!.id, date: applications[0]!.dates[0], blockId: "old-block", status: "ended", code: "ENDED" } };
+  await pool.query("UPDATE classpilot_school_schedules SET config=$2::jsonb,profile_activation_outcomes=$3::jsonb WHERE school_id=$1",
+    [data.schoolId, JSON.stringify({ ...context.config, profileApplications: applications }), JSON.stringify(outcomes)]);
+  const before = (await pool.query("SELECT config,profile_activation_outcomes FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  await scoped(data.schoolId, () => service.deleteScheduleProfile(request(data, saved)));
+  const after = (await pool.query("SELECT config,profile_activation_outcomes FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  assert.deepEqual(after.config.profileApplications, before.config.profileApplications);
+  assert.deepEqual(after.profile_activation_outcomes, before.profile_activation_outcomes);
+  const audit = (await pool.query("SELECT metadata FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId])).rows[0];
+  assert.equal(audit.metadata.retainedApplications, 3);
+});
+
+test("delete races serialize with edits, applications and repeated deletions; stale calendar writes cannot restore profiles", async () => {
+  for (const contender of ["edit", "apply", "delete"] as const) {
+    const data = await fixture(), saved = await save(data), input = request(data, saved);
+    const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    const calendarPreview = await scoped(data.schoolId, () => scheduling.previewSchoolScheduling({ schoolId: data.schoolId, config: context.config }));
+    const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+    const remove = () => scoped(data.schoolId, () => service.deleteScheduleProfile(input));
+    const competing = contender === "edit" ? () => scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId,
+      actorId: data.adminId, revision: saved.revision, id: saved.profile.id, profileRevision: saved.profile.revision,
+      definition: { ...data.definition, name: "Edited" } }))
+      : contender === "apply" ? () => scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken })) : remove;
+    const results = await Promise.allSettled([remove(), competing()]);
+    assert.equal(results.filter(result => result.status === "fulfilled").length, 1, contender);
+    const loser = results.find(result => result.status === "rejected");
+    assert.ok(loser?.status === "rejected");
+    assert.ok(["SCHEDULE_PREVIEW_STALE", "NOT_FOUND"].includes(loser.reason.code));
+    let after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    assert.equal(after.revision, saved.revision + 1);
+    if (after.config.scheduleProfiles?.length) {
+      await assert.rejects(remove(), { code: "SCHEDULE_PREVIEW_STALE" });
+      const current = after.config.scheduleProfiles[0]!;
+      await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...input, revision: after.revision, profileRevision: current.revision }));
+      after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    }
+    await assert.rejects(scoped(data.schoolId, () => scheduling.saveSchoolScheduling({ schoolId: data.schoolId, actorId: data.adminId,
+      config: context.config, expectedRevision: after.revision, previewToken: calendarPreview.previewToken })), { code: "SCHEDULE_PROFILE_WORKFLOW_REQUIRED" });
+    assert.deepEqual((await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId))).config.scheduleProfiles, []);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId])).rows[0].n, 1);
+  }
+});
+
+test("delete rechecks each revision and active administrator authority without changing stored work", async () => {
+  const data = await fixture(), other = await fixture(), saved = await save(data), input = request(data, saved);
+  for (const override of [{ revision: saved.revision - 1 }, { profileRevision: saved.profile.revision + 1 }]) {
+    await assert.rejects(scoped(data.schoolId, () => service.deleteScheduleProfile({ ...input, ...override })), { code: "SCHEDULE_PREVIEW_STALE", status: 409 });
+  }
+  await assert.rejects(scoped(data.schoolId, () => service.deleteScheduleProfile({ ...input, actorId: data.teacherId })), { code: "FORBIDDEN", status: 403 });
+  await assert.rejects(scoped(other.schoolId, () => service.deleteScheduleProfile({ ...input, schoolId: other.schoolId, actorId: other.adminId })), { code: "NOT_FOUND", status: 404 });
+  await pool.query("UPDATE school_memberships SET status='disabled' WHERE school_id=$1 AND user_id=$2", [data.schoolId, data.adminId]);
+  await assert.rejects(scoped(data.schoolId, () => service.deleteScheduleProfile(input)), { code: "FORBIDDEN", status: 403 });
+  const after = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(after.config.scheduleProfiles, [saved.profile]); assert.equal(after.revision, saved.revision);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId])).rows[0].n, 0);
+});
+
+test("a failed deletion audit rolls back the profile and scheduling revision", async () => {
+  const data = await fixture(), saved = await save(data);
+  const suffix = randomUUID().replaceAll("-", ""), functionName = `profile_delete_fail_${suffix}`, triggerName = functionName;
+  await pool.query(`CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture audit failure'; END $$`);
+  await pool.query(`CREATE TRIGGER ${triggerName} BEFORE INSERT ON audit_logs FOR EACH ROW WHEN (NEW.school_id = '${data.schoolId}') EXECUTE FUNCTION ${functionName}()`);
+  try {
+    await assert.rejects(scoped(data.schoolId, () => service.deleteScheduleProfile(request(data, saved))), /Failed query|fixture audit failure/);
+    const current = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    assert.deepEqual(current.config.scheduleProfiles, [saved.profile]); assert.equal(current.revision, saved.revision);
+  } finally { await pool.query(`DROP TRIGGER ${triggerName} ON audit_logs`); await pool.query(`DROP FUNCTION ${functionName}()`); }
+  await scoped(data.schoolId, () => service.deleteScheduleProfile(request(data, saved)));
+  assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId])).rows[0].n, 1);
+});
+
+test("the delete route enforces authentication, school scope, revisions and a bounded request body", async () => {
+  const data = await fixture("school_admin"), other = await fixture(), saved = await save(data);
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot/admin/schedule-profiles", router);
+  app.use(((error, _req, res, _next) => {
+    const known = error as Error & { status?: number; code?: string };
+    res.status(known.status ?? 500).json({ error: known.message, code: known.code });
+  }) satisfies express.ErrorRequestHandler);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles/${saved.profile.id}`;
+  const call = (body: unknown, userId?: string, schoolId = data.schoolId) => fetch(url, { method: "DELETE",
+    headers: { "content-type": "application/json", ...(userId ? { authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId } : {}) },
+    body: JSON.stringify(body) });
+  const body = { revision: saved.revision, profileRevision: saved.profile.revision };
+  try {
+    assert.equal((await call(body)).status, 401);
+    assert.equal((await call(body, data.teacherId)).status, 403);
+    assert.equal((await call(body, data.adminId, other.schoolId)).status, 403);
+    assert.equal((await call(body, other.adminId, other.schoolId)).status, 404);
+    for (const invalid of [{}, [], { ...body, schoolId: other.schoolId }, { ...body, revision: "1" }, { ...body, revision: -1 }, { ...body, profileRevision: 0 }, { ...body, profileRevision: null }]) {
+      assert.equal((await call(invalid, data.adminId)).status, 400);
+    }
+    assert.equal((await call({ ...body, profileRevision: 2 }, data.adminId)).status, 409);
+    const response = await call(body, data.adminId);
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { deleted: true, profileId: saved.profile.id, revision: saved.revision + 1 });
+    assert.equal((await call(body, data.adminId)).status, 404);
+    assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.deleted'", [data.schoolId])).rows[0].n, 1);
+  } finally {
+    server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test("shared preview dates survive legacy edits and scheduling round trips without activating the profile", async () => {
   const data = await fixture();
   const legacy = await save(data);
