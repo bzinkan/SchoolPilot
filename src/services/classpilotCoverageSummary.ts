@@ -10,6 +10,11 @@ export type OwnTestingContextSummary = {
   activeStudentCount: number;
 };
 
+export type OwnSupervisionContextSummary = OwnTestingContextSummary & {
+  contextType: string;
+  startsAt: string;
+};
+
 export type ClasspilotCoverageSummary = {
   schoolId: string;
   viewerId: string;
@@ -18,7 +23,37 @@ export type ClasspilotCoverageSummary = {
   claimedStudentCount: number;
   activeContextCount: number;
   ownTestingContexts: OwnTestingContextSummary[];
+  ownSupervisionContexts: OwnSupervisionContextSummary[];
 };
+
+/** Personal supervision includes manual claims as well as scheduled testing. */
+export function ownActiveSupervisionContexts(options: {
+  schoolId: string;
+  viewerId: string;
+  contexts: readonly Pick<ClasspilotSupervisionContext,
+    "id" | "schoolId" | "name" | "contextType" | "assignedStaffId" | "status" | "startsAt" | "endsAt">[];
+  activeStudents: readonly Pick<ClasspilotSupervisionStudent, "schoolId" | "contextId" | "studentId">[];
+  now?: Date;
+}): OwnSupervisionContextSummary[] {
+  const now = options.now ?? new Date();
+  const studentsByContext = new Map<string, Set<string>>();
+  for (const row of options.activeStudents) {
+    if (row.schoolId !== options.schoolId) continue;
+    const ids = studentsByContext.get(row.contextId) ?? new Set<string>();
+    ids.add(row.studentId);
+    studentsByContext.set(row.contextId, ids);
+  }
+  return options.contexts.flatMap((context) => {
+    const activeStudentCount = studentsByContext.get(context.id)?.size ?? 0;
+    if (context.schoolId !== options.schoolId || context.assignedStaffId !== options.viewerId
+      || context.status !== "active" || context.startsAt > now || context.endsAt <= now
+      || activeStudentCount === 0) return [];
+    return [{
+      id: context.id, name: context.name, contextType: context.contextType,
+      startsAt: context.startsAt.toISOString(), endsAt: context.endsAt.toISOString(), activeStudentCount,
+    }];
+  }).sort((left, right) => left.endsAt.localeCompare(right.endsAt) || left.id.localeCompare(right.id));
+}
 
 /** Navigation hints only: admin visibility never becomes a personal assignment. */
 export function ownScheduledTestingContexts(options: {

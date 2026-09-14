@@ -17,6 +17,7 @@ import {
   getActiveSupervisionContextForStaffGroup,
   extendSupervisionContext,
   getActiveCoverageAssignmentsForStaff,
+  getActiveCoverageCounts,
   getCoverageScopeGroupByIdAndSchool,
   getCoverageScopeGroupStudentIds,
   getCoverageScopeGroupStudentIdsForGroups,
@@ -26,6 +27,7 @@ import {
   getGroupByIdAndSchool,
   getGroupStudents,
   getGroupStudentIdsForGroups,
+  getCoverageStudentClasses,
   getGroupTeacherIdsForGroups,
   getGroupTeachers,
   getMembershipByUserAndSchool,
@@ -70,6 +72,7 @@ import { localDateInTimeZone, localDateStartUtc } from "../../util/schoolTime.js
 import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
 import {
   classpilotCoverageSummaryRevision,
+  ownActiveSupervisionContexts,
   ownScheduledTestingContexts,
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
@@ -1067,10 +1070,11 @@ function assertActiveContext(context: any): asserts context {
 }
 
 async function contextStudentPayload(schoolId: string, rows: any[]) {
-  const statuses = await hydrateClasspilotCoverageStatuses({
-    schoolId,
-    studentIds: rows.map((row) => row.studentId),
-  });
+  const studentIds = rows.map((row) => row.studentId);
+  const [statuses, classes] = await Promise.all([
+    hydrateClasspilotCoverageStatuses({ schoolId, studentIds }),
+    getCoverageStudentClasses(schoolId, studentIds),
+  ]);
   const payload = [];
   for (const row of rows) {
     const status = statuses.get(row.studentId)!;
@@ -1080,6 +1084,7 @@ async function contextStudentPayload(schoolId: string, rows: any[]) {
       studentName: studentName(row.student),
       studentEmail: row.student.email || undefined,
       gradeLevel: row.student.gradeLevel || undefined,
+      classes: classes.get(row.studentId) || [],
       source: row.source,
       assignedBy: row.assignedBy,
       assignedAt: row.assignedAt,
@@ -1203,22 +1208,26 @@ router.get("/coverage/unassigned", ...auth, requireClasspilotFullMonitoring, asy
           rows,
           await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id)
         );
-    const statuses = await hydrateClasspilotCoverageStatuses({
-      schoolId,
-      studentIds: visibleRows.map((row) => row.student.id),
-      knownSessions: visibleRows.map((row) => row.studentSession),
-    });
+    const [statuses, classes] = await Promise.all([
+      hydrateClasspilotCoverageStatuses({
+        schoolId,
+        studentIds: visibleRows.map((row) => row.student.id),
+        knownSessions: visibleRows.map((row) => row.studentSession),
+      }),
+      getCoverageStudentClasses(schoolId, visibleRows.map((row) => row.student.id)),
+    ]);
     const students = visibleRows.map((row) => ({
       studentId: row.student.id,
       studentName: studentName(row.student),
       studentEmail: row.student.email || undefined,
       gradeLevel: row.student.gradeLevel || undefined,
+      classes: classes.get(row.student.id) || [],
       supervisionState: "online_unassigned",
       supervisionContext: null,
       deviceCount: 1,
       ...coverageStatusPayload(statuses.get(row.student.id)!),
     }));
-    return res.json({ students });
+    return res.json({ schoolId, viewerId: req.authUser!.id, students });
   } catch (err) {
     next(err);
   }
@@ -1229,22 +1238,20 @@ router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async 
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const admin = isAdmin(req, res);
-    const [contexts, unassigned, assignments] = await Promise.all([
-      listSupervisionContexts(schoolId, { activeOnly: true }),
+    const [contexts, unassigned, assignments, counts] = await Promise.all([
+      listSupervisionContexts(schoolId, { activeOnly: true, assignedStaffId: req.authUser!.id, requireComplete: true }),
       getOnlineUnassignedStudents(schoolId),
       admin
         ? Promise.resolve([])
         : getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id),
+      getActiveCoverageCounts(schoolId, admin ? undefined : req.authUser!.id),
     ]);
-    const visibleContexts = admin
-      ? contexts
-      : contexts.filter((context) => context.assignedStaffId === req.authUser!.id);
     const visibleUnassigned = admin
       ? unassigned
       : await filterRowsByAssignments(unassigned, assignments);
     const claimedRows = await listSupervisionStudentsForContexts(
       schoolId,
-      visibleContexts.map((context) => context.id),
+      contexts.map((context) => context.id),
       { activeOnly: true }
     );
     const availableStudentIds = visibleUnassigned.map((row) => row.student.id);
@@ -1255,15 +1262,21 @@ router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async 
       revision: classpilotCoverageSummaryRevision({
         availableStudentIds,
         claimedStudentIds,
-        contexts: visibleContexts,
+        contexts: [...contexts, { id: `aggregate:${counts.activeContextCount}:${counts.claimedStudentCount}`, updatedAt: counts.revision }],
       }),
       availableStudentCount: new Set(availableStudentIds).size,
-      claimedStudentCount: new Set(claimedStudentIds).size,
-      activeContextCount: visibleContexts.length,
+      claimedStudentCount: counts.claimedStudentCount,
+      activeContextCount: counts.activeContextCount,
       ownTestingContexts: ownScheduledTestingContexts({
         schoolId,
         viewerId: req.authUser!.id,
-        contexts: visibleContexts,
+        contexts,
+        activeStudents: claimedRows,
+      }),
+      ownSupervisionContexts: ownActiveSupervisionContexts({
+        schoolId,
+        viewerId: req.authUser!.id,
+        contexts,
         activeStudents: claimedRows,
       }),
     });
@@ -1772,8 +1785,15 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
-    const contexts = (await listSupervisionContexts(schoolId, { activeOnly: true }))
-      .filter((context) => isAdmin(req, res) || context.assignedStaffId === req.authUser!.id);
+    if (req.query.scope !== undefined && req.query.scope !== "mine") {
+      return res.status(400).json({ error: "scope must be mine when provided", code: "INVALID_COVERAGE_SCOPE" });
+    }
+    const mine = req.query.scope === "mine" || !isAdmin(req, res);
+    const contexts = await listSupervisionContexts(schoolId, {
+      activeOnly: true,
+      assignedStaffId: mine ? req.authUser!.id : undefined,
+      requireComplete: true,
+    });
     const groupIds = [...new Set(contexts.map((context) => context.coverageGroupId).filter(Boolean))];
     const [allGroups, staffRows, rows] = await Promise.all([
       groupIds.length > 0
@@ -1818,7 +1838,7 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
         assignedStaff: staff ? { id: staff.id, displayName: staffName(staff) } : null,
       };
     });
-    return res.json({ students });
+    return res.json({ schoolId, viewerId: req.authUser!.id, students });
   } catch (err) {
     next(err);
   }
@@ -2276,16 +2296,17 @@ router.get("/coverage/contexts", ...auth, async (req, res, next) => {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const activeOnly = req.query.active !== "false";
-    const contexts = await listSupervisionContexts(schoolId, { activeOnly });
-    const visible = isAdmin(req, res)
-      ? contexts
-      : contexts.filter((context) => context.assignedStaffId === req.authUser!.id);
+    const visible = await listSupervisionContexts(schoolId, {
+      activeOnly,
+      assignedStaffId: isAdmin(req, res) ? undefined : req.authUser!.id,
+      requireComplete: true,
+    });
     const response = await contextResponse(
       schoolId,
       visible,
       (context) => isAdmin(req, res) || context.assignedStaffId === req.authUser!.id
     );
-    return res.json({ contexts: response });
+    return res.json({ schoolId, viewerId: req.authUser!.id, contexts: response });
   } catch (err) {
     next(err);
   }
@@ -2332,6 +2353,8 @@ router.get("/coverage/contexts/:id/students", ...auth, requireClasspilotFullMoni
     const activeOnly = req.query.active !== "false";
     const rows = await listSupervisionStudentsForContexts(schoolId, [context.id], { activeOnly });
     return res.json({
+      schoolId,
+      viewerId: req.authUser!.id,
       context,
       students: await contextStudentPayload(schoolId, rows),
     });
@@ -2540,7 +2563,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
       entityId: context.id,
       changes: { contextType, studentIds, coverageGroupId: coverageGroupId || null, assignedStaffId, endsAt, note: req.body.note ? String(req.body.note) : null },
     });
-    return res.status(201).json({ context });
+    return res.status(201).json({ schoolId, viewerId: req.authUser!.id, context: { ...context, activeStudentCount: studentIds.length } });
   } catch (err: any) {
     if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);

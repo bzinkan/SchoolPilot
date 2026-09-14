@@ -546,6 +546,7 @@ test('switching school during deletion ignores the prior-school completion and n
   assert.equal(state.deletes[0].schoolId, 'school');
   await page.evaluate(() => window.__switchCoverageSchool('other-school'));
   await confirm.waitFor({ state: 'hidden' });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
   await page.getByText(otherGroup.name, { exact: true }).waitFor();
   await page.waitForLoadState('networkidle');
   const readsBeforeCompletion = state.reads.filter(read => read.schoolId === 'other-school' && read.pathname.includes('/coverage/')).length;
@@ -975,6 +976,7 @@ test('a late group save stays scoped to its original school and cannot close or 
   await page.keyboard.press('Escape'); assert.equal(await dialog.isVisible(), true);
   await page.evaluate(() => window.__switchCoverageSchool('other-school'));
   await dialog.waitFor({ state: 'hidden' });
+  await page.getByRole('tab', { name: 'Supervision Groups', exact: true }).click();
   await page.getByText(otherGroup.name, { exact: true }).waitFor();
   await page.getByRole('button', { name: 'New Group', exact: true }).click();
   await dialog.getByLabel('Name', { exact: true }).fill('Current School Draft');

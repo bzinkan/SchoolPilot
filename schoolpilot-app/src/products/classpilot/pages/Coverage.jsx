@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
 import SupervisionGroupEditor from "../components/SupervisionGroupEditor";
 import { refreshSupervisionSetup } from "../components/supervisionGroupQueries";
@@ -47,6 +47,9 @@ import {
 } from "../lib/dashboardCommandContext";
 import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
 import { deriveStudentMonitoringDisplay } from "../lib/studentMonitoringDisplay";
+import CoverageStudentFilters from "../components/CoverageStudentFilters";
+import { emptyCoverageFilters, filterCoverageStudents } from "../lib/coverageStudentFilters";
+import { createSupervisionDashboardIntent } from "../lib/supervisionDashboardNavigation";
 
 const coverageTypes = [
   ["state_testing", "State Testing"],
@@ -151,10 +154,18 @@ function matchesTokens(value, query) {
   return tokens.every((token) => haystack.includes(token));
 }
 
+function supervisionAssignmentKey(student) {
+  return student.assignmentId || student.assignedAt || student.studentId;
+}
+
 export default function Coverage() {
+  const { currentUser } = useClassPilotAuth();
+  return <CoverageWorkspace key={`${currentUser?.schoolId}:${currentUser?.id}`} currentUser={currentUser} />;
+}
+
+function CoverageWorkspace({ currentUser }) {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser } = useClassPilotAuth();
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
   const schoolId = currentUser?.schoolId;
   const setupScope = useMemo(() => ({ schoolId, actorId: currentUser?.id, isAdmin }), [schoolId, currentUser?.id, isAdmin]);
@@ -169,16 +180,16 @@ export default function Coverage() {
     return () => { committedSetupScope.current = null; };
   }, [setupScope]);
 
-  const [selectedUnassignedIds, setSelectedUnassignedIds] = useState(new Set());
-  const [selectedCoverageIds, setSelectedCoverageIds] = useState(new Set());
+  const [unassignedSelection, setUnassignedSelection] = useState(new Set());
+  const [coverageSelection, setCoverageSelection] = useState({ contextId: "", ids: new Set(), bindings: new Map(), explicit: false });
   const [activeTab, setActiveTab] = useState("console");
-  const [search, setSearch] = useState("");
-  const [coverageSearch, setCoverageSearch] = useState("");
+  const [availableFilters, setAvailableFilters] = useState(emptyCoverageFilters);
+  const [claimedFilters, setClaimedFilters] = useState(emptyCoverageFilters);
   const [selectedContextId, setSelectedContextId] = useState("");
   const [historyContextId, setHistoryContextId] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
-  const [commandDialog, setCommandDialog] = useState(null);
+  const [commandDialogState, setCommandDialogState] = useState(null);
   const [commandUrl, setCommandUrl] = useState("");
   const [commandMessage, setCommandMessage] = useState("");
   const [selectedFlightPathId, setSelectedFlightPathId] = useState("");
@@ -189,6 +200,7 @@ export default function Coverage() {
   const [assignmentStaffSearch, setAssignmentStaffSearch] = useState("");
   const [scopeGroupOpen, setScopeGroupOpen] = useState(false);
   const [scopeGroupId, setScopeGroupId] = useState(null);
+  const operationalBusy = useRef(false);
   const [contextForm, setContextForm] = useState({
     contextType: "state_testing",
     name: "State Testing",
@@ -210,15 +222,15 @@ export default function Coverage() {
     active: true,
   });
   const unassignedQuery = useQuery({
-    queryKey: ["/api/coverage/unassigned"],
-    queryFn: () => apiRequest("GET", "/coverage/unassigned"),
+    queryKey: ["/api/coverage/unassigned", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/unassigned", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.students || [],
     refetchInterval: 10000,
   });
 
   const contextsQuery = useQuery({
-    queryKey: ["/api/coverage/contexts"],
-    queryFn: () => apiRequest("GET", "/coverage/contexts"),
+    queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/contexts", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.contexts || [],
     refetchInterval: 10000,
   });
@@ -229,13 +241,13 @@ export default function Coverage() {
   // same visibility rule as /coverage/contexts, and the dashboard reads the same
   // cache entry, so the two surfaces cannot disagree.
   const summaryQuery = useQuery({
-    queryKey: ["/api/coverage/summary"],
-    queryFn: () => apiRequest("GET", "/coverage/summary"),
+    queryKey: ["/api/coverage/summary", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/summary", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     refetchInterval: 10000,
   });
 
   const capabilitiesQuery = useQuery({
-    queryKey: ["/api/coverage/capabilities", schoolId],
+    queryKey: ["/api/coverage/capabilities", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/capabilities", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     enabled: !!currentUser && !!schoolId,
   });
@@ -247,49 +259,49 @@ export default function Coverage() {
   const canChooseSchoolwide = isAdmin || !!capabilitiesQuery.data?.isSchoolwideSetupManager;
 
   const staffQuery = useQuery({
-    queryKey: [isAdmin ? "/api/admin/users" : "/api/coverage/setup/staff"],
-    queryFn: () => apiRequest("GET", isAdmin ? "/admin/users" : "/coverage/setup/staff"),
+    queryKey: [isAdmin ? "/api/admin/users" : "/api/coverage/setup/staff", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", isAdmin ? "/admin/users" : "/coverage/setup/staff", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.users || [],
     enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const groupsQuery = useQuery({
-    queryKey: ["/api/coverage/setup/classes"],
-    queryFn: () => apiRequest("GET", "/coverage/setup/classes"),
+    queryKey: ["/api/coverage/setup/classes", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/setup/classes", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
     enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const assignmentsQuery = useQuery({
-    queryKey: ["/api/coverage/assignments", schoolId],
+    queryKey: ["/api/coverage/assignments", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/assignments", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.assignments || [],
     enabled: isAdmin && !!schoolId,
   });
 
   const scopeGroupsQuery = useQuery({
-    queryKey: ["/api/coverage/supervision-groups", schoolId],
+    queryKey: ["/api/coverage/supervision-groups", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/supervision-groups", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
     enabled: canManageSupervisionSetup && !!schoolId && (assignmentOpen || contextOpen),
   });
 
   const adminStudentsQuery = useQuery({
-    queryKey: [isAdmin ? "/api/admin/teacher-students" : "/api/coverage/setup/students"],
-    queryFn: () => apiRequest("GET", isAdmin ? "/admin/teacher-students" : "/coverage/setup/students"),
+    queryKey: [isAdmin ? "/api/admin/teacher-students" : "/api/coverage/setup/students", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", isAdmin ? "/admin/teacher-students" : "/coverage/setup/students", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.students || [],
     enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
   });
 
   const flightPathsQuery = useQuery({
-    queryKey: ["/api/flight-paths"],
-    queryFn: () => apiRequest("GET", "/flight-paths"),
+    queryKey: ["/api/flight-paths", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/flight-paths", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => Array.isArray(data) ? data : data?.flightPaths || [],
   });
 
   const blockListsQuery = useQuery({
-    queryKey: ["/api/block-lists"],
-    queryFn: () => apiRequest("GET", "/block-lists"),
+    queryKey: ["/api/block-lists", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/block-lists", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => Array.isArray(data) ? data : data?.blockLists || [],
   });
 
@@ -367,67 +379,70 @@ export default function Coverage() {
     ? selectedContextId
     : manageableContexts[0]?.id || "";
   const selectedContext = manageableContexts.find((context) => context.id === activeContextId) || null;
+  const commandDialog = commandDialogState?.contextId === activeContextId ? commandDialogState.type : null;
+  const setCommandDialog = type => setCommandDialogState(type ? { type, contextId: activeContextId } : null);
 
   const contextStudentsQuery = useQuery({
-    queryKey: ["/api/coverage/contexts", selectedContext?.id, "students"],
-    queryFn: () => apiRequest("GET", `/coverage/contexts/${selectedContext.id}/students`),
+    queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id, selectedContext?.id, "students"],
+    queryFn: ({ signal }) => apiRequest("GET", `/coverage/contexts/${selectedContext.id}/students`, undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.students || [],
     enabled: !!selectedContext?.id,
     refetchInterval: 10000,
   });
 
   const historyQuery = useQuery({
-    queryKey: ["/api/coverage/contexts", historyContextId, "history"],
-    queryFn: () => apiRequest("GET", `/coverage/contexts/${historyContextId}/history`),
+    queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id, historyContextId, "history"],
+    queryFn: ({ signal }) => apiRequest("GET", `/coverage/contexts/${historyContextId}/history`, undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.events || [],
     enabled: !!historyContextId,
   });
 
-  const unassignedStudents = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return (unassignedQuery.data || []).filter((student) => {
-      if (!q) return true;
-      return `${student.studentName || ""} ${student.studentEmail || ""} ${student.gradeLevel || ""}`.toLowerCase().includes(q);
-    });
-  }, [unassignedQuery.data, search]);
-
-  const coverageStudents = useMemo(() => {
-    const q = coverageSearch.trim().toLowerCase();
-    return (contextStudentsQuery.data || []).filter((student) => {
-      if (!q) return true;
-      return `${student.studentName || ""} ${student.studentEmail || ""} ${student.gradeLevel || ""}`.toLowerCase().includes(q);
-    });
-  }, [contextStudentsQuery.data, coverageSearch]);
+  const unassignedStudents = useMemo(() => filterCoverageStudents(unassignedQuery.data || [], availableFilters), [unassignedQuery.data, availableFilters]);
+  const coverageStudents = useMemo(() => filterCoverageStudents(contextStudentsQuery.data || [], claimedFilters), [contextStudentsQuery.data, claimedFilters]);
 
   const activeCoverageStudents = useMemo(
     () => coverageStudents.filter((student) => !student.releasedAt),
     [coverageStudents]
   );
-  const allActiveCoverageStudents = useMemo(
-    () => (contextStudentsQuery.data || []).filter((student) => !student.releasedAt),
-    [contextStudentsQuery.data]
-  );
+  const selectedUnassignedIds = new Set(unassignedStudents.filter(student => unassignedSelection.has(student.studentId)).map(student => student.studentId));
+  const selectedCoverageIds = new Set(activeCoverageStudents.filter(student => coverageSelection.contextId === activeContextId && coverageSelection.ids.has(student.studentId) && coverageSelection.bindings.get(student.studentId) === supervisionAssignmentKey(student)).map(student => student.studentId));
+  const setSelectedUnassignedIds = value => setUnassignedSelection(typeof value === "function" ? value(selectedUnassignedIds) : value);
+  const setSelectedCoverageIds = value => {
+    const ids = typeof value === "function" ? value(selectedCoverageIds) : value;
+    const bindings = new Map(activeCoverageStudents.filter(student => ids.has(student.studentId)).map(student => [student.studentId, supervisionAssignmentKey(student)]));
+    setCoverageSelection({ contextId: activeContextId, ids, bindings, explicit: ids.size > 0 });
+  };
+  const changeAvailableFilters = filters => { setAvailableFilters(filters); setUnassignedSelection(new Set()); };
+  const changeClaimedFilters = filters => { setClaimedFilters(filters); setSelectedCoverageIds(new Set()); };
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      setCommandDialogState(previous => previous?.contextId && previous.contextId !== activeContextId ? null : previous);
+      if (contextStudentsQuery.isSuccess) setCoverageSelection(previous => {
+        if (previous.contextId !== activeContextId) return { contextId: activeContextId, ids: new Set(), bindings: new Map(), explicit: false };
+        const activeIds = new Set((contextStudentsQuery.data || []).filter(student => !student.releasedAt && previous.bindings.get(student.studentId) === supervisionAssignmentKey(student)).map(student => student.studentId));
+        const ids = new Set([...previous.ids].filter(id => activeIds.has(id)));
+        return ids.size === previous.ids.size ? previous : { ...previous, ids };
+      });
+      if (unassignedQuery.isSuccess) setUnassignedSelection(previous => {
+        const availableIds = new Set((unassignedQuery.data || []).map(student => student.studentId));
+        const ids = new Set([...previous].filter(id => availableIds.has(id)));
+        return ids.size === previous.size ? previous : ids;
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeContextId, contextStudentsQuery.data, contextStudentsQuery.isSuccess, unassignedQuery.data, unassignedQuery.isSuccess]);
   const commandSelectableCoverageStudents = useMemo(
-    () => allActiveCoverageStudents.filter((student) => coverageStudentCommandSelectionEligible({
+    () => activeCoverageStudents.filter((student) => coverageStudentCommandSelectionEligible({
       student,
       monitoringDisplay: deriveStudentMonitoringDisplay(student),
       structurallyCommandable: !student.releasedAt,
     })),
-    [allActiveCoverageStudents]
+    [activeCoverageStudents]
   );
-  const commandSelectableCoverageStudentIds = useMemo(
-    () => new Set(commandSelectableCoverageStudents.map((student) => student.studentId)),
-    [commandSelectableCoverageStudents]
-  );
-  const selectedCoverageStudentIds = useMemo(
-    () => Array.from(selectedCoverageIds).filter((studentId) => commandSelectableCoverageStudentIds.has(studentId)),
-    [commandSelectableCoverageStudentIds, selectedCoverageIds]
-  );
-  const commandTargetStudents = useMemo(() => {
-    if (selectedCoverageIds.size === 0) return allActiveCoverageStudents;
-    const selected = new Set(selectedCoverageStudentIds);
-    return allActiveCoverageStudents.filter((student) => selected.has(student.studentId));
-  }, [allActiveCoverageStudents, selectedCoverageIds, selectedCoverageStudentIds]);
+  const selectedCoverageStudentIds = Array.from(selectedCoverageIds);
+  // A stale or offline explicit selection must never become a context-wide command.
+  const hasExplicitCoverageSelection = coverageSelection.contextId === activeContextId && coverageSelection.explicit;
+  const commandTargetStudents = commandSelectableCoverageStudents.filter(student => !hasExplicitCoverageSelection || selectedCoverageIds.has(student.studentId));
   const commandTargetCount = commandTargetStudents.length;
   const commandTargetsSupportScreenOnlyUnlock = commandTargetStudents.length > 0
     && commandTargetStudents.every((student) => (
@@ -454,6 +469,7 @@ export default function Coverage() {
     (!assignmentForm.setup || canDelegateSetup);
 
   const invalidateCoverage = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/coverage/summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/unassigned"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/available-students"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/claimed-students"] });
@@ -476,8 +492,10 @@ export default function Coverage() {
   };
 
   const createContextMutation = useMutation({
-    mutationFn: (payload) => apiRequest("POST", "/coverage/contexts", payload),
-    onSuccess: (data) => {
+    retry: false,
+    mutationFn: ({ payload, scope }) => apiRequest("POST", "/coverage/contexts", payload, { headers: { "X-School-Id": scope.schoolId } }),
+    onSuccess: (data, { scope, payload }) => {
+      if (committedSetupScope.current !== scope) return;
       invalidateCoverage();
       setSelectedUnassignedIds(new Set());
       setContextOpen(false);
@@ -487,33 +505,41 @@ export default function Coverage() {
       }
       setActiveTab("console");
       toast({ title: "Supervision started" });
+      if (data?.context?.assignedStaffId === scope.actorId && Number(data.context.activeStudentCount ?? payload.studentIds.length) > 0) {
+        navigate("/classpilot", { state: createSupervisionDashboardIntent({ schoolId: scope.schoolId, viewerId: scope.actorId, contexts: [data.context] }) });
+      }
     },
-    onError: (error) => toast({ variant: "destructive", title: "Could not start coverage", description: error.message }),
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not start coverage", description: error.message }); },
+    onSettled: () => { operationalBusy.current = false; },
   });
 
   const releaseMutation = useMutation({
-    mutationFn: ({ contextId, studentIds, reason }) => apiRequest("POST", `/coverage/contexts/${contextId}/release`, {
-      studentIds,
-      releaseReason: reason,
-    }),
-    onSuccess: () => {
+    retry: false,
+    mutationFn: ({ contextId, studentIds, reason, mode, scope }) => {
+      if (mode !== "all" && studentIds.length === 0) throw new Error("Select students before releasing them.");
+      return apiRequest("POST", `/coverage/contexts/${contextId}/release`, { studentIds, releaseReason: reason }, { headers: { "X-School-Id": scope.schoolId } });
+    },
+    onSuccess: (_data, { scope }) => {
+      if (committedSetupScope.current !== scope) return;
       invalidateCoverage();
       setSelectedCoverageIds(new Set());
       setReleaseDialog(null);
       setReleaseReason("returned_to_class");
       toast({ title: "Students released" });
     },
-    onError: (error) => toast({ variant: "destructive", title: "Could not release coverage", description: error.message }),
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not release coverage", description: error.message }); },
+    onSettled: () => { operationalBusy.current = false; },
   });
 
   const commandMutation = useMutation({
-    mutationFn: ({ contextId, commandType, commandPayload, targetScope, targetStudentIds }) => apiRequest("POST", `/coverage/contexts/${contextId}/commands`, {
+    mutationFn: ({ contextId, commandType, commandPayload, targetScope, targetStudentIds, scope }) => apiRequest("POST", `/coverage/contexts/${contextId}/commands`, {
       targetScope,
       targetStudentIds,
       commandType,
       commandPayload,
-    }),
+    }, { headers: { "X-School-Id": scope.schoolId } }),
     onSuccess: (data, variables) => {
+      if (committedSetupScope.current !== variables.scope) return;
       invalidateCoverage();
       setCommandDialog(null);
       setCommandUrl("");
@@ -523,13 +549,14 @@ export default function Coverage() {
         skippedCurrentPageCount: Number(variables?.skippedCurrentPageCount || 0),
       }, variables?.commandType));
     },
-    onError: (error) => toast({ variant: "destructive", title: "Could not send command", description: error.message }),
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not send command", description: error.message }); },
   });
 
   const refreshSetupLists = () => refreshSupervisionSetup(queryClient, schoolId);
 
   const saveAssignmentMutation = useMutation({
-    mutationFn: async ({ staffId, payloads }) => {
+    mutationFn: async ({ staffId, payloads, scope }) => {
+      const config = { headers: { "X-School-Id": scope.schoolId } };
       const existing = (assignmentsQuery.data || []).filter((assignment) => assignment.staffId === staffId);
       const payloadByKey = new Map(payloads.map((payload) => [assignmentPayloadKey(payload), payload]));
       const existingByKey = new Map(existing.map((assignment) => [
@@ -545,8 +572,8 @@ export default function Coverage() {
       const creates = [];
       for (const [key, payload] of payloadByKey.entries()) {
         const match = existingByKey.get(key);
-        if (match) updates.push(apiRequest("PATCH", `/coverage/assignments/${match.id}`, payload));
-        else creates.push(apiRequest("POST", "/coverage/assignments", payload));
+        if (match) updates.push(apiRequest("PATCH", `/coverage/assignments/${match.id}`, payload, config));
+        else creates.push(apiRequest("POST", "/coverage/assignments", payload, config));
       }
 
       const disables = existing
@@ -560,7 +587,7 @@ export default function Coverage() {
           );
           return !payloadByKey.has(key);
         })
-        .map((assignment) => apiRequest("PATCH", `/coverage/assignments/${assignment.id}`, { active: false }));
+        .map((assignment) => apiRequest("PATCH", `/coverage/assignments/${assignment.id}`, { active: false }, config));
 
       // A partial failure still changes setup. Let every write settle before
       // refreshing either view so a late successful write cannot leave it stale.
@@ -569,20 +596,21 @@ export default function Coverage() {
       if (failed) throw failed.reason;
     },
     onSuccess: (_, variables) => {
+      if (committedSetupScope.current !== variables.scope) return;
       setAssignmentOpen(false);
       setStudentPickerSearch("");
       setAssignmentStaffSearch("");
       const count = variables?.payloads?.length || 1;
       toast({ title: count === 1 ? "Staff permission saved" : `${count} staff permissions saved` });
     },
-    onError: (error) => toast({ variant: "destructive", title: "Could not save assignment", description: error.message }),
-    onSettled: refreshSetupLists,
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not save assignment", description: error.message }); },
+    onSettled: (_data, _error, { scope }) => { if (committedSetupScope.current === scope) refreshSetupLists(); },
   });
 
   const deactivateAssignmentMutation = useMutation({
-    mutationFn: (id) => apiRequest("PATCH", `/coverage/assignments/${id}`, { active: false }),
-    onError: (error) => toast({ variant: "destructive", title: "Could not disable access", description: error.message }),
-    onSettled: refreshSetupLists,
+    mutationFn: ({ id, scope }) => apiRequest("PATCH", `/coverage/assignments/${id}`, { active: false }, { headers: { "X-School-Id": scope.schoolId } }),
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not disable access", description: error.message }); },
+    onSettled: (_data, _error, { scope }) => { if (committedSetupScope.current === scope) refreshSetupLists(); },
   });
 
   const deleteSetupMutation = useMutation({
@@ -760,12 +788,19 @@ export default function Coverage() {
   };
 
   const submitContext = () => {
-    createContextMutation.mutate({
+    if (operationalBusy.current || !schoolId) return;
+    const endsAt = new Date(contextForm.endsAt);
+    if (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date()) {
+      toast({ variant: "destructive", title: "Choose a future end time" });
+      return;
+    }
+    operationalBusy.current = true;
+    createContextMutation.mutate({ scope: setupScope, payload: {
       ...contextForm,
       assignedStaffId: contextForm.assignedStaffId || currentUser?.id,
       studentIds: Array.from(selectedUnassignedIds),
-      endsAt: new Date(contextForm.endsAt).toISOString(),
-    });
+      endsAt: endsAt.toISOString(),
+    } });
   };
 
   const buildAssignmentPayloads = () => {
@@ -838,7 +873,7 @@ export default function Coverage() {
       toast({ variant: "destructive", title: "Choose a scope", description: "Select schoolwide, at least one grade, class, group, or student." });
       return;
     }
-    saveAssignmentMutation.mutate({ staffId: assignmentForm.staffId, payloads });
+    saveAssignmentMutation.mutate({ staffId: assignmentForm.staffId, payloads, scope: setupScope });
   };
 
   const sendCoverageCommand = (commandType, commandPayload = {}) => {
@@ -850,8 +885,8 @@ export default function Coverage() {
       toast({ variant: "destructive", title: "No active students in coverage" });
       return;
     }
-    let targetStudentIds = [...selectedCoverageStudentIds];
-    let targetScope = targetStudentIds.length > 0 ? "students" : "context";
+    let targetStudentIds = commandTargetStudents.map(student => student.studentId);
+    const targetScope = "students";
     let skippedCurrentPageCount = 0;
     if (
       commandType === "lock-screen"
@@ -860,7 +895,6 @@ export default function Coverage() {
       const partition = partitionCoverageCurrentPageWaypointTargets(commandTargetStudents);
       targetStudentIds = partition.targetStudentIds;
       skippedCurrentPageCount = partition.skippedStudentIds.length;
-      targetScope = "students";
       if (targetStudentIds.length === 0) {
         toast({
           variant: "destructive",
@@ -871,6 +905,7 @@ export default function Coverage() {
       }
     }
     commandMutation.mutate({
+      scope: setupScope,
       contextId: selectedContext.id,
       commandType,
       commandPayload,
@@ -880,14 +915,24 @@ export default function Coverage() {
     });
   };
 
-  const openReleaseDialog = ({ contextId, studentIds, title }) => {
+  const openReleaseDialog = ({ contextId, studentIds, title, mode = "selected" }) => {
+    if (operationalBusy.current || (mode !== "all" && studentIds.length === 0)) return;
     setReleaseReason("returned_to_class");
-    setReleaseDialog({ contextId, studentIds, title });
+    const bindings = new Map((contextStudentsQuery.data || []).filter(student => studentIds.includes(student.studentId)).map(student => [student.studentId, supervisionAssignmentKey(student)]));
+    setReleaseDialog({ contextId, studentIds: [...studentIds], bindings, title, mode, scope: setupScope });
   };
 
   const submitRelease = () => {
-    if (!releaseDialog?.contextId || !releaseReason) return;
+    if (operationalBusy.current || !releaseDialog?.contextId || !releaseReason || releaseDialog.scope !== committedSetupScope.current) return;
+    if (releaseDialog.mode !== "all" && releaseDialog.studentIds.length === 0) return;
+    if (releaseDialog.mode !== "all" && releaseDialog.contextId === activeContextId && releaseDialog.studentIds.some(id => !(contextStudentsQuery.data || []).some(student => student.studentId === id && !student.releasedAt && releaseDialog.bindings.get(id) === supervisionAssignmentKey(student)))) {
+      toast({ variant: "destructive", title: "Supervision changed", description: "Close this confirmation and select the currently assigned students again." });
+      return;
+    }
+    operationalBusy.current = true;
     releaseMutation.mutate({
+      scope: releaseDialog.scope,
+      mode: releaseDialog.mode,
       contextId: releaseDialog.contextId,
       studentIds: releaseDialog.studentIds,
       reason: releaseReason,
@@ -949,7 +994,7 @@ export default function Coverage() {
           <TabsContent value="console" className="space-y-4 mt-4">
             {manageableContexts.length === 0 ? (
               <div className="rounded-md border px-4 py-12 text-center text-sm text-muted-foreground">
-                No students are claimed by you yet.
+                {contextsQuery.isPending ? "Loading supervision…" : contextsQuery.isError ? "Supervision could not load. Use Refresh to retry." : "No students are claimed by you yet."}
               </div>
             ) : (
               <>
@@ -978,7 +1023,7 @@ export default function Coverage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{selectedCoverageStudentIds.length || activeCoverageStudents.length} targeted</Badge>
+                      <Badge variant="secondary">{commandTargetCount} command targets</Badge>
                       <Button variant="outline" size="sm" onClick={() => setHistoryContextId(selectedContext.id)}>
                         <History className="h-4 w-4 mr-2" />
                         History
@@ -1032,14 +1077,14 @@ export default function Coverage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCoverageStudentIds.length === 0}
+                      disabled={selectedCoverageStudentIds.length === 0 || releaseMutation.isPending}
                       onClick={() => openReleaseDialog({
                         contextId: selectedContext.id,
                         studentIds: selectedCoverageStudentIds,
                         title: `Release ${selectedCoverageStudentIds.length} selected student${selectedCoverageStudentIds.length === 1 ? "" : "s"}`,
                       })}
                     >
-                      Release Selected
+                      Release selected ({selectedCoverageStudentIds.length})
                     </Button>
                   </div>
 
@@ -1050,17 +1095,19 @@ export default function Coverage() {
                     {commandTargetDomainRestrictionMessage}
                   </p>
 
-                  <div className="flex items-center gap-3 px-4 py-3">
-                    <div className="relative w-full max-w-sm">
-                      <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                      <Input className="pl-9" placeholder="Search claimed students" value={coverageSearch} onChange={(e) => setCoverageSearch(e.target.value)} />
+                  <div className="space-y-3 px-4 py-3">
+                    <CoverageStudentFilters label="Claimed" students={contextStudentsQuery.data || []} filters={claimedFilters} onChange={changeClaimedFilters} />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(activeCoverageStudents.map(student => student.studentId)))} disabled={activeCoverageStudents.length === 0}>
+                        Select all matching students
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={!hasExplicitCoverageSelection}>Clear selection</Button>
+                      <p role="status" className="text-sm text-muted-foreground">{activeCoverageStudents.length} matching · {selectedCoverageIds.size} selected</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(commandSelectableCoverageStudents.map((student) => student.studentId)))} disabled={commandSelectableCoverageStudents.length === 0}>
-                      Select All
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageIds.size === 0}>
-                      Clear
-                    </Button>
+                    {hasExplicitCoverageSelection && selectedCoverageIds.size === 0 && <p role="status" className="text-sm text-muted-foreground">Selected students are no longer assigned here. Clear the selection or choose students again.</p>}
+                    <p className="text-xs text-muted-foreground">Offline students can be released. Chromebook commands apply only to eligible matching students.</p>
+                    {contextStudentsQuery.isPending && <p role="status">Loading supervised students…</p>}
+                    {contextStudentsQuery.isError && <p role="alert">Supervised students could not load. <Button variant="link" onClick={() => contextStudentsQuery.refetch()}>Retry</Button></p>}
                   </div>
 
                   <div className="overflow-x-auto">
@@ -1074,10 +1121,10 @@ export default function Coverage() {
                       <span />
                     </div>
                     {coverageStudents.length === 0 ? (
-                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">No students claimed in this group</div>
+                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">{contextStudentsQuery.isPending ? "Loading supervised students…" : contextStudentsQuery.isError ? "Supervised students are unavailable." : "No students match these filters."}</div>
                     ) : coverageStudents.map((student) => (
                       <div key={student.studentId} className="grid min-w-[860px] grid-cols-[44px_1.1fr_90px_110px_1.4fr_130px_120px] gap-3 border-t px-4 py-3 text-sm items-center">
-                        <Checkbox checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!commandSelectableCoverageStudentIds.has(student.studentId)} />
+                        <Checkbox aria-label={`Select ${student.studentName}`} checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!!student.releasedAt} />
                         <div>
                           <p className="font-medium">{student.studentName}</p>
                           <p className="text-xs text-muted-foreground">{student.studentEmail}</p>
@@ -1089,7 +1136,7 @@ export default function Coverage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={!!student.releasedAt}
+                          disabled={!!student.releasedAt || releaseMutation.isPending}
                           onClick={() => openReleaseDialog({
                             contextId: selectedContext.id,
                             studentIds: [student.studentId],
@@ -1107,18 +1154,22 @@ export default function Coverage() {
           </TabsContent>
 
           <TabsContent value="unassigned" className="space-y-4 mt-4">
+            <CoverageStudentFilters label="Available" students={unassignedQuery.data || []} filters={availableFilters} onChange={changeAvailableFilters} />
             <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="relative w-full max-w-sm">
-                <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                <Input className="pl-9" placeholder="Search students" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button variant="outline" size="sm" onClick={() => setSelectedUnassignedIds(new Set(unassignedStudents.map(student => student.studentId)))} disabled={unassignedStudents.length === 0}>Select all matching students</Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedUnassignedIds(new Set())} disabled={selectedUnassignedIds.size === 0}>Clear selection</Button>
+                <p role="status" className="text-sm text-muted-foreground">{unassignedStudents.length} matching · {selectedUnassignedIds.size} selected</p>
               </div>
               <Button onClick={() => setContextOpen(true)} disabled={selectedUnassignedIds.size === 0 && !isAdmin}>
                 <Plus className="h-4 w-4 mr-2" />
                 Start Supervision
               </Button>
             </div>
-            <div className="rounded-md border overflow-hidden">
-              <div className="grid grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 text-xs font-medium text-muted-foreground bg-muted/50">
+            {unassignedQuery.isPending && <p role="status">Loading available students…</p>}
+            {unassignedQuery.isError && <p role="alert">Available students could not load. <Button variant="link" onClick={() => unassignedQuery.refetch()}>Retry</Button></p>}
+            <div className="rounded-md border overflow-x-auto">
+              <div className="grid min-w-[700px] grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 text-xs font-medium text-muted-foreground bg-muted/50">
                 <span />
                 <span>Student</span>
                 <span>Grade</span>
@@ -1126,10 +1177,10 @@ export default function Coverage() {
                 <span>Active Tab</span>
               </div>
               {unassignedStudents.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-muted-foreground">No online unassigned students visible to you</div>
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">{unassignedQuery.isPending ? "Loading available students…" : unassignedQuery.isError ? "Available students are unavailable." : "No online available students match these filters."}</div>
               ) : unassignedStudents.map((student) => (
-                <div key={student.studentId} className="grid grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 border-t items-center text-sm">
-                  <Checkbox checked={selectedUnassignedIds.has(student.studentId)} onCheckedChange={() => toggleUnassignedStudent(student.studentId)} />
+                <div key={student.studentId} className="grid min-w-[700px] grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 border-t items-center text-sm">
+                  <Checkbox aria-label={`Select ${student.studentName}`} checked={selectedUnassignedIds.has(student.studentId)} onCheckedChange={() => toggleUnassignedStudent(student.studentId)} />
                   <div>
                     <p className="font-medium">{student.studentName}</p>
                     <p className="text-xs text-muted-foreground">{student.studentEmail}</p>
@@ -1183,7 +1234,7 @@ export default function Coverage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => openReleaseDialog({ contextId: context.id, studentIds: [], title: `Release all students from ${context.name}` })}
+                            onClick={() => openReleaseDialog({ contextId: context.id, studentIds: [], mode: "all", title: `Release all students from ${context.name}` })}
                             disabled={context.activeStudentCount === 0}
                           >
                             <X className="h-4 w-4 mr-2" />
@@ -1251,7 +1302,7 @@ export default function Coverage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => permissionPackage.assignments.forEach((assignment) => {
-                              if (!assignmentHasSetup(assignment) || canDelegateSetup) deactivateAssignmentMutation.mutate(assignment.id);
+                              if (!assignmentHasSetup(assignment) || canDelegateSetup) deactivateAssignmentMutation.mutate({ id: assignment.id, scope: setupScope });
                             })}
                             disabled={!permissionPackage.active || setupWriteBusy}
                           >

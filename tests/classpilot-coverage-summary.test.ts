@@ -1,8 +1,41 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { classpilotCoverageSummaryRevision, ownScheduledTestingContexts } from "../src/services/classpilotCoverageSummary.js";
+import { classpilotCoverageSummaryRevision, ownActiveSupervisionContexts, ownScheduledTestingContexts } from "../src/services/classpilotCoverageSummary.js";
 
 describe("ClassPilot coverage summary", () => {
+  it("includes every personally owned supervision type and removes released, expired and transferred ownership", () => {
+    const now = new Date("2026-09-14T15:30:00Z");
+    const base = {
+      schoolId: "school-a", name: "Other", assignedStaffId: "viewer", status: "active" as const,
+      startsAt: new Date("2026-09-14T15:00:00Z"), endsAt: new Date("2026-09-14T16:00:00Z"),
+    };
+    const contexts = [
+      { ...base, id: "manual", contextType: "other" },
+      { ...base, id: "group", contextType: "intervention" },
+      { ...base, id: "scheduled", contextType: "state_testing" },
+      { ...base, id: "class-coverage", contextType: "other" },
+      { ...base, id: "other-teacher", contextType: "other", assignedStaffId: "someone-else" },
+      { ...base, id: "foreign", contextType: "other", schoolId: "school-b" },
+      { ...base, id: "expired", contextType: "other", endsAt: now },
+      { ...base, id: "future", contextType: "other", startsAt: new Date("2026-09-14T15:31:00Z") },
+      { ...base, id: "ended", contextType: "other", status: "ended" as const },
+      { ...base, id: "empty", contextType: "other" },
+    ];
+    const activeStudents = contexts.filter((context) => context.id !== "empty").map((context) => ({
+      schoolId: context.schoolId, contextId: context.id, studentId: `${context.id}-student`,
+    }));
+    activeStudents.push(activeStudents[0]!, { schoolId: "school-b", contextId: "manual", studentId: "foreign-student" });
+    const options = { schoolId: "school-a", viewerId: "viewer", contexts, activeStudents, now };
+    const result = ownActiveSupervisionContexts(options);
+    assert.deepEqual(result.map((context) => context.id), ["class-coverage", "group", "manual", "scheduled"]);
+    assert.equal(result.find((context) => context.id === "manual")?.activeStudentCount, 1);
+    assert.deepEqual(Object.keys(result[0]!).sort(), ["activeStudentCount", "contextType", "endsAt", "id", "name", "startsAt"]);
+    assert.doesNotMatch(JSON.stringify(result), /student|viewer/);
+    assert.deepEqual(ownActiveSupervisionContexts({ ...options, activeStudents: [] }), []);
+    assert.deepEqual(ownActiveSupervisionContexts({ ...options, viewerId: "new-teacher" }), []);
+    const handoff = contexts.map((context) => context.id === "manual" ? { ...context, assignedStaffId: "new-teacher" } : context);
+    assert.deepEqual(ownActiveSupervisionContexts({ ...options, contexts: handoff, viewerId: "new-teacher" }).map((context) => context.id), ["manual"]);
+  });
   it("is deterministic across query insertion order", () => {
     const first = classpilotCoverageSummaryRevision({
       availableStudentIds: ["student-b", "student-a"],

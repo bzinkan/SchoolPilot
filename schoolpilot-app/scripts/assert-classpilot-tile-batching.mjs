@@ -1357,8 +1357,8 @@ assert.match(
 );
 assert.match(
   coverageSource,
-  /partitionCoverageCurrentPageWaypointTargets\(commandTargetStudents\)[\s\S]{0,240}targetScope = "students"/,
-  'Coverage current-page Waypoints must omit explicit sign-outs while retaining signal-loss targets for unavailable reporting',
+  /const targetScope = "students";[\s\S]{0,350}partitionCoverageCurrentPageWaypointTargets\(commandTargetStudents\)/,
+  'Coverage current-page Waypoints must preserve exact matching targets and omit explicit sign-outs',
 );
 assert.match(
   dashboardSource,

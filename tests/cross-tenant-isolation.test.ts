@@ -14,6 +14,8 @@ import {
   assignTeacherStudent,
   getGroupByIdAndSchool,
   getGroupsByTeacherAndSchool,
+  getCoverageStudentClasses,
+  addGroupStudentsDetailed,
   createFlightPath,
   getFlightPathById,
   createBlockList,
@@ -161,6 +163,27 @@ after(async () => {
 });
 
 describe("cross-school isolation", () => {
+  it("Coverage class memberships join both school parents and return only requested student metadata", async () => {
+    const studentA = await inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Coverage", lastName: "A", status: "active" }));
+    const studentB = await inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Coverage", lastName: "B", status: "active" }));
+    const classA = await inSchool(schoolA.id, () => createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: "Coverage class A", groupType: "admin_class", gradeLevel: "5" }));
+    const classB = await inSchool(schoolB.id, () => createGroup({ schoolId: schoolB.id, teacherId: teacher.id, name: "Coverage class B", groupType: "admin_class", gradeLevel: "6" }));
+    await inSchool(schoolA.id, () => addGroupStudentsDetailed(classA.id, [studentA.id]));
+    await inSchool(schoolB.id, () => addGroupStudentsDetailed(classB.id, [studentB.id]));
+    for (const [tenant, ownStudent, foreignStudent, ownClass] of [
+      [schoolA, studentA, studentB, classA], [schoolB, studentB, studentA, classB],
+    ] as const) {
+      const memberships = await inSchool(tenant.id, () => getCoverageStudentClasses(tenant.id, [ownStudent.id, foreignStudent.id]));
+      assert.deepEqual(memberships.get(ownStudent.id), [{ id: ownClass.id, name: ownClass.name, gradeLevel: ownClass.gradeLevel }]);
+      assert.deepEqual(memberships.get(foreignStudent.id), []);
+      assert.equal(memberships.size, 2);
+    }
+    const privileged = await asSystem(() => getCoverageStudentClasses(schoolA.id, [studentA.id, studentB.id]));
+    assert.deepEqual(privileged.get(studentB.id), [], "explicit school predicates also hold with RLS bypassed");
+    const empty = await inSchool(schoolA.id, () => getCoverageStudentClasses(schoolA.id, []));
+    assert.equal(empty.size, 0);
+  });
+
   it("RLS partitions PassPilot legacy multi-class memberships", {
     skip: process.env.RLS_GUC_ENABLED !== "true",
   }, async () => {
