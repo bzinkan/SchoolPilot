@@ -70,17 +70,19 @@ async function historySupervision(schoolId: string, applications: ScheduleProfil
   const receiptContextIds = outcomes.flatMap(outcome => outcome.contextId ? [outcome.contextId] : []);
   const contexts = await database.select({ id: classpilotSupervisionContexts.id, applicationId: classpilotSupervisionContexts.scheduleProfileApplicationId,
     date: classpilotSupervisionContexts.scheduleProfileDate, blockId: classpilotSupervisionContexts.scheduleProfileBlockId,
-    status: classpilotSupervisionContexts.status, endedAt: classpilotSupervisionContexts.endedAt,
-    hasUnreleasedStudents: sql<boolean>`EXISTS (SELECT 1 FROM ${classpilotSupervisionStudents} WHERE ${classpilotSupervisionStudents.schoolId} = ${schoolId} AND ${classpilotSupervisionStudents.contextId} = ${classpilotSupervisionContexts.id} AND ${classpilotSupervisionStudents.releasedAt} IS NULL)` })
+    status: classpilotSupervisionContexts.status, endedAt: classpilotSupervisionContexts.endedAt })
     .from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId, schoolId),
       or(inArray(classpilotSupervisionContexts.scheduleProfileApplicationId, ids), receiptContextIds.length ? inArray(classpilotSupervisionContexts.id, receiptContextIds) : undefined)));
+  const unreleased = contexts.length ? await database.select({ contextId: classpilotSupervisionStudents.contextId }).from(classpilotSupervisionStudents)
+    .where(and(eq(classpilotSupervisionStudents.schoolId, schoolId), inArray(classpilotSupervisionStudents.contextId, contexts.map(context => context.id)), isNull(classpilotSupervisionStudents.releasedAt))) : [];
+  const unreleasedIds = new Set(unreleased.map(student => student.contextId));
   const unresolvedApplicationIds = outcomes.filter(outcome => {
     const context = contexts.find(context => context.id === outcome.contextId);
     if (!["started", "failed", "missed", "cancelled"].includes(outcome.status)
       || !applications.find(application => application.id === outcome.applicationId)?.testingWindows.some(window => window.date === outcome.date && window.blockId === outcome.blockId)) return true;
     return (outcome.status === "started" || outcome.contextId) && (!context || context.applicationId !== outcome.applicationId || context.date !== outcome.date || context.blockId !== outcome.blockId);
   }).map(outcome => outcome.applicationId);
-  return { historySupervision: contexts, unresolvedApplicationIds };
+  return { historySupervision: contexts.map(context => ({ ...context, hasUnreleasedStudents: unreleasedIds.has(context.id) })), unresolvedApplicationIds };
 }
 function definitionReferences(definition: ScheduleProfileDefinition, data: Catalog): Blocker[] {
   const blockers: Blocker[] = [];

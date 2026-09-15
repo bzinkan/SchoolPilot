@@ -274,7 +274,9 @@ test("overview summaries use committed dated snapshots and never write their met
   const deleted = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: applied.revision }));
   const withoutSource = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
   assert.deepEqual(withoutSource.applications, loaded.applications);
-  assert.deepEqual(withoutSource.applicationSummaries, loaded.applicationSummaries);
+  assert.deepEqual(withoutSource.applicationSummaries, { ...loaded.applicationSummaries, [applied.application.id]: {
+    ...summary, historyRemoval: { ...summary.historyRemoval, checkedAt: withoutSource.summariesCheckedAt },
+  } });
   const cancelled = await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId, actorId: data.adminId, applicationId: applied.application.id, revision: deleted.revision }));
   const final = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
   assert.equal(final.revision, cancelled.revision);
