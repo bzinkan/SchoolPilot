@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPlannerOccurrences, buildPlannerRows, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerStableAxis, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
+import { buildPlannerOccurrences, buildPlannerRows, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
 
 const referenceDate = '2026-09-14';
 const definition = { name: 'MAP day', grades: [], classIds: ['homeroom', 'ela'], classRules: [], testingBlocks: [{ id: 'testing', name: 'MAP testing', coverageGroupId: 'map', assignedStaffId: 'zinkan', startTime: '09:00', endTime: '10:45' }] };
@@ -124,14 +124,10 @@ test('New regular-projection classes display their window without inventing miss
   assert.equal(row.grade, 'unassigned');
 });
 
-test('Axis fits valid full-day windows and labels midnight accurately', () => {
-  const axis = plannerAxis([{ regularWindow: { startTime: '00:05', endTime: '23:59' } }]);
-  assert.equal(axis.start, 0);
-  assert.equal(axis.end, 1440);
+test('Minute labels preserve midnight and noon without changing chart bounds', () => {
   assert.equal(plannerTime(0), '12:00 AM');
   assert.equal(plannerTime(720), '12:00 PM');
   assert.equal(plannerTime(1440), '12:00 AM');
-  assert.equal(plannerAxis([]).end - plannerAxis([]).start > 0, true);
 });
 
 test('Exact spans render only the affected intersections of the four server-issued overlap codes', () => {
@@ -278,15 +274,78 @@ test('An active linked occurrence stays anchored through association edits and r
   assert.equal(buildPlannerOccurrences({ rows: edited.filter(row => row.type !== 'testing'), ranks, activeOccurrence }).some(item => item.rowKey === activeOccurrence.rowKey), false, 'Removed canonical blocks never survive as phantom occurrences');
 });
 
-test('A captured shared axis expands for new windows but never shrinks during edits or filtering', () => {
-  const first = plannerStableAxis(model().rows);
-  const longer = plannerStableAxis([{ proposedWindow: { startTime: '07:30', endTime: '18:15' } }], first);
-  assert.equal(longer.start, 420);
-  assert.equal(longer.end, 1140);
-  assert.deepEqual(plannerStableAxis(model().rows, longer), longer);
-  assert.equal(plannerStableAxis(model().rows, longer), longer);
-  assert.deepEqual(plannerStableAxis([], longer), longer);
-  assert.deepEqual(plannerStableAxis([{ proposedWindow: { startTime: '', endTime: '' } }], longer), longer);
-  assert.equal(plannerStableAxis([], first), first, 'An empty filtered view does not expand to fabricated default hours');
-  assert.equal(plannerStableAxis(model().rows).end, first.end, 'A newly opened session can recapture its own axis');
+test('Configured daytime hours bound the axis exactly with readable interior ticks', () => {
+  const settings = { enableTrackingHours: true, trackingStartTime: '08:25', trackingEndTime: '15:05' };
+  const before = structuredClone(settings);
+  const axis = plannerAxis(settings);
+  assert.equal(axis.source, 'configured');
+  assert.equal(axis.start, 505);
+  assert.equal(axis.end, 905);
+  assert.equal(axis.ticks[0], 505);
+  assert.equal(axis.ticks.at(-1), 905);
+  assert.equal(axis.ticks.includes(900), false, 'A 3:00 label must not collide with the exact 3:05 endpoint');
+  assert.equal(axis.ticks.every((tick, index) => tick >= axis.start && tick <= axis.end && (!index || tick - axis.ticks[index - 1] >= (axis.end - axis.start) / 8)), true);
+  assert.deepEqual(settings, before);
+  for (const [startTime, endTime] of [['08:00', '08:01'], ['08:02', '08:07'], ['10:25', '10:45'], ['00:00', '23:59']]) {
+    const short = plannerAxis({ enableTrackingHours: true, trackingStartTime: startTime, trackingEndTime: endTime });
+    const minutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+    assert.equal(short.start, minutes(startTime));
+    assert.equal(short.end, minutes(endTime));
+    assert.equal(short.ticks[0], short.start);
+    assert.equal(short.ticks.at(-1), short.end);
+    assert.equal(short.ticks.every((tick, index) => tick >= short.start && tick <= short.end && (!index || tick > short.ticks[index - 1])), true);
+    assert.equal(short.ticks.length <= 9, true);
+  }
+});
+
+test('Disabled or absent monitoring hours use an honest fixed default; invalid enabled ranges stay unavailable', () => {
+  const fallback = plannerAxis();
+  assert.deepEqual(fallback, { start: 480, end: 960, ticks: [480, 540, 600, 660, 720, 780, 840, 900, 960], source: 'default' });
+  for (const settings of [null, {}, { enableTrackingHours: false, trackingStartTime: '01:00', trackingEndTime: '23:00' }, { enableTrackingHours: 'true', trackingStartTime: '08:00', trackingEndTime: '15:00' }]) {
+    assert.deepEqual(plannerAxis(settings), fallback);
+  }
+  for (const [trackingStartTime, trackingEndTime] of [[undefined, undefined], ['', '15:00'], ['08:00', ''], ['8:00', '15:00'], ['08:00:00', '15:00'], [' 08:00', '15:00'], ['24:00', '25:00'], ['08:00', '08:00'], ['20:00', '02:00']]) {
+    assert.deepEqual(plannerAxis({ enableTrackingHours: true, trackingStartTime, trackingEndTime }), { ...fallback, source: 'unavailable' });
+  }
+});
+
+test('Transient early times, regular windows and closed-day metadata cannot change the configured axis', () => {
+  const settings = { enableTrackingHours: true, trackingStartTime: '08:00', trackingEndTime: '15:00' };
+  const axis = plannerAxis(settings);
+  for (const startTime of ['01:00', '', '13:00']) {
+    const draft = { ...definition, testingBlocks: [{ ...definition.testingBlocks[0], startTime, endTime: '14:00' }] };
+    const rows = model({ definition: draft }).rows;
+    assert.deepEqual(plannerAxis({ ...settings, rows, referenceDate: '2026-09-14', day: { instructional: true } }), axis);
+  }
+  const closed = model({ referenceDate: '2026-09-19' });
+  assert.equal(closed.classes.every(row => !row.regularWindow), true);
+  assert.deepEqual(plannerAxis({ ...settings, rows: closed.rows, referenceDate: '2026-09-19', day: { instructional: false }, afterHoursMode: 'full', trackingDays: ['Monday'] }), axis);
+  assert.deepEqual(plannerAxis({ ...settings, rows: [{ regularWindow: { startTime: '00:00', endTime: '23:59' } }], schoolTimezone: 'America/Chicago' }), axis, 'The range contains school-local clock values and is not translated to the browser timezone');
+});
+
+test('Clipping draws exact in-bounds geometry while retaining off-hours windows for correction', () => {
+  const axis = plannerAxis({ enableTrackingHours: true, trackingStartTime: '08:25', trackingEndTime: '15:05' });
+  const windows = [
+    [{ startTime: '08:25', endTime: '15:05' }, { start: 505, end: 905, clippedStart: false, clippedEnd: false }, false],
+    [{ startTime: '08:00', endTime: '09:00' }, { start: 505, end: 540, clippedStart: true, clippedEnd: false }, true],
+    [{ startTime: '14:00', endTime: '16:00' }, { start: 840, end: 905, clippedStart: false, clippedEnd: true }, true],
+    [{ startTime: '01:00', endTime: '23:00' }, { start: 505, end: 905, clippedStart: true, clippedEnd: true }, true],
+    [{ startTime: '01:00', endTime: '02:00' }, null, true],
+    [{ startTime: '18:00', endTime: '19:00' }, null, true],
+    [{ startTime: '08:00', endTime: '08:25' }, null, true],
+    [{ startTime: '15:05', endTime: '16:00' }, null, true],
+    [{ startTime: '', endTime: '09:00' }, null, false],
+    [{ startTime: '09:00', endTime: '09:00' }, null, false],
+    [null, null, false],
+  ];
+  for (const [window, geometry, outside] of windows) {
+    const original = structuredClone(window);
+    assert.deepEqual(plannerClipWindow(window, axis), geometry);
+    assert.equal(plannerOutsideHours(window, axis), outside);
+    assert.deepEqual(window, original, 'Display clipping never shortens saved/draft times');
+  }
+  for (const invalidAxis of [undefined, {}, { start: 900, end: 500 }, { start: NaN, end: 900 }, { start: -1, end: 900 }, { start: 0, end: 1441 }]) {
+    assert.equal(plannerClipWindow({ startTime: '09:00', endTime: '10:00' }, invalidAxis), null);
+    assert.equal(plannerOutsideHours({ startTime: '09:00', endTime: '10:00' }, invalidAxis), false);
+  }
 });

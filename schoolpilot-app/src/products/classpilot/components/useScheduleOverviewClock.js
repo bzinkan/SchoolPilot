@@ -46,3 +46,10 @@ export function cancellationState(application, summary, serverNow, unavailable, 
   if (summary.cancellation.canRequest && (!Number.isFinite(cutoff) || latestServerNow >= cutoff)) return { canRequest: false, reason: 'unavailable' };
   return summary.cancellation;
 }
+
+export function historyRemovalState(application, summary, unavailable) {
+  if (application.historyHiddenAt) return { canRequest: false, reason: 'hidden' };
+  const removal = summary?.historyRemoval;
+  if (unavailable || !removal || !Number.isFinite(Date.parse(removal.checkedAt))) return { canRequest: false, reason: 'unavailable' };
+  return { ...removal, canRequest: removal.canRequest === true && removal.reason === 'available' };
+}

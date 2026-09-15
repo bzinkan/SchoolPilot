@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { cancellationState, scheduleDateText } from './useScheduleOverviewClock';
+import { cancellationState, historyRemovalState, scheduleDateText } from './useScheduleOverviewClock';
 import { CalendarDays, ChevronDown, Copy, MoreHorizontal, Trash2 } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
@@ -42,7 +42,7 @@ function TestingOutcomeSummary({ dates, fallbackCount, unavailable }) {
   return <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm">{outcomes.filter(([key]) => counts[key]).map(([key, label]) => <span key={key} className={['failed', 'missed'].includes(key) ? 'font-medium text-destructive' : key === 'unknown' ? 'text-muted-foreground' : ''}>{countText(counts[key], 'testing block')} {label}</span>)}</p>;
 }
 
-function ApplicationRow({ application, summary, catalog, testingStatuses, statusReasons, unavailable, serverNow, latestServerNow, busy, blocked, onCancel, expanded, onToggle }) {
+function ApplicationRow({ application, summary, catalog, testingStatuses, statusReasons, unavailable, serverNow, latestServerNow, busy, blocked, onCancel, onDeleteHistory, expanded, onToggle }) {
   const cancelled = application.status === 'cancelled';
   const dates = [...application.dates].sort();
   const today = catalog.schoolLocalToday;
@@ -50,6 +50,8 @@ function ApplicationRow({ application, summary, catalog, testingStatuses, status
   const next = effectiveDates.filter(date => date.date >= today).map(date => date.date).sort()[0];
   const phase = cancelled ? 'cancelled' : effectiveDates.some(date => date.phase === 'today') ? 'today' : effectiveDates.some(date => date.phase === 'future') ? 'future' : effectiveDates.length ? 'past' : 'no_changes';
   const cancellation = cancellationState(application, summary, serverNow, unavailable, latestServerNow);
+  const historyRemoval = historyRemovalState(application, summary, unavailable);
+  const allDatesPast = dates.length > 0 && dates.every(date => date < today);
   const label = `${application.profileName} ${application.dates.join(', ')}`;
   const detailId = `application-details-${application.id}`;
   const classNames = new Map(catalog.classes.map(row => [row.id, row.name]));
@@ -63,10 +65,12 @@ function ApplicationRow({ application, summary, catalog, testingStatuses, status
         {dates.length > 1 && <p className="text-sm text-muted-foreground">{scheduleDateText(dates[0])}–{scheduleDateText(dates.at(-1))}{!cancelled && next && !unavailable ? ` · ${next === today ? 'Applied today' : `Next: ${scheduleDateText(next)}`}` : ''}</p>}
       </div>
       {cancellation.canRequest && <Button size="sm" variant="outline" disabled={busy || blocked} onClick={event => onCancel(application, event.currentTarget)}>Cancel application<span className="sr-only"> {application.profileName}</span></Button>}
+      {historyRemoval.canRequest && <Button size="sm" variant="outline" className="text-destructive" disabled={busy || blocked} onClick={event => onDeleteHistory(application, event.currentTarget)}><Trash2 aria-hidden="true" className="mr-1.5 h-3.5 w-3.5" />Delete from history<span className="sr-only"> {label}</span></Button>}
     </div>
     <TestingOutcomeSummary dates={summary?.dates} fallbackCount={application.testingWindows?.length || 0} unavailable={unavailable} />
     {summary && (classTimeCount > 0 || skippedCount > 0) && <p className="text-sm">{changeText(classTimeCount, skippedCount, 0)}</p>}
     {!cancellation.canRequest && <p className="max-w-3xl text-xs text-muted-foreground">{cancelReasons[cancellation.reason] || cancelReasons.unavailable}</p>}
+    {allDatesPast && !historyRemoval.canRequest && <p className="text-xs text-muted-foreground">{historyRemoval.reason === 'supervision_pending' ? 'History can be removed after all supervision has ended and testing status is settled.' : 'History removal availability could not be confirmed. Refresh status to check again.'}</p>}
     <Button size="sm" variant="ghost" className="-ml-2" aria-expanded={expanded} aria-controls={detailId} aria-label={`${expanded ? 'Hide' : 'View'} details ${label}`} onClick={onToggle}><ChevronDown className={`mr-1.5 h-4 w-4 ${expanded ? 'rotate-180' : ''}`} />{expanded ? 'Hide details' : 'View details'}</Button>
     <div id={detailId} hidden={!expanded} className="space-y-4 border-t pt-4">
       {expanded && dates.map(date => {
@@ -88,7 +92,7 @@ function ApplicationRow({ application, summary, catalog, testingStatuses, status
   </article>;
 }
 
-export default function ScheduleProfilesOverview({ data, busy, blocked, refreshing, statusUnavailable, serverNow, latestServerNow, testingStatuses, statusReasons, onOpen, onDelete, onCancel, onRefresh }) {
+export default function ScheduleProfilesOverview({ data, busy, blocked, refreshing, statusUnavailable, serverNow, latestServerNow, testingStatuses, statusReasons, onOpen, onDelete, onCancel, onDeleteHistory, onRefresh, applicationsHeadingRef }) {
   const [expandedIds, setExpandedIds] = useState(() => new Set());
   const profiles = useMemo(() => [...data.profiles].sort((a, b) => a.definition.name.localeCompare(b.definition.name) || a.id.localeCompare(b.id)), [data.profiles]);
   const summaries = data.applicationSummaries;
@@ -102,13 +106,14 @@ export default function ScheduleProfilesOverview({ data, busy, blocked, refreshi
   }, [data.applications]);
   const grouped = useMemo(() => {
     const nextDate = application => summaries?.[application.id]?.dates.filter(date => date.date >= data.schoolLocalToday && date.phase !== 'no_changes').map(date => date.date).sort()[0] || [...application.dates].sort().find(date => date >= data.schoolLocalToday) || application.dates.at(-1) || '';
-    const current = data.applications.filter(application => application.status !== 'cancelled' && (summaries?.[application.id] ? summaries[application.id].dates.some(date => ['today', 'future'].includes(date.phase)) : application.dates.some(date => date >= data.schoolLocalToday)));
-    const history = data.applications.filter(application => !current.includes(application));
+    const visible = data.applications.filter(application => !application.historyHiddenAt);
+    const current = visible.filter(application => application.status !== 'cancelled' && (summaries?.[application.id] ? summaries[application.id].dates.some(date => ['today', 'future'].includes(date.phase)) : application.dates.some(date => date >= data.schoolLocalToday)));
+    const history = visible.filter(application => !current.includes(application));
     current.sort((a, b) => nextDate(a).localeCompare(nextDate(b)) || a.id.localeCompare(b.id));
     history.sort((a, b) => [...b.dates].sort().at(-1).localeCompare([...a.dates].sort().at(-1)) || a.id.localeCompare(b.id));
     return { current, history };
   }, [data.applications, data.schoolLocalToday, summaries]);
-  const applicationRow = application => <ApplicationRow key={application.id} application={application} summary={summaries?.[application.id]} catalog={data} testingStatuses={testingStatuses} statusReasons={statusReasons} unavailable={statusUnavailable || !summaries?.[application.id]} serverNow={serverNow} latestServerNow={latestServerNow} busy={busy} blocked={blocked} onCancel={onCancel} expanded={expandedIds.has(application.id)} onToggle={() => setExpandedIds(current => { const next = new Set(current); if (next.has(application.id)) next.delete(application.id); else next.add(application.id); return next; })} />;
+  const applicationRow = application => <ApplicationRow key={application.id} application={application} summary={summaries?.[application.id]} catalog={data} testingStatuses={testingStatuses} statusReasons={statusReasons} unavailable={statusUnavailable || !summaries?.[application.id]} serverNow={serverNow} latestServerNow={latestServerNow} busy={busy} blocked={blocked} onCancel={onCancel} onDeleteHistory={onDeleteHistory} expanded={expandedIds.has(application.id)} onToggle={() => setExpandedIds(current => { const next = new Set(current); if (next.has(application.id)) next.delete(application.id); else next.add(application.id); return next; })} />;
   return <div className="space-y-8">
     <section aria-label="Saved profiles" className="space-y-3">
       <h3 className="text-base font-semibold">Saved profiles</h3>
@@ -125,7 +130,7 @@ export default function ScheduleProfilesOverview({ data, busy, blocked, refreshi
       })}</tbody></table> : <p className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No profiles yet. Create your first special-day plan, then apply it to the dates you need.</p>}
     </section>
     <section aria-label="Schedule profile applications" className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold">Applied dates</h3><Button size="sm" variant="ghost" disabled={busy || refreshing} onClick={onRefresh}>Refresh status</Button></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 ref={applicationsHeadingRef} tabIndex={-1} className="text-base font-semibold">Applied dates</h3><Button size="sm" variant="ghost" disabled={busy || refreshing} onClick={onRefresh}>Refresh status</Button></div>
       <p className="text-sm text-muted-foreground">These are the schedules saved for actual dates. Cancelling an application affects all its dates together.</p>
       <p className="text-xs text-muted-foreground">Testing status is separate from class changes. After testing starts, use Release or Extend in Coverage.</p>
       {statusUnavailable && <p role="status" className="text-sm text-muted-foreground">Current application status is unavailable. Refresh status to check again.</p>}

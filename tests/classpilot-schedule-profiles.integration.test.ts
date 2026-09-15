@@ -87,6 +87,159 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+
+async function historyFixture(options: { dates?: string[]; testing?: boolean; cancelled?: boolean; role?: string } = {}) {
+  const data = await fixture(options.role), dates = options.dates ?? ["2000-01-03"];
+  const testingBlocks = options.testing ? [{ id: "history-testing", name: "Testing history", coverageGroupId: data.scopeId,
+    assignedStaffId: data.specialistId, startTime: "09:00", endTime: "09:45" }] : [];
+  const saved = await save(data, { ...data.definition, testingBlocks });
+  const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  const application: ScheduleProfileApplication = { id: randomUUID(), profileId: saved.profile.id, profileRevision: saved.profile.revision,
+    profileName: saved.profile.definition.name, definition: saved.profile.definition, dates,
+    classWindows: Object.fromEntries(dates.map(day => [day, { [data.classId]: { startTime: "11:00", endTime: "11:50" } }])),
+    testingWindows: dates.flatMap(day => testingBlocks.map(({ id, ...block }) => ({ ...block, blockId: id, date: day, studentIds: [data.studentId] }))),
+    status: options.cancelled ? "cancelled" : "scheduled", createdBy: data.adminId, createdAt: "1999-12-01T12:00:00.000Z" };
+  await pool.query("UPDATE classpilot_school_schedules SET config=$2::jsonb WHERE school_id=$1", [data.schoolId, JSON.stringify({ ...context.config, profileApplications: [application] })]);
+  const input = { schoolId: data.schoolId, actorId: data.adminId, applicationId: application.id, revision: saved.revision };
+  return { ...data, saved, application, input };
+}
+async function historyContext(data: Awaited<ReturnType<typeof historyFixture>>, status = "ended", released = true) {
+  const id = randomUUID(), window = data.application.testingWindows[0]!;
+  await pool.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,status,assigned_staff_id,coverage_group_id,created_by,starts_at,ends_at,ended_at,schedule_profile_application_id,schedule_profile_date,schedule_profile_block_id) VALUES($1,$2,'supervision_group','Historical supervision',$3,$4,$5,$6,'2000-01-03T14:00:00Z','2000-01-03T14:45:00Z',$7,$8,$9,$10)",
+    [id, data.schoolId, status, data.specialistId, data.scopeId, data.adminId, status === "ended" ? "2000-01-03T14:45:00Z" : null, data.application.id, window.date, window.blockId]);
+  await pool.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,released_at) VALUES($1,$2,$3,$4,$5)", [data.schoolId, id, data.studentId, data.adminId, released ? "2000-01-03T14:45:00Z" : null]);
+  return id;
+}
+async function historyOutcome(data: Awaited<ReturnType<typeof historyFixture>>, status: string, contextId?: string) {
+  const window = data.application.testingWindows[0]!;
+  const outcome = { applicationId: data.application.id, date: window.date, blockId: window.blockId, status, code: "FIXTURE", updatedAt: "2000-01-03T15:00:00Z", ...(contextId ? { contextId } : {}) };
+  await pool.query("UPDATE classpilot_school_schedules SET profile_activation_outcomes=$2::jsonb WHERE school_id=$1", [data.schoolId, JSON.stringify({ [`${outcome.applicationId}:${outcome.date}:${outcome.blockId}`]: outcome })]);
+}
+
+test("history hiding retains profiles, dated snapshots, actual supervision and receipts and is idempotently audited", async () => {
+  const data = await historyFixture({ testing: true }), contextId = await historyContext(data);
+  await historyOutcome(data, "started", contextId);
+  await pool.query("INSERT INTO audit_logs(school_id,user_id,action,entity_type,entity_id) VALUES($1,$2,'fixture.retained','schedule_profile_application',$3)", [data.schoolId, data.adminId, data.application.id]);
+  const before = (await pool.query("SELECT config,profile_activation_outcomes FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  const contextBefore = (await pool.query("SELECT * FROM classpilot_supervision_contexts WHERE id=$1", [contextId])).rows;
+  const studentsBefore = (await pool.query("SELECT * FROM classpilot_supervision_students WHERE context_id=$1", [contextId])).rows;
+  const overview = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.equal(overview.applicationSummaries[data.application.id]?.historyRemoval.canRequest, true);
+  const outcomes = await Promise.all([0, 1].map(() => scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input))));
+  const result = outcomes[0]!;
+  assert.deepEqual(outcomes[1], result);
+  assert.equal(result.revision, data.saved.revision + 1);
+  const after = (await pool.query("SELECT config,profile_activation_outcomes FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0];
+  assert.deepEqual(after.config, { ...before.config, profileApplications: [{ ...data.application, historyHiddenAt: result.historyHiddenAt, historyHiddenBy: data.adminId }] });
+  assert.deepEqual(after.profile_activation_outcomes, before.profile_activation_outcomes);
+  assert.deepEqual((await pool.query("SELECT * FROM classpilot_supervision_contexts WHERE id=$1", [contextId])).rows, contextBefore);
+  assert.deepEqual((await pool.query("SELECT * FROM classpilot_supervision_students WHERE context_id=$1", [contextId])).rows, studentsBefore);
+  const loaded = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.equal(loaded.applications[0]?.historyHiddenAt, result.historyHiddenAt);
+  assert.equal(loaded.applicationSummaries[data.application.id]?.historyRemoval.reason, "hidden");
+  assert.equal(loaded.testingStatuses[0]?.status, "ended");
+  const audit = (await pool.query("SELECT user_id,metadata FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.history_hidden'", [data.schoolId])).rows;
+  assert.equal(audit.length, 1); assert.equal(audit[0].user_id, data.adminId); assert.equal(audit[0].metadata.revision, result.revision);
+  assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='fixture.retained'", [data.schoolId])).rows[0].n, 1);
+  const effective = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(resolveClassBaseWindow({ id: data.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50", scheduleRule: defaultClassScheduleRule() }, "2000-01-03", effective.config, {}), { startTime: "11:00", endTime: "11:50" });
+  await scoped(data.schoolId, () => service.saveScheduleProfile({ schoolId: data.schoolId, actorId: data.adminId, id: data.saved.profile.id,
+    profileRevision: data.saved.profile.revision, revision: result.revision, definition: { ...data.saved.profile.definition, name: "Reusable after history hide" } }));
+  const afterEdit = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(afterEdit.config.profileApplications, effective.config.profileApplications);
+  assert.deepEqual((await pool.query("SELECT profile_activation_outcomes FROM classpilot_school_schedules WHERE school_id=$1", [data.schoolId])).rows[0].profile_activation_outcomes, before.profile_activation_outcomes);
+});
+
+test("history removal is school-local, rejects today or any later selected date, and permits finished non-start outcomes", async () => {
+  for (const dates of [["2026-09-14"], ["2000-01-03", "2026-09-15"]]) {
+    const data = await historyFixture({ dates, cancelled: true });
+    await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory({ ...data.input, now: new Date("2026-09-15T03:59:59Z") })), { status: 409, code: "SCHEDULE_APPLICATION_HISTORY_UNAVAILABLE" });
+  }
+  const midnight = await historyFixture({ dates: ["2026-09-14"] });
+  assert.equal((await scoped(midnight.schoolId, () => service.hideScheduleProfileApplicationHistory({ ...midnight.input, now: new Date("2026-09-15T04:00:00Z") }))).hidden, true);
+  for (const status of ["failed", "missed", "cancelled"]) {
+    const data = await historyFixture({ testing: true });
+    await historyOutcome(data, status);
+    assert.equal((await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId))).applicationSummaries[data.application.id]?.historyRemoval.reason, "available");
+    assert.equal((await scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input))).hidden, true);
+  }
+  const cancelled = await historyFixture({ testing: true, cancelled: true });
+  assert.equal((await scoped(cancelled.schoolId, () => service.hideScheduleProfileApplicationHistory(cancelled.input))).hidden, true, "cancelled without a start needs no actual context");
+});
+
+test("history removal refuses pending, live, releasing, unclosed student rows and missing or mismatched actual supervision", async () => {
+  for (const state of ["pending", "active", "releasing", "unreleased", "missing", "cancelled-missing", "unknown", "mismatch"] as const) {
+    const data = await historyFixture({ testing: true, cancelled: state === "releasing" || state === "cancelled-missing" });
+    if (["active", "releasing", "unreleased"].includes(state)) await historyContext(data, state === "unreleased" ? "ended" : "active", false);
+    if (state === "missing" || state === "cancelled-missing") await historyOutcome(data, "started", randomUUID());
+    if (state === "unknown") await historyOutcome(data, "unknown");
+    if (state === "mismatch") { const contextId = await historyContext(data); await pool.query("UPDATE classpilot_supervision_contexts SET schedule_profile_block_id='different' WHERE id=$1", [contextId]); await historyOutcome(data, "started", contextId); }
+    const overview = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+    assert.equal(overview.applicationSummaries[data.application.id]?.historyRemoval.canRequest, false, state);
+    await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input)), { status: 409, code: "SCHEDULE_APPLICATION_HISTORY_UNAVAILABLE" });
+    assert.equal((await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId))).revision, data.saved.revision);
+  }
+});
+
+test("history removal rechecks scope, membership, entitlement and revision and serializes a changed supervision state", async () => {
+  const data = await historyFixture({ testing: true }), other = await fixture();
+  const contextId = await historyContext(data);
+  await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory({ ...data.input, revision: 0 })), { code: "SCHEDULE_PREVIEW_STALE", status: 409 });
+  await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory({ ...data.input, actorId: data.teacherId })), { code: "FORBIDDEN", status: 403 });
+  await assert.rejects(scoped(other.schoolId, () => service.hideScheduleProfileApplicationHistory({ ...data.input, schoolId: other.schoolId, actorId: other.adminId })), { code: "NOT_FOUND", status: 404 });
+  await pool.query("UPDATE product_licenses SET status='cancelled' WHERE school_id=$1", [data.schoolId]);
+  await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input)), { code: "CLASSPILOT_NOT_ENTITLED" });
+  await pool.query("UPDATE product_licenses SET status='active' WHERE school_id=$1", [data.schoolId]);
+  const client = await pool.connect();
+  let pending: Promise<unknown> | undefined;
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT id FROM schools WHERE id=$1 FOR UPDATE", [data.schoolId]);
+    pending = scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input));
+    await client.query("UPDATE classpilot_supervision_contexts SET status='active',ended_at=NULL WHERE id=$1", [contextId]);
+    await client.query("COMMIT");
+    await assert.rejects(pending, { code: "SCHEDULE_APPLICATION_HISTORY_UNAVAILABLE", status: 409 });
+  } finally { await client.query("ROLLBACK"); client.release(); await pending?.catch(() => undefined); }
+  await pool.query("UPDATE school_memberships SET status='disabled' WHERE school_id=$1 AND user_id=$2", [data.schoolId, data.adminId]);
+  await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input)), { code: "FORBIDDEN", status: 403 });
+  assert.equal((await pool.query("SELECT count(*)::int n FROM audit_logs WHERE school_id=$1 AND action='classpilot.schedule_profile.history_hidden'", [data.schoolId])).rows[0].n, 0);
+});
+
+test("a failed history audit rolls back its visibility metadata and scheduling revision", async () => {
+  const data = await historyFixture(), suffix = randomUUID().replaceAll("-", ""), name = `history_hide_fail_${suffix}`;
+  await pool.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture audit failure'; END $$`);
+  await pool.query(`CREATE TRIGGER ${name} BEFORE INSERT ON audit_logs FOR EACH ROW WHEN (NEW.school_id = '${data.schoolId}') EXECUTE FUNCTION ${name}()`);
+  try {
+    await assert.rejects(scoped(data.schoolId, () => service.hideScheduleProfileApplicationHistory(data.input)), /Failed query|fixture audit failure/);
+    const current = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+    assert.deepEqual(current.config.profileApplications, [data.application]); assert.equal(current.revision, data.saved.revision);
+  } finally { await pool.query(`DROP TRIGGER ${name} ON audit_logs`); await pool.query(`DROP FUNCTION ${name}()`); }
+});
+
+test("the history route requires admin scope and a strict revision body and returns retained hide metadata", async () => {
+  const data = await historyFixture({ role: "school_admin" }), other = await fixture();
+  const { default: router } = await import("../src/routes/classpilot/scheduleProfiles.js");
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot/admin/schedule-profiles", router);
+  app.use(((error, _req, res, _next) => { const known = error as Error & { status?: number; code?: string }; res.status(known.status ?? 500).json({ error: known.message, code: known.code }); }) satisfies express.ErrorRequestHandler);
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/admin/schedule-profiles/applications/${data.application.id}/history`;
+  const call = (body: unknown, userId?: string, schoolId = data.schoolId) => fetch(url, { method: "DELETE", headers: { "content-type": "application/json", ...(userId ? { authorization: `Bearer ${signUserToken({ userId, email: `${userId}@example.test`, isSuperAdmin: false })}`, "x-school-id": schoolId } : {}) }, body: JSON.stringify(body) });
+  try {
+    assert.equal((await call({ revision: 1 })).status, 401);
+    assert.equal((await call({ revision: 1 }, data.teacherId)).status, 403);
+    assert.equal((await call({ revision: 1 }, data.adminId, other.schoolId)).status, 403);
+    assert.equal((await call({ revision: 1 }, other.adminId, other.schoolId)).status, 404);
+    for (const body of [{}, [], { revision: "1" }, { revision: -1 }, { revision: 1, schoolId: other.schoolId }, { revision: 1, historyHiddenAt: "2000-01-01T00:00:00Z" }]) assert.equal((await call(body, data.adminId)).status, 400);
+    assert.equal((await call({ revision: 0 }, data.adminId)).status, 409);
+    const response = await call({ revision: data.saved.revision }, data.adminId);
+    assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json() as Awaited<ReturnType<typeof service.hideScheduleProfileApplicationHistory>>;
+    assert.equal(body.hidden, true); assert.equal(body.applicationId, data.application.id); assert.equal(body.revision, data.saved.revision + 1); assert.ok(Number.isFinite(Date.parse(body.historyHiddenAt)));
+    assert.deepEqual(await (await call({ revision: data.saved.revision }, data.adminId)).json(), body);
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
 test("overview summaries use committed dated snapshots and never write their metadata into the schedule", async () => {
   const data = await fixture();
   let noMeeting = datePlusDays(date, 1);
@@ -121,7 +274,9 @@ test("overview summaries use committed dated snapshots and never write their met
   const deleted = await scoped(data.schoolId, () => service.deleteScheduleProfile({ ...request(data, saved), revision: applied.revision }));
   const withoutSource = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
   assert.deepEqual(withoutSource.applications, loaded.applications);
-  assert.deepEqual(withoutSource.applicationSummaries, loaded.applicationSummaries);
+  assert.deepEqual(withoutSource.applicationSummaries, { ...loaded.applicationSummaries, [applied.application.id]: {
+    ...summary, historyRemoval: { ...summary.historyRemoval, checkedAt: withoutSource.summariesCheckedAt },
+  } });
   const cancelled = await scoped(data.schoolId, () => service.cancelScheduleProfileApplication({ schoolId: data.schoolId, actorId: data.adminId, applicationId: applied.application.id, revision: deleted.revision }));
   const final = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
   assert.equal(final.revision, cancelled.revision);

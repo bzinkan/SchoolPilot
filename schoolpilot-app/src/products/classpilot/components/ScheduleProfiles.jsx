@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import ScheduleTestingGroupPicker from './ScheduleTestingGroupPicker';
 import ScheduleDayPlanner from './ScheduleDayPlanner';
 import ScheduleProfilesOverview from './ScheduleProfilesOverview';
-import { cancellationState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
+import { cancellationState, historyRemovalState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
 import { useScheduleProfileDraftReview } from './useScheduleProfileDraftReview';
 
 const API = '/classpilot/admin/schedule-profiles';
@@ -114,6 +114,17 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const { activeSchoolId, user } = useAuth();
   const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: async ({ signal }) => { const overviewRequestStartedAt = performance.now(); const result = await apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }); return { ...result, overviewRequestStartedAt, overviewReceivedAt: performance.now() }; }, refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
   const [session, setSession] = useState(null);
+  const hoursQuery = useQuery({
+    queryKey: ['/api/settings', 'day-planner-hours', activeSchoolId, user?.id],
+    queryFn: async ({ signal }) => {
+      const settings = await apiRequest('GET', '/settings', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } });
+      return { enableTrackingHours: settings.enableTrackingHours, trackingStartTime: settings.trackingStartTime, trackingEndTime: settings.trackingEndTime };
+    },
+    enabled: Boolean(session),
+    retry: false,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
   const currentSessionId = useRef(null);
   useEffect(() => { currentSessionId.current = session?.id; }, [session?.id]);
   const [testingPicker, setTestingPicker] = useState(false);
@@ -121,6 +132,11 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const editGroup = useRef(null);
   const listScroll = useRef(0);
   const listHeading = useRef(null);
+  const applicationsHeading = useRef(null);
+  const historyOpener = useRef(null);
+  const [removingHistory, setRemovingHistory] = useState(null);
+  const [historyError, setHistoryError] = useState('');
+  const [historyStale, setHistoryStale] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [cancelling, setCancelling] = useState(null);
   const [cancelError, setCancelError] = useState('');
@@ -152,6 +168,8 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const statusUnavailable = Boolean(query.error || dateStale);
   const cancelAvailability = cancelling ? cancellationState(cancelling.application, data?.applicationSummaries?.[cancelling.application.id], serverNow, statusUnavailable, latestServerNow) : null;
   const cancellationChanged = Boolean(cancelling && (cancelStale || cancelling.revision !== data?.revision));
+  const historyAvailability = removingHistory ? historyRemovalState(removingHistory.application, data?.applicationSummaries?.[removingHistory.application.id], statusUnavailable) : null;
+  const historyChanged = Boolean(removingHistory && (historyStale || removingHistory.revision !== data?.revision || !data?.applications.some(application => application.id === removingHistory.application.id && !application.historyHiddenAt)));
   const showEditor = Boolean(session && (session.mode === 'edit' || session.customize));
   const workspaceOpen = Boolean(session);
   useEffect(() => { onWorkspaceChange?.(workspaceOpen); }, [workspaceOpen, onWorkspaceChange]);
@@ -406,6 +424,37 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       staff: [...current.staff.filter(person => !people.has(person.id)), ...[...people.values()].map(person => ({ id: person.id, name: person.displayName || person.email || 'Unavailable staff member' }))],
     } : current);
   };
+  const requestDeleteHistory = (application, opener) => {
+    if (busyRef.current || blockedByAdvancedDraft || !historyRemovalState(application, data.applicationSummaries?.[application.id], statusUnavailable).canRequest) return;
+    historyOpener.current = opener;
+    setHistoryError(''); setHistoryStale(false);
+    setRemovingHistory({ application: copy(application), revision: data.revision, schoolId: activeSchoolId, actorId: user.id });
+  };
+  const deleteHistory = () => execute(async () => {
+    const origin = removingHistory;
+    if (!origin || origin.schoolId !== activeSchoolId || origin.actorId !== user.id || historyChanged || !historyAvailability?.canRequest || blockedByAdvancedDraft) return;
+    let result;
+    try {
+      result = await apiRequest('DELETE', `${API}/applications/${encodeURIComponent(origin.application.id)}/history`, { revision: origin.revision }, { headers: { 'X-School-Id': origin.schoolId } });
+    } catch (failure) {
+      if (!mounted.current) return;
+      const stale = [404, 409].includes(failure?.response?.status);
+      setHistoryStale(stale);
+      setHistoryError(`${errorMessage(failure)}${stale ? ' Close this confirmation, refresh status, and reopen it before trying again.' : ''}`);
+      if (stale) { setPreview(null); await query.refetch().catch(() => undefined); }
+      return;
+    }
+    if (!mounted.current || origin.schoolId !== activeSchoolId || origin.actorId !== user.id) return;
+    client.setQueryData([...KEY, origin.schoolId], current => current ? { ...current, revision: result.revision,
+      applications: current.applications.map(application => application.id === origin.application.id ? { ...application, historyHiddenAt: result.historyHiddenAt } : application),
+    } : current);
+    historyOpener.current = null;
+    setRemovingHistory(null); setPreview(null);
+    setNotice('History entry deleted. Saved profiles, activity reports, and audit records were preserved.'); setCommittedRefreshNotice(null);
+    requestAnimationFrame(() => applicationsHeading.current?.focus());
+    try { await refresh(true); }
+    catch { if (mounted.current) { setNotice('History entry deleted; list refresh unavailable.'); setCommittedRefreshNotice('History entry deleted. Saved profiles, activity reports, and audit records were preserved.'); } }
+  });
   const refreshCreatedGroup = async group => {
     const originSessionId = session?.id;
     const isCurrent = () => mounted.current && currentSessionId.current === originSessionId;
@@ -486,7 +535,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {notice && <p role="status" className="text-sm text-green-700 dark:text-green-400">{notice}</p>}{deleteRefreshFailed && <Button size="sm" variant="outline" disabled={busy} onClick={retryDeletedList}>Retry profile list refresh</Button>}{committedRefreshNotice && <Button size="sm" variant="outline" disabled={busy} onClick={retryCommittedList}>Retry schedule list refresh</Button>}
     {!session && error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not schedule it.</p>
-      <ScheduleProfilesOverview data={data} busy={busy} blocked={blockedByAdvancedDraft} refreshing={query.isFetching} statusUnavailable={statusUnavailable} serverNow={serverNow} latestServerNow={latestServerNow} testingStatuses={testingStatuses} statusReasons={testingStatusReasons} onOpen={open} onDelete={requestDelete} onCancel={requestCancel} onRefresh={query.refetch} />
+      <ScheduleProfilesOverview data={data} busy={busy} blocked={blockedByAdvancedDraft} refreshing={query.isFetching} statusUnavailable={statusUnavailable} serverNow={serverNow} latestServerNow={latestServerNow} testingStatuses={testingStatuses} statusReasons={testingStatusReasons} onOpen={open} onDelete={requestDelete} onCancel={requestCancel} onDeleteHistory={requestDeleteHistory} onRefresh={query.refetch} applicationsHeadingRef={applicationsHeading} />
     </>}
   </CardContent></Card>
     {session && data && <section ref={workspaceRef} aria-label="Schedule profile workspace" className="min-w-0 space-y-5" data-testid="schedule-profile-workspace" onBlurCapture={() => { editGroup.current = null; }}>
@@ -518,7 +567,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
           <p className="text-sm text-muted-foreground">{regularSchedule && meetingClasses.length > 0 ? `${meetingClasses.length} classes meet on this day. ` : ''}Load the whole day, then adjust or remove classes. Unchanged classes keep following their regular schedule.</p>
           {loadProblem && <p role="alert" className="text-sm text-destructive">{loadProblem}</p>}
           <div className="flex flex-wrap gap-2"><Button disabled={!regularSchedule || !meetingClasses.length || Boolean(loadProblem) || blockedByAdvancedDraft} onClick={loadRegularSchedule}>Load regular schedule</Button><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={() => edit({ setup: false })}>Start blank</Button></div>
-        </div> : <ScheduleDayPlanner key={session.id} definition={session.definition} catalog={data} regularSchedule={regularSchedule} referenceDate={referenceDate} review={draftReview} reviewRetry={refreshReference} validReviewDate={isReferenceDate(referenceDate)} savedReview={session.mode === 'view' && session.savedNotice}
+        </div> : <ScheduleDayPlanner key={session.id} definition={session.definition} catalog={data} regularSchedule={regularSchedule} referenceDate={referenceDate} hoursQuery={hoursQuery} review={draftReview} reviewRetry={refreshReference} validReviewDate={isReferenceDate(referenceDate)} savedReview={session.mode === 'view' && session.savedNotice}
           filters={session.plannerFilters} onFiltersChange={plannerFilters => setSession(current => ({ ...current, plannerFilters }))}
           plannerView={plannerView} onPlannerViewChange={setPlannerView}
           collapsedGrades={session.collapsedGrades} onCollapsedGradesChange={collapsedGrades => setSession(current => ({ ...current, collapsedGrades }))}
@@ -535,6 +584,17 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       seedGroupMetadata(groups);
       edit({ definition: { ...session.definition, testingBlocks: [...session.definition.testingBlocks, ...blocks] }, activeTarget: blocks[0] ? { blockId: blocks[0].id } : null, focusTarget: blocks[0] ? { blockId: blocks[0].id } : null });
     }} onGroupSaved={refreshCreatedGroup} />}
+
+    <AlertDialog open={Boolean(removingHistory)} onOpenChange={open => { if (!open && !busyRef.current) setRemovingHistory(null); }}>
+      <AlertDialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => (historyOpener.current?.isConnected ? historyOpener.current : applicationsHeading.current)?.focus()); }}>
+        <AlertDialogHeader><AlertDialogTitle>Delete from history?</AlertDialogTitle><AlertDialogDescription asChild><div className="space-y-2"><p>Remove <strong>{removingHistory?.application.profileName}</strong> and all its dates below from the history list?</p><p>The reusable profile, applied schedule records, student activity reports, and audit records will be preserved. This does not cancel or change any schedule.</p></div></AlertDialogDescription></AlertDialogHeader>
+        <ul className="max-h-48 list-inside list-disc overflow-y-auto text-sm">{removingHistory?.application.dates.map(date => <li key={date}>{scheduleDateText(date)}</li>)}</ul>
+        {historyChanged && <p role="alert" className="text-sm text-destructive">Scheduling changed. Close this confirmation, refresh status, and reopen it before deleting from history.</p>}
+        {!historyChanged && removingHistory && !historyAvailability?.canRequest && <p role="alert" className="text-sm text-destructive">History removal is unavailable. All application dates must be past and supervision must have ended. Close this confirmation and refresh status.</p>}
+        {historyError && <p role="alert" className="text-sm text-destructive">{historyError}</p>}
+        <AlertDialogFooter><AlertDialogCancel disabled={busy}>Keep history entry</AlertDialogCancel><Button variant="destructive" disabled={busy || blockedByAdvancedDraft || historyChanged || !historyAvailability?.canRequest} onClick={deleteHistory}>{busy ? 'Deleting…' : 'Delete from history'}</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <AlertDialog open={Boolean(cancelling)} onOpenChange={open => { if (!open && !busyRef.current) setCancelling(null); }}>
       <AlertDialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => (cancelOpener.current?.isConnected ? cancelOpener.current : listHeading.current)?.focus()); }}>

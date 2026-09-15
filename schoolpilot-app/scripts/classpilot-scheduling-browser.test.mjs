@@ -306,7 +306,9 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     config = { ...config, yearStart: null, yearEnd: null, cycleAnchorDate: null, periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {} };
     await page.setViewportSize({ width: 1365, height: 950 });
     await page.reload();
-    await page.getByText("No profiles yet. Create your first special-day plan, then apply it to the dates you need.", { exact: true }).waitFor();
+    await page.getByText("No profiles yet. Create your first special-day plan, then apply it to the dates you need.", { exact: true }).waitFor().catch(async error => {
+      throw new Error(`${error.message}; page errors: ${JSON.stringify(errors)}; rendered page: ${await page.locator('body').innerText()}`);
+    });
     assert.equal(await createProfile.isEnabled(), true);
     await page.screenshot({ path: path.join(artifactDir, "profiles-empty-desktop.png"), fullPage: true, animations: "disabled" });
     await bellsTab.click();
