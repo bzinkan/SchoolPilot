@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applicationCancellation, createApplicationTimingResolver, summarizeScheduleApplications } from "../src/services/classpilotScheduleApplicationSummaries.js";
+import { applicationCancellation, applicationHistoryRemoval, createApplicationTimingResolver, summarizeScheduleApplications, type ApplicationHistorySupervision } from "../src/services/classpilotScheduleApplicationSummaries.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
 import type { ProfileSupervisionStatus } from "../src/services/classpilotScheduleProfileSupervision.js";
 import { defaultClassScheduleRule, emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
@@ -19,6 +19,33 @@ function application(overrides: Partial<ScheduleProfileApplication> = {}): Sched
 }
 const block = (id: string, blockDate = date) => ({ blockId: id, date: blockDate, name: id, coverageGroupId: "group", assignedStaffId: "teacher", studentIds: ["student"], startTime: "09:00", endTime: "10:45" });
 const timing = (overrides: Partial<Parameters<typeof createApplicationTimingResolver>[0]> = {}) => createApplicationTimingResolver({ classes, config, calendar: {}, schoolTimezone, ...overrides });
+
+test("history removal uses all dates and the school-local midnight boundary, including cancelled and no-change dates", () => {
+  const app = application({ dates: ["2026-09-13", date], status: "cancelled", classWindows: {}, testingWindows: [] });
+  const check = (checkedAt: string, value = app) => applicationHistoryRemoval({ application: value, testingStatuses: [], supervision: [], schoolTimezone, now: new Date(checkedAt) });
+  assert.equal(check("2026-09-15T03:59:59Z").reason, "not_past");
+  assert.deepEqual(check("2026-09-15T04:00:00Z"), { canRequest: true, reason: "available", checkedAt: "2026-09-15T04:00:00.000Z" });
+  assert.equal(check("2026-09-15T04:00:00Z", { ...app, dates: [...app.dates, "2026-09-16"] }).reason, "not_past");
+  assert.equal(check("2026-09-15T04:00:00Z", { ...app, historyHiddenAt: "2026-09-15T04:00:00Z", historyHiddenBy: "admin" }).reason, "hidden");
+});
+
+test("history removal requires terminal outcomes and independently resolved, released actual supervision", () => {
+  const app = application({ testingWindows: [block("test")] });
+  const checkedAt = new Date("2026-09-15T12:00:00Z");
+  const ended: ApplicationHistorySupervision = { id: "context", applicationId: app.id, date, blockId: "test", status: "ended", endedAt: now, hasUnreleasedStudents: false };
+  const status: ProfileSupervisionStatus = { applicationId: app.id, date, blockId: "test", status: "ended", code: "ENDED", contextId: ended.id };
+  const check = (testingStatuses = [status], supervision: ApplicationHistorySupervision[] | undefined = [ended]) => applicationHistoryRemoval({ application: app, testingStatuses, supervision, schoolTimezone, now: checkedAt });
+  assert.equal(check().reason, "available");
+  for (const terminal of ["failed", "missed", "cancelled"] as const) assert.equal(check([{ ...status, status: terminal, contextId: undefined }], []).reason, "available");
+  for (const pending of ["pending", "active", "releasing"] as const) assert.equal(check([{ ...status, status: pending }]).reason, "supervision_pending");
+  assert.equal(check([], []).reason, "unavailable");
+  assert.equal(check([status, status]).reason, "unavailable");
+  assert.equal(check([status], []).reason, "unavailable", "an ended outcome cannot replace the actual context");
+  for (const patch of [{ status: "active" }, { hasUnreleasedStudents: true }]) assert.equal(check([status], [{ ...ended, ...patch }]).reason, "supervision_pending");
+  for (const patch of [{ status: "unknown" }, { endedAt: null }, { endedAt: new Date("2030-01-01") }, { applicationId: "other" }, { blockId: "unknown" }]) assert.equal(check([status], [{ ...ended, ...patch }]).reason, "unavailable");
+  assert.equal(applicationHistoryRemoval({ application: app, testingStatuses: [status], supervision: [ended], unresolvedApplicationIds: [app.id], schoolTimezone, now: checkedAt }).reason, "unavailable");
+  assert.equal(applicationHistoryRemoval({ application: { ...app, testingWindows: [] }, testingStatuses: [], supervision: [{ ...ended, status: "active" }], schoolTimezone, now: checkedAt }).reason, "supervision_pending", "unexpected actual contexts cannot be hidden by an empty snapshot");
+});
 function summaries(apps: ScheduleProfileApplication[], statuses: ProfileSupervisionStatus[] = [], checkedAt = now) {
   return summarizeScheduleApplications({ applications: apps, testingStatuses: statuses, timing: timing(), schoolTimezone, now: checkedAt });
 }

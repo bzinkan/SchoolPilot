@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
+const DEFAULT_SCHOOL_HOURS = { enableTrackingHours: true, trackingStartTime: '08:00', trackingEndTime: '16:00' };
+
 async function createProfileFixture(context) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const entry = `import React from 'react';import {createRoot} from 'react-dom/client';import {MemoryRouter} from 'react-router-dom';import {QueryClientProvider} from '@tanstack/react-query';import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';import {queryClient as client} from '/src/lib/queryClient.js';import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';import '/src/index.css';function ScopeBridge(){const auth=useAuth();window.switchFixtureSchool=auth.switchSchool;return null;}createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement('main',{className:'mx-auto max-w-6xl p-6'},React.createElement(ScopeBridge),React.createElement(Scheduling))))));`;
@@ -122,7 +124,11 @@ function overviewCatalog(catalog) {
       return { date, phase: application.status === 'cancelled' ? 'cancelled' : date > catalog.schoolLocalToday ? 'future' : date === catalog.schoolLocalToday ? 'today' : 'past', customTimeCount: rules.filter(rule => rule.action === 'time').length, skippedClassCount: rules.filter(rule => rule.action === 'skip').length, testingBlockCount: testing.length, testingOutcomes, testingStatusByBlock };
     });
     const canRequest = application.status !== 'cancelled' && dates.some(date => ['today', 'future'].includes(date.phase));
-    return [application.id, { dates, nextFutureDate: dates.filter(date => date.phase === 'future').map(date => date.date).sort()[0] || null, appliedToday: dates.some(date => date.phase === 'today'), cancellation: { canRequest, cutoffAt: canRequest ? `${application.dates.slice().sort()[0]}T13:00:00Z` : null, reason: canRequest ? null : application.status === 'cancelled' ? 'cancelled' : 'started' } }];
+    const allPast = application.dates.length > 0 && application.dates.every(date => date < catalog.schoolLocalToday);
+    const unknown = dates.some(date => date.testingOutcomes.unknown > 0);
+    const supervisionPending = dates.some(date => date.testingOutcomes.pending + date.testingOutcomes.active + date.testingOutcomes.releasing > 0);
+    const historyReason = application.historyHiddenAt ? 'hidden' : !allPast ? 'not_past' : unknown ? 'unavailable' : supervisionPending ? 'supervision_pending' : 'available';
+    return [application.id, { dates, nextFutureDate: dates.filter(date => date.phase === 'future').map(date => date.date).sort()[0] || null, appliedToday: dates.some(date => date.phase === 'today'), cancellation: { canRequest, cutoffAt: canRequest ? `${application.dates.slice().sort()[0]}T13:00:00Z` : null, reason: canRequest ? null : application.status === 'cancelled' ? 'cancelled' : 'started' }, historyRemoval: { canRequest: historyReason === 'available', reason: historyReason, checkedAt: catalog.summariesCheckedAt || '2026-09-08T12:00:00Z' } }];
   }));
   return { ...catalog, applications: catalog.applications.map(application => ({ classWindows: {}, ...application })), applicationSummaries: { ...applicationSummaries, ...catalog.applicationSummaries }, summariesCheckedAt: catalog.summariesCheckedAt || '2026-09-08T12:00:00Z', nextSchoolDateAt: catalog.nextSchoolDateAt || '2026-09-09T04:00:00Z' };
 }
@@ -151,8 +157,14 @@ async function createDraftReviewFixture(context) {
       { id: 'vatter-group', name: 'Science MAP group', staffIds: ['vatter'], studentIds: ['synthetic-e', 'synthetic-f'], classParticipation: [{ classId: 'science', count: 2, total: 22 }] },
     ],
   };
-  const reviews = [], saves = [], previews = [], applies = [], deletions = [], cancellations = [], errors = [];
+  const reviews = [], saves = [], previews = [], applies = [], deletions = [], cancellations = [], historyDeletions = [], errors = [];
   const control = { reviewResponse: null, saveResponse: null, saveTransform: definition => definition, previewDateTransform: value => value, staleCatalog: false, failCatalogRefresh: false, failOverviewRead: false, catalogResponse: null, catalogReads: [], catalogReadFailures: 0, failSavedReview: false, groupCreates: [], failGroupCreate: false, failDirectory: false, deleteResponse: null, cancelResponse: null, failDeleteRefresh: false, failApplicationRefresh: false, failCancellationRefresh: false, activeSchool: 'school' };
+  control.schoolHours = { ...DEFAULT_SCHOOL_HOURS };
+  control.schoolHoursReads = [];
+  control.schoolHoursResponse = null;
+  control.failSchoolHours = false;
+  control.historyDeleteResponse = null;
+  control.failHistoryRefresh = false;
   const groupSummary = group => ({ id: group.id, schoolId: 'school', name: group.name, active: group.active !== false, updatedAt: '2026-09-08T12:00:00Z', studentCount: group.studentIds.length, inactiveStudentCount: 0, categoryId: 'map-category', category: { id: 'map-category', name: 'NWEA MAP' }, gradeCounts: [{ gradeLevel: '3', count: group.studentIds.length }], staff: group.staffIds.map(id => ({ id, displayName: catalog.staff.find(person => person.id === id)?.name || id })) });
   const project = body => {
     const result = draftReviewFixture(catalog, body.definition, body.referenceDate);
@@ -177,6 +189,13 @@ async function createDraftReviewFixture(context) {
   page.on('pageerror', error => errors.push(error.message));
   const handleApi = async route => {
     const request = route.request(), url = new URL(request.url());
+    if (url.pathname === '/api/settings') {
+      const read = { method: request.method(), schoolId: request.headers()['x-school-id'] || null };
+      control.schoolHoursReads.push(read);
+      const response = await control.schoolHoursResponse?.(read);
+      if (response) return route.fulfill(response);
+      return route.fulfill(control.failSchoolHours ? { status: 503, json: { error: 'School hours are temporarily unavailable.' } } : { json: { ...control.schoolHours, schoolTimezone: catalog.schoolTimezone } });
+    }
     if (url.pathname.endsWith('/auth/me')) { control.activeSchool = request.headers()['x-school-id'] || 'school'; return route.fulfill({ json: { user: { id: request.headers()['x-fixture-admin'] || 'admin', role: 'school_admin' }, activeSchoolId: control.activeSchool, memberships: ['school', 'other-school'].map(id => ({ id: `membership-${id}`, schoolId: id, role: 'school_admin' })), licenses: { classPilot: true } } }); }
     if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
     if (url.pathname.endsWith('/coverage/supervision-groups/browse')) {
@@ -227,6 +246,18 @@ async function createDraftReviewFixture(context) {
       if (catalog.applicationSummaries?.[id]) delete catalog.applicationSummaries[id];
       return route.fulfill({ json: { revision: ++catalog.revision } });
     }
+    if (request.method() === 'DELETE' && /\/schedule-profiles\/applications\/[^/]+\/history$/.test(url.pathname)) {
+      const id = decodeURIComponent(url.pathname.split('/').at(-2)), body = request.postDataJSON();
+      historyDeletions.push({ id, ...body, schoolId: request.headers()['x-school-id'] });
+      const response = await control.historyDeleteResponse?.(id, body);
+      if (response) return route.fulfill(response);
+      const application = catalog.applications.find(row => row.id === id);
+      if (!application) return route.fulfill({ status: 404, json: { error: 'Schedule application not found.' } });
+      if (body.revision !== catalog.revision) return route.fulfill({ status: 409, json: { error: 'Schedules changed. Reload and reopen Delete from history.', code: 'SCHEDULE_PREVIEW_STALE' } });
+      if (!overviewCatalog(catalog).applicationSummaries[id]?.historyRemoval?.canRequest) return route.fulfill({ status: 409, json: { error: 'History removal is unavailable.' } });
+      application.historyHiddenAt = '2026-09-08T12:00:01.000Z';
+      return route.fulfill({ json: { hidden: true, applicationId: id, revision: ++catalog.revision, historyHiddenAt: application.historyHiddenAt } });
+    }
     if (request.method() === 'DELETE' && /\/schedule-profiles\/[^/]+$/.test(url.pathname)) {
       const id = decodeURIComponent(url.pathname.split('/').at(-1)), body = request.postDataJSON();
       deletions.push({ id, ...body, schoolId: request.headers()['x-school-id'] });
@@ -255,14 +286,14 @@ async function createDraftReviewFixture(context) {
       control.catalogReads.push({ schoolId });
       const response = await control.catalogResponse?.(schoolId);
       if (response) return route.fulfill(response);
-      if (control.failOverviewRead || (control.failCatalogRefresh && saves.length) || control.failGroupCatalogRefresh || (control.failDeleteRefresh && deletions.length) || (control.failApplicationRefresh && applies.length) || (control.failCancellationRefresh && cancellations.length)) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
+      if (control.failOverviewRead || (control.failCatalogRefresh && saves.length) || control.failGroupCatalogRefresh || (control.failDeleteRefresh && deletions.length) || (control.failApplicationRefresh && applies.length) || (control.failCancellationRefresh && cancellations.length) || (control.failHistoryRefresh && historyDeletions.length)) { control.catalogReadFailures++; return route.fulfill({ status: 503, json: { error: 'The profile list is temporarily unavailable.' } }); }
       return route.fulfill({ json: overviewCatalog(schoolId === 'school' ? catalog : { ...catalog, profiles: [], applications: [], testingStatuses: [], applicationSummaries: {}, classes: [], staff: [], supervisionGroups: [] }) });
     }
     return route.fulfill({ status: 404, json: { error: `Unexpected fixture request ${url.pathname}` } });
   };
   await page.route('**/api/**', handleApi);
   await page.goto(fixture.url); await page.waitForLoadState('networkidle');
-  return { ...fixture, catalog, reviews, saves, previews, applies, deletions, cancellations, errors, control, handleApi };
+  return { ...fixture, catalog, reviews, saves, previews, applies, deletions, cancellations, historyDeletions, errors, control, handleApi };
 }
 
 async function addTestingBlock(dialog, index, teacher) {    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
@@ -604,6 +635,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     page.on('pageerror', error => errors.push(error.message));
     await page.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url());
+      if (url.pathname === '/api/settings') return route.fulfill({ json: { ...DEFAULT_SCHOOL_HOURS, schoolTimezone: catalog.schoolTimezone } });
       if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
       if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
       if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
@@ -807,6 +839,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     page.on('dialog', prompt => prompt.accept());
     await page.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url());
+      if (url.pathname === '/api/settings') return route.fulfill({ json: { ...DEFAULT_SCHOOL_HOURS, schoolTimezone: catalog.schoolTimezone } });
       if (request.method() !== 'GET' && !url.pathname.endsWith('/schedule-profiles/draft-review')) mutations.push({ path: url.pathname, body: request.postDataJSON() });
       if (url.pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', role: 'school_admin' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { classPilot: true } } });
       if (url.pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture-token' } });
@@ -1229,6 +1262,23 @@ async function openDelete(page, name = 'Old MAP profile') {
   await page.getByRole('button', { name: 'More actions for ' + name, exact: true }).click();
   await page.getByRole('menuitem', { name: 'Delete profile ' + name, exact: true }).click();
   const dialog = page.getByRole('alertdialog', { name: 'Delete profile?', exact: true });
+  await dialog.waitFor(); return dialog;
+}
+
+const historyDeleteButton = (page, application) => applicationRow(page, application.id).getByRole('button', { name: `Delete from history ${application.profileName} ${application.dates.join(', ')}`, exact: true });
+
+function completedHistoryFixture(catalog, id = 'completed-history', dates = ['2026-09-04', '2026-09-07']) {
+  const profile = deletableProfile();
+  const application = appliedSnapshot(profile, id, dates);
+  catalog.profiles = [profile]; catalog.applications = [application];
+  catalog.testingStatuses = application.testingWindows.map(window => ({ applicationId: id, date: window.date, blockId: window.blockId, status: 'ended' }));
+  return { profile, application };
+}
+
+async function openHistoryDelete(page, application) {
+  await showEarlierApplications(page);
+  await historyDeleteButton(page, application).click();
+  const dialog = page.getByRole('alertdialog', { name: 'Delete from history?', exact: true });
   await dialog.waitFor(); return dialog;
 }
 
@@ -2033,4 +2083,341 @@ test('A newer regular-day projection cannot display an older review as globally 
     assert.equal(saves.length, 0);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
+});
+
+test('Configured school hours keep exact fixed bounds during time edits and clip outside meetings without hiding their editors', { timeout: 90_000 }, async context => {
+  const { root, browser, vite, page, catalog, control, saves, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  try {
+    control.schoolHours = { enableTrackingHours: true, trackingStartTime: '08:30', trackingEndTime: '15:10' };
+    Object.assign(catalog.classes[0], { blockStartTime: '12:00', blockEndTime: '14:00' });
+    Object.assign(catalog.classes[1], { blockStartTime: '16:00', blockEndTime: '17:00' });
+    Object.assign(catalog.classes[2], { blockStartTime: '06:00', blockEndTime: '07:00' });
+    Object.assign(catalog.classes[3], { blockStartTime: '07:45', blockEndTime: '09:15' });
+    catalog.profiles = [{ id: 'configured-hours', revision: 2, previewDate: '2026-09-14', definition: {
+      name: 'Configured school hours', grades: [], classIds: catalog.classes.map(row => row.id), classRules: [], testingBlocks: [
+        { id: 'partial-late', name: 'Partly late testing', coverageGroupId: 'vatter-group', assignedStaffId: 'vatter', startTime: '14:50', endTime: '16:00' },
+        { id: 'fully-late', name: 'Fully late testing', coverageGroupId: 'burba-group', assignedStaffId: 'burba', startTime: '16:00', endTime: '17:00' },
+      ],
+    } }];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Configured school hours', exact: true }).click();
+    const header = workspace.locator('[data-planner-time-header][data-school-hours-source="configured"]');
+    await header.waitFor();
+    const assertAxis = async () => {
+      assert.equal(await header.getAttribute('data-axis-start'), '510');
+      assert.equal(await header.getAttribute('data-axis-end'), '910');
+      assert.equal(await header.locator('[data-planner-tick]').first().getAttribute('data-planner-tick'), '510');
+      assert.equal(await header.locator('[data-planner-tick]').last().getAttribute('data-planner-tick'), '910');
+    };
+    await assertAxis();
+    assert.match(await header.locator('[data-planner-tick="510"]').innerText(), /8:30 AM/);
+    assert.match(await header.locator('[data-planner-tick="910"]').innerText(), /3:10 PM/);
+    const evidence = path.resolve(root, '../soc2-evidence/school-hours-planner/browser'); await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: path.join(evidence, 'configured-hours-desktop-light.png'), fullPage: true, animations: 'disabled' });
+
+    const earlyPartial = scheduleRow(workspace, 'Art Studio');
+    assert.match(await earlyPartial.innerText(), /Outside school hours/);
+    assert.match(await earlyPartial.innerText(), /07:45–09:15/);
+    const [earlyBar, earlyTrack] = await Promise.all([earlyPartial.locator('[data-proposed-window="07:45–09:15"]').boundingBox(), earlyPartial.locator('[data-planner-track]').boundingBox()]);
+    assert.ok(earlyBar && earlyTrack && Math.abs(earlyBar.x - earlyTrack.x) <= 1);
+    assert.ok(Math.abs(earlyBar.width / earlyTrack.width - 45 / 400) <= 0.003, 'Only the 45 minutes inside school hours are drawn for the early class');
+    await earlyPartial.getByRole('button', { name: 'Change proposed time for Art Studio: 07:45–09:15', exact: true }).click();
+    assert.equal(await workspace.getByLabel('Art Studio schedule action', { exact: true }).isEnabled(), true, 'The visible portion of a clipped bar opens its inline editor');
+    const latePartial = scheduleRow(workspace, 'Partly late testing');
+    assert.match(await latePartial.innerText(), /Outside school hours/);
+    const [lateBar, lateTrack] = await Promise.all([latePartial.locator('[data-proposed-window="14:50–16:00"]').boundingBox(), latePartial.locator('[data-planner-track]').boundingBox()]);
+    assert.ok(lateBar && lateTrack && Math.abs(lateBar.x + lateBar.width - lateTrack.x - lateTrack.width) <= 1);
+    assert.ok(Math.abs(lateBar.width / lateTrack.width - 20 / 400) <= 0.003, 'The late testing block stops precisely at 3:10 PM');
+    for (const name of ['Burba Reading', 'Vatter Science', 'Fully late testing']) {
+      const row = scheduleRow(workspace, name);
+      assert.match(await row.innerText(), /Outside school hours/);
+      assert.equal(await row.locator('[data-proposed-window]').count(), 0, `${name} remains visible without a fabricated in-range bar`);
+      assert.equal(await row.locator('[data-regular-window]').count(), 0);
+    }
+    await editClass(workspace, 'Burba Reading');
+    await workspace.getByLabel('Burba Reading schedule action', { exact: true }).selectOption('time');
+    assert.equal(await workspace.getByLabel('Burba Reading profile start', { exact: true }).inputValue(), '16:00');
+    assert.equal(await workspace.getByLabel('Burba Reading profile end', { exact: true }).inputValue(), '17:00');
+    await workspace.getByLabel('Burba Reading profile end', { exact: true }).fill('14:00');
+    await workspace.getByLabel('Burba Reading profile start', { exact: true }).fill('13:00');
+    assert.match(await scheduleRow(workspace, 'Burba Reading').innerText(), /Regular time outside school hours/);
+    assert.equal(await scheduleRow(workspace, 'Burba Reading').getByText('Outside school hours', { exact: true }).count(), 0, 'A corrected proposal distinguishes its out-of-hours regular baseline');
+    assert.equal(await scheduleRow(workspace, 'Burba Reading').locator('[data-proposed-window="13:00–14:00"]').count(), 1);
+    await editTesting(workspace, 'Fully late testing');
+    assert.equal(await workspace.getByLabel('Testing block 2 start', { exact: true }).inputValue(), '16:00');
+    assert.equal(await workspace.getByLabel('Testing block 2 end', { exact: true }).inputValue(), '17:00');
+
+    await editClass(workspace, 'Zinkan Math');
+    await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).selectOption('time');
+    const start = workspace.getByLabel('Zinkan Math profile start', { exact: true });
+    await start.fill('01:00');
+    await assertAxis();
+    assert.match(await scheduleRow(workspace, 'Zinkan Math').innerText(), /Outside school hours/);
+    assert.equal(await scheduleRow(workspace, 'Zinkan Math').locator('[data-proposed-window]').getAttribute('data-proposed-window'), '01:00–14:00');
+    await start.fill('13:00');
+    await assertAxis();
+    assert.equal(await scheduleRow(workspace, 'Zinkan Math').locator('[data-proposed-window]').getAttribute('data-proposed-window'), '13:00–14:00');
+    assert.doesNotMatch(await scheduleRow(workspace, 'Zinkan Math').innerText(), /Outside school hours/);
+    await workspace.getByRole('button', { name: 'List', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await assertAxis();
+    assert.equal(await start.inputValue(), '13:00');
+    assert.ok(control.schoolHoursReads.length > 0);
+    assert.ok(control.schoolHoursReads.every(read => read.method === 'GET' && read.schoolId === 'school'), 'School-hour reads use the active school context and do not write settings');
+    assert.equal(saves.length, 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Disabled school hours use a labeled default while invalid and overnight hours keep the planner editable in List', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, saves, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  try {
+    catalog.profiles = [{ id: 'hours-fallback', revision: 2, previewDate: '2026-09-14', definition: { name: 'School hours fallback', grades: [], classIds: ['math'], classRules: [], testingBlocks: [] } }];
+    control.schoolHours = { enableTrackingHours: false, trackingStartTime: '22:00', trackingEndTime: '06:00' };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile School hours fallback', exact: true }).click();
+    const defaultHeader = workspace.locator('[data-planner-time-header][data-school-hours-source="default"]');
+    await defaultHeader.waitFor();
+    assert.equal(await defaultHeader.getAttribute('data-axis-start'), '480');
+    assert.equal(await defaultHeader.getAttribute('data-axis-end'), '960');
+    const defaultNotice = await workspace.locator('[data-school-hours-notice]').innerText();
+    assert.match(defaultNotice, /default/i);
+    assert.match(defaultNotice, /0?8:00/);
+    assert.match(defaultNotice, /16:00|4:00/);
+
+    for (const settings of [
+      { enableTrackingHours: true, trackingStartTime: 'invalid', trackingEndTime: '15:00' },
+      { enableTrackingHours: true, trackingStartTime: '22:00', trackingEndTime: '06:00' },
+    ]) {
+      control.schoolHours = settings;
+      await page.reload(); await page.waitForLoadState('networkidle');
+      await page.getByRole('button', { name: 'Open profile School hours fallback', exact: true }).click();
+      await workspace.getByRole('region', { name: 'Proposed day timetable', exact: true }).waitFor();
+      const notice = workspace.locator('[data-school-hours-notice]');
+      await notice.waitFor();
+      assert.match(await notice.innerText(), /school[- ]hours/i);
+      assert.match(await notice.innerText(), /List/i);
+      assert.match(await notice.innerText(), /invalid|valid|overnight|same.day|daytime.*unavailable|start.*end|end.*start/i);
+      assert.equal(await workspace.locator('[data-planner-time-header]').count(), 0, 'Unavailable configured hours do not silently present the default as school hours');
+      const timeline = workspace.getByRole('button', { name: 'Timeline', exact: true });
+      if (await timeline.isEnabled()) await timeline.click();
+      await workspace.getByRole('region', { name: 'Proposed day timetable', exact: true }).waitFor();
+      await editClass(workspace, 'Zinkan Math');
+      assert.equal(await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).isEnabled(), true);
+      assert.equal(await workspace.getByLabel('Preview schedule for', { exact: true }).inputValue(), '2026-09-14');
+    }
+    assert.equal(saves.length, 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('A school-hours read failure offers List and an explicit retry without discarding inline draft changes', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, saves, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  try {
+    catalog.profiles = [{ id: 'hours-retry', revision: 2, previewDate: '2026-09-14', definition: { name: 'School hours retry', grades: [], classIds: ['math'], classRules: [], testingBlocks: [] } }];
+    control.failSchoolHours = true;
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile School hours retry', exact: true }).click();
+    const retry = workspace.getByRole('button', { name: 'Retry school hours', exact: true });
+    await retry.waitFor();
+    await workspace.getByRole('region', { name: 'Proposed day timetable', exact: true }).waitFor();
+    assert.match(await workspace.locator('[data-school-hours-notice]').innerText(), /school hours/i);
+    assert.equal(await workspace.locator('[data-planner-time-header]').count(), 0);
+    await editClass(workspace, 'Zinkan Math');
+    await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).selectOption('time');
+    await workspace.getByLabel('Zinkan Math profile end', { exact: true }).fill('14:00');
+    await workspace.getByLabel('Zinkan Math profile start', { exact: true }).fill('13:00');
+    const readsBefore = control.schoolHoursReads.length;
+    control.failSchoolHours = false;
+    control.schoolHours = { enableTrackingHours: true, trackingStartTime: '08:30', trackingEndTime: '15:10' };
+    const loaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/settings' && response.status() === 200);
+    await retry.click(); await loaded;
+    await workspace.getByRole('button', { name: 'Timeline', exact: true }).click();
+    const header = workspace.locator('[data-planner-time-header][data-school-hours-source="configured"]');
+    await header.waitFor();
+    assert.equal(await header.getAttribute('data-axis-start'), '510');
+    assert.equal(await header.getAttribute('data-axis-end'), '910');
+    assert.equal(control.schoolHoursReads.length, readsBefore + 1, 'Retry performs exactly one additional read');
+    assert.equal(await workspace.getByLabel('Zinkan Math profile start', { exact: true }).inputValue(), '13:00');
+    assert.equal(await workspace.getByLabel('Zinkan Math profile end', { exact: true }).inputValue(), '14:00');
+    assert.equal(await workspace.locator('[data-class-editor-id]').count(), 1);
+    assert.equal(await retry.count(), 0);
+    assert.equal(saves.length, 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('History deletion confirms every past date, supports mobile keyboard cancellation, and hides only the history entry once', { timeout: 120_000 }, async context => {
+  const { root, browser, vite, page, catalog, historyDeletions, deletions, cancellations, saves, applies, errors } = await createDraftReviewFixture(context);
+  try {
+    const { profile, application } = completedHistoryFixture(catalog); catalog.revision = 19;
+    const saved = structuredClone(profile), snapshot = structuredClone(application), statuses = structuredClone(catalog.testingStatuses);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await showEarlierApplications(page);
+    const opener = historyDeleteButton(page, application);
+    await opener.focus(); await page.keyboard.press('Enter');
+    const dialog = page.getByRole('alertdialog', { name: 'Delete from history?', exact: true });
+    await dialog.waitFor();
+    assert.match(await dialog.innerText(), /Old MAP profile/);
+    assert.match(await dialog.innerText(), /September 4, 2026/);
+    assert.match(await dialog.innerText(), /September 7, 2026/);
+    assert.match(await dialog.innerText(), /reusable profile.*applied schedule records.*student activity reports.*audit records.*preserved/is);
+    const keep = dialog.getByRole('button', { name: 'Keep history entry', exact: true });
+    const confirm = dialog.getByRole('button', { name: 'Delete from history', exact: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const evidence = path.resolve(root, '../soc2-evidence/schedule-history/browser'); await mkdir(evidence, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await page.screenshot({ path: path.join(evidence, `delete-history-mobile-${theme}.png`), fullPage: true, animations: 'disabled' });
+      const bounds = await dialog.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 391 && bounds.y >= 0 && bounds.y + bounds.height <= 845, 'All confirmation content and actions fit a narrow screen: ' + JSON.stringify(bounds));
+    }
+    await keep.focus(); await page.keyboard.press('Tab');
+    assert.equal(await confirm.evaluate(button => button === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    assert.equal(await keep.evaluate(button => button === document.activeElement), true, 'Keyboard focus remains inside the confirmation');
+    await page.keyboard.press('Enter'); await dialog.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.tagName === 'BUTTON' && document.activeElement.textContent.includes('Delete from history'));
+    assert.equal(await opener.evaluate(button => button === document.activeElement), true);
+    assert.equal(historyDeletions.length, 0);
+    await opener.click();
+    await confirm.evaluate(button => { button.click(); button.click(); });
+    await dialog.waitFor({ state: 'hidden' });
+    await page.getByText('History entry deleted. Saved profiles, activity reports, and audit records were preserved.', { exact: true }).waitFor();
+    await page.waitForFunction(() => document.activeElement?.textContent.trim() === 'Applied dates');
+    assert.deepEqual(historyDeletions, [{ id: application.id, revision: 19, schoolId: 'school' }], 'Double confirmation submits one frozen, explicitly scoped request');
+    assert.equal(await applicationRow(page, application.id).count(), 0);
+    assert.equal(application.historyHiddenAt, '2026-09-08T12:00:01.000Z');
+    const { historyHiddenAt, ...retained } = catalog.applications[0];
+    assert.equal(historyHiddenAt, application.historyHiddenAt); assert.deepEqual(retained, snapshot);
+    assert.deepEqual(catalog.profiles, [saved]); assert.deepEqual(catalog.testingStatuses, statuses);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    assert.equal(await applicationRow(page, application.id).count(), 0, 'The hidden entry stays absent after a fresh catalog read');
+    await page.getByRole('button', { name: 'Open profile Old MAP profile', exact: true }).click();
+    await page.getByRole('region', { name: 'Schedule profile workspace', exact: true }).waitFor();
+    assert.deepEqual(catalog.profiles[0], saved, 'The reusable profile remains independently openable');
+    assert.equal(deletions.length + cancellations.length + saves.length + applies.length, 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('History deletion stays unavailable for nonpast dates, unsettled supervision, unknown outcomes, and missing server metadata', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, historyDeletions, errors } = await createDraftReviewFixture(context);
+  try {
+    const profile = deletableProfile(); catalog.profiles = [profile];
+    const cases = [
+      ['today', ['2026-09-08'], 'ended'], ['future', ['2026-09-10'], 'ended'], ['mixed-dates', ['2026-09-07', '2026-09-10'], 'ended'],
+      ['active', ['2026-09-07'], 'active'], ['pending', ['2026-09-07'], 'pending'], ['releasing', ['2026-09-07'], 'releasing'],
+      ['unknown', ['2026-09-07'], 'unknown'], ['missing-permission', ['2026-09-07'], 'ended'], ['missing-check', ['2026-09-07'], 'ended'],
+      ['contradictory-permission', ['2026-09-07'], 'ended'], ['coverage-running', ['2026-09-07'], 'ended'], ['already-hidden', ['2026-09-07'], 'ended'],
+    ];
+    catalog.applications = cases.map(([id, dates]) => appliedSnapshot(profile, id, dates, id === 'already-hidden' ? { historyHiddenAt: '2026-09-08T11:00:00Z' } : {}));
+    catalog.testingStatuses = cases.flatMap(([id, dates, status]) => dates.map(date => ({ applicationId: id, date, blockId: 'old-block', status })));
+    const summaries = overviewCatalog(catalog).applicationSummaries;
+    delete summaries['missing-permission'].historyRemoval;
+    delete summaries['missing-check'].historyRemoval.checkedAt;
+    summaries['contradictory-permission'].historyRemoval = { canRequest: true, reason: 'unavailable', checkedAt: '2026-09-08T12:00:00Z' };
+    summaries['coverage-running'].historyRemoval = { canRequest: false, reason: 'supervision_pending', checkedAt: '2026-09-08T12:00:00Z' };
+    catalog.applicationSummaries = summaries;
+    await page.reload(); await page.waitForLoadState('networkidle'); await showEarlierApplications(page);
+    for (const [id] of cases.filter(([id]) => id !== 'already-hidden')) {
+      await applicationRow(page, id).waitFor();
+      assert.equal(await applicationRow(page, id).getByRole('button', { name: /^Delete from history/ }).count(), 0, id + ' must not expose a destructive action without affirmative server permission');
+    }
+    for (const id of ['active', 'pending', 'releasing', 'coverage-running']) await applicationRow(page, id).getByText('History can be removed after all supervision has ended and testing status is settled.', { exact: true }).waitFor();
+    for (const id of ['unknown', 'missing-permission', 'missing-check', 'contradictory-permission']) await applicationRow(page, id).getByText('History removal availability could not be confirmed. Refresh status to check again.', { exact: true }).waitFor();
+    assert.equal(await applicationRow(page, 'already-hidden').count(), 0);
+    assert.equal(catalog.applications.length, cases.length);
+    assert.equal(historyDeletions.length, 0); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('History deletion freezes revisions and requires a fresh confirmation after stale or missing application responses', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, control, historyDeletions, errors } = await createDraftReviewFixture(context);
+  try {
+    for (const status of [409, 404]) {
+      const { application } = completedHistoryFixture(catalog, 'stale-history-' + status); catalog.revision = status;
+      await page.reload(); await page.waitForLoadState('networkidle');
+      const dialog = await openHistoryDelete(page, application);
+      const beforeRequests = historyDeletions.length, beforeReads = control.catalogReads.length;
+      control.historyDeleteResponse = () => {
+        catalog.revision++;
+        if (status === 404) catalog.applications = [];
+        return { status, json: { error: status === 409 ? 'Schedules changed. Reload and reopen Delete from history.' : 'Schedule application not found.' } };
+      };
+      const confirm = dialog.getByRole('button', { name: 'Delete from history', exact: true });
+      await confirm.evaluate(button => { button.click(); button.click(); });
+      await dialog.getByText('Scheduling changed. Close this confirmation, refresh status, and reopen it before deleting from history.', { exact: true }).waitFor();
+      await page.waitForLoadState('networkidle');
+      assert.equal(await confirm.isDisabled(), true); assert.equal(historyDeletions.length, beforeRequests + 1);
+      assert.equal(historyDeletions.at(-1).revision, status, 'The request retains the revision from opening the dialog');
+      assert.ok(control.catalogReads.length > beforeReads, 'A rejected confirmation refreshes the authoritative overview');
+      assert.equal(application.historyHiddenAt, undefined);
+      await dialog.getByRole('button', { name: 'Keep history entry', exact: true }).click();
+      await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await page.waitForLoadState('networkidle');
+      assert.equal(historyDeletions.length, beforeRequests + 1, 'Refresh performs no automatic destructive retry');
+      control.historyDeleteResponse = null;
+      if (status === 409) {
+        const reopened = await openHistoryDelete(page, application);
+        await reopened.getByRole('button', { name: 'Delete from history', exact: true }).click();
+        await reopened.waitFor({ state: 'hidden' });
+        assert.equal(historyDeletions.length, beforeRequests + 2);
+        assert.equal(historyDeletions.at(-1).revision, status + 1, 'Only an explicitly reopened confirmation captures the fresh revision');
+      } else assert.equal(await applicationRow(page, application.id).count(), 0);
+      assert.equal(catalog.profiles.length, 1);
+    }
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Committed history deletion survives a failed list refresh and retries only the read', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, historyDeletions, errors } = await createDraftReviewFixture(context);
+  try {
+    const { profile, application } = completedHistoryFixture(catalog); const snapshot = structuredClone(application);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const dialog = await openHistoryDelete(page, application); control.failHistoryRefresh = true;
+    await dialog.getByRole('button', { name: 'Delete from history', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+    await page.getByText('History entry deleted; list refresh unavailable.', { exact: true }).waitFor();
+    assert.equal(await applicationRow(page, application.id).count(), 0, 'The committed hidden timestamp removes the row even before a successful list refresh');
+    assert.equal(historyDeletions.length, 1); assert.equal(catalog.applications.length, 1);
+    const { historyHiddenAt, ...retained } = catalog.applications[0];
+    assert.equal(historyHiddenAt, '2026-09-08T12:00:01.000Z'); assert.deepEqual(retained, snapshot);
+    const reads = control.catalogReads.length; control.failHistoryRefresh = false;
+    await page.getByRole('button', { name: 'Retry schedule list refresh', exact: true }).click();
+    await page.getByText('History entry deleted. Saved profiles, activity reports, and audit records were preserved.', { exact: true }).waitFor();
+    assert.ok(control.catalogReads.length > reads); assert.equal(historyDeletions.length, 1);
+    assert.equal(await applicationRow(page, application.id).count(), 0);
+    await profileRow(page, profile.id).getByRole('button', { name: 'Open profile Old MAP profile', exact: true }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('A delayed history deletion response cannot alter the new school after a school switch', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, historyDeletions, errors } = await createDraftReviewFixture(context);
+  let finishDelete;
+  try {
+    const { application } = completedHistoryFixture(catalog);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    const dialog = await openHistoryDelete(page, application);
+    control.historyDeleteResponse = async () => {
+      await new Promise(resolve => { finishDelete = resolve; });
+      application.historyHiddenAt = '2026-09-08T12:00:01.000Z';
+      return { json: { hidden: true, applicationId: application.id, revision: ++catalog.revision, historyHiddenAt: application.historyHiddenAt } };
+    };
+    const request = page.waitForRequest(request => request.method() === 'DELETE' && request.url().endsWith('/history'));
+    await dialog.getByRole('button', { name: 'Delete from history', exact: true }).click();
+    assert.equal((await request).headers()['x-school-id'], 'school');
+    await page.evaluate(() => window.switchFixtureSchool('other-school'));
+    await dialog.waitFor({ state: 'hidden' });
+    finishDelete(); finishDelete = null; await page.waitForLoadState('networkidle');
+    await page.getByRole('region', { name: 'Saved profiles', exact: true }).getByText(/No profiles yet/).waitFor();
+    assert.equal(historyDeletions.length, 1); assert.equal(control.activeSchool, 'other-school');
+    assert.equal(await page.locator('[data-application-id]').count(), 0);
+    assert.equal(await page.locator('[data-profile-id]').count(), 0);
+    assert.equal(await page.getByText(/History entry deleted|list refresh unavailable/).count(), 0, 'A completed old-school request cannot write a success or refresh-error notice in the new school');
+    assert.deepEqual(errors, []);
+  } finally { finishDelete?.(); await browser.close(); await vite.close(); }
 });

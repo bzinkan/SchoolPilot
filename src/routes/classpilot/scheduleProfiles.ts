@@ -3,7 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getScheduleProfiles, saveScheduleProfile, deleteScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication } from "../../services/classpilotScheduleProfiles.js";
+import { getScheduleProfiles, saveScheduleProfile, deleteScheduleProfile, previewScheduleProfile, applyScheduleProfile, cancelScheduleProfileApplication, hideScheduleProfileApplicationHistory } from "../../services/classpilotScheduleProfiles.js";
 import { schedulingError } from "../../services/classpilotSchedulingRules.js";
 import { getClasspilotRegularSchedule } from "../../services/classpilotRegularSchedule.js";
 import { getScheduleDraftReview } from "../../services/classpilotScheduleDraftReview.js";
@@ -59,6 +59,17 @@ router.post("/applications/:id/cancel", async (req, res, next) => {
   try {
     const result = await cancelScheduleProfileApplication({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, applicationId: String(req.params.id) });
     await logAudit({ schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.schedule_profile.cancelled", entityType: "schedule_profile_application", entityId: String(req.params.id), metadata: { revision: result.revision } });
+    await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, revision: result.revision }).catch(() => undefined);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+router.delete("/applications/:id/history", async (req, res, next) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== "revision")) {
+      throw schedulingError("Provide only the current scheduling revision.", "SCHEDULE_PROFILE_INVALID", 400);
+    }
+    const result = await hideScheduleProfileApplicationHistory({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id,
+      applicationId: String(req.params.id), revision: req.body.revision });
     await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, revision: result.revision }).catch(() => undefined);
     res.json(result);
   } catch (error) { next(error); }

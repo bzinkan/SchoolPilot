@@ -3,8 +3,8 @@ import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DraftReviewIssues, DraftReviewStatus } from './ScheduleProfileDraftReview';
 import {
-  buildPlannerRows, buildPlannerOccurrences, capturePlannerRanks, filterPlannerRows, plannerStableAxis, plannerGradeKey, plannerGradeName,
-  plannerIncluded, plannerMinutes, plannerTime, plannerValidWindow, plannerWindowText,
+  buildPlannerRows, buildPlannerOccurrences, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerGradeKey, plannerGradeName,
+  plannerIncluded, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow, plannerWindowText,
 } from './scheduleDayPlannerModel';
 
 const EMPTY = [];
@@ -49,16 +49,25 @@ function RowDescription({ row, classId }) {
 function TimelineBars({ row, axis, disabled, onEdit }) {
   const conflict = row.issues.some(issue => issue.kind === 'conflict');
   const overlap = row.issues.some(issue => issue.kind === 'overlap');
-  const styleFor = window => ({ left: `${(plannerMinutes(window.startTime) - axis.start) / (axis.end - axis.start) * 100}%`, width: `${(plannerMinutes(window.endTime) - plannerMinutes(window.startTime)) / (axis.end - axis.start) * 100}%` });
+  const regular = plannerClipWindow(row.regularWindow, axis);
+  const proposed = plannerClipWindow(row.proposedWindow, axis);
+  const outsideProposed = plannerOutsideHours(row.proposedWindow, axis);
+  const outsideRegular = plannerOutsideHours(row.regularWindow, axis);
+  const outsideLabel = outsideProposed ? `Outside ${axis.source === 'configured' ? 'school' : 'displayed'} hours`
+    : outsideRegular ? `Regular time outside ${axis.source === 'configured' ? 'school' : 'displayed'} hours` : '';
+  const styleFor = window => ({ left: `${(window.start - axis.start) / (axis.end - axis.start) * 100}%`, width: `${(window.end - window.start) / (axis.end - axis.start) * 100}%` });
   return <div className="relative min-h-[62px]" data-timeline-bars={row.key} data-planner-track>
     {axis.ticks.map(tick => <span key={tick} aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-l border-border/70" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%` }} />)}
-    {row.regularWindow && <span aria-hidden="true" data-regular-window={plannerWindowText(row.regularWindow)} className="absolute top-[6px] h-1 rounded-sm bg-slate-500/65 dark:bg-slate-400/65" style={styleFor(row.regularWindow)} />}
-    {row.proposedWindow ? <button type="button" disabled={disabled} onClick={onEdit} aria-label={`Change proposed time for ${row.name}: ${plannerWindowText(row.proposedWindow)}`}
+    {regular && <span aria-hidden="true" data-regular-window={plannerWindowText(row.regularWindow)} className="absolute top-[6px] h-1 rounded-sm bg-slate-500/65 dark:bg-slate-400/65" style={styleFor(regular)} />}
+    {proposed ? <button type="button" disabled={disabled} onClick={onEdit} aria-label={`Change proposed time for ${row.name}: ${plannerWindowText(row.proposedWindow)}`}
       data-proposed-window={plannerWindowText(row.proposedWindow)}
       className={`absolute top-4 h-6 rounded border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${row.type === 'testing' ? 'border-amber-600 bg-amber-300 dark:border-amber-300 dark:bg-amber-400' : 'border-blue-700 bg-blue-500 dark:border-blue-300 dark:bg-blue-500'} ${overlap ? 'border-dashed' : ''}`}
-      style={styleFor(row.proposedWindow)}><span className="sr-only">{rowStatus(row)}{conflict ? '. Conflict — review affected duties' : overlap ? '. Allowed overlap — regular class remains scheduled' : ''}</span></button> : null}
-    {(row.overlapSpans || EMPTY).filter(span => span.kind === 'conflict').map(span => <span key={span.issueId} aria-hidden="true" data-overlap-interval={`${span.startTime}–${span.endTime}`} className="pointer-events-none absolute top-[17px] h-[22px] bg-rose-400 dark:bg-rose-500" style={{ ...striped, ...styleFor(span) }} />)}
-    <p className="absolute inset-x-0 bottom-1 flex flex-wrap gap-x-2 text-[11px] leading-4"><span>{proposedText(row)}</span><span className={conflict ? 'font-medium text-rose-800 dark:text-rose-200' : 'text-muted-foreground'}>{conflict ? 'Conflict' : overlap ? 'Allowed overlap · class remains scheduled' : row.type === 'testing' ? rowStatus(row) : row.action === 'time' ? 'Custom time' : row.proposedStatus === 'skipped' ? 'Skipped' : ''}</span>{row.type === 'class' && !row.included && <span className="text-muted-foreground">Outside profile</span>}</p>
+      style={styleFor(proposed)}><span className="sr-only">{rowStatus(row)}{conflict ? '. Conflict — review affected duties' : overlap ? '. Allowed overlap — regular class remains scheduled' : ''}</span></button> : null}
+    {(row.overlapSpans || EMPTY).filter(span => span.kind === 'conflict').map(span => {
+      const clipped = plannerClipWindow(span, axis);
+      return clipped && <span key={span.issueId} aria-hidden="true" data-overlap-interval={`${span.startTime}–${span.endTime}`} className="pointer-events-none absolute top-[17px] h-[22px] bg-rose-400 dark:bg-rose-500" style={{ ...striped, ...styleFor(clipped) }} />;
+    })}
+    <p className="pointer-events-none relative flex flex-wrap gap-x-2 pb-1 pt-[42px] text-[11px] leading-4"><span>{proposedText(row)}</span>{outsideLabel && <span className="font-medium text-amber-900 dark:text-amber-200">{outsideLabel}</span>}<span className={conflict ? 'font-medium text-rose-800 dark:text-rose-200' : 'text-muted-foreground'}>{conflict ? 'Conflict' : overlap ? 'Allowed overlap · class remains scheduled' : row.type === 'testing' ? rowStatus(row) : row.action === 'time' ? 'Custom time' : row.proposedStatus === 'skipped' ? 'Skipped' : ''}</span>{row.type === 'class' && !row.included && <span className="text-muted-foreground">Outside profile</span>}</p>
   </div>;
 }
 
@@ -181,13 +190,17 @@ function PlannerRow({ occurrence, timeline, axis, active, filters, definition, c
   </article>;
 }
 
-export default function ScheduleDayPlanner({ definition, catalog, regularSchedule, referenceDate, review, reviewRetry, validReviewDate = true, savedReview = false, filters, onFiltersChange, plannerView = 'timeline', onPlannerViewChange, collapsedGrades = EMPTY, onCollapsedGradesChange, activeTarget, onEditTarget, onChange, onAddGroups, disabled, onEditGroup }) {
+export default function ScheduleDayPlanner({ definition, catalog, regularSchedule, referenceDate, hoursQuery, review, reviewRetry, validReviewDate = true, savedReview = false, filters, onFiltersChange, plannerView = 'timeline', onPlannerViewChange, collapsedGrades = EMPTY, onCollapsedGradesChange, activeTarget, onEditTarget, onChange, onAddGroups, disabled, onEditGroup }) {
   const [metadata, setMetadata] = useState(null);
-  const [layout, setLayout] = useState({ date: null, ranks: undefined, axis: undefined });
+  const [layout, setLayout] = useState({ date: null, ranks: undefined });
   const [anchor, setAnchor] = useState(null);
   const planner = useRef(null);
   const scroller = useRef(null);
   const timeHeader = useRef(null);
+  const axis = useMemo(() => plannerAxis(hoursQuery.data), [hoursQuery.data]);
+  const hoursReady = Boolean(hoursQuery.data) && !hoursQuery.isError;
+  const timelineAvailable = hoursReady && axis.source !== 'unavailable';
+  const timeline = plannerView !== 'list' && timelineAvailable;
   const horizontalPositions = useRef({ timeline: 0, list: 0 });
   const changeDisplay = next => {
     horizontalPositions.current[plannerView] = scroller.current?.scrollLeft || 0;
@@ -209,7 +222,7 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     observer.observe(viewport);
     if (toolbar) observer.observe(toolbar);
     return () => observer.disconnect();
-  }, [plannerView]);
+  }, [plannerView, timeline]);
   // Retain labels/associations only, scoped to this mounted profile session and
   // date. Pending/failed checks never retain a previous conflict verdict.
   if (review.data?.referenceDate === referenceDate && metadata !== review.data) setMetadata(review.data);
@@ -217,9 +230,7 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
   const visible = useMemo(() => filterPlannerRows(model.rows, filters, activeTarget), [model, filters, activeTarget]);
   const rowsByKey = useMemo(() => new Map(model.rows.map(row => [row.key, row])), [model]);
   const ranks = useMemo(() => capturePlannerRanks(model.rows, layout.date === referenceDate ? layout.ranks : undefined), [model.rows, layout.date, layout.ranks, referenceDate]);
-  const axis = useMemo(() => plannerStableAxis(model.rows, layout.date === referenceDate ? layout.axis : undefined), [model.rows, layout.date, layout.axis, referenceDate]);
-  const capturedAxis = model.rows.some(row => plannerValidWindow(row.regularWindow) || plannerValidWindow(row.proposedWindow)) ? axis : layout.date === referenceDate ? layout.axis : undefined;
-  if (layout.date !== referenceDate || layout.ranks !== ranks || layout.axis?.start !== capturedAxis?.start || layout.axis?.end !== capturedAxis?.end) setLayout({ date: referenceDate, ranks, axis: capturedAxis });
+  if (layout.date !== referenceDate || layout.ranks !== ranks) setLayout({ date: referenceDate, ranks });
   const options = useMemo(() => {
     const grades = new Map(), staff = new Map();
     for (const row of model.classes) {
@@ -233,7 +244,6 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     return { grades: [...grades].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })), staff: [...staff].sort(([, a], [, b]) => a.localeCompare(b)) };
   }, [model, definition.grades]);
   const issues = model.issues || EMPTY;
-  const timeline = plannerView !== 'list';
   const schoolView = !filters.view || filters.view === 'school';
   const targetKey = activeTarget?.classId ? `class:${activeTarget.classId}` : activeTarget?.blockId ? `testing:${activeTarget.blockId}` : null;
   const activeAnchor = anchor?.rowKey === targetKey && anchor?.date === referenceDate && anchor.schoolView === schoolView ? anchor : null;
@@ -288,7 +298,13 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
   }).flat();
   return <section ref={planner} aria-label="Day planner" data-day-planner onFocusCapture={revealFocusedControl} style={{ '--planner-grid-width': `${Math.max(760, 284 + (axis.ticks.length - 1) * 72)}px` }} className="min-w-0 space-y-4"><section aria-label="Draft schedule review" className="min-w-0 space-y-4">
     <DraftReviewStatus review={{ ...review, data: model.reviewCurrent ? review.data : null, error: review.error || (review.data && !model.reviewCurrent ? { message: 'The schedule comparison changed. Refresh the preview-day check before relying on conflict results.' } : null), retry: reviewRetry || review.retry }} validDate={validReviewDate} saved={savedReview} />
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold" tabIndex={-1} data-review-heading>Day planner</h3><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Click a class or testing bar to adjust the proposed day here. Regular classes stay scheduled until you explicitly change them.</p></div><div role="group" aria-label="Day planner display" className="flex gap-2"><Button size="sm" variant={timeline ? 'default' : 'outline'} aria-pressed={timeline} onClick={() => changeDisplay('timeline')}>Timeline</Button><Button size="sm" variant={!timeline ? 'default' : 'outline'} aria-pressed={!timeline} onClick={() => changeDisplay('list')}>List</Button></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold" tabIndex={-1} data-review-heading>Day planner</h3><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Click a class or testing bar to adjust the proposed day here. Regular classes stay scheduled until you explicitly change them.</p></div><div role="group" aria-label="Day planner display" className="flex gap-2"><Button size="sm" variant={timeline ? 'default' : 'outline'} aria-pressed={timeline} disabled={!timelineAvailable} onClick={() => changeDisplay('timeline')}>Timeline</Button><Button size="sm" variant={!timeline ? 'default' : 'outline'} aria-pressed={!timeline} onClick={() => changeDisplay('list')}>List</Button></div></div>
+    <div data-school-hours-notice role="status" className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      {hoursQuery.isError ? <><span>School hours could not load. Use List while they are unavailable.</span><Button size="sm" variant="outline" disabled={hoursQuery.isFetching} onClick={() => hoursQuery.refetch()}>Retry school hours</Button></>
+        : !hoursReady ? <span>Loading school hours. List remains available.</span>
+          : axis.source === 'unavailable' ? <span>School hours need a valid start and end within the same day. Use List, or correct the times in Monitoring Hours.</span>
+            : <span>{axis.source === 'configured' ? 'School hours' : 'Default display hours'}: {plannerTime(axis.start)}–{plannerTime(axis.end)} · {catalog.schoolTimezone}.{axis.source === 'default' ? ' Monitoring Hours is not enabled; the timeline uses 8:00 AM–4:00 PM.' : ' From Monitoring Hours.'} Out-of-range entries stay editable; their bars are limited to these hours.</span>}
+    </div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className="space-y-1 text-sm"><span>Schedule view</span><select className={inputClass} value={filters.view || 'school'} onChange={event => changeFilters({ view: event.target.value, grade: 'all', classId: 'all', teacher: 'all' })}><option value="school">School</option><option value="classes">Class</option><option value="teachers">Teacher</option></select></label>
       <label className="space-y-1 text-sm"><span>Review grade</span><select className={inputClass} value={filters.grade || 'all'} onChange={event => changeFilters({ grade: event.target.value, classId: 'all' })}><option value="all">All grades</option>{options.grades.map(([grade]) => <option key={grade} value={grade}>{plannerGradeName(grade)}</option>)}</select></label>
@@ -303,7 +319,7 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     {timeline && <><div aria-label="Timeline legend" className="flex flex-wrap gap-x-5 gap-y-2 text-xs"><span className="flex items-center gap-2"><span aria-hidden="true" className="h-1 w-6 bg-slate-500" />Regular time</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-blue-500" />Proposed class</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-amber-400" />Testing</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-rose-400" style={striped} />Conflict</span><span>Dashed border: allowed overlap</span></div><p className="text-xs text-muted-foreground sm:hidden">Scroll the timeline sideways, or use List for a stacked view.</p></>}
     {filters.conflictsOnly && !model.reviewCurrent && <p role="status" className="rounded border p-3 text-sm">Conflict results are pending or unavailable. Clear display filters to keep editing the day.</p>}
     <div className="min-w-0 rounded-lg border">
-      {timeline && <div ref={timeHeader} data-planner-time-header className="sticky z-[15] overflow-hidden rounded-t-lg border-b bg-muted text-xs" style={{ top: 'var(--planner-toolbar-offset, 0px)' }}><div className="grid grid-cols-[260px_minmax(480px,1fr)]" style={{ minWidth: 'var(--planner-grid-width)' }}><div className="sticky left-0 z-10 border-r bg-muted px-3 py-2 font-medium">Class / supervision</div><div className="px-3"><div className="relative h-9">{axis.ticks.map(tick => <span key={tick} data-planner-tick={tick} className="absolute top-2 whitespace-nowrap" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%`, transform: tick === axis.end ? 'translateX(-100%)' : tick === axis.start ? 'none' : 'translateX(-50%)' }}>{plannerTime(tick)}</span>)}</div></div></div></div>}
+      {timeline && <div ref={timeHeader} data-planner-time-header data-school-hours-source={axis.source} data-axis-start={axis.start} data-axis-end={axis.end} className="sticky z-[15] overflow-hidden rounded-t-lg border-b bg-muted text-xs" style={{ top: 'var(--planner-toolbar-offset, 0px)' }}><div className="grid grid-cols-[260px_minmax(480px,1fr)]" style={{ minWidth: 'var(--planner-grid-width)' }}><div className="sticky left-0 z-10 border-r bg-muted px-3 py-2 font-medium">Class / supervision</div><div className="px-3"><div className="relative h-9">{axis.ticks.map(tick => <span key={tick} data-planner-tick={tick} className="absolute top-2 whitespace-nowrap" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%`, transform: tick === axis.end ? 'translateX(-100%)' : tick === axis.start ? 'none' : 'translateX(-50%)' }}>{plannerTime(tick)}</span>)}</div></div></div></div>}
       <div ref={scroller} role="region" aria-label={timeline ? 'Proposed day timeline' : 'Proposed day timetable'} tabIndex={0} onScroll={event => { if (timeHeader.current) timeHeader.current.scrollLeft = event.currentTarget.scrollLeft; }} className={`min-w-0 ${timeline ? 'overflow-x-auto' : ''} ${focusClass}`}>
         <div style={timeline ? { minWidth: 'var(--planner-grid-width)' } : undefined}>
         {groups.flatMap(group => {

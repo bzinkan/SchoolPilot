@@ -33,6 +33,18 @@ function testingApplication(overrides: Partial<ScheduleProfileApplication> = {})
 }
 
 describe("Reusable schedule profile contracts", () => {
+  it("retains history hiding metadata without changing dated schedule resolution", () => {
+    const hidden = application({ historyHiddenAt: "2026-09-02T12:00:00Z", historyHiddenBy: "admin-2" });
+    const normalized = config([hidden]);
+    assert.equal(normalized.profileApplications?.[0]?.historyHiddenAt, "2026-09-02T12:00:00.000Z");
+    assert.equal(normalized.profileApplications?.[0]?.historyHiddenBy, "admin-2");
+    assert.deepEqual(resolveClassBaseWindow(fixed, "2026-09-01", normalized, {}), time);
+    assert.deepEqual(normalizeSchoolSchedulingConfig(JSON.parse(JSON.stringify(normalized))), normalized);
+    assert.throws(() => normalizeScheduleProfileApplication(application({ historyHiddenAt: "2026-09-02T12:00:00Z" })), /timestamp and administrator/);
+    assert.throws(() => normalizeScheduleProfileApplication(application({ historyHiddenBy: "admin" })), /timestamp and administrator/);
+    assert.throws(() => normalizeScheduleProfileApplication({ ...hidden, historyHiddenAt: "2026-02-30T12:00:00Z" }), /real dates/);
+    assert.throws(() => normalizeScheduleProfileDefinition({ ...definition(), historyHiddenAt: hidden.historyHiddenAt }), /unsupported field/);
+  });
   it("normalizes legacy version-one config with empty optional collections", () => {
     const { scheduleProfiles: _profiles, profileApplications: _applications, ...legacy } = emptySchoolSchedulingConfig();
     const result = normalizeSchoolSchedulingConfig(legacy);

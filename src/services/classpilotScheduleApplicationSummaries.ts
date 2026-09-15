@@ -22,7 +22,57 @@ export type ApplicationSummary = {
   nextFutureDate: string | null;
   appliedToday: boolean;
   cancellation: ApplicationCancellation;
+  historyRemoval: ApplicationHistoryRemoval;
 };
+
+export type ApplicationHistoryRemoval = {
+  canRequest: boolean;
+  reason: "available" | "not_past" | "supervision_pending" | "unavailable" | "hidden";
+  checkedAt: string;
+};
+export type ApplicationHistorySupervision = {
+  id: string;
+  applicationId: string | null;
+  date: string | null;
+  blockId: string | null;
+  status: string;
+  endedAt: Date | null;
+  hasUnreleasedStudents: boolean;
+};
+
+/** Visibility is separate from cancellation. Missing operational evidence never proves completion. */
+export function applicationHistoryRemoval(options: {
+  application: ScheduleProfileApplication;
+  testingStatuses: ProfileSupervisionStatus[];
+  supervision?: ApplicationHistorySupervision[];
+  unresolvedApplicationIds?: string[];
+  schoolTimezone: string;
+  now: Date;
+}): ApplicationHistoryRemoval {
+  const { application, now } = options;
+  const result = (reason: ApplicationHistoryRemoval["reason"]): ApplicationHistoryRemoval => ({ canRequest: reason === "available", reason, checkedAt: now.toISOString() });
+  if (application.historyHiddenAt) return result("hidden");
+  const today = localDateInTimeZone(now, options.schoolTimezone);
+  if (!application.dates.length || application.dates.some(date => date >= today)) return result("not_past");
+  if (!options.supervision) return result("unavailable");
+  if (options.unresolvedApplicationIds?.includes(application.id)) return result("unavailable");
+  const statuses = options.testingStatuses.filter(status => status.applicationId === application.id);
+  const contexts = options.supervision.filter(context => context.applicationId === application.id || statuses.some(status => status.contextId === context.id));
+  if (contexts.some(context => context.status === "active" || context.hasUnreleasedStudents)) return result("supervision_pending");
+  if (contexts.some(context => context.status !== "ended" || !context.endedAt || !Number.isFinite(context.endedAt.getTime()) || context.endedAt > now
+    || context.applicationId !== application.id || !application.testingWindows.some(window => window.date === context.date && window.blockId === context.blockId))) return result("unavailable");
+  for (const window of application.testingWindows) {
+    const matches = statuses.filter(status => status.date === window.date && status.blockId === window.blockId);
+    if (matches.length !== 1) return result("unavailable");
+    const status = matches[0]!;
+    if (["pending", "active", "releasing"].includes(status.status)) return result("supervision_pending");
+    if (!["ended", "failed", "missed", "cancelled"].includes(status.status)) return result("unavailable");
+    const context = contexts.find(context => context.date === window.date && context.blockId === window.blockId);
+    if ((status.status === "ended" && !context) || (status.contextId && context?.id !== status.contextId)) return result("unavailable");
+  }
+  if (statuses.some(status => !application.testingWindows.some(window => window.date === status.date && window.blockId === status.blockId))) return result("unavailable");
+  return result("available");
+}
 
 export type ApplicationTiming = { earliestKnownStart: number | null; unavailable: boolean; hasChanges: boolean };
 
@@ -109,6 +159,8 @@ export function summarizeScheduleApplications(options: {
   timing: (application: ScheduleProfileApplication) => ApplicationTiming;
   schoolTimezone: string;
   now: Date;
+  historySupervision?: ApplicationHistorySupervision[];
+  unresolvedApplicationIds?: string[];
 }) {
   const today = localDateInTimeZone(options.now, options.schoolTimezone);
   const statuses = new Map<string, ProfileSupervisionStatus | null>();
@@ -144,7 +196,8 @@ export function summarizeScheduleApplications(options: {
     applicationSummaries[application.id] = { dates,
       nextFutureDate: dates.filter((date) => date.phase === "future").map((date) => date.date).sort()[0] ?? null,
       appliedToday: dates.some((date) => date.phase === "today"),
-      cancellation: applicationCancellation(application, options.timing(application), options.now) };
+      cancellation: applicationCancellation(application, options.timing(application), options.now),
+      historyRemoval: applicationHistoryRemoval({ ...options, application, supervision: options.historySupervision }) };
   }
   return { applicationSummaries, summariesCheckedAt: options.now.toISOString(),
     nextSchoolDateAt: localDateTimeUtc(datePlusDays(today, 1), "00:00", options.schoolTimezone).toISOString() };

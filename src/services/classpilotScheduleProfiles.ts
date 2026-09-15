@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import { schools, schoolMemberships } from "../schema/core.js";
 import { students } from "../schema/students.js";
@@ -14,7 +14,7 @@ import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersed
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
-import { applicationCancellation, createApplicationTimingResolver, summarizeScheduleApplications } from "./classpilotScheduleApplicationSummaries.js";
+import { applicationCancellation, applicationHistoryRemoval, createApplicationTimingResolver, summarizeScheduleApplications } from "./classpilotScheduleApplicationSummaries.js";
 
 type Database = typeof db;
 type Blocker = { code: string; message: string; date?: string };
@@ -61,6 +61,27 @@ async function catalog(schoolId: string, database: Database = db) {
   };
 }
 type Catalog = Awaited<ReturnType<typeof catalog>>;
+/** Includes actual contexts outside the expected windows and unresolved receipt references. */
+async function historySupervision(schoolId: string, applications: ScheduleProfileApplication[], database: Database) {
+  if (!applications.length) return { historySupervision: [], unresolvedApplicationIds: [] };
+  const ids = applications.map(application => application.id);
+  const [schedule] = await database.select({ outcomes: classpilotSchoolSchedules.profileActivationOutcomes }).from(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, schoolId));
+  const outcomes = Object.values(schedule?.outcomes ?? {}).filter(outcome => ids.includes(outcome.applicationId));
+  const receiptContextIds = outcomes.flatMap(outcome => outcome.contextId ? [outcome.contextId] : []);
+  const contexts = await database.select({ id: classpilotSupervisionContexts.id, applicationId: classpilotSupervisionContexts.scheduleProfileApplicationId,
+    date: classpilotSupervisionContexts.scheduleProfileDate, blockId: classpilotSupervisionContexts.scheduleProfileBlockId,
+    status: classpilotSupervisionContexts.status, endedAt: classpilotSupervisionContexts.endedAt,
+    hasUnreleasedStudents: sql<boolean>`EXISTS (SELECT 1 FROM ${classpilotSupervisionStudents} WHERE ${classpilotSupervisionStudents.schoolId} = ${schoolId} AND ${classpilotSupervisionStudents.contextId} = ${classpilotSupervisionContexts.id} AND ${classpilotSupervisionStudents.releasedAt} IS NULL)` })
+    .from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId, schoolId),
+      or(inArray(classpilotSupervisionContexts.scheduleProfileApplicationId, ids), receiptContextIds.length ? inArray(classpilotSupervisionContexts.id, receiptContextIds) : undefined)));
+  const unresolvedApplicationIds = outcomes.filter(outcome => {
+    const context = contexts.find(context => context.id === outcome.contextId);
+    if (!["started", "failed", "missed", "cancelled"].includes(outcome.status)
+      || !applications.find(application => application.id === outcome.applicationId)?.testingWindows.some(window => window.date === outcome.date && window.blockId === outcome.blockId)) return true;
+    return (outcome.status === "started" || outcome.contextId) && (!context || context.applicationId !== outcome.applicationId || context.date !== outcome.date || context.blockId !== outcome.blockId);
+  }).map(outcome => outcome.applicationId);
+  return { historySupervision: contexts, unresolvedApplicationIds };
+}
 function definitionReferences(definition: ScheduleProfileDefinition, data: Catalog): Blocker[] {
   const blockers: Blocker[] = [];
   const add = (message: string) => blockers.push({ code: "SCHEDULE_PROFILE_REFERENCE", message });
@@ -85,7 +106,9 @@ export async function getScheduleProfiles(schoolId: string) {
     const testingStatuses = await getScheduledProfileSupervisionStatuses(schoolId, undefined, database);
     const now = new Date();
     const applications = data.context.config.profileApplications ?? [];
+    const history = await historySupervision(schoolId, applications, database);
     const summaries = summarizeScheduleApplications({ applications, testingStatuses, now, schoolTimezone: data.schoolTimezone,
+      ...history,
       timing: createApplicationTimingResolver({ classes: data.classes, config: data.context.config, calendar: data.context.calendar, schoolTimezone: data.schoolTimezone }) });
     return { revision: data.context.revision, schoolTimezone: data.schoolTimezone, schoolLocalToday: localDateInTimeZone(now, data.schoolTimezone),
       profiles: data.context.config.scheduleProfiles ?? [], applications, ...summaries,
@@ -154,6 +177,38 @@ export async function deleteScheduleProfile(options: { schoolId: string; actorId
       metadata: { profileRevision: profile.revision, revision: nextRevision,
         retainedApplications: (context.config.profileApplications ?? []).filter(application => application.profileId === profileId).length } });
     return { deleted: true as const, profileId, revision: nextRevision };
+  });
+}
+
+/** Hide only the overview entry; keep snapshots and activation receipts available to all operational readers. */
+export async function hideScheduleProfileApplicationHistory(options: { schoolId: string; actorId: string; applicationId: string; revision: number; now?: Date }) {
+  const id = normalizeScheduleProfileId(options.applicationId);
+  revision(options.revision);
+  return locked(options.schoolId, options.actorId, async database => {
+    const context = await getSchoolSchedulingContext(options.schoolId, database);
+    const application = context.config.profileApplications?.find(entry => entry.id === id);
+    if (!application) fail("Schedule application not found.", "NOT_FOUND", 404);
+    // A retry of a committed hide reports that same metadata and does not audit twice.
+    if (application.historyHiddenAt) return { hidden: true as const, applicationId: id, revision: context.revision, historyHiddenAt: application.historyHiddenAt };
+    if (context.revision !== options.revision) fail("Schedules changed. Reload and reopen Delete from history.", "SCHEDULE_PREVIEW_STALE", 409);
+    const { getScheduledProfileSupervisionStatuses } = await import("./classpilotScheduleProfileSupervision.js");
+    const testingStatuses = await getScheduledProfileSupervisionStatuses(options.schoolId, id, database);
+    const history = await historySupervision(options.schoolId, [application], database);
+    const [school] = await database.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, options.schoolId));
+    const now = options.now ?? new Date();
+    const removal = applicationHistoryRemoval({ application, testingStatuses, supervision: history.historySupervision,
+      unresolvedApplicationIds: history.unresolvedApplicationIds, schoolTimezone: school?.timezone || "America/New_York", now });
+    if (!removal.canRequest) fail(removal.reason === "not_past" ? "All application dates must be before today in the school's timezone."
+      : removal.reason === "supervision_pending" ? "Testing supervision must finish before this application can be removed from history."
+        : "Testing completion could not be confirmed. Refresh the history and resolve supervision before removing it.", "SCHEDULE_APPLICATION_HISTORY_UNAVAILABLE", 409);
+    const historyHiddenAt = now.toISOString();
+    const config = { ...context.config, profileApplications: context.config.profileApplications!.map(entry => entry.id === id
+      ? { ...entry, historyHiddenAt, historyHiddenBy: options.actorId } : entry) };
+    const nextRevision = await persist(options.schoolId, options.actorId, config, options.revision, database);
+    await database.insert(auditLogs).values({ schoolId: options.schoolId, userId: options.actorId,
+      action: "classpilot.schedule_profile.history_hidden", entityType: "schedule_profile_application", entityId: id, entityName: application.profileName,
+      metadata: { profileId: application.profileId, profileRevision: application.profileRevision, revision: nextRevision, historyHiddenAt, dateCount: application.dates.length, testingWindows: application.testingWindows.length } });
+    return { hidden: true as const, applicationId: id, revision: nextRevision, historyHiddenAt };
   });
 }
 function applicationId(options: ProfileRequest, definition: ScheduleProfileDefinition, dates: string[]) {

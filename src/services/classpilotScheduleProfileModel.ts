@@ -41,6 +41,9 @@ export type ScheduleProfileApplication = {
   status: "scheduled" | "cancelled";
   createdBy: string;
   createdAt: string;
+  /** Overview visibility only; dated snapshots and operational dependencies remain intact. */
+  historyHiddenAt?: string;
+  historyHiddenBy?: string;
 };
 export const SCHEDULE_PROFILE_LIMITS = {
   profiles: 30, applications: 100, dates: 31, classes: 500, blocks: 30,
@@ -144,7 +147,8 @@ export function normalizeSavedScheduleProfile(value: unknown): SavedScheduleProf
 
 export function normalizeScheduleProfileApplication(value: unknown): ScheduleProfileApplication {
   const row = object(value, "Schedule profile application");
-  keys(row, ["id", "profileId", "profileName", "profileRevision", "dates", "definition", "classWindows", "testingWindows", "status", "createdBy", "createdAt"], "Schedule profile application");
+  keys(row, ["id", "profileId", "profileName", "profileRevision", "dates", "definition", "classWindows", "testingWindows", "status", "createdBy", "createdAt", "historyHiddenAt", "historyHiddenBy"], "Schedule profile application");
+  if ((row.historyHiddenAt === undefined) !== (row.historyHiddenBy === undefined)) throw invalid("History hiding requires its timestamp and administrator together.");
   const dates = unique(list(row.dates, SCHEDULE_PROFILE_LIMITS.dates, "Application dates").map(value => date(value)), "Application dates").sort();
   if (!dates.length) throw invalid("Choose at least one application date.");
   const dateSet = new Set(dates);
@@ -190,7 +194,8 @@ export function normalizeScheduleProfileApplication(value: unknown): SchedulePro
   if (row.status !== "scheduled" && row.status !== "cancelled") throw invalid("Application status must be scheduled or cancelled.");
   return { id: normalizeScheduleProfileId(row.id), profileId: normalizeScheduleProfileId(row.profileId), profileName,
     profileRevision: revision(row.profileRevision), dates, definition, classWindows, testingWindows, status: row.status,
-    createdBy: normalizeScheduleProfileId(row.createdBy), createdAt: timestamp(row.createdAt) };
+    createdBy: normalizeScheduleProfileId(row.createdBy), createdAt: timestamp(row.createdAt),
+    ...(row.historyHiddenAt !== undefined ? { historyHiddenAt: timestamp(row.historyHiddenAt), historyHiddenBy: normalizeScheduleProfileId(row.historyHiddenBy) } : {}) };
 }
 
 export function normalizeScheduleProfileCollections(scheduleProfiles: unknown = [], profileApplications: unknown = []): {

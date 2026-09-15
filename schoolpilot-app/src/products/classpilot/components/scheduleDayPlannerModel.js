@@ -201,24 +201,38 @@ export function filterPlannerRows(rows, filters, activeTarget) {
   });
 }
 
-export function plannerAxis(rows) {
-  const windows = rows.flatMap(row => [row.regularWindow, row.proposedWindow]).filter(plannerValidWindow);
-  let start = windows.length ? 1440 : 480, end = windows.length ? 0 : 960;
-  for (const window of windows) { start = Math.min(start, plannerMinutes(window.startTime)); end = Math.max(end, plannerMinutes(window.endTime)); }
-  start = Math.max(0, Math.floor(start / 60) * 60);
-  end = Math.min(1440, Math.ceil(end / 60) * 60);
-  if (end - start < 120) end = Math.min(1440, start + 120);
-  if (end - start < 120) start = end - 120;
-  const step = end - start > 600 ? 120 : 60;
-  return { start, end, ticks: Array.from({ length: Math.floor((end - start) / step) + 1 }, (_, index) => start + index * step) };
+// Chart bounds are a display choice, never a projection of editable meetings or
+// a substitute for the server's monitoring/eligibility checks.
+export function plannerAxis(settings) {
+  const configured = settings?.enableTrackingHours === true;
+  const window = { startTime: settings?.trackingStartTime, endTime: settings?.trackingEndTime };
+  const available = configured && plannerValidWindow(window);
+  const start = available ? plannerMinutes(window.startTime) : 480;
+  const end = available ? plannerMinutes(window.endTime) : 960;
+  const source = available ? 'configured' : configured ? 'unavailable' : 'default';
+  // Both edges must be exact. Drop nearby interior ticks rather than extending
+  // school hours or crowding a final clock label such as 3:00 beside 3:05.
+  const minimumGap = (end - start) / 8;
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 180].find(value => value >= minimumGap) || 180;
+  const ticks = [start];
+  for (let tick = Math.ceil(start / step) * step; tick < end; tick += step) {
+    if (tick - ticks.at(-1) >= minimumGap && end - tick >= minimumGap) ticks.push(tick);
+  }
+  ticks.push(end);
+  return { start, end, ticks, source };
 }
 
-export function plannerStableAxis(rows, previous) {
-  if (previous && !rows.some(row => plannerValidWindow(row.regularWindow) || plannerValidWindow(row.proposedWindow))) return previous;
-  const next = plannerAxis(rows);
-  if (!previous) return next;
-  const start = Math.min(previous.start, next.start), end = Math.max(previous.end, next.end);
-  if (start === previous.start && end === previous.end) return previous;
-  const step = end - start > 600 ? 120 : 60;
-  return { start, end, ticks: Array.from({ length: Math.floor((end - start) / step) + 1 }, (_, index) => start + index * step) };
+const validAxis = axis => Number.isFinite(axis?.start) && Number.isFinite(axis?.end) && axis.start >= 0 && axis.end <= 1440 && axis.start < axis.end;
+
+// Clip drawing geometry only. Rows retain their original times and editor.
+export function plannerClipWindow(window, axis) {
+  if (!plannerValidWindow(window) || !validAxis(axis)) return null;
+  const originalStart = plannerMinutes(window.startTime), originalEnd = plannerMinutes(window.endTime);
+  const start = Math.max(originalStart, axis.start), end = Math.min(originalEnd, axis.end);
+  return start < end ? { start, end, clippedStart: originalStart < start, clippedEnd: originalEnd > end } : null;
+}
+
+export function plannerOutsideHours(window, axis) {
+  return Boolean(plannerValidWindow(window) && validAxis(axis)
+    && (plannerMinutes(window.startTime) < axis.start || plannerMinutes(window.endTime) > axis.end));
 }
