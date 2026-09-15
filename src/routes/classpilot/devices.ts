@@ -26,6 +26,7 @@ import {
   markStudentSignInFailure,
   markStudentSignInError,
 } from "../../services/classpilotStudentSignInDiagnostics.js";
+import { usesEmailIdStudentSignIn } from "../../util/classpilotStudentSignInMethod.js";
 import {
   getDeviceById,
   getDevicesBySchool,
@@ -343,11 +344,6 @@ const PENDING_MESSAGE_RECONNECT_GAP_MS = 60_000;
 const PENDING_MESSAGE_PERIODIC_CHECK_MS = 5 * 60_000;
 const DELIVERED_MESSAGE_CACHE_TTL_MS = 24 * 60 * 60_000;
 const DELIVERED_MESSAGE_CACHE_MAX_IDS = 500;
-const PIN_LOGIN_MAX_FAILURES = 5;
-const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
-const PIN_LOGIN_LOCKOUT_SECONDS = PIN_LOGIN_LOCKOUT_MS / 1000;
-const PIN_LOGIN_FAILURE_WINDOW_SECONDS = 10 * 60;
-const fallbackPinLoginFailures = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
 const REDIS_KEY_PREFIX = process.env.REDIS_PREFIX ?? "schoolpilot";
 
 async function hasCurrentClassPilotLicense(schoolId: string): Promise<boolean> {
@@ -487,6 +483,9 @@ const extensionRosterLimiter = rateLimit({
 const extensionLoginLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
+  // PIN mistakes must not prevent a later correct PIN. The global API limiter
+  // still protects both methods; email/ID retains this additional request cap.
+  skip: (req) => !usesEmailIdStudentSignIn(req.body?.studentEmail, req.body?.studentIdNumber),
   message: { error: "Too many login attempts, please wait" },
   handler: async (req, res, _next, options) => {
     markStudentSignInFailure(req, "STUDENT_LOGIN_RATE_LIMIT");
@@ -923,10 +922,6 @@ function rosterGradesForStudents(students: Awaited<ReturnType<typeof getStudents
     }));
 }
 
-function getPinFailureKey(schoolId: string, studentId: string): string {
-  return `${schoolId}:${studentId}`;
-}
-
 async function tryRedisNumber(args: string[], label: string): Promise<number | undefined> {
   try {
     const value = await redisCommand(args);
@@ -947,75 +942,6 @@ async function tryRedisVoid(args: string[], label: string): Promise<boolean> {
     console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`);
     return false;
   }
-}
-
-async function getPinLockout(schoolId: string, studentId: string): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
-  const key = getPinFailureKey(schoolId, studentId);
-  const redisLockKey = `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`;
-  const redisLockTtlMs = await tryRedisNumber(["PTTL", redisLockKey], "pin lockout TTL");
-  if (redisLockTtlMs !== undefined) {
-    if (redisLockTtlMs > 0) {
-      return { ok: false, retryAfterSeconds: Math.ceil(redisLockTtlMs / 1000) };
-    }
-    return { ok: true };
-  }
-
-  const failure = fallbackPinLoginFailures.get(key);
-  if (!failure) {
-    return { ok: true };
-  }
-  if (Date.now() - failure.windowStart > PIN_LOGIN_FAILURE_WINDOW_SECONDS * 1000) {
-    fallbackPinLoginFailures.delete(key);
-    return { ok: true };
-  }
-  if (failure.lockedUntil > 0 && failure.lockedUntil <= Date.now()) {
-    fallbackPinLoginFailures.delete(key);
-    return { ok: true };
-  }
-  if (failure.lockedUntil === 0) {
-    return { ok: true };
-  }
-  return {
-    ok: false,
-    retryAfterSeconds: Math.ceil((failure.lockedUntil - Date.now()) / 1000),
-  };
-}
-
-async function recordPinFailure(schoolId: string, studentId: string) {
-  const key = getPinFailureKey(schoolId, studentId);
-  const redisCountKey = `${REDIS_KEY_PREFIX}:classpilot:pin-failures:${key}`;
-  const redisLockKey = `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`;
-  const count = await tryRedisNumber(["INCR", redisCountKey], "pin failure increment");
-  if (count !== undefined) {
-    if (count === 1) {
-      await tryRedisVoid(["EXPIRE", redisCountKey, String(PIN_LOGIN_FAILURE_WINDOW_SECONDS)], "pin failure expiry");
-    }
-    if (count >= PIN_LOGIN_MAX_FAILURES) {
-      await tryRedisVoid(["SET", redisLockKey, "1", "EX", String(PIN_LOGIN_LOCKOUT_SECONDS)], "pin lockout set");
-      await tryRedisVoid(["DEL", redisCountKey], "pin failure clear");
-    }
-    return;
-  }
-
-  const current = fallbackPinLoginFailures.get(key);
-  const now = Date.now();
-  if (current?.lockedUntil && current.lockedUntil > now) return;
-  const withinWindow = current && now - current.windowStart <= PIN_LOGIN_FAILURE_WINDOW_SECONDS * 1000;
-  const localCount = (withinWindow ? current.count : 0) + 1;
-  fallbackPinLoginFailures.set(key, {
-    count: localCount,
-    lockedUntil: localCount >= PIN_LOGIN_MAX_FAILURES ? now + PIN_LOGIN_LOCKOUT_MS : 0,
-    windowStart: withinWindow ? current.windowStart : now,
-  });
-}
-
-async function clearPinFailures(schoolId: string, studentId: string) {
-  const key = getPinFailureKey(schoolId, studentId);
-  await tryRedisVoid(
-    ["DEL", `${REDIS_KEY_PREFIX}:classpilot:pin-failures:${key}`, `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`],
-    "pin failure clear"
-  );
-  fallbackPinLoginFailures.delete(key);
 }
 
 function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
@@ -2714,7 +2640,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
     }
 
     // Upper-grade fallback: email + Student ID Number.
-    if (studentEmail || studentIdNumber) {
+    if (usesEmailIdStudentSignIn(studentEmail, studentIdNumber)) {
       markStudentSignInMethod(req, "email_id");
       const emailLc = String(studentEmail || "").trim().toLowerCase();
       const idNumber = String(studentIdNumber || "").trim();
@@ -2886,19 +2812,6 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
 
       markStudentSignInStage(req, "credential_validation");
       const student = await getStudentById(selectedStudentId);
-      markStudentSignInStage(req, "pin_lockout");
-      const lockout = await getPinLockout(school.id, selectedStudentId);
-      if (!lockout.ok) {
-        markStudentSignInFailure(req, "PIN_LOCKOUT");
-        return res.status(429).json({
-          error: "Too many PIN attempts. Try again later.",
-          retryAfterSeconds: lockout.retryAfterSeconds,
-          ...(managedDeviceContinuity
-            ? { managedDeviceContinuityAccepted: true }
-            : {}),
-        });
-      }
-      markStudentSignInStage(req, "credential_validation");
       // Preserve the existing short-circuit order and single comparison. The
       // reason describes the failed check, never the student's intended choice.
       const credentialFailure = !student ? "STUDENT_NOT_FOUND"
@@ -2908,17 +2821,15 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         : !(await comparePassword(enteredPin, student.classpilotPinHash))
           ? "PIN_MISMATCH" : undefined;
       if (credentialFailure) {
-        await recordPinFailure(school.id, selectedStudentId);
         markStudentSignInFailure(req, credentialFailure);
         return res.status(401).json({
-          error: "Invalid student credentials",
+          error: credentialFailure === "PIN_MISMATCH"
+            ? "Incorrect PIN. Please try again." : "Invalid student credentials",
           ...(managedDeviceContinuity
             ? { managedDeviceContinuityAccepted: true }
             : {}),
         });
       }
-      await clearPinFailures(school.id, selectedStudentId);
-
       markStudentSignInStage(req, "session_issuance");
       const login = await completeStudentDeviceLogin({
         schoolId: school.id,

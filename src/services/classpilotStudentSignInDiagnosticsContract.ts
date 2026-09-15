@@ -1,7 +1,8 @@
 /** Fixed private labels; this module has no runtime, request, database or timer dependency. */
 export const STUDENT_SIGN_IN_REASON_COUNTERS = {
   GLOBAL_API_RATE_LIMIT: "studentSignInReasonGlobalApiRateLimit",
-  STUDENT_LOGIN_RATE_LIMIT: "studentSignInReasonStudentLoginRateLimit",
+  STUDENT_LOGIN_RATE_LIMIT: "studentSignInReasonStudentLoginRateLimit", // Email/ID request cap only.
+  // Retained for historical records and stable interval schemas; no new PIN lockouts.
   PIN_LOCKOUT: "studentSignInReasonPinLockout",
   MANUAL_ISSUANCE_DISABLED: "studentSignInReasonManualIssuanceDisabled",
   DEVICE_BINDING_MISSING: "studentSignInReasonDeviceBindingMissing",
