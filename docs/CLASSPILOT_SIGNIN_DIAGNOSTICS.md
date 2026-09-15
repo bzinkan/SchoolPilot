@@ -1,11 +1,37 @@
 # ClassPilot student sign-in diagnostics
 
-These private backend records explain which existing check rejected a manual
+These private backend records explain which check rejected a manual
 student-login request. They cover the canonical
 `POST /api/classpilot/extension/student-login` and compatibility
-`POST /api/extension/student-login` paths. They do not change response bodies,
-HTTP statuses, headers, authentication, retries, enrollment or rate limits.
+`POST /api/extension/student-login` paths. The PIN retry behavior below applies
+to both paths; diagnostic recording itself remains best effort and does not
+control authentication.
 No extension update, database migration or administrative UI is required.
+
+## PIN retries
+
+Students can retry PIN sign-in without a PIN attempt limit or a lockout wait.
+PIN mode no longer applies the student-login route's 20-request-per-minute
+limit. Email plus Student ID Number sign-in retains that limit, including its
+existing responses, headers, keys and counting of successful requests. The
+global API limiter and other existing request protections remain unchanged.
+
+When the existing comparison finds that a well-formed PIN does not match the
+selected eligible student's stored PIN, the API returns HTTP `401` with
+`error: "Incorrect PIN. Please try again."`. The student can submit another PIN
+immediately. Missing, inactive or foreign-school students, invalid PIN format,
+and unconfigured PINs retain their existing responses; they must not be
+reported as a failed PIN comparison.
+
+Previous PIN mistakes do not prevent the next correct PIN from proceeding
+through normal sign-in. This does not bypass school policy, entitlement,
+enrollment, continuity, session authority or the global API limiter, and does
+not promise access while a required service or network is unavailable.
+
+The API no longer maintains PIN failure counts or lockout state. It ignores
+existing Redis PIN failure and lockout keys without reading, updating or
+deleting them. No Redis cleanup or account/PIN reset is needed to remove a
+lockout on the new release. This change does not modify the PIN itself.
 
 ## Interpretation
 
@@ -40,7 +66,8 @@ The fixed reason-to-counter mapping is maintained in
 | Reasons | Meaning |
 | --- | --- |
 | `STUDENT_NOT_FOUND`, `STUDENT_INACTIVE`, `STUDENT_SCHOOL_MISMATCH` | The existing student lookup or account checks rejected the request. RLS-hidden records remain not found; diagnostics never bypass isolation to investigate them. |
-| `PIN_MISMATCH`, `PIN_NOT_CONFIGURED`, `PIN_FORMAT_INVALID` | Failed PIN comparison, absent stored PIN, or invalid four-digit input, respectively. |
+| `PIN_MISMATCH` | The existing PIN comparison returned false. HTTP `401` carries `Incorrect PIN. Please try again.` and permits another PIN attempt immediately, subject to the unchanged global request protections. |
+| `PIN_NOT_CONFIGURED`, `PIN_FORMAT_INVALID` | Absent stored PIN or invalid four-digit input, respectively; existing responses are preserved. |
 | `STUDENT_ID_NUMBER_MISMATCH` | The supplied Student ID Number did not match the existing active student record. |
 | `DEVICE_BINDING_MISSING`, `EMAIL_ID_FIELDS_MISSING`, `STUDENT_SELECTION_MISSING` | An existing required-input check failed. |
 | `EMAIL_SCHOOL_UNRESOLVED`, `SCHOOL_CONTEXT_MISSING`, `SCHOOL_CONTEXT_MISMATCH` | School resolution or the existing school-context checks failed. |
@@ -49,8 +76,8 @@ The fixed reason-to-counter mapping is maintained in
 | `MANAGED_DEVICE_CONTINUITY_UNAUTHORIZED`, `MANAGED_DEVICE_CONTINUITY_UNAVAILABLE` | Existing continuity proof validation or availability failed. |
 | `STUDENT_DEVICE_UNAVAILABLE`, `STUDENT_SESSION_TRANSFER_UNAVAILABLE`, `STUDENT_SESSION_ACTIVE`, `STUDENT_SESSION_REPLACED` | Existing device/session issuance, conflict, replacement or transfer checks failed. |
 | `GLOBAL_API_RATE_LIMIT` | The global API limiter rejected the request, before student credential validation. |
-| `STUDENT_LOGIN_RATE_LIMIT` | The existing student-login route request limit rejected it. Successful requests also count toward that limit. |
-| `PIN_LOCKOUT` | The existing PIN lockout is active. This does not establish that every preceding failure was a PIN mismatch. |
+| `STUDENT_LOGIN_RATE_LIMIT` | The existing email plus Student ID Number route request limit rejected it. Successful requests also count toward that limit. On releases before PIN retry removal, this reason could also describe PIN requests. |
+| `PIN_LOCKOUT` | Deprecated historical reason. The new release does not emit it or enforce PIN lockouts. Older releases used it when PIN lockout state was active; it does not establish that every preceding failure was a PIN mismatch. |
 | `REQUEST_BODY_INVALID`, `REQUEST_BODY_TOO_LARGE`, `REQUEST_ENCODING_UNSUPPORTED` | A recognized request-parser rejection. |
 | `POOL_ACQUISITION_FAILED`, `QUERY_CANCELLED`, `AUTHORITY_CONTENTION`, `DATABASE_ERROR` | The existing bounded operational classifier recognized an acquisition/database failure. |
 | `CONNECTION_RESET`, `CONNECTION_REFUSED`, `CONNECTION_TIMEOUT`, `CONNECTION_UNAVAILABLE` | The classifier recognized a network/connection failure. The stage provides context; it does not identify a Chromebook or prove an AWS-wide outage. |
@@ -74,6 +101,12 @@ received it or that a student began using the device. The sum of all
 `studentSignInDiagnosticSinkFailure` counts synchronous detail-emission
 exceptions. Neither is added to failure totals. Undetected stdout or CloudWatch
 transport loss remains unknown and cannot be measured by these counters.
+
+`studentSignInReasonPinLockout` remains in every interval with value zero on
+the new release. The deprecated `PIN_LOCKOUT` reason and `pin_lockout` stage
+remain recognizable for historical records; retaining their names does not
+retain lockout state or behavior. Keep the counter in totals and queries so
+existing collectors and older-release records remain compatible.
 
 Counts are updated together in the completion interval. Do not compare them to
 ingress-minute request counts without allowing for in-flight requests, or add
@@ -148,9 +181,65 @@ tenant and deployment evidence gates. Review and merge, then deploy the exact
 green commit with the documented guarded backend procedure. Preserve existing
 capacity, RLS, pool limits and `/readyz` configuration.
 
+Before rollout, use local fixtures to exercise the production route
+implementation for both aliases with more than 20 wrong PIN submissions
+followed immediately by a correct PIN, while staying below unchanged global
+limits and keeping other sign-in prerequisites valid.
+Cover separate API instances, existing Redis PIN keys, and unavailable Redis;
+verify no PIN-state operations occur. Keep email/ID and global limiter coverage,
+including their existing `429` responses. Verify actual mismatches receive the
+new exact `401` message, other credential rejections retain their responses,
+and normal session issuance and compensation remain intact.
+
+Run the unchanged-extension browser compatibility gate with a local ClassPilot
+2.8.7 checkout and Playwright Chromium installed. The script can use Playwright
+from either SchoolPilot or the supplied ClassPilot checkout:
+
+```text
+node scripts/test-classpilot-pin-retry-browser.mjs --extension-dir ../ClassPilot/extension --evidence-dir <external-release-evidence-directory>
+```
+
+It copies the extension into a temporary profile, replaces only that copy's
+configuration with a managed-policy API shim and loopback fixture, and runs the
+actual 2.8.7 worker, secure frame and content gate. A pass requires 50 explicit
+wrong-PIN `401` responses displaying exactly `Incorrect PIN. Please try again.`,
+no automatic credential replay during a 32-second wait, suppression of duplicate
+submission attempts, and at most one login request in flight. The next explicit
+correct PIN must receive `200`, commit the exact student/session authentication
+state, and dismiss the gate on both test tabs. The original extension files and
+manifest must remain byte-identical; source hashes and results are recorded in
+`managed-pin-retry-browser.json` under the requested evidence directory.
+
+This is a synthetic API compatibility check; the backend route tests above
+prove the actual limiter and Redis behavior. The managed-policy shim is not a
+physical managed Chromebook or managed guest session. Record hardware validation
+separately. No extension code change, package, release or Store upload is needed.
+
+During a rolling deployment, old API tasks can still enforce both the old PIN
+lockout and the old PIN route request limit, and can still write PIN state.
+Existing cookie stickiness can keep a client on an old task. Do not announce
+completion after the first healthy new target: require the exact new API and
+worker revisions and image digests, completed deployments, healthy new API
+targets, and all old API targets removed and tasks stopped. Record this cutoff
+and distinguish old-release events from new-release events and late delivery.
+
 Perform one bounded read-only verification of release/task identity, target
-health, normal runtime summaries and diagnostic schema. Do not manufacture
-failed production sign-ins. If no real rejection occurs, record live reason
-emission as unexercised and retain the local branch tests as classification
-evidence. Do not restart the cancelled recurring monitor. Preserve this release's
-evidence and remove only its clean worktrees and verified merged branches.
+health, normal runtime summaries and diagnostic schema. Require zero new-release
+`PIN_LOCKOUT` emissions and preserve the interval counter identities above. Do
+not manufacture failed production sign-ins. If no natural wrong-PIN retry
+sequence occurs, record live retry validation as unexercised and retain the
+local tests as behavioral evidence. Successful production responses alone do
+not prove that the photographed Chromebook recovered. Do not restart the
+cancelled recurring monitor. Preserve this release's evidence and remove only
+its clean worktrees and verified merged branches.
+
+## Rollback
+
+A rollback to a release with PIN lockout code restores that behavior and the
+old PIN route request limit. Surviving Redis keys can become effective again;
+the new release's successful sign-ins do not clear those keys. Record this
+consequence in the rollback decision. Prefer a forward correction that retains
+PIN retry removal when feasible. Any backend rollback must still pass the
+repository's data-compatibility checks and preserve the verified readiness,
+capacity, pool and RLS configuration. No Redis deletion is part of this rollout
+or its ordinary rollback procedure.
