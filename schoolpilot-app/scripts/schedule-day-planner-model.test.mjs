@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classPlacementFingerprint, classPlacementUnavailable, reviewClassPlacement } from '../src/products/classpilot/components/scheduleClassPlacement.js';
+import { classPlacementCandidates, classPlacementFingerprint, classPlacementUnavailable, reviewClassPlacement } from '../src/products/classpilot/components/scheduleClassPlacement.js';
 import { buildPlannerOccurrences, buildPlannerRows, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
 
 const referenceDate = '2026-09-14';
@@ -67,6 +67,24 @@ test('Class placement fails closed on unknown, inactive, ineligible and incomple
   assert.match(reviewClassPlacement({ definition: limit, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).error, /500 individually/);
   const ruleLimit = { ...definition, classRules: Array.from({ length: 500 }, (_, index) => ({ classId: 'other-' + index, action: 'skip' })) };
   assert.match(reviewClassPlacement({ definition: ruleLimit, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).error, /500 class adjustments/);
+});
+
+test('Inactive catalog references are disabled picker choices without expanding planner rows or grade inclusion', () => {
+  const inactiveClasses = [{ id: 'archived', name: 'Archived ELA', gradeLevel: '5', active: false, staff: [{ id: 'burba', name: 'Burba' }], studentCount: null }];
+  const draft = { ...definition, grades: ['5'] }, result = model({ definition: draft, catalog: { ...catalog, inactiveClasses } });
+  assert.equal(result.classes.some(row => row.id === 'archived'), false);
+  assert.equal(result.classes.filter(row => row.included).length, 2);
+  const candidates = classPlacementCandidates(result.classes, inactiveClasses), archived = candidates.find(row => row.id === 'archived');
+  assert.equal(archived.name, 'Archived ELA');
+  assert.equal(archived.regularWindow, null);
+  assert.equal(archived.proposedWindow, null);
+  assert.equal(classPlacementUnavailable(archived), 'This class is inactive.');
+  assert.ok(reviewClassPlacement({ definition: draft, classes: candidates, originalId: 'homeroom', selectedId: 'archived', action: 'swap' }).error);
+  const stale = { ...result.classes[0], id: 'archived' };
+  const deduplicated = classPlacementCandidates([...result.classes, stale], inactiveClasses);
+  assert.equal(deduplicated.filter(row => row.id === 'archived').length, 1);
+  assert.equal(classPlacementUnavailable(deduplicated.find(row => row.id === 'archived')), 'This class is inactive.', 'Fresh inactive metadata overrides a stale reviewed meeting only inside the picker');
+  assert.deepEqual(result.classes.map(row => row.id), model({ definition: draft }).classes.map(row => row.id));
 });
 
 test('A frozen placement invalidates on changed draft, date, revision, eligibility or roster and staff facts', () => {

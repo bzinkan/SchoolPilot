@@ -100,6 +100,18 @@ test("class-only profiles block new shared-student intervals outside their selec
   await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, saved), previewToken: preview.previewToken })), /competing class time/);
 });
 
+test("inactive picker references never enter the active class catalog or default profile selection", async () => {
+  const data = await fixture(), archivedId = randomUUID();
+  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time) VALUES($1,$2,$3,'Archived class','admin_class','inactive',true,'08:00','08:30')", [archivedId, data.schoolId, data.teacherId]);
+  const catalog = await scoped(data.schoolId, () => service.getScheduleProfiles(data.schoolId));
+  assert.deepEqual(catalog.classes.map(c => c.id).sort(), [data.classId, data.nextClassId].sort());
+  assert.equal(catalog.inactiveClasses[0]?.id, archivedId);
+  assert.equal(catalog.inactiveClasses[0]?.active, false);
+  assert.equal(catalog.inactiveClasses[0]?.studentCount, null);
+  const saved = await save(data, { ...data.definition, grades: [], classIds: catalog.classes.map(c => c.id) });
+  assert.equal(saved.profile.definition.classIds.includes(archivedId), false);
+});
+
 test("application review permits reduced inherited student overlap but detects the same duration moved elsewhere", async () => {
   const data = await fixture();
   await pool.query("UPDATE groups SET teacher_id=$2,block_start_time='09:30',block_end_time='10:30' WHERE id=$1", [data.nextClassId, data.specialistId]);

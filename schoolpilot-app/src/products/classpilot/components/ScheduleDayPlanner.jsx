@@ -4,7 +4,7 @@ import { Button } from '../../../components/ui/button';
 import { DraftReviewIssues, DraftReviewStatus } from './ScheduleProfileDraftReview';
 import ScheduleClassForTime from './ScheduleClassForTime';
 import ScheduleAfterTesting from './ScheduleAfterTesting';
-import { classPlacementFingerprint, classPlacementUnavailable } from './scheduleClassPlacement';
+import { classPlacementCandidates, classPlacementFingerprint, classPlacementUnavailable } from './scheduleClassPlacement';
 import {
   buildPlannerRows, buildPlannerOccurrences, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerGradeKey, plannerGradeName,
   plannerIncluded, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow, plannerWindowText,
@@ -233,11 +233,12 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
   // date. Pending/failed checks never retain a previous conflict verdict.
   if (review.data?.referenceDate === referenceDate && metadata !== review.data) setMetadata(review.data);
   const model = useMemo(() => buildPlannerRows({ definition, catalog, regularSchedule, referenceDate, reviewData: review.data, metadata }), [definition, catalog, regularSchedule, referenceDate, review.data, metadata]);
-  const placementFingerprint = useMemo(() => classPlacementFingerprint({ definition, classes: model.classes, referenceDate, revision: catalog.revision }), [definition, model.classes, referenceDate, catalog.revision]);
+  const placementClasses = useMemo(() => classPlacementCandidates(model.classes, catalog.inactiveClasses), [model.classes, catalog.inactiveClasses]);
+  const placementFingerprint = useMemo(() => classPlacementFingerprint({ definition, classes: placementClasses, referenceDate, revision: catalog.revision }), [definition, placementClasses, referenceDate, catalog.revision]);
   const openPlacement = (row, opener) => {
     if (disabled || classPlacementUnavailable(row, true)) return;
     placementOpener.current = opener;
-    setPlacement({ originalId: row.id, definition: structuredClone(definition), classes: structuredClone(model.classes), referenceDate, fingerprint: placementFingerprint });
+    setPlacement({ originalId: row.id, definition: structuredClone(definition), classes: structuredClone(placementClasses), referenceDate, fingerprint: placementFingerprint });
   };
   const returnPlacementFocus = classId => requestAnimationFrame(() => {
     const root = planner.current;

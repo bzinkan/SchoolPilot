@@ -124,12 +124,12 @@ export async function getScheduleProfiles(schoolId: string) {
       timing: createApplicationTimingResolver({ classes: data.classes, config: data.context.config, calendar: data.context.calendar, schoolTimezone: data.schoolTimezone }) });
     return { revision: data.context.revision, schoolTimezone: data.schoolTimezone, schoolLocalToday: localDateInTimeZone(now, data.schoolTimezone),
       profiles: data.context.config.scheduleProfiles ?? [], applications, ...summaries,
-      classes: [...data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: g.status, active: true, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime,
+      classes: data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: g.status, active: true, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime,
         teacherName: staffById.get(g.teacherId)?.name,
         staff: [...new Set([g.teacherId, ...(classStaffIds.get(g.id) ?? [])])].flatMap(id => staffById.has(id) ? [staffById.get(id)!] : []),
         studentCount: classRosterCounts.get(g.id)?.size ?? 0 })),
-        ...inactiveClasses.map(g => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: "inactive", active: false, scheduleEnabled: false,
-          blockStartTime: null, blockEndTime: null, studentCount: null, teacherName: staffById.get(g.teacherId)?.name, staff: staffById.has(g.teacherId) ? [staffById.get(g.teacherId)!] : [] }))],
+      inactiveClasses: inactiveClasses.map(g => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: "inactive", active: false, scheduleEnabled: false,
+        blockStartTime: null, blockEndTime: null, studentCount: null, teacherName: staffById.get(g.teacherId)?.name, staff: staffById.has(g.teacherId) ? [staffById.get(g.teacherId)!] : [] })),
       staff: data.staff, supervisionGroups: data.supervisionGroups, testingStatuses };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }

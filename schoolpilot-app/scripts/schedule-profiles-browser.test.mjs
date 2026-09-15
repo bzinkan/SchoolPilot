@@ -371,16 +371,20 @@ test('Class placement swaps full proposed windows atomically, includes both clas
     catalog.classes[1].staff.push({ id: 'art-teacher', name: 'Art Teacher' });
     catalog.classes[2].scheduleEnabled = false;
     catalog.classes[3].scheduleRule = { weekdays: [2], startsOn: null, endsOn: null, cycleDay: 'all', periodId: null };
+    catalog.inactiveClasses = [{ id: 'archived-class', name: 'Archived Class', gradeLevel: '3', active: false, status: 'inactive',
+      scheduleEnabled: false, studentCount: null, staff: [{ id: 'art-teacher', name: 'Art Teacher' }] }];
     const classFacts = structuredClone(catalog.classes), rosters = structuredClone([...placement.rosters]);
     const original = structuredClone(catalog.profiles[0].definition);
     await page.reload(); await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
     const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    assert.equal(await workspace.getByRole('button', { name: 'Archived Class', exact: true }).count(), 0, 'Inactive picker references do not become planner rows');
     let { picker } = await openClassPlacement(page, workspace, 'Zinkan Math');
     assert.equal(await picker.getByRole('radio', { name: 'Use Zinkan Math', exact: true }).isChecked(), true);
     assert.equal(await picker.getByRole('button', { name: 'Update draft', exact: true }).isDisabled(), true, 'Keeping the current class is not a mutation');
     assert.equal(await picker.getByRole('radio', { name: 'Use Vatter Science', exact: true }).isDisabled(), true, 'An inactive schedule is not offered as a placement');
     assert.equal(await picker.getByRole('radio', { name: 'Use Art Studio', exact: true }).isDisabled(), true, 'A class without an eligible preview-date meeting cannot be placed');
+    assert.equal(await picker.getByRole('radio', { name: 'Use Archived Class', exact: true }).isDisabled(), true, 'Inactive classes remain disabled picker references');
     await picker.getByLabel('Find an existing class', { exact: true }).fill('Burba');
     await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
     assert.match(await picker.innerText(), /12 students/);

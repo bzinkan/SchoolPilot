@@ -1,4 +1,18 @@
-import { plannerIncluded, plannerValidWindow } from './scheduleDayPlannerModel.js';
+import { plannerGradeKey, plannerIncluded, plannerValidWindow } from './scheduleDayPlannerModel.js';
+
+// Inactive references belong only in the picker. They must never enlarge the
+// planner's class scope or become eligible meetings through stale review data.
+export function classPlacementCandidates(classes, inactiveClasses = []) {
+  const candidates = new Map(classes.map(row => [row.id, row]));
+  for (const source of inactiveClasses) candidates.set(source.id, {
+    ...source, id: source.id, classId: source.id, key: `class:${source.id}`, type: 'class',
+    name: source.name || 'Unavailable class', grade: plannerGradeKey(source.gradeLevel),
+    active: false, scheduleEnabled: false, status: 'unavailable', proposedStatus: 'unavailable',
+    regularWindow: null, proposedWindow: null, action: 'keep',
+    staff: source.staff || [], studentCount: source.studentCount ?? null,
+  });
+  return [...candidates.values()];
+}
 
 export function classPlacementUnavailable(row, destination = false) {
   if (!row || row.type !== 'class' || row.detailsUnavailable) return 'Class details or schedule unavailable.';
