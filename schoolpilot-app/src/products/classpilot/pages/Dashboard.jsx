@@ -134,6 +134,7 @@ import {
   unwrapToday,
 } from '../lib/scheduleChanges';
 import { useObservationLease } from '../hooks/useObservationLease';
+import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import {
   classpilotObservationSessionEligible,
   classpilotSessionAuthorityKey,
@@ -509,8 +510,6 @@ export default function Dashboard() {
   const [rerouteNote, setRerouteNote] = useState("");
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
   const [raisedHands, setRaisedHands] = useState(new Map());
-  const [studentMessages, setStudentMessages] = useState([]);
-  const [chatReplies, setChatReplies] = useState({});
   const [sessionFabState, setSessionFabState] = useState(null);
   const [startGroupId, setStartGroupId] = useState(() => readClassroomSelection(teacherClassroomSelectionKey));
   const [adminStartGroupId, setAdminStartGroupId] = useState(() => readClassroomSelection(adminClassroomSelectionKey));
@@ -1494,13 +1493,19 @@ export default function Dashboard() {
     refetchInterval: wsAuthenticated ? false : 30000,
   });
 
-  const { data: initialChatMessages } = useQuery({
-    queryKey: ['/api/teacher/messages', effectiveSession?.id],
-    queryFn: () => apiRequest('GET', `/teacher/messages?sessionId=${encodeURIComponent(effectiveSession.id)}`),
-    select: (data) => data?.messages ?? [],
-    enabled: !!effectiveSession?.id,
-    refetchInterval: wsAuthenticated ? false : 30000,
+  const chat = useClasspilotSessionChat({
+    schoolId: activeSchoolId,
+    viewerId: currentUser?.id,
+    sessionId: effectiveSession?.id,
+    enabled: dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable
+      && !terminalSessionError
+      && !(sessionSubscriptionState.status === 'terminal_error'
+        && sessionSubscriptionState.sessionId === effectiveSession?.id),
+    wsAuthenticated,
+    students,
+    dismissedMessageIds,
   });
+  const { studentMessages, chatReplies } = chat;
 
   // Sync initial raised hands to state
   useEffect(() => {
@@ -1522,60 +1527,6 @@ export default function Dashboard() {
       setRaisedHands(handsMap);
     }
   }, [initialRaisedHands, effectiveSession?.id]);
-
-  // Hydrate FAB chat from the canonical session chat store after refresh/reconnect.
-  useEffect(() => {
-    if (!effectiveSession?.id) {
-      setStudentMessages([]);
-      setChatReplies({});
-      return;
-    }
-    if (!Array.isArray(initialChatMessages)) return;
-
-    const studentLookup = new Map();
-    students.forEach((student) => {
-      const key = student.studentId || student.id;
-      if (!key) return;
-      studentLookup.set(key, student);
-    });
-    const nameFor = (studentId) => {
-      const student = studentLookup.get(studentId);
-      return student?.studentName || student?.name || [student?.firstName, student?.lastName].filter(Boolean).join(" ").trim() || student?.email || studentId;
-    };
-    const emailFor = (studentId) => studentLookup.get(studentId)?.studentEmail || studentLookup.get(studentId)?.email || "";
-    const sorted = [...initialChatMessages].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    const hydratedStudentMessages = sorted
-      .filter((msg) => msg.senderType === 'student' && !dismissedMessageIds.current.has(msg.id))
-      .map((msg) => ({
-        id: msg.id,
-        sessionId: msg.sessionId,
-        studentId: msg.studentId,
-        studentName: nameFor(msg.studentId),
-        studentEmail: emailFor(msg.studentId),
-        message: msg.content,
-        messageType: msg.messageType || 'message',
-        timestamp: msg.createdAt,
-        read: true,
-      }));
-    const hydratedReplies = {};
-    sorted
-      .filter((msg) => msg.senderType === 'teacher' && msg.studentId)
-      .forEach((msg) => {
-        hydratedReplies[msg.studentId] = [
-          ...(hydratedReplies[msg.studentId] || []),
-          {
-            id: msg.id,
-            message: msg.content,
-            timestamp: msg.createdAt,
-            status: msg.deliveryStatus || 'sent',
-            errorMessage: msg.errorMessage,
-          },
-        ];
-      });
-
-    setStudentMessages(hydratedStudentMessages);
-    setChatReplies(hydratedReplies);
-  }, [initialChatMessages, effectiveSession?.id, students]);
 
   // WebSocket connection with automatic reconnection
   useEffect(() => {
@@ -1895,10 +1846,7 @@ export default function Dashboard() {
                 timestamp: message.data.timestamp,
                 read: false,
               };
-              setStudentMessages(prev => {
-                if (prev.some(m => m.id === msgId)) return prev;
-                return [newMsg, ...prev];
-              });
+              if (!chat.receiveStudentMessage(newMsg)) return;
               toast({
                 title: message.data.messageType === 'question' ? "Question" : "Message",
                 description: `${message.data.studentName}: ${message.data.message.slice(0, 50)}${message.data.message.length > 50 ? '...' : ''}`,
@@ -1908,17 +1856,8 @@ export default function Dashboard() {
               if (!classRealtimeMessageEligibility(message)) return;
               const messageId = message.messageId || message.data?.messageId;
               if (!messageId) return;
-              setChatReplies(prev => {
-                const next = {};
-                Object.entries(prev).forEach(([studentId, replies]) => {
-                  next[studentId] = replies.map((reply) => (
-                    reply.id === messageId
-                      ? { ...reply, status: message.deliveryStatus || message.data?.deliveryStatus, errorMessage: message.errorMessage || message.data?.errorMessage }
-                      : reply
-                  ));
-                });
-                return next;
-              });
+              chat.receiveDelivery(messageId, message.deliveryStatus || message.data?.deliveryStatus,
+                message.errorMessage || message.data?.errorMessage);
             }
             if (message.type === 'student-registered') {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
@@ -2143,8 +2082,9 @@ export default function Dashboard() {
       liveViewConnectTimerRef.current = null;
       webrtc.cleanup();
     };
-  // Reconnect when an administrator switches schools. Other live values are carried through refs.
-  }, [currentUser?.schoolId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Replace the socket when its authenticated school or viewer changes.
+  // Other live values are carried through refs.
+  }, [currentUser?.schoolId, currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-authenticate when currentUser becomes available (e.g. token loaded after WS connected)
   useEffect(() => {
@@ -5090,29 +5030,27 @@ export default function Dashboard() {
   });
 
   const replyToMessageMutation = useMutation({
-    mutationFn: async ({ sessionId, studentId, message }) => apiRequest('POST', '/teacher/reply', { sessionId, studentId, message }),
+    mutationFn: async ({ sessionId, studentId, message, chatRequest }) => {
+      if (!chat.isCurrentReply(chatRequest)) throw new Error('This class chat is no longer available.');
+      return apiRequest('POST', '/teacher/reply', { sessionId, studentId, message }, {
+        headers: { 'X-School-Id': chatRequest.schoolId },
+      });
+    },
     onSuccess: (data, variables) => {
       const reply = data?.message || {};
-      setChatReplies(prev => ({
-        ...prev,
-        [variables.studentId]: [
-          ...(prev[variables.studentId] || []),
-          {
-            id: reply.id,
-            message: reply.content || variables.message,
-            timestamp: reply.createdAt || new Date().toISOString(),
-            status: reply.deliveryStatus || 'sent',
-            errorMessage: reply.errorMessage,
-          },
-        ],
-      }));
+      if (!chat.receiveReply(variables.chatRequest, reply, variables.message)) return;
       toast({
         title: reply.deliveryStatus === 'failed' ? "Reply Not Delivered" : "Reply Queued",
         description: reply.deliveryStatus === 'failed' ? (reply.errorMessage || "No student device was available") : "Waiting for device confirmation",
         variant: reply.deliveryStatus === 'failed' ? "destructive" : undefined,
       });
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error, variables) => {
+      if (chat.isCurrentReply(variables.chatRequest)) {
+        toast({ variant: "destructive", title: "Error", description: error.message });
+      }
+    },
+    onSettled: (_data, _error, variables) => { chat.finishReply(variables.chatRequest); },
   });
 
   const sendMessageMutation = useMutation({
@@ -5171,10 +5109,10 @@ export default function Dashboard() {
     sendMessageMutation.mutate({ message: sendMessageText.trim() });
   };
 
-  const markMessageRead = (messageId) => { setStudentMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, read: true } : msg)); };
+  const markMessageRead = chat.markRead;
 
   const dismissMessage = async (messageId) => {
-    setStudentMessages(prev => prev.filter(msg => msg.id !== messageId));
+    if (!chat.dismiss(messageId)) return;
     try { await apiRequest('DELETE', `/teacher/messages/${messageId}`); } catch (error) {
       console.error('Failed to delete message from server:', error);
       dismissedMessageIds.current.add(messageId);
@@ -5184,8 +5122,7 @@ export default function Dashboard() {
 
   const closeChat = async (studentId) => {
     const msg = studentMessages.find(m => m.studentId === studentId);
-    setStudentMessages(prev => prev.filter(m => m.studentId !== studentId));
-    setChatReplies(prev => { const next = { ...prev }; delete next[studentId]; return next; });
+    if (!chat.closeThread(studentId)) return;
     if (msg) {
       try { await apiRequest('POST', '/teacher/close-chat', { sessionId: effectiveSession?.id, studentId }); } catch (error) {
         console.error('Failed to send close-chat:', error);
@@ -7169,6 +7106,7 @@ export default function Dashboard() {
       {/* TeacherFab */}
       {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive && (
         <TeacherFab
+          key={chat.generation}
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}
           attentionPending={subgroupCommandsDisabled || attentionModeMutation.isPending}
@@ -7187,7 +7125,9 @@ export default function Dashboard() {
           onMarkMessageRead={markMessageRead}
           onDismissMessage={dismissMessage}
           onReplyToMessage={(studentId, message) => {
-            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message });
+            const chatRequest = chat.beginReply(studentId);
+            if (!chatRequest) return Promise.reject(new Error('This class chat is no longer available.'));
+            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message, chatRequest });
           }}
           replyPending={replyToMessageMutation.isPending}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
