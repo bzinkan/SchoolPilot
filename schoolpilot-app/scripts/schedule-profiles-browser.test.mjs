@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { tsImport } from 'tsx/esm/api';
 
 const DEFAULT_SCHOOL_HOURS = { enableTrackingHours: true, trackingStartTime: '08:00', trackingEndTime: '16:00' };
 
@@ -222,14 +223,22 @@ async function createDraftReviewFixture(context) {
     }
     if (url.pathname.endsWith('/instructional-calendar')) return route.fulfill({ json: { month: url.searchParams.get('month'), schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, nonInstructionalDates: [], revision: 1, updatedAt: null } });
     if (url.pathname.endsWith('/admin/scheduling')) return route.fulfill({ json: { revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, schoolLocalToday: catalog.schoolLocalToday, config: { schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null, cycleAnchorDay: 'A', periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {}, scheduleProfiles: catalog.profiles, profileApplications: [] } } });
-    if (url.pathname.endsWith('/schedule-profiles/regular-schedule')) return route.fulfill({ json: { referenceDate: url.searchParams.get('referenceDate'), revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: null, overridden: false }, classes: catalog.classes.map(row => ({ classId: row.id, status: 'meets', window: { startTime: row.blockStartTime, endTime: row.blockEndTime } })) } });
+    if (url.pathname.endsWith('/schedule-profiles/regular-schedule')) {
+      const referenceDate = url.searchParams.get('referenceDate');
+      const response = await control.regularResponse?.(referenceDate);
+      return route.fulfill(response || { json: { referenceDate, revision: catalog.revision, schoolTimezone: catalog.schoolTimezone, day: { instructional: true, meetingWeekday: 2, cycleDay: 'A', bellProfile: null, overridden: false }, classes: catalog.classes.map(row => ({ classId: row.id, status: 'meets', window: { startTime: row.blockStartTime, endTime: row.blockEndTime } })) } });
+    }
     if (url.pathname.endsWith('/schedule-profiles/draft-review')) {
       const body = request.postDataJSON(); reviews.push(body);
       if (control.failSavedReview && saves.length) return route.fulfill({ status: 503, json: { error: 'Saved schedule review is temporarily unavailable.' } });
       const custom = await control.reviewResponse?.(body, project(body));
       return route.fulfill(custom || { json: project(body) });
     }
-    if (url.pathname.endsWith('/schedule-profiles/preview')) { const body = request.postDataJSON(); previews.push(body); return route.fulfill({ json: { previewToken: `actual-date-${previews.length}`, schoolTimezone: catalog.schoolTimezone, affectedClasses: 1, blockers: [], changes: [], testingWindows: [] } }); }
+    if (url.pathname.endsWith('/schedule-profiles/preview')) {
+      const body = request.postDataJSON(); previews.push(body);
+      const response = await control.previewResponse?.(body);
+      return route.fulfill(response || { json: { previewToken: `actual-date-${previews.length}`, schoolTimezone: catalog.schoolTimezone, affectedClasses: 1, blockers: [], changes: [], testingWindows: [] } });
+    }
     if (url.pathname.endsWith('/schedule-profiles/apply')) {
       const body = request.postDataJSON(); applies.push(body);
       const profile = catalog.profiles.find(row => row.id === body.profileId) || control.savedProfile;
@@ -296,11 +305,391 @@ async function createDraftReviewFixture(context) {
   return { ...fixture, catalog, reviews, saves, previews, applies, deletions, cancellations, historyDeletions, errors, control, handleApi };
 }
 
+let placementModules;
+async function createClassPlacementFixture(context) {
+  // These pure projections use synthetic server facts. Loading them does not
+  // execute the database-backed review endpoints or expose rosters to the UI.
+  // tsImport uses scoped loader registrations; initialize each scope serially.
+  placementModules ||= (async () => [
+    await tsImport('../../src/services/classpilotScheduleDraftReview.ts', import.meta.url),
+    await tsImport('../../src/services/classpilotRegularSchedule.ts', import.meta.url),
+    await tsImport('../../src/services/classpilotSchedulingRules.ts', import.meta.url),
+  ])();
+  const [{ projectScheduleDraftReview }, { projectClasspilotRegularSchedule }, { emptySchoolSchedulingConfig }] = await placementModules;
+  const fixture = await createDraftReviewFixture(context);
+  const { catalog, control } = fixture;
+  const cohort = Array.from({ length: 12 }, (_, index) => `placement-student-${index + 1}`);
+  const placement = { config: emptySchoolSchedulingConfig(), calendar: {}, rosters: new Map([
+    ['math', cohort], ['reading', [...cohort]], ['science', ['science-student']], ['art', ['art-student']],
+  ]), unavailableRosters: new Set(), reviewResponse: null };
+  const windows = [['08:30', '09:10'], ['11:00', '11:45'], ['12:00', '12:45'], ['13:00', '13:45']];
+  catalog.classes.forEach((row, index) => Object.assign(row, { blockStartTime: windows[index][0], blockEndTime: windows[index][1] }));
+  const facts = referenceDate => ({ referenceDate, revision: catalog.revision, schoolTimezone: catalog.schoolTimezone,
+    config: placement.config, calendar: placement.calendar,
+    tracking: { ...control.schoolHours, trackingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], schoolTimezone: catalog.schoolTimezone },
+    classes: catalog.classes.map(row => ({ ...row, studentIds: placement.rosters.get(row.id) || [], unavailableRoster: placement.unavailableRosters.has(row.id) })),
+    supervisionGroups: catalog.supervisionGroups.map(group => ({ ...group, inactiveStudents: 0 })), staff: catalog.staff,
+  });
+  control.regularResponse = referenceDate => ({ json: projectClasspilotRegularSchedule(facts(referenceDate)) });
+  control.reviewResponse = async body => {
+    const reviewed = projectScheduleDraftReview(body.definition, facts(body.referenceDate));
+    return await placement.reviewResponse?.(body, reviewed) || { json: reviewed };
+  };
+  return { ...fixture, placement, projectPlacement: (definition, referenceDate) => projectScheduleDraftReview(definition, facts(referenceDate)) };
+}
+
+function classPlacementProfile(patch = {}) {
+  return { id: 'class-placement', revision: 3, previewDate: '2026-09-14', definition: {
+    name: 'Class placement day', grades: [], classIds: ['math'], classRules: [], testingBlocks: [], ...patch,
+  } };
+}
+
+async function openClassPlacement(page, workspace, name, { allowPending = false } = {}) {
+  if (!allowPending) await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText('No blocking conflicts on this preview date.', { exact: true }).waitFor();
+  await editClass(workspace, name);
+  const opener = workspace.getByRole('button', { name: `Class for this time for ${name}`, exact: true, disabled: false });
+  await opener.click();
+  const picker = page.getByRole('dialog', { name: 'Class for this time', exact: true });
+  await picker.waitFor();
+  return { picker, opener };
+}
+
+async function waitForClassEditorFocus(page, id) {
+  await page.waitForFunction(classId => document.querySelector(`[data-class-editor-id="${classId}"]`)?.contains(document.activeElement), id);
+}
+
 async function addTestingBlock(dialog, index, teacher) {    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
   await dialog.getByLabel(`Testing block ${index} name`, { exact: true }).fill(`${teacher[0].toUpperCase()}${teacher.slice(1)} MAP`);
   await dialog.getByLabel(`Testing block ${index} Supervision group`, { exact: true }).selectOption(`${teacher}-group`);
   await dialog.getByLabel(`Testing block ${index} assigned staff`, { exact: true }).selectOption(teacher);
 }
+
+test('Class placement swaps full proposed windows atomically, includes both classes, preserves rosters, and Undo restores the draft', { timeout: 120_000 }, async context => {
+  const { root, browser, vite, page, catalog, placement, saves, applies, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.profiles = [classPlacementProfile({ classRules: [{ classId: 'math', action: 'time', startTime: '08:15', endTime: '08:55' }] })];
+    catalog.classes[1].staff.push({ id: 'art-teacher', name: 'Art Teacher' });
+    catalog.classes[2].scheduleEnabled = false;
+    catalog.classes[3].scheduleRule = { weekdays: [2], startsOn: null, endsOn: null, cycleDay: 'all', periodId: null };
+    const classFacts = structuredClone(catalog.classes), rosters = structuredClone([...placement.rosters]);
+    const original = structuredClone(catalog.profiles[0].definition);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    let { picker } = await openClassPlacement(page, workspace, 'Zinkan Math');
+    assert.equal(await picker.getByRole('radio', { name: 'Use Zinkan Math', exact: true }).isChecked(), true);
+    assert.equal(await picker.getByRole('button', { name: 'Update draft', exact: true }).isDisabled(), true, 'Keeping the current class is not a mutation');
+    assert.equal(await picker.getByRole('radio', { name: 'Use Vatter Science', exact: true }).isDisabled(), true, 'An inactive schedule is not offered as a placement');
+    assert.equal(await picker.getByRole('radio', { name: 'Use Art Studio', exact: true }).isDisabled(), true, 'A class without an eligible preview-date meeting cannot be placed');
+    await picker.getByLabel('Find an existing class', { exact: true }).fill('Burba');
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    assert.match(await picker.innerText(), /12 students/);
+    assert.match(await picker.innerText(), /Art Teacher/, 'Candidate metadata includes the co-teacher');
+    assert.equal(await picker.getByRole('radio', { name: 'Swap class times', exact: true }).isChecked(), false);
+    assert.equal(await picker.getByRole('radio', { name: 'Use selected class; original does not meet', exact: true }).isChecked(), false);
+    assert.equal(await picker.getByRole('button', { name: 'Update draft', exact: true }).isDisabled(), true, 'Selecting a class never silently selects a destructive placement mode');
+    await picker.getByRole('radio', { name: 'Swap class times', exact: true }).check();
+    assert.match(await picker.innerText(), /08:15.*08:55/s);
+    assert.match(await picker.innerText(), /11:00.*11:45/s);
+    for (const id of ['math', 'reading']) {
+      const change = picker.locator(`[data-placement-change="${id}"]`);
+      assert.match(await change.innerText(), /12 students/, 'The before-and-after review retains each class roster count even when search hides the original');
+      assert.match(await change.innerText(), id === 'math' ? /Zinkan/ : /Burba.*Art Teacher/s);
+    }
+    const evidence = path.resolve(root, '../soc2-evidence/day-planner-class-placement/browser'); await mkdir(evidence, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await page.screenshot({ path: path.join(evidence, `class-placement-desktop-${theme}.png`), animations: 'disabled' });
+    }
+    await page.evaluate(() => document.documentElement.classList.remove('dark'));
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).click();
+    await picker.waitFor({ state: 'hidden' }); await waitForClassEditorFocus(page, 'reading');
+    assert.equal(await workspace.getByLabel('Burba Reading profile start', { exact: true }).inputValue(), '08:15');
+    assert.equal(await workspace.getByLabel('Burba Reading profile end', { exact: true }).inputValue(), '08:55');
+    await editClass(workspace, 'Zinkan Math');
+    assert.equal(await workspace.getByLabel('Zinkan Math profile start', { exact: true }).inputValue(), '11:00');
+    assert.equal(await workspace.getByLabel('Zinkan Math profile end', { exact: true }).inputValue(), '11:45');
+    await workspace.getByRole('button', { name: 'Undo last change', exact: true }).click();
+    assert.equal(await workspace.getByLabel('Zinkan Math profile start', { exact: true }).inputValue(), '08:15');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.deepEqual(saves[0].definition, original, 'One Undo restores both rules and both class selections');
+    ({ picker } = await openClassPlacement(page, workspace, 'Zinkan Math'));
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await picker.getByRole('radio', { name: 'Swap class times', exact: true }).check();
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).click();
+    await picker.waitFor({ state: 'hidden' });
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.deepEqual([...saves[1].definition.classIds].sort(), ['math', 'reading']);
+    assert.deepEqual([...saves[1].definition.classRules].sort((a, b) => a.classId.localeCompare(b.classId)), [
+      { classId: 'math', action: 'time', startTime: '11:00', endTime: '11:45' },
+      { classId: 'reading', action: 'time', startTime: '08:15', endTime: '08:55' },
+    ]);
+    assert.deepEqual(catalog.classes, classFacts, 'Placement does not rewrite class identities or permanent staff assignments');
+    assert.deepEqual([...placement.rosters], rosters, 'Both permanent student rosters remain unchanged');
+    assert.equal(applies.length, 0); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Class placement cancellation is a no-op and Move/skip can restore a skipped class with one complete Undo', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, saves, applies, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.profiles = [classPlacementProfile({ grades: ['3'], classIds: [], classRules: [{ classId: 'reading', action: 'skip' }] })];
+    const original = structuredClone(catalog.profiles[0].definition);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    let { picker } = await openClassPlacement(page, workspace, 'Zinkan Math');
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    assert.equal(await picker.getByRole('radio', { name: 'Swap class times', exact: true }).isDisabled(), true, 'A skipped class has no proposed window to exchange');
+    await picker.getByRole('radio', { name: 'Use selected class; original does not meet', exact: true }).check();
+    await picker.getByRole('button', { name: 'Cancel class placement', exact: true }).click();
+    await picker.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Class for this time for Zinkan Math');
+    assert.equal(await workspace.getByRole('button', { name: 'Undo last change', exact: true }).isDisabled(), true);
+    ({ picker } = await openClassPlacement(page, workspace, 'Zinkan Math'));
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await page.keyboard.press('Escape'); await picker.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Class for this time for Zinkan Math');
+    assert.equal(await workspace.getByRole('button', { name: 'Undo last change', exact: true }).isDisabled(), true);
+    ({ picker } = await openClassPlacement(page, workspace, 'Zinkan Math'));
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await picker.getByRole('radio', { name: 'Use selected class; original does not meet', exact: true }).check();
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).click();
+    await picker.waitFor({ state: 'hidden' }); await waitForClassEditorFocus(page, 'reading');
+    assert.equal(await workspace.getByLabel('Burba Reading profile start', { exact: true }).inputValue(), '08:30');
+    assert.equal(await workspace.getByLabel('Burba Reading profile end', { exact: true }).inputValue(), '09:10');
+    await editClass(workspace, 'Zinkan Math');
+    assert.equal(await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).inputValue(), 'skip');
+    assert.equal(await scheduleRow(workspace, 'Zinkan Math').locator('[data-proposed-window]').count(), 0);
+    assert.equal(await workspace.getByRole('button', { name: 'Class for this time for Zinkan Math', exact: true }).isDisabled(), true, 'A skipped original class has no destination window');
+    await workspace.getByRole('button', { name: 'Undo last change', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.deepEqual(saves[0].definition, original);
+    ({ picker } = await openClassPlacement(page, workspace, 'Zinkan Math'));
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await picker.getByRole('radio', { name: 'Use selected class; original does not meet', exact: true }).check();
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).click(); await picker.waitFor({ state: 'hidden' });
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.deepEqual(saves[1].definition.grades, ['3']);
+    assert.deepEqual([...saves[1].definition.classIds].sort(), ['math', 'reading'], 'Both affected IDs are explicit even when their grade already includes them');
+    assert.deepEqual([...saves[1].definition.classRules].sort((a, b) => a.classId.localeCompare(b.classId)), [
+      { classId: 'math', action: 'skip' }, { classId: 'reading', action: 'time', startTime: '08:30', endTime: '09:10' },
+    ]);
+    assert.equal(applies.length, 0); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Class placement searches across hidden grades and preserves focus and readable controls in mobile light and dark themes', { timeout: 120_000 }, async context => {
+  const { root, browser, vite, page, catalog, saves, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.profiles = [classPlacementProfile()];
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    assert.equal(await workspace.getByRole('button', { name: 'List', exact: true }).getAttribute('aria-pressed'), 'true');
+    await workspace.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('3');
+    const { picker } = await openClassPlacement(page, workspace, 'Zinkan Math');
+    await picker.getByLabel('Find an existing class', { exact: true }).fill('Art Teacher');
+    const candidate = picker.getByRole('radio', { name: 'Use Art Studio', exact: true });
+    assert.equal(await candidate.isEnabled(), true, 'The picker searches real classes outside the display grade filter');
+    await candidate.check(); await picker.getByRole('radio', { name: 'Swap class times', exact: true }).check();
+    const evidence = path.resolve(root, '../soc2-evidence/day-planner-class-placement/browser'); await mkdir(evidence, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      const confirm = picker.getByRole('button', { name: 'Update draft', exact: true });
+      await confirm.focus(); await confirm.scrollIntoViewIfNeeded();
+      const bounds = await confirm.evaluate(element => { const rect = element.getBoundingClientRect(); return { focused: element === document.activeElement, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight }; });
+      assert.ok(bounds.focused && bounds.left >= 0 && bounds.right <= bounds.width && bounds.top >= 0 && bounds.bottom <= bounds.height, `The ${theme} mobile dialog keeps its focused action visible: ${JSON.stringify(bounds)}`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({ path: path.join(evidence, `class-placement-mobile-${theme}.png`), animations: 'disabled' });
+    }
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).press('Enter');
+    await picker.waitFor({ state: 'hidden' }); await waitForClassEditorFocus(page, 'art');
+    const target = workspace.locator('[data-class-editor-id="art"]');
+    assert.equal(await target.isVisible(), true, 'Commit reveals the canonical destination class through the previous grade filter');
+    assert.equal(await workspace.getByLabel('Art Studio profile start', { exact: true }).inputValue(), '08:30');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.deepEqual([...saves[0].definition.classIds].sort(), ['art', 'math']);
+    assert.equal(saves[0].definition.classRules.length, 2); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Class placement rejects a changed review and an old-school response cannot revive its picker or draft', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, placement, saves, applies, errors } = await createClassPlacementFixture(context);
+  let finishRead;
+  try {
+    catalog.profiles = [classPlacementProfile()];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByText('No blocking conflicts on this preview date.', { exact: true }).waitFor();
+    placement.reviewResponse = async (_body, reviewed) => {
+      const updated = structuredClone(reviewed), candidate = updated.classes.find(row => row.classId === 'reading');
+      candidate.rosterFingerprint = 'same-size-roster-replacement';
+      await new Promise(resolve => { finishRead = resolve; });
+      return { json: updated };
+    };
+    const read = page.waitForRequest(request => request.url().endsWith('/schedule-profiles/draft-review'));
+    await workspace.getByRole('button', { name: 'Refresh regular schedule', exact: true }).click(); await read;
+    let { picker } = await openClassPlacement(page, workspace, 'Zinkan Math', { allowPending: true });
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await picker.getByRole('radio', { name: 'Swap class times', exact: true }).check();
+    finishRead(); finishRead = null;
+    await picker.getByRole('alert').filter({ hasText: 'The schedule changed while this review was open.' }).waitFor();
+    assert.equal(await picker.getByRole('button', { name: 'Update draft', exact: true }).isDisabled(), true);
+    await picker.getByRole('button', { name: 'Cancel class placement', exact: true }).click(); await picker.waitFor({ state: 'hidden' });
+    assert.equal(await workspace.getByRole('button', { name: 'Undo last change', exact: true }).isDisabled(), true);
+    const oldSchoolRead = page.waitForRequest(request => request.url().endsWith('/schedule-profiles/draft-review'));
+    await workspace.getByRole('button', { name: 'Refresh regular schedule', exact: true }).click(); await oldSchoolRead;
+    ({ picker } = await openClassPlacement(page, workspace, 'Zinkan Math', { allowPending: true }));
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await page.evaluate(() => window.switchFixtureSchool('other-school'));
+    await picker.waitFor({ state: 'hidden' }); await workspace.waitFor({ state: 'hidden' });
+    finishRead(); finishRead = null; await page.waitForLoadState('networkidle');
+    assert.equal(await page.getByRole('dialog', { name: 'Class for this time', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).count(), 0);
+    assert.equal(saves.length, 0); assert.equal(applies.length, 0); assert.deepEqual(errors, []);
+  } finally { finishRead?.(); await browser.close(); await vite.close(); }
+});
+
+test('After testing partitions the actual roster into class, gap, none, multiple and continuing-testing outcomes without changing assignments', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, placement, projectPlacement, saves, applies, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.staff.push({ id: 'proctor', name: 'MAP Proctor' }, { id: 'next-proctor', name: 'Next Proctor' });
+    const students = ['returns', 'waits', 'no-later-class', 'ambiguous', 'continues'];
+    placement.rosters = new Map([['math', ['returns']], ['reading', ['waits']], ['science', ['ambiguous']], ['art', ['ambiguous']]]);
+    Object.assign(catalog.classes[0], { blockStartTime: '10:30', blockEndTime: '11:30' });
+    Object.assign(catalog.classes[2], { blockStartTime: '10:30', blockEndTime: '11:30' });
+    Object.assign(catalog.classes[3], { blockStartTime: '10:30', blockEndTime: '11:30' });
+    catalog.supervisionGroups = [{ id: 'whole-mixed', name: 'Five destinations', staffIds: ['proctor'], studentIds: students }, { id: 'next-test', name: 'Next testing group', staffIds: ['next-proctor'], studentIds: ['continues'] }];
+    catalog.profiles = [classPlacementProfile({ classIds: [], testingBlocks: [
+      { id: 'source-testing', name: 'Mixed return MAP', coverageGroupId: 'whole-mixed', assignedStaffId: 'proctor', startTime: '09:00', endTime: '10:45' },
+      { id: 'continued-testing', name: 'Continuing MAP', coverageGroupId: 'next-test', assignedStaffId: 'next-proctor', startTime: '10:45', endTime: '11:30' },
+    ] })];
+    const checked = projectPlacement(catalog.profiles[0].definition, '2026-09-14');
+    assert.equal(checked.testingBlocks[0].afterTesting.status, 'ready', `Synthetic roster facts must be complete: ${JSON.stringify(checked.issues)}`);
+    const frozenRoster = structuredClone(catalog.supervisionGroups);
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await editTesting(workspace, 'Mixed return MAP');
+    const after = workspace.getByRole('region', { name: 'After testing for Mixed return MAP', exact: true });
+    await page.waitForFunction(() => document.querySelector('[aria-label="After testing for Mixed return MAP"]')?.getAttribute('data-after-testing-status') === 'ready');
+    assert.match(await after.innerText(), /5 students in this testing group/);
+    for (const kind of ['class', 'gap', 'none', 'multiple', 'continuing_testing']) {
+      assert.equal(await after.locator(`[data-after-testing-kind="${kind}"]`).count(), 1);
+      assert.match(await after.locator(`[data-after-testing-kind="${kind}"]`).innerText(), /1 student/);
+    }
+    assert.match(await after.locator('[data-after-testing-kind="class"]').innerText(), /Zinkan Math.*10:45/s);
+    assert.match(await after.locator('[data-after-testing-kind="gap"]').innerText(), /Burba Reading.*11:00/s);
+    assert.match(await after.locator('[data-after-testing-kind="multiple"]').innerText(), /Art Studio|Vatter Science/);
+    assert.match(await after.locator('[data-after-testing-kind="continuing_testing"]').innerText(), /Continuing MAP/);
+    placement.unavailableRosters.add('math');
+    await workspace.getByRole('button', { name: 'Refresh regular schedule', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[aria-label="After testing for Mixed return MAP"]')?.getAttribute('data-after-testing-status') === 'unavailable');
+    assert.match(await after.innerText(), /After testing is unavailable/);
+    assert.doesNotMatch(await after.innerText(), /No later class scheduled|0 students|Zinkan Math.*10:45/);
+    assert.deepEqual(catalog.supervisionGroups, frozenRoster);
+    assert.equal(saves.length, 0); assert.equal(applies.length, 0); assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('After testing clears stale destinations while checking, ignores an older response, and never treats failure as no later class', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, placement, errors } = await createClassPlacementFixture(context);
+  let finishRead;
+  try {
+    catalog.staff.push({ id: 'proctor', name: 'MAP Proctor' });
+    catalog.supervisionGroups = [{ id: 'return-group', name: 'Return group', staffIds: ['proctor'], studentIds: [...placement.rosters.get('math')] }];
+    catalog.profiles = [classPlacementProfile({ testingBlocks: [{ id: 'return-testing', name: 'Return MAP', coverageGroupId: 'return-group', assignedStaffId: 'proctor', startTime: '09:15', endTime: '10:45' }] })];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await editTesting(workspace, 'Return MAP');
+    const after = workspace.getByRole('region', { name: 'After testing for Return MAP', exact: true });
+    await after.locator('[data-after-testing-kind="gap"]').waitFor();
+    assert.match(await after.innerText(), /Burba Reading.*11:00/s);
+    placement.reviewResponse = async (body, reviewed) => {
+      if (body.definition.testingBlocks[0].endTime !== '10:30') return { json: reviewed };
+      await new Promise(resolve => { finishRead = resolve; }); return { json: reviewed };
+    };
+    const heldRead = page.waitForRequest(request => request.url().endsWith('/schedule-profiles/draft-review') && request.postDataJSON().definition.testingBlocks[0].endTime === '10:30');
+    await workspace.getByLabel('Testing block 1 end', { exact: true }).fill('10:30'); await heldRead;
+    assert.equal(await after.getAttribute('data-after-testing-status'), 'pending');
+    assert.doesNotMatch(await after.innerText(), /Burba Reading|No later class scheduled/);
+    await workspace.getByLabel('Testing block 1 end', { exact: true }).fill('12:00');
+    await after.locator('[data-after-testing-kind="none"]').waitFor();
+    finishRead(); finishRead = null; await page.waitForLoadState('networkidle');
+    assert.equal(await after.getAttribute('data-after-testing-status'), 'ready');
+    assert.match(await after.innerText(), /No later class scheduled/);
+    assert.doesNotMatch(await after.innerText(), /Burba Reading/);
+    placement.reviewResponse = () => ({ status: 503, json: { error: 'The roster-aware review is unavailable.' } });
+    await workspace.getByLabel('Testing block 1 end', { exact: true }).fill('12:15');
+    await workspace.getByText('Could not review this draft schedule.', { exact: true }).waitFor();
+    assert.equal(await after.getAttribute('data-after-testing-status'), 'unavailable');
+    assert.doesNotMatch(await after.innerText(), /No later class scheduled|0 students/);
+    assert.deepEqual(errors, []);
+  } finally { finishRead?.(); await browser.close(); await vite.close(); }
+});
+
+test('Class placement rules and After testing are reviewed independently on every application date without creating a missing meeting', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, placement, control, projectPlacement, saves, previews, applies, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.classes[0].scheduleRule = { weekdays: [1], startsOn: null, endsOn: null, cycleDay: 'all', periodId: null };
+    catalog.staff.push({ id: 'proctor', name: 'MAP Proctor' });
+    catalog.supervisionGroups = [{ id: 'date-group', name: 'Date-specific group', staffIds: ['proctor'], studentIds: [...placement.rosters.get('math')] }];
+    catalog.profiles = [classPlacementProfile({ testingBlocks: [{ id: 'date-testing', name: 'Dated MAP', coverageGroupId: 'date-group', assignedStaffId: 'proctor', startTime: '09:15', endTime: '10:45' }] })];
+    control.previewResponse = body => {
+      const definition = body.definition || catalog.profiles.find(profile => profile.id === body.profileId).definition;
+      const dates = body.dates.map(date => ({ date, reviewed: projectPlacement(definition, date) }));
+      const classResults = dates.flatMap(({ date, reviewed }) => definition.classRules.map(rule => {
+        const row = reviewed.classes.find(item => item.classId === rule.classId);
+        return { date, classId: row.classId, className: row.name, status: row.status !== 'meets' ? 'does_not_meet' : rule.action === 'skip' ? 'skipped' : 'time', ...(row.proposedWindow || {}) };
+      }));
+      const testingWindows = dates.flatMap(({ date, reviewed }) => reviewed.testingBlocks.map(block => ({ ...block, date,
+        afterTesting: { ...block.afterTesting, allocations: block.afterTesting.allocations.map(allocation => date === '2026-09-14' && allocation.classIds.includes('math') ? { ...allocation, classNames: ['Reviewed Monday Math'] } : allocation) },
+      })));
+      return { json: { previewToken: `date-outcomes-${previews.length}`, schoolTimezone: catalog.schoolTimezone, affectedClasses: 2, blockers: [], changes: [], classResults, testingWindows } };
+    };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    const { picker } = await openClassPlacement(page, workspace, 'Zinkan Math');
+    await picker.getByRole('radio', { name: 'Use Burba Reading', exact: true }).check();
+    await picker.getByRole('radio', { name: 'Swap class times', exact: true }).check();
+    await picker.getByRole('button', { name: 'Update draft', exact: true }).click(); await picker.waitFor({ state: 'hidden' });
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    await workspace.getByRole('button', { name: 'Choose dates & apply', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Remove application date 2026-09-08', exact: true }).click();
+    for (const date of ['2026-09-14', '2026-09-15']) {
+      await workspace.getByLabel('Add an individual date', { exact: true }).fill(date);
+      await workspace.getByRole('button', { name: 'Add selected date', exact: true }).click();
+    }
+    await workspace.getByRole('button', { name: 'Preview application', exact: true }).click();
+    const preview = workspace.getByRole('region', { name: 'Profile application preview', exact: true }); await preview.waitFor();
+    assert.match(await preview.locator('[data-application-class-result="2026-09-14:math"]').innerText(), /Custom time: 11:00–11:45/);
+    assert.match(await preview.locator('[data-application-class-result="2026-09-15:math"]').innerText(), /Does not meet on this date/);
+    assert.match(await preview.locator('[data-application-class-result="2026-09-15:reading"]').innerText(), /Custom time: 08:30–09:10/);
+    const monday = preview.locator('[data-after-testing-date="2026-09-14"]'), tuesday = preview.locator('[data-after-testing-date="2026-09-15"]');
+    assert.match(await monday.innerText(), /Gap until Reviewed Monday Math at 11:00/, 'The destination label comes from this exact server review');
+    assert.match(await tuesday.innerText(), /No later class scheduled/);
+    assert.doesNotMatch(await tuesday.innerText(), /Gap until Zinkan Math/);
+    await workspace.getByRole('button', { name: 'Apply reviewed dates', exact: true }).click();
+    await workspace.waitFor({ state: 'hidden' });
+    assert.equal(saves.length, 1); assert.equal(applies.length, 1);
+    assert.deepEqual(applies[0].dates, ['2026-09-14', '2026-09-15']);
+    assert.equal(applies[0].previewToken, 'date-outcomes-1');
+    assert.equal(catalog.profiles[0].previewDate, '2026-09-14');
+    assert.deepEqual(catalog.profiles[0].definition.classRules, saves[0].definition.classRules);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
 
 test('Saved preview dates survive reopen and separate administrators while date-only actions preserve the saved schedule', { timeout: 120_000 }, async context => {
   const { root, browser, vite, page, catalog, control, saves, reviews, previews, applies, errors, handleApi, url } = await createDraftReviewFixture(context);

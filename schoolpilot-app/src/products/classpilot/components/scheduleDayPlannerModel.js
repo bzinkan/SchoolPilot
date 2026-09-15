@@ -1,6 +1,8 @@
 const EMPTY = [];
 const OVERLAP_CODES = new Map([
   ['CLASS_SCHEDULE_CONFLICT', { kind: 'conflict', classes: 2, blocks: 0 }],
+  ['SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT', { kind: 'conflict', classes: 2, blocks: 0 }],
+  ['SCHEDULE_DRAFT_EXISTING_STUDENT_OVERLAP', { kind: 'overlap', classes: 2, blocks: 0 }],
   ['SCHEDULE_PROFILE_CONFLICT', { kind: 'conflict', classes: 0, blocks: 2 }],
   ['SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT', { kind: 'conflict', classes: 1, blocks: 1 }],
   ['SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP', { kind: 'overlap', classes: 1, blocks: 1 }],
@@ -51,7 +53,7 @@ export function buildPlannerRows({ definition, catalog, regularSchedule, referen
   for (const row of labelClasses.values()) {
     if (sourceIds.has(row.classId)) continue;
     sources.push({ id: row.classId, name: row.name || 'Class details unavailable', gradeLevel: row.gradeLevel ?? null,
-      staff: row.staff || EMPTY, ...(row.status === 'schedule_off' ? { scheduleEnabled: false } : {}), detailsUnavailable: !row.name });
+      staff: row.staff || EMPTY, studentCount: row.studentCount, ...(row.status === 'schedule_off' ? { scheduleEnabled: false } : {}), detailsUnavailable: !row.name });
     sourceIds.add(row.classId);
   }
   // The lightweight regular projection has no class names or roster labels.
@@ -83,6 +85,8 @@ export function buildPlannerRows({ definition, catalog, regularSchedule, referen
       grade: plannerGradeKey(source.gradeLevel), included, byGrade: definition.grades.includes(String(source.gradeLevel)), rule,
       status, proposedStatus, regularWindow, proposedWindow, action: rule?.action || 'keep',
       staff: labeled?.staff || source.staff || EMPTY, staffKnown: Boolean(labeled || source.staff),
+      studentCount: labeled && Object.hasOwn(labeled, 'studentCount') ? labeled.studentCount : source.studentCount ?? null,
+      rosterFingerprint: labeled?.rosterFingerprint ?? null,
       message: baseline?.message, issues: [], overlapSpans: [], checked: false };
   });
   const groups = new Map((catalog.supervisionGroups || EMPTY).map(group => [group.id, group]));
@@ -125,7 +129,10 @@ export function buildPlannerRows({ definition, catalog, regularSchedule, referen
   const reviewCurrent = Boolean(current && !(Number.isSafeInteger(regular?.revision) && Number.isSafeInteger(current.revision) && regular.revision > current.revision)
     && rows.every(reviewedWindowMatches) && (current.testingBlocks || EMPTY).length === testing.length);
   const issues = reviewCurrent ? current.issues || EMPTY : EMPTY;
-  for (const row of rows) row.checked = reviewCurrent && (row.type === 'testing' ? currentBlocks.has(row.id) : reviewedClasses.has(row.id));
+  for (const row of rows) {
+    row.checked = reviewCurrent && (row.type === 'testing' ? currentBlocks.has(row.id) : reviewedClasses.has(row.id));
+    if (row.type === 'testing') row.afterTesting = row.checked ? currentBlocks.get(row.id)?.afterTesting || null : null;
+  }
   for (const issue of issues) {
     const classIds = [...new Set(issue.classIds || EMPTY)], blockIds = [...new Set(issue.blockIds || EMPTY)];
     const affected = [...classIds.map(id => rowsByKey.get(`class:${id}`)), ...blockIds.map(id => rowsByKey.get(`testing:${id}`))];
@@ -136,7 +143,13 @@ export function buildPlannerRows({ definition, catalog, regularSchedule, referen
     // In particular, monitoring-hours issues do not color an invented interval.
     const windows = [...classIds.map(id => reviewedClasses.get(id)?.proposedWindow), ...blockIds.map(id => currentBlocks.get(id))];
     if (windows.length !== 2 || !windows.every(plannerValidWindow) || affected.some(row => !row)) continue;
-    const startTime = windows.map(window => window.startTime).sort().at(-1), endTime = windows.map(window => window.endTime).sort()[0];
+    let startTime = windows.map(window => window.startTime).sort().at(-1), endTime = windows.map(window => window.endTime).sort()[0];
+    // Student-duty checks exclude testing supervision and can split a class
+    // intersection. Shade only the server's exact remaining interval.
+    if (['SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT', 'SCHEDULE_DRAFT_EXISTING_STUDENT_OVERLAP'].includes(issue.code)) {
+      if (!plannerValidWindow(issue.overlapWindow) || issue.overlapWindow.startTime < startTime || issue.overlapWindow.endTime > endTime) continue;
+      ({ startTime, endTime } = issue.overlapWindow);
+    }
     if (startTime >= endTime) continue;
     const span = { issueId: issue.id, kind: issue.kind, code: issue.code, message: issue.message, startTime, endTime };
     for (const row of affected) row.overlapSpans.push(span);

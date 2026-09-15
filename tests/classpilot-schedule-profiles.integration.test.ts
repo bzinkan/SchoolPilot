@@ -34,7 +34,7 @@ after(async () => {
     // Child deletion and parent deletion must commit together for the deferred
     // exactly-two-legs constraint, just like swap creation below.
     await fixtureTransaction(async (client) => {
-      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
       await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
@@ -87,6 +87,120 @@ async function save(data: Awaited<ReturnType<typeof fixture>>, definition = data
 function request(data: Awaited<ReturnType<typeof fixture>>, saved: Awaited<ReturnType<typeof save>>) {
   return { schoolId: data.schoolId, actorId: data.adminId, revision: saved.revision, profileId: saved.profile.id, profileRevision: saved.profile.revision, dates: [date] };
 }
+
+test("class-only profiles block new shared-student intervals outside their selection and keep student IDs out of summaries", async () => {
+  const data = await fixture();
+  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  const saved = await save(data, { ...data.definition, grades: [], classIds: [data.classId], classRules: [{ classId: data.classId, action: "time", startTime: "10:20", endTime: "11:10" }] });
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.equal(preview.studentReviewComplete, true);
+  assert.ok(preview.blockers.some(b => b.code === "SCHEDULE_PROFILE_STUDENT_CONFLICT"));
+  assert.deepEqual(preview.studentConflicts.map(c => [c.startTime, c.endTime, c.studentCount, c.newStudentCount]), [["10:20", "10:50", 1, 1]]);
+  assert.equal(JSON.stringify(preview.studentConflicts).includes(data.studentId), false);
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, saved), previewToken: preview.previewToken })), /competing class time/);
+});
+
+test("application review permits reduced inherited student overlap but detects the same duration moved elsewhere", async () => {
+  const data = await fixture();
+  await pool.query("UPDATE groups SET teacher_id=$2,block_start_time='09:30',block_end_time='10:30' WHERE id=$1", [data.nextClassId, data.specialistId]);
+  const saved = await save(data, { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime: "09:00", endTime: "09:40" }] });
+  const reduced = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.deepEqual(reduced.blockers, []);
+  assert.equal(reduced.studentConflicts[0]?.change, "reduced");
+  assert.equal(reduced.studentConflicts[0]?.newStudentCount, 0);
+  const moved = await scoped(data.schoolId, () => service.previewScheduleProfile({ ...request(data, saved), definition: { ...saved.profile.definition,
+    classRules: [{ classId: data.classId, action: "time", startTime: "10:00", endTime: "10:20" }] } }));
+  assert.ok(moved.blockers.some(b => b.code === "SCHEDULE_PROFILE_STUDENT_CONFLICT"));
+  assert.equal(moved.studentConflicts[0]?.newStudentCount, 1);
+});
+
+test("21-student testing handoff uses adjacent class windows and independent eligibility on each applied date", async () => {
+  const data = await fixture();
+  let secondDate = datePlusDays(date, 1);
+  while ([0, 6].includes(dateWeekday(secondDate))) secondDate = datePlusDays(secondDate, 1);
+  await pool.query("UPDATE groups SET name='Grade 8 Math',grade_level='8',schedule_rule=$2::jsonb WHERE id=$1", [data.classId, JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [dateWeekday(date)] })]);
+  await pool.query("UPDATE groups SET name='Grade 8 ELA',grade_level='8',teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  for (let i = 1; i < 21; i++) {
+    const id = randomUUID();
+    await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) VALUES($1,$2,'Grade8','Fixture','active','8')", [id, data.schoolId]);
+    await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$3),($2,$3)", [data.classId, data.nextClassId, id]);
+    await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, data.scopeId, id]);
+  }
+  const saved = await save(data, { ...data.definition, grades: [], classIds: [data.classId, data.nextClassId], classRules: [
+    { classId: data.classId, action: "time", startTime: "10:55", endTime: "11:40" }, { classId: data.nextClassId, action: "skip" },
+  ], testingBlocks: [{ id: "grade8testing", name: "Wendell MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "09:10", endTime: "10:55" }] });
+  const input = { ...request(data, saved), dates: [date, secondDate] };
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
+  assert.deepEqual(preview.blockers, []);
+  const first = preview.testingWindows.find(w => w.date === date)!.afterTesting!;
+  assert.equal(first.status, "ready"); assert.equal(first.studentCount, 21);
+  assert.deepEqual(first.allocations.map(a => [a.kind, a.classIds, a.studentCount, a.at]), [["class", [data.classId], 21, "10:55"]]);
+  assert.equal(JSON.stringify(first).includes(data.studentId), false);
+  assert.equal(preview.classResults.find(r => r.classId === data.classId && r.date === secondDate)?.status, "does_not_meet");
+  assert.equal(preview.testingWindows.find(w => w.date === secondDate)?.afterTesting?.allocations[0]?.kind, "none");
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
+  assert.deepEqual(applied.application.classWindows[date]?.[data.classId], { startTime: "10:55", endTime: "11:40" });
+  assert.equal(Object.hasOwn(applied.application.classWindows[secondDate] ?? {}, data.classId), false);
+  const context = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  assert.deepEqual(resolveClassBaseWindow({ id: data.classId, scheduleEnabled: true, blockStartTime: "09:00", blockEndTime: "09:50", scheduleRule: { ...defaultClassScheduleRule(), weekdays: [dateWeekday(date)] } }, date, context.config, {}), { startTime: "10:55", endTime: "11:40" });
+});
+
+test("student review uses frozen session rosters and fingerprints their changes", async () => {
+  const data = await fixture(), sessionId = randomUUID();
+  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await pool.query("DELETE FROM group_students WHERE group_id=$1", [data.classId]);
+  await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,$5::timestamptz,$6,'America/New_York',$5::timestamptz,$7,'active',now())",
+    [sessionId, data.schoolId, data.classId, data.teacherId, localDateTimeUtc(date, "09:00", "America/New_York"), date, localDateTimeUtc(date, "09:50", "America/New_York")]);
+  await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [data.schoolId, sessionId, data.classId, data.studentId]);
+  const saved = await save(data, { ...data.definition, classRules: [{ classId: data.nextClassId, action: "time", startTime: "09:20", endTime: "10:10" }] });
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.ok(preview.blockers.some(b => b.code === "SCHEDULE_PROFILE_STUDENT_CONFLICT"));
+  assert.equal(preview.studentConflicts[0]?.studentCount, 1);
+  await pool.query("DELETE FROM classpilot_session_students WHERE teaching_session_id=$1", [sessionId]);
+  const refreshed = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.deepEqual(refreshed.blockers, []); assert.notEqual(refreshed.previewToken, preview.previewToken);
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, saved), previewToken: preview.previewToken })), /schedule, roster, or staff changed/);
+  await pool.query("UPDATE teaching_sessions SET roster_snapshot_completed_at=NULL WHERE id=$1", [sessionId]);
+  const incomplete = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.equal(incomplete.studentReviewComplete, false);
+  assert.ok(incomplete.blockers.some(b => b.code === "SCHEDULE_PROFILE_STUDENT_REVIEW_INCOMPLETE"));
+});
+
+test("a previous testing application cannot mask new class conflicts after its group roster changes", async () => {
+  const data = await fixture();
+  await pool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  const testing = await save(data, { name: "Earlier testing", grades: [], classIds: [], classRules: [], testingBlocks: [
+    { id: "existing-testing", name: "Existing MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "10:00", endTime: "10:30" },
+  ] });
+  const first = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, testing)));
+  assert.deepEqual(first.blockers, []);
+  const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, testing), previewToken: first.previewToken }));
+  const placement = await save(data, { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime: "10:00", endTime: "10:30" }] }, applied.revision);
+  const before = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, placement)));
+  assert.deepEqual(before.blockers, []);
+  const added = randomUUID();
+  await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Added','Student','active')", [added, data.schoolId]);
+  await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, data.scopeId, added]);
+  const after = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, placement)));
+  assert.ok(after.blockers.some(b => b.code === "SCHEDULE_PROFILE_STUDENT_CONFLICT"));
+  assert.notEqual(after.previewToken, before.previewToken);
+  await assert.rejects(scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, placement), previewToken: before.previewToken })), /schedule, roster, or staff changed/);
+});
+
+test("after-testing comparison does not return students to an early-finalized scheduled class", async () => {
+  const data = await fixture(), sessionId = randomUUID();
+  await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state,roster_snapshot_completed_at) VALUES($1,$2,$3,$4,$5::timestamptz,$6::timestamptz,$7,'America/New_York',$5::timestamptz,$8,'finalized',now())",
+    [sessionId, data.schoolId, data.classId, data.teacherId, localDateTimeUtc(date, "09:00", "America/New_York"), localDateTimeUtc(date, "09:50", "America/New_York"), date, localDateTimeUtc(date, "11:00", "America/New_York")]);
+  await pool.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id) VALUES($1,$2,$3,$4)", [data.schoolId, sessionId, data.classId, data.studentId]);
+  const saved = await save(data, { ...data.definition, classRules: [{ classId: data.nextClassId, action: "time", startTime: "11:30", endTime: "12:00" }], testingBlocks: [
+    { id: "after-ended-class", name: "Later testing", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "10:00", endTime: "10:30" },
+  ] });
+  const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, saved)));
+  assert.deepEqual(preview.blockers, []);
+  const handoff = preview.testingWindows[0]?.afterTesting;
+  assert.equal(handoff?.status, "ready");
+  assert.deepEqual(handoff?.allocations.map(a => [a.kind, a.classIds, a.at]), [["gap", [data.nextClassId], "11:30"]]);
+});
 
 async function historyFixture(options: { dates?: string[]; testing?: boolean; cancelled?: boolean; role?: string } = {}) {
   const data = await fixture(options.role), dates = options.dates ?? ["2000-01-03"];

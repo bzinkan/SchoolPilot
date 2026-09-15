@@ -58,7 +58,7 @@ export function scheduleProfileWindowHasFullMonitoring(window: Pick<ScheduleProf
 }
 
 /** Pure evaluation keeps precedence and boundary behavior independently testable. */
-export function evaluateScheduleProfileTestingWindows(testingWindows: ScheduleProfileTestingWindow[], facts: ScheduleProfileValidationFacts): { blockers: Blocker[]; fingerprint: string } {
+export function evaluateScheduleProfileTestingWindows(testingWindows: ScheduleProfileTestingWindow[], facts: ScheduleProfileValidationFacts, options: { fingerprint?: boolean } = {}): { blockers: Blocker[]; fingerprint: string } {
   const blockers: Blocker[] = [];
   const seen = new Set<string>();
   const block = (code: string, message: string, date?: string) => {
@@ -102,7 +102,9 @@ export function evaluateScheduleProfileTestingWindows(testingWindows: SchedulePr
       if (classStart < end && classEnd > start) conflicts(group.name, group.studentIds, true);
     }
   }
-  return { blockers, fingerprint: fingerprint({ testingWindows, ...facts, tracking }) };
+  // Combined callers fingerprint their complete, resolved facts once after
+  // qualifying each block independently; avoid repeatedly hashing all rosters.
+  return { blockers, fingerprint: options.fingerprint === false ? "" : fingerprint({ testingWindows, ...facts, tracking }) };
 }
 
 /**

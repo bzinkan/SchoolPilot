@@ -108,8 +108,56 @@ describe("Reference-day draft review", () => {
     assert.ok(truncated.issues.some((issue) => issue.code === "SCHEDULE_DRAFT_REVIEW_LIMIT"));
   });
   it("retains grade selections above 500 when only a few classes have explicit rules", () => {
-    const data = { ...facts(), classes: Array.from({ length: 501 }, (_, i) => ({ ...homeroom, id: `class-${i}`, staff: [{ id: `teacher-${i}`, name: "Teacher" }] })) };
+    const data = { ...facts(), classes: Array.from({ length: 501 }, (_, i) => ({ ...homeroom, id: `class-${i}`, studentIds: [`pupil-${i}`], staff: [{ id: `teacher-${i}`, name: "Teacher" }] })) };
     const result = projectScheduleDraftReview({ ...draft(), testingBlocks: [] }, data);
     assert.equal(result.complete, true); assert.equal(result.classes.filter((row) => row.selected).length, 501);
+  });
+  it("checks shared students for class-only manual moves and retains legacy overlap feedback", () => {
+    const definition = { ...draft(), testingBlocks: [], classRules: [{ classId: "first", action: "time" as const, startTime: "09:00", endTime: "09:55" }] };
+    const result = projectScheduleDraftReview(definition, facts());
+    const conflict = result.issues.find((row) => row.code === "SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT")!;
+    assert.deepEqual(conflict.overlapWindow, { startTime: "09:00", endTime: "09:10" });
+    assert.equal(conflict.studentCount, 2); assert.equal(conflict.newStudentCount, 2);
+    assert.equal(result.classes[0]?.studentCount, 2);
+    const legacyFacts = facts(); legacyFacts.classes[1] = { ...first, blockStartTime: "09:00" };
+    const legacy = projectScheduleDraftReview({ ...draft(), testingBlocks: [] }, legacyFacts);
+    assert.equal(legacy.counts.conflicts, 0);
+    assert.ok(legacy.issues.some((row) => row.code === "SCHEDULE_DRAFT_EXISTING_STUDENT_OVERLAP" && row.change === "existing"));
+  });
+  it("returns authoritative after-testing counts and never infers them from grade membership", () => {
+    const data = facts(); data.supervisionGroups = [{ ...group, studentIds: ["pupil-a", "pupil-b"] }];
+    const definition = { ...draft(), testingBlocks: [{ ...block, startTime: "09:10", endTime: "09:15" }] };
+    const result = projectScheduleDraftReview(definition, data);
+    assert.deepEqual(result.testingBlocks[0]?.afterTesting, { status: "ready", studentCount: 2, allocations: [
+      { kind: "class", studentCount: 2, classIds: ["first"], blockIds: [], staff: [teacher], at: "09:15" },
+    ] });
+    data.classes[1] = { ...first, studentIds: ["pupil-a"] };
+    const split = projectScheduleDraftReview(definition, data).testingBlocks[0]!.afterTesting;
+    assert.deepEqual(split.allocations.map((row) => [row.kind, row.studentCount]), [["class", 1], ["none", 1]]);
+    assert.doesNotMatch(JSON.stringify(split), /pupil|studentIds/);
+  });
+  it("includes roster facts in the review fingerprint and marks unavailable roster counts explicitly", () => {
+    const definition = draft(), data = facts(), initial = projectScheduleDraftReview(definition, data);
+    data.classes[1] = { ...first, studentIds: ["replacement-a", "replacement-b"] };
+    const replacement = projectScheduleDraftReview(definition, data);
+    assert.equal(replacement.classes[1]?.studentCount, initial.classes[1]?.studentCount);
+    assert.notEqual(replacement.classes[1]?.rosterFingerprint, initial.classes[1]?.rosterFingerprint);
+    assert.notEqual(replacement.requestFingerprint, initial.requestFingerprint);
+    data.classes[1] = { ...first, studentIds: [] };
+    const changed = projectScheduleDraftReview(definition, data);
+    assert.notEqual(changed.requestFingerprint, initial.requestFingerprint);
+    assert.equal(changed.classes[1]?.studentCount, 0);
+    data.classes[1] = { ...first, unavailableRoster: true };
+    const missing = projectScheduleDraftReview(definition, data);
+    assert.equal(missing.complete, false); assert.equal(missing.classes[1]?.studentCount, null);
+    assert.ok(missing.issues.some((row) => row.code === "SCHEDULE_DRAFT_ROSTER_UNAVAILABLE"));
+    assert.equal(missing.testingBlocks[0]?.afterTesting.status, "unavailable");
+  });
+  it("invalid testing cannot hide new class/student conflicts or promise return allocation", () => {
+    const definition = { ...draft(), classRules: [{ classId: "first", action: "time" as const, startTime: "09:00", endTime: "09:55" }] };
+    const result = projectScheduleDraftReview(definition, facts());
+    assert.ok(result.issues.some((row) => row.code === "SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT" && row.studentCount === 2));
+    assert.equal(result.testingBlocks[0]?.afterTesting.status, "unavailable");
+    assert.ok(result.issues.filter((row) => row.code === "SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP").every((row) => !row.message.includes("takes precedence")));
   });
 });

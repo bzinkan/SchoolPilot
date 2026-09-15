@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import db from "../db.js";
 import { schools, schoolMemberships } from "../schema/core.js";
 import { students } from "../schema/students.js";
@@ -8,6 +8,7 @@ import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { auditLogs } from "../schema/shared.js";
 import { getSchoolSchedulingContext, previewSchoolScheduling } from "./classpilotScheduling.js";
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
+import { reviewScheduleApplicationStudents } from "./classpilotScheduleApplicationStudentReview.js";
 import { normalizeSchoolSchedulingConfig, resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError, isSchedulingDate, datePlusDays, type SchoolSchedulingConfig, type BellWindow } from "./classpilotSchedulingRules.js";
 import { normalizeScheduleProfileDefinition, normalizeScheduleProfileId, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup } from "./storage.js";
@@ -42,7 +43,9 @@ async function catalog(schoolId: string, database: Database = db) {
       .innerJoin(students, and(eq(students.id, classpilotCoverageScopeGroupMembers.studentId), eq(students.schoolId, classpilotCoverageScopeGroupMembers.schoolId)))
       .where(eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId)).orderBy(classpilotCoverageScopeGroupMembers.coverageGroupId, students.id),
     database.select().from(classpilotCoverageAssignments).where(and(eq(classpilotCoverageAssignments.schoolId, schoolId), eq(classpilotCoverageAssignments.active, true), eq(classpilotCoverageAssignments.scopeType, "coverage_group"))).orderBy(classpilotCoverageAssignments.id),
-    database.select({ classId: groupStudents.groupId, studentId: groupStudents.studentId }).from(groupStudents).innerJoin(groups, eq(groups.id, groupStudents.groupId)).where(eq(groups.schoolId, schoolId)).orderBy(groupStudents.groupId, groupStudents.studentId),
+    database.select({ classId: groupStudents.groupId, studentId: groupStudents.studentId }).from(groupStudents).innerJoin(groups, eq(groups.id, groupStudents.groupId))
+      .innerJoin(students, and(eq(students.id, groupStudents.studentId), eq(students.schoolId, schoolId), eq(students.status, "active")))
+      .where(eq(groups.schoolId, schoolId)).orderBy(groupStudents.groupId, groupStudents.studentId),
     database.select({ classId: groupTeachers.groupId, staffId: groupTeachers.teacherId }).from(groupTeachers).innerJoin(groups, eq(groups.id, groupTeachers.groupId)).where(eq(groups.schoolId, schoolId)).orderBy(groupTeachers.groupId, groupTeachers.teacherId),
     database.select().from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.status, "active"))).orderBy(classpilotSupervisionContexts.id),
     database.select({ contextId: classpilotSupervisionStudents.contextId, studentId: classpilotSupervisionStudents.studentId }).from(classpilotSupervisionStudents).where(and(eq(classpilotSupervisionStudents.schoolId, schoolId), isNull(classpilotSupervisionStudents.releasedAt))).orderBy(classpilotSupervisionStudents.contextId, classpilotSupervisionStudents.studentId),
@@ -104,6 +107,13 @@ export async function getScheduleProfiles(schoolId: string) {
   return db.transaction(async (tx) => {
     const database = tx as unknown as Database;
     const data = await catalog(schoolId, database);
+    const inactiveClasses = await database.select({ id: groups.id, name: groups.name, gradeLevel: groups.gradeLevel, teacherId: groups.teacherId }).from(groups)
+      .where(and(eq(groups.schoolId, schoolId), ne(groups.status, "active"))).orderBy(groups.id).limit(5001);
+    if (inactiveClasses.length > 5000) fail("The class picker could not load all class references. Archive or reduce obsolete classes before retrying.", "SCHEDULE_PROFILE_CATALOG_INCOMPLETE", 409);
+    const classRosterCounts = new Map<string, Set<string>>(), classStaffIds = new Map<string, Set<string>>();
+    for (const member of data.classMembers) { const ids = classRosterCounts.get(member.classId) ?? new Set<string>(); ids.add(member.studentId); classRosterCounts.set(member.classId, ids); }
+    for (const teacher of data.coTeachers) { const ids = classStaffIds.get(teacher.classId) ?? new Set<string>(); ids.add(teacher.staffId); classStaffIds.set(teacher.classId, ids); }
+    const staffById = new Map(data.staff.map(s => [s.id, s]));
     const { getScheduledProfileSupervisionStatuses } = await import("./classpilotScheduleProfileSupervision.js");
     const testingStatuses = await getScheduledProfileSupervisionStatuses(schoolId, undefined, database);
     const now = new Date();
@@ -114,7 +124,12 @@ export async function getScheduleProfiles(schoolId: string) {
       timing: createApplicationTimingResolver({ classes: data.classes, config: data.context.config, calendar: data.context.calendar, schoolTimezone: data.schoolTimezone }) });
     return { revision: data.context.revision, schoolTimezone: data.schoolTimezone, schoolLocalToday: localDateInTimeZone(now, data.schoolTimezone),
       profiles: data.context.config.scheduleProfiles ?? [], applications, ...summaries,
-      classes: data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime, teacherName: data.staff.find((s) => s.id === g.teacherId)?.name })),
+      classes: [...data.classes.map((g) => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: g.status, active: true, scheduleEnabled: g.scheduleEnabled, blockStartTime: g.blockStartTime, blockEndTime: g.blockEndTime,
+        teacherName: staffById.get(g.teacherId)?.name,
+        staff: [...new Set([g.teacherId, ...(classStaffIds.get(g.id) ?? [])])].flatMap(id => staffById.has(id) ? [staffById.get(id)!] : []),
+        studentCount: classRosterCounts.get(g.id)?.size ?? 0 })),
+        ...inactiveClasses.map(g => ({ id: g.id, name: g.name, gradeLevel: g.gradeLevel, status: "inactive", active: false, scheduleEnabled: false,
+          blockStartTime: null, blockEndTime: null, studentCount: null, teacherName: staffById.get(g.teacherId)?.name, staff: staffById.has(g.teacherId) ? [staffById.get(g.teacherId)!] : [] }))],
       staff: data.staff, supervisionGroups: data.supervisionGroups, testingStatuses };
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }
@@ -236,23 +251,30 @@ async function buildPreview(options: ProfileRequest, database: Database = db) {
   const classWindows: ScheduleProfileApplication["classWindows"] = {};
   const testingWindows: ScheduleProfileTestingWindow[] = [];
   const changes: Array<{ date: string; classId: string; className: string; before: BellWindow | null; after: BellWindow | null }> = [];
+  const classResults: Array<{ date: string; classId: string; className: string; status: "time" | "skipped" | "does_not_meet" | "unavailable"; startTime?: string; endTime?: string; reason?: string }> = [];
   const frozen = await database.select({ classId: teachingSessions.groupId, date: teachingSessions.scheduledDate }).from(teachingSessions).where(and(eq(teachingSessions.schoolId, options.schoolId), inArray(teachingSessions.scheduledDate, dates)));
   for (const date of dates) {
-    if (!resolveSchoolScheduleDay(date, data.context.config, data.context.calendar).instructional) { block("This is not an instructional date. Update the school calendar first.", date); continue; }
+    if (!resolveSchoolScheduleDay(date, data.context.config, data.context.calendar).instructional) {
+      block("This is not an instructional date. Update the school calendar first.", date);
+      for (const row of selected.filter(c => definition.classRules.some(r => r.classId === c.id))) classResults.push({ date, classId: row.id, className: row.name, status: "does_not_meet", reason: "This date is not instructional." });
+      continue;
+    }
     classWindows[date] = {};
     for (const row of selected) {
       const rule = definition.classRules.find((r) => r.classId === row.id);
       if (!rule) continue;
+      const unavailable = (reason: string) => { block(row.name + ": " + reason, date); classResults.push({ date, classId: row.id, className: row.name, status: "unavailable", reason }); };
       let before: BellWindow | null;
       try { before = resolveClassBaseWindow(row, date, data.context.config, data.context.calendar); }
-      catch { block(row.name + ": resolve the missing period mapping before applying a profile.", date); continue; }
-      if (!before) continue;
+      catch { block(row.name + ": resolve the missing period mapping before applying a profile.", date); classResults.push({ date, classId: row.id, className: row.name, status: "unavailable", reason: "The regular schedule mapping is unavailable." }); continue; }
+      if (!before) { classResults.push({ date, classId: row.id, className: row.name, status: "does_not_meet", reason: "This class has no eligible meeting on this date. Its saved rule will not create another occurrence." }); continue; }
       const after = rule.action === "skip" ? null : { startTime: rule.startTime!, endTime: rule.endTime! };
-      if (data.context.config.profileApplications?.some((a) => a.status === "scheduled" && Object.hasOwn(a.classWindows[date] ?? {}, row.id))) { block(row.name + " already has an applied profile on this date. Cancel that application first.", date); continue; }
-      if (frozen.some((f) => f.classId === row.id && f.date === date)) { block(row.name + " already has a recorded occurrence on this date. It cannot be changed.", date); continue; }
-      if (localDateTimeUtc(date, before.startTime, data.schoolTimezone) <= now || (after && localDateTimeUtc(date, after.startTime, data.schoolTimezone) <= now)) { block(row.name + ": apply the profile before both the original and proposed start time.", date); continue; }
+      if (data.context.config.profileApplications?.some((a) => a.status === "scheduled" && Object.hasOwn(a.classWindows[date] ?? {}, row.id))) { unavailable("already has an applied profile on this date. Cancel that application first."); continue; }
+      if (frozen.some((f) => f.classId === row.id && f.date === date)) { unavailable("already has a recorded occurrence on this date. It cannot be changed."); continue; }
+      if (localDateTimeUtc(date, before.startTime, data.schoolTimezone) <= now || (after && localDateTimeUtc(date, after.startTime, data.schoolTimezone) <= now)) { unavailable("apply the profile before both the original and proposed start time."); continue; }
       classWindows[date][row.id] = after;
       changes.push({ date, classId: row.id, className: row.name, before, after });
+      classResults.push({ date, classId: row.id, className: row.name, status: after ? "time" : "skipped", ...(after ?? {}) });
     }
     for (const planned of definition.testingBlocks) {
       const group = data.supervisionGroups.find((g) => g.id === planned.coverageGroupId);
@@ -278,14 +300,22 @@ async function buildPreview(options: ProfileRequest, database: Database = db) {
   }
   const testingValidation = await validateScheduleProfileTestingWindows({ schoolId: options.schoolId, testingWindows, config, calendar: data.context.calendar, dbInstance: database, now });
   blockers.push(...testingValidation.blockers);
+  const studentReview = await reviewScheduleApplicationStudents({ schoolId: options.schoolId, dates, schoolTimezone: data.schoolTimezone, now, database,
+    baseline: data.context.config, config, calendar: data.context.calendar, testingWindows, staff: data.staff, supervisionGroups: data.supervisionGroups });
+  blockers.push(...studentReview.blockers);
   if (!changes.length && !testingWindows.length) block("No eligible class meetings or testing blocks were found on these dates.");
   const uniqueBlockers = [...new Map(blockers.map((b) => [b.code + ":" + b.date + ":" + b.message, b])).values()].slice(0, 100);
-  const previewToken = digest({ revision: data.context.revision, application, scheduling: scheduling.previewToken, testing: testingValidation.fingerprint, classes: data.classes, staff: data.staff, groups: data.supervisionGroups, classMembers: data.classMembers, coTeachers: data.coTeachers, activeContexts: data.activeContexts, supervisedStudents: data.supervisedStudents, today });
-  return { revision: data.context.revision, previewToken, blockers: uniqueBlockers, changes, testingWindows, affectedClasses: new Set(changes.map((c) => c.classId)).size, schoolTimezone: data.schoolTimezone, application, config };
+  const previewToken = digest({ revision: data.context.revision, application, scheduling: scheduling.previewToken, testing: testingValidation.fingerprint, students: studentReview.fingerprint, classes: data.classes, staff: data.staff, groups: data.supervisionGroups, classMembers: data.classMembers, coTeachers: data.coTeachers, activeContexts: data.activeContexts, supervisedStudents: data.supervisedStudents, today });
+  return { revision: data.context.revision, previewToken, blockers: uniqueBlockers, changes, classResults, testingWindows: testingWindows.map(w => ({ ...w,
+    afterTesting: studentReview.afterTesting.find(s => s.blockId === w.blockId && s.date === w.date) })),
+    studentConflicts: studentReview.studentConflicts, studentReviewComplete: studentReview.complete,
+    affectedClasses: new Set(changes.map((c) => c.classId)).size, schoolTimezone: data.schoolTimezone, application, config };
 }
 export async function previewScheduleProfile(options: ProfileRequest) {
-  const { config: _config, application: _application, ...publicPreview } = await buildPreview(options);
-  return publicPreview;
+  return db.transaction(async tx => {
+    const { config: _config, application: _application, ...publicPreview } = await buildPreview(options, tx as unknown as Database);
+    return publicPreview;
+  }, { isolationLevel: "repeatable read" });
 }
 export async function applyScheduleProfile(options: ProfileRequest & { previewToken: string }) {
   if (!/^[a-f0-9]{64}$/.test(options.previewToken)) fail("Review a current preview before applying a profile.");
