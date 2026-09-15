@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 import { createServer } from "vite";
+
+// Optional source override is used only to preserve a failing release-baseline
+// browser reproduction while the working Dashboard is being repaired.
+function chatBaselinePlugins() {
+  const baseline = process.env.CLASSPILOT_CHAT_BASELINE_SOURCE;
+  return baseline ? [{
+    name: 'chat-release-baseline', enforce: 'pre',
+    load(id) {
+      if (id.replaceAll('\\', '/').split('?')[0].endsWith('/src/products/classpilot/pages/Dashboard.jsx')) {
+        return readFileSync(baseline, 'utf8');
+      }
+    },
+  }] : [];
+}
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHOOL_ID = "11111111-1111-4111-8111-111111111111";
@@ -224,9 +238,12 @@ async function configureDashboard(page, {
   claimResponse = null,
   coverageSummary = { activeContextCount: 0, availableStudentCount: 0, claimedStudentCount: 0, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, ownTestingContexts: [] },
   authentication = null,
+  acknowledgeSessionSubscriptions = false,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
+  const retiredSockets = new WeakSet();
+  const websocketConnections = [];
   const commandPosts = [];
   const coverageMutationRequests = [];
   const tileRequests = [];
@@ -242,13 +259,30 @@ async function configureDashboard(page, {
   }, SCHOOL_ID);
 
   await page.routeWebSocket("**/ws", (socket) => {
+    const connection = { openedAt: Date.now(), authenticationRequests: 0, authenticationResponses: 0 };
+    websocketConnections.push(connection);
     socket.onMessage((message) => {
+      if (retiredSockets.has(socket)) return;
       const parsed = JSON.parse(message);
+      if (acknowledgeSessionSubscriptions && parsed.type === 'subscribe-session') {
+        socket.send(JSON.stringify({ type: 'session-subscription-success', sessionId: parsed.sessionId,
+          teachingSessionId: parsed.sessionId, requestId: parsed.requestId }));
+        return;
+      }
       if (parsed.type !== "auth") return;
+      connection.authenticationRequests += 1;
       dashboardSocket = socket;
       assert.equal(parsed.role, userRole === "teacher" ? "teacher" : "school_admin");
       assert.equal(parsed.userToken, "dashboard-load-state-token");
       assert.equal(Object.hasOwn(parsed, "token"), false);
+      if (acknowledgeSessionSubscriptions) {
+        // The real server answers every authentication request, including the
+        // on-open / role-refresh pair. Leaving the second unanswered strands
+        // a fixture in unauthenticated state after an otherwise valid reconnect.
+        websocketAuthenticated = true;
+        connection.authenticationResponses += 1;
+        socket.send(JSON.stringify({ type: 'auth-success' }));
+      }
     });
   });
 
@@ -449,10 +483,18 @@ async function configureDashboard(page, {
     sessionRequests,
     claimedRosterRequests,
     coverageSummaryRequests,
+    websocketConnections,
     setActiveSession(session) { activeSession = session; },
     setAllSessions(sessions) { allSessions = sessions; },
     setCoverageSummary(summary) { coverageSummary = summary; },
     setClaimedStudents(students) { claimedStudents = students; },
+    async disconnectWebSocket() {
+      const previous = dashboardSocket;
+      retiredSockets.add(previous);
+      dashboardSocket = null;
+      websocketAuthenticated = false;
+      await previous.close();
+    },
     async authenticateWebSocket() {
       await waitUntil(
         () => Boolean(dashboardSocket),
@@ -460,6 +502,7 @@ async function configureDashboard(page, {
       );
       if (websocketAuthenticated) return;
       websocketAuthenticated = true;
+      websocketConnections.at(-1).authenticationResponses += 1;
       dashboardSocket.send(JSON.stringify({ type: "auth-success" }));
     },
     async sendWebSocketMessage(message) {
@@ -3147,6 +3190,389 @@ function testingStudent(studentId, contextId, assignedStaffId = ADMIN_ID) {
 async function assertPickupView(page, view) {
   await page.waitForFunction(value => document.querySelector(`[data-testid="button-view-${value}-students"]`)?.getAttribute('aria-pressed') === 'true', view);
 }
+
+const CHAT_MESSAGE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const CHAT_REPLY_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const CHAT_MESSAGE_TEXT = 'Synthetic student reply stays in this classroom';
+const CHAT_REPLY_TEXT = 'Synthetic teacher response';
+
+function storedChatMessage(overrides = {}) {
+  return {
+    id: CHAT_MESSAGE_ID, schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID,
+    studentId: STUDENT_ID, senderId: STUDENT_ID, senderType: 'student',
+    content: CHAT_MESSAGE_TEXT, messageType: 'message', deliveryStatus: 'delivered',
+    createdAt: new Date().toISOString(), ...overrides,
+  };
+}
+
+function studentChatEvent(row = storedChatMessage()) {
+  return {
+    type: 'student-message', schoolId: row.schoolId, sessionId: row.sessionId,
+    data: { id: row.id, sessionId: row.sessionId, studentId: row.studentId,
+      studentName: 'Ada Student', studentEmail: 'ada@example.edu',
+      message: row.content, messageType: row.messageType, timestamp: row.createdAt },
+  };
+}
+
+async function chatBrowserFixture(context, options = {}) {
+  const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: chatBaselinePlugins() });
+  const page = await browser.newPage();
+  if (options.clockTime) await page.clock.install({ time: new Date(options.clockTime) });
+  const socketConsole = [];
+  page.on('console', message => { if (message.text().startsWith('[Dashboard]')) socketConsole.push(message.text()); });
+  const aggregate = aggregateController({ scoped: success([student()]) });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, {
+    aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+  });
+  const reads = [];
+  const mutations = [];
+  let messages = [];
+  let historyResponder = null;
+  let replyResponder = null;
+  let rosterRevision = 1;
+  await page.route('**/api/teacher/**', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === '/api/teacher/messages' && request.method() === 'GET') {
+      reads.push({ sessionId: url.searchParams.get('sessionId'), schoolId: request.headers()['x-school-id'] });
+      const response = historyResponder ? await historyResponder(request) : { messages };
+      await route.fulfill(response.status
+        ? { status: response.status, json: response.body }
+        : { json: response });
+      return;
+    }
+    if (request.method() === 'POST' && ['/api/teacher/reply', '/api/teacher/close-chat'].includes(url.pathname)) {
+      mutations.push({ pathname: url.pathname, body: request.postDataJSON() });
+      const response = url.pathname.endsWith('/reply')
+        ? replyResponder ? await replyResponder(request) : {
+          message: storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' }), queued: true,
+        }
+        : { ok: true };
+      await route.fulfill({ status: url.pathname.endsWith('/reply') ? 202 : 200, json: response });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await waitUntil(() => reads.length > 0, 'The canonical chat history must be requested');
+  await harness.authenticateWebSocket();
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages(?:\s+\d+)?$/ }).click();
+  await page.getByText('No messages from students', { exact: true }).waitFor();
+  const refetch = (prefix, wait = true) => page.evaluate(async ({ prefix, wait }) => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    const pending = queryClient.invalidateQueries({ queryKey: [prefix] });
+    if (wait) await pending;
+  }, { prefix, wait });
+  const fixture = {
+    page, harness, reads, mutations, refetch, socketConsole,
+    setMessages(next) { messages = next; },
+    setHistoryResponder(next) { historyResponder = next; },
+    setReplyResponder(next) { replyResponder = next; },
+    async updateRoster({ refetchAggregate = true } = {}) {
+      rosterRevision += 1;
+      const title = `Chat fixture roster revision ${rosterRevision}`;
+      const observedAt = Date.now() + rosterRevision;
+      aggregate.setScopedResponse(success([student({
+        activeTabTitle: title, realtimeRevision: rosterRevision,
+        lastSeenAt: new Date(observedAt).toISOString(), realtimeObservedAt: new Date(observedAt).toISOString(),
+      })]));
+      await harness.sendWebSocketMessage({
+        type: 'student-update', eventVersion: 2, schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+        studentId: STUDENT_ID, realtimeBinding: 'binding-a', revision: rosterRevision,
+        observedAtMs: observedAt, activeTabTitle: title,
+      });
+      await page.getByTestId(`text-tab-title-${STUDENT_ID}`).getByText(title, { exact: true }).waitFor();
+      if (refetchAggregate) await refetch('/api/students-aggregated');
+    },
+  };
+  if (options.onReady) await options.onReady(fixture);
+  return fixture;
+}
+
+async function chatEvidence(page, name, facts = {}) {
+  const evidence = process.env.CLASSPILOT_CHAT_EVIDENCE_DIR;
+  if (!evidence) return;
+  mkdirSync(evidence, { recursive: true });
+  await page.screenshot({ path: path.join(evidence, `${name}.png`), fullPage: true });
+  writeFileSync(path.join(evidence, `${name}.json`), `${JSON.stringify(facts, null, 2)}\n`);
+}
+
+async function openChatPanel(page) {
+  if (await page.getByText(/^Messages \(\d+ new\)$/).count()) return;
+  const menu = page.getByRole('button', { name: /^Messages(?:\s+\d+)?$/ });
+  if (!await menu.count()) await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await menu.click();
+}
+
+test('chat recovery: a live student reply survives roster rehydration with unread and read state intact', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  await chatEvidence(page, 'realtime-visible', { visible: true, canonicalHistory: 'empty', messageCount: 1 });
+  await fixture.updateRoster({ refetchAggregate: false });
+  const retained = await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count() === 1;
+  await chatEvidence(page, 'after-roster-update', { retained, canonicalHistory: 'empty', studentTelemetryChanged: true });
+  if (!retained && process.env.CLASSPILOT_CHAT_BASELINE_SOURCE) {
+    fixture.setMessages([row]);
+    await page.reload();
+    await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+    await page.getByRole('button', { name: /^Messages(?:\s+\d+)?$/ }).click();
+    await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+    await chatEvidence(page, 'baseline-reload-restored', { restored: true, canonicalHistory: 'committed reply', noStudentResend: true });
+  }
+  assert.equal(retained, true, 'A roster update must not replace a live student reply with the older cached empty history');
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await fixture.updateRoster();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1, 'Duplicate WebSocket delivery must not duplicate a reply');
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).click();
+  await page.getByText('Messages (0 new)', { exact: true }).waitFor();
+  fixture.setMessages([row]);
+  await fixture.refetch('/api/teacher/messages');
+  await fixture.updateRoster();
+  await page.getByText('Messages (0 new)', { exact: true }).waitFor();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
+  const readsBeforeReconnect = fixture.reads.length;
+  await harness.disconnectWebSocket();
+  await harness.authenticateWebSocket();
+  await waitUntil(() => fixture.reads.length > readsBeforeReconnect, 'Reconnecting must reconcile missed chat messages with one history read');
+  await chatHistorySettled(page);
+  assert.equal(fixture.reads.length, readsBeforeReconnect + 1);
+  await page.getByText('Messages (0 new)', { exact: true }).waitFor();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+async function chatHistorySettled(page) {
+  await page.waitForFunction(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    return queryClient.isFetching({ queryKey: ['/api/teacher/messages'] }) === 0;
+  });
+}
+
+test('chat recovery: an older in-flight history cannot erase realtime messages, replies, or delivered acknowledgements', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  let finishHistory;
+  const heldHistory = new Promise(resolve => { finishHistory = resolve; });
+  context.after(() => finishHistory());
+  fixture.setHistoryResponder(async () => { await heldHistory; return { messages: [] }; });
+  const previousReads = fixture.reads.length;
+  await fixture.refetch('/api/teacher/messages', false);
+  await waitUntil(() => fixture.reads.length > previousReads, 'The older history request must start before the live message');
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await page.getByPlaceholder('Type reply...').fill(CHAT_REPLY_TEXT);
+  await page.getByPlaceholder('Type reply...').press('Enter');
+  await page.getByText(CHAT_REPLY_TEXT, { exact: true }).waitFor();
+  await page.getByText('Sending', { exact: true }).waitFor();
+  await harness.sendWebSocketMessage({
+    type: 'chat-message-delivery', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID,
+    messageId: CHAT_REPLY_ID, studentId: STUDENT_ID, deliveryStatus: 'delivered',
+  });
+  await page.getByText('Delivered', { exact: true }).waitFor();
+  finishHistory();
+  await chatHistorySettled(page);
+  await fixture.updateRoster();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
+  assert.equal(await page.getByText(CHAT_REPLY_TEXT, { exact: true }).count(), 1);
+  await page.getByText('Delivered', { exact: true }).waitFor();
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/reply').length, 1, 'History refreshes must never replay the teacher reply POST');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat recovery: closing a thread survives stale history, duplicate events and a pending reply while a new message can reopen it', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  let finishReply;
+  const heldReply = new Promise(resolve => { finishReply = resolve; });
+  context.after(() => finishReply());
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => { await heldReply; return { message: reply, queued: true }; });
+  await page.getByPlaceholder('Type reply...').fill(CHAT_REPLY_TEXT);
+  await page.getByPlaceholder('Type reply...').press('Enter');
+  await waitUntil(() => fixture.mutations.some(row => row.pathname === '/api/teacher/reply'), 'The reply POST must be pending before close');
+  await page.getByRole('button', { name: 'Close Chat', exact: true }).click();
+  await page.getByText('No messages from students', { exact: true }).waitFor();
+  fixture.setMessages([row, reply]);
+  await fixture.refetch('/api/teacher/messages');
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await fixture.updateRoster();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  const replyResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/teacher/reply');
+  finishReply();
+  await replyResponse;
+  const newRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', content: 'A new synthetic question after close' });
+  await harness.sendWebSocketMessage(studentChatEvent(newRow));
+  await page.getByText(newRow.content, { exact: true }).waitFor();
+  await fixture.updateRoster();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'Closing must keep the old student item hidden');
+  assert.equal(await page.getByText(CHAT_REPLY_TEXT, { exact: true }).count(), 0, 'A reply submitted before close cannot reappear in a newly opened thread');
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/close-chat').length, 1);
+  assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/reply').length, 1);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat recovery: session changes fence old history and realtime data', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  let finishOldHistory;
+  const heldHistory = new Promise(resolve => { finishOldHistory = resolve; });
+  context.after(() => finishOldHistory());
+  fixture.setHistoryResponder(async request => {
+    if (new URL(request.url()).searchParams.get('sessionId') === OWN_SESSION_ID) {
+      await heldHistory;
+      return { messages: [row] };
+    }
+    return { messages: [] };
+  });
+  const previousReads = fixture.reads.length;
+  await fixture.refetch('/api/teacher/messages', false);
+  await waitUntil(() => fixture.reads.length > previousReads, 'The original session read is in flight');
+  const replacement = teachingSession({ id: OBSERVED_SESSION_ID });
+  harness.setActiveSession(replacement);
+  harness.setAllSessions([replacement]);
+  await fixture.refetch('/api/sessions/active');
+  await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'The replacement session starts its own history read');
+  await openChatPanel(page);
+  finishOldHistory();
+  await chatHistorySettled(page);
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'A superseded session cannot retain or restore message content');
+  const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
+  await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
+  await page.getByText(replacementRow.content, { exact: true }).waitFor();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat recovery: a global authorization denial clears and latches chat until an authoritative scope change', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  fixture.setHistoryResponder(async () => ({ status: 403, body: { error: 'Access denied' } }));
+  await fixture.refetch('/api/teacher/messages');
+  await chatHistorySettled(page);
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor({ state: 'hidden' });
+  fixture.setHistoryResponder(null);
+  fixture.setMessages([row]);
+  const readsAfterDenial = fixture.reads.length;
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await fixture.updateRoster();
+  await fixture.refetch('/api/teacher/messages');
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('online'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.equal(fixture.reads.length, readsAfterDenial, 'Cache invalidation and browser events do not re-arm denied authority');
+  const replacement = teachingSession({ id: OBSERVED_SESSION_ID });
+  const replacementRow = storedChatMessage({ sessionId: OBSERVED_SESSION_ID });
+  fixture.setMessages([replacementRow]);
+  harness.setActiveSession(replacement);
+  harness.setAllSessions([replacement]);
+  await fixture.refetch('/api/sessions/active');
+  await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'New authoritative session re-arms its history read');
+  await openChatPanel(page);
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat recovery: a fast browser clock cannot hide a new reply recovered from server history after close', { timeout: 60_000 }, async context => {
+  const serverNow = Date.now();
+  const fixture = await chatBrowserFixture(context, { clockTime: serverNow + 5 * 60_000 });
+  const { page, harness } = fixture;
+  const oldRow = storedChatMessage({ createdAt: new Date(serverNow).toISOString() });
+  await harness.sendWebSocketMessage(studentChatEvent(oldRow));
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Close Chat', exact: true }).click();
+  await page.getByText('No messages from students', { exact: true }).waitFor();
+  const missedRow = storedChatMessage({
+    id: 'abababab-abab-4bab-8bab-abababababab', content: 'Synthetic reply missed during disconnect',
+    createdAt: new Date(serverNow + 60_000).toISOString(),
+  });
+  assert.ok(Date.parse(missedRow.createdAt) < await page.evaluate(() => Date.now()), 'The server-created row is older than the browser clock, but was sent after close');
+  fixture.setMessages([oldRow, missedRow]);
+  // No student-message event delivers this row. Only a fresh server snapshot
+  // can recover it, independently of the browser's wall-clock skew.
+  await fixture.refetch('/api/teacher/messages');
+  await page.getByText(missedRow.content, { exact: true }).waitFor();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  const previousReads = fixture.reads.length;
+  await harness.disconnectWebSocket();
+  await harness.authenticateWebSocket();
+  await waitUntil(() => fixture.reads.length > previousReads, 'Reconnect reconciles server history after close');
+  await chatHistorySettled(page);
+  assert.equal(await page.getByText(missedRow.content, { exact: true }).count(), 1);
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat recovery: reconnect fetches history newer than an empty request begun before disconnect', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  let finishOldHistory;
+  const heldHistory = new Promise(resolve => { finishOldHistory = resolve; });
+  context.after(() => finishOldHistory());
+  let snapshotCount = 0;
+  const offlineRow = storedChatMessage({ content: 'Synthetic student reply committed while offline' });
+  fixture.setHistoryResponder(async () => {
+    snapshotCount += 1;
+    if (snapshotCount === 1) {
+      await heldHistory;
+      return { messages: [] };
+    }
+    return { messages: [offlineRow] };
+  });
+  await fixture.refetch('/api/teacher/messages', false);
+  await waitUntil(() => snapshotCount === 1, 'The old empty snapshot starts before disconnect');
+  const connectionsBefore = harness.websocketConnections.length;
+  await harness.disconnectWebSocket();
+  // The student reply is now in canonical history, but no WebSocket message
+  // delivers it to this disconnected teacher.
+  await harness.authenticateWebSocket();
+  assert.ok(harness.websocketConnections.length > connectionsBefore, 'Authentication must occur on a new socket');
+  assert.ok(harness.websocketConnections.at(-1).authenticationRequests > 0);
+  assert.equal(harness.websocketConnections.at(-1).authenticationResponses,
+    harness.websocketConnections.at(-1).authenticationRequests);
+  finishOldHistory();
+  try {
+    await waitUntil(() => snapshotCount >= 2, 'Reconnect must start a fresh history GET instead of joining the pre-disconnect snapshot');
+  } catch (error) {
+    const queryState = await page.evaluate(async () => {
+      const { queryClient } = await import('/src/lib/queryClient.js');
+      return queryClient.getQueryCache().findAll({ queryKey: ['/api/teacher/messages'] }).map(query => ({
+        status: query.state.status, fetchStatus: query.state.fetchStatus, active: query.isActive(),
+        responseRows: query.state.data?.messages?.length,
+      }));
+    });
+    assert.fail(`${error.message}: ${JSON.stringify({ sockets: harness.websocketConnections, console: fixture.socketConsole, queryState, pageErrors: harness.pageErrors })}`);
+  }
+  await chatHistorySettled(page);
+  await page.getByText(offlineRow.content, { exact: true }).waitFor();
+  assert.equal(await page.getByText(offlineRow.content, { exact: true }).count(), 1);
+  assert.deepEqual(fixture.mutations, [], 'Recovery only reads history; no message is resent');
+  assert.deepEqual(harness.pageErrors, []);
+});
 
 async function assignedTestingBrowser(context, options = {}) {
   const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, ...options });
