@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPlannerRows, filterPlannerRows, plannerAxis, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
+import { buildPlannerOccurrences, buildPlannerRows, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerStableAxis, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
 
 const referenceDate = '2026-09-14';
 const definition = { name: 'MAP day', grades: [], classIds: ['homeroom', 'ela'], classRules: [], testingBlocks: [{ id: 'testing', name: 'MAP testing', coverageGroupId: 'map', assignedStaffId: 'zinkan', startTime: '09:00', endTime: '10:45' }] };
@@ -11,6 +11,12 @@ const catalog = {
 };
 const regularSchedule = { referenceDate, classes: [{ classId: 'homeroom', status: 'meets', window: { startTime: '08:30', endTime: '09:10' } }, { classId: 'ela', status: 'meets', window: { startTime: '09:15', endTime: '09:55' } }, { classId: 'math', status: 'meets', window: { startTime: '09:15', endTime: '09:55' } }, { classId: 'ungraded', status: 'not_scheduled', window: null }] };
 const metadata = { referenceDate, classes: [{ classId: 'homeroom', staff: [{ id: 'zinkan', name: 'Zinkan' }] }, { classId: 'ela', staff: [{ id: 'burba', name: 'Burba' }, { id: 'zinkan', name: 'Zinkan' }] }, { classId: 'math', staff: [{ id: 'zinkan', name: 'Zinkan' }] }], testingBlocks: [{ blockId: 'testing', coverageGroupId: 'map', assignedStaffId: 'zinkan', classParticipation: [{ classId: 'homeroom', count: 12, total: 23 }, { classId: 'ela', count: 12, total: 23 }] }], issues: [{ id: 'conflict', kind: 'conflict', classIds: ['math'], blockIds: ['testing'] }] };
+const checkedReview = {
+  ...metadata, revision: 7,
+  classes: regularSchedule.classes.map(row => ({ ...catalog.classes.find(item => item.id === row.classId), ...metadata.classes.find(item => item.classId === row.classId),
+    classId: row.classId, status: row.status, proposedStatus: row.status, selected: definition.classIds.includes(row.classId), action: 'keep', regularWindow: row.window, proposedWindow: row.window })),
+  testingBlocks: [{ ...definition.testingBlocks[0], ...metadata.testingBlocks[0], status: 'ready', studentCount: 12 }],
+};
 const model = overrides => buildPlannerRows({ definition, catalog, regularSchedule, referenceDate, metadata, ...overrides });
 const all = { grade: 'all', classId: 'all', teacher: 'all', search: '', conflictsOnly: false };
 
@@ -29,10 +35,10 @@ test('Provisional edits shorten only an explicitly included meeting and keep a s
 test('Pending metadata keeps co-teachers and partial-class associations without stale conflict verdicts', () => {
   const pending = model();
   assert.equal(pending.rows.some(row => row.issues.length), false);
-  assert.deepEqual(filterPlannerRows(pending.rows, { ...all, teacher: 'zinkan' }).map(row => row.id), ['ela', 'homeroom', 'math', 'ungraded', 'testing']);
+  assert.deepEqual(filterPlannerRows(pending.rows, { ...all, teacher: 'zinkan' }).map(row => row.id), ['homeroom', 'ela', 'math', 'ungraded', 'testing']);
   assert.deepEqual(filterPlannerRows(pending.rows, { ...all, classId: 'ela' }).map(row => row.id), ['ela', 'testing']);
   assert.deepEqual(pending.testing[0].classParticipation[0], { classId: 'homeroom', count: 12, total: 23 });
-  const checked = model({ reviewData: metadata });
+  const checked = model({ reviewData: checkedReview });
   assert.deepEqual(filterPlannerRows(checked.rows, { ...all, conflictsOnly: true }).map(row => row.id), ['math', 'testing']);
 });
 
@@ -55,13 +61,13 @@ test('Fresh review windows replace an older cached regular-day projection, while
 });
 
 test('Unavailable assigned staff stays visibly unavailable in a completed response', () => {
-  const result = model({ reviewData: { ...metadata, testingBlocks: [{ ...metadata.testingBlocks[0], status: 'unavailable' }] } });
+  const result = model({ reviewData: { ...checkedReview, testingBlocks: [{ ...checkedReview.testingBlocks[0], status: 'unavailable' }] } });
   assert.equal(result.testing[0].status, 'unavailable');
   assert.equal(result.testing[0].proposedWindow.endTime, '10:45', 'The requested window remains visible for correction');
 });
 
 test('Current review participant counts replace stale catalog counts, including a genuinely empty group', () => {
-  const reviewData = { ...metadata, testingBlocks: [{ ...metadata.testingBlocks[0], studentCount: 18 }] };
+  const reviewData = { ...checkedReview, testingBlocks: [{ ...checkedReview.testingBlocks[0], studentCount: 18 }] };
   assert.equal(model({ reviewData }).testing[0].studentCount, 18);
   const emptyReview = { ...reviewData, testingBlocks: [{ ...reviewData.testingBlocks[0], studentCount: 0, status: 'unavailable' }] };
   assert.equal(model({ reviewData: emptyReview }).testing[0].studentCount, 0);
@@ -96,8 +102,8 @@ test('Missing saved class references remain visible for correction', () => {
 });
 
 test('A newly created outside-selection obligation from review is visible, filterable, and linked to its issue', () => {
-  const newClass = { classId: 'new-duty', name: 'Grade 7 Science', gradeLevel: '7', status: 'meets', staff: [{ id: 'zinkan', name: 'Zinkan' }], regularWindow: { startTime: '09:15', endTime: '10:00' } };
-  const reviewData = { ...metadata, classes: [...metadata.classes, newClass], issues: [{ id: 'new-conflict', kind: 'conflict', classIds: ['new-duty'], blockIds: ['testing'] }] };
+  const newClass = { classId: 'new-duty', name: 'Grade 7 Science', gradeLevel: '7', status: 'meets', staff: [{ id: 'zinkan', name: 'Zinkan' }], regularWindow: { startTime: '09:15', endTime: '10:00' }, proposedWindow: { startTime: '09:15', endTime: '10:00' } };
+  const reviewData = { ...checkedReview, classes: [...checkedReview.classes, newClass], issues: [{ id: 'new-conflict', kind: 'conflict', classIds: ['new-duty'], blockIds: ['testing'] }] };
   const result = model({ reviewData });
   const row = result.classes.find(item => item.id === 'new-duty');
   assert.equal(row.name, 'Grade 7 Science');
@@ -126,4 +132,161 @@ test('Axis fits valid full-day windows and labels midnight accurately', () => {
   assert.equal(plannerTime(720), '12:00 PM');
   assert.equal(plannerTime(1440), '12:00 AM');
   assert.equal(plannerAxis([]).end - plannerAxis([]).start > 0, true);
+});
+
+test('Exact spans render only the affected intersections of the four server-issued overlap codes', () => {
+  const second = { ...definition.testingBlocks[0], id: 'second', name: 'Second testing', startTime: '10:00', endTime: '11:00' };
+  const issues = [
+    { id: 'staff', kind: 'conflict', code: 'CLASS_SCHEDULE_CONFLICT', classIds: ['ela', 'math'], blockIds: [] },
+    { id: 'proctor', kind: 'conflict', code: 'SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT', classIds: ['homeroom'], blockIds: ['testing'] },
+    { id: 'students', kind: 'overlap', code: 'SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP', classIds: ['ela'], blockIds: ['testing'] },
+    { id: 'testing-pair', kind: 'conflict', code: 'SCHEDULE_PROFILE_CONFLICT', classIds: [], blockIds: ['testing', 'second'] },
+  ];
+  const reviewData = { ...checkedReview, issues, testingBlocks: [...checkedReview.testingBlocks, { ...second, blockId: 'second', classParticipation: [], status: 'ready' }] };
+  const result = model({ definition: { ...definition, testingBlocks: [...definition.testingBlocks, second] }, reviewData });
+  assert.equal(result.reviewCurrent, true);
+  assert.deepEqual(result.classes.find(row => row.id === 'homeroom').overlapSpans.map(span => [span.issueId, span.startTime, span.endTime]), [['proctor', '09:00', '09:10']]);
+  assert.deepEqual(result.classes.find(row => row.id === 'ela').overlapSpans.map(span => [span.issueId, span.startTime, span.endTime]), [['staff', '09:15', '09:55'], ['students', '09:15', '09:55']]);
+  assert.deepEqual(result.testing[1].overlapSpans.map(span => [span.issueId, span.startTime, span.endTime]), [['testing-pair', '10:00', '10:45']]);
+  assert.equal(result.classes.find(row => row.id === 'homeroom').proposedWindow.endTime, '09:10', 'Highlighting never shortens the class');
+  assert.equal(result.testing[0].proposedWindow.endTime, '10:45');
+  assert.equal(result.classes.find(row => row.id === 'ungraded').overlapSpans.length, 0);
+  assert.equal(model({ reviewData: { ...checkedReview, issues: [] } }).rows.every(row => !row.overlapSpans.length), true, 'Coincident clocks alone never create client verdicts');
+});
+
+test('Touching endpoints, unsupported issue codes, and incomplete rows never invent highlighted spans', () => {
+  const issue = { id: 'adjacent', kind: 'overlap', code: 'SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP', classIds: ['homeroom'], blockIds: ['testing'] };
+  const adjustedDefinition = { ...definition, classRules: [{ classId: 'homeroom', action: 'time', startTime: '08:30', endTime: '09:00' }] };
+  const reviewData = { ...checkedReview, classes: checkedReview.classes.map(row => row.classId === 'homeroom' ? { ...row, action: 'time', proposedWindow: { startTime: '08:30', endTime: '09:00' } } : row), issues: [issue] };
+  const adjacent = model({ definition: adjustedDefinition, reviewData });
+  assert.equal(adjacent.reviewCurrent, true);
+  assert.equal(adjacent.rows.every(row => !row.overlapSpans.length), true);
+  const unknown = model({ reviewData: { ...checkedReview, issues: [{ ...issue, code: 'FUTURE_REVIEW_RULE' }, { id: 'monitoring', kind: 'conflict', code: 'SCHEDULE_PROFILE_MONITORING_NOT_FULL', classIds: [], blockIds: ['testing'] }] } });
+  assert.equal(unknown.issues.length, 2);
+  assert.equal(unknown.rows.every(row => !row.overlapSpans.length), true);
+  const incomplete = model({ definition: { ...definition, classRules: [{ classId: 'homeroom', action: 'time', startTime: '', endTime: '09:00' }] } });
+  assert.equal(incomplete.classes.find(row => row.id === 'homeroom').overlapSpans.length, 0);
+});
+
+test('Superseded windows, assignments, dates, and newer regular revisions clear spans and all stale verdicts', () => {
+  const issue = { id: 'proctor', kind: 'conflict', code: 'SCHEDULE_PROFILE_PROCTOR_CLASS_CONFLICT', classIds: ['homeroom'], blockIds: ['testing'] };
+  const reviewData = { ...checkedReview, issues: [issue] };
+  const changedRule = { ...definition, classRules: [{ classId: 'homeroom', action: 'time', startTime: '08:30', endTime: '09:00' }] };
+  for (const overrides of [
+    { definition: changedRule },
+    { definition: { ...definition, testingBlocks: [{ ...definition.testingBlocks[0], endTime: '11:00' }] } },
+    { definition: { ...definition, testingBlocks: [{ ...definition.testingBlocks[0], assignedStaffId: 'burba' }] } },
+    { referenceDate: '2026-09-15' },
+    { regularSchedule: { ...regularSchedule, revision: 8 } },
+    { regularSchedule: { ...regularSchedule, classes: regularSchedule.classes.map(row => row.classId === 'homeroom' ? { ...row, window: { startTime: '08:30', endTime: '09:00' } } : row) } },
+    { reviewData: null },
+  ]) {
+    const result = model({ reviewData, ...overrides });
+    assert.equal(result.reviewCurrent, false);
+    assert.equal(result.issues.length, 0);
+    assert.equal(result.rows.every(row => !row.checked && !row.issues.length && !row.overlapSpans.length), true);
+  }
+  const fresh = model({ regularSchedule: { ...regularSchedule, revision: 6 }, reviewData });
+  assert.equal(fresh.reviewCurrent, true);
+  assert.equal(fresh.testing[0].overlapSpans[0].endTime, '09:10');
+  const changedAssignment = model({ definition: { ...definition, testingBlocks: [{ ...definition.testingBlocks[0], assignedStaffId: 'burba' }] }, reviewData: { ...reviewData, testingBlocks: [{ ...reviewData.testingBlocks[0], status: 'unavailable' }] } });
+  assert.equal(changedAssignment.testing[0].status, 'ready', 'An old unavailable verdict cannot follow a changed assignment');
+});
+
+test('Linked testing occurrences repeat actual participating grades and keep one canonical block identity', () => {
+  const reviewData = { ...checkedReview, testingBlocks: [{ ...checkedReview.testingBlocks[0], classParticipation: [...metadata.testingBlocks[0].classParticipation, { classId: 'math', count: 3, total: 25 }] }] };
+  const result = model({ reviewData });
+  const occurrences = buildPlannerOccurrences({ rows: result.rows });
+  const testing = occurrences.filter(item => item.rowKey === 'testing:testing');
+  assert.deepEqual(testing.map(item => item.groupKey), ['5', '6']);
+  assert.equal(testing.every(item => item.row === result.testing[0] && item.linked), true);
+  assert.notEqual(testing[0].key, testing[1].key);
+  assert.equal(testing[0].participation.length, 2, 'Repeated membership across periods is not summed into a false unique-student count');
+  assert.deepEqual(testing[1].participation, [{ classId: 'math', count: 3, total: 25 }]);
+  assert.equal(new Set(result.rows.map(row => row.key)).size, result.rows.length);
+  assert.equal(result.testing.length, 1);
+  assert.deepEqual(buildPlannerOccurrences({ rows: result.rows, schoolView: false }).filter(item => item.rowKey === 'testing:testing').map(item => [item.groupKey, item.linked]), [['all', false]]);
+});
+
+test('Unknown testing placements remain visible and staff-only conflicts never claim grade participation', () => {
+  const result = model({ reviewData: checkedReview });
+  assert.equal(result.testing[0].relatedClassIds.includes('math'), true, 'Staff issue links remain available for navigation');
+  assert.deepEqual(buildPlannerOccurrences({ rows: result.rows }).filter(item => item.row.type === 'testing').map(item => item.groupKey), ['5']);
+  assert.equal(filterPlannerRows(result.rows, { ...all, grade: '6' }).some(row => row.type === 'testing'), true, 'The staff-related testing duty remains discoverable');
+  const unknown = model({ metadata: null });
+  assert.equal(unknown.testing[0].participationKnown, false);
+  assert.deepEqual(buildPlannerOccurrences({ rows: unknown.rows }).filter(item => item.row.type === 'testing').map(item => item.groupKey), ['testing']);
+  const unmapped = { ...result.testing[0], classParticipation: [{ classId: 'unloaded-class', count: 2, total: 10 }] };
+  assert.deepEqual(buildPlannerOccurrences({ rows: [unmapped] }).map(item => item.groupKey), ['testing']);
+});
+
+test('Grade and class filters suppress other linked placements while retaining staff-related and unknown duties', () => {
+  const reviewData = { ...checkedReview, testingBlocks: [{ ...checkedReview.testingBlocks[0], classParticipation: [...metadata.testingBlocks[0].classParticipation, { classId: 'math', count: 3, total: 25 }] }] };
+  const result = model({ reviewData });
+  for (const filters of [{ ...all, grade: '5' }, { ...all, classId: 'ela' }]) {
+    const visible = filterPlannerRows(result.rows, filters);
+    const occurrences = buildPlannerOccurrences({ rows: visible, allRows: result.rows, filters });
+    assert.equal(occurrences.every(item => item.groupKey === '5'), true);
+    assert.equal(occurrences.filter(item => item.row.type === 'testing').length, 1);
+    if (filters.classId === 'ela') assert.deepEqual(occurrences.find(item => item.row.type === 'testing').participation.map(part => part.classId), ['ela']);
+  }
+  const staffOnly = model({ reviewData: checkedReview });
+  const staffFilters = { ...all, grade: '6' };
+  const staffVisible = filterPlannerRows(staffOnly.rows, staffFilters);
+  assert.deepEqual(buildPlannerOccurrences({ rows: staffVisible, allRows: staffOnly.rows, filters: staffFilters }).map(item => [item.rowKey, item.groupKey]), [['class:math', '6'], ['testing:testing', 'testing']]);
+  const unknown = model({ metadata: null });
+  assert.equal(buildPlannerOccurrences({ rows: filterPlannerRows(unknown.rows, staffFilters), allRows: unknown.rows, filters: staffFilters }).some(item => item.row.type === 'testing' && item.groupKey === 'testing'), true);
+  const gradeFive = { ...all, grade: '5' };
+  const original = buildPlannerOccurrences({ rows: filterPlannerRows(result.rows, gradeFive), allRows: result.rows, filters: gradeFive }).find(item => item.row.type === 'testing');
+  const edited = result.rows.map(row => row.type === 'testing' ? { ...row, classParticipation: [{ classId: 'math', count: 3, total: 25 }], relatedClassIds: ['math'] } : row);
+  const anchored = buildPlannerOccurrences({ rows: filterPlannerRows(edited, gradeFive, { blockId: 'testing' }), allRows: edited, filters: gradeFive, activeOccurrence: original });
+  assert.equal(anchored.find(item => item.key === original.key)?.pinned, true);
+  assert.equal(anchored.some(item => item.groupKey === '6'), false, 'Pinning preserves the editor, not unrelated linked grades');
+});
+
+test('Chronological ranks survive names and time edits, initialize late windows, and insert new rows', () => {
+  const result = model();
+  assert.deepEqual(result.classes.slice(0, 2).map(row => row.id), ['homeroom', 'ela']);
+  const ranks = capturePlannerRanks(result.rows);
+  const before = buildPlannerOccurrences({ rows: result.rows, ranks }).map(item => item.key);
+  const edited = result.rows.map(row => row.id === 'testing' ? { ...row, name: 'AAA renamed', proposedWindow: { startTime: '07:00', endTime: '11:00' } }
+    : row.id === 'ela' ? { ...row, name: 'AAA class', regularWindow: { startTime: '07:15', endTime: '08:00' }, proposedWindow: { startTime: '07:15', endTime: '08:00' } } : row);
+  assert.deepEqual(buildPlannerOccurrences({ rows: edited, ranks: capturePlannerRanks(edited, ranks) }).map(item => item.key), before);
+  assert.equal(capturePlannerRanks(edited, ranks), ranks, 'Unchanged captures preserve reference identity for React state');
+  const newRow = { ...result.classes[0], id: 'new', key: 'class:new', name: 'New class', regularWindow: { startTime: '08:45', endTime: '09:00' }, proposedWindow: { startTime: '08:45', endTime: '09:00' } };
+  const added = [...result.rows, newRow];
+  assert.deepEqual(buildPlannerOccurrences({ rows: added, ranks: capturePlannerRanks(added, ranks) }).filter(item => item.groupKey === '5').map(item => item.rowKey), ['class:homeroom', 'class:new', 'testing:testing', 'class:ela']);
+  const empty = { ...newRow, regularWindow: null, proposedWindow: null };
+  const lateRanks = capturePlannerRanks([newRow], capturePlannerRanks([empty]));
+  assert.equal(lateRanks.get(newRow.key).start, '08:45');
+  assert.equal(capturePlannerRanks([{ ...newRow, regularWindow: { startTime: '07:00', endTime: '08:00' } }], lateRanks).get(newRow.key).start, '08:45');
+});
+
+test('An active linked occurrence stays anchored through association edits and resolves to its canonical row', () => {
+  const result = model();
+  const ranks = capturePlannerRanks(result.rows);
+  const activeOccurrence = buildPlannerOccurrences({ rows: result.rows, ranks }).find(item => item.rowKey === 'testing:testing');
+  const edited = result.rows.map(row => row.type === 'testing' ? { ...row, classParticipation: [{ classId: 'math', count: 4, total: 25 }], name: 'Renamed testing', proposedWindow: { startTime: '07:00', endTime: '11:00' } } : row);
+  const pinned = buildPlannerOccurrences({ rows: edited, ranks, activeOccurrence });
+  const anchor = pinned.find(item => item.key === activeOccurrence.key);
+  assert.equal(anchor.pinned, true);
+  assert.equal(anchor.groupKey, '5');
+  assert.equal(anchor.row, edited.find(row => row.type === 'testing'));
+  assert.equal(anchor.rank, activeOccurrence.rank);
+  assert.deepEqual(pinned.filter(item => item.row.type === 'testing').map(item => [item.groupKey, item.linked]), [['5', true], ['6', true]]);
+  assert.deepEqual(buildPlannerOccurrences({ rows: edited, ranks }).filter(item => item.row.type === 'testing').map(item => item.groupKey), ['6'], 'Closing the editor removes the temporary old placement');
+  assert.equal(buildPlannerOccurrences({ rows: edited.filter(row => row.type !== 'testing'), ranks, activeOccurrence }).some(item => item.rowKey === activeOccurrence.rowKey), false, 'Removed canonical blocks never survive as phantom occurrences');
+});
+
+test('A captured shared axis expands for new windows but never shrinks during edits or filtering', () => {
+  const first = plannerStableAxis(model().rows);
+  const longer = plannerStableAxis([{ proposedWindow: { startTime: '07:30', endTime: '18:15' } }], first);
+  assert.equal(longer.start, 420);
+  assert.equal(longer.end, 1140);
+  assert.deepEqual(plannerStableAxis(model().rows, longer), longer);
+  assert.equal(plannerStableAxis(model().rows, longer), longer);
+  assert.deepEqual(plannerStableAxis([], longer), longer);
+  assert.deepEqual(plannerStableAxis([{ proposedWindow: { startTime: '', endTime: '' } }], longer), longer);
+  assert.equal(plannerStableAxis([], first), first, 'An empty filtered view does not expand to fabricated default hours');
+  assert.equal(plannerStableAxis(model().rows).end, first.end, 'A newly opened session can recapture its own axis');
 });

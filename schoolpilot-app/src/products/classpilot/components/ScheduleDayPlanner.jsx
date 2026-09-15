@@ -1,10 +1,9 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
-import { DraftReviewIssues } from './ScheduleProfileDraftReview';
+import { DraftReviewIssues, DraftReviewStatus } from './ScheduleProfileDraftReview';
 import {
-  buildPlannerRows, filterPlannerRows, plannerAxis, plannerGradeKey, plannerGradeName,
+  buildPlannerRows, buildPlannerOccurrences, capturePlannerRanks, filterPlannerRows, plannerStableAxis, plannerGradeKey, plannerGradeName,
   plannerIncluded, plannerMinutes, plannerTime, plannerValidWindow, plannerWindowText,
 } from './scheduleDayPlannerModel';
 
@@ -13,7 +12,6 @@ const inputClass = 'min-w-0 w-full rounded-md border bg-background px-3 py-2 tex
 const focusClass = 'rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
 const striped = { backgroundImage: 'repeating-linear-gradient(135deg, transparent, transparent 7px, rgb(255 255 255 / .45) 7px, rgb(255 255 255 / .45) 12px)' };
 const targetFor = row => row.type === 'class' ? { classId: row.id } : { blockId: row.id };
-const activeRow = (row, target) => row.type === 'class' ? target?.classId === row.id : target?.blockId === row.id;
 
 function rowStatus(row) {
   if (row.proposedStatus === 'incomplete') return 'Not checked yet';
@@ -52,15 +50,15 @@ function TimelineBars({ row, axis, disabled, onEdit }) {
   const conflict = row.issues.some(issue => issue.kind === 'conflict');
   const overlap = row.issues.some(issue => issue.kind === 'overlap');
   const styleFor = window => ({ left: `${(plannerMinutes(window.startTime) - axis.start) / (axis.end - axis.start) * 100}%`, width: `${(plannerMinutes(window.endTime) - plannerMinutes(window.startTime)) / (axis.end - axis.start) * 100}%` });
-  return <div className="relative min-h-[88px]" data-timeline-bars={row.key}>
+  return <div className="relative min-h-[62px]" data-timeline-bars={row.key} data-planner-track>
     {axis.ticks.map(tick => <span key={tick} aria-hidden="true" className="pointer-events-none absolute inset-y-0 border-l border-border/70" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%` }} />)}
-    {row.regularWindow && <span aria-hidden="true" data-regular-window={plannerWindowText(row.regularWindow)} className="absolute top-3 h-1.5 rounded-sm bg-slate-500/65 dark:bg-slate-400/65" style={styleFor(row.regularWindow)} />}
+    {row.regularWindow && <span aria-hidden="true" data-regular-window={plannerWindowText(row.regularWindow)} className="absolute top-[6px] h-1 rounded-sm bg-slate-500/65 dark:bg-slate-400/65" style={styleFor(row.regularWindow)} />}
     {row.proposedWindow ? <button type="button" disabled={disabled} onClick={onEdit} aria-label={`Change proposed time for ${row.name}: ${plannerWindowText(row.proposedWindow)}`}
       data-proposed-window={plannerWindowText(row.proposedWindow)}
-      className={`absolute top-7 h-8 min-w-2 rounded border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${conflict ? 'border-rose-700 bg-rose-300 dark:border-rose-300 dark:bg-rose-500' : row.type === 'testing' ? 'border-amber-600 bg-amber-300 dark:border-amber-300 dark:bg-amber-400' : 'border-blue-700 bg-blue-500 dark:border-blue-300 dark:bg-blue-500'} ${overlap && !conflict ? 'border-dashed border-2' : ''}`}
-      style={{ ...styleFor(row.proposedWindow), ...(conflict ? striped : {}) }}><span className="sr-only">{rowStatus(row)}</span></button>
-      : <p className="absolute left-2 top-7 max-w-full text-xs text-muted-foreground">{proposedText(row)}</p>}
-    <p className="absolute left-2 top-[62px] text-[11px] text-muted-foreground">{conflict ? 'Conflict — review affected duties' : overlap ? 'Allowed overlap — regular class remains scheduled' : row.proposedStatus === 'skipped' ? 'Skipped meeting remains visible' : ''}</p>
+      className={`absolute top-4 h-6 rounded border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${row.type === 'testing' ? 'border-amber-600 bg-amber-300 dark:border-amber-300 dark:bg-amber-400' : 'border-blue-700 bg-blue-500 dark:border-blue-300 dark:bg-blue-500'} ${overlap ? 'border-dashed' : ''}`}
+      style={styleFor(row.proposedWindow)}><span className="sr-only">{rowStatus(row)}{conflict ? '. Conflict — review affected duties' : overlap ? '. Allowed overlap — regular class remains scheduled' : ''}</span></button> : null}
+    {(row.overlapSpans || EMPTY).filter(span => span.kind === 'conflict').map(span => <span key={span.issueId} aria-hidden="true" data-overlap-interval={`${span.startTime}–${span.endTime}`} className="pointer-events-none absolute top-[17px] h-[22px] bg-rose-400 dark:bg-rose-500" style={{ ...striped, ...styleFor(span) }} />)}
+    <p className="absolute inset-x-0 bottom-1 flex flex-wrap gap-x-2 text-[11px] leading-4"><span>{proposedText(row)}</span><span className={conflict ? 'font-medium text-rose-800 dark:text-rose-200' : 'text-muted-foreground'}>{conflict ? 'Conflict' : overlap ? 'Allowed overlap · class remains scheduled' : row.type === 'testing' ? rowStatus(row) : row.action === 'time' ? 'Custom time' : row.proposedStatus === 'skipped' ? 'Skipped' : ''}</span>{row.type === 'class' && !row.included && <span className="text-muted-foreground">Outside profile</span>}</p>
   </div>;
 }
 
@@ -121,8 +119,10 @@ function TestingEditor({ row, definition, catalog, disabled, onChange, onEditGro
 }
 
 function PlannerIssues({ issues, rowsByKey, onEditTarget, disabled }) {
+  const [expanded, setExpanded] = useState(false);
   if (!issues.length) return null;
-  return <details className="rounded-lg border p-3" open><summary className={`cursor-pointer text-sm font-semibold ${focusClass}`}>Schedule issues and overlaps ({issues.length})</summary><div className="mt-3 space-y-3">
+  const counts = ['conflict', 'overlap', 'incomplete'].map(kind => issues.filter(issue => issue.kind === kind).length);
+  return <details className="rounded-lg border px-3 py-2" data-planner-issues open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}><summary className={`cursor-pointer text-sm font-semibold ${focusClass}`}>Schedule issues and overlaps<span className="ml-2 font-normal text-muted-foreground">{counts[0]} {counts[0] === 1 ? 'conflict' : 'conflicts'} · {counts[1]} allowed {counts[1] === 1 ? 'overlap' : 'overlaps'} · {issues.length - counts[0] - counts[1]} need review</span></summary><div className="mt-3 space-y-3">
     {issues.map(issue => <div key={issue.id} className="space-y-1 text-sm">
       <p className={issue.kind === 'conflict' || issue.kind === 'incomplete' ? 'text-amber-800 dark:text-amber-300' : 'text-muted-foreground'}><strong>{issue.kind === 'conflict' ? 'Conflict: ' : issue.kind === 'overlap' ? 'Allowed overlap: ' : 'Needs review: '}</strong>{issue.message}</p>
       <div className="flex flex-wrap gap-x-3 gap-y-1">{[...(issue.classIds || EMPTY).map(id => rowsByKey.get(`class:${id}`)), ...(issue.blockIds || EMPTY).map(id => rowsByKey.get(`testing:${id}`))].filter(Boolean).map(row => <button type="button" key={row.key} disabled={disabled} className={`text-left font-medium text-primary underline underline-offset-4 ${focusClass}`} aria-label={row.type === 'class' ? `Resolve issue for class ${row.name}` : `Resolve issue for testing block ${row.name}`} onClick={() => onEditTarget(targetFor(row), issue)}>Edit {row.name}</button>)}</div>
@@ -130,13 +130,19 @@ function PlannerIssues({ issues, rowsByKey, onEditTarget, disabled }) {
   </div></details>;
 }
 
-function PlannerRow({ row, timeline, axis, active, filters, definition, catalog, disabled, onChange, onEditTarget, onEditGroup, checked }) {
+function PlannerRow({ occurrence, timeline, axis, active, filters, definition, catalog, disabled, onChange, onEditTarget, onEditGroup, checked }) {
+  const { row, linked, pinned } = occurrence;
   const editorId = useId();
-  const open = () => onEditTarget(targetFor(row));
+  const open = () => onEditTarget(targetFor(row), undefined, occurrence);
   const close = event => {
+    const planner = event.currentTarget.closest('[data-day-planner]');
     const opener = event.currentTarget.closest('[data-schedule-row]')?.querySelector('[data-row-opener]');
     onEditTarget(null);
-    requestAnimationFrame(() => opener?.isConnected && opener.focus({ preventScroll: true }));
+    requestAnimationFrame(() => {
+      const next = opener?.isConnected ? opener : [...(planner?.querySelectorAll('[data-schedule-row]') || EMPTY)].find(element => element.dataset.scheduleRow === row.key)?.querySelector('[data-row-opener]') || planner?.querySelector('[data-add-testing-block]');
+      next?.focus({ preventScroll: true });
+      if (next && next !== opener) next.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
   };
   const remove = event => {
     const planner = event.currentTarget.closest('[data-day-planner]');
@@ -144,43 +150,76 @@ function PlannerRow({ row, timeline, axis, active, filters, definition, catalog,
     onEditTarget(null);
     requestAnimationFrame(() => planner?.querySelector('[data-add-testing-block]')?.focus({ preventScroll: true }));
   };
-  return <article data-schedule-row={row.key} aria-label={`${row.name} schedule row`} className={`min-w-0 border-t ${active ? 'bg-primary/5' : ''}`}>
-    <div className={timeline ? 'grid min-w-[760px] grid-cols-[260px_minmax(480px,1fr)]' : 'grid gap-3 p-3 sm:grid-cols-[minmax(180px,1fr)_minmax(200px,1fr)]'}>
-      <div className={timeline ? 'sticky left-0 z-10 space-y-2 border-r bg-background p-3' : 'space-y-2'}>
-        <button type="button" data-row-opener className={`text-left text-sm font-semibold text-primary underline-offset-4 hover:underline ${focusClass}`} disabled={disabled} onClick={open} aria-expanded={active} aria-controls={active ? editorId : undefined} aria-label={row.type === 'class' ? `Edit affected class ${row.name}` : `Edit testing block ${row.name}`}>{row.name}</button>
-        <RowDescription row={row} classId={filters.classId} />
+  const conflict = row.issues.some(issue => issue.kind === 'conflict');
+  const staffText = row.type === 'class' ? row.staff.map(person => person.name).join(', ') || row.teacherName || 'No assigned teacher' : row.staffName || 'Choose assigned staff';
+  const participation = filters.classId && filters.classId !== 'all' ? row.classParticipation?.find(part => part.classId === filters.classId) : null;
+  return <article data-schedule-row={row.key} data-row-occurrence={occurrence.key} aria-label={`${row.name} schedule row`} className={`min-w-0 border-t ${active ? 'bg-primary/5' : ''}`}>
+    <div data-planner-compact-row style={timeline ? { minWidth: 'var(--planner-grid-width)' } : undefined} className={timeline ? 'grid grid-cols-[260px_minmax(480px,1fr)]' : 'grid gap-2 p-3 sm:grid-cols-[minmax(180px,1fr)_minmax(200px,1fr)]'}>
+      <div className={timeline ? 'sticky left-0 z-10 min-w-0 border-r bg-background px-3 py-2' : 'min-w-0 space-y-1'}>
+        <div className="flex flex-wrap items-baseline gap-x-2"><button type="button" data-row-opener className={`text-left text-sm font-semibold text-primary underline-offset-4 hover:underline ${focusClass}`} disabled={disabled} onClick={open} aria-expanded={active} aria-controls={active ? editorId : undefined} aria-label={row.type === 'class' ? `Edit affected class ${row.name}` : `Edit testing block ${row.name}`}>{row.name}</button>{linked && <span className="text-[11px] text-muted-foreground" aria-label="Linked view of the same testing block">Linked</span>}</div>
+        <p className="text-xs text-muted-foreground">{staffText}{row.type === 'testing' && <span> · {row.studentCount == null ? 'Student count unavailable' : `${row.studentCount} students total`}</span>}</p>
+        {!timeline && <RowDescription row={row} classId={filters.classId} />}
       </div>
-      <div className={timeline ? 'min-w-0 p-3' : 'space-y-2'}>
-        {timeline && <TimelineBars row={row} axis={axis} disabled={disabled} onEdit={open} />}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><p className="text-muted-foreground">Regular: {row.type === 'testing' ? 'No testing block' : row.regularWindow ? plannerWindowText(row.regularWindow) : row.status === 'unavailable' ? 'Unavailable' : row.status === 'schedule_off' ? 'Schedule off' : 'Does not meet'}</p><p>Proposed: {proposedText(row)}</p></div>
-        <div className="mt-2 flex flex-wrap items-center gap-2"><Badge variant="secondary">{rowStatus(row)}</Badge>{!checked && <span className="text-xs text-muted-foreground">Checks pending or unavailable</span>}</div>
-        <DraftReviewIssues compact issues={row.issues} />
+      <div className={timeline ? 'min-w-0 px-3' : 'space-y-1 text-xs'}>
+        {timeline ? <TimelineBars row={row} axis={axis} disabled={disabled} onEdit={open} /> : <><p>Proposed: {proposedText(row)}</p><p className="text-muted-foreground">{rowStatus(row)}</p>{conflict && <p className="font-medium text-rose-800 dark:text-rose-200">Conflict — review affected duties</p>}</>}
+        {timeline && participation && <p className="pb-1 text-xs text-muted-foreground">{participation.count} of {participation.total} class students participate</p>}
+        {row.type === 'class' && !row.included && <span className="sr-only">Outside profile selection</span>}
+        {!checked && <span className="sr-only">Checks pending or unavailable</span>}
       </div>
     </div>
-    {active && <section id={editorId} aria-label={`Edit ${row.name} in Day planner`} className="max-w-full space-y-3 border-t p-4">
+    {active && <section id={editorId} aria-label={`Edit ${row.name} in Day planner`} className="sticky left-0 max-w-full space-y-3 border-t bg-background p-4" style={timeline ? { width: 'var(--planner-visible-width, 100%)' } : undefined}>
       <div className="flex items-center justify-between gap-3"><h4 className="text-sm font-semibold">Edit {row.name}</h4><Button type="button" size="sm" variant="ghost" onClick={close}>{row.type === 'testing' ? 'Close testing editor' : 'Close class editor'}<span className="sr-only"> for {row.name}</span></Button></div>
+      <RowDescription row={row} classId={filters.classId} />
+      {linked && <p className="text-xs text-muted-foreground">This is the same testing block shown beside other grades. Changes here update every linked view; the block is counted once.</p>}
+      {pinned && <p className="text-xs text-muted-foreground">This editor stays here while you work. Updated class participation is shown in the other linked rows.</p>}
+      {row.type === 'testing' && occurrence.participation?.length > 0 && filters.classId === 'all' && <div className="text-xs text-muted-foreground">{occurrence.participation.map(part => <p key={part.classId}>{part.count} of {part.total} students in {catalog.classes.find(item => item.id === part.classId)?.name || 'associated class'} participate</p>)}</div>}
+      <p className="text-xs text-muted-foreground">Regular: {row.type === 'testing' ? 'No testing block' : row.regularWindow ? plannerWindowText(row.regularWindow) : row.status === 'unavailable' ? 'Unavailable' : row.status === 'schedule_off' ? 'Schedule off' : 'Does not meet'}</p>
+      <DraftReviewIssues compact issues={row.issues} />
       {row.type === 'class' ? <ClassEditor row={row} definition={definition} disabled={disabled} onChange={onChange} /> : <><TestingEditor row={row} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditGroup={onEditGroup} /><Button type="button" size="sm" variant="outline" disabled={disabled} className="text-destructive" aria-label={`Remove testing block ${row.index + 1}`} onClick={remove}>Remove testing block</Button></>}
       <p className="text-xs text-muted-foreground">Changes update this profile draft. Save profile keeps your work; Choose dates & apply schedules it separately.</p>
     </section>}
   </article>;
 }
 
-export default function ScheduleDayPlanner({ definition, catalog, regularSchedule, referenceDate, review, filters, onFiltersChange, plannerView = 'timeline', onPlannerViewChange, collapsedGrades = EMPTY, onCollapsedGradesChange, activeTarget, onEditTarget, onChange, onAddGroups, disabled, onEditGroup }) {
+export default function ScheduleDayPlanner({ definition, catalog, regularSchedule, referenceDate, review, reviewRetry, validReviewDate = true, savedReview = false, filters, onFiltersChange, plannerView = 'timeline', onPlannerViewChange, collapsedGrades = EMPTY, onCollapsedGradesChange, activeTarget, onEditTarget, onChange, onAddGroups, disabled, onEditGroup }) {
   const [metadata, setMetadata] = useState(null);
+  const [layout, setLayout] = useState({ date: null, ranks: undefined, axis: undefined });
+  const [anchor, setAnchor] = useState(null);
+  const planner = useRef(null);
   const scroller = useRef(null);
+  const timeHeader = useRef(null);
   const horizontalPositions = useRef({ timeline: 0, list: 0 });
   const changeDisplay = next => {
     horizontalPositions.current[plannerView] = scroller.current?.scrollLeft || 0;
     onPlannerViewChange(next);
   };
-  useLayoutEffect(() => { if (scroller.current) scroller.current.scrollLeft = horizontalPositions.current[plannerView] || 0; }, [plannerView]);
+  useLayoutEffect(() => {
+    const position = horizontalPositions.current[plannerView] || 0;
+    if (scroller.current) scroller.current.scrollLeft = position;
+    if (timeHeader.current) timeHeader.current.scrollLeft = position;
+    const root = planner.current, viewport = scroller.current;
+    const toolbar = root?.closest('[data-testid="schedule-profile-workspace"]')?.querySelector(':scope > header');
+    if (!root || !viewport) return undefined;
+    const measure = () => {
+      root.style.setProperty('--planner-visible-width', `${viewport.clientWidth}px`);
+      root.style.setProperty('--planner-toolbar-offset', `${toolbar?.getBoundingClientRect().height || 0}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    if (toolbar) observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [plannerView]);
   // Retain labels/associations only, scoped to this mounted profile session and
   // date. Pending/failed checks never retain a previous conflict verdict.
   if (review.data?.referenceDate === referenceDate && metadata !== review.data) setMetadata(review.data);
   const model = useMemo(() => buildPlannerRows({ definition, catalog, regularSchedule, referenceDate, reviewData: review.data, metadata }), [definition, catalog, regularSchedule, referenceDate, review.data, metadata]);
   const visible = useMemo(() => filterPlannerRows(model.rows, filters, activeTarget), [model, filters, activeTarget]);
   const rowsByKey = useMemo(() => new Map(model.rows.map(row => [row.key, row])), [model]);
-  const axis = useMemo(() => plannerAxis(model.rows), [model]);
+  const ranks = useMemo(() => capturePlannerRanks(model.rows, layout.date === referenceDate ? layout.ranks : undefined), [model.rows, layout.date, layout.ranks, referenceDate]);
+  const axis = useMemo(() => plannerStableAxis(model.rows, layout.date === referenceDate ? layout.axis : undefined), [model.rows, layout.date, layout.axis, referenceDate]);
+  const capturedAxis = model.rows.some(row => plannerValidWindow(row.regularWindow) || plannerValidWindow(row.proposedWindow)) ? axis : layout.date === referenceDate ? layout.axis : undefined;
+  if (layout.date !== referenceDate || layout.ranks !== ranks || layout.axis?.start !== capturedAxis?.start || layout.axis?.end !== capturedAxis?.end) setLayout({ date: referenceDate, ranks, axis: capturedAxis });
   const options = useMemo(() => {
     const grades = new Map(), staff = new Map();
     for (const row of model.classes) {
@@ -193,15 +232,26 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     for (const row of model.testing) if (row.assignedStaffId) staff.set(row.assignedStaffId, row.staffName || 'Unavailable staff member');
     return { grades: [...grades].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })), staff: [...staff].sort(([, a], [, b]) => a.localeCompare(b)) };
   }, [model, definition.grades]);
-  const issues = review.data?.referenceDate === referenceDate ? review.data.issues || EMPTY : EMPTY;
+  const issues = model.issues || EMPTY;
   const timeline = plannerView !== 'list';
   const schoolView = !filters.view || filters.view === 'school';
+  const targetKey = activeTarget?.classId ? `class:${activeTarget.classId}` : activeTarget?.blockId ? `testing:${activeTarget.blockId}` : null;
+  const activeAnchor = anchor?.rowKey === targetKey && anchor?.date === referenceDate && anchor.schoolView === schoolView ? anchor : null;
+  const occurrences = useMemo(() => buildPlannerOccurrences({ rows: visible, allRows: model.rows, schoolView, ranks, filters, activeOccurrence: activeAnchor }), [visible, model.rows, schoolView, ranks, filters, activeAnchor]);
+  const editorOccurrence = occurrences.find(occurrence => occurrence.key === activeAnchor?.key) || occurrences.find(occurrence => occurrence.rowKey === targetKey);
+  // Capture the clicked occurrence, not just its block ID. New review metadata
+  // may move linked appearances, but must not unmount a focused inline editor.
+  if (editorOccurrence && !activeAnchor) setAnchor({ ...editorOccurrence, date: referenceDate, schoolView });
+  if (!targetKey && anchor) setAnchor(null);
+  const editOccurrence = (target, issue, occurrence) => {
+    setAnchor(occurrence ? { ...occurrence, date: referenceDate, schoolView } : null);
+    onEditTarget(target, issue);
+  };
   const groups = useMemo(() => {
-    if (!schoolView) return [{ key: 'all', label: null, rows: visible }];
     const result = new Map();
-    for (const row of visible) { const key = row.type === 'testing' ? 'testing' : row.grade; result.set(key, [...(result.get(key) || EMPTY), row]); }
-    return [...result].map(([key, rows]) => ({ key, label: key === 'testing' ? 'Testing blocks' : plannerGradeName(key), rows }));
-  }, [visible, schoolView]);
+    for (const occurrence of occurrences) result.set(occurrence.groupKey, [...(result.get(occurrence.groupKey) || EMPTY), occurrence]);
+    return [...result].map(([key, rows]) => ({ key, label: key === 'all' ? null : key === 'testing' ? 'Other testing / participation unavailable' : plannerGradeName(key), rows }));
+  }, [occurrences]);
   const changeFilters = patch => { onEditTarget(null); onFiltersChange({ ...filters, ...patch }); };
   const updateScope = patch => {
     const next = { ...definition, ...patch };
@@ -216,11 +266,28 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     onEditTarget({ blockId: block.id });
   };
   const activeCount = model.classes.filter(row => row.included).length;
+  const revealFocusedControl = event => {
+    const control = event.target;
+    if (!control.closest('[data-class-editor-id], [data-block-editor-id]')) return;
+    // Native focus scrolling does not account for the profile toolbar. On a
+    // narrow screen it can occupy more than half the viewport.
+    requestAnimationFrame(() => {
+      if (!control.isConnected || document.activeElement !== control) return;
+      const toolbar = planner.current?.closest('[data-testid="schedule-profile-workspace"]')?.querySelector(':scope > header');
+      const bounds = control.getBoundingClientRect();
+      const header = timeHeader.current?.getBoundingClientRect();
+      const covered = Math.max(toolbar?.getBoundingClientRect().bottom || 0, header && header.top < window.innerHeight ? header.bottom : 0);
+      const top = Math.min(covered + 12, window.innerHeight - bounds.height - 12);
+      if (bounds.top < top) window.scrollBy({ top: bounds.top - top });
+      else if (bounds.bottom > window.innerHeight - 12) window.scrollBy({ top: bounds.bottom - window.innerHeight + 12 });
+    });
+  };
   const gradesOneToEight = Array.from({ length: 8 }, (_, index) => {
     const key = String(index + 1), values = options.grades.find(([grade]) => grade === key)?.[1];
     return values?.size ? [...values] : [key];
   }).flat();
-  return <section aria-label="Day planner" data-day-planner className="min-w-0 space-y-4"><section aria-label="Draft schedule review" className="min-w-0 space-y-4">
+  return <section ref={planner} aria-label="Day planner" data-day-planner onFocusCapture={revealFocusedControl} style={{ '--planner-grid-width': `${Math.max(760, 284 + (axis.ticks.length - 1) * 72)}px` }} className="min-w-0 space-y-4"><section aria-label="Draft schedule review" className="min-w-0 space-y-4">
+    <DraftReviewStatus review={{ ...review, data: model.reviewCurrent ? review.data : null, error: review.error || (review.data && !model.reviewCurrent ? { message: 'The schedule comparison changed. Refresh the preview-day check before relying on conflict results.' } : null), retry: reviewRetry || review.retry }} validDate={validReviewDate} saved={savedReview} />
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold" tabIndex={-1} data-review-heading>Day planner</h3><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Click a class or testing bar to adjust the proposed day here. Regular classes stay scheduled until you explicitly change them.</p></div><div role="group" aria-label="Day planner display" className="flex gap-2"><Button size="sm" variant={timeline ? 'default' : 'outline'} aria-pressed={timeline} onClick={() => changeDisplay('timeline')}>Timeline</Button><Button size="sm" variant={!timeline ? 'default' : 'outline'} aria-pressed={!timeline} onClick={() => changeDisplay('list')}>List</Button></div></div>
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <label className="space-y-1 text-sm"><span>Schedule view</span><select className={inputClass} value={filters.view || 'school'} onChange={event => changeFilters({ view: event.target.value, grade: 'all', classId: 'all', teacher: 'all' })}><option value="school">School</option><option value="classes">Class</option><option value="teachers">Teacher</option></select></label>
@@ -231,23 +298,26 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
     </div>
     <div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(filters.conflictsOnly)} onChange={event => changeFilters({ conflictsOnly: event.target.checked })} />Show conflicts only</label><Button variant="ghost" size="sm" onClick={() => changeFilters({ grade: 'all', classId: 'all', teacher: 'all', search: '', conflictsOnly: false })}>Clear display filters</Button><p className="text-xs text-muted-foreground">Display filters do not change the {activeCount} classes included in this profile.</p></div>
     <p aria-label="Whole profile summary" className="text-sm">{activeCount} classes included · {definition.classRules.filter(rule => rule.action === 'time').length} custom-time rules · {definition.classRules.filter(rule => rule.action === 'skip').length} skipped-class rules · {definition.testingBlocks.length} testing blocks</p>
-    <PlannerIssues issues={issues} rowsByKey={rowsByKey} onEditTarget={onEditTarget} disabled={disabled} />
+    <PlannerIssues issues={issues} rowsByKey={rowsByKey} onEditTarget={editOccurrence} disabled={disabled} />
     <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" disabled={disabled || definition.testingBlocks.length >= 30} onClick={onAddGroups}>Add testing groups</Button><Button data-add-testing-block variant="outline" size="sm" disabled={disabled || definition.testingBlocks.length >= 30} onClick={addBlock}><Plus className="mr-2 h-4 w-4" />Add testing block</Button><span className="text-xs text-muted-foreground">{definition.testingBlocks.length}/30 testing blocks</span></div>
     {timeline && <><div aria-label="Timeline legend" className="flex flex-wrap gap-x-5 gap-y-2 text-xs"><span className="flex items-center gap-2"><span aria-hidden="true" className="h-1 w-6 bg-slate-500" />Regular time</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-blue-500" />Proposed class</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-amber-400" />Testing</span><span className="flex items-center gap-2"><span aria-hidden="true" className="h-3 w-6 rounded bg-rose-400" style={striped} />Conflict</span><span>Dashed border: allowed overlap</span></div><p className="text-xs text-muted-foreground sm:hidden">Scroll the timeline sideways, or use List for a stacked view.</p></>}
-    {filters.conflictsOnly && !review.data && <p role="status" className="rounded border p-3 text-sm">Conflict results are pending or unavailable. Clear display filters to keep editing the day.</p>}
-    <div ref={scroller} role="region" aria-label={timeline ? 'Proposed day timeline' : 'Proposed day timetable'} tabIndex={0} className={`min-w-0 rounded-lg border ${timeline ? 'overflow-x-auto' : ''} ${focusClass}`}>
-      {timeline && <div className="grid min-w-[760px] grid-cols-[260px_minmax(480px,1fr)] border-b bg-muted text-xs"><div className="sticky left-0 z-10 border-r bg-muted p-3 font-medium">Class / supervision</div><div className="px-3"><div className="relative h-12">{axis.ticks.map(tick => <span key={tick} className="absolute top-3 whitespace-nowrap" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%`, transform: tick === axis.end ? 'translateX(-100%)' : 'none' }}>{plannerTime(tick)}</span>)}</div></div></div>}
-      {groups.map(group => {
-        const collapsed = collapsedGrades.includes(group.key) && !group.rows.some(row => activeRow(row, activeTarget));
-        return <div key={group.key}>
-          {group.label && <button type="button" className={`flex w-full items-center gap-2 bg-muted/60 p-3 text-left text-sm font-semibold ${focusClass}`} aria-expanded={!collapsed} onClick={() => {
-            if (!collapsed && group.rows.some(row => activeRow(row, activeTarget))) onEditTarget(null);
+    {filters.conflictsOnly && !model.reviewCurrent && <p role="status" className="rounded border p-3 text-sm">Conflict results are pending or unavailable. Clear display filters to keep editing the day.</p>}
+    <div className="min-w-0 rounded-lg border">
+      {timeline && <div ref={timeHeader} data-planner-time-header className="sticky z-[15] overflow-hidden rounded-t-lg border-b bg-muted text-xs" style={{ top: 'var(--planner-toolbar-offset, 0px)' }}><div className="grid grid-cols-[260px_minmax(480px,1fr)]" style={{ minWidth: 'var(--planner-grid-width)' }}><div className="sticky left-0 z-10 border-r bg-muted px-3 py-2 font-medium">Class / supervision</div><div className="px-3"><div className="relative h-9">{axis.ticks.map(tick => <span key={tick} data-planner-tick={tick} className="absolute top-2 whitespace-nowrap" style={{ left: `${(tick - axis.start) / (axis.end - axis.start) * 100}%`, transform: tick === axis.end ? 'translateX(-100%)' : tick === axis.start ? 'none' : 'translateX(-50%)' }}>{plannerTime(tick)}</span>)}</div></div></div></div>}
+      <div ref={scroller} role="region" aria-label={timeline ? 'Proposed day timeline' : 'Proposed day timetable'} tabIndex={0} onScroll={event => { if (timeHeader.current) timeHeader.current.scrollLeft = event.currentTarget.scrollLeft; }} className={`min-w-0 ${timeline ? 'overflow-x-auto' : ''} ${focusClass}`}>
+        <div style={timeline ? { minWidth: 'var(--planner-grid-width)' } : undefined}>
+        {groups.flatMap(group => {
+          const containsEditor = group.rows.some(occurrence => occurrence.key === editorOccurrence?.key);
+          const collapsed = collapsedGrades.includes(group.key) && !containsEditor;
+          return [group.label && <button key={`heading:${group.key}`} type="button" data-planner-grade={group.key} className={`sticky left-0 flex max-w-full items-center gap-2 bg-muted px-3 py-1.5 text-left text-sm font-semibold ${focusClass}`} style={timeline ? { width: 'var(--planner-visible-width, 100%)' } : { width: '100%' }} aria-expanded={!collapsed} onClick={() => {
+            if (!collapsed && containsEditor) editOccurrence(null);
             onCollapsedGradesChange(collapsed ? collapsedGrades.filter(key => key !== group.key) : [...new Set([...collapsedGrades, group.key])]);
-          }}>{collapsed ? <ChevronRight aria-hidden="true" className="h-4 w-4" /> : <ChevronDown aria-hidden="true" className="h-4 w-4" />}{group.label}<span className="font-normal text-muted-foreground">({group.rows.length})</span></button>}
-          {!collapsed && group.rows.map(row => <PlannerRow key={row.key} row={row} timeline={timeline} axis={axis} active={activeRow(row, activeTarget)} filters={filters} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditTarget={onEditTarget} onEditGroup={onEditGroup} checked={Boolean(review.data)} />)}
-        </div>;
-      })}
-      {!visible.length && <p className="p-4 text-sm text-muted-foreground">{filters.conflictsOnly && !review.data ? 'Current conflict results are not available.' : filters.conflictsOnly ? 'No conflicting schedule rows match these display filters.' : 'No schedule rows match these display filters.'}</p>}
+          }}>{collapsed ? <ChevronRight aria-hidden="true" className="h-4 w-4" /> : <ChevronDown aria-hidden="true" className="h-4 w-4" />}{group.label}<span className="font-normal text-muted-foreground">({group.rows.length})</span></button>,
+          ...(!collapsed ? group.rows.map(occurrence => <PlannerRow key={occurrence.key} occurrence={occurrence} timeline={timeline} axis={axis} active={occurrence.key === editorOccurrence?.key} filters={filters} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditTarget={editOccurrence} onEditGroup={onEditGroup} checked={occurrence.row.checked} />) : EMPTY)];
+        })}
+        {!visible.length && <p className="p-4 text-sm text-muted-foreground">{filters.conflictsOnly && !model.reviewCurrent ? 'Current conflict results are not available.' : filters.conflictsOnly ? 'No conflicting schedule rows match these display filters.' : 'No schedule rows match these display filters.'}</p>}
+        </div>
+      </div>
     </div>
     <details className="rounded-lg border p-3"><summary className={`cursor-pointer text-sm font-semibold ${focusClass}`}>Classes included ({activeCount})</summary><fieldset disabled={disabled} className="mt-3 space-y-3">
       <p className="text-xs text-muted-foreground">Select grades here, or open a class row to include it individually. Removing a class from the profile also removes its custom-time or skipped-class rule.</p>

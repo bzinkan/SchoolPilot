@@ -7,7 +7,6 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from '../../../components/ui/alert-dialog';
 import ScheduleTestingGroupPicker from './ScheduleTestingGroupPicker';
-import { DraftReviewStatus } from './ScheduleProfileDraftReview';
 import ScheduleDayPlanner from './ScheduleDayPlanner';
 import ScheduleProfilesOverview from './ScheduleProfilesOverview';
 import { cancellationState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
@@ -515,12 +514,11 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
         </div>}
 
         {<RegularScheduleReference date={referenceDate} onDateChange={changePreviewDate} onRefresh={refreshReference} query={regularQuery} schedule={regularSchedule} timezone={data.schoolTimezone} setup={session.setup} hideControls />}
-        {!session.setup && <DraftReviewStatus review={{ ...draftReview, retry: refreshReference }} validDate={isReferenceDate(referenceDate)} saved={session.mode === 'view' && session.savedNotice} />}
         {session.setup ? <div className="space-y-3">
           <p className="text-sm text-muted-foreground">{regularSchedule && meetingClasses.length > 0 ? `${meetingClasses.length} classes meet on this day. ` : ''}Load the whole day, then adjust or remove classes. Unchanged classes keep following their regular schedule.</p>
           {loadProblem && <p role="alert" className="text-sm text-destructive">{loadProblem}</p>}
           <div className="flex flex-wrap gap-2"><Button disabled={!regularSchedule || !meetingClasses.length || Boolean(loadProblem) || blockedByAdvancedDraft} onClick={loadRegularSchedule}>Load regular schedule</Button><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={() => edit({ setup: false })}>Start blank</Button></div>
-        </div> : <ScheduleDayPlanner key={session.id} definition={session.definition} catalog={data} regularSchedule={regularSchedule} referenceDate={referenceDate} review={draftReview}
+        </div> : <ScheduleDayPlanner key={session.id} definition={session.definition} catalog={data} regularSchedule={regularSchedule} referenceDate={referenceDate} review={draftReview} reviewRetry={refreshReference} validReviewDate={isReferenceDate(referenceDate)} savedReview={session.mode === 'view' && session.savedNotice}
           filters={session.plannerFilters} onFiltersChange={plannerFilters => setSession(current => ({ ...current, plannerFilters }))}
           plannerView={plannerView} onPlannerViewChange={setPlannerView}
           collapsedGrades={session.collapsedGrades} onCollapsedGradesChange={collapsedGrades => setSession(current => ({ ...current, collapsedGrades }))}
