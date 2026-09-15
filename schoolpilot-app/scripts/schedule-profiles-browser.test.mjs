@@ -47,7 +47,12 @@ async function closeSavedReview(dialog) {
   await dialog.waitFor({ state: 'hidden' });
 }
 
-const scheduleRow = (workspace, name) => workspace.getByRole('article', { name: `${name} schedule row`, exact: true });
+const scheduleOccurrences = (workspace, name) => workspace.getByRole('article', { name: `${name} schedule row`, exact: true });
+// A testing block can appear beside several grades while remaining one editable
+// block. General scenarios use its first occurrence; linked-row scenarios check
+// every occurrence explicitly.
+const scheduleRow = (workspace, name) => scheduleOccurrences(workspace, name).first();
+const canonicalTestingKeys = workspace => workspace.locator('[data-schedule-row^="testing:"]').evaluateAll(rows => [...new Set(rows.map(row => row.getAttribute('data-schedule-row')))]);
 
 async function editClass(workspace, name) {
   const control = workspace.getByLabel(`${name} schedule action`, { exact: true });
@@ -69,6 +74,11 @@ async function classSelection(workspace) {
 
 async function editTesting(workspace, name) {
   await scheduleRow(workspace, name).getByRole('button', { name: `Edit testing block ${name}`, exact: true }).click();
+}
+
+async function openPlannerIssues(workspace) {
+  const summary = workspace.locator('summary').filter({ hasText: /^Schedule issues and overlaps/ });
+  if (!await summary.locator('..').evaluate(element => element.open)) await summary.click();
 }
 
 const applicationRow = (page, id) => page.locator(`[data-application-id="${id}"]`);
@@ -462,7 +472,7 @@ test('Testing groups retain explicit page selections, enforce the total limit, a
     await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"] button')].some(button => button.textContent.includes('Add 30 testing blocks') && !button.disabled));
     await add.evaluate(button => { button.click(); button.click(); });
     await picker.waitFor({ state: 'hidden' });
-    assert.equal(await workspace.locator('[data-schedule-row^="testing:"]').count(), 30);
+    assert.equal((await canonicalTestingKeys(workspace)).length, 30, 'Linked grade occurrences do not count as extra testing blocks');
     assert.equal(await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).first().isDisabled(), true);
     await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
     await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
@@ -522,9 +532,11 @@ test('Workspace keyboard navigation and current staff choices preserve independe
     await picker.getByLabel('Mixed MAP group — assigned staff').selectOption('zinkan');
     await picker.getByLabel('Common testing start').fill('11:00'); await picker.getByLabel('Common testing end').fill('12:00');
     await picker.getByRole('button', { name: 'Add 1 testing block', exact: true }).click();
-    await workspace.locator('[data-schedule-row^="testing:"]').first().getByRole('button', { name: 'Edit testing block Mixed MAP group', exact: true }).click();
+    const testingKeys = await canonicalTestingKeys(workspace);
+    assert.equal(testingKeys.length, 2);
+    await workspace.locator(`[data-schedule-row="${testingKeys[0]}"]`).first().getByRole('button', { name: 'Edit testing block Mixed MAP group', exact: true }).click();
     assert.equal(await workspace.getByLabel('Testing block 1 start').inputValue(), '09:00');
-    await workspace.locator('[data-schedule-row^="testing:"]').last().getByRole('button', { name: 'Edit testing block Mixed MAP group', exact: true }).click();
+    await workspace.locator(`[data-schedule-row="${testingKeys[1]}"]`).first().getByRole('button', { name: 'Edit testing block Mixed MAP group', exact: true }).click();
     assert.equal(await workspace.getByLabel('Testing block 2 start').inputValue(), '11:00');
     for (const theme of ['light', 'dark']) for (const [device, viewport] of Object.entries({ desktop: { width: 1365, height: 950 }, mobile: { width: 390, height: 844 } })) {
       await page.setViewportSize(viewport); await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
@@ -931,6 +943,7 @@ test('Regular-day profile comparison loads eligible classes without freezing tim
     assert.equal(await dialog.getByLabel('B-day Reading schedule action').locator('option[value="time"]').evaluate(option => option.disabled), true, 'A pending comparison must not seed an override from the old date: ' + JSON.stringify({ date: await reference.inputValue(), action: await dialog.getByLabel('B-day Reading schedule action').inputValue(), option: await dialog.getByLabel('B-day Reading schedule action').locator('option[value="time"]').evaluate(element => ({ disabled: element.disabled, attribute: element.getAttribute('disabled') })), row: await row('B-day Reading').innerText(), pending: releaseOld.length }));
     const latestResponse = page.waitForResponse(response => response.url().includes('regular-schedule?referenceDate=2026-09-11'));
     await reference.fill('2026-09-11'); await latestResponse;
+    await editClass(dialog, 'Fixed Math');
     await row('Fixed Math').getByText('Regular: 11:15–12:00', { exact: true }).waitFor();
     releaseOld.splice(0).forEach(resolve => resolve()); await page.waitForLoadState('networkidle');
     assert.equal(await reference.inputValue(), '2026-09-11');
@@ -1029,6 +1042,7 @@ test('Day planner shows the whole day, resolves cross-grade issues inline, and p
     await workspace.getByRole('button', { name: 'List', exact: true }).click();
     await workspace.getByRole('button', { name: 'Timeline', exact: true }).click();
     assert.equal(await review.getByLabel('Find a class or teacher', { exact: true }).inputValue(), 'Art');
+    await openPlannerIssues(review);
     await review.getByRole('button', { name: 'Resolve issue for class Zinkan Math', exact: true }).first().click();
     await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).waitFor();
     assert.equal(await workspace.locator('[data-class-editor-id="math"]').evaluate(element => element.contains(document.activeElement)), true, 'Issue navigation clears obstructing display filters and focuses its editor');
@@ -1036,6 +1050,8 @@ test('Day planner shows the whole day, resolves cross-grade issues inline, and p
     await workspace.getByLabel('Zinkan Math profile end', { exact: true }).fill('11:30');
     await workspace.getByLabel('Zinkan Math profile start', { exact: true }).fill('10:45');
     await check.getByText('2 conflicts need attention', { exact: true }).waitFor();
+    assert.equal(await review.locator('summary').filter({ hasText: /^Schedule issues and overlaps/ }).locator('..').evaluate(element => element.open), true, 'The issue disclosure stays expanded after a pending review resolves');
+    await openPlannerIssues(review);
     await review.getByRole('button', { name: 'Resolve issue for class Burba Reading', exact: true }).first().click();
     await workspace.getByLabel('Burba Reading schedule action', { exact: true }).selectOption('skip');
     await check.getByText(/1 conflict.*need/).waitFor();
@@ -1051,6 +1067,10 @@ test('Day planner shows the whole day, resolves cross-grade issues inline, and p
       assert.match(await scheduleRow(workspace, 'Burba Reading').innerText(), /Does not meet/);
       await editClass(workspace, 'Zinkan Math');
       await workspace.getByLabel('Zinkan Math profile end', { exact: true }).focus();
+      await page.waitForFunction(() => {
+        const target = document.activeElement?.getBoundingClientRect(), toolbar = document.querySelector('[data-testid="schedule-profile-workspace"] > header')?.getBoundingClientRect();
+        return target && toolbar && target.top >= toolbar.bottom && target.bottom <= innerHeight;
+      }, undefined, { timeout: 3000 });
       const focusBounds = await page.evaluate(() => { const target = document.activeElement?.getBoundingClientRect(); const header = document.querySelector('[data-testid="schedule-profile-workspace"] > header')?.getBoundingClientRect(); return { target: target && { top: target.top, bottom: target.bottom }, header: header && { bottom: header.bottom }, height: innerHeight }; });
       assert.ok(focusBounds.target && focusBounds.header && focusBounds.target.top >= focusBounds.header.bottom && focusBounds.target.bottom <= focusBounds.height, 'Inline keyboard focus is visible beneath the sticky toolbar: ' + JSON.stringify(focusBounds));
       await page.screenshot({ path: path.join(evidence, device + '-' + theme + '-focused.png'), animations: 'disabled' });
@@ -1158,7 +1178,7 @@ test('Saving opens the exact returned profile even if catalog refresh or saved r
     assert.equal(await dialog.getByRole('button', { name: 'Save profile', exact: true }).count(), 0, 'A failed advisory check must never imply the save failed');
     control.failSavedReview = false;
     await check.getByRole('button', { name: 'Retry draft review', exact: true }).click();
-    await review.getByText('Proposed: 10:20–11:20', { exact: true }).first().waitFor();
+    await review.locator('[data-proposed-window="10:20–11:20"]').first().waitFor();
     assert.equal(saves.length, 1);
     await dialog.getByRole('button', { name: /Choose dates & apply/ }).click();
     await dialog.getByRole('button', { name: 'Preview application', exact: true }).waitFor();
@@ -1357,7 +1377,7 @@ test('Inline timeline edits update provisional windows, preserve skipped rows, a
     await picker.getByLabel('Common testing start', { exact: true }).fill('09:00');
     await picker.getByLabel('Common testing end', { exact: true }).fill('10:45');
     await picker.getByRole('button', { name: 'Add 2 testing blocks', exact: true }).click();
-    assert.equal(await workspace.locator('[data-schedule-row^="testing:"]').count(), 2);
+    assert.equal((await canonicalTestingKeys(workspace)).length, 2);
     await undo.click();
     assert.equal(await workspace.locator('[data-schedule-row^="testing:"]').count(), 0, 'Bulk addition is one undo operation');
     await addTestingBlock(workspace, 1, 'zinkan');
@@ -1479,13 +1499,14 @@ test('Grade collapse survives display changes and issue navigation reveals its c
     const opener = page.getByRole('button', { name: 'Open profile Old MAP profile', exact: true });
     await opener.click();
     await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText(/1 conflict.*need/).waitFor();
-    const grade = workspace.getByRole('button', { name: /^Grade 3\s*\(2\)$/ });
+    const grade = workspace.getByRole('button', { name: /^Grade 3\b/ });
     await grade.click();
     assert.equal(await grade.getAttribute('aria-expanded'), 'false');
     assert.equal(await scheduleRow(workspace, 'Zinkan Math').count(), 0);
     await workspace.getByRole('button', { name: 'List', exact: true }).click();
     await workspace.getByRole('button', { name: 'Timeline', exact: true }).click();
     assert.equal(await grade.getAttribute('aria-expanded'), 'false', 'View switching retains the collapsed grade');
+    await openPlannerIssues(workspace);
     await workspace.getByRole('button', { name: 'Resolve issue for class Zinkan Math', exact: true }).click();
     await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).waitFor();
     assert.equal(await grade.getAttribute('aria-expanded'), 'true');
@@ -1794,6 +1815,222 @@ test('Back to scheduling keeps the renamed profile opener focused and visible af
     assert.equal(bounds.focused, true);
     assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height && bounds.left >= 0 && bounds.right <= bounds.width, 'The focused originating button remains in the viewport: ' + JSON.stringify(bounds));
     assert.equal(saves.length, 1); assert.equal(saves[0].id, 'moving-profile');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('Compact connected timeline aligns linked grades, shades exact overlaps, and edits one shared testing block', { timeout: 120_000 }, async context => {
+  const { root, browser, vite, page, catalog, saves, applies, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  try {
+    Object.assign(catalog.classes[0], { blockStartTime: '08:30', blockEndTime: '09:10' });
+    Object.assign(catalog.classes[3], { blockStartTime: '08:50', blockEndTime: '09:20' });
+    catalog.profiles = [{ id: 'compact-linked', revision: 4, previewDate: '2026-09-14', definition: {
+      name: 'Connected MAP day', grades: [], classIds: ['math'], classRules: [],
+      testingBlocks: [{ id: 'mixed-testing', name: 'Shared MAP', coverageGroupId: 'zinkan-group', assignedStaffId: 'zinkan', startTime: '09:00', endTime: '10:45' }],
+    } }];
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Connected MAP day', exact: true }).click();
+    await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText(/1 conflict.*need/).waitFor();
+    const timeline = workspace.getByRole('region', { name: 'Proposed day timeline', exact: true });
+    const linked = workspace.locator('[data-schedule-row="testing:mixed-testing"]');
+    const evidence = path.resolve(root, '../soc2-evidence/day-planner/browser'); await mkdir(evidence, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await page.screenshot({ path: path.join(evidence, `compact-linked-desktop-${theme}.png`), fullPage: true, animations: 'disabled' });
+    }
+    await page.evaluate(() => document.documentElement.classList.remove('dark'));
+    assert.equal(await linked.count(), 2, 'A mixed-grade block has one linked occurrence beside each participating grade');
+    assert.deepEqual(await canonicalTestingKeys(workspace), ['testing:mixed-testing']);
+    assert.match(await workspace.getByLabel('Whole profile summary').innerText(), /1 testing blocks/);
+    const occurrenceKeys = await linked.evaluateAll(rows => rows.map(row => row.getAttribute('data-row-occurrence')));
+    assert.ok(occurrenceKeys.every(Boolean));
+    assert.equal(new Set(occurrenceKeys).size, 2, 'Linked occurrences have distinct display identities');
+    const orderedKeys = await timeline.locator('[data-schedule-row]').evaluateAll(rows => rows.map(row => row.getAttribute('data-schedule-row')));
+    assert.ok(orderedKeys.indexOf('class:math') < orderedKeys.indexOf('testing:mixed-testing'));
+    assert.ok(orderedKeys.indexOf('testing:mixed-testing') < orderedKeys.indexOf('class:art'), 'Grade 3 testing stays beside Grade 3 instead of moving to a trailing testing section');
+    assert.ok(orderedKeys.indexOf('class:art') < orderedKeys.lastIndexOf('testing:mixed-testing'));
+
+    const compactRows = await timeline.locator('[data-planner-compact-row]').evaluateAll(rows => rows.map(row => ({ key: row.closest('[data-schedule-row]')?.getAttribute('data-schedule-row'), height: row.getBoundingClientRect().height })));
+    assert.equal(compactRows.length, 6);
+    assert.ok(compactRows.every(row => row.height >= 52 && row.height <= 64), 'Closed desktop rows remain 52–64 px high: ' + JSON.stringify(compactRows));
+    const tracks = await timeline.locator('[data-planner-track]').evaluateAll(rows => rows.map(row => { const bounds = row.getBoundingClientRect(); return { left: bounds.left, right: bounds.right }; }));
+    assert.ok(tracks.length >= 6);
+    assert.ok(tracks.every(track => Math.abs(track.left - tracks[0].left) <= 1 && Math.abs(track.right - tracks[0].right) <= 1), 'Class and linked testing tracks share exactly the same time-grid origin and width');
+    const math = workspace.locator('[data-schedule-row="class:math"]');
+    const conflict = math.locator('[data-overlap-interval="09:00–09:10"]');
+    const classBar = math.locator('[data-proposed-window="08:30–09:10"]');
+    const [conflictBounds, classBounds, testingBounds] = await Promise.all([conflict.boundingBox(), classBar.boundingBox(), linked.first().locator('[data-proposed-window="09:00–10:45"]').boundingBox()]);
+    assert.ok(conflictBounds && classBounds && testingBounds);
+    assert.ok(Math.abs(conflictBounds.x - testingBounds.x) <= 1, 'The conflict begins at the testing start on the shared time axis');
+    assert.ok(Math.abs(conflictBounds.x + conflictBounds.width - classBounds.x - classBounds.width) <= 1, 'The conflict ends exactly at the ordinary class end: ' + JSON.stringify({ conflictBounds, classBounds, testingBounds }));
+    assert.ok(Math.abs(conflictBounds.width / classBounds.width - 0.25) <= 0.015, 'Only the overlapping ten minutes of the forty-minute class are shaded');
+    assert.equal(await workspace.locator('[data-schedule-row="class:art"] [data-overlap-interval]').count(), 0, 'An allowed student overlap is not painted as a blocking conflict');
+    assert.match(await workspace.locator('[data-schedule-row="class:art"]').innerText(), /Allowed overlap/);
+    const issueSummary = workspace.locator('summary').filter({ hasText: /^Schedule issues and overlaps/ });
+    assert.equal(await issueSummary.locator('..').evaluate(element => element.open), false, 'Long issue details begin collapsed in the compact view');
+    await classBar.click({ position: { x: classBounds.width - 3, y: classBounds.height / 2 } });
+    await workspace.getByLabel('Zinkan Math schedule action', { exact: true }).waitFor();
+    assert.equal(await workspace.locator('[data-class-editor-id="math"]').evaluate(element => element.contains(document.activeElement)), true, 'Clicking the conflict portion opens its class editor inline');
+    await workspace.getByRole('button', { name: 'Close class editor for Zinkan Math', exact: true }).click();
+
+    await linked.last().getByRole('button', { name: 'Edit testing block Shared MAP', exact: true }).click();
+    assert.equal(await workspace.locator('[data-block-editor-id]').count(), 1);
+    assert.equal(await linked.last().locator('[data-block-editor-id="mixed-testing"]').count(), 1, 'The single editor opens at the clicked Grade 4 occurrence');
+    await timeline.evaluate(element => {
+      const toolbar = element.closest('[data-testid="schedule-profile-workspace"]').querySelector(':scope > header');
+      window.scrollTo({ top: window.scrollY + element.getBoundingClientRect().top - toolbar.getBoundingClientRect().height + 40 });
+    });
+    const stickyHeader = await workspace.locator('[data-planner-time-header]').evaluate(element => {
+      const header = element.getBoundingClientRect(), toolbar = element.closest('[data-testid="schedule-profile-workspace"]').querySelector(':scope > header').getBoundingClientRect();
+      const timeline = element.parentElement.querySelector('[aria-label="Proposed day timeline"]').getBoundingClientRect();
+      return { top: header.top, bottom: header.bottom, toolbarBottom: toolbar.bottom, chartBottom: timeline.bottom };
+    });
+    assert.ok(Math.abs(stickyHeader.top - stickyHeader.toolbarBottom) <= 1 && stickyHeader.chartBottom > stickyHeader.bottom, 'While the chart is in view, the time header stays immediately beneath the sticky toolbar: ' + JSON.stringify(stickyHeader));
+    const tickBounds = await workspace.locator('[data-planner-tick="540"]').boundingBox();
+    const linkedBarBounds = await linked.first().locator('[data-proposed-window="09:00–10:45"]').boundingBox();
+    assert.ok(Math.abs(tickBounds.x + tickBounds.width / 2 - linkedBarBounds.x) <= 1, 'The shared 9 AM header tick aligns with testing even while the header is sticky');
+    await workspace.getByLabel('Testing block 1 end', { exact: true }).fill('10:30');
+    await workspace.getByLabel('Testing block 1 name', { exact: true }).fill('Shared MAP revised');
+    assert.equal(await linked.locator('[data-proposed-window="09:00–10:30"]').count(), 2, 'Editing one occurrence updates every linked bar');
+    assert.equal(await scheduleOccurrences(workspace, 'Shared MAP revised').count(), 2);
+    assert.deepEqual(await linked.evaluateAll(rows => rows.map(row => row.getAttribute('data-row-occurrence'))), occurrenceKeys, 'Typing preserves occurrence identities');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const theme of ['light', 'dark']) for (const view of ['Timeline', 'List']) {
+      await page.evaluate(value => document.documentElement.classList.toggle('dark', value === 'dark'), theme);
+      await workspace.getByRole('button', { name: view, exact: true }).click();
+      if (view === 'Timeline') {
+        await timeline.evaluate(element => { element.scrollLeft = 200; });
+        await page.waitForFunction(() => {
+          const timeline = document.querySelector('[aria-label="Proposed day timeline"]'), header = document.querySelector('[data-planner-time-header]');
+          return timeline?.scrollLeft > 0 && Math.abs(timeline.scrollLeft - header?.scrollLeft) <= 1;
+        });
+        const labelBounds = await linked.last().locator('[data-row-opener]').boundingBox(), viewportBounds = await timeline.boundingBox();
+        assert.ok(labelBounds.x >= viewportBounds.x && labelBounds.x + labelBounds.width <= viewportBounds.x + viewportBounds.width, 'Horizontal scrolling preserves visible pinned row labels');
+      }
+      const input = workspace.getByLabel('Testing block 1 end', { exact: true });
+      await input.focus(); await input.scrollIntoViewIfNeeded();
+      const bounds = await input.evaluate(element => { const rect = element.getBoundingClientRect(), toolbar = document.querySelector('[data-testid="schedule-profile-workspace"] > header').getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, toolbarBottom: toolbar.bottom, width: innerWidth, height: innerHeight }; });
+      await page.screenshot({ path: path.join(evidence, `compact-linked-mobile-${view.toLowerCase()}-${theme}.png`), fullPage: true, animations: 'disabled' });
+      assert.ok(bounds.left >= 0 && bounds.right <= bounds.width && bounds.top >= bounds.toolbarBottom && bounds.bottom <= bounds.height, `${view}/${theme} keeps the focused inline editor in the mobile viewport: ${JSON.stringify(bounds)}`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      assert.equal(await workspace.locator('[data-block-editor-id]').count(), 1);
+      await page.screenshot({ path: path.join(evidence, `compact-linked-mobile-${view.toLowerCase()}-${theme}-viewport.png`), animations: 'disabled' });
+    }
+    await page.setViewportSize({ width: 1365, height: 950 });
+    await workspace.getByRole('button', { name: 'Timeline', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Remove testing block 1', exact: true }).click();
+    assert.equal(await linked.count(), 0, 'Removing from the second-grade editor removes every occurrence of that block');
+    assert.equal(await workspace.locator('[data-block-editor-id]').count(), 0);
+    assert.equal(await workspace.getByRole('button', { name: 'Add testing block', exact: true }).evaluate(element => element === document.activeElement), true);
+    await workspace.getByRole('button', { name: 'Undo last change', exact: true }).click();
+    assert.equal(await linked.count(), 2);
+    assert.equal(await linked.locator('[data-proposed-window="09:00–10:30"]').count(), 2);
+    assert.equal(await workspace.locator('[data-block-editor-id]').count(), 1, 'Undo restores the one editor as well as the canonical block');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.equal(saves.length, 1); assert.equal(applies.length, 0);
+    assert.deepEqual(saves[0].definition.testingBlocks, [{ id: 'mixed-testing', name: 'Shared MAP revised', coverageGroupId: 'zinkan-group', assignedStaffId: 'zinkan', startTime: '09:00', endTime: '10:30' }]);
+    assert.deepEqual(saves[0].definition.classRules, [], 'Visual links and conflict shading do not create class adjustments');
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
+
+test('An asynchronous grade-association change preserves the focused linked editor until it closes', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, saves, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  let releaseReview;
+  let reviewHeld;
+  const held = new Promise(resolve => { reviewHeld = resolve; });
+  try {
+    catalog.staff.push({ id: 'proctor', name: 'Available Proctor' });
+    catalog.supervisionGroups[0].staffIds = ['proctor'];
+    delete catalog.supervisionGroups[0].classParticipation;
+    catalog.profiles = [{ id: 'moving-association', revision: 3, previewDate: '2026-09-14', definition: {
+      name: 'Association changes', grades: [], classIds: [], classRules: [],
+      testingBlocks: [{ id: 'moving-testing', name: 'Moving MAP', coverageGroupId: 'zinkan-group', assignedStaffId: 'proctor', startTime: '09:00', endTime: '10:45' }],
+    } }];
+    let moved = false;
+    control.reviewResponse = async (body, result) => {
+      if (body.definition.testingBlocks[0]?.name === 'Renamed across grades' && !moved) {
+        await new Promise(resolve => { releaseReview = resolve; reviewHeld(); });
+        moved = true;
+      }
+      result.testingBlocks[0].classParticipation = [{ classId: moved ? 'art' : 'math', count: 2, total: moved ? 24 : 20 }];
+      return { json: result };
+    };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Association changes', exact: true }).click();
+    await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText('No blocking conflicts on this preview date.', { exact: true }).waitFor();
+    const linked = workspace.locator('[data-schedule-row="testing:moving-testing"]');
+    assert.equal(await linked.count(), 1);
+    const originalOccurrence = await linked.getAttribute('data-row-occurrence');
+    await editTesting(workspace, 'Moving MAP');
+    const input = workspace.getByLabel('Testing block 1 name', { exact: true });
+    const originalInput = await input.elementHandle();
+    const sent = page.waitForRequest(request => request.url().endsWith('/draft-review') && request.postDataJSON().definition.testingBlocks[0]?.name === 'Renamed across grades');
+    await input.fill('Renamed across grades'); await sent; await held;
+    await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText('Checking changes…', { exact: true }).waitFor();
+    assert.equal(await originalInput.evaluate(element => element.isConnected && element === document.activeElement), true);
+    const received = page.waitForResponse(response => response.url().endsWith('/draft-review') && response.request().postDataJSON().definition.testingBlocks[0]?.name === 'Renamed across grades');
+    releaseReview(); releaseReview = null; await received;
+    await workspace.getByRole('region', { name: 'Draft schedule check', exact: true }).getByText('No blocking conflicts on this preview date.', { exact: true }).waitFor();
+    assert.equal(await originalInput.evaluate(element => element.isConnected && element === document.activeElement), true, 'A response relocating the group to another grade must not remount or blur the active editor');
+    assert.equal(await input.inputValue(), 'Renamed across grades');
+    assert.equal(await workspace.locator('[data-block-editor-id]').count(), 1);
+    assert.equal(await workspace.locator('[data-block-editor-id="moving-testing"]').evaluate(element => element.closest('[data-row-occurrence]')?.getAttribute('data-row-occurrence')), originalOccurrence, 'The active occurrence remains pinned until the editor closes');
+    await workspace.getByRole('button', { name: 'Close testing editor for Renamed across grades', exact: true }).click();
+    assert.equal(await linked.count(), 1, 'Closing removes the obsolete pinned occurrence');
+    assert.notEqual(await linked.getAttribute('data-row-occurrence'), originalOccurrence);
+    const order = await workspace.locator('[data-schedule-row]').evaluateAll(rows => rows.map(row => row.getAttribute('data-schedule-row')));
+    assert.ok(order.indexOf('testing:moving-testing') > order.indexOf('class:art'), 'The remaining occurrence belongs beside its newly associated Grade 4 class');
+    assert.equal(await linked.locator('[data-row-opener]').evaluate(element => element === document.activeElement), true, 'Closing transfers focus to the current linked row when its old occurrence disappears');
+    await editTesting(workspace, 'Renamed across grades');
+    assert.equal(await input.inputValue(), 'Renamed across grades');
+    await workspace.getByRole('button', { name: 'Save profile', exact: true }).click();
+    await workspace.getByText('Profile saved — not applied', { exact: true }).waitFor();
+    assert.equal(saves[0].definition.testingBlocks.length, 1);
+    assert.equal(saves[0].definition.testingBlocks[0].name, 'Renamed across grades');
+    assert.deepEqual(errors, []);
+  } finally { releaseReview?.(); await browser.close(); await vite.close(); }
+});
+
+test('A newer regular-day projection cannot display an older review as globally conflict-free', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, catalog, control, saves, errors } = await createDraftReviewFixture(context);
+  const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+  const check = workspace.getByRole('region', { name: 'Draft schedule check', exact: true });
+  try {
+    catalog.profiles = [{ id: 'review-freshness', revision: 2, previewDate: '2026-09-14', definition: {
+      name: 'Fresh regular-day review', grades: [], classIds: [], classRules: [],
+      testingBlocks: [{ id: 'later-testing', name: 'Later MAP', coverageGroupId: 'zinkan-group', assignedStaffId: 'zinkan', startTime: '10:00', endTime: '10:45' }],
+    } }];
+    let capturedReview;
+    control.reviewResponse = async (_body, result) => {
+      capturedReview ||= structuredClone(result);
+      return { json: capturedReview };
+    };
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Open profile Fresh regular-day review', exact: true }).click();
+    await check.getByText('No blocking conflicts on this preview date.', { exact: true }).waitFor();
+    assert.equal(capturedReview.revision, 1);
+    catalog.revision = 2;
+    catalog.classes[0].blockEndTime = '10:30';
+    const staleResponse = page.waitForResponse(response => response.url().endsWith('/draft-review'));
+    const regularResponse = page.waitForResponse(response => response.url().includes('/regular-schedule?'));
+    await workspace.getByRole('button', { name: 'Refresh regular schedule', exact: true }).click();
+    assert.equal((await (await regularResponse).json()).revision, 2);
+    assert.equal((await (await staleResponse).json()).revision, 1);
+    await workspace.locator('[data-schedule-row="class:math"] [data-proposed-window="09:00–10:30"]').waitFor();
+    await check.getByText('Could not review this draft schedule.', { exact: true }).waitFor();
+    await check.getByText('The schedule comparison changed. Refresh the preview-day check before relying on conflict results.', { exact: true }).waitFor();
+    assert.equal(await check.getByText('No blocking conflicts on this preview date.', { exact: true }).count(), 0, 'The global status must not reuse a conflict-free verdict for the superseded regular schedule');
+    assert.equal(await workspace.locator('[data-overlap-interval]').count(), 0, 'Until rechecked, fresh clocks have no invented conflict shading');
+    control.reviewResponse = null;
+    await check.getByRole('button', { name: 'Retry draft review', exact: true }).click();
+    await check.getByText('1 conflict needs attention', { exact: true }).waitFor();
+    await workspace.locator('[data-schedule-row="class:math"] [data-overlap-interval="10:00–10:30"]').waitFor();
+    assert.equal(saves.length, 0);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
 });
