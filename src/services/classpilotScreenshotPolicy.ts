@@ -1,5 +1,6 @@
 import {
   classpilotObservationStatus,
+  classpilotSupervisionObservationStatus,
   type ClasspilotObservationStatus,
 } from "./classpilotObservationLease.js";
 import { resolveClasspilotMonitoringPolicy } from "./classpilotMonitoringPolicy.js";
@@ -116,6 +117,10 @@ export async function resolveClasspilotScreenshotPolicy(options: {
       trackingAuthority: options.trackingAuthority,
       now,
     });
+    if (policy.authority.kind === "supervision_context" && !options.acceptedCapabilities.includes("scheduledClassroomV1")) {
+      return { ...policy, captureAllowed: false, expiresInSeconds: 0,
+        authority: { kind: "student_session", controlRevision: policy.authority.controlRevision } };
+    }
     if (!options.acceptedCapabilities.includes("screenshotActiveObservationCadenceV1")) {
       return policy;
     }
@@ -127,11 +132,14 @@ export async function resolveClasspilotScreenshotPolicy(options: {
     };
     if (
       policy.captureAllowed
-      && policy.authority.kind === "teaching_session"
-      && policy.authority.teachingSessionId === options.teachingSessionId
+      && (policy.authority.kind === "supervision_context" || (policy.authority.kind === "teaching_session"
+      && policy.authority.teachingSessionId === options.teachingSessionId))
     ) {
       try {
-        const status = await (options.observationStatus ?? classpilotObservationStatus)({
+        const status = policy.authority.kind === "supervision_context"
+          ? await classpilotSupervisionObservationStatus({ schoolId: options.schoolId,
+            supervisionContextId: policy.authority.supervisionContextId, studentId: options.studentId, now })
+          : await (options.observationStatus ?? classpilotObservationStatus)({
           schoolId: options.schoolId,
           teachingSessionId: options.teachingSessionId,
           studentId: options.studentId,
@@ -296,6 +304,12 @@ export function parseClasspilotScreenshotAuthority(
     || candidate.controlRevision < 0
   ) return null;
   const controlRevision = candidate.controlRevision;
+  if (candidate.kind === "supervision_context") {
+    const id = candidate.supervisionContextId;
+    if (typeof id !== "string" || !id || id !== id.trim() || id.length > 200
+      || Object.keys(candidate).some((key) => !["kind", "supervisionContextId", "controlRevision"].includes(key))) return null;
+    return { kind: "supervision_context", supervisionContextId: id, controlRevision };
+  }
   if (candidate.kind === "student_session") {
     const keys = Object.keys(candidate);
     if (keys.some((key) => key !== "kind" && key !== "controlRevision")) return null;
@@ -339,12 +353,12 @@ export function validateClasspilotScreenshotCapturedAt(options: {
   if (capturedAt < now - CLASSPILOT_SCREENSHOT_TRACKING_LEASE_SECONDS * 1_000) {
     return "expired";
   }
-  // Identity is fenced by the exact-claim match upstream; this only rejects
-  // frames captured before the authority identity could exist, with the same
-  // clock tolerance the future check grants, so a slow client clock does not
-  // supersede an honest in-flight frame.
+  // Scheduled supervision cannot retain a frame from before its assignment.
+  // Preserve the existing teaching-session clock tolerance for older clients.
+  const pastTolerance = options.trackingAuthority.authority.kind === "supervision_context"
+    ? 0 : CLASSPILOT_SCREENSHOT_CAPTURE_PAST_SKEW_MS;
   if (
-    capturedAt + CLASSPILOT_SCREENSHOT_CAPTURE_PAST_SKEW_MS
+    capturedAt + pastTolerance
       < options.trackingAuthority.authorityStartedAt.getTime()
   ) {
     return "before_authority";

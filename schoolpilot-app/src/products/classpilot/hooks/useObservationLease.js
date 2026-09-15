@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../../lib/queryClient';
+import { activityAuthority, activityAuthorityKey, activityParentPath, activityRequestHeaders } from '../lib/dashboardActivity';
 import {
   normalizedObservationScope,
   observationLeaseRenewalFailureDisposition,
@@ -16,14 +17,16 @@ function viewerInstanceId() {
 }
 
 export function useObservationLease({
-  enabled, eligible = true, teachingSessionId, scope,
+  enabled, eligible = true, schoolId, teachingSessionId, supervisionContextId, contextAuthorityRevision, scope,
   authorityKey = '', retryEpoch = 0, onDenied,
 }) {
   const normalizedScope = useMemo(() => normalizedObservationScope(scope), [scope]);
   const scopeKey = JSON.stringify(normalizedScope);
-  const requestedSessionId = String(teachingSessionId || '');
+  const requestedAuthorityKey = activityAuthorityKey({ teachingSessionId, supervisionContextId });
+  const requestedAuthority = useMemo(() => requestedAuthorityKey ? JSON.parse(requestedAuthorityKey) : null, [requestedAuthorityKey]);
+  const requestedSessionId = teachingSessionId || supervisionContextId || '';
   const leaseContextKey = enabled && requestedSessionId && normalizedScope
-    ? `${authorityKey}:${requestedSessionId}:${scopeKey}:${retryEpoch}`
+    ? `${authorityKey}:${requestedAuthorityKey}:${scopeKey}:${retryEpoch}`
     : null;
   const deniedContexts = useRef(new Set());
   const [deniedContextKeys, setDeniedContextKeys] = useState(() => new Set());
@@ -58,7 +61,8 @@ export function useObservationLease({
       return undefined;
     }
 
-    const path = `/classpilot/teaching-sessions/${encodeURIComponent(sessionId)}/observation-lease`;
+    if (!activityAuthority(requestedAuthority)) return undefined;
+    const path = activityParentPath(requestedAuthority, 'observation-lease');
     let stopped = false;
     let timer = null;
     let requestEpoch = 0;
@@ -74,7 +78,9 @@ export function useObservationLease({
       timer = null;
     };
     const deleteLease = (viewerId) => (
-      apiRequest('DELETE', path, { viewerInstanceId: viewerId }).catch(() => {})
+      apiRequest('DELETE', path, { viewerInstanceId: viewerId }, {
+        headers: activityRequestHeaders(schoolId, contextAuthorityRevision),
+      }).catch(() => {})
     );
     const release = (viewerId = activeViewerId, force = false) => {
       if (!force && (!leaseWasActive || viewerId !== activeViewerId)) return;
@@ -105,7 +111,7 @@ export function useObservationLease({
         const response = await apiRequest('PUT', path, {
           viewerInstanceId: requestViewerId,
           scope: normalizedScope,
-        });
+        }, { headers: activityRequestHeaders(schoolId, contextAuthorityRevision) });
         const disposition = observationLeaseResponseDisposition({
           stopped,
           requestEpoch: epoch,
@@ -178,7 +184,7 @@ export function useObservationLease({
       invalidateRequest();
       for (const viewerId of knownViewerIds) release(viewerId, true);
     };
-  }, [eligible, enabled, leaseContextKey, normalizedScope, requestedSessionId]);
+  }, [eligible, enabled, leaseContextKey, normalizedScope, requestedSessionId, requestedAuthority, schoolId, contextAuthorityRevision]);
 
   return status;
 }

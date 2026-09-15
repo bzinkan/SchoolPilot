@@ -1,3 +1,4 @@
+import { activityAuthority, activityAuthorityKey } from '../products/classpilot/lib/dashboardActivity';
 import { useRef, useCallback } from 'react';
 
 // ICE servers configuration - STUN for most cases, TURN for restrictive networks
@@ -73,7 +74,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
           signalingSocket.send(JSON.stringify({
             type: 'stop-share',
             studentId,
-            teachingSessionId: connection.teachingSessionId,
+            ...connection.authority, contextAuthorityRevision: connection.contextAuthorityRevision,
             negotiationId: connection.negotiationId,
           }));
           console.log(`[WebRTC] Sent stop-share for student ${studentId}`);
@@ -87,7 +88,9 @@ export function useWebRTC(wsSource, onStreamStopped) {
   }, [currentSocket, onStreamStopped]);
 
   // Start live view for a student
-  const startLiveView = useCallback(async (studentId, teachingSessionId, onStreamReceived) => {
+  const startLiveView = useCallback(async (studentId, activity, onStreamReceived) => {
+    const authority = activityAuthority(activity);
+    if (!authority) return null;
     const socket = currentSocket();
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       console.error('[WebRTC] WebSocket not connected');
@@ -108,7 +111,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
     const connection = {
       peerConnection: pc,
       stream: null,
-      teachingSessionId,
+      authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
       negotiationId: null,
       pendingIce: [],
       onStreamReceived,
@@ -134,7 +137,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
         activeSocket.send(JSON.stringify({
           type: 'ice',
           toStudentId: studentId,
-          teachingSessionId,
+          ...authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
           negotiationId: connection.negotiationId,
           candidate: event.candidate.toJSON(),
         }));
@@ -158,7 +161,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
       socket.send(JSON.stringify({
         type: 'request-stream',
         studentId,
-        teachingSessionId,
+        ...authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
       }));
     } catch (error) {
       console.error(`[WebRTC] Could not request stream from ${studentId}:`, error);
@@ -176,14 +179,16 @@ export function useWebRTC(wsSource, onStreamStopped) {
   // that claim succeeds.
   const handleLiveViewRequested = useCallback(async (
     studentId,
-    teachingSessionId,
+    activity,
     negotiationId,
   ) => {
+    const authority = activityAuthority(activity);
     const connection = connectionsRef.current.get(studentId);
     const socket = currentSocket();
     if (
       !connection
-      || connection.teachingSessionId !== teachingSessionId
+      || activityAuthorityKey(connection.authority) !== activityAuthorityKey(authority)
+      || connection.contextAuthorityRevision !== activity?.contextAuthorityRevision
       || !negotiationId
       || !socket
       || socket.readyState !== WebSocket.OPEN
@@ -195,7 +200,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
         socket.send(JSON.stringify({
           type: 'stop-share',
           studentId,
-          teachingSessionId,
+          ...authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
           negotiationId,
         }));
       }
@@ -205,7 +210,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
       socket.send(JSON.stringify({
         type: 'stop-share',
         studentId,
-        teachingSessionId,
+        ...authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
         negotiationId,
       }));
       return false;
@@ -229,7 +234,7 @@ export function useWebRTC(wsSource, onStreamStopped) {
       activeSocket.send(JSON.stringify({
         type: 'offer',
         toStudentId: studentId,
-        teachingSessionId,
+        ...authority, contextAuthorityRevision: activity?.contextAuthorityRevision,
         negotiationId,
         sdp: connection.peerConnection.localDescription?.toJSON(),
       }));

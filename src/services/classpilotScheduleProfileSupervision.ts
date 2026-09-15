@@ -221,8 +221,8 @@ export async function cancelProfileSupervision(schoolId: string, applicationId: 
 }
 
 /** Bounded discovery on the worker pool, followed by one locked transaction per due block. */
-export async function reconcileScheduledProfileSupervision(now = new Date(), schoolId?: string) {
-  const database = schoolId ? db : schedulerDb;
+export async function reconcileScheduledProfileSupervision(now = new Date(), schoolId?: string, dbInstance?: typeof db) {
+  const database = dbInstance ?? (schoolId ? db : schedulerDb);
   const candidates = await database.select({ schoolId: classpilotSchoolSchedules.schoolId, config: classpilotSchoolSchedules.config,
     outcomes: classpilotSchoolSchedules.profileActivationOutcomes, timezone: schools.schoolTimezone }).from(classpilotSchoolSchedules)
     .innerJoin(schools, eq(schools.id, classpilotSchoolSchedules.schoolId)).where(and(

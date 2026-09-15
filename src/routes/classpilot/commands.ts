@@ -33,6 +33,12 @@ import { isClasspilotCapabilityActive } from "../../services/classpilotProtocol.
 import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpilotCurrentPage.js";
 import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 import { requireClasspilotFullMonitoring } from "../../services/classpilotMonitoringPolicy.js";
+import { requireScheduledClassroomContext, parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
+import { resolveCoverageCommandTargets } from "./coverage.js";
+import { getScheduledClassroomTransientState } from "../../services/classpilotScheduledClassroomTools.js";
+import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { db } from "../../db.js";
+import { classpilotClassroomStates, classpilotCommands, classpilotCommandTargets } from "../../schema/classpilot.js";
 
 const router = Router();
 
@@ -63,6 +69,15 @@ function normalizeTargetScope(value: unknown): ClassroomTargetScope | null {
 async function resolveTargets(req: Request, res: Response, body: any): Promise<ResolvedClasspilotCommandTarget[]> {
   const schoolId = res.locals.schoolId as string;
   const userId = req.authUser!.id;
+  if (body.supervisionContextId) {
+    const authority = parseClasspilotActivityAuthority(body);
+    if (!authority?.supervisionContextId) throw Object.assign(new Error("Exactly one classroom authority is required"), { status: 400 });
+    await requireScheduledClassroomContext({ schoolId, supervisionContextId: authority.supervisionContextId, actorId: userId,
+      contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) });
+    return resolveCoverageCommandTargets(schoolId, authority.supervisionContextId, {
+      ...body, targetScope: body.targetScope === "class" ? "context" : body.targetScope,
+    }, { requireClassroomCapability: true });
+  }
   const teachingSessionId = String(body.teachingSessionId || "").trim();
   if (!teachingSessionId) throw Object.assign(new Error("teachingSessionId is required"), { status: 400 });
 
@@ -233,6 +248,8 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const teacherId = req.authUser!.id;
     const commandType = String(req.body.commandType || "").trim();
     const teachingSessionId = String(req.body.teachingSessionId || "").trim();
+    const supervisionContextId = String(req.body.supervisionContextId || "").trim();
+    if (!parseClasspilotActivityAuthority(req.body)) return res.status(400).json({ error: "Exactly one classroom authority is required" });
     const pollAction = commandType === "poll"
       ? String(req.body.commandPayload?.action || "start").trim()
       : "";
@@ -254,8 +271,10 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const result = await executeClasspilotCommand({
       schoolId,
       actorId: teacherId,
-      teachingSessionId,
-      targetScope,
+      teachingSessionId: teachingSessionId || null,
+      supervisionContextId: supervisionContextId || null,
+      contextAuthorityRevision: supervisionContextId ? requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) : undefined,
+      targetScope: supervisionContextId && targetScope === "class" ? "context" : targetScope,
       subgroupId: req.body.subgroupId || null,
       commandType,
       rawCommandPayload: req.body.commandPayload || {},
@@ -277,6 +296,21 @@ router.post("/commands", ...auth, async (req, res, next) => {
 
 router.get("/commands/recent", ...auth, async (req, res, next) => {
   try {
+    if (("teachingSessionId" in req.query || "supervisionContextId" in req.query)
+      && !parseClasspilotActivityAuthority(req.query)) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    if (typeof req.query.supervisionContextId === "string") {
+      const context = await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: req.query.supervisionContextId,
+        actorId: req.authUser!.id, allowObserve: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) });
+      const rows = await db.select().from(classpilotCommands).where(and(eq(classpilotCommands.schoolId, context.schoolId),
+        eq(classpilotCommands.supervisionContextId, context.id))).orderBy(desc(classpilotCommands.createdAt)).limit(25);
+      const commands = [];
+      for (const row of rows) {
+        const targets = await db.select().from(classpilotCommandTargets).where(and(eq(classpilotCommandTargets.schoolId, context.schoolId), eq(classpilotCommandTargets.commandId, row.id)));
+        const command = { ...row, targets };
+        commands.push({ ...(publicClasspilotCommand(command) as Record<string, unknown>), summary: commandSummary(command), message: resultMessage(command.commandType, commandSummary(command)) });
+      }
+      return res.json({ commands });
+    }
     const limit = Math.max(1, Math.min(25, Number(req.query.limit || 10)));
     const teachingSessionId = String(req.query.teachingSessionId || "").trim();
     const commands = await getRecentClasspilotCommands(
@@ -299,6 +333,15 @@ router.get("/commands/recent", ...auth, async (req, res, next) => {
 
 router.get("/commands/active-state", ...auth, async (req, res, next) => {
   try {
+    if (!parseClasspilotActivityAuthority(req.query)) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    if (typeof req.query.supervisionContextId === "string") {
+      const context = await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: req.query.supervisionContextId,
+        actorId: req.authUser!.id, allowObserve: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) });
+      const states = await db.select().from(classpilotClassroomStates).where(and(eq(classpilotClassroomStates.schoolId, context.schoolId),
+        eq(classpilotClassroomStates.supervisionContextId, context.id), isNull(classpilotClassroomStates.clearedAt),
+        or(isNull(classpilotClassroomStates.expiresAt), gt(classpilotClassroomStates.expiresAt, new Date()))));
+      return res.json({ states, transient: await getScheduledClassroomTransientState(context) });
+    }
     const teachingSessionId = String(req.query.teachingSessionId || "").trim();
     if (!teachingSessionId) return res.status(400).json({ error: "teachingSessionId query param required" });
     const session = await getTeachingSessionByIdAndSchool(teachingSessionId, res.locals.schoolId!);

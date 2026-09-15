@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { correlateClasspilotSessionMessage } from "../services/classpilotSessionSubscription.js";
+import { correlateClasspilotSessionMessage, correlateClasspilotContextMessage } from "../services/classpilotSessionSubscription.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -14,6 +14,8 @@ export type WSClient = {
   acceptedCapabilities?: string[];
   schoolId?: string;
   subscribedSessionIds: Set<string>;
+  subscribedSupervisionContextIds: Set<string>;
+  subscribedSupervisionContextRevisions: Map<string, string>;
   sessionSubscriptionEpochs: Map<string, number>;
   sessionSubscriptionIdentityGeneration: number;
   authenticated: boolean;
@@ -104,6 +106,8 @@ export function registerWsClient(ws: WebSocket): WSClient {
     ws,
     role: "student",
     subscribedSessionIds: new Set(),
+    subscribedSupervisionContextIds: new Set(),
+    subscribedSupervisionContextRevisions: new Map(),
     sessionSubscriptionEpochs: new Map(),
     sessionSubscriptionIdentityGeneration: 0,
     authenticated: false,
@@ -149,6 +153,8 @@ export function authenticateWsClient(
   client.passiveAuthorizationExpiresAt = undefined;
   client.passiveAuthorizationGeneration = undefined;
   client.subscribedSessionIds.clear();
+  client.subscribedSupervisionContextIds.clear();
+  client.subscribedSupervisionContextRevisions.clear();
   client.sessionSubscriptionEpochs.clear();
   client.sessionSubscriptionIdentityGeneration += 1;
 
@@ -186,6 +192,39 @@ export function unsubscribeWsClientFromSession(ws: WebSocket, sessionId: string)
   }
   client.subscribedSessionIds.delete(sessionId);
   return true;
+}
+
+export function subscribeWsClientToContext(ws: WebSocket, supervisionContextId: string, contextAuthorityRevision: string): boolean {
+  const client = wsClients.get(ws);
+  if (!client || !client.authenticated || !isStaffRole(client.role)) return false;
+  client.subscribedSupervisionContextIds.add(supervisionContextId);
+  client.subscribedSupervisionContextRevisions.set(supervisionContextId, contextAuthorityRevision);
+  return true;
+}
+
+export function unsubscribeWsClientFromContext(ws: WebSocket, supervisionContextId: string): boolean {
+  const client = wsClients.get(ws);
+  if (!client || !client.authenticated || !isStaffRole(client.role)) return false;
+  client.subscribedSupervisionContextIds.delete(supervisionContextId);
+  client.subscribedSupervisionContextRevisions.delete(supervisionContextId);
+  return true;
+}
+
+export function broadcastToStaffContextLocal(schoolId: string, supervisionContextId: string, message: unknown, assignedStaffId: string, contextAuthorityRevision: string): number {
+  if (!contextAuthorityRevision) return 0;
+  let count = 0;
+  const payload = JSON.stringify(correlateClasspilotContextMessage(supervisionContextId, message));
+  for (const ws of teacherSocketsBySchool.get(schoolId) ?? []) {
+    const client = wsClients.get(ws);
+    if (client?.authenticated && isStaffRole(client.role)
+      && (client.userId === assignedStaffId || client.role === "school_admin" || client.role === "super_admin")
+      && client.subscribedSupervisionContextRevisions.get(supervisionContextId) === contextAuthorityRevision
+      && client.subscribedSupervisionContextIds.has(supervisionContextId) && ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+      count += 1;
+    }
+  }
+  return count;
 }
 
 export function broadcastToTeachersLocal(schoolId: string, message: unknown): number {

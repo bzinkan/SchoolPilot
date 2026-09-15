@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
@@ -65,6 +65,8 @@ import {
 import { getStaffAssignmentIntegrityIssues } from "../../services/staffAssignmentLifecycle.js";
 import { recordSafetyAlert } from "../../services/safetyCenter.js";
 import { describeClasspilotSafetyReason } from "../../services/classpilotSafetyAction.js";
+import { parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
+import { readActivityHistoryScope } from "../../services/classpilotActivityHistory.js";
 
 const router = Router();
 
@@ -327,8 +329,8 @@ async function buildTimeline(options: {
         and(
           eq(dismissalQueue.studentId, options.studentId),
           eq(dismissalSessions.schoolId, options.schoolId),
-          options.from ? sql`${dismissalQueue.createdAt} >= ${options.from}` : sql`true`,
-          options.to ? sql`${dismissalQueue.createdAt} <= ${options.to}` : sql`true`
+          options.from ? gte(dismissalQueue.createdAt, options.from) : sql`true`,
+          options.to ? lte(dismissalQueue.createdAt, options.to) : sql`true`
         )
       )
       .orderBy(desc(dismissalQueue.createdAt))
@@ -594,19 +596,44 @@ router.patch("/ai-decisions/:id/review", ...adminAuth, async (req, res, next) =>
 // GET /api/classpilot/students/:studentId/timeline
 router.get("/students/:studentId/timeline", ...staffAuth, async (req, res, next) => {
   try {
-    const access = await canViewStudent(req, res, String(req.params.studentId));
+    const scoped = req.query.teachingSessionId !== undefined || req.query.supervisionContextId !== undefined;
+    const authority = scoped ? parseClasspilotActivityAuthority(req.query) : null;
+    if (scoped && !authority) return res.status(400).json({ error: "Exactly one classroom activity is required" });
+    const scopeOptions = authority ? { schoolId: res.locals.schoolId!, staffId: req.authUser!.id,
+      studentId: String(req.params.studentId), authority,
+      contextAuthorityRevision: authority.supervisionContextId
+        ? requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) : undefined,
+      allowObserve: requestHasAnySchoolRole(req, res, ["admin", "school_admin"]) } : null;
+    const historyScope = scopeOptions ? await readActivityHistoryScope(scopeOptions) : null;
+    if (scoped && !historyScope) return res.status(403).json({ error: "Classroom activity is no longer available" });
+    const access = scoped ? { allowed: true, student: await getStudentById(String(req.params.studentId)), role: roleFrom(res, req) }
+      : await canViewStudent(req, res, String(req.params.studentId));
     if (!access.allowed) return res.status(403).json({ error: "Insufficient permissions" });
+    if (!access.student || access.student.schoolId !== res.locals.schoolId) return res.status(403).json({ error: "Insufficient permissions" });
+    const requestedFrom = parseDate(req.query.from), requestedTo = parseDate(req.query.to);
+    const from = historyScope ? new Date(Math.max(historyScope.from.getTime(), requestedFrom?.getTime() ?? 0)) : requestedFrom;
+    const to = historyScope ? new Date(Math.min(historyScope.to.getTime(), requestedTo?.getTime() ?? Infinity)) : requestedTo;
     const types = typeof req.query.types === "string" ? req.query.types.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
-    const events = await buildTimeline({
+    const events = from && to && from >= to ? [] : await buildTimeline({
       schoolId: res.locals.schoolId!,
       studentId: access.student.id,
-      from: parseDate(req.query.from),
-      to: parseDate(req.query.to),
+      from,
+      to,
       caseId: req.query.caseId as string | undefined,
       types,
       role: access.role,
     });
-    return res.json({ student: timelineStudentDto(access.student), events });
+    if (scopeOptions && historyScope) {
+      const latest = await readActivityHistoryScope(scopeOptions);
+      if (!latest || latest.stamp !== historyScope.stamp) return res.status(409).json({ error: "Classroom activity changed; refresh history" });
+    }
+    // Some cross-product sources query calendar days. Enforce the exact classroom
+    // interval on their result too, including the exclusive outgoing boundary.
+    const scopedEvents = historyScope ? events.filter((event) => {
+      const at = new Date(event.occurredAt).getTime();
+      return at >= from!.getTime() && at < to!.getTime();
+    }) : events;
+    return res.json({ student: timelineStudentDto(access.student), events: scopedEvents });
   } catch (err) {
     next(err);
   }

@@ -40,6 +40,8 @@ function authorizationKey(
     request.role,
     request.isSuperAdmin ? "super" : "member",
     request.sessionScope,
+    request.teachingSessionId ?? "",
+    request.supervisionContextId ?? "",
     mode,
   ].join("\u0000");
 }
@@ -114,6 +116,8 @@ const tileAuthorizationCoalescer = createClassPilotTileAuthorizationCoalescer(
           staffId: request.staffId,
           role: request.role,
           isSuperAdmin: request.isSuperAdmin,
+          teachingSessionId: request.teachingSessionId,
+          supervisionContextId: request.supervisionContextId,
         },
         mode
       )

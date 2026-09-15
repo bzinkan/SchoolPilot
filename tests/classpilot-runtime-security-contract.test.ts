@@ -466,7 +466,11 @@ describe("ClassPilot WebSocket signaling containment", () => {
       websocket.indexOf("const resolveLiveTarget = async"),
       websocket.indexOf("// --- WebRTC signaling")
     );
-    assert.match(resolver, /isAuthorizedClasspilotSessionStaff\(/);
+    assert.match(resolver, /isClasspilotLiveViewAuthorityCurrent\(binding\)/);
+    const authority = await source("src/services/classpilotLiveViewAuthority.ts");
+    assert.match(authority, /isAuthorizedClasspilotSessionStaff\(binding.schoolId, binding.teachingSessionId, binding.requesterUserId\)/);
+    assert.match(authority, /actorId: binding.requesterUserId/);
+    assert.doesNotMatch(authority, /allowObserve: true/);
     assert.doesNotMatch(resolver, /client\.role === "school_admin"|client\.role === "super_admin"/);
   });
 
@@ -515,8 +519,9 @@ describe("ClassPilot WebSocket signaling containment", () => {
         websocket.indexOf('if (client.role === "student")', signalingStart),
         websocket.indexOf("const target = await resolveLiveTarget()")
       );
-      assert.match(studentRelay, /classpilotLiveViewRequester/);
-      assert.match(studentRelay, /isAuthorizedClasspilotSessionStaff/);
+      assert.match(studentRelay, /classpilotLiveViewNegotiationAuthority/);
+      assert.match(studentRelay, /isClasspilotLiveViewAuthorityCurrent/);
+      assert.match(studentRelay, /isClasspilotLiveViewNegotiationActive/);
       assert.match(studentRelay, /sendToStaffUserLocal/);
       assert.match(studentRelay, /kind: "staff-user"/);
       assert.doesNotMatch(studentRelay, /broadcastToStaffSessionLocal/);
@@ -706,7 +711,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       storage.indexOf("export async function replaceClasspilotStudentControlSnapshots"),
       storage.indexOf("export async function replaceClasspilotSupervisionControlSnapshots")
     );
-    assert.match(teachingTransition, /update\(classpilotActiveHands\)[\s\S]*ne\(classpilotActiveHands\.teachingSessionId, options\.teachingSessionId\)/);
+    assert.match(teachingTransition, /update\(classpilotActiveHands\)[\s\S]*classpilotActiveHands\.teachingSessionId\} IS DISTINCT FROM \$\{options\.teachingSessionId/);
     const supervisionTransition = storage.slice(
       storage.indexOf("export async function replaceClasspilotSupervisionControlSnapshots"),
       storage.indexOf("export async function clearClasspilotStudentControlStatesForSession")
@@ -717,7 +722,9 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       storage.indexOf("export async function upsertClasspilotActiveHand")
     );
     assert.match(handReads, /innerJoin\([\s\S]*classpilotStudentControlStates/);
-    assert.match(fab, /authoritativeSessionIds[\s\S]*filter\(\(hand\) => authoritativeSessionIds\.has/);
+    assert.match(fab, /authoritativeSessionIds[\s\S]*filter\(\(hand\) => !!hand\.teachingSessionId && authoritativeSessionIds\.has/);
+    assert.match(fab, /filter\(\(hand\) => hand\.supervisionContextId === context\.id\)/);
+    assert.match(supervisionTransition, /classpilotActiveHands\.supervisionContextId\} IS DISTINCT FROM \$\{options\.supervisionContextId/);
   });
 
   it("wires the canonical gate across all staff and device mutation routers", async () => {

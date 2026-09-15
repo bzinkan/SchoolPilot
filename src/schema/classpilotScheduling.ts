@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, integer, jsonb, timestamp, check } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, timestamp, check, index } from "drizzle-orm/pg-core";
 import { schools } from "./core.js";
 import type { SchoolSchedulingConfig } from "../services/classpilotSchedulingRules.js";
 
@@ -12,4 +12,11 @@ export const classpilotSchoolSchedules = pgTable("classpilot_school_schedules", 
     .$type<Record<string, import("../services/classpilotScheduleProfileSupervision.js").ProfileSupervisionOutcome>>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   updatedBy: text("updated_by"),
-}, (table) => [check("cp_schedule_profile_outcomes_object_check", sql`jsonb_typeof(${table.profileActivationOutcomes}) = 'object'`)]);
+  nextBoundaryAt: timestamp("next_boundary_at", { withTimezone: true }).default(sql`now()`),
+  boundaryGeneration: integer("boundary_generation").notNull().default(0),
+  boundaryLeaseOwner: text("boundary_lease_owner"),
+  boundaryLeaseUntil: timestamp("boundary_lease_until", { withTimezone: true }),
+}, (table) => [
+  check("cp_schedule_profile_outcomes_object_check", sql`jsonb_typeof(${table.profileActivationOutcomes}) = 'object'`),
+  index("cp_schedule_next_boundary_idx").on(table.nextBoundaryAt).where(sql`${table.nextBoundaryAt} IS NOT NULL`),
+]);

@@ -30,6 +30,8 @@ const DB_SERIAL = new Set([
   "classpilot-portal-first-login.integration.test.ts",
   "classpilot-schedule-profile-validation.integration.test.ts",
   "classpilot-schedule-profile-supervision.integration.test.ts",
+  "classpilot-schedule-boundaries.integration.test.ts",
+  "classpilot-scheduled-classroom.integration.test.ts",
   "classpilot-schedule-profiles.integration.test.ts",
   "safety-notification-bundling.integration.test.ts",
   "safety-report-pagination.integration.test.ts",

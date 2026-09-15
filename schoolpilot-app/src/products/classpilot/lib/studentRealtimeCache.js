@@ -218,7 +218,10 @@ export function aggregateSnapshotHasStudent(data, studentId) {
   return (rowsFrom(data) || []).some((student) => student?.studentId === studentId);
 }
 
-function sameTeachingSession(event, teachingSessionId, allowSessionlessEvents) {
+function sameTeachingSession(event, teachingSessionId, allowSessionlessEvents, supervisionContextId) {
+  if (supervisionContextId) return !event.teachingSessionId && !event.sessionId
+    && String(event.supervisionContextId || '') === String(supervisionContextId);
+  if (event.supervisionContextId && teachingSessionId) return false;
   const eventSessionId = event.teachingSessionId ?? event.sessionId;
   // Additive rollout compatibility: older events do not carry a session. The
   // dashboard accepts those only after the current session subscription ACKs.
@@ -387,6 +390,7 @@ function applyOne(rows, rawEvent, scope) {
       event,
       scope?.teachingSessionId,
       scope?.allowSessionlessEvents,
+      scope?.supervisionContextId,
     )
   ) return rows;
   if (!['student-update', 'ai-classification', 'student-signed-out'].includes(event.type)) return rows;

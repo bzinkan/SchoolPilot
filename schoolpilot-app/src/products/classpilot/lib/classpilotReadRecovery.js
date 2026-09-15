@@ -3,12 +3,16 @@
 export function classpilotSessionAuthorityKey({ schoolId, viewerId, session }) {
   return JSON.stringify([
     schoolId || '', viewerId || '', session?.id || '',
+    session?.authority?.supervisionContextId || '',
+    session?.contextAuthorityRevision ?? '',
     session?.sessionMode || '', session?.endTime || '',
     session?.rosterSnapshotCompletedAt || '',
   ]);
 }
 
 export function classpilotObservationSessionEligible(session) {
+  if (session?.authority?.supervisionContextId) return session.status === 'active'
+    && session.capabilities?.screenshots === true;
   return Boolean(session?.id && session.sessionMode === 'live'
     && !session.endTime && session.rosterSnapshotCompletedAt);
 }
@@ -16,7 +20,7 @@ export function classpilotObservationSessionEligible(session) {
 export function isClasspilotSessionUnavailable(error, sessionId) {
   if (!sessionId || Number(error?.response?.status) !== 404) return false;
   const code = error?.response?.data?.code;
-  return !code || code === 'CLASSPILOT_SESSION_UNAVAILABLE';
+  return !code || code === 'CLASSPILOT_SESSION_UNAVAILABLE' || code === 'CLASSROOM_ACTIVITY_UNAVAILABLE';
 }
 
 export function tileStudentReadAuthorityKey(contextKey, student) {

@@ -24,6 +24,9 @@ import {
   authenticateWsClient,
   broadcastToTeachersLocal,
   broadcastToStaffSessionLocal,
+  broadcastToStaffContextLocal,
+  subscribeWsClientToContext,
+  unsubscribeWsClientFromContext,
   broadcastToStudentsLocal,
   sendToDeviceLocal,
   sendToStudentBindingLocal,
@@ -55,6 +58,7 @@ import {
   getTeachingSessionByIdAndSchool,
   isAuthorizedClasspilotSessionStaff,
   withClasspilotTeachingTelemetryAuthority,
+  withClasspilotSupervisionTelemetryAuthority,
   getAuthorizedClasspilotSessionStaffIds,
   getClasspilotStudentControlState,
   getClasspilotSsoPolicyForSchool,
@@ -71,6 +75,7 @@ import {
   terminalClasspilotCommandAckReceipt,
 } from "../services/classpilotAckReceipt.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { db } from "../db.js";
 import { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
 import {
   reportStudentWebSocketAuthenticationFailure,
@@ -136,12 +141,16 @@ import {
   CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS,
   claimClasspilotLiveViewNegotiation,
   classpilotLiveViewNegotiationAuthority,
-  classpilotLiveViewRequester,
   consumeClasspilotWsFrame,
   createClasspilotWsFrameBucket,
   releaseClasspilotLiveViewNegotiation,
   verifyClasspilotLiveViewNegotiation,
+  isClasspilotLiveViewNegotiationActive,
 } from "../services/classpilotLiveViewNegotiation.js";
+import { isClasspilotLiveViewAuthorityCurrent } from "../services/classpilotLiveViewAuthority.js";
+import { classpilotCommandAuthorityEnvelope } from "../services/classpilotCommandAuthority.js";
+import { stopStaleClasspilotLiveViewsForStudents } from "../services/classpilotLiveViewRevocation.js";
+import { parseClasspilotActivityAuthority, requireScheduledClassroomContext } from "../services/classpilotActivityAuthority.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "../services/classpilotLiveViewStop.js";
 import { resolveClasspilotStaffWebSocketAuthorization } from "../services/classpilotWebSocketAuthorization.js";
 import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
@@ -157,6 +166,7 @@ import {
   beginClasspilotSessionSubscriptionMutation,
   isCurrentClasspilotSessionSubscriptionMutation,
   parseClasspilotSessionSubscription,
+  parseClasspilotContextAuthorityRevision,
 } from "../services/classpilotSessionSubscription.js";
 
 // Ping/pong keepalive constants
@@ -740,11 +750,17 @@ export function setupWebSocket(
       }));
     }
     switch (target.kind) {
+      case "live-view-authority":
+        void webSocketWork.track(stopStaleClasspilotLiveViewsForStudents(target.schoolId, target.studentIds));
+        break;
       case "staff":
         broadcastToTeachersLocal(target.schoolId, message);
         break;
       case "staff-user":
         sendToStaffUserLocal(target.schoolId, target.userId, message);
+        break;
+      case "staff-context":
+        broadcastToStaffContextLocal(target.schoolId, target.supervisionContextId, message, target.assignedStaffId, target.contextAuthorityRevision);
         break;
       case "staff-session":
         broadcastToStaffSessionLocal(target.schoolId, target.sessionId, message);
@@ -1224,6 +1240,7 @@ export function setupWebSocket(
                       const fab = await buildStudentFabState(schoolId, payload.studentId, {
                         schoolSettings,
                         studentSessionId: activeSession.id,
+                        acceptedCapabilities: protocol.acceptedCapabilities,
                         dbInstance: transactionDb,
                       });
                       const [classroomStateRow, ssoPolicy] = await Promise.all([
@@ -1367,7 +1384,10 @@ export function setupWebSocket(
                           _msgId: teacherMessage.id,
                           chatMessageId: teacherMessage.id,
                           messageId: teacherMessage.id,
-                          sessionId: teacherMessage.sessionId,
+                          ...(teacherMessage.supervisionContextId
+                            ? { ...classpilotCommandAuthorityEnvelope({ supervisionContextId: teacherMessage.supervisionContextId }),
+                                studentControlRevision: prepared.classroomState?.revision ?? 0 }
+                            : { sessionId: teacherMessage.sessionId, teachingSessionId: teacherMessage.sessionId }),
                           studentId: payload.studentId,
                           studentSessionId: activeSession.id,
                           message: teacherMessage.content,
@@ -1640,13 +1660,19 @@ export function setupWebSocket(
               code: parsed.code,
               error: parsed.code === "REQUEST_ID_INVALID"
                 ? "Invalid request ID"
-                : "Teaching session required",
+                : parsed.code === "CONTEXT_AUTHORITY_REVISION_REQUIRED" ? "Current classroom authority revision required" : "Teaching session required",
               ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
             }));
             return;
           }
-          const sessionId = parsed.teachingSessionId;
-          const subscriptionMutation = beginClasspilotSessionSubscriptionMutation(client, sessionId);
+          const sessionId = (parsed.teachingSessionId || parsed.supervisionContextId)!;
+          const scope = parsed.supervisionContextId
+            ? { supervisionContextId: parsed.supervisionContextId }
+            : { teachingSessionId: sessionId, sessionId };
+          const subscribe = (socket: WebSocket, id: string) => parsed.supervisionContextId
+            ? subscribeWsClientToContext(socket, id, parsed.contextAuthorityRevision!) : subscribeWsClientToSession(socket, id);
+          const unsubscribe = parsed.supervisionContextId ? unsubscribeWsClientFromContext : unsubscribeWsClientFromSession;
+          const subscriptionMutation = beginClasspilotSessionSubscriptionMutation(client, `${parsed.supervisionContextId ? "supervision" : "teaching"}:${sessionId}`);
           const subscriptionMutationIsCurrent = () => {
             const currentClient = getWsClient(ws);
             return currentClient === client
@@ -1658,11 +1684,10 @@ export function setupWebSocket(
           // otherwise a socket that previously subscribed can be stranded on
           // the old session fan-out after it has lost authority.
           if (parsed.action === "unsubscribe") {
-            if (!unsubscribeWsClientFromSession(ws, sessionId)) {
+            if (!unsubscribe(ws, sessionId)) {
               ws.send(JSON.stringify({
                 type: "session-subscription-error",
-                teachingSessionId: sessionId,
-                sessionId,
+                ...scope,
                 code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
                 error: "Session subscription service unavailable",
                 ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
@@ -1671,16 +1696,31 @@ export function setupWebSocket(
             }
             ws.send(JSON.stringify({
               type: "session-unsubscription-success",
-              teachingSessionId: sessionId,
-              sessionId,
+              ...scope,
               ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
             }));
             return;
           }
 
           let allowed: boolean;
+          let contextSubscriptionRegistered = false;
           try {
             allowed = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+              if (parsed.supervisionContextId) {
+                try {
+                  return await db.transaction(async (tx) => {
+                    await requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: sessionId,
+                      actorId: client.userId!, contextAuthorityRevision: parsed.contextAuthorityRevision, lock: true,
+                      allowObserve: client.role === "school_admin" || client.role === "super_admin" }, tx as unknown as typeof db);
+                    if (!subscriptionMutationIsCurrent()) return false;
+                    contextSubscriptionRegistered = subscribe(ws, sessionId);
+                    return contextSubscriptionRegistered;
+                  });
+                } catch (error) {
+                  if (["CLASSROOM_ACTIVITY_UNAVAILABLE", "CLASSROOM_AUTHORITY_CHANGED"].includes((error as { code?: string }).code || "")) return false;
+                  throw error;
+                }
+              }
               const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
               if (
                 !session
@@ -1697,6 +1737,7 @@ export function setupWebSocket(
             });
           } catch (error) {
             if (!subscriptionMutationIsCurrent()) return;
+            if (contextSubscriptionRegistered) unsubscribe(ws, sessionId);
             if (!wasTenantPoolAcquisitionFailureReported(error)) {
               errorMonitor.trackError("database_connectivity", error as Error, {
                 job: "classpilotSessionSubscription",
@@ -1705,8 +1746,7 @@ export function setupWebSocket(
             }
             ws.send(JSON.stringify({
               type: "session-subscription-error",
-              teachingSessionId: sessionId,
-              sessionId,
+              ...scope,
               code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
               error: "Session subscription service unavailable",
               ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
@@ -1721,8 +1761,7 @@ export function setupWebSocket(
           if (!allowed) {
             ws.send(JSON.stringify({
               type: "session-subscription-error",
-              teachingSessionId: sessionId,
-              sessionId,
+              ...scope,
               code: "SESSION_UNAVAILABLE",
               error: "Teaching session unavailable",
               ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
@@ -1730,11 +1769,10 @@ export function setupWebSocket(
             return;
           }
 
-          if (!subscribeWsClientToSession(ws, sessionId)) {
+          if (!contextSubscriptionRegistered && !subscribe(ws, sessionId)) {
             ws.send(JSON.stringify({
               type: "session-subscription-error",
-              teachingSessionId: sessionId,
-              sessionId,
+              ...scope,
               code: "SUBSCRIPTION_SERVICE_UNAVAILABLE",
               error: "Session subscription service unavailable",
               ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
@@ -1743,8 +1781,7 @@ export function setupWebSocket(
           }
           ws.send(JSON.stringify({
             type: "session-subscription-success",
-            teachingSessionId: sessionId,
-            sessionId,
+            ...scope,
             ...(parsed.requestId ? { requestId: parsed.requestId } : {}),
           }));
           return;
@@ -1772,11 +1809,28 @@ export function setupWebSocket(
               studentSessionId: client.studentSessionId!,
               deviceId: client.deviceId!,
               status: deliveryStatus,
+              studentControlRevision: message.studentControlRevision,
               errorMessage: message.error || message.errorMessage || null,
             })
           );
 
-          if (acknowledged?.message.sessionId) {
+          if (acknowledged?.message.supervisionContextId) {
+            const payload = { type: "chat-message-delivery", supervisionContextId: acknowledged.message.supervisionContextId,
+              messageId, studentId: acknowledged.message.studentId, deliveryStatus: acknowledged.message.deliveryStatus,
+              errorMessage: acknowledged.message.errorMessage };
+            const context = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: acknowledged.message.supervisionContextId! })
+                .catch((error) => {
+                  if ((error as { code?: string }).code === "CLASSROOM_ACTIVITY_UNAVAILABLE") return null;
+                  throw error;
+                }));
+            if (context) {
+              broadcastToStaffContextLocal(client.schoolId, context.id, payload, context.assignedStaffId, String(context.classroomAuthorityRevision));
+              void publishWS({ kind: "staff-context", schoolId: client.schoolId,
+                supervisionContextId: context.id, assignedStaffId: context.assignedStaffId,
+                contextAuthorityRevision: String(context.classroomAuthorityRevision) }, payload);
+            }
+          } else if (acknowledged?.message.sessionId) {
             const payload = {
               type: "chat-message-delivery",
               sessionId: acknowledged.message.sessionId,
@@ -2100,41 +2154,33 @@ export function setupWebSocket(
         }
 
         const resolveLiveTarget = async () => {
-          if (!client.schoolId || (await getClasspilotMonitoringPolicy(client.schoolId)).policyMode !== "full") return null;
-          if (!client.schoolId || !client.userId) return null;
-          const studentId = normalizeClasspilotSignalingIdentifier(
-            message.studentId || message.toStudentId
-          );
-          const teachingSessionId = normalizeClasspilotSignalingIdentifier(
-            message.teachingSessionId
-          );
-          if (!studentId || !teachingSessionId || !client.subscribedSessionIds.has(teachingSessionId)) {
-            return null;
-          }
+          if (!client.schoolId || !client.userId
+            || (await getClasspilotMonitoringPolicy(client.schoolId)).policyMode !== "full") return null;
+          const studentId = normalizeClasspilotSignalingIdentifier(message.studentId || message.toStudentId);
+          const authority = parseClasspilotActivityAuthority(message);
+          if (!studentId || !authority) return null;
+          const contextAuthorityRevision = authority.supervisionContextId && message.type === "request-stream"
+            ? parseClasspilotContextAuthorityRevision(message.contextAuthorityRevision) : undefined;
+          if (authority.supervisionContextId && message.type === "request-stream" && contextAuthorityRevision === null) return null;
+          if (authority.supervisionContextId
+            ? !client.subscribedSupervisionContextIds.has(authority.supervisionContextId)
+            : !client.subscribedSessionIds.has(authority.teachingSessionId!)) return null;
           return runWithTenantContext({ schoolId: client.schoolId }, async () => {
-            // An admin may subscribe to observe a session, but subscriptions are
-            // never mutation authority. Live control/signaling requires immutable
-            // primary/co-teacher assignment just like canonical HTTP commands.
-            if (!(await isAuthorizedClasspilotSessionStaff(
-              client.schoolId!,
-              teachingSessionId,
-              client.userId!
-            ))) {
-              return null;
-            }
             const [controlState, activeSessions] = await Promise.all([
               getClasspilotStudentControlState(client.schoolId!, studentId),
               getActiveSessionsForStudents(client.schoolId!, [studentId]),
             ]);
-            if (controlState?.teachingSessionId !== teachingSessionId) return null;
             const active = activeSessions.find((row) => row.studentId === studentId);
-                    return active ? {
-                      studentId,
-                      teachingSessionId,
-                      controlRevision: controlState!.revision,
-                      studentSessionId: active.id,
-              deviceId: active.deviceId,
-            } : null;
+            if (!active || !controlState) return null;
+            const binding = { schoolId: client.schoolId!, studentId, ...authority,
+              controlRevision: controlState.revision, studentSessionId: active.id,
+              deviceId: active.deviceId, requesterUserId: client.userId! };
+            if (!await isClasspilotLiveViewAuthorityCurrent(binding)) return null;
+            const context = authority.supervisionContextId
+              ? await requireScheduledClassroomContext({ schoolId: client.schoolId!,
+                supervisionContextId: authority.supervisionContextId, actorId: client.userId!,
+                contextAuthorityRevision: contextAuthorityRevision ?? undefined }) : null;
+            return { ...binding, contextAuthorityRevision: contextAuthorityRevision ?? undefined, authorityExpiresAt: context?.endsAt.getTime() };
           });
         };
 
@@ -2147,29 +2193,15 @@ export function setupWebSocket(
             if (message.to !== "teacher" || !client.studentId) return;
             const fromStudentId = normalizeClasspilotSignalingIdentifier(client.studentId);
             if (!fromStudentId) return;
-            const state = await runWithTenantContext({ schoolId: client.schoolId }, () =>
-              getClasspilotStudentControlState(client.schoolId!, client.studentId!)
-            );
-            const sessionId = normalizeClasspilotSignalingIdentifier(state?.teachingSessionId);
-            if (!sessionId) return;
             const negotiationId = String(message.negotiationId || "").trim();
-            const requesterUserId = classpilotLiveViewRequester(negotiationId, {
-              schoolId: client.schoolId,
-              studentId: client.studentId,
-              studentSessionId: client.studentSessionId!,
-              deviceId: client.deviceId!,
-              teachingSessionId: sessionId,
-            });
-            if (!requesterUserId) return;
-            const requesterAuthorized = await runWithTenantContext(
-              { schoolId: client.schoolId },
-              () => isAuthorizedClasspilotSessionStaff(
-                client.schoolId!,
-                sessionId,
-                requesterUserId
-              )
-            );
-            if (!requesterAuthorized) return;
+            const exactBinding = { schoolId: client.schoolId, studentId: client.studentId,
+              studentSessionId: client.studentSessionId!, deviceId: client.deviceId! };
+            const authority = classpilotLiveViewNegotiationAuthority(negotiationId, exactBinding);
+            if (!authority || !await isClasspilotLiveViewNegotiationActive(exactBinding, negotiationId)) return;
+            const requesterAuthorized = await runWithTenantContext({ schoolId: client.schoolId },
+              () => isClasspilotLiveViewAuthorityCurrent({ ...exactBinding, ...authority }));
+            if (!requesterAuthorized || !await isClasspilotLiveViewNegotiationActive(exactBinding, negotiationId)) return;
+            const requesterUserId = authority.requesterUserId;
             const payload = {
               type: message.type,
               from: fromStudentId,
@@ -2193,8 +2225,11 @@ export function setupWebSocket(
             studentSessionId: target.studentSessionId,
             deviceId: target.deviceId,
             teachingSessionId: target.teachingSessionId,
+            supervisionContextId: target.supervisionContextId,
+            controlRevision: target.controlRevision,
             requesterUserId: client.userId,
           })) return;
+          if (!await isClasspilotLiveViewNegotiationActive(target, negotiationId)) return;
           const payload = {
             type: message.type,
             from: "teacher",
@@ -2251,24 +2286,15 @@ export function setupWebSocket(
         if (message.type === "request-stream" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
           const target = await resolveLiveTarget();
           if (!target || !client.schoolId || !client.userId) return;
+          const withAuthority = target.supervisionContextId
+            ? <T>(callback: () => Promise<T>) => withClasspilotSupervisionTelemetryAuthority({
+                ...target, supervisionContextId: target.supervisionContextId!, actorId: client.userId!,
+                scheduledClassroomOnly: true }, callback)
+            : <T>(callback: () => Promise<T>) => withClasspilotTeachingTelemetryAuthority({
+                ...target, teachingSessionId: target.teachingSessionId!, actorId: client.userId! }, callback);
           const outcome = await runWithTenantContext({ schoolId: client.schoolId }, () =>
-            withClasspilotTeachingTelemetryAuthority({
-              schoolId: client.schoolId!,
-              teachingSessionId: target.teachingSessionId,
-              studentId: target.studentId,
-              studentSessionId: target.studentSessionId,
-              deviceId: target.deviceId,
-              controlRevision: target.controlRevision,
-              actorId: client.userId!,
-            }, async () => {
-              const negotiation = await claimClasspilotLiveViewNegotiation({
-                schoolId: client.schoolId!,
-                studentId: target.studentId,
-                studentSessionId: target.studentSessionId,
-                deviceId: target.deviceId,
-                teachingSessionId: target.teachingSessionId,
-                requesterUserId: client.userId!,
-              });
+            withAuthority(async () => { /* exact binding remains locked during claim and delivery */
+              const negotiation = await claimClasspilotLiveViewNegotiation({ ...target });
               if (negotiation.status !== "claimed") return {
                 status: negotiation.status,
                 studentId: target.studentId,
@@ -2302,6 +2328,8 @@ export function setupWebSocket(
                 from: "teacher",
                 negotiationId: negotiation.negotiationId,
                 teachingSessionId: target.teachingSessionId,
+                supervisionContextId: target.supervisionContextId,
+                controlRevision: target.controlRevision,
                 studentId: target.studentId,
                 studentSessionId: target.studentSessionId,
                 setupExpiresAt: new Date(
@@ -2326,6 +2354,8 @@ export function setupWebSocket(
                 status: "claimed",
                 studentId: target.studentId,
                 teachingSessionId: target.teachingSessionId,
+                supervisionContextId: target.supervisionContextId,
+                controlRevision: target.controlRevision,
                 negotiationId: negotiation.negotiationId,
                 expiresAt: monitoringExpiresAt,
                 deliveredLocally,
@@ -2358,6 +2388,8 @@ export function setupWebSocket(
               type: "live-view-requested",
               studentId: outcome.studentId,
               teachingSessionId: outcome.teachingSessionId,
+              supervisionContextId: outcome.supervisionContextId,
+              controlRevision: outcome.controlRevision,
               negotiationId: outcome.negotiationId,
               setupExpiresAt: new Date(
                 Date.now() + CLASSPILOT_LIVE_VIEW_SETUP_TTL_MS
@@ -2382,6 +2414,8 @@ export function setupWebSocket(
             studentSessionId: target.studentSessionId,
             deviceId: target.deviceId,
             teachingSessionId: target.teachingSessionId,
+            supervisionContextId: target.supervisionContextId,
+            controlRevision: target.controlRevision,
             requesterUserId: client.userId,
           })) return;
           const payload = {

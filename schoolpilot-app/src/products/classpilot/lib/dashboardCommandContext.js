@@ -1,4 +1,5 @@
 import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
+import { activityAuthority, activityAuthorityKey } from './dashboardActivity.js';
 
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
@@ -96,6 +97,7 @@ export function studentSignOutSelectionBinding({
   viewerId,
   mode,
   teachingSessionId,
+  supervisionContextId,
   student,
 }) {
   const normalizedStudentId = boundedContextValue(studentId(student));
@@ -105,14 +107,15 @@ export function studentSignOutSelectionBinding({
     viewerId: boundedContextValue(viewerId),
     mode: boundedContextValue(mode, 64),
     teachingSessionId: boundedContextValue(teachingSessionId),
+    ...(supervisionContextId ? { supervisionContextId: boundedContextValue(supervisionContextId) } : {}),
   };
   if (
     !normalizedStudentId
     || !realtimeBinding
     || !context.schoolId
     || !context.viewerId
-    || context.mode !== 'owned-class'
-    || !context.teachingSessionId
+    || !['owned-class', 'scheduled-supervision'].includes(context.mode)
+    || !activityAuthority(context)
   ) return null;
 
   return JSON.stringify({
@@ -138,6 +141,14 @@ export function studentSupportsCapability(student, capabilityName) {
       ? student.capabilities
       : [];
   return advertised.includes(capabilityName);
+}
+
+export function studentSupportsScheduledClassroom(student) {
+  // Full classroom tools need the accepted protocol, not a raw extension claim.
+  return ['scheduledClassroomV1', 'scopedAuthorityChecksV1'].every(capability => (
+    student?.capabilities?.[capability] === true
+    || Array.isArray(student?.acceptedCapabilities) && student.acceptedCapabilities.includes(capability)
+  ));
 }
 
 export function isExplicitlySignedOutStudent(student) {
@@ -415,6 +426,7 @@ export function deriveDashboardCapabilities({
   activeSession,
   observedSession,
   coverageCommandTypes = DEFAULT_COVERAGE_COMMANDS,
+  scheduledActivity = null,
 }) {
   const observedOtherClass = Boolean(
     isAdmin
@@ -422,6 +434,9 @@ export function deriveDashboardCapabilities({
     && String(observedSession.teacherId || '') !== String(currentUserId || ''),
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
+  const scheduledSupervision = Boolean(studentView === 'class' && !observedSession
+    && scheduledActivity?.status === 'active' && activityAuthority(scheduledActivity)?.supervisionContextId
+    && ['scheduled_testing', 'scheduled_coverage'].includes(scheduledActivity.source));
   const ownedClassSession = Boolean(
     studentView === 'class'
     && effectiveSession?.id
@@ -439,7 +454,7 @@ export function deriveDashboardCapabilities({
   );
   const claimedCoverage = studentView === 'claimed' && !observedOtherClass;
   const allowedCommands = new Set(
-    ownedClassSession
+    scheduledSupervision ? scheduledActivity.capabilities?.commands || [] : ownedClassSession
       ? CLASS_COMMANDS
       : claimedCoverage
         ? coverageCommandTypes
@@ -449,7 +464,7 @@ export function deriveDashboardCapabilities({
   return {
     mode: observedOtherClass
       ? 'observe-read-only'
-      : ownedClassSession
+      : scheduledSupervision ? 'scheduled-supervision' : ownedClassSession
         ? 'owned-class'
         : claimedCoverage
           ? 'claimed-coverage'
@@ -457,14 +472,17 @@ export function deriveDashboardCapabilities({
             ? 'available'
             : 'read-only',
     effectiveSession,
+    authority: scheduledSupervision ? activityAuthority(scheduledActivity)
+      : effectiveSession?.id ? { teachingSessionId: effectiveSession.id } : null,
+    scheduledSupervision,
     observedOtherClass,
     ownedClassSession,
     claimedCoverage,
-    canSelectStudents: ownedClassSession || claimedCoverage,
+    canSelectStudents: ownedClassSession || scheduledSupervision || claimedCoverage,
     canUseRemoteControls: allowedCommands.size > 0,
-    canUseTeacherFab: ownedClassSession,
-    canUseLiveView: ownedClassSession,
-    canChangeFabSettings: ownedClassSession,
+    canUseTeacherFab: scheduledSupervision ? scheduledActivity.capabilities?.fab === true : ownedClassSession,
+    canUseLiveView: scheduledSupervision ? scheduledActivity.capabilities?.liveView === true : ownedClassSession,
+    canChangeFabSettings: scheduledSupervision ? scheduledActivity.capabilities?.settings === true : ownedClassSession,
     allowedCommands,
     allows(commandType) {
       return allowedCommands.has(commandType);
@@ -473,7 +491,7 @@ export function deriveDashboardCapabilities({
       ? 'Observe mode is read-only. Return to your own class to control student devices.'
       : studentView === 'available'
         ? 'Claim students before sending classroom commands.'
-        : !effectiveSession?.id && !claimedCoverage
+        : !effectiveSession?.id && !claimedCoverage && !scheduledSupervision
           ? 'Start a class before sending classroom commands.'
           : '',
   };
@@ -488,14 +506,14 @@ export function resolveCommandTargets({
   subgroupStudentIds = [],
   overrideStudentIds = null,
 }) {
-  if (mode !== 'owned-class' && mode !== 'claimed-coverage') {
+  if (!['owned-class', 'scheduled-supervision', 'claimed-coverage'].includes(mode)) {
     throw new Error('Classroom commands are not available in this view.');
   }
 
   const overrideIds = overrideStudentIds === null ? null : normalizedIds(overrideStudentIds);
   const selectedIds = normalizedIds(selectedStudentIds);
 
-  if (mode === 'owned-class') {
+  if (mode === 'owned-class' || mode === 'scheduled-supervision') {
     const cohort = (sessionStudents || []).filter((student) => student?.commandable !== false);
     let rows;
     let targetScope = 'class';
@@ -519,6 +537,7 @@ export function resolveCommandTargets({
     const targetStudentIds = normalizedIds(rows.map(studentId));
     if (targetStudentIds.length === 0) throw new Error('No controllable students are in this target.');
 
+    if (mode === 'scheduled-supervision') targetScope = 'students';
     return {
       mode,
       targetScope,
@@ -579,7 +598,7 @@ export function resolveStudentSignOutTargets({
   selectedStudentIds = [],
   selectedStudentBindings = [],
 }) {
-  if (mode !== 'owned-class') {
+  if (!['owned-class', 'scheduled-supervision'].includes(mode)) {
     throw new Error('Student sign out is available only for your active class.');
   }
 
@@ -627,13 +646,13 @@ export function resolveStudentSignOutTargets({
 }
 
 export function buildStudentSignOutCommandRequest(teachingSessionId, target) {
-  const sessionId = String(teachingSessionId || '').trim();
+  const authority = activityAuthority(teachingSessionId);
   const targetStudentIds = normalizedIds(target?.targetStudentIds);
-  if (!sessionId || target?.targetScope !== 'students' || targetStudentIds.length === 0) {
+  if (!authority || target?.targetScope !== 'students' || targetStudentIds.length === 0) {
     throw new Error('Student sign out requires an active class and explicit student targets.');
   }
   return {
-    teachingSessionId: sessionId,
+    ...authority,
     targetScope: 'students',
     targetStudentIds,
     commandType: 'student-sign-out',
@@ -840,14 +859,15 @@ export function studentSignOutCommandPayload() {
 }
 
 export function normalizeSessionFabState(value, teachingSessionId) {
-  const sessionId = String(teachingSessionId || '').trim();
-  const stateSessionId = String(value?.teachingSessionId || value?.activeSessionId || '').trim();
-  if (!sessionId || stateSessionId !== sessionId) return null;
+  const authority = activityAuthority(teachingSessionId);
+  const stateAuthority = activityAuthority(value?.supervisionContextId ? value
+    : { teachingSessionId: value?.teachingSessionId || value?.activeSessionId });
+  if (!authority || activityAuthorityKey(stateAuthority) !== activityAuthorityKey(authority)) return null;
   const revisionValue = Number(value?.revision ?? value?.lifecycleRevision ?? value?.sessionFabRevision);
   return {
-    teachingSessionId: sessionId,
-    handRaisingEnabled: value?.handRaisingEnabled !== false,
-    messagingEnabled: (value?.messagingEnabled ?? value?.studentMessagingEnabled) !== false,
+    ...authority,
+    handRaisingEnabled: (value?.handRaisingEnabled ?? value?.raiseHandEnabled) !== false,
+    messagingEnabled: (value?.messagingEnabled ?? value?.studentMessagingEnabled ?? value?.chatEnabled) !== false,
     revision: Number.isSafeInteger(revisionValue) && revisionValue >= 0 ? revisionValue : 0,
   };
 }

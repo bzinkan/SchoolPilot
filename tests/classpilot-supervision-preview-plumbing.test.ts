@@ -195,7 +195,7 @@ describe("supervision-bound screenshot key family", () => {
 });
 
 describe("supervision retention target stays server-side", () => {
-  it("is never placed on the wire authority union", () => {
+  it("keeps retention metadata private while supporting an explicit scheduled authority", () => {
     const storage = read("src/services/storage.ts");
     const claim = storage.slice(
       storage.indexOf("export type ClasspilotScreenshotAuthorityClaim"),
@@ -204,9 +204,10 @@ describe("supervision retention target stays server-side", () => {
     assert.ok(claim.length > 0);
     assert.doesNotMatch(
       claim,
-      /supervision/i,
-      "the device-facing authority claim must stay a closed two-member union"
+      /supervisionRetention|assignedStaffId|expiresAt/i,
+      "retention routing metadata must remain private"
     );
+    assert.match(claim, /kind: "supervision_context";\s+supervisionContextId: string;\s+controlRevision: number/);
   });
 
   it("is dropped when the projection is rewritten onto a delivered revision", () => {
@@ -256,7 +257,7 @@ describe("supervision retention target stays server-side", () => {
     const storage = read("src/services/storage.ts");
     const literal = storage.slice(
       storage.indexOf("const studentAuthority: ClasspilotScreenshotAuthorityProjection = {"),
-      storage.indexOf("// A supervision claim writes teachingSessionId = null")
+      storage.indexOf("if (controlState?.supervisionContextId && controlState.hardExpiresAt && isScheduledClassroomEnabled")
     );
     assert.ok(literal.length > 0);
     assert.match(

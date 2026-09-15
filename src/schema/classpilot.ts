@@ -1125,13 +1125,21 @@ export type InsertClasspilotMonitoringEvent = typeof classpilotMonitoringEvents.
 export const sessionSettings = pgTable("session_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   schoolId: text("school_id").notNull(),
-  sessionId: varchar("session_id").notNull().unique(),
+  sessionId: varchar("session_id").unique(),
+    supervisionContextId: varchar("supervision_context_id"),
   chatEnabled: boolean("chat_enabled").default(true),
   raiseHandEnabled: boolean("raise_hand_enabled").default(true),
   lifecycleRevision: integer("lifecycle_revision").notNull().default(1),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
 }, (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.sessionId},${table.supervisionContextId})=1`),
+    index("session_settings_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.sessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
+    uniqueIndex("session_settings_context_unique").on(table.schoolId, table.supervisionContextId).where(sql`supervision_context_id IS NOT NULL`),
   index("session_settings_school_session_idx").on(table.schoolId, table.sessionId),
   check("session_settings_revision_check", sql`${table.lifecycleRevision} > 0`),
 ]);
@@ -1147,7 +1155,8 @@ export const chatMessages = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
-    sessionId: varchar("session_id").notNull(),
+    sessionId: varchar("session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     studentId: text("student_id"),
     studentSessionId: varchar("student_session_id"),
     deviceId: text("device_id"),
@@ -1169,6 +1178,12 @@ export const chatMessages = pgTable(
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.sessionId},${table.supervisionContextId})=1`),
+    index("chat_messages_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.sessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
     index("chat_messages_session_id_idx").on(table.sessionId),
     index("chat_messages_school_session_idx").on(table.schoolId, table.sessionId),
     index("chat_messages_school_student_idx").on(table.schoolId, table.studentId),
@@ -1251,7 +1266,8 @@ export const classpilotChatDeliveries = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
     chatMessageId: varchar("chat_message_id").notNull(),
-    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     studentId: text("student_id").notNull(),
     state: text("state")
       .notNull()
@@ -1272,6 +1288,12 @@ export const classpilotChatDeliveries = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.teachingSessionId},${table.supervisionContextId})=1`),
+    index("classpilot_chat_deliveries_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.teachingSessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
     uniqueIndex("classpilot_chat_deliveries_message_unique").on(table.chatMessageId),
     index("classpilot_chat_deliveries_due_idx").on(table.state, table.nextAttemptAt),
     index("classpilot_chat_deliveries_school_student_idx").on(table.schoolId, table.studentId, table.state),
@@ -1294,7 +1316,8 @@ export const classpilotActiveHands = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
-    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     studentId: text("student_id").notNull(),
     deviceId: text("device_id").notNull(),
     raisedAt: timestamp("raised_at").notNull().default(sql`now()`),
@@ -1303,6 +1326,13 @@ export const classpilotActiveHands = pgTable(
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   },
   (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.teachingSessionId},${table.supervisionContextId})=1`),
+    index("classpilot_active_hands_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.teachingSessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
+    uniqueIndex("classpilot_hands_context_active_unique").on(table.schoolId, table.supervisionContextId, table.studentId).where(sql`supervision_context_id IS NOT NULL AND cleared_at IS NULL`),
     index("classpilot_active_hands_session_idx").on(table.schoolId, table.teachingSessionId),
     index("classpilot_active_hands_student_idx").on(table.schoolId, table.studentId),
     uniqueIndex("classpilot_active_hands_active_unique")
@@ -1322,7 +1352,8 @@ export const polls = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
-    sessionId: varchar("session_id").notNull(),
+    sessionId: varchar("session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     teacherId: text("teacher_id").notNull(),
     startCommandId: varchar("start_command_id"),
     closeCommandId: varchar("close_command_id"),
@@ -1335,6 +1366,13 @@ export const polls = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.sessionId},${table.supervisionContextId})=1`),
+    index("polls_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.sessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
+    uniqueIndex("polls_active_context_unique").on(table.schoolId, table.supervisionContextId).where(sql`supervision_context_id IS NOT NULL AND is_active=true`),
     index("polls_session_id_idx").on(table.sessionId),
     index("polls_school_session_idx").on(table.schoolId, table.sessionId),
     uniqueIndex("polls_active_session_unique")
@@ -1486,7 +1524,8 @@ export const classpilotClassroomStates = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
-    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     studentId: text("student_id"),
     stateType: text("state_type").notNull(),
     stateKey: text("state_key").notNull(),
@@ -1499,6 +1538,13 @@ export const classpilotClassroomStates = pgTable(
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   },
   (table) => [
+    check("cp_activity_parent_check", sql`num_nonnulls(${table.teachingSessionId},${table.supervisionContextId})=1`),
+    index("classpilot_classroom_states_supervision_idx").on(table.schoolId, table.supervisionContextId),
+    foreignKey({ columns: [table.schoolId, table.supervisionContextId],
+      foreignColumns: [classpilotSupervisionContexts.schoolId, classpilotSupervisionContexts.id], name: "cp_activity_supervision_fk" }),
+    foreignKey({ columns: [table.schoolId, table.teachingSessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id], name: "cp_activity_session_fk" }),
+    uniqueIndex("cp_classroom_states_context_active_unique").on(table.supervisionContextId, table.studentId, table.stateType, table.stateKey).where(sql`supervision_context_id IS NOT NULL AND cleared_at IS NULL`),
     index("classpilot_classroom_states_session_idx").on(
       table.schoolId,
       table.teachingSessionId
@@ -1628,6 +1674,7 @@ export const classpilotSupervisionContexts = pgTable(
       .default("active")
       .$type<"active" | "ended">(),
     assignedStaffId: text("assigned_staff_id").notNull(),
+    classroomAuthorityRevision: integer("classroom_authority_revision").notNull().default(0),
     coverageGroupId: text("coverage_group_id"),
     scheduledConflictId: text("scheduled_conflict_id"),
     scheduleProfileApplicationId: text("schedule_profile_application_id"),
@@ -1642,6 +1689,8 @@ export const classpilotSupervisionContexts = pgTable(
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   },
   (table) => [
+    uniqueIndex("cp_activity_supervision_school_id_unique").on(table.schoolId, table.id),
+    check("cp_context_classroom_authority_revision_check", sql`${table.classroomAuthorityRevision} >= 0`),
     index("classpilot_supervision_contexts_school_status_idx").on(
       table.schoolId,
       table.status

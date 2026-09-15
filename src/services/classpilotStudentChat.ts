@@ -38,7 +38,7 @@ export function isCurrentClasspilotStudentMessageSession(
 export function isExactIdempotentStudentMessage(
   existing: {
     schoolId: string;
-    sessionId: string;
+    sessionId: string | null;
     studentId: string | null;
     studentSessionId: string | null;
     senderType: string;

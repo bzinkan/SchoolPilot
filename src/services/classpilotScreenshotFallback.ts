@@ -1,10 +1,12 @@
 import type {
   ClassBoundScreenshotBinding,
+  SupervisionBoundScreenshotBinding,
   ScreenshotBinding,
   ScreenshotData,
 } from "../realtime/ws-redis.js";
 import {
   classBoundScreenshotBindingCacheKey,
+  supervisionBoundScreenshotBindingCacheKey,
   screenshotBindingCacheKey,
 } from "../realtime/ws-redis.js";
 
@@ -32,6 +34,7 @@ function estimateBytes(key: string, value: ScreenshotData): number {
       studentId: value.studentId,
       studentSessionId: value.studentSessionId,
       teachingSessionId: value.teachingSessionId,
+      supervisionContextId: value.supervisionContextId,
       controlRevision: value.controlRevision,
       bindingVersion: value.bindingVersion,
     }), "utf8");
@@ -59,6 +62,10 @@ export class ClasspilotScreenshotFallbackStore {
 
   setClassBound(binding: ClassBoundScreenshotBinding, value: ScreenshotData): boolean {
     return this.setForKey(classBoundScreenshotBindingCacheKey(binding), value);
+  }
+
+  setSupervisionBound(binding: SupervisionBoundScreenshotBinding, value: ScreenshotData): boolean {
+    return this.setForKey(supervisionBoundScreenshotBindingCacheKey(binding), value);
   }
 
   private setForKey(key: string, value: ScreenshotData): boolean {
@@ -100,6 +107,10 @@ export class ClasspilotScreenshotFallbackStore {
 
   getClassBound(binding: ClassBoundScreenshotBinding): ScreenshotData | null {
     return this.getForKey(classBoundScreenshotBindingCacheKey(binding));
+  }
+
+  getSupervisionBound(binding: SupervisionBoundScreenshotBinding): ScreenshotData | null {
+    return this.getForKey(supervisionBoundScreenshotBindingCacheKey(binding));
   }
 
   private getForKey(key: string): ScreenshotData | null {

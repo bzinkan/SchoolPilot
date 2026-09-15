@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { eq, sql } from "drizzle-orm";
 import { CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL } from "../src/db/classpilotScheduleProfileSupervisionMigration.js";
 import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
+import { CLASSPILOT_SCHEDULE_BOUNDARY_SQL } from "../src/db/classpilotScheduleBoundaryMigration.js";
 import { emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
 import { localDateInTimeZone } from "../src/util/schoolTime.js";
 import type { ScheduleProfileApplication } from "../src/services/classpilotScheduleProfileModel.js";
@@ -65,6 +66,7 @@ before(async () => {
   ({ classpilotLifecyclePushes: pushes } = await import("../src/services/classpilotLifecyclePushes.js"));
   await pool.query(CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL);
   await pool.query(CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL);
+  await pool.query(CLASSPILOT_SCHEDULE_BOUNDARY_SQL);
   const domain = `${ids.school}.example.edu`;
   await pool.query("INSERT INTO schools(id,name,domain,school_timezone) VALUES($1,'Profile testing',$3,$4),($2,'Other profile testing',$3,$4)", [ids.school, ids.otherSchool, domain, timezone]);
   for (const teacher of [ids.teacher, ids.otherTeacher]) {
@@ -105,6 +107,7 @@ after(async () => {
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await pool.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
+  await pool.query("DELETE FROM classpilot_school_schedules WHERE school_id=$1", [ids.otherSchool]);
   await pool.query("DELETE FROM schools WHERE id IN($1,$2)", [ids.school, ids.otherSchool]);
   await pool.query("DELETE FROM users WHERE id IN($1,$2)", [ids.teacher, ids.otherTeacher]);
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
@@ -201,7 +204,8 @@ test("coverage summary distinguishes the current supervisor from school-wide adm
     assert.equal(teacherSummary.schoolId, ids.school); assert.equal(teacherSummary.viewerId, ids.teacher);
     assert.deepEqual(teacherSummary.ownTestingContexts, [{ id: context.id, name: context.name, endsAt: context.endsAt.toISOString(), activeStudentCount: 2 }]);
     assert.deepEqual(teacherSummary.ownSupervisionContexts, [{ id: context.id, name: context.name, contextType: context.contextType, startsAt: context.startsAt.toISOString(), endsAt: context.endsAt.toISOString(), activeStudentCount: 2 }]);
-    assert.deepEqual(Object.keys(teacherSummary).sort(), ["activeContextCount", "availableStudentCount", "claimedStudentCount", "ownSupervisionContexts", "ownTestingContexts", "revision", "schoolId", "viewerId"]);
+    assert.deepEqual(Object.keys(teacherSummary).sort(), ["activeContextCount", "availableStudentCount", "claimedStudentCount", "ownAdHocContexts", "ownSupervisionContexts", "ownTestingContexts", "revision", "schoolId", "viewerId"]);
+    assert.deepEqual(teacherSummary.ownAdHocContexts, []);
     for (const privateId of [ids.student, ids.secondStudent, ids.group, app.id, app.testingWindows[0]!.blockId]) {
       assert.equal(JSON.stringify(teacherSummary).includes(privateId), false);
     }
@@ -290,6 +294,61 @@ test("expiry cannot restart a testing block and retains its durable receipt", as
   await scoped(() => storage.releaseExpiredClasspilotSupervisionContexts({ schoolId: ids.school, now: afterWindow }));
   await scan(afterWindow);
   assert.equal((await contexts()).length, 1); assert.equal((await statuses())[0]?.status, "ended");
+});
+
+test("fast boundary lifecycle gives testing its roster within five seconds and resumes the real class", async () => {
+  const previousMode = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
+  const previousSchools = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
+  process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
+  process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = ids.school;
+  const regularGroup = randomUUID(), regularSession = randomUUID();
+  const worker = await import("../src/services/classpilotScheduleBoundaries.js");
+  const { getClasspilotDashboardActivity } = await import("../src/services/classpilotDashboardActivity.js");
+  try {
+    await statement(sql`INSERT INTO groups(id,school_id,teacher_id,name,group_type,status)
+      VALUES(${regularGroup},${ids.school},${ids.teacher},'Regular class','admin_class','active')`);
+    await statement(sql`INSERT INTO group_students(group_id,student_id) VALUES(${regularGroup},${ids.student}),(${regularGroup},${ids.secondStudent})`);
+    await statement(sql`INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,roster_snapshot_completed_at,class_name_snapshot)
+      VALUES(${regularSession},${ids.school},${regularGroup},${ids.teacher},now()-interval '1 minute',now(),'Regular class')`);
+    await statement(sql`INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id)
+      VALUES(${ids.school},${regularSession},${regularGroup},${ids.student}),(${ids.school},${regularSession},${regularGroup},${ids.secondStudent})`);
+    await statement(sql`INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role)
+      VALUES(${ids.school},${regularSession},${ids.teacher},'primary')`);
+    await save([application()]);
+    const before = await scoped(() => getClasspilotDashboardActivity(ids.school, ids.teacher));
+    assert.equal(before.current?.authority.teachingSessionId, regularSession);
+    const began = performance.now();
+    await worker.reconcileSchoolScheduleBoundary(ids.school, new Date());
+    const active = await scoped(() => getClasspilotDashboardActivity(ids.school, ids.teacher));
+    const elapsed = performance.now() - began;
+    assert.ok(elapsed < 5_000, `healthy local activation and assignment read took ${elapsed.toFixed(0)}ms`);
+    assert.equal(active.current?.source, "scheduled_testing");
+    assert.equal(active.current?.studentCount, 2, "offline assigned pupils stay in the scheduled roster");
+    const contextId = active.current!.authority.supervisionContextId!;
+    const sessionCount = await statement(sql`SELECT count(*)::int AS count FROM teaching_sessions WHERE school_id=${ids.school}`);
+    assert.equal(sessionCount.rows[0]?.count, 1, "testing never fabricates or replaces a teaching session");
+    // Move the persisted deadline into the past to exercise expiry without a wall-clock hour-long test.
+    await statement(sql`UPDATE classpilot_supervision_contexts SET ends_at=now()-interval '1 millisecond' WHERE id=${contextId}`);
+    const ending = performance.now();
+    await worker.reconcileSchoolScheduleBoundary(ids.school, new Date());
+    const resumed = await scoped(() => getClasspilotDashboardActivity(ids.school, ids.teacher));
+    assert.ok(performance.now() - ending < 5_000, "healthy expiry and assignment read stays within the five-second target");
+    assert.equal(resumed.current?.authority.teachingSessionId, regularSession);
+    assert.equal((await contexts()).length, 1);
+    assert.ok((await controls()).every((state) => state.supervisionContextId === null));
+    const unchanged = await statement(sql`SELECT end_time FROM teaching_sessions WHERE id=${regularSession}`);
+    assert.equal(unchanged.rows[0]?.end_time, null, "ending testing cannot finalize the underlying regular session");
+  } finally {
+    for (const context of await contexts()) if (context.status === "active") await scoped(() => storage.releaseSupervisionStudents({ schoolId: ids.school, contextId: context.id }));
+    await statement(sql`DELETE FROM classpilot_student_control_states WHERE school_id=${ids.school}`);
+    await statement(sql`DELETE FROM classpilot_session_staff WHERE teaching_session_id=${regularSession}`);
+    await statement(sql`DELETE FROM classpilot_session_students WHERE teaching_session_id=${regularSession}`);
+    await statement(sql`DELETE FROM teaching_sessions WHERE id=${regularSession}`);
+    await statement(sql`DELETE FROM group_students WHERE group_id=${regularGroup}`);
+    await statement(sql`DELETE FROM groups WHERE id=${regularGroup}`);
+    if (previousMode === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE; else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = previousMode;
+    if (previousSchools === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS; else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = previousSchools;
+  }
 });
 
 test("changed exact roster and staff pairing fail visibly, without a later automatic retry", async () => {

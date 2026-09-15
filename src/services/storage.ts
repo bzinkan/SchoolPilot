@@ -1,5 +1,6 @@
-import { eq, and, desc, asc, gt, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
+import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { isDeepStrictEqual } from "node:util";
 import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
@@ -20,6 +21,8 @@ import {
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, requireScheduledClassroomContext, assertScheduledClassroomAuthorityRevision } from "./classpilotActivityAuthority.js";
+import { finalizeScheduledClassroomTools, persistScheduledClassroomStateRecords, releaseScheduledClassroomStudentTools } from "./classpilotScheduledClassroomTools.js";
 import { syncSupervisionActivityReports, supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
 import { retainedSupervisionStaffSql, supervisionContextHasReportsSql, supervisionEventOwnershipSql } from "./classpilotSupervisionHistory.js";
 import {
@@ -9038,6 +9041,7 @@ export type ClassPilotTileScopeOptions = {
   role: ClassPilotTileReadRole;
   isSuperAdmin?: boolean;
   teachingSessionId?: string;
+  supervisionContextId?: string;
 };
 
 type ClassPilotTileReadOptions = ClassPilotTileScopeOptions & {
@@ -9065,6 +9069,8 @@ export type ClassPilotStudentTileAccess = {
   schoolId: string;
   studentSessionId: string | null;
   teachingSessionId?: string | null;
+  supervisionContextId?: string | null;
+  historySince?: Date | null;
   controlRevision?: number | null;
 };
 
@@ -9109,8 +9115,19 @@ export function buildClassPilotTileAuthorizationQuery(
 ): SQL {
   const requestedStudents = requestedTileStudentsSql(options.schoolId, studentIds);
   const schoolWide = hasSchoolWideTileRead(options);
+  if (options.teachingSessionId && options.supervisionContextId) throw new Error("Exactly one tile activity is required");
 
-  const authorizedStudents = options.teachingSessionId
+  const authorizedStudents = options.supervisionContextId
+    ? isScheduledClassroomEnabled(options.schoolId) ? sql`
+        SELECT supervised.student_id FROM ${classpilotSupervisionStudents} supervised
+        INNER JOIN ${classpilotSupervisionContexts} context ON context.id=supervised.context_id AND context.school_id=${options.schoolId}
+        INNER JOIN requested_students requested ON requested.student_id=supervised.student_id
+        WHERE supervised.school_id=${options.schoolId} AND supervised.released_at IS NULL
+          AND context.id=${options.supervisionContextId} AND context.status='active' AND context.starts_at<=now() AND context.ends_at>now()
+          AND (context.assigned_staff_id=${options.staffId} OR ${schoolWide})
+          AND (context.scheduled_conflict_id IS NOT NULL OR (context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL AND context.schedule_profile_block_id IS NOT NULL))
+      ` : sql`SELECT NULL::text AS student_id WHERE false`
+    : options.teachingSessionId
     ? schoolWide
       ? sql`
           SELECT roster.student_id
@@ -9258,7 +9275,12 @@ export function buildClassPilotTileAuthorizationQuery(
            AND device.school_id = ${options.schoolId}
           `;
 
-  const controlRevision = accessMode === "live" && options.teachingSessionId
+  const controlRevision = accessMode === "live" && options.supervisionContextId
+    ? sql`(SELECT control.revision FROM ${classpilotStudentControlStates} control
+        WHERE control.school_id=${options.schoolId} AND control.student_id=resolved.student_id
+          AND control.supervision_context_id=${options.supervisionContextId} AND control.teaching_session_id IS NULL
+          AND control.hard_expires_at>now() AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>now()) LIMIT 1)`
+    : accessMode === "live" && options.teachingSessionId
     ? sql`(
         SELECT control.revision
         FROM ${classpilotStudentControlStates} AS control
@@ -9334,6 +9356,9 @@ export function buildClassPilotTileAuthorizationQuery(
       resolved.ordinal,
       resolved.student_session_id,
       ${controlRevision} AS control_revision,
+      ${options.supervisionContextId ? sql`(SELECT MAX(supervised.assigned_at) FROM ${classpilotSupervisionStudents} supervised
+        WHERE supervised.school_id=${options.schoolId} AND supervised.context_id=${options.supervisionContextId}
+          AND supervised.student_id=resolved.student_id AND supervised.released_at IS NULL)` : sql`NULL::timestamp`} AS history_since,
       device.device_id,
       device.device_name,
       device.school_id,
@@ -9416,6 +9441,8 @@ async function loadClassPilotTileAuthorizationRows(
       teachingSessionId: accessMode === "live"
         ? options.teachingSessionId ?? null
         : null,
+      supervisionContextId: options.supervisionContextId ?? null,
+      historySince: raw.history_since ? new Date(String(raw.history_since)) : null,
       controlRevision: raw.control_revision !== null
         && raw.control_revision !== undefined
         && Number.isSafeInteger(Number(raw.control_revision))
@@ -9444,6 +9471,8 @@ export async function getBatchTileAccessForStaff(
     schoolId: row.schoolId,
     studentSessionId: row.studentSessionId,
     teachingSessionId: row.teachingSessionId,
+    supervisionContextId: row.supervisionContextId,
+    historySince: row.historySince,
     controlRevision: row.controlRevision,
   }]));
 }
@@ -9508,7 +9537,7 @@ export async function getTileAuthorizationScopeForStaff(
   accessMode: "live" | "history"
 ): Promise<ClassPilotTileAuthorizationScope> {
   if (!hasSelectedTileTenantContext(options.schoolId)) return new Map();
-  if (hasSchoolWideTileRead(options)) {
+  if (hasSchoolWideTileRead(options) && !options.teachingSessionId && !options.supervisionContextId) {
     const schoolDevices = await db
       .select()
       .from(devices)
@@ -11048,8 +11077,18 @@ export async function endStudentSessionExact(options: {
   studentId: string;
   deviceId: string;
   studentSessionId: string;
+  scheduledClassroom?: { contextId: string; actorId: string; controlRevision: number };
 }): Promise<StudentSession | undefined> {
   const result = await db.transaction(async (tx) => {
+    if (options.scheduledClassroom) {
+      const transactionDb = tx as unknown as typeof db;
+      await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
+      await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], transactionDb);
+      await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: options.scheduledClassroom.contextId,
+        actorId: options.scheduledClassroom.actorId, lock: true }, transactionDb);
+      if (!(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,
+        supervisionContextId: options.scheduledClassroom.contextId, ownershipRevision: options.scheduledClassroom.controlRevision }, transactionDb))) return undefined;
+    }
     const [binding] = await tx
       .select({ id: studentSessions.id })
       .from(studentSessions)
@@ -18658,6 +18697,7 @@ export async function acknowledgeTeacherChatDelivery(options: {
   deviceId: string;
   status: "delivered" | "failed";
   errorMessage?: string | null;
+  studentControlRevision?: number;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery } | undefined> {
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -18683,6 +18723,14 @@ export async function acknowledgeTeacherChatDelivery(options: {
       delivery.lastAttemptStudentSessionId !== options.studentSessionId ||
       delivery.lastAttemptDeviceId !== options.deviceId
     ) return undefined;
+    if (delivery.supervisionContextId) {
+      const supervision = (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0];
+      if (!scheduledContextHasClassroomTools(supervision?.context) || supervision.context.id !== delivery.supervisionContextId
+        || delivery.expiresAt <= new Date() || delivery.state === "expired"
+        || !Number.isSafeInteger(options.studentControlRevision)
+        || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,
+          supervisionContextId: delivery.supervisionContextId, ownershipRevision: options.studentControlRevision }, transactionDb))) return undefined;
+    }
     const [existingMessage] = await tx.select().from(chatMessages).where(and(
       eq(chatMessages.id, options.chatMessageId),
       eq(chatMessages.schoolId, options.schoolId),
@@ -18781,13 +18829,22 @@ export async function withClasspilotStudentControlDeliveryAuthority<
             transactionDb
           )
         : undefined;
+      const supervision = options.claimTeacherChatDeliveries
+        ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
+      const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
+        ? supervision.context : undefined;
+      const authority = classroomContext ? { supervisionContextId: classroomContext.id }
+        : owner ? { teachingSessionId: owner.session.id } : undefined;
+      const parentCondition = classroomContext
+        ? eq(classpilotChatDeliveries.supervisionContextId, classroomContext.id)
+        : owner ? eq(classpilotChatDeliveries.teachingSessionId, owner.session.id) : sql`false`;
       const claimed: ClasspilotClaimedTeacherChatDelivery[] = [];
       if (
-        owner
+        authority
         && await hasCurrentClasspilotStudentControlAuthority({
           schoolId: options.schoolId,
           studentId: options.studentId,
-          teachingSessionId: owner.session.id,
+          ...authority,
         }, transactionDb)
       ) {
         const now = new Date();
@@ -18797,7 +18854,7 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           .where(and(
             eq(classpilotChatDeliveries.schoolId, options.schoolId),
             eq(classpilotChatDeliveries.studentId, options.studentId),
-            eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
+            parentCondition,
             inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"]),
             sql`${classpilotChatDeliveries.expiresAt} <= ${now}`
           ));
@@ -18807,22 +18864,14 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           .innerJoin(chatMessages, and(
             eq(chatMessages.id, classpilotChatDeliveries.chatMessageId),
             eq(chatMessages.schoolId, classpilotChatDeliveries.schoolId),
-            eq(chatMessages.studentId, classpilotChatDeliveries.studentId)
-          ))
-          .innerJoin(teachingSessions, and(
-            eq(teachingSessions.id, classpilotChatDeliveries.teachingSessionId),
-            eq(teachingSessions.schoolId, classpilotChatDeliveries.schoolId),
-            isNull(teachingSessions.endTime)
-          ))
-          .innerJoin(classpilotSessionStudents, and(
-            eq(classpilotSessionStudents.schoolId, classpilotChatDeliveries.schoolId),
-            eq(classpilotSessionStudents.teachingSessionId, classpilotChatDeliveries.teachingSessionId),
-            eq(classpilotSessionStudents.studentId, classpilotChatDeliveries.studentId)
+            eq(chatMessages.studentId, classpilotChatDeliveries.studentId),
+            sql`${chatMessages.sessionId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.teachingSessionId}`,
+            sql`${chatMessages.supervisionContextId} IS NOT DISTINCT FROM ${classpilotChatDeliveries.supervisionContextId}`
           ))
           .where(and(
             eq(classpilotChatDeliveries.schoolId, options.schoolId),
             eq(classpilotChatDeliveries.studentId, options.studentId),
-            eq(classpilotChatDeliveries.teachingSessionId, owner.session.id),
+            parentCondition,
             inArray(classpilotChatDeliveries.state, ["queued", "attempted", "retry"]),
             sql`${classpilotChatDeliveries.nextAttemptAt} <= ${now}`,
             gt(classpilotChatDeliveries.expiresAt, now)
@@ -18951,6 +19000,7 @@ export async function deleteAuthorizedClasspilotChatMessage(options: {
   schoolId: string;
   messageId: string;
   actorId: string;
+  contextAuthorityRevision?: string;
 }): Promise<ChatMessage> {
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -18967,7 +19017,7 @@ export async function deleteAuthorizedClasspilotChatMessage(options: {
     if (!message) {
       throw classpilotFabMutationError(404, "chat_message_not_found", "Message not found");
     }
-    const [authorizedStaff] = await tx
+    const [authorizedStaff] = message.sessionId ? await tx
       .select({ id: classpilotSessionStaff.id })
       .from(classpilotSessionStaff)
       .where(and(
@@ -18976,10 +19026,16 @@ export async function deleteAuthorizedClasspilotChatMessage(options: {
         eq(classpilotSessionStaff.staffId, options.actorId)
       ))
       .limit(1)
-      .for("share");
+      .for("share") : await tx.select({ id: classpilotSupervisionContexts.id }).from(classpilotSupervisionContexts)
+        .where(and(eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          eq(classpilotSupervisionContexts.id, message.supervisionContextId!),
+          eq(classpilotSupervisionContexts.assignedStaffId, options.actorId))).limit(1).for("share");
     if (!authorizedStaff) {
       throw classpilotFabMutationError(404, "chat_message_not_found", "Message not found");
     }
+    if (message.supervisionContextId) await requireScheduledClassroomContext({ schoolId: options.schoolId,
+      supervisionContextId: message.supervisionContextId, actorId: options.actorId, lock: true,
+      contextAuthorityRevision: options.contextAuthorityRevision ?? "" }, transactionDb);
     await tx.delete(classpilotChatDeliveries).where(and(
       eq(classpilotChatDeliveries.chatMessageId, message.id),
       eq(classpilotChatDeliveries.schoolId, options.schoolId)
@@ -19105,11 +19161,10 @@ export async function getActiveHandsForStudent(
       and(
         eq(classpilotStudentControlStates.schoolId, schoolId),
         eq(classpilotStudentControlStates.studentId, classpilotActiveHands.studentId),
-        eq(
-          classpilotStudentControlStates.teachingSessionId,
-          classpilotActiveHands.teachingSessionId
-        ),
-        isNull(classpilotStudentControlStates.supervisionContextId)
+        or(and(eq(classpilotStudentControlStates.teachingSessionId, classpilotActiveHands.teachingSessionId),
+          isNull(classpilotStudentControlStates.supervisionContextId)),
+          and(eq(classpilotStudentControlStates.supervisionContextId, classpilotActiveHands.supervisionContextId),
+            isNull(classpilotStudentControlStates.teachingSessionId)))
       )
     )
     .where(
@@ -19258,6 +19313,8 @@ export async function createPollResponseFirstWrite(options: {
   studentSessionId: string;
   deviceId: string;
   selectedOption: number;
+  supervisionContextId?: string;
+  studentControlRevision?: number;
 }): Promise<CreatePollResponseResult> {
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -19328,6 +19385,7 @@ export async function createPollResponseFirstWrite(options: {
       .select({
         teachingSessionId: classpilotStudentControlStates.teachingSessionId,
         supervisionContextId: classpilotStudentControlStates.supervisionContextId,
+        revision: classpilotStudentControlStates.revision,
       })
       .from(classpilotStudentControlStates)
       .where(and(
@@ -19341,13 +19399,22 @@ export async function createPollResponseFirstWrite(options: {
       options.studentId,
       transactionDb
     );
-    if (
+    const supervision = poll.supervisionContextId
+      ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
+    const contextAuthorized = !!poll.supervisionContextId && options.supervisionContextId === poll.supervisionContextId
+      && scheduledContextHasClassroomTools(supervision?.context)
+      && supervision.context.id === poll.supervisionContextId
+      && target.supervisionContextId === poll.supervisionContextId && target.teachingSessionId === null
+      && controlState?.supervisionContextId === poll.supervisionContextId && controlState.teachingSessionId === null
+      && Number.isSafeInteger(options.studentControlRevision) && options.studentControlRevision === controlState.revision
+      && await scheduledClassroomBindingCapable(options);
+    if (poll.supervisionContextId ? !contextAuthorized : (
       target.teachingSessionId !== poll.sessionId
       || target.supervisionContextId !== null
       || controlState?.teachingSessionId !== poll.sessionId
       || controlState.supervisionContextId !== null
       || owner?.session.id !== poll.sessionId
-    ) {
+    )) {
       throw Object.assign(new Error("Poll classroom authority changed"), {
         status: 409,
         code: "POLL_AUTHORITY_STALE",
@@ -19395,7 +19462,8 @@ export type ClasspilotCommandPollMutation =
 function frozenClasspilotCommandTargetResult(
   commandData: InsertClasspilotCommand,
   target: InsertClasspilotCommandTarget,
-  controlRevision: number
+  controlRevision: number,
+  classroomAuthorityRevision?: number
 ): InsertClasspilotCommandTarget["result"] {
   const commandPayload = commandData.commandPayload
     && typeof commandData.commandPayload === "object"
@@ -19405,12 +19473,14 @@ function frozenClasspilotCommandTargetResult(
   const freezesExactTabAuthority = commandData.commandType === "close-tabs"
     && Array.isArray(commandPayload.tabsToClose);
   const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
+  const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "student-sign-out"].includes(commandData.commandType);
   const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
     && commandPayload.currentPage === true;
   if (
     !freezesExactTabAuthority
     && !freezesDurableMessageAuthority
     && !freezesCurrentPageAuthority
+    && !freezesScheduledAuthority
   ) return target.result;
   return {
     ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
@@ -19419,6 +19489,8 @@ function frozenClasspilotCommandTargetResult(
     ...(freezesDurableMessageAuthority
       ? { durableAuthorityRevision: controlRevision }
       : {}),
+    ...(freezesScheduledAuthority ? { scheduledAuthorityRevision: controlRevision,
+      ...(classroomAuthorityRevision !== undefined ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}) } : {}),
     ...(freezesExactTabAuthority || freezesCurrentPageAuthority
       ? { frozenControlRevision: controlRevision }
       : {}),
@@ -19429,6 +19501,8 @@ const classpilotCommandAuthorityResultKeys = [
   "exactTabCloseVersion",
   "frozenControlRevision",
   "durableAuthorityRevision",
+  "scheduledAuthorityRevision",
+  "scheduledContextAuthorityRevision",
 ] as const;
 
 /**
@@ -19480,6 +19554,7 @@ export async function createClasspilotCommandWithTargets(
       teachingSessionId?: string;
       supervisionContextId?: string;
       actorMayUseAdminAuthority?: boolean;
+      contextAuthorityRevision?: string;
     };
     pollMutation?: ClasspilotCommandPollMutation;
   } = {}
@@ -19488,6 +19563,7 @@ export async function createClasspilotCommandWithTargets(
     return await db.transaction(async (tx) => {
     let authoritativeTargets = targetData;
     let teachingSession: TeachingSession | undefined;
+    let classroomContext: ClasspilotSupervisionContext | undefined;
     if (options.authority) {
       const authority = options.authority;
       const hasTeachingAuthority = !!authority.teachingSessionId;
@@ -19645,6 +19721,12 @@ export async function createClasspilotCommandWithTargets(
             code: "COMMAND_SUPERVISION_CONTEXT_STALE",
           });
         }
+        if (scheduledContextHasClassroomTools(context)) classroomContext = context;
+        if (authority.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, authority.contextAuthorityRevision);
+        if (!["open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message", "apply-flight-path", "remove-flight-path", "apply-block-list", "remove-block-list"].includes(commandData.commandType)
+          && (!classroomContext || context.assignedStaffId !== authority.actorId)) {
+          throw Object.assign(new Error("This supervision context does not allow classroom tools"), { status: 403, code: "CLASSROOM_TOOLS_UNAVAILABLE" });
+        }
 
         let actorAuthorized = context.assignedStaffId === authority.actorId;
         if (!actorAuthorized && authority.actorMayUseAdminAuthority === true) {
@@ -19732,7 +19814,8 @@ export async function createClasspilotCommandWithTargets(
           const result = frozenClasspilotCommandTargetResult(
             commandData,
             target,
-            control!.revision
+            control!.revision,
+            context.classroomAuthorityRevision
           );
           return result === target.result ? target : { ...target, result };
         });
@@ -19745,15 +19828,16 @@ export async function createClasspilotCommandWithTargets(
 
     let pollExpiresAt: Date | undefined;
     if (options.pollMutation?.action === "start") {
-      if (!teachingSession || !commandData.teachingSessionId) {
+      if ((!teachingSession || !commandData.teachingSessionId) && !classroomContext) {
         throw Object.assign(new Error("Poll command requires an active class session"), {
           status: 409,
           code: "POLL_SESSION_REQUIRED",
         });
       }
       const maximumExpiry = new Date(Date.now() + 12 * 60 * 60 * 1000);
-      pollExpiresAt = teachingSession.scheduledEndAt && teachingSession.scheduledEndAt < maximumExpiry
-        ? teachingSession.scheduledEndAt
+      const activityEnd = classroomContext?.endsAt ?? teachingSession?.scheduledEndAt;
+      pollExpiresAt = activityEnd && activityEnd < maximumExpiry
+        ? activityEnd
         : maximumExpiry;
       const pollExpiryIso = pollExpiresAt.toISOString();
       commandData = {
@@ -19786,7 +19870,7 @@ export async function createClasspilotCommandWithTargets(
       : [];
 
     if (options.pollMutation) {
-      if (!teachingSession || !commandData.teachingSessionId) {
+      if ((!teachingSession || !commandData.teachingSessionId) && !classroomContext) {
         throw Object.assign(new Error("Poll command requires an active class session"), {
           status: 409,
           code: "POLL_SESSION_REQUIRED",
@@ -19796,7 +19880,8 @@ export async function createClasspilotCommandWithTargets(
         await tx.insert(polls).values({
           id: options.pollMutation.pollId,
           schoolId: command.schoolId,
-          sessionId: teachingSession.id,
+          sessionId: teachingSession?.id ?? null,
+          supervisionContextId: classroomContext?.id ?? null,
           teacherId: command.teacherId,
           startCommandId: command.id,
           question: options.pollMutation.question,
@@ -19815,7 +19900,7 @@ export async function createClasspilotCommandWithTargets(
           .where(and(
             eq(polls.id, options.pollMutation.pollId),
             eq(polls.schoolId, command.schoolId),
-            eq(polls.sessionId, teachingSession.id),
+            classroomContext ? eq(polls.supervisionContextId, classroomContext.id) : eq(polls.sessionId, teachingSession!.id),
             eq(polls.isActive, true)
           ))
           .returning({ id: polls.id });
@@ -19833,7 +19918,7 @@ export async function createClasspilotCommandWithTargets(
     if (
       options.pollMutation?.action === "start" &&
       databaseError?.code === "23505" &&
-      databaseError?.constraint === "polls_active_session_unique"
+      ["polls_active_session_unique", "polls_active_context_unique"].includes(databaseError?.constraint)
     ) {
       throw Object.assign(new Error("This class already has an active poll"), {
         status: 409,
@@ -20303,6 +20388,15 @@ export async function persistClasspilotCommandTargetAck(
       ? target.result as Record<string, unknown>
       : {};
     const exactTabCloseV2 = frozenResult.exactTabCloseVersion === 2;
+    if (binding.commandSupervisionContextId && ["timer", "poll", "student-sign-out"].includes(binding.commandType)) {
+      const revision = frozenResult.scheduledAuthorityRevision;
+      if (!Number.isSafeInteger(revision) || options.controlRevision !== revision
+        || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,
+          supervisionContextId: binding.commandSupervisionContextId, ownershipRevision: Number(revision) }, transactionDb))) {
+        return { disposition: "terminal_rejected" as const, retryable: false as const,
+          code: "COMMAND_ACK_BINDING_MISMATCH" as const, target };
+      }
+    }
     const commandPayload = binding.commandPayload
       && typeof binding.commandPayload === "object"
       && !Array.isArray(binding.commandPayload)
@@ -21172,7 +21266,7 @@ export async function replaceClasspilotStudentControlSnapshots(
       .where(and(
         eq(classpilotActiveHands.schoolId, options.schoolId),
         inArray(classpilotActiveHands.studentId, authorizedStudentIds),
-        ne(classpilotActiveHands.teachingSessionId, options.teachingSessionId),
+        sql`${classpilotActiveHands.teachingSessionId} IS DISTINCT FROM ${options.teachingSessionId}`,
         isNull(classpilotActiveHands.clearedAt)
       ));
 
@@ -21299,6 +21393,7 @@ export async function replaceClasspilotSupervisionControlSnapshots(
      * re-acknowledgement run.
      */
     forceRevision?: boolean;
+    classroomCommand?: { commandId: string; commandType: string; payload: Record<string, unknown>; actorId: string };
   },
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState[]> {
@@ -21441,14 +21536,15 @@ export async function replaceClasspilotSupervisionControlSnapshots(
       if (studentIds.length === 0) return [];
     }
 
-    // Coverage owns no classroom FAB. Clear every still-active class hand as
-    // part of the same locked ownership transition.
+    // Only displaced authorities lose their hands. Updating a restriction
+    // within the current scheduled activity must preserve its raised hands.
     await tx
       .update(classpilotActiveHands)
       .set({ clearedAt: now, updatedAt: now })
       .where(and(
         eq(classpilotActiveHands.schoolId, options.schoolId),
         inArray(classpilotActiveHands.studentId, studentIds),
+        sql`${classpilotActiveHands.supervisionContextId} IS DISTINCT FROM ${options.supervisionContextId}`,
         isNull(classpilotActiveHands.clearedAt)
       ));
 
@@ -21524,6 +21620,10 @@ export async function replaceClasspilotSupervisionControlSnapshots(
       const resolved = row || currentByStudent.get(studentId) || null;
       if (resolved) rows.push(resolved);
     }
+    if (options.classroomCommand && scheduledContextHasClassroomTools(context, now)) {
+      await persistScheduledClassroomStateRecords({ ...options.classroomCommand, schoolId: options.schoolId,
+        contextId: context.id, studentIds: rows.map((row) => row.studentId), endsAt: context.endsAt, now }, transactionDb);
+    }
     return rows;
   });
 }
@@ -21578,6 +21678,13 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const [releasedContext] = await tx.select().from(classpilotSupervisionContexts).where(and(
+      eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.id, options.supervisionContextId))).limit(1);
+    if (releasedContext?.status === "ended" || (releasedContext && releasedContext.endsAt <= now)) {
+      await finalizeScheduledClassroomTools(options.schoolId, options.supervisionContextId, now, transactionDb);
+    } else {
+      await releaseScheduledClassroomStudentTools(options.schoolId, options.supervisionContextId, studentIds, now, transactionDb);
+    }
     const currentRows = await tx
       .select()
       .from(classpilotStudentControlStates)
@@ -22245,7 +22352,8 @@ export async function upsertClasspilotClassroomStates(
       .where(
         and(
           eq(classpilotClassroomStates.schoolId, state.schoolId),
-          eq(classpilotClassroomStates.teachingSessionId, state.teachingSessionId),
+          state.supervisionContextId ? eq(classpilotClassroomStates.supervisionContextId, state.supervisionContextId)
+            : state.teachingSessionId ? eq(classpilotClassroomStates.teachingSessionId, state.teachingSessionId) : sql`false`,
           state.studentId === null || state.studentId === undefined
             ? isNull(classpilotClassroomStates.studentId)
             : eq(classpilotClassroomStates.studentId, state.studentId),
@@ -23008,6 +23116,11 @@ export type ClasspilotScreenshotAuthorityClaim =
       kind: "teaching_session";
       teachingSessionId: string;
       controlRevision: number;
+    }
+  | {
+      kind: "supervision_context";
+      supervisionContextId: string;
+      controlRevision: number;
     };
 
 export type ClasspilotScreenshotAuthorityProjection = {
@@ -23184,6 +23297,28 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
       ? session.manualLeaseExpiresAt
       : null,
   };
+  if (controlState?.supervisionContextId && controlState.hardExpiresAt && isScheduledClassroomEnabled(options.schoolId)) {
+    const [claim] = await dbInstance.select({ context: classpilotSupervisionContexts, assignedAt: classpilotSupervisionStudents.assignedAt })
+      .from(classpilotSupervisionContexts).innerJoin(classpilotSupervisionStudents, and(
+        eq(classpilotSupervisionStudents.contextId, classpilotSupervisionContexts.id),
+        eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.studentId, options.studentId),
+        isNull(classpilotSupervisionStudents.releasedAt)))
+      .where(and(eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.id, controlState.supervisionContextId),
+        eq(classpilotSupervisionContexts.status, "active"), lte(classpilotSupervisionContexts.startsAt, new Date()),
+        gt(classpilotSupervisionContexts.endsAt, new Date()), or(isNotNull(classpilotSupervisionContexts.scheduledConflictId), and(
+          isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId), isNotNull(classpilotSupervisionContexts.scheduleProfileDate),
+          isNotNull(classpilotSupervisionContexts.scheduleProfileBlockId))))).limit(1).for("share");
+    const retention = claim && await resolveClasspilotSupervisionRetentionTarget({ schoolId: options.schoolId, studentId: options.studentId,
+      supervisionContextId: claim.context.id, controlRevision, hardExpiresAt: controlState.hardExpiresAt, scheduledEndAt: controlState.scheduledEndAt }, dbInstance);
+    if (claim && retention) return {
+      ...studentAuthority,
+      authority: { kind: "supervision_context", supervisionContextId: claim.context.id, controlRevision },
+      authorityStartedAt: new Date(Math.max(session.startedAt.getTime(), claim.context.startsAt.getTime(), claim.assignedAt.getTime())),
+      authorityStartedAtSource: "supervision_assignment_started",
+      supervisionRetention: retention,
+      authorityExpiresAt: earliestClasspilotAuthorityExpiry(studentAuthority.authorityExpiresAt, retention.expiresAt),
+    };
+  }
   // A supervision claim writes teachingSessionId = null and a non-null
   // supervisionContextId, so it fails the teaching gate below on both counts.
   // Resolve its retention target first: the returned authority is still the
@@ -23318,8 +23453,10 @@ function classpilotScreenshotAuthorityMatches(
   return expected.kind === "student_session"
     || (
       current.kind === "teaching_session"
+      && expected.kind === "teaching_session"
       && expected.teachingSessionId === current.teachingSessionId
-    );
+    ) || (current.kind === "supervision_context" && expected.kind === "supervision_context"
+      && expected.supervisionContextId === current.supervisionContextId);
 }
 
 export async function withClasspilotScreenshotUploadAuthority<T>(options: {
@@ -23458,6 +23595,9 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
   deviceId: string;
   controlRevision: number;
   allowEndedBinding?: boolean;
+  actorId?: string;
+  scheduledClassroomOnly?: boolean;
+  contextAuthorityRevision?: string;
 }, callback: (target: {
   assignedStaffId: string;
   supervisionContextId: string;
@@ -23465,6 +23605,7 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
 }) => Promise<T> | T, dbInstance: typeof db = db): Promise<T | undefined> {
   return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
+    if (options.scheduledClassroomOnly) await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
     await lockClasspilotStudentControlAuthorities(
       options.schoolId,
       [options.studentId],
@@ -23490,10 +23631,7 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
 
     const [context] = await tx
-      .select({
-        id: classpilotSupervisionContexts.id,
-        assignedStaffId: classpilotSupervisionContexts.assignedStaffId,
-      })
+      .select()
       .from(classpilotSupervisionContexts)
       .where(and(
         eq(classpilotSupervisionContexts.id, options.supervisionContextId),
@@ -23504,6 +23642,10 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
       .limit(1)
       .for("share");
     if (!context) return undefined;
+
+    if (options.scheduledClassroomOnly && (!scheduledContextHasClassroomTools(context)
+      || !options.actorId || context.assignedStaffId !== options.actorId)) return undefined;
+    if (options.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, options.contextAuthorityRevision);
 
     const [assignment] = await tx
       .select({ studentId: classpilotSupervisionStudents.studentId })
@@ -24140,6 +24282,7 @@ export async function releaseSupervisionStudents(options: {
   contextId: string;
   studentIds?: string[];
   releaseReason?: string;
+  scheduledClassroomAuthority?: { actorId: string; contextAuthorityRevision: string };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const conditions: SQL[] = [
     eq(classpilotSupervisionStudents.schoolId, options.schoolId),
@@ -24161,6 +24304,11 @@ export async function releaseSupervisionStudents(options: {
       releasing.map((row) => row.studentId),
       tx as unknown as typeof db
     );
+    if (options.scheduledClassroomAuthority) {
+      await assertClasspilotEntitled(options.schoolId, tx as unknown as typeof db, { lock: true });
+      await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: options.contextId,
+        ...options.scheduledClassroomAuthority, lock: true }, tx as unknown as typeof db);
+    }
     const releasedAt = new Date();
     await syncSupervisionActivityReports({
       schoolId: options.schoolId, contextIds: [options.contextId], now: releasedAt,
@@ -24289,13 +24437,16 @@ export async function extendSupervisionContext(options: {
     await syncSupervisionActivityReports({
       schoolId: options.schoolId, contextIds: [options.contextId], now: summaryAt,
     }, transactionDb);
-    if (!row || !options.endsAt) return row;
+    const staffChanged = !!row && currentContext.assignedStaffId !== row.assignedStaffId;
+    if (staffChanged) await finalizeScheduledClassroomTools(options.schoolId, options.contextId, summaryAt, transactionDb);
+    if (!row || (!options.endsAt && !staffChanged)) return row;
 
     if (studentIds.length > 0) {
       await replaceClasspilotSupervisionControlSnapshots({
         schoolId: options.schoolId,
         supervisionContextId: options.contextId,
         studentIds,
+        forceRevision: staffChanged,
         desiredState: (
           _studentId: string,
           current: ClasspilotStudentControlState | null
@@ -24395,7 +24546,7 @@ export async function releaseScheduledConflictSupervision(
  * conflicts so direct-pickup and ad-hoc coverage cannot leave stale authority
  * in the durable control-state row. */
 export async function releaseExpiredClasspilotSupervisionContexts(
-  options: { now?: Date; schoolId?: string } = {},
+  options: { now?: Date; schoolId?: string; limit?: number } = {},
   dbInstance: typeof db = db
 ): Promise<ClasspilotSupervisionStudent[]> {
   const endedAt = options.now || new Date();
@@ -24410,7 +24561,9 @@ export async function releaseExpiredClasspilotSupervisionContexts(
     const candidates = await tx
       .select()
       .from(classpilotSupervisionContexts)
-      .where(and(...contextConditions));
+      .where(and(...contextConditions))
+      .orderBy(classpilotSupervisionContexts.endsAt, classpilotSupervisionContexts.id)
+      .limit(options.limit == null ? 10_000 : Math.max(1, Math.min(10_000, Math.floor(options.limit))));
     if (candidates.length === 0) return [];
     const candidateIds = candidates.map((context) => context.id);
     const candidateAssignments = await tx
@@ -27933,7 +28086,7 @@ export async function listEmailAlertsForSchool(
   if (options.severity) conditions.push(eq(emailAlerts.severity, options.severity));
   if (options.safetyAlert) conditions.push(eq(emailAlerts.safetyAlert, options.safetyAlert));
   if (options.studentId) conditions.push(eq(emailAlerts.studentId, options.studentId));
-  if (options.since) conditions.push(sql`${emailAlerts.alertedAt} >= ${options.since}`);
+  if (options.since) conditions.push(gte(emailAlerts.alertedAt, options.since));
 
   return db
     .select()
@@ -28137,8 +28290,8 @@ export async function listStudentTimelineEvents(options: {
     eq(studentTimelineEvents.studentId, options.studentId),
   ];
   if (options.caseId) conditions.push(eq(studentTimelineEvents.caseId, options.caseId));
-  if (options.from) conditions.push(sql`${studentTimelineEvents.occurredAt} >= ${options.from}`);
-  if (options.to) conditions.push(sql`${studentTimelineEvents.occurredAt} <= ${options.to}`);
+  if (options.from) conditions.push(gte(studentTimelineEvents.occurredAt, options.from));
+  if (options.to) conditions.push(lte(studentTimelineEvents.occurredAt, options.to));
   if (options.types?.length) conditions.push(inArray(studentTimelineEvents.eventType, options.types));
 
   return db
@@ -28165,8 +28318,8 @@ export async function listClasspilotAiDecisions(options: {
 }): Promise<ClasspilotAiDecision[]> {
   const conditions: SQL[] = [eq(classpilotAiDecisions.schoolId, options.schoolId)];
   if (options.studentId) conditions.push(eq(classpilotAiDecisions.studentId, options.studentId));
-  if (options.from) conditions.push(sql`${classpilotAiDecisions.createdAt} >= ${options.from}`);
-  if (options.to) conditions.push(sql`${classpilotAiDecisions.createdAt} <= ${options.to}`);
+  if (options.from) conditions.push(gte(classpilotAiDecisions.createdAt, options.from));
+  if (options.to) conditions.push(lte(classpilotAiDecisions.createdAt, options.to));
 
   return db
     .select()

@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import { requireScheduledClassroomContext, parseClasspilotActivityAuthority } from "../../services/classpilotActivityAuthority.js";
+import { getScheduledClassroomHands } from "../../services/classpilotScheduledClassroomTools.js";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
@@ -648,6 +650,18 @@ router.post("/groups", ...auth, async (req, res, next) => {
 router.get("/raised-hands", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
+    if (req.query.supervisionContextId) {
+      const authority = parseClasspilotActivityAuthority(req.query);
+      if (!authority?.supervisionContextId || req.query.sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+      const context = await requireScheduledClassroomContext({ schoolId, supervisionContextId: authority.supervisionContextId,
+        actorId: req.authUser!.id, allowObserve: isAdminRole(req, res) });
+      const hands = await getScheduledClassroomHands(schoolId, context.id);
+      return res.json({ supervisionContextId: context.id, raisedHands: hands.map(({ hand, student }) => ({
+        supervisionContextId: context.id, studentId: student.id,
+        studentName: [student.firstName, student.lastName].filter(Boolean).join(" ").trim() || student.email || student.id,
+        studentEmail: student.email || "", timestamp: hand.raisedAt.toISOString(), expiresAt: hand.expiresAt?.toISOString() || null,
+      })) });
+    }
     const requestedSessionId = String(req.query.sessionId || "").trim();
     const session = requestedSessionId
       ? await getTeachingSessionByIdAndSchool(requestedSessionId, schoolId)

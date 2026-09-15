@@ -26,6 +26,7 @@ import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
 import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
 import { assertClasspilotCapabilityRolloutsEnv } from "./services/classpilotProtocol.js";
 import { assertClasspilotSupervisionPreviewEnv } from "./config/classpilotSupervisionPreviewRollout.js";
+import { assertScheduledClassroomEnvironment } from "./config/classpilotScheduledClassroom.js";
 import {
   hasCompletedSchoolPilotMigration,
   runSchoolPilotMigrationLedger,
@@ -42,6 +43,8 @@ import { stopRuntimePerformanceMetrics } from "./services/runtimePerformanceMetr
 import { SAFETY_CENTER_SQL } from "./db/safetyCenterMigration.js";
 import { MAILPILOT_SAFETY_DURABILITY_SQL } from "./db/mailpilotSafetyDurabilityMigration.js";
 import { CLASSPILOT_SCHEDULING_SQL } from "./db/classpilotSchedulingMigration.js";
+import { CLASSPILOT_SCHEDULE_BOUNDARY_SQL } from "./db/classpilotScheduleBoundaryMigration.js";
+import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "./db/classpilotScheduledClassroomMigration.js";
 import { ROSTER_INTEGRATIONS_SQL } from "./db/rosterIntegrationsMigration.js";
 import { CLASSPILOT_SCHOOL_WEBSITE_POLICY_SQL } from "./db/classpilotSchoolWebsitePolicyMigration.js";
 import { CLASSPILOT_CONTENT_CATEGORIES_SQL } from "./db/classpilotContentCategoriesMigration.js";
@@ -273,6 +276,7 @@ function validateEnv(): void {
   // A supervision-preview value an operator meant as an enablement but that
   // would silently read as off is worse than no value at all.
   assertClasspilotSupervisionPreviewEnv();
+  assertScheduledClassroomEnvironment();
 }
 
 validateEnv();
@@ -2021,6 +2025,7 @@ export async function runStartupMigrations(): Promise<void> {
       )
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_active_hands_session_idx ON classpilot_active_hands (school_id, teaching_session_id)`);
+    await pool.query(`ALTER TABLE classpilot_active_hands ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_active_hands_student_idx ON classpilot_active_hands (school_id, student_id)`);
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS classpilot_active_hands_active_unique
@@ -2036,7 +2041,7 @@ export async function runStartupMigrations(): Promise<void> {
         ON student.id = hand.student_id AND student.school_id = hand.school_id
       LEFT JOIN devices device
         ON device.device_id = hand.device_id AND device.school_id = hand.school_id
-      WHERE session.id IS NULL
+      WHERE hand.teaching_session_id IS NOT NULL AND (session.id IS NULL
          OR student.id IS NULL
          OR (
            device.device_id IS NULL
@@ -2044,7 +2049,7 @@ export async function runStartupMigrations(): Promise<void> {
              hand.cleared_at IS NULL
              OR EXISTS (SELECT 1 FROM devices any_device WHERE any_device.device_id = hand.device_id)
            )
-         )
+         ))
     `);
     if (Number(invalidActiveHandParents.rows[0]?.count || 0) !== 0) {
       throw new Error("ClassPilot active-hand parent tenant verification failed");
@@ -2053,6 +2058,11 @@ export async function runStartupMigrations(): Promise<void> {
       CREATE OR REPLACE FUNCTION classpilot_validate_active_hand_parents()
       RETURNS trigger LANGUAGE plpgsql AS $classpilot_active_hand_parents$
       BEGIN
+        -- Expanded rows remain guarded during legacy bootstrap convergence.
+        IF to_jsonb(NEW)->>'supervision_context_id' IS NOT NULL THEN
+          PERFORM classpilot_validate_activity_record(to_jsonb(NEW), 'teaching_session_id', TG_TABLE_NAME, TG_OP, to_jsonb(OLD));
+          RETURN NEW;
+        END IF;
         IF NOT EXISTS (
           SELECT 1
           FROM teaching_sessions session
@@ -2123,7 +2133,7 @@ export async function runStartupMigrations(): Promise<void> {
       FROM session_settings setting
       LEFT JOIN teaching_sessions session
         ON session.id = setting.session_id AND session.school_id = setting.school_id
-      WHERE session.id IS NULL
+      WHERE setting.session_id IS NOT NULL AND session.id IS NULL
     `);
     if (Number(invalidSessionSettingParents.rows[0]?.count || 0) !== 0) {
       throw new Error("ClassPilot session-setting parent tenant verification failed");
@@ -2137,6 +2147,11 @@ export async function runStartupMigrations(): Promise<void> {
       RETURNS trigger LANGUAGE plpgsql AS $classpilot_session_setting$
       DECLARE expected_school TEXT;
       BEGIN
+        -- Expanded rows remain guarded during legacy bootstrap convergence.
+        IF to_jsonb(NEW)->>'supervision_context_id' IS NOT NULL THEN
+          PERFORM classpilot_validate_activity_record(to_jsonb(NEW), 'session_id', TG_TABLE_NAME, TG_OP, to_jsonb(OLD));
+          RETURN NEW;
+        END IF;
         SELECT school_id INTO expected_school FROM teaching_sessions WHERE id = NEW.session_id;
         IF expected_school IS NULL OR (NEW.school_id IS NOT NULL AND NEW.school_id <> expected_school) THEN
           RAISE EXCEPTION 'session setting tenant does not match teaching session' USING ERRCODE = '23514';
@@ -2193,7 +2208,7 @@ export async function runStartupMigrations(): Promise<void> {
         ON session.id = delivery.teaching_session_id AND session.school_id = delivery.school_id
       LEFT JOIN students student
         ON student.id = delivery.student_id AND student.school_id = delivery.school_id
-      WHERE message.id IS NULL OR session.id IS NULL OR student.id IS NULL
+      WHERE delivery.teaching_session_id IS NOT NULL AND (message.id IS NULL OR session.id IS NULL OR student.id IS NULL)
     `);
     if (Number(invalidChatDeliveryParents.rows[0]?.count || 0) !== 0) {
       throw new Error("ClassPilot chat-delivery parent tenant verification failed");
@@ -2202,6 +2217,11 @@ export async function runStartupMigrations(): Promise<void> {
       CREATE OR REPLACE FUNCTION classpilot_validate_chat_delivery_parents()
       RETURNS trigger LANGUAGE plpgsql AS $classpilot_chat_delivery_parents$
       BEGIN
+        -- Expanded rows remain guarded during legacy bootstrap convergence.
+        IF to_jsonb(NEW)->>'supervision_context_id' IS NOT NULL THEN
+          PERFORM classpilot_validate_activity_record(to_jsonb(NEW), 'teaching_session_id', TG_TABLE_NAME, TG_OP, to_jsonb(OLD));
+          RETURN NEW;
+        END IF;
         IF NOT EXISTS (
           SELECT 1
           FROM chat_messages message
@@ -2245,6 +2265,7 @@ export async function runStartupMigrations(): Promise<void> {
       )
     `);
     await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
     await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS start_command_id VARCHAR`);
     await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS close_command_id VARCHAR`);
     await pool.query(`ALTER TABLE polls ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`);
@@ -2265,6 +2286,11 @@ export async function runStartupMigrations(): Promise<void> {
         start_command_matches BOOLEAN;
         close_command_matches BOOLEAN;
       BEGIN
+        -- Expanded rows remain guarded during legacy bootstrap convergence.
+        IF to_jsonb(NEW)->>'supervision_context_id' IS NOT NULL THEN
+          PERFORM classpilot_validate_activity_record(to_jsonb(NEW), 'session_id', TG_TABLE_NAME, TG_OP, to_jsonb(OLD));
+          RETURN NEW;
+        END IF;
         SELECT school_id INTO expected_school FROM teaching_sessions WHERE id = NEW.session_id;
         IF expected_school IS NULL OR (NEW.school_id IS NOT NULL AND NEW.school_id <> expected_school) THEN
           RAISE EXCEPTION 'poll tenant does not match teaching session' USING ERRCODE = '23514';
@@ -2319,7 +2345,7 @@ export async function runStartupMigrations(): Promise<void> {
     await schedulerPool.query(`
       WITH ranked AS (
         SELECT id, row_number() OVER (
-          PARTITION BY school_id, session_id ORDER BY created_at DESC, id DESC
+          PARTITION BY school_id, session_id, supervision_context_id ORDER BY created_at DESC, id DESC
         ) AS ordinal
         FROM polls WHERE is_active = true
       )
@@ -2351,10 +2377,10 @@ export async function runStartupMigrations(): Promise<void> {
        AND close_command.supervision_context_id IS NULL
        AND close_command.command_type = 'poll'
        AND close_command.command_payload->>'action' = 'close'
-      WHERE session.id IS NULL
+      WHERE poll.session_id IS NOT NULL AND (session.id IS NULL
          OR (poll.is_active AND poll.start_command_id IS NULL)
          OR (poll.start_command_id IS NOT NULL AND start_command.id IS NULL)
-         OR (poll.close_command_id IS NOT NULL AND close_command.id IS NULL)
+         OR (poll.close_command_id IS NOT NULL AND close_command.id IS NULL))
     `);
     if (Number(invalidPollParents.rows[0]?.count || 0) !== 0) {
       throw new Error("ClassPilot poll parent authority verification failed");
@@ -4752,11 +4778,11 @@ export async function runStartupMigrations(): Promise<void> {
       WITH ranked AS (
         SELECT hand.id,
                first_value(hand.id) OVER (
-                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id
+                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id, hand.supervision_context_id
                  ORDER BY hand.raised_at, hand.id
                ) AS keeper_hand_id,
                row_number() OVER (
-                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id
+                 PARTITION BY COALESCE(mapping.keeper_id, hand.student_id), hand.teaching_session_id, hand.supervision_context_id
                  ORDER BY hand.raised_at, hand.id
                ) AS ordinal
         FROM classpilot_active_hands hand
@@ -4957,6 +4983,8 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_SCHEDULE_PROFILE_SUPERVISION_SQL);
   await pool.query(CLASSPILOT_COVERAGE_CATEGORIES_SQL);
   await pool.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+  await pool.query(CLASSPILOT_SCHEDULE_BOUNDARY_SQL);
+  await pool.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
 }
 
 async function startServer(): Promise<void> {

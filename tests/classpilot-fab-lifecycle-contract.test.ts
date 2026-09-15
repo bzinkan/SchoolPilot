@@ -92,8 +92,9 @@ describe("ClassPilot FAB lifecycle publication contract", () => {
       fab.indexOf("export async function buildStudentFabState"),
       fab.indexOf("export async function getSessionStudentDeviceIds")
     );
-    assert.equal(builder.match(/studentSessionId,/g)?.length, 2);
+    assert.equal(builder.match(/studentSessionId,/g)?.length, 3);
     assert.equal(builder.match(/schemaVersion: 1,\r?\n\s+studentId,/g)?.length, 2);
+    assert.match(builder, /schemaVersion: 1, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id/);
     const fanout = fab.slice(
       fab.indexOf("export async function updateAndFanoutSessionFabSettings"),
       fab.length

@@ -30,6 +30,7 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, matchesActivityAuthority } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
@@ -117,6 +118,7 @@ import {
   resolveStudentSignOutTargets,
   studentSignOutSelectionBinding,
   studentSupportsCapability,
+  studentSupportsScheduledClassroom,
   studentSignOutCommandPayload,
   sessionFabSettingsPayload,
   tabLimitCommandPayload,
@@ -175,7 +177,7 @@ const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;
 const SCREENSHOT_EVENT_MAX_CONCURRENCY = 3;
 // The WebRTC implementation remains dormant for a future managed-Chromebook
 // validation, but screenshots are the only student-tile viewing surface.
-const LIVE_VIEW_UI_ENABLED = false;
+const LEGACY_LIVE_VIEW_UI_ENABLED = false;
 const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
 const classroomSelectionCache = new Map();
 
@@ -198,9 +200,11 @@ function createRealtimeRequestId(prefix = 'session') {
 
 function realtimeMessageSessionId(message) {
   return message?.teachingSessionId
+    || message?.supervisionContextId
     || message?.sessionId
     || message?.data?.teachingSessionId
     || message?.data?.sessionId
+    || message?.data?.supervisionContextId
     || null;
 }
 
@@ -483,6 +487,8 @@ export default function Dashboard() {
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
   const {
     studentView, setStudentView, summaryQueryKey,
+    scheduledClassEnabled, scheduledActivity, scheduledTransitionKey,
+    refreshDashboardActivity, dashboardActivityError, dashboardActivityLoading, dashboardActivityRefreshing,
     ownSupervisionContexts, displaySupervisionContexts, automaticallyShowingSupervision,
     ownSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
     showOwnSupervision, supervisionSummaryError, supervisionSummaryRefreshing,
@@ -490,13 +496,14 @@ export default function Dashboard() {
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
+  const LIVE_VIEW_UI_ENABLED = scheduledClassEnabled || LEGACY_LIVE_VIEW_UI_ENABLED;
   const activeSessionQueryKey = useMemo(
     () => ['/api/sessions/active', activeSchoolId, currentUser?.id],
     [activeSchoolId, currentUser?.id],
   );
   const claimedStudentsQueryKey = useMemo(
-    () => ['/api/coverage/claimed-students', activeSchoolId, currentUser?.id, 'mine'],
-    [activeSchoolId, currentUser?.id],
+    () => ['/api/coverage/claimed-students', activeSchoolId, currentUser?.id, scheduledClassEnabled ? 'ad_hoc' : 'mine'],
+    [activeSchoolId, currentUser?.id, scheduledClassEnabled],
   );
   const coverageKeysRef = useRef({ summaryQueryKey, claimedStudentsQueryKey });
   const claimedRosterRevisionRef = useRef(null);
@@ -516,6 +523,9 @@ export default function Dashboard() {
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const [endClassTarget, setEndClassTarget] = useState(null);
+  const [endTestingTarget, setEndTestingTarget] = useState(null);
+  const endTestingBusyRef = useRef(false);
+  const activityBannerRef = useRef(null);
   const [sessionReportTarget, setSessionReportTarget] = useState(null);
   const [showPastSessions, setShowPastSessions] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
@@ -643,7 +653,7 @@ export default function Dashboard() {
     timer: false,
     poll: false,
   });
-  const effectiveSessionIdRef = useRef(null);
+  const effectiveActivityIdRef = useRef(null);
   const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
   const LIVE_VIEW_CONNECT_TIMEOUT_MS = 12000;
   const activeLiveViewStudentIdRef = useRef(null);
@@ -855,7 +865,7 @@ export default function Dashboard() {
     dataUpdatedAt: claimedStudentsUpdatedAt,
   } = useQuery({
     queryKey: claimedStudentsQueryKey,
-    queryFn: ({ signal }) => apiRequest('GET', '/coverage/claimed-students?scope=mine', undefined, {
+    queryFn: ({ signal }) => apiRequest('GET', `/coverage/claimed-students?scope=mine${scheduledClassEnabled ? '&category=ad_hoc' : ''}`, undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
     }),
     select: (data) => data?.students || [],
@@ -910,23 +920,62 @@ export default function Dashboard() {
   const retainedObservedSession = observedSession || (adminObservedSessionId ? deniedSelection : null);
   // A failed scoped read must not silently become an unscoped school read
   // when the parent refresh removes the ended session from its active list.
-  const effectiveSession = isAdmin
-    ? retainedObservedSession || activeSession || deniedSelection
-    : activeSession || deniedSelection;
+  const scheduledAssignment = scheduledClassEnabled ? scheduledActivity?.current : null;
+  const chosenActivity = useMemo(() => scheduledAssignment ? {
+    ...(scheduledAssignment.authority?.teachingSessionId === activeSession?.id ? activeSession : {}),
+    ...scheduledAssignment,
+    groupName: scheduledAssignment.name,
+    teacherId: currentUser?.id,
+  } : null, [scheduledAssignment, activeSession, currentUser?.id]);
+  const effectiveActivity = retainedObservedSession || (scheduledClassEnabled
+    ? chosenActivity : activeSession || deniedSelection);
+  const effectiveAuthority = useMemo(() => effectiveActivity
+    ? activityAuthority(effectiveActivity.authority || { teachingSessionId: effectiveActivity.id }) : null,
+  [effectiveActivity]);
+  const contextAuthorityRevision = effectiveActivity?.contextAuthorityRevision ?? null;
+  const effectiveAuthorityKey = JSON.stringify([activityAuthorityKey(effectiveAuthority), contextAuthorityRevision]);
+  const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
+  const activityScopeRef = useRef(activityScopeKey);
+  useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
+  const requestActivityApi = useCallback(async (method, path, body, options = {}) => {
+    try {
+      const data = await apiRequest(method, path, body, {
+        ...options, headers: { ...options.headers, ...activityRequestHeaders(activeSchoolId, contextAuthorityRevision) },
+      });
+      if (activityScopeRef.current !== activityScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError');
+      return data;
+    } catch (error) {
+      if (activityScopeRef.current !== activityScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError');
+      throw error;
+    }
+  }, [activeSchoolId, contextAuthorityRevision, activityScopeKey]);
+  const effectiveAuthorityRef = useRef(effectiveAuthority);
+  const scheduledSupervisionId = effectiveAuthority?.supervisionContextId || null;
+  const ownActiveSession = scheduledClassEnabled
+    ? (scheduledAssignment?.authority?.teachingSessionId ? chosenActivity : null) : activeSession;
+  const { data: scheduledFabSettings } = useQuery({
+    queryKey: ['/api/classpilot/activity-settings', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
+    queryFn: ({ signal }) => requestActivityApi('GET', activityParentPath(effectiveAuthority, 'settings'), undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
+    enabled: Boolean(scheduledSupervisionId),
+    retry: false,
+  });
   const sessionReadAuthorityKey = classpilotSessionAuthorityKey({
-    schoolId: activeSchoolId, viewerId: currentUser?.id, session: effectiveSession,
+    schoolId: activeSchoolId, viewerId: currentUser?.id, session: effectiveActivity,
   });
   const terminalSessionError = sessionReadDenialsRef.current.get(sessionReadAuthorityKey) || null;
   classReadContextRef.current = {
     authorityKey: sessionReadAuthorityKey, selectionKey: classSelectionKey,
-    readerKey: classReaderKey, session: effectiveSession, view: studentView,
+    readerKey: classReaderKey, session: effectiveActivity, view: studentView,
   };
   const dashboardCapabilities = unavailableClassCapabilities(deriveDashboardCapabilities({
     studentView,
     isTeacher,
     isAdmin,
     currentUserId: currentUser?.id,
-    activeSession,
+    activeSession: ownActiveSession,
+    scheduledActivity: scheduledAssignment,
     observedSession: retainedObservedSession,
     coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
   }), studentView === 'class' && Boolean(terminalSessionError));
@@ -935,7 +984,8 @@ export default function Dashboard() {
     isTeacher,
     isAdmin,
     currentUserId: currentUser?.id,
-    activeSession,
+    activeSession: ownActiveSession,
+    scheduledActivity: scheduledAssignment,
     observedSession: retainedObservedSession,
     coverageCommandTypes: coverageCapabilities.commandTypes || coverageCapabilities.allowedCommandTypes,
   }), Boolean(terminalSessionError));
@@ -948,12 +998,12 @@ export default function Dashboard() {
     // carry into an observed or subsequently owned class.
     setTeacherAllowedDomains(new Set());
     void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
-  }, [effectiveSession?.id]);
+  }, [effectiveActivity?.id]);
   useEffect(() => {
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
-  }, [currentUser?.id, dashboardCapabilities.mode, effectiveSession?.id, school?.id]);
+  }, [currentUser?.id, dashboardCapabilities.mode, effectiveActivity?.id, school?.id]);
   useEffect(() => {
     if (!signOutOnlySelectionActive) return;
     setShowOpenTabDialog(false);
@@ -973,7 +1023,11 @@ export default function Dashboard() {
     setShowRerouteDialog(false);
   }, [signOutOnlySelectionActive]);
   useEffect(() => {
-    const sessionId = effectiveSession?.id || null;
+    if (scheduledSupervisionId) {
+      setSessionFabState(normalizeSessionFabState(scheduledFabSettings?.settings || scheduledFabSettings?.state || scheduledFabSettings, effectiveAuthority));
+      return;
+    }
+    const sessionId = effectiveActivity?.id || null;
     if (!dashboardCapabilities.canChangeFabSettings || !sessionId || settings?.activeSessionId !== sessionId) {
       setSessionFabState(null);
       return;
@@ -986,11 +1040,12 @@ export default function Dashboard() {
     }, sessionId));
   }, [
     dashboardCapabilities.canChangeFabSettings,
-    effectiveSession?.id,
+    effectiveActivity?.id,
     settings?.activeSessionId,
     settings?.handRaisingEnabled,
     settings?.sessionFabRevision,
     settings?.studentMessagingEnabled,
+    scheduledSupervisionId, scheduledFabSettings, effectiveAuthority,
   ]);
   // Past sessions are fetched only after the teacher opens the popover so the
   // dashboard mount stays request-for-request identical.
@@ -1012,30 +1067,31 @@ export default function Dashboard() {
     enabled: Boolean(isTeacher && activeSchoolId),
     refetchInterval: 60_000,
   });
-  const effectiveSessionId = effectiveSession?.id || null;
+  const effectiveActivityId = effectiveActivity?.id || null;
   const isStudentOwnedByAnotherClass = useCallback((student) => (
-    !!effectiveSessionId
+    !!effectiveActivityId
     && student?.supervisionContext?.type === "class"
     && student.supervisionContext.id
-    && student.supervisionContext.id !== effectiveSessionId
-  ), [effectiveSessionId]);
+    && student.supervisionContext.id !== effectiveActivityId
+  ), [effectiveActivityId]);
   const isStudentMonitoringSuppressed = useCallback((student) => (
     studentView === 'class'
     && (
-      isStudentInTemporarySupervision(student)
+      (isStudentInTemporarySupervision(student) && student?.supervisionContext?.id !== scheduledSupervisionId)
       || isStudentOwnedByAnotherClass(student)
     )
-  ), [isStudentOwnedByAnotherClass, studentView]);
-  const adminSchoolMode = isAdmin && !effectiveSessionId;
+  ), [isStudentOwnedByAnotherClass, studentView, scheduledSupervisionId]);
+  const adminSchoolMode = isAdmin && !effectiveActivityId && !scheduledClassEnabled && !dashboardActivityLoading;
   useEffect(() => () => {
     // A peer-to-peer stream can outlive signaling. Tear it down whenever the
     // authoritative class context or Live View capability changes, including
     // A→B replacement, A→none session end, and owned-class→Observe.
     cleanupLiveViews();
-  }, [cleanupLiveViews, dashboardCapabilities.canUseLiveView, effectiveSessionId]);
+  }, [cleanupLiveViews, dashboardCapabilities.canUseLiveView, effectiveActivityId]);
   const aggregatedStudentsQueryKey = useMemo(
-    () => makeAggregatedStudentsQueryKey(activeSchoolId, effectiveSessionId, adminSchoolMode),
-    [activeSchoolId, adminSchoolMode, effectiveSessionId],
+    () => scheduledSupervisionId ? ['/api/students-aggregated', activeSchoolId, 'supervision', scheduledSupervisionId, contextAuthorityRevision]
+      : makeAggregatedStudentsQueryKey(activeSchoolId, effectiveActivityId, adminSchoolMode),
+    [activeSchoolId, adminSchoolMode, effectiveActivityId, scheduledSupervisionId, contextAuthorityRevision],
   );
   const aggregatedStudentsScopeKey = JSON.stringify(aggregatedStudentsQueryKey);
   const aggregateReconciliationIntervalMs = useMemo(
@@ -1059,10 +1115,10 @@ export default function Dashboard() {
       const denial = sessionReadDenialsRef.current.get(sessionReadAuthorityKey);
       if (denial) throw denial;
       try {
-        const rows = normalizeAggregatedStudentsResponse(await apiRequest(
+        const rows = normalizeAggregatedStudentsResponse(await requestActivityApi(
           'GET',
-          effectiveSessionId
-            ? `/students-aggregated?teachingSessionId=${encodeURIComponent(effectiveSessionId)}`
+          effectiveActivityId
+            ? `/students-aggregated?${activityAuthorityQuery(effectiveAuthority)}`
             : '/students-aggregated',
           undefined, { signal },
         ));
@@ -1073,23 +1129,24 @@ export default function Dashboard() {
         return rows;
       } catch (error) {
         if (!signal.aborted
-          && isClasspilotSessionUnavailable(error, effectiveSessionId)
+          && isClasspilotSessionUnavailable(error, effectiveActivityId)
           && classReadContextRef.current?.authorityKey === sessionReadAuthorityKey
           && !sessionReadDenialsRef.current.has(sessionReadAuthorityKey)) {
           sessionReadDenialsRef.current.set(sessionReadAuthorityKey, error);
           lastDeniedSelectionRef.current = {
-            selectionKey: classSelectionKey, session: effectiveSession,
+            selectionKey: classSelectionKey, session: effectiveActivity,
           };
           setReadDenialVersion((version) => version + 1);
           void refreshParentSessions().catch(() => {});
+          if (scheduledClassEnabled) void refreshDashboardActivity({ cancelRefetch: true });
         }
         throw error;
       }
     },
     // WebSocket delivery is the fast path, never the only path. Keeping a
     // stable per-view jitter avoids a school-wide bell-time polling herd.
-    enabled: !terminalSessionError,
-    retry: (failureCount, error) => !isClasspilotSessionUnavailable(error, effectiveSessionId)
+    enabled: !terminalSessionError && !dashboardActivityLoading && (!scheduledClassEnabled || Boolean(effectiveAuthority)),
+    retry: (failureCount, error) => !isClasspilotSessionUnavailable(error, effectiveActivityId)
       && error?.response?.status !== 401 && failureCount < 1,
     refetchInterval: terminalSessionError ? false : aggregateReconciliationIntervalMs,
     refetchOnWindowFocus: false,
@@ -1097,7 +1154,7 @@ export default function Dashboard() {
     staleTime: 10000,
     structuralSharing: mergeAggregatedStudents,
   });
-  const studentsSnapshot = terminalSessionError ? undefined : cachedStudentsSnapshot;
+  const studentsSnapshot = scheduledClassEnabled && !effectiveAuthority ? EMPTY_LIST : terminalSessionError ? undefined : cachedStudentsSnapshot;
   const studentsQueryError = Boolean(terminalSessionError) || aggregateQueryError;
   const studentsError = terminalSessionError || aggregateError;
   const refetchStudents = useCallback(() => (
@@ -1121,7 +1178,7 @@ export default function Dashboard() {
         try {
           const response = await queryClient.fetchQuery({
             queryKey: coverageKeysRef.current.claimedStudentsQueryKey, staleTime: 0,
-            queryFn: ({ signal, queryKey }) => apiRequest('GET', '/coverage/claimed-students?scope=mine', undefined, {
+            queryFn: ({ signal, queryKey }) => apiRequest('GET', `/coverage/claimed-students?scope=mine${scheduledClassEnabled ? '&category=ad_hoc' : ''}`, undefined, {
               signal, headers: { 'X-School-Id': queryKey[1] },
             }),
           });
@@ -1151,6 +1208,22 @@ export default function Dashboard() {
         selectionKey: context.selectionKey, session: context.session,
       };
       try {
+        if (context.session.authority?.supervisionContextId) {
+          const refreshedActivity = await refreshDashboardActivity({ cancelRefetch: true, throwOnError: true });
+          const confirmed = refreshedActivity.data?.current;
+          if (classReadContextRef.current?.authorityKey !== context.authorityKey
+            || !confirmed || activityAuthorityKey(confirmed) !== activityAuthorityKey(context.session)
+            || confirmed.status !== 'active') return;
+          sessionReadDenialsRef.current.delete(context.authorityKey);
+          setReadDenialVersion(version => version + 1);
+          const result = await rawRefetchStudents({ cancelRefetch: true });
+          if (result.isError || classReadContextRef.current?.authorityKey !== context.authorityKey) return;
+          lastDeniedSelectionRef.current = null;
+          checkedReadRetryRef.current?.(context.authorityKey);
+          setTileGlobalAuthorizationDenied(false);
+          setReadRetryEpoch(epoch => epoch + 1);
+          return;
+        }
         const refreshed = await refreshParentSessions();
         if (classReadContextRef.current?.selectionKey !== context.selectionKey
           || classReadContextRef.current?.view !== context.view) return;
@@ -1183,7 +1256,7 @@ export default function Dashboard() {
         setReadsRetrying(false);
       }
     });
-  }, [activeSchoolId, currentUser?.id, rawRefetchStudents, refetchStudents, refreshParentSessions]);
+  }, [activeSchoolId, currentUser?.id, rawRefetchStudents, refetchStudents, refreshParentSessions, refreshDashboardActivity, scheduledClassEnabled]);
   const lastSuccessfulReconciliationAtMs = aggregateReconciliation.key === aggregatedStudentsScopeKey
     ? aggregateReconciliation.succeededAtMs
     : null;
@@ -1227,9 +1300,9 @@ export default function Dashboard() {
       .sort(),
   );
   const sessionRealtimeHealthy = Boolean(
-    effectiveSessionId
+    effectiveActivityId
     && sessionSubscriptionState.status === 'active'
-    && sessionSubscriptionState.sessionId === effectiveSessionId,
+    && sessionSubscriptionState.sessionId === effectiveActivityId,
   );
   const monitoringProjectionRef = useRef({ scopeKey: null, displays: null });
   const monitoringDisplaysByStudent = useMemo(() => {
@@ -1312,6 +1385,7 @@ export default function Dashboard() {
     const reconcileVisibleDashboard = () => {
       if (document.visibilityState === 'hidden') return;
       setFreshnessVersion((version) => version + 1);
+      void refreshDashboardActivity({ cancelRefetch: true });
       void refetchStudents();
     };
     const onVisibilityChange = () => {
@@ -1327,7 +1401,7 @@ export default function Dashboard() {
       window.removeEventListener('focus', reconcileVisibleDashboard);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [aggregatedStudentsScopeKey, refetchStudents]);
+  }, [aggregatedStudentsScopeKey, refetchStudents, refreshDashboardActivity]);
 
   useEffect(() => {
     websocketAuthRef.current = currentUser?.id && token ? {
@@ -1349,7 +1423,8 @@ export default function Dashboard() {
     // Replace every piece of event-routing context in one pre-paint step. A
     // socket callback cannot observe session B paired with session A's cache
     // key (or school) while an Observe/teacher context is switching.
-    effectiveSessionIdRef.current = effectiveSessionId;
+    effectiveActivityIdRef.current = effectiveActivityId;
+    effectiveAuthorityRef.current = effectiveAuthority;
     aggregatedStudentsQueryKeyRef.current = aggregatedStudentsQueryKey;
     activeSchoolIdRef.current = activeSchoolId;
     coverageKeysRef.current = { summaryQueryKey, claimedStudentsQueryKey };
@@ -1359,11 +1434,30 @@ export default function Dashboard() {
       clearTimeout(realtimeFlushTimeoutRef.current);
       realtimeFlushTimeoutRef.current = null;
     }
-  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey]);
+  }, [activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority]);
 
   const automaticTestingTargetKey = automaticallyShowingSupervision
     ? displaySupervisionContexts.map((context) => context.id).sort().join(',')
     : '';
+  useLayoutEffect(() => {
+    if (!scheduledClassEnabled) return;
+    setAdminObservedSessionId(null);
+    setSelectedStudentIds(new Set());
+    setSelectedServerSignOutStudentIds(new Set());
+    setSelectedStudentBindingSnapshots(new Map());
+    setSearchQuery(''); setSelectedGrade(''); setSelectedSubgroupId('');
+    setShowOpenTabDialog(false); setShowLockScreenDialog(false); setShowCloseTabsDialog(false);
+    setShowApplyFlightPathDialog(false); setShowFlightPathViewerDialog(false);
+    setShowApplyBlockListDialog(false); setShowBlockListViewerDialog(false);
+    setShowSendMessageDialog(false); setShowSignOutDialog(false); setShowRerouteDialog(false);
+    setShowAttentionDialog(false); setShowTimerDialog(false); setShowPollDialog(false);
+    setShowPollResultsDialog(false); setEndTestingTarget(null); setEndClassTarget(null);
+    setRaisedHands(new Map());
+    setSelectedTabsToClose(new Set()); setManageTabsStudentIds(null); setManageTabsTargetSnapshot('');
+    clearStudentDetails(); cleanupLiveViews();
+    const frame = requestAnimationFrame(() => activityBannerRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [classReaderKey, scheduledClassEnabled, scheduledTransitionKey, clearStudentDetails, cleanupLiveViews]);
   useLayoutEffect(() => {
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
@@ -1374,6 +1468,12 @@ export default function Dashboard() {
   }, [classReaderKey, studentView, automaticTestingTargetKey, clearStudentDetails]);
 
   const openOwnSupervision = useCallback((contexts = []) => {
+    if (scheduledClassEnabled && contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
+      || ['scheduled_testing', 'scheduled_coverage'].includes(context.source))) {
+      setStudentView('class');
+      void refreshDashboardActivity({ cancelRefetch: true });
+      return;
+    }
     if (contexts.length) setConfirmedOwnStart({ scopeKey: classReaderKey, baselineUpdatedAt: claimedStudentsUpdatedAt });
     setAdminObservedSessionId(null);
     setSelectedStudentIds(new Set());
@@ -1391,7 +1491,7 @@ export default function Dashboard() {
         focusSupervisionNoticeRef.current = false;
       }
     });
-  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision]);
+  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision, scheduledClassEnabled, setStudentView, refreshDashboardActivity]);
 
   useEffect(() => {
     if (!activeSchoolId || !currentUser?.id || !hasSupervisionDashboardIntent(location.state)) return;
@@ -1428,18 +1528,30 @@ export default function Dashboard() {
     clearStudentDetails,
     currentUser?.id,
     dashboardCapabilities.mode,
-    effectiveSessionId,
+    effectiveActivityId,
     selectedSubgroupId,
     studentView,
   ]);
 
-  const { data: activeClassroomStates = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/commands/active-state', effectiveSession?.id],
-    queryFn: () => apiRequest('GET', `/commands/active-state?teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
-    select: (data) => data?.states ?? [],
-    enabled: !!effectiveSession?.id,
-    refetchInterval: wsAuthenticated ? false : 30000,
+  const { data: classroomStateResponse } = useQuery({
+    queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
+    queryFn: ({ signal }) => requestActivityApi('GET', `/commands/active-state?${activityAuthorityQuery(effectiveAuthority)}`, undefined, { signal }),
+    enabled: !!effectiveActivity?.id,
+    refetchInterval: scheduledSupervisionId ? 10000 : wsAuthenticated ? false : 30000,
   });
+  const activeClassroomStates = classroomStateResponse?.states ?? EMPTY_LIST;
+  const restoredClassroomTransient = scheduledSupervisionId ? classroomStateResponse?.transient : null;
+  useEffect(() => {
+    if (!restoredClassroomTransient) return;
+    const timer = restoredClassroomTransient.timer;
+    const timerEnd = Date.parse(timer?.endsAt || '');
+    const active = timer?.completedTargetCount > 0 && Number.isFinite(timerEnd) && timerEnd > Date.now();
+    setTimerActive(active);
+    setActivePoll(restoredClassroomTransient.poll?.isActive ? restoredClassroomTransient.poll : null);
+    if (!active) return;
+    const deadline = setTimeout(() => setTimerActive(false), Math.min(2147483647, Math.max(0, timerEnd - Date.now())));
+    return () => clearTimeout(deadline);
+  }, [restoredClassroomTransient]);
 
   useEffect(() => {
     if (!activeLiveViewMonitoringSuppressed) return;
@@ -1447,13 +1559,13 @@ export default function Dashboard() {
   }, [activeLiveViewMonitoringSuppressed, cleanupLiveViews]);
 
   const { data: subgroups = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/groups', effectiveSession?.groupId, 'subgroups'],
+    queryKey: ['/api/groups', effectiveActivity?.groupId, 'subgroups'],
     queryFn: async () => {
-      if (!effectiveSession?.groupId) return [];
-      const data = await apiRequest('GET', `/groups/${effectiveSession.groupId}/subgroups`);
+      if (!effectiveActivity?.groupId) return [];
+      const data = await apiRequest('GET', `/groups/${effectiveActivity.groupId}/subgroups`);
       return data.subgroups || [];
     },
-    enabled: !!effectiveSession?.groupId,
+    enabled: !!effectiveActivity?.groupId,
   });
 
   useEffect(() => {
@@ -1475,7 +1587,7 @@ export default function Dashboard() {
     error: subgroupMembersLoadError,
     refetch: refetchSubgroupMembers,
   } = useQuery(createSubgroupMembersQuery({
-    groupId: effectiveSession?.groupId,
+    groupId: effectiveActivity?.groupId,
     subgroupId: selectedSubgroupId,
     requestApi: apiRequest,
   }));
@@ -1487,20 +1599,20 @@ export default function Dashboard() {
     || (!subgroupMembersFetching && !subgroupMembersError);
 
   const { data: initialRaisedHands } = useQuery({
-    queryKey: ['/api/teacher/raised-hands', effectiveSession?.id],
-    queryFn: () => apiRequest('GET', `/teacher/raised-hands?sessionId=${encodeURIComponent(effectiveSession.id)}`),
-    enabled: !!effectiveSession?.id,
+    queryKey: ['/api/teacher/raised-hands', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
+    queryFn: ({ signal }) => requestActivityApi('GET', `/teacher/raised-hands?${activityAuthorityQuery(effectiveAuthority, true)}`, undefined, { signal }),
+    enabled: !!effectiveActivity?.id,
     refetchInterval: wsAuthenticated ? false : 30000,
   });
 
   const chat = useClasspilotSessionChat({
     schoolId: activeSchoolId,
     viewerId: currentUser?.id,
-    sessionId: effectiveSession?.id,
+    sessionId: effectiveAuthority?.teachingSessionId, supervisionContextId: scheduledSupervisionId, contextAuthorityRevision,
     enabled: dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable
       && !terminalSessionError
       && !(sessionSubscriptionState.status === 'terminal_error'
-        && sessionSubscriptionState.sessionId === effectiveSession?.id),
+        && sessionSubscriptionState.sessionId === effectiveActivity?.id),
     wsAuthenticated,
     students,
     dismissedMessageIds,
@@ -1509,7 +1621,7 @@ export default function Dashboard() {
 
   // Sync initial raised hands to state
   useEffect(() => {
-    if (!effectiveSession?.id) {
+    if (!effectiveActivity?.id) {
       setRaisedHands(new Map());
       return;
     }
@@ -1526,7 +1638,7 @@ export default function Dashboard() {
       });
       setRaisedHands(handsMap);
     }
-  }, [initialRaisedHands, effectiveSession?.id]);
+  }, [initialRaisedHands, effectiveActivity?.id]);
 
   // WebSocket connection with automatic reconnection
   useEffect(() => {
@@ -1549,13 +1661,13 @@ export default function Dashboard() {
         messageSchoolId
         && String(messageSchoolId) !== String(activeSchoolIdRef.current)
       ) return false;
-      const currentSessionId = effectiveSessionIdRef.current;
+      const currentSessionId = effectiveActivityIdRef.current;
       const messageSessionId = realtimeMessageSessionId(message);
       // Admin school-wide has no teaching-session subscription. A delayed
       // event from a previously observed class must not mutate that view;
       // only genuinely school-wide/sessionless messages are eligible.
       if (!currentSessionId) return !messageSessionId;
-      if (messageSessionId) return String(messageSessionId) === String(currentSessionId);
+      if (messageSessionId) return matchesActivityAuthority(message, effectiveAuthorityRef.current);
       const subscription = sessionSubscriptionStateRef.current;
       return subscription.status === 'active'
         && String(subscription.sessionId) === String(currentSessionId)
@@ -1582,7 +1694,7 @@ export default function Dashboard() {
       pendingRealtimeEventsRef.current = [];
       const queryKey = aggregatedStudentsQueryKeyRef.current;
       if (queued.length === 0) return;
-      const currentSessionId = effectiveSessionIdRef.current;
+      const currentSessionId = effectiveActivityIdRef.current;
       const classEvents = coalesceStudentRealtimeEvents(queued
         .filter((entry) => (
           entry.socketGeneration === generation
@@ -1598,7 +1710,7 @@ export default function Dashboard() {
         .map((entry) => entry.message));
       const scope = {
         schoolId: activeSchoolIdRef.current,
-        teachingSessionId: currentSessionId,
+        ...effectiveAuthorityRef.current,
         allowSessionlessEvents: true,
       };
       if (queryKey) {
@@ -1617,7 +1729,7 @@ export default function Dashboard() {
       pendingRealtimeEventsRef.current.push({
         message,
         socketGeneration: generation,
-        sessionContextId: effectiveSessionIdRef.current,
+        sessionContextId: effectiveActivityIdRef.current,
         classEligible: classRealtimeMessageEligibility(message),
         coverageEligible: coverageRealtimeMessageEligibility(message),
       });
@@ -1692,6 +1804,7 @@ export default function Dashboard() {
               authenticatedSchoolIdRef.current = activeSchoolIdRef.current;
               const queryKey = aggregatedStudentsQueryKeyRef.current;
               if (queryKey) queryClient.refetchQueries({ queryKey, exact: true });
+              queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
             }
             if (message.type === 'auth-error') {
               setWsAuthenticated(false);
@@ -1705,7 +1818,7 @@ export default function Dashboard() {
               if (messageSchoolId && String(messageSchoolId) !== String(activeSchoolIdRef.current)) return;
               if (
                 messageSessionId
-                && String(messageSessionId) !== String(effectiveSessionIdRef.current)
+                && String(messageSessionId) !== String(effectiveActivityIdRef.current)
               ) return;
 
               const before = transientCommandOutcomesRef.current;
@@ -1772,7 +1885,7 @@ export default function Dashboard() {
               if (!classRealtimeMessageEligibility(message)) return;
               void webrtc.handleLiveViewRequested(
                 message.studentId,
-                message.teachingSessionId,
+                { authority: activityAuthority(message), contextAuthorityRevision: message.contextAuthorityRevision },
                 message.negotiationId,
               ).then((offerSent) => {
                 if (!offerSent) webrtc.stopLiveView(message.studentId);
@@ -1832,12 +1945,11 @@ export default function Dashboard() {
             }
             if (message.type === 'student-message') {
               if (!classRealtimeMessageEligibility(message)) return;
-              const eventSessionId = realtimeMessageSessionId(message);
               const msgId = message.data.id;
               if (dismissedMessageIds.current.has(msgId)) return;
               const newMsg = {
                 id: msgId,
-                sessionId: eventSessionId,
+                ...activityLegacyBody(effectiveAuthorityRef.current),
                 studentId: message.data.studentId,
                 studentName: message.data.studentName,
                 studentEmail: message.data.studentEmail,
@@ -1868,7 +1980,7 @@ export default function Dashboard() {
               if (!classEligible && !coverageEligible) return;
               const scope = {
                 schoolId: activeSchoolIdRef.current,
-                teachingSessionId: effectiveSessionIdRef.current,
+                ...effectiveAuthorityRef.current,
                 allowSessionlessEvents: classEligible,
               };
               const queryKey = aggregatedStudentsQueryKeyRef.current;
@@ -1916,8 +2028,8 @@ export default function Dashboard() {
             if (message.type === 'session-ended') {
               const endedOwnSession = Boolean(
                 message.sessionId
-                && effectiveSessionIdRef.current
-                && message.sessionId === effectiveSessionIdRef.current,
+                && effectiveActivityIdRef.current
+                && message.sessionId === effectiveActivityIdRef.current,
               );
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/all'], exact: false });
@@ -1943,7 +2055,14 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
+            if (message.type === 'dashboard-activity-updated') {
+              const messageSchoolId = message.schoolId || message.data?.schoolId;
+              if (!messageSchoolId || String(messageSchoolId) === String(activeSchoolIdRef.current)) {
+                queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
+              }
+            }
             if (message.type === 'coverage-summary-updated') {
+              queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
               const messageSchoolId = message.schoolId || message.data?.schoolId;
               if (messageSchoolId && String(messageSchoolId) !== String(activeSchoolIdRef.current)) return;
               queryClient.invalidateQueries({ queryKey: coverageKeysRef.current.summaryQueryKey, exact: true });
@@ -2104,7 +2223,8 @@ export default function Dashboard() {
   useEffect(() => {
     const subscriptionGeneration = sessionSubscriptionGenerationRef.current + 1;
     sessionSubscriptionGenerationRef.current = subscriptionGeneration;
-    const sessionId = effectiveSessionId;
+    const sessionId = effectiveActivityId;
+    const authority = effectiveAuthority;
     const socket = wsRef.current;
     const socketGeneration = websocketGenerationRef.current;
     let stopped = false;
@@ -2150,7 +2270,7 @@ export default function Dashboard() {
       && sessionSubscriptionGenerationRef.current === subscriptionGeneration
       && websocketGenerationRef.current === socketGeneration
       && wsRef.current === socket
-      && effectiveSessionIdRef.current === sessionId
+      && effectiveActivityIdRef.current === sessionId
     );
     const scheduleRetry = () => {
       if (!isCurrentAttempt()) return;
@@ -2178,7 +2298,7 @@ export default function Dashboard() {
         handleMessage(message, messageSocketGeneration) {
           if (!isCurrentAttempt() || messageSocketGeneration !== socketGeneration) return;
           const acknowledgedSessionId = realtimeMessageSessionId(message);
-          if (!acknowledgedSessionId || String(acknowledgedSessionId) !== String(sessionId)) return;
+          if (!acknowledgedSessionId || !matchesActivityAuthority(message, authority)) return;
           const acknowledgedRequestId = message.requestId == null
             ? null
             : normalizedRequestId(message.requestId);
@@ -2211,7 +2331,7 @@ export default function Dashboard() {
         },
       };
       sessionSubscriptionPendingRef.current = pending;
-      socket.send(JSON.stringify({ type: 'subscribe-session', sessionId, requestId }));
+      socket.send(JSON.stringify({ type: 'subscribe-session', ...activityLegacyBody(effectiveAuthorityRef.current), contextAuthorityRevision, requestId }));
       sessionSubscriptionAckTimeoutRef.current = setTimeout(() => {
         if (sessionSubscriptionPendingRef.current !== pending) return;
         scheduleRetry();
@@ -2228,12 +2348,12 @@ export default function Dashboard() {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({
           type: 'unsubscribe-session',
-          sessionId,
+          ...activityLegacyBody(authority), contextAuthorityRevision,
           requestId: createRealtimeRequestId('unsubscribe'),
         }));
       }
     };
-  }, [effectiveSessionId, wsAuthenticated, wsConnected]);
+  }, [effectiveActivityId, effectiveAuthorityKey, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     transientCommandOutcomesRef.current = new Map();
@@ -2245,7 +2365,7 @@ export default function Dashboard() {
       clearTimeout(commandExpiryTimeoutRef.current);
       commandExpiryTimeoutRef.current = null;
     }
-  }, [activeSchoolId, effectiveSessionId]);
+  }, [activeSchoolId, effectiveActivityId, effectiveAuthorityKey]);
 
   useEffect(() => {
     if (commandExpiryTimeoutRef.current) {
@@ -2331,7 +2451,7 @@ export default function Dashboard() {
   };
 
   const isStudentStructurallyCommandable = (student) => (
-    !isStudentInTemporarySupervision(student) && !isStudentOwnedByAnotherClass(student)
+    (!isStudentInTemporarySupervision(student) || student?.supervisionContext?.id === scheduledSupervisionId) && !isStudentOwnedByAnotherClass(student)
   );
   const isStudentCommandable = (student, { allowSafetyUnlock = false } = {}) => {
     if (!isStudentStructurallyCommandable(student)) return false;
@@ -2345,7 +2465,7 @@ export default function Dashboard() {
     );
   };
   const isStudentServerSignOutEligible = (student) => (
-    dashboardCapabilities.ownedClassSession
+    (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
     && isStudentStructurallyCommandable(student)
     && student?.isLoggedIn === true
     && student?.loginState !== 'not_logged_in'
@@ -2354,7 +2474,7 @@ export default function Dashboard() {
     schoolId: activeSchoolId,
     viewerId: currentUser?.id,
     mode: dashboardCapabilities.mode,
-    teachingSessionId: effectiveSession?.id,
+    ...effectiveAuthority,
     student,
   });
 
@@ -2562,7 +2682,7 @@ export default function Dashboard() {
     liveViewConnectTimerRef.current = null;
 
     try {
-      const connection = await webrtc.startLiveView(studentId, effectiveSession?.id, (stream) => {
+      const connection = await webrtc.startLiveView(studentId, { authority: effectiveAuthority, contextAuthorityRevision }, (stream) => {
         if (
           liveViewGenerationRef.current !== generation
           || activeLiveViewStudentIdRef.current !== studentId
@@ -2617,13 +2737,13 @@ export default function Dashboard() {
   // roster. Do not intersect it with mutable current group membership: doing so
   // can hide students added to or removed from the group after class started.
   const sessionFilteredStudents = students.filter((student) => {
-    if (effectiveSession && isStudentOwnedByAnotherClass(student)) return false;
-    if (isAdmin && !effectiveSession) {
+    if (effectiveActivity && isStudentOwnedByAnotherClass(student)) return false;
+    if (isAdmin && !effectiveActivity) {
       return normalizeGrade(student.gradeLevel) === normalizeGrade(selectedGrade);
     }
     return true;
   });
-  const lateSignInRestrictionsEnabled = dashboardCapabilities.ownedClassSession
+  const lateSignInRestrictionsEnabled = (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
     && lateSignInRestrictionGateEnabled(sessionFilteredStudents);
   const isStudentLateSignInRestrictionEligible = (student) => (
     isLateSignInRestrictionTarget({
@@ -2638,11 +2758,13 @@ export default function Dashboard() {
     commandPayload = {},
     { allowSafetyUnlock = false } = {},
   ) => (
-    isStudentCommandable(student, { allowSafetyUnlock })
+    (!scheduledSupervisionId || ['open-tab', 'close-tabs', 'lock-screen', 'unlock-screen', 'apply-flight-path', 'remove-flight-path', 'apply-block-list', 'remove-block-list', 'teacher-message'].includes(commandType)
+      || studentSupportsScheduledClassroom(student))
+    && (isStudentCommandable(student, { allowSafetyUnlock })
     || (
       commandSupportsLateSignInRestriction(commandType, commandPayload)
       && isStudentLateSignInRestrictionEligible(student)
-    )
+    ))
   );
 
   const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
@@ -2716,7 +2838,7 @@ export default function Dashboard() {
     [lateSignInRestrictionEligibleStudentIdsKey],
   );
   useEffect(() => {
-    if (!dashboardCapabilities.ownedClassSession || studentView !== 'class') return;
+    if (!(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) || studentView !== 'class') return;
     const selectedIds = new Set([
       ...selectedStudentIds,
       ...selectedServerSignOutStudentIds,
@@ -2747,7 +2869,7 @@ export default function Dashboard() {
       return next.size === current.size ? current : next;
     });
   }, [
-    dashboardCapabilities.ownedClassSession,
+    dashboardCapabilities.ownedClassSession, dashboardCapabilities.scheduledSupervision,
     lateSignInRestrictionEligibleStudentIds,
     selectedServerSignOutStudentIds,
     selectedStudentBindingSnapshots,
@@ -2769,12 +2891,12 @@ export default function Dashboard() {
     void refreshParentSessions().catch(() => {});
   }, [refreshParentSessions]);
   const observationLeaseStatus = useObservationLease({
-    // The only deployed observation lease is frozen-teaching-session scoped.
-    // Claimed coverage may be authorized by a separate supervision context,
-    // so it stays telemetry-only until a supervision observation lease exists.
-    enabled: studentView === 'class' && Boolean(effectiveSession?.id),
-    eligible: classpilotObservationSessionEligible(effectiveSession) && !terminalSessionError,
-    teachingSessionId: effectiveSession?.id,
+    // Scheduled classrooms use their real context; ad hoc Claimed supervision
+    // retains its existing telemetry-only tools.
+    enabled: studentView === 'class' && Boolean(effectiveActivity?.id),
+    eligible: classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
+    schoolId: activeSchoolId, contextAuthorityRevision,
+    ...effectiveAuthority,
     scope: observationScope,
     authorityKey: sessionReadAuthorityKey,
     retryEpoch: readRetryEpoch,
@@ -2818,17 +2940,20 @@ export default function Dashboard() {
     nearViewportStudentIds,
     getTileRef,
   } = useTileViewport();
-  const screenshotTileQueryStudents = effectiveSessionId
+  const screenshotTileQueryStudents = effectiveActivityId
     ? students
     : EMPTY_LIST;
   const historyTileQueryStudents = studentView === 'available'
     ? EMPTY_LIST
-    : studentView === 'class' && effectiveSessionId
+    : studentView === 'class' && effectiveActivityId
       // A session-scoped aggregate is the immutable frozen roster. Keep every
       // row in deterministic cohorts; per-student authorization gates and the
       // server decide whether a row may currently return pixels.
       ? students
       : filteredStudents;
+  const scheduledClientSupported = student => !scheduledSupervisionId || (
+    studentSupportsScheduledClassroom(student)
+  );
   const screenshotTileStudentBindingsKey = JSON.stringify(
     screenshotTileQueryStudents
       .map((student) => ({
@@ -2842,7 +2967,7 @@ export default function Dashboard() {
   // preview work uses this subset; historical reads keep their own authority.
   const eligibleScreenshotStudentBindingsKey = JSON.stringify(
     screenshotTileQueryStudents
-      .filter((student) => isStudentScreenshotReadEligible(student, isStudentMonitoringSuppressed(student)))
+      .filter((student) => scheduledClientSupported(student) && isStudentScreenshotReadEligible(student, isStudentMonitoringSuppressed(student)))
       .map((student) => ({
         studentId: student.studentId,
         realtimeBinding: student.realtimeBinding || '',
@@ -2879,26 +3004,25 @@ export default function Dashboard() {
     schoolId: activeSchoolId || '',
     viewerId: currentUser?.id || '',
     authority: `${dashboardViewerRole}:${classDashboardCapabilities.mode}:class`,
-    teachingSessionId: effectiveSessionId || '',
+    ...effectiveAuthority, contextAuthorityRevision,
   }), [
     activeSchoolId,
     classDashboardCapabilities.mode,
     currentUser?.id,
     dashboardViewerRole,
-    effectiveSessionId,
+    effectiveAuthority, contextAuthorityRevision,
   ]);
   const historyTileBatchContext = useMemo(() => ({
     schoolId: activeSchoolId || '',
     viewerId: currentUser?.id || '',
     authority: `${dashboardViewerRole}:${dashboardCapabilities.mode}:${studentView}`,
-    teachingSessionId: studentView === 'class' ? effectiveSessionId || '' : '',
+    ...(studentView === 'class' ? { ...effectiveAuthority, contextAuthorityRevision } : {}),
   }), [
     activeSchoolId,
     currentUser?.id,
     dashboardCapabilities.mode,
     dashboardViewerRole,
-    effectiveSessionId,
-    studentView,
+    studentView, effectiveAuthority, contextAuthorityRevision,
   ]);
   const screenshotTileBatchContextKey = JSON.stringify(screenshotTileBatchContext);
   const historyTileBatchContextKey = JSON.stringify(historyTileBatchContext);
@@ -2965,7 +3089,7 @@ export default function Dashboard() {
     const allowed = tileRequestWithoutDeniedStudents(request, tileReadDenialsRef.current, authorities);
     if (allowed.body.studentIds.length === 0) return { tiles: [] };
     try {
-      const response = await fetchTileBatch(allowed, apiRequest, signal);
+      const response = await fetchTileBatch(allowed, requestActivityApi, signal);
       if (!screenshotReadCurrent()) throw new DOMException('Preview context changed', 'AbortError');
       // A simultaneous targeted request may have denied a row while this
       // reconciliation was pending. Its result cannot restore that row.
@@ -2983,7 +3107,7 @@ export default function Dashboard() {
       }
       throw error;
     }
-  }, []);
+  }, [requestActivityApi]);
   useLayoutEffect(() => {
     setTileGlobalAuthorizationDenied(false);
     setUpdatingPreviewStudentIds((current) => (
@@ -3073,7 +3197,7 @@ export default function Dashboard() {
     || observationLeaseStatus === 'legacy'
     || observationLeaseStatus === 'error';
   const screenshotTileReadsEnabled = studentView === 'class'
-    && Boolean(effectiveSessionId)
+    && Boolean(effectiveActivityId)
     && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
     && !tileGlobalAuthorizationDenied;
   const legacyScreenshotReadsRevoked = ['denied', 'ineligible', 'paused_unobserved'].includes(
@@ -3098,7 +3222,7 @@ export default function Dashboard() {
     fenceGeneration: targetedScreenshotFenceGenerationRef.current.generation,
     enabled: screenshotTileReadsEnabled
       && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus),
-    teachingSessionId: effectiveSessionId,
+    authority: effectiveAuthority,
     sessionAuthorityKey: sessionReadAuthorityKey,
     requests: classScreenshotTileRequests,
     authorities: screenshotReadAuthorities,
@@ -3109,7 +3233,7 @@ export default function Dashboard() {
     const snapshot = targetedScreenshotContextRef.current;
     if (
       !snapshot?.enabled
-      || !snapshot.teachingSessionId
+      || !activityAuthority(snapshot.authority)
       || (typeof document !== 'undefined' && document.visibilityState !== 'visible')
     ) return;
     const pendingIds = new Set(studentIds);
@@ -3137,9 +3261,9 @@ export default function Dashboard() {
       const controller = new AbortController();
       targetedScreenshotAbortControllersRef.current.add(controller);
       try {
-        let response = await apiRequest('POST', '/classpilot/tiles/screenshots', {
+        let response = await requestActivityApi('POST', '/classpilot/tiles/screenshots', {
           studentIds: requestedIds,
-          teachingSessionId: snapshot.teachingSessionId,
+          ...snapshot.authority,
         }, { signal: controller.signal });
         assertTileScreenshotStoreAvailable(response);
         if (
@@ -3451,7 +3575,7 @@ export default function Dashboard() {
     void purgeAllStudentTileCaches(queryClient);
   }, [tileGlobalAuthorizationFailure]);
   const detailHistoryTeachingSessionId = studentView === 'class'
-    ? effectiveSessionId
+    ? effectiveActivityId
     : null;
   const selectedStudentDisplay = selectedStudentRow
     ? monitoringDisplayFor(selectedStudentRow)
@@ -3491,7 +3615,7 @@ export default function Dashboard() {
         studentIds: [selectedStudentRow.studentId],
         limit: 10,
         ...(detailHistoryTeachingSessionId
-          ? { teachingSessionId: detailHistoryTeachingSessionId }
+          ? effectiveAuthority
           : {}),
       },
     }, historyReadAuthorities, signal),
@@ -3616,7 +3740,7 @@ export default function Dashboard() {
   const tilePrivacyStudents = (() => {
     const studentsById = new Map();
     for (const student of [
-      ...(effectiveSessionId ? students : EMPTY_LIST),
+      ...(effectiveActivityId ? students : EMPTY_LIST),
       ...filteredStudents,
     ]) {
       if (student?.studentId) studentsById.set(student.studentId, student);
@@ -3903,21 +4027,21 @@ export default function Dashboard() {
     ? "Available"
     : studentView === "claimed"
       ? "Claimed"
-      : groups.find(g => g.id === effectiveSession?.groupId)?.name || (effectiveSession ? "Active Class" : "Class");
+      : effectiveActivity?.name || groups.find(g => g.id === effectiveActivity?.groupId)?.name || (effectiveActivity ? "Active Class" : "Class");
   const subgroupName = selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name : null;
   const observedViewStudents = dashboardCapabilities.observedOtherClass
     ? sessionFilteredStudents.filter((student) => (
         !selectedSubgroupId || subgroupMembers.has(student.studentId)
       ))
     : EMPTY_LIST;
-  const ownedClassBannerStudents = dashboardCapabilities.ownedClassSession
+  const ownedClassBannerStudents = (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
     ? sessionFilteredStudents.filter((student) => (
         !selectedSubgroupId || subgroupMembers.has(student.studentId)
       ))
     : EMPTY_LIST;
   const bannerStudents = dashboardCapabilities.observedOtherClass
     ? observedViewStudents
-    : dashboardCapabilities.ownedClassSession
+    : (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
       ? ownedClassBannerStudents
       : targetStudents;
   const bannerCounts = {
@@ -3979,7 +4103,7 @@ export default function Dashboard() {
       ? `${selectedServerSignOutStudentIds.size} selected for sign-out only`
     : selectedSubgroupId && studentView === "class"
       ? `${subgroupName || "Subgroup"} - ${ownedClassBannerStudents.length} student${ownedClassBannerStudents.length === 1 ? "" : "s"}`
-      : `All ${dashboardCapabilities.ownedClassSession ? ownedClassBannerStudents.length : targetStudents.length} student${(dashboardCapabilities.ownedClassSession ? ownedClassBannerStudents.length : targetStudents.length) === 1 ? "" : "s"}`;
+      : `All ${(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) ? ownedClassBannerStudents.length : targetStudents.length} student${((dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) ? ownedClassBannerStudents.length : targetStudents.length) === 1 ? "" : "s"}`;
   const observedViewLabel = subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
     : selectedSubgroupId
@@ -4019,8 +4143,8 @@ export default function Dashboard() {
   const selectedSignOutStudents = selectedSignOutTarget?.targetStudents || EMPTY_LIST;
   const signOutSelectedCount = selectedSignOutStudents.length;
   const signOutSelectionLabel = `${signOutSelectedCount} explicitly selected student${signOutSelectedCount === 1 ? '' : 's'}`;
-  const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
-  const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
+  const canSignOutSelectedStudents = studentView === "class" && !!effectiveActivity?.id && signOutSelectedCount > 0;
+  const canShowStudentWorkspace = isAdmin || (isTeacher && (scheduledClassEnabled || activeSession || studentView !== "class"));
   const canUseRemoteControls = dashboardCapabilities.canUseRemoteControls
     && !classStudentTargetsUnavailable
     && !(
@@ -4066,14 +4190,14 @@ export default function Dashboard() {
     if (!dashboardCapabilities.allows(commandType)) {
       throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
     }
-    if (!dashboardCapabilities.effectiveSession?.id) {
+    if (!effectiveAuthority) {
       throw new Error("Start or select an active class session before sending classroom commands.");
     }
     if (commandType === 'student-sign-out') {
       const target = resolveActiveStudentSignOutTarget(options.studentIds ?? EMPTY_LIST);
       return {
         request: buildStudentSignOutCommandRequest(
-          dashboardCapabilities.effectiveSession.id,
+          effectiveAuthority,
           target,
         ),
         target,
@@ -4101,12 +4225,12 @@ export default function Dashboard() {
         { allowSafetyUnlock },
       )
     ));
-    const requestTargetScope = hasUnavailableCommandTarget
+    const requestTargetScope = Boolean(scheduledSupervisionId) || hasUnavailableCommandTarget
       && (target.targetScope === 'class' || target.targetScope === 'subgroup')
       ? 'students'
       : target.targetScope;
     const request = {
-      teachingSessionId: dashboardCapabilities.effectiveSession.id,
+      ...effectiveAuthority,
       targetScope: requestTargetScope,
       commandType,
       commandPayload,
@@ -4231,7 +4355,8 @@ export default function Dashboard() {
       return apiRequest('POST', '/settings', payload);
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/settings'] }); toast({ title: "Success", description: "Grade levels updated successfully" }); },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const handleAddGrade = () => {
@@ -4309,6 +4434,7 @@ export default function Dashboard() {
       });
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({
         variant: "destructive",
         title: "Could not end class",
@@ -4356,6 +4482,7 @@ export default function Dashboard() {
       toast({ title: "Class Started", description: "Scheduled class started. Temporary scheduled coverage was released." });
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
         queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
@@ -4384,6 +4511,7 @@ export default function Dashboard() {
       });
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       setSkipTodayGroup(null);
       toast({
         variant: "destructive",
@@ -4606,7 +4734,8 @@ export default function Dashboard() {
       toast({ title: "Stopped Impersonating", description: "Returned to your super admin account" });
       setTimeout(() => { window.location.href = "/super-admin/schools"; }, 500);
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const refreshScreenshotsForDevices = () => {
@@ -4656,7 +4785,12 @@ export default function Dashboard() {
 
   const postClassroomCommand = async (commandType, commandPayload, options = {}) => {
     const { request, target } = buildCommandRequest(commandType, commandPayload, options);
-    const data = await apiRequest('POST', '/commands', request);
+    const commandAuthorityKey = activityAuthorityKey(request);
+    const commandScope = activityScopeKey;
+    const data = await requestActivityApi('POST', '/commands', request);
+    if (commandScope !== activityScopeRef.current || commandAuthorityKey !== activityAuthorityKey(effectiveAuthorityRef.current)) {
+      throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
+    }
     return decorateCommandResponse({
       ...data,
       request,
@@ -4702,7 +4836,8 @@ export default function Dashboard() {
       try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       setOpenTabUrl(""); refreshScreenshotsForDevices();
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const closeTabsMutation = useMutation({
@@ -4718,16 +4853,18 @@ export default function Dashboard() {
       setManageTabsTargetSnapshot("");
       refreshScreenshotsForDevices();
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const limitTabsMutation = useMutation({
     mutationFn: async ({ maxTabs, studentIds }) => postActiveCommand('limit-tabs', { maxTabs }, { studentIds }),
     onSuccess: (data) => {
       toast(data.deliveryFeedback);
-      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', effectiveSession?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const lockScreenMutation = useMutation({
@@ -4750,6 +4887,7 @@ export default function Dashboard() {
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -4761,6 +4899,7 @@ export default function Dashboard() {
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -4899,6 +5038,7 @@ export default function Dashboard() {
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -4910,6 +5050,7 @@ export default function Dashboard() {
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
   });
@@ -4935,7 +5076,8 @@ export default function Dashboard() {
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
       refreshScreenshotsForDevices();
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const removeBlockListMutation = useMutation({
@@ -4944,7 +5086,8 @@ export default function Dashboard() {
       toast(data.deliveryFeedback);
       refreshScreenshotsForDevices();
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const handleApplyBlockList = () => {
@@ -4982,11 +5125,12 @@ export default function Dashboard() {
     mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
     onSuccess: (data, variables) => {
       toast(data.deliveryFeedback);
-      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', effectiveSession?.id] });
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
       if (!variables.active) setShowAttentionDialog(false);
       refreshScreenshotsForDevices();
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const timerMutation = useMutation({
@@ -4995,7 +5139,8 @@ export default function Dashboard() {
       toast(data.deliveryFeedback);
       if (variables.action === 'start') setShowTimerDialog(false);
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const handleAttentionMode = (active) => { attentionModeMutation.mutate({ active, message: attentionMessage }); };
@@ -5014,26 +5159,29 @@ export default function Dashboard() {
       toast(data.deliveryFeedback);
       setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const closePollMutation = useMutation({
     mutationFn: async ({ pollId }) => postClassroomCommand('poll', { action: 'close', pollId }),
     onSuccess: (data) => { toast(data.deliveryFeedback); },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const dismissHandMutation = useMutation({
-    mutationFn: async (studentId) => apiRequest('POST', `/teacher/dismiss-hand/${studentId}`, { sessionId: effectiveSession?.id }),
+    mutationFn: async (studentId) => requestActivityApi('POST', `/teacher/dismiss-hand/${studentId}`, activityLegacyBody(effectiveAuthority)),
     onSuccess: (_, studentId) => { setRaisedHands(prev => { const newMap = new Map(prev); newMap.delete(studentId); return newMap; }); },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const replyToMessageMutation = useMutation({
     mutationFn: async ({ sessionId, studentId, message, chatRequest }) => {
       if (!chat.isCurrentReply(chatRequest)) throw new Error('This class chat is no longer available.');
-      return apiRequest('POST', '/teacher/reply', { sessionId, studentId, message }, {
-        headers: { 'X-School-Id': chatRequest.schoolId },
+      return apiRequest('POST', '/teacher/reply', { ...activityLegacyBody(chatRequest.authority || sessionId), studentId, message }, {
+        headers: activityRequestHeaders(chatRequest.schoolId, chatRequest.contextAuthorityRevision),
       });
     },
     onSuccess: (data, variables) => {
@@ -5059,7 +5207,8 @@ export default function Dashboard() {
       toast(data.deliveryFeedback);
       setShowSendMessageDialog(false); setSendMessageText("");
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const signOutStudentsMutation = useMutation({
@@ -5100,8 +5249,34 @@ export default function Dashboard() {
       toast(data.deliveryFeedback);
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Could Not Sign Out Students", description: error.message });
     },
+  });
+
+  const endTestingMutation = useMutation({
+    retry: false,
+    mutationFn: async (target) => {
+      if (target.scope !== supervisionScopeRef.current
+        || target.contextId !== effectiveAuthorityRef.current?.supervisionContextId) {
+        throw new Error('This testing assignment changed. Close the confirmation and refresh.');
+      }
+      return apiRequest('POST', `/coverage/contexts/${encodeURIComponent(target.contextId)}/release`, {
+        studentIds: [], releaseReason: 'returned_to_class',
+      }, { headers: activityRequestHeaders(target.schoolId, target.contextAuthorityRevision) });
+    },
+    onSuccess: (_data, target) => {
+      if (target.scope !== supervisionScopeRef.current) return;
+      setEndTestingTarget(null);
+      void refreshDashboardActivity({ cancelRefetch: true });
+      void queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      toast({ title: 'Testing ended', description: 'Students follow their current scheduled assignments.' });
+    },
+    onError: (error, target) => {
+      if (target.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not end testing', description: error.message });
+    },
+    onSettled: () => { endTestingBusyRef.current = false; },
   });
 
   const handleSendMessage = () => {
@@ -5113,7 +5288,7 @@ export default function Dashboard() {
 
   const dismissMessage = async (messageId) => {
     if (!chat.dismiss(messageId)) return;
-    try { await apiRequest('DELETE', `/teacher/messages/${messageId}`); } catch (error) {
+    try { await requestActivityApi('DELETE', `/teacher/messages/${messageId}`); } catch (error) {
       console.error('Failed to delete message from server:', error);
       dismissedMessageIds.current.add(messageId);
       try { const ids = Array.from(dismissedMessageIds.current).slice(-100); localStorage.setItem('classpilot-dismissed-messages', JSON.stringify(ids)); } catch { /* intentionally empty */ }
@@ -5124,7 +5299,7 @@ export default function Dashboard() {
     const msg = studentMessages.find(m => m.studentId === studentId);
     if (!chat.closeThread(studentId)) return;
     if (msg) {
-      try { await apiRequest('POST', '/teacher/close-chat', { sessionId: effectiveSession?.id, studentId }); } catch (error) {
+      try { await requestActivityApi('POST', '/teacher/close-chat', { ...activityLegacyBody(effectiveAuthority), studentId }); } catch (error) {
         console.error('Failed to send close-chat:', error);
       }
     }
@@ -5132,22 +5307,23 @@ export default function Dashboard() {
 
   const toggleHandRaisingMutation = useMutation({
     mutationFn: async (enabled) => {
-      if (!dashboardCapabilities.canChangeFabSettings || !effectiveSession?.id) throw new Error('Session settings are available only for your active class.');
-      return apiRequest('PUT', `/classpilot/teaching-sessions/${encodeURIComponent(effectiveSession.id)}/settings`, sessionFabSettingsPayload(
+      if (!dashboardCapabilities.canChangeFabSettings || !effectiveActivity?.id) throw new Error('Session settings are available only for your active class.');
+      return requestActivityApi(scheduledSupervisionId ? 'PATCH' : 'PUT', activityParentPath(effectiveAuthority, 'settings'), sessionFabSettingsPayload(
         sessionFabState,
         { raiseHandEnabled: enabled },
-      ));
+      ), { headers: { 'X-School-Id': activeSchoolId } });
     },
     onSuccess: (data) => {
-      const nextState = normalizeSessionFabState(data?.state, effectiveSessionIdRef.current);
+      const nextState = normalizeSessionFabState(data?.settings || data?.state, effectiveAuthorityRef.current);
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
-      const enabled = data?.state?.handRaisingEnabled === true;
+      const enabled = nextState?.handRaisingEnabled === true;
       toast({ title: enabled ? "Hand Raising Enabled" : "Hand Raising Disabled", description: enabled ? "Students can now raise their hands" : "Students cannot raise their hands" });
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       const current = error?.response?.data?.current || error?.data?.current;
-      const nextState = normalizeSessionFabState(current, effectiveSessionIdRef.current);
+      const nextState = normalizeSessionFabState(current, effectiveAuthorityRef.current);
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       toast({ variant: "destructive", title: "Error", description: error.message });
@@ -5156,22 +5332,23 @@ export default function Dashboard() {
 
   const toggleStudentMessagingMutation = useMutation({
     mutationFn: async (enabled) => {
-      if (!dashboardCapabilities.canChangeFabSettings || !effectiveSession?.id) throw new Error('Session settings are available only for your active class.');
-      return apiRequest('PUT', `/classpilot/teaching-sessions/${encodeURIComponent(effectiveSession.id)}/settings`, sessionFabSettingsPayload(
+      if (!dashboardCapabilities.canChangeFabSettings || !effectiveActivity?.id) throw new Error('Session settings are available only for your active class.');
+      return requestActivityApi(scheduledSupervisionId ? 'PATCH' : 'PUT', activityParentPath(effectiveAuthority, 'settings'), sessionFabSettingsPayload(
         sessionFabState,
         { chatEnabled: enabled },
-      ));
+      ), { headers: { 'X-School-Id': activeSchoolId } });
     },
     onSuccess: (data) => {
-      const nextState = normalizeSessionFabState(data?.state, effectiveSessionIdRef.current);
+      const nextState = normalizeSessionFabState(data?.settings || data?.state, effectiveAuthorityRef.current);
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
-      const enabled = data?.state?.messagingEnabled === true;
+      const enabled = nextState?.messagingEnabled === true;
       toast({ title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
     },
     onError: (error) => {
+      if (error?.name === 'AbortError') return;
       const current = error?.response?.data?.current || error?.data?.current;
-      const nextState = normalizeSessionFabState(current, effectiveSessionIdRef.current);
+      const nextState = normalizeSessionFabState(current, effectiveAuthorityRef.current);
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       toast({ variant: "destructive", title: "Error", description: error.message });
@@ -5187,7 +5364,7 @@ export default function Dashboard() {
 
     const fetchPollResults = async () => {
       try {
-        const data = await apiRequest('GET', `/polls/${pollId}/results`);
+        const data = await requestActivityApi('GET', `/polls/${pollId}/results`);
         if (cancelled) return;
         setPollResults(data.results || []);
         setPollTotalResponses(data.totalResponses || 0);
@@ -5202,7 +5379,7 @@ export default function Dashboard() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activePoll?.id]);
+  }, [activePoll?.id, requestActivityApi]);
 
   const handleCreatePoll = () => {
     const validOptions = pollOptions.filter(opt => opt.trim() !== '');
@@ -5224,7 +5401,7 @@ export default function Dashboard() {
   const updatePollOption = (index, value) => { const newOptions = [...pollOptions]; newOptions[index] = value; setPollOptions(newOptions); };
 
   const monitoringTransportUnavailable = studentsQueryError && !sessionRealtimeHealthy;
-  const connectionPresentation = !effectiveSessionId
+  const connectionPresentation = !effectiveActivityId
     ? monitoringTransportUnavailable
       ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
       : { label: 'Refreshing', tone: 'neutral' }
@@ -5277,19 +5454,20 @@ export default function Dashboard() {
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
               </div>
-              {isTeacher && activeSession && (
+              {scheduledSupervisionId ? <Badge variant="outline" className="text-amber-300" data-testid="badge-scheduled-testing">Testing: {effectiveActivity.name}</Badge> : null}
+              {isTeacher && !scheduledSupervisionId && activeSession && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-active-session">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                   {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                 </div>
               )}
-              {isTeacher && activeSessionIsScheduled && (
+              {isTeacher && !scheduledSupervisionId && activeSessionIsScheduled && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-automatic-session">
                   <Clock className="h-3.5 w-3.5" />
                   Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
                 </div>
               )}
-              {isTeacher && (
+              {isTeacher && !scheduledSupervisionId && (
                 <>
                   {activeSession ? (
                     <div className="flex items-center gap-2">
@@ -5372,7 +5550,7 @@ export default function Dashboard() {
                 </>
               )}
               {/* Admin Class Selection */}
-              {isAdmin && (
+              {isAdmin && !scheduledSupervisionId && (
                 <>
                   {activeSession && (
                     <>
@@ -5482,12 +5660,12 @@ export default function Dashboard() {
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
               <ThemeToggle />
-              {isTeacher && (
+              {isTeacher && !scheduledSupervisionId && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
                   <User className="h-[18px] w-[18px]" />
                 </button>
               )}
-              {isAdmin && (
+              {isAdmin && !scheduledSupervisionId && (
                 <>
                   <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-admin">
                     <Shield className="h-4 w-4" /> Admin Panel
@@ -5525,6 +5703,38 @@ export default function Dashboard() {
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
       <main className={`transition-all duration-300 ${showSidebar ? 'lg:ml-80' : ''}`}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
+        {scheduledClassEnabled ? (
+          <section ref={activityBannerRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true"
+            data-testid="scheduled-class-banner" className="mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">{dashboardActivityError ? 'Class assignment could not refresh'
+                  : scheduledActivity.pending ? 'Updating class'
+                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : 'Class'}: ${scheduledAssignment.name}`
+                      : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
+                {scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">
+                  {scheduledAssignment.studentCount} students · {students.filter(student => ['online', 'idle'].includes(deriveStudentMonitoringDisplay(student, freshnessNowMs).kind)).length} online
+                  {scheduledAssignment.endsAt ? ` · Ends ${new Date(scheduledAssignment.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}` : ' · Manual class'}
+                </p> : null}
+                {scheduledActivity.next ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
+                  {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
+                  {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
+                {scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student))
+                  ? <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">Extension update required for full testing tools on some student Chromebooks.</p> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(studentView !== 'class' || adminObservedSessionId) ? <Button variant="outline" onClick={() => {
+                  setAdminObservedSessionId(null); setStudentView('class');
+                }}>View current class</Button> : null}
+                {dashboardActivityError ? <Button variant="outline" disabled={dashboardActivityRefreshing}
+                  onClick={() => void refreshDashboardActivity({ cancelRefetch: true })}>Retry class assignment</Button> : null}
+                {scheduledSupervisionId && studentView === 'class' ? <Button variant="outline" disabled={endTestingMutation.isPending}
+                  onClick={() => setEndTestingTarget({ contextId: scheduledSupervisionId, name: effectiveActivity.name,
+                    schoolId: activeSchoolId, scope: classReaderKey, contextAuthorityRevision })}>End testing</Button> : null}
+              </div>
+            </div>
+          </section>
+        ) : null}
         {/* Remote Control Toolbar */}
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
@@ -5534,7 +5744,7 @@ export default function Dashboard() {
             selectedGrade={selectedGrade}
             onGradeChange={setSelectedGrade}
             userRole={isAdmin ? 'admin' : 'teacher'}
-            schoolId={activeSchoolId}
+            schoolId={activeSchoolId} contextAuthorityRevision={contextAuthorityRevision}
             viewerId={currentUser?.id}
             coverageCount={activeCoverageCount}
             availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
@@ -5543,8 +5753,8 @@ export default function Dashboard() {
             showCoverageRail={!dashboardCapabilities.observedOtherClass}
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
             onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={dashboardCapabilities.ownedClassSession && !nonRestrictionSelectionActive}
-            onReroute={dashboardCapabilities.ownedClassSession && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
+            canReroute={(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive}
+            onReroute={(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
@@ -5587,7 +5797,7 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {studentView === 'class' && effectiveSessionId ? (
+        {studentView === 'class' && effectiveActivityId ? (
           <p className="mb-4 text-xs text-muted-foreground" data-testid="screenshot-refresh-disclosure">
             Screen previews update automatically while this class is open. They are recent screenshots, not live video.
           </p>
@@ -5760,7 +5970,7 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {effectiveSessionId && sessionSubscriptionState.status === 'terminal_error' ? (
+        {effectiveActivityId && sessionSubscriptionState.status === 'terminal_error' ? (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100" role="status" data-testid="session-subscription-error">
             <span>
               {sessionSubscriptionState.errorCode === 'SESSION_UNAVAILABLE'
@@ -6017,7 +6227,9 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-        ) : isTeacher && !activeSession && studentView === "class" ? (
+        ) : studentView === 'class' && dashboardActivityLoading ? (
+          <div className="py-20 text-center" role="status">Loading class assignment...</div>
+        ) : isTeacher && !scheduledClassEnabled && !activeSession && studentView === "class" ? (
           <div className="py-20 text-center">
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-muted/30 flex items-center justify-center"><Calendar className="h-10 w-10 text-muted-foreground/50" /></div>
             <h3 className="text-xl font-semibold mb-2">No Active Class Session</h3>
@@ -6076,7 +6288,8 @@ export default function Dashboard() {
                   ? monitoringDisplayFor(student)
                   : deriveStudentMonitoringDisplay(student, freshnessNowMs);
               const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
-              const coverageLabel = student.supervisionState === "temporary_coverage"
+              const coverageLabel = studentView === 'class' && scheduledSupervisionId
+                && student.supervisionContext?.id === scheduledSupervisionId ? null : student.supervisionState === "temporary_coverage"
                 ? `In supervision: ${[
                     student.supervisionContext?.name || "Supervision",
                     supervisionStaffName,
@@ -6113,7 +6326,7 @@ export default function Dashboard() {
               const supportsNegotiatedLiveView = studentSupportsCapability(
                 student,
                 'liveViewNegotiationV1',
-              );
+              ) && (!scheduledSupervisionId || studentSupportsScheduledClassroom(student));
               const tileSharedPrivacyRevoked = supervisedElsewhere
                 || tileGlobalAuthorizationDenied
                 || tileGlobalAuthorizationFailure
@@ -6133,7 +6346,8 @@ export default function Dashboard() {
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
                 || observationLeaseStatus === 'denied'
                 || observationLeaseStatus === 'ineligible'
-                || studentView !== 'class';
+                || studentView !== 'class'
+                || !scheduledClientSupported(student);
               // This is the tile's 15-second active-view stale cue, and it mirrors the
               // server capture policy exactly: an observed lease AND the student's
               // accepted screenshotActiveObservationCadenceV1. StudentTile's
@@ -6178,7 +6392,7 @@ export default function Dashboard() {
                     persistentRestrictionSelectionAvailable={persistentRestrictionSelectionAvailable}
                     liveStream={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey ? liveViewState.stream : null}
                     liveViewPending={LIVE_VIEW_UI_ENABLED && !supervisedElsewhere && liveViewState.studentId === studentRealtimeKey && liveViewState.pending}
-                    onStartLiveView={LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveSession?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
+                    onStartLiveView={LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && supportsNegotiatedLiveView && !supervisedElsewhere && student.isLoggedIn && effectiveActivity?.id ? () => handleStartLiveView(studentRealtimeKey, student.studentName) : undefined}
                     onStopLiveView={LIVE_VIEW_UI_ENABLED && dashboardCapabilities.canUseLiveView && !supervisedElsewhere ? () => handleStopLiveView(studentRealtimeKey) : undefined}
                     onExpandLiveView={LIVE_VIEW_UI_ENABLED ? () => setLiveViewState((current) => (
                       current.studentId === studentRealtimeKey && current.stream
@@ -6200,7 +6414,7 @@ export default function Dashboard() {
                     monitoringSuppressed={supervisedElsewhere}
                     monitoringSuppressedReason={supervisionReason}
                     supervisionLabel={coverageLabel || ""}
-                    onReturnToClass={supervisedElsewhere && dashboardCapabilities.ownedClassSession && activeSession ? () => handleReturnToClass(student) : undefined}
+                    onReturnToClass={supervisedElsewhere && (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
                     recentHeartbeats={tileHistoryRevoked
                       ? EMPTY_LIST
@@ -6219,7 +6433,7 @@ export default function Dashboard() {
                     screenshotObservationStatus={tileScreenshotObservationStatus}
                     screenshotCaptureCadence={screenshotCaptureCadence}
                     screenshotAuthorizationDenied={tileScreenshotRevoked}
-                    actionContextKey={`${activeSchoolId || ''}:${effectiveSession?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
+                    actionContextKey={`${activeSchoolId || ''}:${effectiveActivity?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   />}
                 </div>
               );
@@ -6266,13 +6480,14 @@ export default function Dashboard() {
       {/* Student Detail Drawer */}
       {selectedStudentRow && !selectedStudentDetailsRevoked && (
         <StudentDetailDrawer
+          schoolId={activeSchoolId} contextAuthorityRevision={contextAuthorityRevision}
           student={selectedStudentRow}
           urlHistory={urlHistory}
           allowedDomains={settings?.allowedDomains || []}
           flightPaths={flightPaths}
           onClose={closeStudentDetails}
-          activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
-          teachingSessionId={effectiveSession?.id}
+          activeClassName={effectiveActivity ? groups.find(g => g.id === effectiveActivity.groupId)?.name : null}
+          teachingSessionId={effectiveAuthority?.teachingSessionId} supervisionContextId={scheduledSupervisionId}
           canViewHistoricalUsage={isAdmin}
           freshnessNowMs={freshnessNowMs}
         />
@@ -7104,9 +7319,20 @@ export default function Dashboard() {
       </Dialog>
 
       {/* TeacherFab */}
+      <Dialog open={Boolean(endTestingTarget)} onOpenChange={open => { if (!open && !endTestingMutation.isPending) setEndTestingTarget(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>End testing: {endTestingTarget?.name}</DialogTitle>
+            <DialogDescription>Release all students from this testing assignment, including offline students. Their next assignment follows the applied schedule. This does not end a regular class.</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" disabled={endTestingMutation.isPending} onClick={() => setEndTestingTarget(null)}>Cancel</Button>
+            <Button disabled={endTestingMutation.isPending} onClick={() => {
+              if (!endTestingTarget || endTestingBusyRef.current) return;
+              endTestingBusyRef.current = true; endTestingMutation.mutate(endTestingTarget);
+            }}>End testing and release all</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive && (
         <TeacherFab
-          key={chat.generation}
+          key={`${classReaderKey}:${effectiveAuthorityKey}:${chat.generation}`}
           attentionActive={attentionActive}
           onAttentionClick={() => setShowAttentionDialog(true)}
           attentionPending={subgroupCommandsDisabled || attentionModeMutation.isPending}
@@ -7127,7 +7353,7 @@ export default function Dashboard() {
           onReplyToMessage={(studentId, message) => {
             const chatRequest = chat.beginReply(studentId);
             if (!chatRequest) return Promise.reject(new Error('This class chat is no longer available.'));
-            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message, chatRequest });
+            return replyToMessageMutation.mutateAsync({ sessionId: effectiveActivity?.id, studentId, message, chatRequest });
           }}
           replyPending={replyToMessageMutation.isPending}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}

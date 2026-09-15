@@ -87,7 +87,7 @@ test('malformed and over-limit enabled observation scopes fail private', async (
   );
   assert.match(
     dashboard,
-    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,100}Boolean\(effectiveSessionId\)/,
+    /screenshotTileReadsEnabled = studentView === 'class'[\s\S]{0,100}Boolean\(effectiveActivityId\)/,
     'a live class must still ask the server for independently authorized V2 screenshots',
   );
 });
@@ -218,7 +218,7 @@ test('subgroup membership queries are fenced by group and subgroup identity', as
   assert.equal(calls[0][3].signal, signal);
 });
 
-test('dashboard retains dormant Live View code without exposing its portal or tile entrypoint', async () => {
+test('legacy Live View stays gated while scheduled classrooms negotiate explicit authority', async () => {
   const [dashboard, tile, portal, sidebar] = await Promise.all([
     readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
@@ -227,7 +227,7 @@ test('dashboard retains dormant Live View code without exposing its portal or ti
   ]);
 
   assert.equal(dashboard.match(/<VideoPortal/g)?.length, 1, 'dashboard must render exactly one Live View portal');
-  assert.match(dashboard, /const LIVE_VIEW_UI_ENABLED = false;/);
+  assert.match(dashboard, /const LEGACY_LIVE_VIEW_UI_ENABLED = false;/);
   assert.match(dashboard, /LIVE_VIEW_UI_ENABLED && dashboardCapabilities\.canUseLiveView && liveViewState\.expanded/);
   assert.match(dashboard, /onStartLiveView=\{LIVE_VIEW_UI_ENABLED &&/);
   assert.doesNotMatch(tile, /<VideoPortal|querySelector|portal-video-slot/);
@@ -358,7 +358,7 @@ test('screenshot events coalesce one-second targeted refreshes without replacing
   assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 1_000;/);
   assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;/);
   assert.match(dashboard, /mergeTargetedTileScreenshotResponse/);
-  assert.match(dashboard, /teachingSessionId: snapshot\.teachingSessionId/);
+  assert.match(dashboard, /\.\.\.snapshot\.authority/);
   assert.match(
     dashboard,
     /targetedScreenshotFlushInFlightRef\.current = true[\s\S]{0,500}targetedScreenshotFlushInFlightRef\.current = false/,
@@ -695,7 +695,7 @@ test('enabled observation scopes remain pending across A to B to A until their e
     'an enabled exact context must stay pending until that context records its own lease response',
   );
   assert.match(lease, /if \(stopped\) return;/);
-  assert.match(dashboard, /enabled: studentView === 'class' && Boolean\(effectiveSession\?\.id\)/);
+  assert.match(dashboard, /enabled: studentView === 'class' && Boolean\(effectiveActivity\?\.id\)/);
   assert.match(dashboard, /enabled: screenshotTileReadsEnabled/);
   assert.match(dashboard, /enabled: historyTileReadsEnabled/);
   assert.match(tile, /screenshotObservationStatus === 'pending'/);
@@ -724,7 +724,7 @@ test('A to B switches replace the complete realtime routing context before queue
     'utf8',
   );
   const routingLayoutEffect = dashboard.match(
-    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveSessionIdRef\.current = effectiveSessionId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveSessionId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey\]\);/,
+    /useLayoutEffect\(\(\) => \{[\s\S]{0,900}effectiveActivityIdRef\.current = effectiveActivityId;[\s\S]{0,300}aggregatedStudentsQueryKeyRef\.current = aggregatedStudentsQueryKey;[\s\S]{0,300}activeSchoolIdRef\.current = activeSchoolId;[\s\S]{0,300}coverageKeysRef\.current = \{ summaryQueryKey, claimedStudentsQueryKey \};[\s\S]{0,100}supervisionScopeRef\.current = classReaderKey;[\s\S]{0,300}pendingRealtimeEventsRef\.current = \[\];[\s\S]{0,500}\}, \[activeSchoolId, aggregatedStudentsQueryKey, effectiveActivityId, summaryQueryKey, claimedStudentsQueryKey, classReaderKey, effectiveAuthority\]\);/,
   );
   assert.ok(
     routingLayoutEffect,
@@ -784,7 +784,7 @@ test('detail history is fenced to the current authority and cannot reuse a stale
   );
   assert.match(
     dashboard,
-    /clearStudentDetails\(\);[\s\S]{0,240}\[\s*activeSchoolId,[\s\S]{0,220}effectiveSessionId,[\s\S]{0,160}studentView,/,
+    /clearStudentDetails\(\);[\s\S]{0,240}\[\s*activeSchoolId,[\s\S]{0,220}effectiveActivityId,[\s\S]{0,160}studentView,/,
     'the drawer selection must be cleared when session or authority changes',
   );
   assert.match(
@@ -826,7 +826,7 @@ test('late-sign-in restriction authoring is row-gated and command-specific', asy
 
   assert.match(
     dashboard,
-    /lateSignInRestrictionsEnabled = dashboardCapabilities\.ownedClassSession\s*&& lateSignInRestrictionGateEnabled\(sessionFilteredStudents\)/,
+    /lateSignInRestrictionsEnabled = \(dashboardCapabilities\.ownedClassSession \|\| dashboardCapabilities\.scheduledSupervision\)\s*&& lateSignInRestrictionGateEnabled\(sessionFilteredStudents\)/,
     'the exact-school row projection must gate the signed-out authoring lane',
   );
   assert.match(
@@ -877,7 +877,7 @@ test('Manage Tabs exposes a capability-gated tab limit that routes through the a
   );
   assert.match(
     limitMutation,
-    /invalidateQueries\(\{ queryKey: \['\/api\/commands\/active-state', effectiveSession\?\.id\] \}\)/,
+    /invalidateQueries\(\{ queryKey: \['\/api\/commands\/active-state', activeSchoolId, currentUser\?\.id, effectiveAuthorityKey\] \}\)/,
   );
   assert.doesNotMatch(limitMutation, /\bonMutate\b|setQueryData/, 'the tab limit must not be applied optimistically');
 

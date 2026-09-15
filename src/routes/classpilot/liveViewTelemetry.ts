@@ -18,10 +18,7 @@ import {
   classpilotTurnTelemetrySchema,
   recordClasspilotTurnTelemetry,
 } from "../../services/classpilotTurnTelemetry.js";
-import {
-  getClasspilotStudentControlState,
-  isAuthorizedClasspilotSessionStaff,
-} from "../../services/storage.js";
+import { isClasspilotLiveViewAuthorityCurrent } from "../../services/classpilotLiveViewAuthority.js";
 
 const router = Router();
 const liveViewTelemetryRequestLimiter = rateLimit({
@@ -105,18 +102,7 @@ router.post(
 
       const authorized = await runWithTenantContext(
         { schoolId: exactBinding.schoolId },
-        async () => {
-          const [controlState, staffAuthorized] = await Promise.all([
-            getClasspilotStudentControlState(exactBinding.schoolId, exactBinding.studentId),
-            isAuthorizedClasspilotSessionStaff(
-              exactBinding.schoolId,
-              authority.teachingSessionId,
-              authority.requesterUserId
-            ),
-          ]);
-          return controlState?.teachingSessionId === authority.teachingSessionId
-            && staffAuthorized;
-        }
+        () => isClasspilotLiveViewAuthorityCurrent({ ...exactBinding, ...authority })
       );
       if (!authorized) {
         return res.status(403).json({

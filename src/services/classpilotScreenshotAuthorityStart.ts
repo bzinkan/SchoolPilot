@@ -12,7 +12,8 @@ export type ClasspilotScreenshotAuthorityStartSource =
   | "student_session_started"
   | "teaching_start_time"
   | "roster_snapshot_completed"
-  | "control_updated";
+  | "control_updated"
+  | "supervision_assignment_started";
 
 export type ClasspilotScreenshotAuthorityStartInput = readonly [
   source: ClasspilotScreenshotAuthorityStartSource,

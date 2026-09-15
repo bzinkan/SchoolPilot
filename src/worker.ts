@@ -10,8 +10,10 @@ import { drainService, snapshotShutdownPools, type ShutdownPool } from "./servic
 import { classpilotLifecyclePushes, flushClasspilotLifecyclePushes, snapshotClasspilotLifecyclePushes } from "./services/classpilotLifecyclePushes.js";
 import { drainTenantContextReleases, getTenantContextReleaseSnapshot } from "./middleware/tenantContext.js";
 import { stopRuntimePerformanceMetrics } from "./services/runtimePerformanceMetrics.js";
+import { assertScheduledClassroomEnvironment } from "./config/classpilotScheduledClassroom.js";
 
 initSentry();
+assertScheduledClassroomEnvironment();
 
 let shutdownStarted = false;
 let heartbeatTimer: NodeJS.Timeout | null = null;

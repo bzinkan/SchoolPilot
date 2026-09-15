@@ -107,6 +107,12 @@ import {
 } from "../services/classpilotClassroomState.js";
 import { requestHasAnySchoolRole } from "../services/schoolAuthorization.js";
 import { isClasspilotCapabilityActive } from "../services/classpilotProtocol.js";
+import {
+  isScheduledClassroomEnabled,
+  parseClasspilotActivityAuthority,
+  requireScheduledClassroomContext,
+  scheduledClassroomRoster,
+} from "../services/classpilotActivityAuthority.js";
 
 const router = Router();
 
@@ -1067,7 +1073,18 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
     const requestedTeachingSessionId = typeof req.query.teachingSessionId === "string"
       ? req.query.teachingSessionId.trim()
       : "";
-    let activeSession = requestedTeachingSessionId
+    const hasExplicitAuthority = req.query.teachingSessionId !== undefined
+      || req.query.supervisionContextId !== undefined;
+    const requestedAuthority = hasExplicitAuthority
+      ? parseClasspilotActivityAuthority(req.query) : null;
+    if (hasExplicitAuthority && !requestedAuthority) {
+      return res.status(400).json({ error: "Choose exactly one classroom authority", code: "INVALID_CLASSROOM_AUTHORITY" });
+    }
+    const scheduledContext = requestedAuthority?.supervisionContextId
+      ? await requireScheduledClassroomContext({ schoolId,
+        supervisionContextId: requestedAuthority.supervisionContextId,
+        actorId: userId, allowObserve: isAdmin }) : null;
+    const activeSession = scheduledContext ? undefined : requestedTeachingSessionId
       ? await getTeachingSessionByIdAndSchool(requestedTeachingSessionId, schoolId)
       : await getActiveTeachingSessionForSchool(userId, schoolId);
     if (requestedTeachingSessionId) {
@@ -1088,7 +1105,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       : undefined;
 
     let dbStudents;
-    if (activeGroup) {
+    if (scheduledContext) {
+      // Assignments, not connection state, define a scheduled classroom roster.
+      const contextRows = await scheduledClassroomRoster(schoolId, scheduledContext.id);
+      dbStudents = contextRows.map((row) => row.student);
+    } else if (activeGroup) {
       // The class roster is frozen at session start. Current group membership
       // must not silently add or remove students from an already-running
       // teacher monitoring boundary.
@@ -1109,7 +1130,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
           deviceId: null,
         };
       });
-    } else if (isAdmin) {
+    } else if (isAdmin && !hasExplicitAuthority) {
       // Admin without active session → show all students
       dbStudents = await getStudentsBySchool(schoolId);
     } else {
@@ -1144,6 +1165,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
     );
 
     const operatorCapabilities = {
+      scheduledClassroomV1: isScheduledClassroomEnabled(schoolId),
       studentAuthGatePresenceV1: isClasspilotCapabilityActive(
         "studentAuthGatePresenceV1",
         { schoolId }
@@ -1170,7 +1192,9 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       // the original class teacher. Keep roster/supervision context visible but
       // do not return live browser telemetry from the delegated interval.
       const delegatedAway = Boolean(
-        activeCoverage && activeCoverage.assignedStaffId !== userId && !isAdmin
+        scheduledContext
+          ? activeCoverage?.id !== scheduledContext.id
+          : activeCoverage && activeCoverage.assignedStaffId !== userId && !isAdmin
       );
       const visibleRealtime = delegatedAway ? null : activeRealtime;
       const signedOut = rt?.state === "signed_out";
@@ -1222,8 +1246,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         ? new Date(lastActivityAt + CLASSPILOT_REALTIME_STALE_AFTER_MS).toISOString()
         : null;
       const ownedDesiredControlState = (
-        activeSession?.id
-        && desiredControlState?.teachingSessionId === activeSession.id
+        !delegatedAway && (scheduledContext
+          ? desiredControlState?.supervisionContextId === scheduledContext.id
+            && !desiredControlState?.teachingSessionId
+          : activeSession?.id && desiredControlState?.teachingSessionId === activeSession.id
+            && !desiredControlState?.supervisionContextId)
       ) ? desiredControlState : undefined;
       // Rollback/off mode retains durable deferred provenance for a safe later
       // re-enable, but it must not make that hidden revision look applied in
@@ -1253,8 +1280,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       const realtimeClassroomState = visibleRealtime?.classroomState;
       const scopedRealtimeClassroomState = deferredDesiredStateHidden
         ? undefined
-        : activeSession?.id
-          ? realtimeClassroomState?.teachingSessionId === activeSession.id
+        : scheduledContext
+          ? realtimeClassroomState?.supervisionContextId === scheduledContext.id
+            && !realtimeClassroomState?.teachingSessionId ? realtimeClassroomState : undefined
+          : activeSession?.id
+          ? realtimeClassroomState?.teachingSessionId === activeSession.id && !realtimeClassroomState?.supervisionContextId
             ? realtimeClassroomState
             : undefined
           : realtimeClassroomState;
@@ -1295,7 +1325,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
           : "unsupported";
       const publicExtensionContract = publicClasspilotExtensionContract(capabilityRealtime);
       const publicClassroomControls = normalizeClasspilotPublicClassroomControls(
-        visibleRealtime?.classroomControls
+        scheduledContext && !scopedRealtimeClassroomState ? undefined : visibleRealtime?.classroomControls
       );
 
       return {

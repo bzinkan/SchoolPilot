@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { activityAuthorityQuery, activityParentPath, activityRequestHeaders } from '../lib/dashboardActivity';
+import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../../lib/queryClient";
 import api from "../../../shared/utils/api";
@@ -25,13 +26,21 @@ function StudentDetailDrawer({
   flightPaths = [],
   onClose,
   activeClassName,
-  teachingSessionId,
+  teachingSessionId, supervisionContextId, schoolId, contextAuthorityRevision,
   canViewHistoricalUsage = false,
   freshnessNowMs,
 }) {
   const { toast } = useToast();
   const monitoringStudentId = student?.studentId;
   const monitoringStudentName = student?.studentName;
+  const authorityQuery = teachingSessionId || supervisionContextId
+    ? activityAuthorityQuery({ teachingSessionId, supervisionContextId }) : '';
+  const requestScope = JSON.stringify([schoolId, authorityQuery, contextAuthorityRevision, monitoringStudentId]);
+  const requestScopeRef = useRef(requestScope);
+  useLayoutEffect(() => {
+    requestScopeRef.current = requestScope;
+    return () => { requestScopeRef.current = null; };
+  }, [requestScope]);
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
   // Calculate URL sessions with duration from heartbeats
   const urlSessions = useMemo(() => {
@@ -100,9 +109,11 @@ function StudentDetailDrawer({
   }, []);
 
   const { data: weeklyUsage = [] } = useQuery({
-    queryKey: ['/api/classpilot/student-analytics/usage', student?.studentId, usageDateRange.startDate],
-    queryFn: () =>
-      apiRequest('GET', `/classpilot/student-analytics/${student.studentId}/usage?startDate=${usageDateRange.startDate}&endDate=${usageDateRange.endDate}`),
+    queryKey: ['/api/classpilot/student-analytics/usage', schoolId, student?.studentId, usageDateRange.startDate],
+    queryFn: ({ signal }) =>
+      apiRequest('GET', `/classpilot/student-analytics/${student.studentId}/usage?startDate=${usageDateRange.startDate}&endDate=${usageDateRange.endDate}`, undefined, {
+        signal, headers: activityRequestHeaders(schoolId, contextAuthorityRevision),
+      }),
     select: (data) => data?.usage ?? [],
     enabled: canViewHistoricalUsage && !!student?.studentId,
     staleTime: 60000,
@@ -116,41 +127,46 @@ function StudentDetailDrawer({
     };
   }, [historyStartDate]);
 
-  const { data: unifiedTimeline = [] } = useQuery({
-    queryKey: ["/api/classpilot/student-timeline", student?.studentId, unifiedTimelineRange.from],
-    queryFn: () =>
+  const { data: unifiedTimeline = [], isError: timelineError, isLoading: timelineLoading, refetch: retryTimeline } = useQuery({
+    queryKey: ["/api/classpilot/student-timeline", schoolId, authorityQuery, contextAuthorityRevision, student?.studentId, unifiedTimelineRange.from],
+    queryFn: ({ signal }) =>
       apiRequest(
         "GET",
-        `/classpilot/students/${student.studentId}/timeline?from=${encodeURIComponent(unifiedTimelineRange.from)}&to=${encodeURIComponent(unifiedTimelineRange.to)}`
+        `/classpilot/students/${student.studentId}/timeline?from=${encodeURIComponent(unifiedTimelineRange.from)}&to=${encodeURIComponent(unifiedTimelineRange.to)}${authorityQuery ? `&${authorityQuery}` : ''}`,
+        undefined, { signal, headers: activityRequestHeaders(schoolId, contextAuthorityRevision) },
       ),
     select: (data) => data?.events ?? [],
     enabled: !!student?.studentId,
     staleTime: 30000,
+    retry: false,
   });
 
-  const { data: monitoringEvents = [], isLoading: monitoringEventsLoading } = useQuery({
+  const { data: monitoringEvents = [], isLoading: monitoringEventsLoading, isError: monitoringEventsError, refetch: retryMonitoringEvents } = useQuery({
     queryKey: [
       '/api/classpilot/teaching-sessions/events',
-      teachingSessionId,
+      schoolId, teachingSessionId, supervisionContextId, contextAuthorityRevision,
       student?.studentId,
     ],
-    queryFn: () => apiRequest(
+    queryFn: ({ signal }) => apiRequest(
       'GET',
-      `/classpilot/teaching-sessions/${encodeURIComponent(teachingSessionId)}/events?studentId=${encodeURIComponent(student.studentId)}&limit=100`,
+      `${activityParentPath({ teachingSessionId, supervisionContextId }, 'events')}?studentId=${encodeURIComponent(student.studentId)}&limit=100`,
+      undefined, { signal, headers: activityRequestHeaders(schoolId, contextAuthorityRevision) },
     ),
     select: (data) => data?.events ?? [],
-    enabled: !!teachingSessionId && !!student?.studentId,
+    enabled: !!(teachingSessionId || supervisionContextId) && !!student?.studentId,
     staleTime: 10000,
     refetchInterval: 30000,
+    retry: false,
   });
 
   const exportMonitoringEvents = useCallback(async () => {
-    if (!teachingSessionId || !monitoringStudentId) return;
+    if ((!teachingSessionId && !supervisionContextId) || !monitoringStudentId) return;
     try {
       const response = await api.get(
-        `/classpilot/teaching-sessions/${encodeURIComponent(teachingSessionId)}/events/export.csv?studentId=${encodeURIComponent(monitoringStudentId)}`,
-        { responseType: 'blob' },
+        `${activityParentPath({ teachingSessionId, supervisionContextId }, 'events/export.csv')}?studentId=${encodeURIComponent(monitoringStudentId)}`,
+        { responseType: 'blob', headers: activityRequestHeaders(schoolId, contextAuthorityRevision) },
       );
+      if (requestScopeRef.current !== requestScope) return;
       const blobUrl = URL.createObjectURL(response.data);
       const link = document.createElement('a');
       link.href = blobUrl;
@@ -160,13 +176,14 @@ function StudentDetailDrawer({
       link.remove();
       URL.revokeObjectURL(blobUrl);
     } catch (error) {
+      if (requestScopeRef.current !== requestScope) return;
       toast({
         variant: 'destructive',
         title: 'Could not export monitoring activity',
         description: error.response?.data?.error || error.message,
       });
     }
-  }, [monitoringStudentId, monitoringStudentName, teachingSessionId, toast]);
+  }, [monitoringStudentId, monitoringStudentName, teachingSessionId, supervisionContextId, schoolId, contextAuthorityRevision, requestScope, toast]);
 
   if (!student) return null;
 
@@ -670,7 +687,14 @@ function StudentDetailDrawer({
                       </CardHeader>
                       <Separator />
                       <CardContent className="pt-4">
-                        {unifiedTimeline.length === 0 ? (
+                        {timelineError ? (
+                          <div role="status" className="space-y-2 text-sm">
+                            <p>Student timeline unavailable for this assignment.</p>
+                            <Button variant="outline" size="sm" onClick={() => void retryTimeline()}>Retry timeline</Button>
+                          </div>
+                        ) : timelineLoading ? (
+                          <p className="text-sm text-muted-foreground">Loading student timeline…</p>
+                        ) : unifiedTimeline.length === 0 ? (
                           <p className="text-sm text-muted-foreground">No cross-product safety or context events for this date.</p>
                         ) : (
                           <div className="space-y-2">
@@ -771,13 +795,13 @@ function StudentDetailDrawer({
                         Observed browser telemetry for this class session. Monitoring gaps indicate missing telemetry; they do not identify the cause or prove intentional behavior.
                       </p>
                       </div>
-                      {teachingSessionId && (
+                      {(teachingSessionId || supervisionContextId) && (
                         <Button variant="outline" size="sm" onClick={() => void exportMonitoringEvents()}>
                           <Download className="mr-2 h-4 w-4" /> Export CSV
                         </Button>
                       )}
                     </div>
-                    {!teachingSessionId ? (
+                    {!teachingSessionId && !supervisionContextId ? (
                       <Card>
                         <CardContent className="py-8 text-center text-sm text-muted-foreground">
                           Select an active class session to view monitoring activity.
@@ -789,6 +813,11 @@ function StudentDetailDrawer({
                           Loading monitoring activity…
                         </CardContent>
                       </Card>
+                    ) : monitoringEventsError ? (
+                      <Card><CardContent className="space-y-2 py-8 text-center text-sm" role="status">
+                        <p>Monitoring activity unavailable for this assignment.</p>
+                        <Button variant="outline" size="sm" onClick={() => void retryMonitoringEvents()}>Retry monitoring activity</Button>
+                      </CardContent></Card>
                     ) : monitoringEvents.length === 0 ? (
                       <Card>
                         <CardContent className="py-8 text-center text-sm text-muted-foreground">

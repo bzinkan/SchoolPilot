@@ -132,6 +132,8 @@ export function createTileBatchRequests(students, context = {}) {
     viewerId: normalizedContextValue(context.viewerId, 'no-viewer'),
     authority: normalizedContextValue(context.authority, 'no-authority'),
     teachingSessionId: normalizedContextValue(context.teachingSessionId, 'no-session'),
+    ...(context.supervisionContextId ? { supervisionContextId: context.supervisionContextId } : {}),
+    ...(context.contextAuthorityRevision != null ? { contextAuthorityRevision: context.contextAuthorityRevision } : {}),
   });
   const requests = [];
 
@@ -147,7 +149,9 @@ export function createTileBatchRequests(students, context = {}) {
       && context.teachingSessionId.trim()
       ? context.teachingSessionId.trim()
       : null;
-    const sessionBody = teachingSessionId ? { teachingSessionId } : {};
+    if (teachingSessionId && context.supervisionContextId) throw new Error('Tile requests require one classroom authority.');
+    const sessionBody = context.supervisionContextId ? { supervisionContextId: context.supervisionContextId }
+      : teachingSessionId ? { teachingSessionId } : {};
     requests.push(
       {
         kind: 'screenshots',

@@ -66,6 +66,7 @@ test('only a session-scoped missing-session response terminates aggregate reconc
   const response = (status, code) => ({ response: { status, data: { code } } });
   assert.equal(isClasspilotSessionUnavailable(response(404), 'class-a'), true);
   assert.equal(isClasspilotSessionUnavailable(response(404, 'CLASSPILOT_SESSION_UNAVAILABLE'), 'class-a'), true);
+  assert.equal(isClasspilotSessionUnavailable(response(404, 'CLASSROOM_ACTIVITY_UNAVAILABLE'), 'context-a'), true);
   assert.equal(isClasspilotSessionUnavailable(response(404), null), false);
   for (const status of [408, 429, 500, 503]) assert.equal(isClasspilotSessionUnavailable(response(status), 'class-a'), false);
   assert.equal(isClasspilotSessionUnavailable(new Error('offline'), 'class-a'), false);

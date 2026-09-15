@@ -14,6 +14,7 @@ import { publishWS } from "../realtime/ws-redis.js";
 export async function stopActiveClasspilotLiveViewNegotiations(options: {
   schoolId: string;
   teachingSessionId?: string;
+  supervisionContextId?: string;
   requesterUserId?: string;
   negotiationIds?: readonly string[];
   reason: string;

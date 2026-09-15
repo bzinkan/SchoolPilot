@@ -7,12 +7,14 @@ export type ParsedClasspilotSessionSubscription =
   | {
       ok: true;
       action: ClasspilotSessionSubscriptionAction;
-      teachingSessionId: string;
+      teachingSessionId?: string;
+      supervisionContextId?: string;
+      contextAuthorityRevision?: string;
       requestId?: string;
     }
   | {
       ok: false;
-      code: "REQUEST_ID_INVALID" | "SESSION_ID_REQUIRED";
+      code: "REQUEST_ID_INVALID" | "SESSION_ID_REQUIRED" | "CONTEXT_AUTHORITY_REVISION_REQUIRED";
       requestId?: string;
     };
 
@@ -26,6 +28,11 @@ export type ClasspilotSessionSubscriptionMutation = {
   epoch: number;
   identityGeneration: number;
 };
+
+export function parseClasspilotContextAuthorityRevision(value: unknown): string | null {
+  return typeof value === "string" && /^(0|[1-9]\d*)$/.test(value)
+    && Number.isSafeInteger(Number(value)) ? value : null;
+}
 
 /**
  * Mark the arrival order before any asynchronous authorization. A later
@@ -64,6 +71,8 @@ export function parseClasspilotSessionSubscription(
     requestId?: unknown;
     sessionId?: unknown;
     teachingSessionId?: unknown;
+    supervisionContextId?: unknown;
+    contextAuthorityRevision?: unknown;
   };
   const action = candidate.type === "subscribe-session"
     ? "subscribe"
@@ -84,18 +93,32 @@ export function parseClasspilotSessionSubscription(
   const teachingSessionId = typeof rawSessionId === "string"
     ? rawSessionId.trim()
     : "";
+  const supervisionContextId = typeof candidate.supervisionContextId === "string"
+    ? candidate.supervisionContextId.trim() : "";
   if (
-    !teachingSessionId
-    || teachingSessionId.length > SESSION_ID_MAX_LENGTH
+    Boolean(teachingSessionId) === Boolean(supervisionContextId)
+    || (teachingSessionId || supervisionContextId).length > SESSION_ID_MAX_LENGTH
   ) {
     return { ok: false, code: "SESSION_ID_REQUIRED", ...(requestId ? { requestId } : {}) };
+  }
+  const contextAuthorityRevision = parseClasspilotContextAuthorityRevision(candidate.contextAuthorityRevision);
+  if (supervisionContextId && action === "subscribe" && contextAuthorityRevision === null) {
+    return { ok: false, code: "CONTEXT_AUTHORITY_REVISION_REQUIRED", ...(requestId ? { requestId } : {}) };
   }
   return {
     ok: true,
     action,
-    teachingSessionId,
+    ...(teachingSessionId ? { teachingSessionId } : { supervisionContextId }),
+    ...(supervisionContextId && contextAuthorityRevision !== null ? { contextAuthorityRevision } : {}),
     ...(requestId ? { requestId } : {}),
   };
+}
+
+/** Context IDs never share the teaching-session namespace on a wire event. */
+export function correlateClasspilotContextMessage(supervisionContextId: string, message: unknown): unknown {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return message;
+  const { teachingSessionId: _teaching, sessionId: _legacy, ...payload } = message as Record<string, unknown>;
+  return { ...payload, supervisionContextId };
 }
 
 /** Attach the server-authoritative session target to an object event. */

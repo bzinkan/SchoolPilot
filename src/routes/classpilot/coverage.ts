@@ -76,6 +76,7 @@ import {
   ownScheduledTestingContexts,
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
+import { scheduledSupervisionSource, scheduledContextHasClassroomTools, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   classpilotRealtimeFresh,
@@ -1097,10 +1098,11 @@ async function contextStudentPayload(schoolId: string, rows: any[]) {
   return payload;
 }
 
-async function resolveCoverageCommandTargets(
+export async function resolveCoverageCommandTargets(
   schoolId: string,
   contextId: string,
-  body: any
+  body: any,
+  options: { requireClassroomCapability?: boolean } = {},
 ): Promise<ResolvedClasspilotCommandTarget[]> {
   const scope = String(body.targetScope || "").trim();
   if (scope !== "context" && scope !== "students") {
@@ -1163,7 +1165,8 @@ async function resolveCoverageCommandTargets(
     const session = sessionsByStudent.get(row.studentId);
     const read = realtime.get(row.studentId);
     const snapshot = read?.status === "hit" ? read.snapshot : null;
-    const active = !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
+    const capable = !options.requireClassroomCapability || snapshot?.acceptedCapabilities?.includes("scheduledClassroomV1") === true;
+    const active = capable && !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
     const explicitlySignedOut = !session;
     const deferredAuthorized = explicitlySignedOut && lateSignInAuthoring;
     targets.push({
@@ -1176,11 +1179,11 @@ async function resolveCoverageCommandTargets(
       // device is reachable or the signed-out target passed the school gate.
       // Non-persistent commands (notably durable teacher messages) retain
       // their own queueing policy while delivery is unavailable.
-      stateAuthorized: active
+      stateAuthorized: capable && (active
         || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
-        || deferredAuthorized,
+        || deferredAuthorized),
       lateSignInEligible: deferredAuthorized,
-      unavailableReason: active
+      unavailableReason: !capable ? "The extension needs scheduled classroom support" : active
         ? undefined
         : explicitlySignedOut
           ? currentPageWaypoint
@@ -1279,6 +1282,8 @@ router.get("/coverage/summary", ...auth, requireClasspilotFullMonitoring, async 
         contexts,
         activeStudents: claimedRows,
       }),
+      ownAdHocContexts: ownActiveSupervisionContexts({ schoolId, viewerId: req.authUser!.id,
+        contexts: contexts.filter((context) => !scheduledSupervisionSource(context)), activeStudents: claimedRows }),
     });
   } catch (err) {
     next(err);
@@ -1789,11 +1794,16 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
       return res.status(400).json({ error: "scope must be mine when provided", code: "INVALID_COVERAGE_SCOPE" });
     }
     const mine = req.query.scope === "mine" || !isAdmin(req, res);
-    const contexts = await listSupervisionContexts(schoolId, {
+    const allContexts = await listSupervisionContexts(schoolId, {
       activeOnly: true,
       assignedStaffId: mine ? req.authUser!.id : undefined,
       requireComplete: true,
     });
+    if (req.query.category !== undefined && !["ad_hoc", "scheduled"].includes(String(req.query.category))) {
+      return res.status(400).json({ error: "category must be ad_hoc or scheduled" });
+    }
+    const contexts = allContexts.filter((context) => req.query.category === "ad_hoc"
+      ? !scheduledSupervisionSource(context) : req.query.category === "scheduled" ? !!scheduledSupervisionSource(context) : true);
     const groupIds = [...new Set(contexts.map((context) => context.coverageGroupId).filter(Boolean))];
     const [allGroups, staffRows, rows] = await Promise.all([
       groupIds.length > 0
@@ -2645,6 +2655,8 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       contextId: context.id,
       studentIds,
       releaseReason,
+      ...(scheduledContextHasClassroomTools(context) && req.get("X-ClassPilot-Context-Authority-Revision") !== undefined ? { scheduledClassroomAuthority: { actorId: req.authUser!.id,
+        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } } : {}),
     });
     await syncClasspilotControlStatesToActiveDevices(
       schoolId,

@@ -330,7 +330,7 @@ test(
         `INSERT INTO session_settings (id, school_id, session_id) VALUES ($1, $2, $3)`,
         [`${token}_setting_cross`, ids.schoolA, ids.sessionB],
         "23514",
-        /session setting tenant/i,
+        /session setting tenant|classroom activity parent/i,
       );
       await client.query(
         `INSERT INTO session_settings (id, school_id, session_id) VALUES ($1, $2, $3)`,
@@ -346,7 +346,7 @@ test(
         `,
         [`${token}_hand_session`, ids.schoolA, ids.sessionB, ids.studentA, ids.deviceA],
         "23514",
-        /session and student/i,
+        /session and student|classroom activity (parent|student)/i,
       );
       await expectDatabaseError(
         "active hand rejects a hidden cross-school student",
@@ -357,7 +357,7 @@ test(
         `,
         [`${token}_hand_student`, ids.schoolA, ids.sessionA, ids.studentB, ids.deviceA],
         "23514",
-        /session and student/i,
+        /session and student|classroom activity (parent|student)/i,
       );
       await expectDatabaseError(
         "active hand rejects a hidden cross-school device",
@@ -368,7 +368,7 @@ test(
         `,
         [`${token}_hand_device`, ids.schoolA, ids.sessionA, ids.studentA, ids.deviceB],
         "23514",
-        /device must belong/i,
+        /device must belong|active hand requires a same-school device/i,
       );
       await expectDatabaseError(
         "new cleared hand rejects a hidden cross-school device",
@@ -379,7 +379,7 @@ test(
         `,
         [`${token}_hand_cleared_cross`, ids.schoolA, ids.sessionA, ids.studentA, ids.deviceB],
         "23514",
-        /device must belong/i,
+        /device must belong|active hand requires a same-school device/i,
       );
       const handId = `${token}_hand_a`;
       await client.query(
@@ -417,7 +417,7 @@ test(
           `,
           [`${token}_delivery_${suffix}`, ids.schoolA, messageId, sessionId, studentId],
           "23514",
-          /chat delivery parents/i,
+          /chat delivery parents|chat delivery must match|classroom activity (parent|student)/i,
         );
       }
       await client.query(
@@ -445,7 +445,7 @@ test(
         `,
         [`${token}_poll_session`, ids.schoolA, ids.sessionB, ids.teacher, ["A", "B"]],
         "23514",
-        /poll tenant/i,
+        /poll tenant|classroom activity parent/i,
       );
       await expectDatabaseError(
         "poll rejects hidden cross-school command authority",
@@ -464,7 +464,7 @@ test(
           ["A", "B"],
         ],
         "23514",
-        /command authority/i,
+        /command authority|poll start command must match/i,
       );
       await client.query(
         `
@@ -551,7 +551,7 @@ test(
         `,
         [`${token}_hand_deleted`, ids.schoolA, ids.sessionA, ids.studentA, ids.deviceA],
         "23514",
-        /device must belong/i,
+        /device must belong|active hand requires a same-school device/i,
       );
 
       const visibleState = await client.query<{

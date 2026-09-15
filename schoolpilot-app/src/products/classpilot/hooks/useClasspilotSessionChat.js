@@ -1,3 +1,4 @@
+import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityRequestHeaders, matchesActivityAuthority } from '../lib/dashboardActivity';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../../../lib/queryClient';
@@ -5,16 +6,16 @@ import { apiRequest } from '../../../lib/queryClient';
 let nextGeneration = 0;
 const DENIED_STATUSES = new Set([401, 403, 404]);
 
-function newChatScope(key, schoolId, viewerId, sessionId) {
+function newChatScope(key, schoolId, viewerId, sessionId, authority, contextAuthorityRevision) {
   return {
-    key, schoolId, viewerId, sessionId, generation: ++nextGeneration,
+    key, schoolId, viewerId, sessionId, authority, contextAuthorityRevision, generation: ++nextGeneration,
     sequence: 0, requestSequence: 0, reconnectSequence: 0, appliedRequest: 0, denied: false,
     messages: new Map(), deliveries: new Map(), dismissed: new Set(), closedThreads: new Map(), pendingReplies: new Set(),
   };
 }
 
-function historyMessage(row, sessionId, schoolId) {
-  if (!row?.id || !row.studentId || row.sessionId !== sessionId
+function historyMessage(row, sessionId, schoolId, authority) {
+  if (!row?.id || !row.studentId || !matchesActivityAuthority(row, authority)
     || (row.schoolId && row.schoolId !== schoolId)
     || (row.senderType !== 'student' && row.senderType !== 'teacher')) return null;
   return {
@@ -30,7 +31,7 @@ function applyHistory(scope, rows, request, dismissedIds) {
   const previous = scope.messages;
   const next = new Map();
   for (const row of rows) {
-    const message = historyMessage(row, scope.sessionId, scope.schoolId);
+    const message = historyMessage(row, scope.sessionId, scope.schoolId, scope.authority);
     if (!message || scope.dismissed.has(message.id) || dismissedIds.has(message.id)) continue;
     const existing = previous.get(message.id);
     const closed = scope.closedThreads.get(message.studentId);
@@ -65,13 +66,15 @@ function applyHistory(scope, rows, request, dismissedIds) {
 // History, live events, and teacher replies share one authority-scoped store.
 // Student telemetry only supplies display names; it never replays a snapshot.
 export function useClasspilotSessionChat({
-  schoolId, viewerId, sessionId, enabled, wsAuthenticated, students, dismissedMessageIds,
+  schoolId, viewerId, sessionId: teachingSessionId, supervisionContextId, contextAuthorityRevision, enabled, wsAuthenticated, students, dismissedMessageIds,
 }) {
   const queryClient = useQueryClient();
+  const authority = activityAuthority({ teachingSessionId, supervisionContextId });
+  const sessionId = teachingSessionId || supervisionContextId;
   const scopeKey = enabled && schoolId && viewerId && sessionId
-    ? JSON.stringify([schoolId, viewerId, sessionId]) : null;
-  const [scope, setScope] = useState(() => newChatScope(scopeKey, schoolId, viewerId, sessionId));
-  if (scope.key !== scopeKey) setScope(newChatScope(scopeKey, schoolId, viewerId, sessionId));
+    ? JSON.stringify([schoolId, viewerId, activityAuthorityKey(authority), contextAuthorityRevision ?? null]) : null;
+  const [scope, setScope] = useState(() => newChatScope(scopeKey, schoolId, viewerId, sessionId, authority, contextAuthorityRevision));
+  if (scope.key !== scopeKey) setScope(newChatScope(scopeKey, schoolId, viewerId, sessionId, authority, contextAuthorityRevision));
   const [, setVersion] = useState(0);
   const activeScope = useRef(null);
   const connection = useRef({ authenticated: wsAuthenticated, hasAuthenticated: wsAuthenticated });
@@ -103,8 +106,8 @@ export function useClasspilotSessionChat({
     queryFn: async ({ signal }) => {
       const request = { id: ++scope.requestSequence, version: scope.sequence };
       try {
-        const data = await apiRequest('GET', `/teacher/messages?sessionId=${encodeURIComponent(scope.sessionId)}`,
-          undefined, { signal, headers: { 'X-School-Id': scope.schoolId } });
+        const data = await apiRequest('GET', `/teacher/messages?${activityAuthorityQuery(scope.authority, true)}`,
+          undefined, { signal, headers: activityRequestHeaders(scope.schoolId, scope.contextAuthorityRevision) });
         if (!Array.isArray(data?.messages)) throw new Error('Class chat history is unavailable.');
         if (!signal.aborted && currentScope() === scope) {
           applyHistory(scope, data.messages, request, dismissedMessageIds.current);
@@ -153,7 +156,7 @@ export function useClasspilotSessionChat({
 
   const receiveStudentMessage = useCallback((message) => {
     const current = currentScope();
-    if (!current || message.sessionId !== current.sessionId || !message.id || !message.studentId
+    if (!current || !matchesActivityAuthority(message, current.authority) || !message.id || !message.studentId
       || current.dismissed.has(message.id) || dismissedMessageIds.current.has(message.id)
       || current.messages.has(message.id)) return false;
     current.messages.set(message.id, { ...message, senderType: 'student', read: false, version: ++current.sequence });
@@ -177,8 +180,8 @@ export function useClasspilotSessionChat({
     const current = currentScope();
     if (!current) return null;
     const request = {
-      generation: current.generation, schoolId: current.schoolId,
-      sessionId: current.sessionId, studentId, version: ++current.sequence,
+      generation: current.generation, schoolId: current.schoolId, contextAuthorityRevision: current.contextAuthorityRevision,
+      sessionId: current.sessionId, authority: current.authority, studentId, version: ++current.sequence,
     };
     current.pendingReplies.add(request);
     return request;
@@ -191,7 +194,7 @@ export function useClasspilotSessionChat({
   const receiveReply = useCallback((request, reply, text) => {
     const current = currentScope();
     if (!request || current?.generation !== request.generation || !reply?.id
-      || (reply.sessionId && reply.sessionId !== current.sessionId)
+      || ((reply.sessionId || reply.supervisionContextId) && !matchesActivityAuthority(reply, current.authority))
       || (reply.schoolId && reply.schoolId !== current.schoolId)
       || (reply.studentId && reply.studentId !== request.studentId)) return false;
     if (!isCurrentReply(request)) {

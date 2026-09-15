@@ -25,6 +25,8 @@ import {
   getActiveSessionsForStudents,
   isAuthorizedClasspilotSessionStaff,
   withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotSupervisionTelemetryAuthority,
+  getClasspilotStudentControlState,
 } from "../../services/storage.js";
 import {
   broadcastToStaffSessionLocal,
@@ -44,6 +46,12 @@ import {
   parseClasspilotTeachingSessionId,
 } from "../../services/classpilotStudentChat.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import { requireScheduledClassroomContext, parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
+import { createScheduledStudentMessage, mutateScheduledStudentHand, createScheduledTeacherReply,
+  publishScheduledClassroomEvent, authorizeScheduledTeacherStudentAction, type ScheduledStudentAction } from "../../services/classpilotScheduledClassroomTools.js";
+import { db } from "../../db.js";
+import { and, eq, isNull } from "drizzle-orm";
+import { chatMessages, classpilotActiveHands, polls as pollsTable } from "../../schema/classpilot.js";
 
 const router = Router();
 
@@ -132,6 +140,13 @@ function publicChatMessage<T extends Record<string, any>>(message: T) {
   return safe;
 }
 
+function scheduledStudentAction(req: any, res: any): ScheduledStudentAction {
+  const authority = parseClasspilotActivityAuthority(req.body);
+  if (!authority?.supervisionContextId || req.body.sessionId) throw Object.assign(new Error("Exactly one classroom authority is required"), { status: 400, expose: true, code: "ACTIVITY_AUTHORITY_INVALID" });
+  return { schoolId: res.locals.schoolId, supervisionContextId: authority.supervisionContextId, studentId: res.locals.studentId,
+    studentSessionId: res.locals.studentSessionId, deviceId: res.locals.deviceId, studentControlRevision: req.body.studentControlRevision };
+}
+
 // ============================================================================
 // Chat (Teacher broadcast)
 // ============================================================================
@@ -162,6 +177,13 @@ router.get("/chat/:sessionId", ...staffAuth, async (req, res, next) => {
 // POST /api/classpilot/student/raise-hand
 router.post("/student/raise-hand", ...studentAuth, async (req, res, next) => {
   try {
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const options = scheduledStudentAction(req, res);
+      const { context, hand } = await mutateScheduledStudentHand({ ...options, raised: true });
+      await publishScheduledClassroomEvent(context, { type: "hand-raised", data: { supervisionContextId: context.id,
+        studentId: options.studentId, timestamp: hand!.raisedAt.toISOString() } });
+      return res.json({ ok: true, handRaised: true, raisedHands: [{ supervisionContextId: context.id, raisedAt: hand!.raisedAt }] });
+    }
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const studentSessionId = res.locals.studentSessionId as string;
@@ -202,6 +224,12 @@ router.post("/student/raise-hand", ...studentAuth, async (req, res, next) => {
 // POST /api/classpilot/student/lower-hand
 router.post("/student/lower-hand", ...studentAuth, async (req, res, next) => {
   try {
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const options = scheduledStudentAction(req, res);
+      const { context } = await mutateScheduledStudentHand({ ...options, raised: false });
+      await publishScheduledClassroomEvent(context, { type: "hand-lowered", data: { supervisionContextId: context.id, studentId: options.studentId } });
+      return res.json({ ok: true, handRaised: false, clearedContexts: [{ supervisionContextId: context.id }] });
+    }
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const { teachingSession } = await lowerAuthorizedClasspilotStudentHand({
@@ -228,6 +256,14 @@ router.post("/student/lower-hand", ...studentAuth, async (req, res, next) => {
 // POST /api/classpilot/student/send-message
 router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
   try {
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const options = scheduledStudentAction(req, res);
+      const result = await createScheduledStudentMessage({ ...options, content: String(req.body.message || "").trim(), clientMessageId: String(req.body.clientMessageId || "") });
+      const message = publicChatMessage(result.message);
+      if (result.created) await publishScheduledClassroomEvent(result.context, { type: "student-message", data: message });
+      return res.json({ message, messageId: message.id, clientMessageId: message.clientMessageId, supervisionContextId: result.context.id,
+        delivered: true, duplicate: !result.created, messages: [message] });
+    }
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const studentSessionId = res.locals.studentSessionId as string;
@@ -334,6 +370,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
         studentSessionId,
         deviceId,
         status,
+        studentControlRevision: raw?.studentControlRevision,
         errorMessage: typeof (raw?.errorMessage ?? raw?.error) === "string"
           ? String(raw.errorMessage ?? raw.error).slice(0, 500)
           : null,
@@ -350,6 +387,10 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
         };
         broadcastToStaffSessionLocal(schoolId, acknowledged.message.sessionId, payload);
         await publishWS({ kind: "staff-session", schoolId, sessionId: acknowledged.message.sessionId }, payload);
+      } else if (acknowledged?.message.supervisionContextId) {
+        const context = await requireScheduledClassroomContext({ schoolId, supervisionContextId: acknowledged.message.supervisionContextId });
+        await publishScheduledClassroomEvent(context, { type: "chat-message-delivery", messageId, studentId,
+          deliveryStatus: acknowledged.message.deliveryStatus, errorMessage: acknowledged.message.errorMessage });
       }
     }
     return res.json({ receipts });
@@ -366,6 +407,16 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
 // GET /api/classpilot/teacher/messages - Get student messages
 router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
   try {
+    if ("supervisionContextId" in req.query && (!parseClasspilotActivityAuthority(req.query) || req.query.sessionId)) {
+      return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    }
+    if (typeof req.query.supervisionContextId === "string") {
+      const context = await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: req.query.supervisionContextId,
+        actorId: req.authUser!.id, allowObserve: isClasspilotAdmin(req, res) });
+      const messages = await db.select().from(chatMessages).where(and(eq(chatMessages.schoolId, context.schoolId), eq(chatMessages.supervisionContextId, context.id)))
+        .orderBy(chatMessages.createdAt).limit(500);
+      return res.json({ messages: messages.map(publicChatMessage) });
+    }
     const sessionId = String(req.query.sessionId || "").trim();
     if (!sessionId) {
       return res.status(400).json({ error: "sessionId query param required" });
@@ -384,6 +435,30 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
 // POST /api/classpilot/teacher/reply - Reply to student message
 router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
   try {
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const authority = parseClasspilotActivityAuthority(req.body);
+      if (!authority?.supervisionContextId || req.body.sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+      const result = await createScheduledTeacherReply({ schoolId: res.locals.schoolId!, contextId: authority.supervisionContextId,
+        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")),
+        actorId: req.authUser!.id, studentId: String(req.body.studentId || req.body.toStudentId || ""), content: String(req.body.message || "").trim() });
+      const binding = (await getActiveSessionsForStudents(result.context.schoolId, [result.message.studentId!]))[0];
+      if (binding) {
+        const target = { kind: "student-binding" as const, schoolId: result.context.schoolId, studentId: result.message.studentId!,
+          studentSessionId: binding.id, deviceId: binding.deviceId };
+        const delivery = await withClasspilotStudentControlDeliveryAuthority({ ...target, claimTeacherChatDeliveries: true, limit: 20 },
+          (database) => getClasspilotStudentControlState(target.schoolId, target.studentId, database),
+          (claimed, control) => claimed.map(({ message }) => {
+            const payload = { type: "teacher-message", _msgId: message.id, chatMessageId: message.id, messageId: message.id,
+              supervisionContextId: message.supervisionContextId, studentId: target.studentId, studentSessionId: binding.id,
+              studentControlRevision: control?.revision, message: message.content, fromName: "Teacher" };
+            sendToStudentBindingLocal(target, payload);
+            return publishWS(target, payload);
+          }));
+        if (delivery.authorized) await Promise.all(delivery.value);
+      }
+      await publishScheduledClassroomEvent(result.context, { type: "teacher-message", data: publicChatMessage(result.message) });
+      return res.status(201).json({ message: publicChatMessage(result.message), queued: true });
+    }
     const { sessionId, toStudentId, studentId: bodyStudentId, message } = req.body;
     const targetStudentId = toStudentId || bodyStudentId;
     const schoolId = res.locals.schoolId!;
@@ -472,6 +547,7 @@ router.delete("/teacher/messages/:messageId", ...staffAuth, async (req, res, nex
       schoolId: res.locals.schoolId!,
       messageId,
       actorId: req.authUser!.id,
+      contextAuthorityRevision: req.get("X-ClassPilot-Context-Authority-Revision"),
     });
     return res.json({ ok: true });
   } catch (err) {
@@ -485,6 +561,28 @@ router.post("/teacher/dismiss-hand/:studentId", ...staffAuth, async (req, res, n
   try {
     const studentId = param(req, "studentId");
     const schoolId = res.locals.schoolId!;
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const authority = parseClasspilotActivityAuthority(req.body);
+      if (!authority?.supervisionContextId || req.body.sessionId || req.query.sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+      const result = await authorizeScheduledTeacherStudentAction({ schoolId, contextId: authority.supervisionContextId,
+        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")),
+        actorId: req.authUser!.id, studentId, dismissHand: true });
+      if (result.binding) {
+        const binding = result.binding;
+        await withClasspilotSupervisionTelemetryAuthority({ schoolId, supervisionContextId: result.context.id, studentId,
+          studentSessionId: binding.id, deviceId: binding.deviceId, controlRevision: result.controlRevision,
+          scheduledClassroomOnly: true, actorId: req.authUser!.id }, async () => {
+            const target = { kind: "student-binding" as const, schoolId, studentId, studentSessionId: binding.id, deviceId: binding.deviceId };
+            const payload = { type: "remote-control", _msgId: crypto.randomUUID(), studentId, studentSessionId: binding.id,
+              command: { type: "hand-dismissed", studentId, studentSessionId: binding.id,
+                ...classpilotCommandAuthorityEnvelope({ supervisionContextId: result.context.id }),
+                studentControlRevision: result.controlRevision, data: { supervisionContextId: result.context.id, studentId, studentSessionId: binding.id } } };
+            sendToStudentBindingLocal(target, payload); await publishWS(target, payload);
+          });
+      }
+      await publishScheduledClassroomEvent(result.context, { type: "hand-dismissed", studentId });
+      return res.json({ ok: true });
+    }
     const sessionId = String(req.body?.sessionId || req.query.sessionId || "").trim();
 
     if (!sessionId) {
@@ -536,6 +634,25 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
   try {
     const { sessionId, studentId } = req.body;
     const schoolId = res.locals.schoolId!;
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const authority = parseClasspilotActivityAuthority(req.body);
+      if (!authority?.supervisionContextId || sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+      const result = await authorizeScheduledTeacherStudentAction({ schoolId, contextId: authority.supervisionContextId,
+        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")),
+        actorId: req.authUser!.id, studentId: String(studentId || "") });
+      if (result.binding) {
+        const binding = result.binding;
+        await withClasspilotSupervisionTelemetryAuthority({ schoolId, supervisionContextId: result.context.id, studentId,
+          studentSessionId: binding.id, deviceId: binding.deviceId, controlRevision: result.controlRevision,
+          scheduledClassroomOnly: true, actorId: req.authUser!.id }, async () => {
+            const target = { kind: "student-binding" as const, schoolId, studentId, studentSessionId: binding.id, deviceId: binding.deviceId };
+            const payload = { type: "chat-closed", _msgId: crypto.randomUUID(), studentId, studentSessionId: binding.id,
+              ...classpilotCommandAuthorityEnvelope({ supervisionContextId: result.context.id }), studentControlRevision: result.controlRevision };
+            sendToStudentBindingLocal(target, payload); await publishWS(target, payload);
+          });
+      }
+      return res.json({ ok: true });
+    }
 
     if (!sessionId) {
       return res.status(400).json({ error: "sessionId required" });
@@ -585,6 +702,15 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
 // GET /api/classpilot/polls - List polls for teacher
 router.get("/polls", ...staffAuth, async (req, res, next) => {
   try {
+    if ("supervisionContextId" in req.query && (!parseClasspilotActivityAuthority(req.query) || req.query.sessionId)) {
+      return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    }
+    if (typeof req.query.supervisionContextId === "string") {
+      const context = await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: req.query.supervisionContextId,
+        actorId: req.authUser!.id, allowObserve: isClasspilotAdmin(req, res) });
+      const rows = await db.select().from(pollsTable).where(and(eq(pollsTable.schoolId, context.schoolId), eq(pollsTable.supervisionContextId, context.id))).orderBy(pollsTable.createdAt).limit(100);
+      return res.json({ polls: rows });
+    }
     const { sessionId } = req.query;
     if (!sessionId) {
       return res.status(400).json({ error: "sessionId query param required" });
@@ -607,7 +733,9 @@ router.get("/polls/:pollId/results", ...staffAuth, async (req, res, next) => {
     if (!poll) {
       return res.status(404).json({ error: "Poll not found" });
     }
-    if (!(await authorizedStaffSession(req, res, poll.sessionId))) {
+    if (poll.supervisionContextId) await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: poll.supervisionContextId,
+      actorId: req.authUser!.id, allowObserve: isClasspilotAdmin(req, res) });
+    if (!poll.supervisionContextId && (!poll.sessionId || !(await authorizedStaffSession(req, res, poll.sessionId)))) {
       return res.status(404).json({ error: "Poll not found" });
     }
 
@@ -629,6 +757,9 @@ router.get("/polls/:pollId/results", ...staffAuth, async (req, res, next) => {
 // POST /api/classpilot/polls/:pollId/respond - Student responds to poll
 router.post("/polls/:pollId/respond", requireDeviceAuth, pollResponseLimiter, requireClasspilotEntitlement, async (req, res, next) => {
   try {
+    if (req.body.supervisionContextId != null && (!parseClasspilotActivityAuthority(req.body) || req.body.sessionId)) {
+      return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    }
     const pollId = param(req, "pollId");
     const { selectedOption } = req.body;
     const schoolId = res.locals.schoolId as string;
@@ -648,6 +779,8 @@ router.post("/polls/:pollId/respond", requireDeviceAuth, pollResponseLimiter, re
       studentSessionId: res.locals.studentSessionId as string,
       deviceId,
       selectedOption,
+      supervisionContextId: typeof req.body.supervisionContextId === "string" ? req.body.supervisionContextId : undefined,
+      studentControlRevision: req.body.studentControlRevision,
     });
     const { deviceId: _deviceId, ...response } = result.response;
     if (result.disposition === "conflict") {

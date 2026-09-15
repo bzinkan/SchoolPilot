@@ -1091,7 +1091,7 @@ assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
 assert.match(
   dashboardSource,
-  /const screenshotTileQueryStudents = effectiveSessionId[\s\S]{0,80}\? students[\s\S]{0,80}: EMPTY_LIST/,
+  /const screenshotTileQueryStudents = effectiveActivityId[\s\S]{0,80}\? students[\s\S]{0,80}: EMPTY_LIST/,
   'class screenshot cohorts must remain bound to the full frozen aggregate across temporary dashboard views',
 );
 assert.doesNotMatch(
@@ -1141,7 +1141,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /authority: `\$\{dashboardViewerRole\}:\$\{classDashboardCapabilities\.mode\}:class`[\s\S]{0,100}teachingSessionId: effectiveSessionId \|\| ''/,
+  /authority: `\$\{dashboardViewerRole\}:\$\{classDashboardCapabilities\.mode\}:class`[\s\S]{0,100}\.\.\.effectiveAuthority/,
   'teacher/admin Observe screenshot keys must retain the exact role, class authority, and frozen session',
 );
 assert.doesNotMatch(
@@ -1161,7 +1161,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /detailHistoryTeachingSessionId = studentView === 'class'[\s\S]{0,120}\? effectiveSessionId/,
+  /detailHistoryTeachingSessionId = studentView === 'class'[\s\S]{0,120}\? effectiveActivityId/,
   'class detail history must derive its session from the exact active teaching session',
 );
 const detailHistoryQueryKeyStart = dashboardSource.indexOf('const detailHistoryQueryKey = [');
@@ -1187,7 +1187,7 @@ for (const requiredBoundary of [
 }
 assert.match(
   dashboardSource,
-  /\.\.\.\(detailHistoryTeachingSessionId[\s\S]{0,140}\{ teachingSessionId: detailHistoryTeachingSessionId \}/,
+  /\.\.\.\(detailHistoryTeachingSessionId[\s\S]{0,140}\? effectiveAuthority/,
   'class detail history must send its exact teaching session while claimed coverage omits it',
 );
 assert.doesNotMatch(

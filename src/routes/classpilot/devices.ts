@@ -113,6 +113,11 @@ import {
   screenshotMatchesBinding,
   classBoundScreenshotMatchesBinding,
   type ClassBoundScreenshotBinding,
+  type SupervisionBoundScreenshotBinding,
+  getSupervisionBoundScreenshots,
+  setSupervisionBoundScreenshot,
+  supervisionBoundScreenshotBindingVersion,
+  supervisionBoundScreenshotMatchesBinding,
   type ScreenshotBinding,
   type ScreenshotData,
   type WsRedisTarget,
@@ -148,6 +153,7 @@ import {
   effectiveSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
 import { buildStudentFabState } from "../../services/classpilotFab.js";
+import { isClasspilotLiveViewAuthorityCurrent } from "../../services/classpilotLiveViewAuthority.js";
 import {
   classpilotCommandDeliveryPolicy,
   classpilotCommandExpiresAt,
@@ -763,12 +769,19 @@ function parseTileStudentIds(body: unknown):
 }
 
 function parseTileTeachingSessionId(body: unknown):
-  | { ok: true; teachingSessionId?: string }
+  | { ok: true; teachingSessionId?: string; supervisionContextId?: string }
   | { ok: false } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false };
   }
-  const value = (body as { teachingSessionId?: unknown }).teachingSessionId;
+  const fields = body as { teachingSessionId?: unknown; supervisionContextId?: unknown };
+  const value = fields.teachingSessionId;
+  if (fields.supervisionContextId !== undefined) {
+    if (value !== undefined || typeof fields.supervisionContextId !== "string") return { ok: false };
+    const supervisionContextId = fields.supervisionContextId.trim();
+    if (!supervisionContextId || supervisionContextId.length > 200) return { ok: false };
+    return { ok: true, supervisionContextId };
+  }
   if (value === undefined) return { ok: true };
   if (typeof value !== "string") return { ok: false };
   const teachingSessionId = value.trim();
@@ -779,7 +792,8 @@ function parseTileTeachingSessionId(body: unknown):
 function tileStaffScope(
   req: Request,
   res: Response,
-  teachingSessionId?: string
+  teachingSessionId?: string,
+  supervisionContextId?: string
 ) {
   return {
     schoolId: res.locals.schoolId as string,
@@ -796,6 +810,7 @@ function tileStaffScope(
       | "office_staff",
     isSuperAdmin: req.authUser!.isSuperAdmin,
     ...(teachingSessionId ? { teachingSessionId } : {}),
+    ...(supervisionContextId ? { supervisionContextId } : {}),
   };
 }
 
@@ -1059,6 +1074,26 @@ async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBin
     clearTimeout(timeout);
     recordHeartbeatHotPathTiming("screenshotPublicationMs", Date.now() - startedAt);
   }
+}
+
+async function publishLockedSupervisionScreenshotAvailable(
+  binding: SupervisionBoundScreenshotBinding, data: ScreenshotData, assignedStaffId: string
+) {
+  const orderedKey = `${classpilotRealtimeOrderingKey(binding.schoolId, binding.deviceId)}:${CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE}:supervision:${binding.supervisionContextId}`;
+  const revision = String(data.timestamp);
+  const message = { ...classpilotScreenshotAvailableEvent({ studentId: binding.studentId,
+    capturedAt: data.capturedAt ?? new Date(data.timestamp).toISOString(), timestamp: data.timestamp }),
+    supervisionContextId: binding.supervisionContextId, controlRevision: binding.controlRevision };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 300);
+  timeout.unref?.();
+  try {
+    const outcome = await publishOrderedWS({ kind: "staff-user", schoolId: binding.schoolId, userId: assignedStaffId },
+      message, { orderedKey, revision, signal: controller.signal });
+    if ((outcome.status === "accepted" || outcome.status === "failed") && recordLocalOrderedDelivery(orderedKey, revision)) {
+      sendToStaffUserLocal(binding.schoolId, assignedStaffId, message);
+    }
+  } finally { clearTimeout(timeout); }
 }
 
 async function publishRevisionedRealtimeUpdate(
@@ -2533,9 +2568,6 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }
-    const fab = await buildStudentFabState(schoolId, studentId, {
-      studentSessionId,
-    });
     const controlState = await getClasspilotStudentControlState(schoolId, studentId);
     // Settings carries no capability negotiation evidence. Ordinary control
     // state may continue to bind FAB/settings authority, but a deferred-origin
@@ -2550,6 +2582,9 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
         clientProtocolVersion: Number(req.query.clientProtocolVersion),
         capabilities: typeof req.query.capabilities === "string" ? req.query.capabilities.split(",") : [],
       }, scope: { schoolId, studentId, studentSessionId, deviceId: res.locals.deviceId },
+    });
+    const fab = await buildStudentFabState(schoolId, studentId, {
+      studentSessionId, acceptedCapabilities: settingsProtocol.acceptedCapabilities,
     });
     const monitoringSettings = await getHeartbeatTrackingSettingsForSchool(schoolId, undefined, { bypassCache: true });
     const monitoringPolicy = resolveClasspilotMonitoringPolicy(monitoringSettings, { acceptedCapabilities: settingsProtocol.acceptedCapabilities });
@@ -3623,18 +3658,7 @@ router.post(
       }
       const authorized = await runWithTenantContext(
         { schoolId: exactBinding.schoolId },
-        async () => {
-          const [controlState, staffAuthorized] = await Promise.all([
-            getClasspilotStudentControlState(exactBinding.schoolId, exactBinding.studentId),
-            isAuthorizedClasspilotSessionStaff(
-              exactBinding.schoolId,
-              authority.teachingSessionId,
-              authority.requesterUserId
-            ),
-          ]);
-          return controlState?.teachingSessionId === authority.teachingSessionId
-            && staffAuthorized;
-        }
+        () => isClasspilotLiveViewAuthorityCurrent({ ...exactBinding, ...authority })
       );
       if (!authorized) {
         return res.status(403).json({
@@ -4716,6 +4740,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           const finalFab = req.body?.requestFabState === true
             ? await buildStudentFabState(schoolId, studentId, {
                 studentSessionId,
+                acceptedCapabilities: protocol.acceptedCapabilities,
                 dbInstance: transactionDb,
               })
             : undefined;
@@ -5012,6 +5037,23 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             return { outcome: "discarded" as const, screenshotPolicy };
           }
 
+          if (current.authority.kind === "supervision_context") {
+            const supervisionBinding: SupervisionBoundScreenshotBinding = { ...binding,
+              supervisionContextId: current.authority.supervisionContextId, controlRevision: current.authority.controlRevision };
+            const data = { screenshot, timestamp: capturedAtDate.getTime(), capturedAt: capturedAtDate.toISOString(),
+              tabTitle, tabUrl, tabFavicon, ...supervisionBinding,
+              bindingVersion: supervisionBoundScreenshotBindingVersion(supervisionBinding) };
+            const stored = await setSupervisionBoundScreenshot(supervisionBinding, data);
+            const required = classpilotScreenshotStoreRequired();
+            if (!stored && !required) classpilotScreenshotFallback.setSupervisionBound(supervisionBinding, data);
+            const outcome = stored ? "redis" as const : required ? "unavailable" as const : "local_fallback" as const;
+            if (outcome !== "unavailable" && current.supervisionRetention?.assignedStaffId) {
+              await publishLockedSupervisionScreenshotAvailable(supervisionBinding, data, current.supervisionRetention.assignedStaffId)
+                .catch(() => recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures"));
+            }
+            return { outcome, screenshotPolicy, data };
+          }
+
           const classBinding: ClassBoundScreenshotBinding = {
             ...binding,
             teachingSessionId: current.authority.teachingSessionId,
@@ -5300,7 +5342,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     recordHeartbeatHotPathCounter("tileBatchScreenshotRequests");
     recordHeartbeatHotPathCounter("tileBatchScreenshotItems", parsed.studentIds.length);
 
-    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId);
+    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId, sessionScope.supervisionContextId);
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
@@ -5341,6 +5383,8 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
       exactBindings
     );
     const classBindings: ClassBoundScreenshotBinding[] = [];
+    const supervisionBindings: SupervisionBoundScreenshotBinding[] = [];
+    const supervisionBindingByStudent = new Map<string, SupervisionBoundScreenshotBinding>();
     const legacyBindings: ScreenshotBinding[] = [];
     const classBindingByStudent = new Map<string, ClassBoundScreenshotBinding>();
     const legacyBindingByStudent = new Map<string, ScreenshotBinding>();
@@ -5369,6 +5413,17 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
         || !classpilotRealtimeFresh(realtime.snapshot)
         || !Array.isArray(realtime.snapshot.acceptedCapabilities)
       ) ? null : realtime.snapshot.acceptedCapabilities;
+      if (access.supervisionContextId) {
+        // Never read a legacy or previous-class artifact for scheduled supervision.
+        if (Number.isSafeInteger(access.controlRevision) && access.controlRevision! >= 0
+          && (freshCapabilities === null || freshCapabilities.includes("scheduledClassroomV1"))) {
+          const supervisionBinding = { ...exactBinding, supervisionContextId: access.supervisionContextId,
+            controlRevision: access.controlRevision! };
+          supervisionBindings.push(supervisionBinding);
+          supervisionBindingByStudent.set(access.studentId, supervisionBinding);
+        }
+        continue;
+      }
       if (freshCapabilities === null) {
         if (classBinding) {
           classBindings.push(classBinding);
@@ -5388,9 +5443,10 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
         legacyBindingByStudent.set(access.studentId, exactBinding);
       }
     }
-    const [classScreenshotRead, legacyScreenshotRead] = await Promise.all([
+    const [classScreenshotRead, legacyScreenshotRead, supervisionScreenshotRead] = await Promise.all([
       getClassBoundScreenshots(classBindings),
       getScreenshots(legacyBindings),
+      getSupervisionBoundScreenshots(supervisionBindings),
     ]);
     recordHeartbeatHotPathTiming(
       "tileBatchScreenshotRedisMs",
@@ -5402,6 +5458,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     const screenshotStoreUnavailable = (
       classScreenshotRead.status === "unavailable"
       || legacyScreenshotRead.status === "unavailable"
+      || supervisionScreenshotRead.status === "unavailable"
     );
     if (screenshotStoreUnavailable) {
       recordHeartbeatHotPathCounter("tileBatchScreenshotStoreUnavailable");
@@ -5423,7 +5480,16 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
           ])
         : []
     );
+    const supervisionScreenshotByStudent = new Map(supervisionScreenshotRead.status === "ok"
+      ? supervisionBindings.map((binding, index) => [binding.studentId, supervisionScreenshotRead.screenshots[index] ?? null]) : []);
     const tiles = accesses.map((access) => {
+      const supervisionBinding = supervisionBindingByStudent.get(access.studentId);
+      if (supervisionBinding) {
+        const data = supervisionScreenshotByStudent.get(access.studentId)
+          ?? (localFallbackAllowed ? classpilotScreenshotFallback.getSupervisionBound(supervisionBinding) : null);
+        return { studentId: access.studentId, bindingVersion: supervisionBoundScreenshotBindingVersion(supervisionBinding),
+          screenshot: data && supervisionBoundScreenshotMatchesBinding(data, supervisionBinding) ? publicScreenshotData(data) : null };
+      }
       const classBinding = classBindingByStudent.get(access.studentId);
       if (classBinding) {
         const screenshot = classScreenshotByStudent.get(access.studentId)
@@ -5507,7 +5573,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
     recordHeartbeatHotPathCounter("tileBatchHistoryRequests");
     recordHeartbeatHotPathCounter("tileBatchHistoryItems", parsed.studentIds.length);
 
-    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId);
+    const scope = tileStaffScope(req, res, sessionScope.teachingSessionId, sessionScope.supervisionContextId);
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
@@ -5573,7 +5639,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
           : fallbackByStudent.get(access.studentId) ?? [];
         return {
           studentId: access.studentId,
-          heartbeats: heartbeats.map(safeTileHeartbeat),
+          heartbeats: heartbeats.filter((heartbeat) => !access.historySince || new Date(heartbeat.timestamp) >= access.historySince).map(safeTileHeartbeat),
         };
       }),
     });

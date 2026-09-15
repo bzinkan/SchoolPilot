@@ -41,7 +41,8 @@ function claimLocalRefreshWindow(digest: string, now = Date.now()): RefreshClaim
 
 async function claimRefreshWindow(options: {
   schoolId: string;
-  teachingSessionId: string;
+  teachingSessionId?: string;
+  supervisionContextId?: string;
   reason: ClasspilotScreenshotPolicyRefreshReason;
   studentIds: readonly string[];
 }): Promise<RefreshClaim> {
@@ -74,7 +75,8 @@ async function claimRefreshWindow(options: {
  */
 export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
   schoolId: string;
-  teachingSessionId: string;
+  teachingSessionId?: string;
+  supervisionContextId?: string;
   studentIds: string[];
   reason?: ClasspilotScreenshotPolicyRefreshReason;
   onFailure?: (error: unknown) => void;
@@ -91,6 +93,7 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
     const claim = await claimRefreshWindow({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId,
+      supervisionContextId: options.supervisionContextId,
       reason,
       studentIds,
     });
@@ -127,7 +130,7 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
       type: "screenshot-policy-refresh",
       _msgId: randomUUID(),
       reason: "observation_changed",
-      teachingSessionId: options.teachingSessionId,
+      ...(options.supervisionContextId ? { supervisionContextId: options.supervisionContextId } : { teachingSessionId: options.teachingSessionId }),
     } as const;
     const localDelivered = broadcastToStudentsLocal(
       options.schoolId,

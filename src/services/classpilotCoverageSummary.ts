@@ -24,6 +24,7 @@ export type ClasspilotCoverageSummary = {
   activeContextCount: number;
   ownTestingContexts: OwnTestingContextSummary[];
   ownSupervisionContexts: OwnSupervisionContextSummary[];
+  ownAdHocContexts?: OwnSupervisionContextSummary[];
 };
 
 /** Personal supervision includes manual claims as well as scheduled testing. */

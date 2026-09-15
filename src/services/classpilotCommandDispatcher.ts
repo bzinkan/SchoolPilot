@@ -18,6 +18,7 @@ import {
   replaceClasspilotSupervisionControlSnapshots,
   revalidateClasspilotExactCommandTargetsForDispatch,
   withClasspilotStudentControlDeliveryAuthority,
+  hasCurrentClasspilotStudentControlAuthority,
   type ClasspilotCommandWithTargets,
   type ClasspilotCommandPollMutation,
 } from "./storage.js";
@@ -72,6 +73,7 @@ import {
 import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPolicyRefresh.js";
 import { classpilotSsoPolicyApprovesObservedUrl } from "./classpilotHeartbeatSsoSanitizer.js";
 import { classpilotTransientCurrentPageCommandEnvelope } from "./classpilotTransientCurrentPage.js";
+import { requireScheduledClassroomContext } from "./classpilotActivityAuthority.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -85,6 +87,8 @@ export type ResolvedClasspilotCommandTarget = {
   stateAuthorized?: boolean;
   unavailableReason?: string;
   durableAuthorityRevision?: number;
+  scheduledAuthorityRevision?: number;
+  contextAuthorityRevision?: string;
   controlRevision?: number;
   exactTabCloseVersion?: 1 | 2;
   /** Structurally commandable signed-out target admitted by the exact-school gate. */
@@ -166,7 +170,8 @@ export async function normalizeCommandPayload(
   payload: any,
   schoolId: string,
   teacherId: string,
-  teachingSessionId?: string | null
+  teachingSessionId?: string | null,
+  supervisionContextId?: string | null,
 ): Promise<{
   extensionType: string;
   payload: Record<string, any>;
@@ -200,7 +205,7 @@ export async function normalizeCommandPayload(
     case "limit-tabs":
       return { extensionType: commandType, payload: validated };
     case "student-sign-out":
-      if (!teachingSessionId) {
+      if (!teachingSessionId && !supervisionContextId) {
         throw Object.assign(new Error("Student sign-out requires an active class session"), { status: 400 });
       }
       return {
@@ -208,7 +213,7 @@ export async function normalizeCommandPayload(
         payload: {
           ...validated,
           reason: "teacher_sign_out",
-          sessionId: teachingSessionId,
+          ...(teachingSessionId ? { sessionId: teachingSessionId } : { supervisionContextId }),
         },
       };
     case "apply-flight-path": {
@@ -256,7 +261,7 @@ export async function normalizeCommandPayload(
       };
     }
     case "poll": {
-      if (!teachingSessionId) {
+      if (!teachingSessionId && !supervisionContextId) {
         throw Object.assign(new Error("Poll commands require an active class session"), { status: 400 });
       }
       const action = validated.action || "start";
@@ -272,7 +277,7 @@ export async function normalizeCommandPayload(
       }
       const pollId = String(validated.pollId || "").trim();
       const poll = pollId ? await getPollById(pollId, schoolId) : undefined;
-      if (!poll || poll.sessionId !== teachingSessionId) {
+      if (!poll || poll.sessionId !== (teachingSessionId || null) || poll.supervisionContextId !== (supervisionContextId || null)) {
         throw Object.assign(new Error("Poll not found for this class session"), { status: 404 });
       }
       if (!poll.startCommandId) {
@@ -282,7 +287,8 @@ export async function normalizeCommandPayload(
         });
       }
       const startCommand = await getClasspilotCommandByIdAndSchool(poll.startCommandId, schoolId);
-      if (!startCommand || startCommand.teachingSessionId !== teachingSessionId) {
+      if (!startCommand || startCommand.teachingSessionId !== (teachingSessionId || null)
+        || startCommand.supervisionContextId !== (supervisionContextId || null)) {
         throw Object.assign(new Error("Poll start authority is unavailable"), {
           status: 409,
           code: "POLL_TARGET_AUTHORITY_MISSING",
@@ -627,6 +633,8 @@ export function classpilotCommandFrameForTarget(
   const bindingEnvelope = {
     studentId: target.studentId,
     studentSessionId: target.studentSessionId,
+    ...(target.scheduledAuthorityRevision !== undefined ? { studentControlRevision: target.scheduledAuthorityRevision } : {}),
+    ...(target.contextAuthorityRevision !== undefined ? { contextAuthorityRevision: target.contextAuthorityRevision } : {}),
   };
   const exactBindingControlRevision = classroomState?.revision
     ?? delivery.exactBindingControlRevision;
@@ -735,7 +743,9 @@ export function classpilotCommandFrameForTarget(
 
 async function endStudentSessionsForSignOut(options: {
   schoolId: string;
-  teachingSessionId: string;
+  teachingSessionId?: string;
+  supervisionContextId?: string;
+  actorId: string;
   commandId: string;
   targets: ResolvedClasspilotCommandTarget[];
 }) {
@@ -755,6 +765,9 @@ async function endStudentSessionsForSignOut(options: {
         studentId: target.studentId,
         studentSessionId: target.studentSessionId,
         deviceId: target.deviceId,
+        ...(options.supervisionContextId && target.scheduledAuthorityRevision !== undefined ? {
+          scheduledClassroom: { contextId: options.supervisionContextId, actorId: options.actorId, controlRevision: target.scheduledAuthorityRevision },
+        } : {}),
       });
     } catch {
       cleanupFailures += 1;
@@ -1011,6 +1024,7 @@ async function persistActiveSupervisionState(options: {
     supervisionContextId: options.supervisionContextId,
     studentIds,
     sourceCommandId: options.commandId,
+    classroomCommand: { commandId: options.commandId, commandType: options.commandType, payload: options.payload, actorId: options.actorId },
     authorizedActorId: options.actorId,
     actorIsAdmin: options.actorIsAdmin,
     bindingExpectationByStudent: options.bindingExpectationByStudent,
@@ -1065,6 +1079,7 @@ export async function executeClasspilotCommand(options: {
   targets: ResolvedClasspilotCommandTarget[];
   persistClassroomState?: boolean;
   supervisionActorIsAdmin?: boolean;
+  contextAuthorityRevision?: string;
 }) {
   const targetResolutionStartedAt = performance.now();
   const normalized = await normalizeCommandPayload(
@@ -1072,7 +1087,8 @@ export async function executeClasspilotCommand(options: {
     options.rawCommandPayload || {},
     options.schoolId,
     options.actorId,
-    options.teachingSessionId || null
+    options.teachingSessionId || null,
+    options.supervisionContextId || null,
   );
   const commandPayload = { ...normalized.payload };
   // Poll close is bound to the immutable start-command target rows. Dashboard
@@ -1196,6 +1212,7 @@ export async function executeClasspilotCommand(options: {
         actorId: options.actorId,
         supervisionContextId: options.supervisionContextId,
         actorMayUseAdminAuthority: options.supervisionActorIsAdmin === true,
+        contextAuthorityRevision: options.contextAuthorityRevision,
       } : undefined,
       pollMutation: normalized.extra?.pollMutation,
     }
@@ -1236,6 +1253,14 @@ export async function executeClasspilotCommand(options: {
         && Number.isSafeInteger((persisted.result as Record<string, unknown>).durableAuthorityRevision)
           ? Number((persisted.result as Record<string, unknown>).durableAuthorityRevision)
           : undefined,
+      scheduledAuthorityRevision:
+        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
+          && Number.isSafeInteger((persisted.result as Record<string, unknown>).scheduledAuthorityRevision)
+            ? Number((persisted.result as Record<string, unknown>).scheduledAuthorityRevision) : undefined,
+      contextAuthorityRevision:
+        persisted.result && typeof persisted.result === "object" && !Array.isArray(persisted.result)
+          && typeof (persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision === "string"
+            ? String((persisted.result as Record<string, unknown>).scheduledContextAuthorityRevision) : undefined,
       controlRevision:
         persisted.result
         && typeof persisted.result === "object"
@@ -1563,6 +1588,18 @@ export async function executeClasspilotCommand(options: {
           const deliveryAuthority = await withClasspilotStudentControlDeliveryAuthority(
             baseExactTarget,
             async (transactionDb) => {
+              if (target.scheduledAuthorityRevision !== undefined && created.supervisionContextId) {
+                try {
+                  await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: created.supervisionContextId,
+                    actorId: created.teacherId, lock: true }, transactionDb);
+                } catch {
+                  return { kind: "unavailable" as const, reason: "Scheduled classroom authority changed before delivery", authCapabilityMissing: false };
+                }
+                if (!(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: target.studentId,
+                  supervisionContextId: created.supervisionContextId, ownershipRevision: target.scheduledAuthorityRevision }, transactionDb))) {
+                  return { kind: "unavailable" as const, reason: "Scheduled classroom authority changed before delivery", authCapabilityMissing: false };
+                }
+              }
               if (!currentPageRequested && !controlStateIds.has(target.studentId)) {
                 return {
                   kind: "ready" as const,
@@ -1881,10 +1918,12 @@ export async function executeClasspilotCommand(options: {
       { success: markSentSucceeded, items: sentTargets.length }
     );
   }
-  if (options.commandType === "student-sign-out" && options.teachingSessionId) {
+  if (options.commandType === "student-sign-out" && (options.teachingSessionId || options.supervisionContextId)) {
     await endStudentSessionsForSignOut({
       schoolId: options.schoolId,
-      teachingSessionId: options.teachingSessionId,
+      teachingSessionId: options.teachingSessionId || undefined,
+      supervisionContextId: options.supervisionContextId || undefined,
+      actorId: options.actorId,
       commandId: created.id,
       targets: sentTargets,
     });

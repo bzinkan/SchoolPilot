@@ -6,12 +6,14 @@ import {
   type CacheInvalidationTarget,
 } from "./cacheInvalidation.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
-import { correlateClasspilotSessionMessage } from "../services/classpilotSessionSubscription.js";
+import { correlateClasspilotSessionMessage, correlateClasspilotContextMessage } from "../services/classpilotSessionSubscription.js";
 
 export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
   | { kind: "staff-user"; schoolId: string; userId: string }
   | { kind: "staff-session"; schoolId: string; sessionId: string }
+  | { kind: "staff-context"; schoolId: string; supervisionContextId: string; assignedStaffId: string; contextAuthorityRevision: string }
+  | { kind: "live-view-authority"; schoolId: string; studentIds: string[] }
   | { kind: "students"; schoolId: string; targetDeviceIds?: string[] }
   | { kind: "device"; schoolId: string; deviceId: string }
   | {
@@ -64,7 +66,9 @@ export type PublishWSBatchItem = {
 function messageForTarget(target: WsRedisTarget, message: unknown): unknown {
   return target.kind === "staff-session"
     ? correlateClasspilotSessionMessage(target.sessionId, message)
-    : message;
+    : target.kind === "staff-context"
+      ? correlateClasspilotContextMessage(target.supervisionContextId, message)
+      : message;
 }
 
 export type CommandHotPathPhase =

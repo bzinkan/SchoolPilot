@@ -92,9 +92,11 @@ import {
 } from "./classpilotDailyUsageRollup.js";
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
+import { discoverScheduleBoundarySchools, runDueClasspilotScheduleBoundaries, SCHEDULE_BOUNDARY_POLL_MS } from "./classpilotScheduleBoundaries.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
+let boundaryIntervalId: NodeJS.Timeout | null = null;
 let schedulerStopping = false;
 const pendingSchedulerJobs = new Set<Promise<void>>();
 let lastRollupHour = -1;
@@ -235,8 +237,22 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   const staffIdentityScanEveryTicks =
     getStaffIdentityIntegrityScanIntervalMinutes();
   console.log("Dismissal scheduler started (checking every 60s)");
+  if (process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE === "on") {
+    const tickBoundary = () => {
+      if (schedulerStopping) return;
+      const pending = runDueClasspilotScheduleBoundaries().catch((err) => {
+        errorMonitor.trackError("scheduler_failure", err as Error, { job: "classpilotScheduleBoundary" });
+      });
+      pendingSchedulerJobs.add(pending);
+      void pending.then(() => pendingSchedulerJobs.delete(pending));
+    };
+    boundaryIntervalId = setInterval(tickBoundary, SCHEDULE_BOUNDARY_POLL_MS);
+    scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
+    tickBoundary();
+  }
   intervalId = setInterval(() => {
     tickCount++;
+    scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
     scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
@@ -291,6 +307,10 @@ export function startScheduler(socketIo: SocketServer | null = null) {
 
 export function stopScheduler() {
   schedulerStopping = true;
+  if (boundaryIntervalId) {
+    clearInterval(boundaryIntervalId);
+    boundaryIntervalId = null;
+  }
   if (intervalId) {
     clearInterval(intervalId);
     intervalId = null;

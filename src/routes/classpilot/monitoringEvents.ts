@@ -33,8 +33,11 @@ import {
   classpilotObservationSessionIsLive,
   releaseClasspilotObservationLeaseWithState,
   renewClasspilotObservationLease,
+  renewClasspilotSupervisionObservationLease,
+  releaseClasspilotSupervisionObservationLeaseWithState,
 } from "../../services/classpilotObservationLease.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
+import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision, scheduledClassroomRoster } from "../../services/classpilotActivityAuthority.js";
 import {
   classpilotSessionReportCsv,
   classpilotSessionReportDto,
@@ -274,6 +277,65 @@ router.get("/teaching-sessions/:id/events", ...staffAuth, (req, res, next) =>
 router.get("/supervision-contexts/:id/events", ...staffAuth, (req, res, next) =>
   eventList(req, res, next, { kind: "supervision_context", id: String(req.params.id || "") })
 );
+
+router.put("/supervision-contexts/:id/observation-lease", ...staffAuth, requireClasspilotFullMonitoring,
+  observationLeaseRenewalLimiter, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const schoolId = res.locals.schoolId as string;
+    const supervisionContextId = String(req.params.id || "");
+    const contextAuthorityRevision = requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision"));
+    const authority = { schoolId, supervisionContextId, actorId: req.authUser!.id,
+      allowObserve: isAdmin(req, res), contextAuthorityRevision };
+    await requireScheduledClassroomContext(authority);
+    const viewerInstanceId = typeof req.body?.viewerInstanceId === "string" ? req.body.viewerInstanceId.trim() : "";
+    if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
+    const roster = await scheduledClassroomRoster(schoolId, supervisionContextId);
+    const rosterIds = roster.map(({ student }) => student.id);
+    const raw = req.body?.scope;
+    let scope: { kind: "class" } | { kind: "students"; studentIds: string[] };
+    if (raw?.kind === "class") scope = { kind: "class" };
+    else if (raw?.kind === "students" && Array.isArray(raw.studentIds)
+      && raw.studentIds.length > 0 && raw.studentIds.length <= 500
+      && raw.studentIds.every((id: unknown) => typeof id === "string" && id.trim())) {
+      const studentIds = [...new Set<string>(raw.studentIds.map((id: string) => id.trim()))];
+      if (studentIds.some((id) => !rosterIds.includes(id))) return res.status(404).json({ error: "Not found", code: "OBSERVATION_SESSION_UNAVAILABLE" });
+      scope = { kind: "students", studentIds };
+    } else return res.status(400).json({ error: "Explicit observation scope is required", code: "OBSERVATION_SCOPE_INVALID" });
+    const lease = await renewClasspilotSupervisionObservationLease({ schoolId, supervisionContextId,
+      viewerUserId: req.authUser!.id, viewerInstanceId, scope });
+    try {
+      await requireScheduledClassroomContext(authority);
+    } catch (error) {
+      await releaseClasspilotSupervisionObservationLeaseWithState({ schoolId, supervisionContextId,
+        viewerUserId: req.authUser!.id, viewerInstanceId });
+      throw error;
+    }
+    if (lease.activated || (!lease.created && lease.changed)) void nudgeClasspilotScreenshotPolicyRefresh({
+      schoolId, supervisionContextId, studentIds: rosterIds, reason: lease.activated ? "activated" : "scope_changed",
+    }).catch(() => recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures"));
+    return res.json({ state: "active", renewAfterSeconds: CLASSPILOT_OBSERVATION_RENEW_SECONDS,
+      expiresAt: new Date(lease.expiresAt).toISOString(), serverTime: new Date().toISOString(), scope: lease.scope });
+  } catch (error) { next(error); }
+});
+
+router.delete("/supervision-contexts/:id/observation-lease", ...staffAuth, async (req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store, private");
+    const schoolId = res.locals.schoolId as string;
+    const supervisionContextId = String(req.params.id || "");
+    const viewerInstanceId = typeof req.body?.viewerInstanceId === "string" ? req.body.viewerInstanceId.trim() : "";
+    if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
+    // Release is bound to this user's opaque viewer lease, including after the assignment ends.
+    const release = await releaseClasspilotSupervisionObservationLeaseWithState({ schoolId, supervisionContextId,
+      viewerUserId: req.authUser!.id, viewerInstanceId });
+    if (release.deactivated) void scheduledClassroomRoster(schoolId, supervisionContextId)
+      .then((roster) => nudgeClasspilotScreenshotPolicyRefresh({ schoolId, supervisionContextId,
+        studentIds: roster.map(({ student }) => student.id), reason: "released" }))
+      .catch(() => recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures"));
+    return res.status(204).send();
+  } catch (error) { next(error); }
+});
 
 router.put(
   "/teaching-sessions/:id/observation-lease",
@@ -549,6 +611,57 @@ router.get("/teaching-sessions/:id/events/export.csv", ...staffAuth, async (req,
       "Cache-Control": "no-store, private",
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="classpilot-monitoring-${teachingSessionId}.csv"`,
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.send(`\uFEFF${csvRows.map((row) => row.map(formulaSafeCsvCell).join(",")).join("\r\n")}`);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/supervision-contexts/:id/events/export.csv", ...staffAuth, async (req, res, next) => {
+  try {
+    const supervisionContextId = String(req.params.id || "");
+    if (!(await authorizeContext(req, res, supervisionContextId))) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const schoolId = res.locals.schoolId as string;
+    const rows = await listClasspilotMonitoringEvents({
+      schoolId,
+      scope: { kind: "supervision_context", id: supervisionContextId },
+      studentId: typeof req.query.studentId === "string" ? req.query.studentId : undefined,
+      supervisionStaffId: !isAdmin(req, res) ? req.authUser!.id : undefined,
+      limit: 50_001,
+    });
+    if (rows.length > 50_000) {
+      return res.status(413).json({ error: "Export exceeds 50,000 rows", code: "EXPORT_TOO_LARGE" });
+    }
+    await logAudit({
+      schoolId: res.locals.schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "classpilot.monitoring_events.export",
+      entityType: "supervision_context",
+      entityId: supervisionContextId,
+      metadata: { rowCount: rows.length },
+    });
+    const header = ["Occurred At", "Student ID", "Student", "Type", "Origin", "Domain", "Path", "Title", "Details"];
+    const csvRows = [header, ...rows.map((row) => [
+      row.event.occurredAt.toISOString(),
+      row.event.studentId,
+      row.studentName,
+      row.event.eventType,
+      row.event.origin,
+      row.event.normalizedDomain || "",
+      row.event.sanitizedPath || "",
+      row.event.title || "",
+      JSON.stringify(row.event.metadata || {}),
+    ])];
+    res.set({
+      "Cache-Control": "no-store, private",
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="classpilot-monitoring-${supervisionContextId}.csv"`,
       "X-Content-Type-Options": "nosniff",
     });
     res.send(`\uFEFF${csvRows.map((row) => row.map(formulaSafeCsvCell).join(",")).join("\r\n")}`);

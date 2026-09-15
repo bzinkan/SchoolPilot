@@ -40,7 +40,9 @@ type LiveViewClaims = {
   requestId: string;
   schoolId: string;
   studentId: string;
-  teachingSessionId: string;
+  teachingSessionId?: string;
+  supervisionContextId?: string;
+  controlRevision?: number;
   requesterUserId: string;
   binding: string;
   expiresAt: number;
@@ -51,7 +53,11 @@ export type ClasspilotLiveViewBinding = {
   studentId: string;
   studentSessionId: string;
   deviceId: string;
-  teachingSessionId: string;
+  teachingSessionId?: string;
+  supervisionContextId?: string;
+  controlRevision?: number;
+  /** Authoritative scheduled boundary; never extends the negotiation TTL. */
+  authorityExpiresAt?: number;
   requesterUserId: string;
 };
 
@@ -101,6 +107,7 @@ function rememberActiveClaim(
 export function listActiveClasspilotLiveViewNegotiations(options: {
   schoolId?: string;
   teachingSessionId?: string;
+  supervisionContextId?: string;
   requesterUserId?: string;
   negotiationIds?: readonly string[];
   now?: number;
@@ -125,6 +132,7 @@ export function listActiveClasspilotLiveViewNegotiations(options: {
       options.teachingSessionId
       && claim.binding.teachingSessionId !== options.teachingSessionId
     ) continue;
+    if (options.supervisionContextId && claim.binding.supervisionContextId !== options.supervisionContextId) continue;
     if (
       options.requesterUserId
       && claim.binding.requesterUserId !== options.requesterUserId
@@ -172,18 +180,32 @@ export function createClasspilotLiveViewNegotiationId(
   binding: ClasspilotLiveViewBinding,
   now = Date.now()
 ): { negotiationId: string; expiresAt: number } {
+  if (!validLiveViewContext(binding)) throw new Error("Live View requires one exact classroom authority");
+  const expiresAt = Math.min(now + CLASSPILOT_LIVE_VIEW_NEGOTIATION_TTL_MS,
+    binding.authorityExpiresAt ?? Infinity);
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) throw new Error("Live View authority expired");
   const claims: LiveViewClaims = {
     v: 1,
     requestId: crypto.randomUUID(),
     schoolId: binding.schoolId,
     studentId: binding.studentId,
     teachingSessionId: binding.teachingSessionId,
+    supervisionContextId: binding.supervisionContextId,
+    controlRevision: binding.supervisionContextId ? binding.controlRevision : undefined,
     requesterUserId: binding.requesterUserId,
     binding: bindingDigest(binding),
-    expiresAt: now + CLASSPILOT_LIVE_VIEW_NEGOTIATION_TTL_MS,
+    expiresAt,
   };
   const payload = encoded(JSON.stringify(claims));
   return { negotiationId: `${payload}.${signature(payload)}`, expiresAt: claims.expiresAt };
+}
+
+function validLiveViewContext(value: Pick<ClasspilotLiveViewBinding,
+  "teachingSessionId" | "supervisionContextId" | "controlRevision">): boolean {
+  const id = value.teachingSessionId || value.supervisionContextId;
+  return !!id && typeof id === "string" && id.length <= 128
+    && Boolean(value.teachingSessionId) !== Boolean(value.supervisionContextId)
+    && (!value.supervisionContextId || (Number.isSafeInteger(value.controlRevision) && value.controlRevision! >= 0));
 }
 
 export function verifyClasspilotLiveViewNegotiation(
@@ -209,11 +231,13 @@ export function verifyClasspilotLiveViewNegotiation(
   } catch {
     return false;
   }
-  return claims.v === 1
+  return validLiveViewContext(claims) && validLiveViewContext(expected) && claims.v === 1
     && typeof claims.requestId === "string"
     && claims.schoolId === expected.schoolId
     && claims.studentId === expected.studentId
     && claims.teachingSessionId === expected.teachingSessionId
+    && claims.supervisionContextId === expected.supervisionContextId
+    && (!claims.supervisionContextId || claims.controlRevision === expected.controlRevision)
     && claims.requesterUserId === expected.requesterUserId
     && claims.binding === bindingDigest(expected)
     && Number.isSafeInteger(claims.expiresAt)
@@ -230,7 +254,9 @@ export function classpilotLiveViewRequester(
     expected,
     now
   );
-  return authority?.teachingSessionId === expected.teachingSessionId
+  return authority && authority.teachingSessionId === expected.teachingSessionId
+    && authority.supervisionContextId === expected.supervisionContextId
+    && (!authority.supervisionContextId || authority.controlRevision === expected.controlRevision)
     ? authority.requesterUserId
     : null;
 }
@@ -246,7 +272,7 @@ export function classpilotLiveViewNegotiationAuthority(
     "schoolId" | "studentId" | "studentSessionId" | "deviceId"
   >,
   now = Date.now()
-): { teachingSessionId: string; requesterUserId: string; expiresAt: number } | null {
+): Pick<ClasspilotLiveViewBinding, "teachingSessionId" | "supervisionContextId" | "controlRevision" | "requesterUserId"> & { expiresAt: number } | null {
   if (typeof negotiationId !== "string" || negotiationId.length > 2_048) return null;
   const payload = negotiationId.split(".")[0];
   if (!payload) return null;
@@ -255,19 +281,23 @@ export function classpilotLiveViewNegotiationAuthority(
     if (
       typeof claims.requesterUserId !== "string"
       || claims.requesterUserId.length > 128
-      || typeof claims.teachingSessionId !== "string"
-      || claims.teachingSessionId.length > 128
+      || !claims.requesterUserId
+      || !validLiveViewContext(claims)
     ) return null;
     return verifyClasspilotLiveViewNegotiation(
       negotiationId,
       {
         ...expected,
         teachingSessionId: claims.teachingSessionId,
+        supervisionContextId: claims.supervisionContextId,
+        controlRevision: claims.controlRevision,
         requesterUserId: claims.requesterUserId,
       },
       now
     ) ? {
-      teachingSessionId: claims.teachingSessionId,
+      ...(claims.supervisionContextId
+        ? { supervisionContextId: claims.supervisionContextId, controlRevision: claims.controlRevision }
+        : { teachingSessionId: claims.teachingSessionId }),
       requesterUserId: claims.requesterUserId,
       expiresAt: claims.expiresAt,
     } : null;
@@ -288,7 +318,7 @@ export async function claimClasspilotLiveViewNegotiation(
   pruneLocalClaims(now);
   try {
     const result = await redisCommand(
-      ["SET", key, claim.negotiationId, "NX", "PX", String(CLASSPILOT_LIVE_VIEW_NEGOTIATION_TTL_MS)],
+      ["SET", key, claim.negotiationId, "NX", "PX", String(claim.expiresAt - now)],
       { readyTimeoutMs: 200 }
     );
     if (result === "OK") {

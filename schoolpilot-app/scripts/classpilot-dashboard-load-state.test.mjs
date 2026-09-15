@@ -157,10 +157,11 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
     },
     async fulfill(route, url) {
       const teachingSessionId = url.searchParams.get("teachingSessionId");
-      const request = { teachingSessionId, url: url.toString() };
+      const supervisionContextId = url.searchParams.get('supervisionContextId');
+      const request = { teachingSessionId, supervisionContextId, url: url.toString() };
       requests.push(request);
       const response = await waitUntilResolved(() => (
-        teachingSessionId ? scopedResponse : schoolResponse
+        teachingSessionId || supervisionContextId ? scopedResponse : schoolResponse
       ));
       if (response.kind === "success") {
         await route.fulfill({ status: 200, json: response.body });
@@ -239,11 +240,13 @@ async function configureDashboard(page, {
   coverageSummary = { activeContextCount: 0, availableStudentCount: 0, claimedStudentCount: 0, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, ownTestingContexts: [] },
   authentication = null,
   acknowledgeSessionSubscriptions = false,
+  dashboardActivity = { enabled: false, schoolId: SCHOOL_ID, viewerId: ADMIN_ID },
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
   const retiredSockets = new WeakSet();
   const websocketConnections = [];
+  const websocketMessages = [];
   const commandPosts = [];
   const coverageMutationRequests = [];
   const tileRequests = [];
@@ -251,6 +254,7 @@ async function configureDashboard(page, {
   const sessionRequests = [];
   const claimedRosterRequests = [];
   const coverageSummaryRequests = [];
+  const activityRequests = [];
   const pageErrors = [];
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -264,9 +268,11 @@ async function configureDashboard(page, {
     socket.onMessage((message) => {
       if (retiredSockets.has(socket)) return;
       const parsed = JSON.parse(message);
+      websocketMessages.push(parsed);
       if (acknowledgeSessionSubscriptions && parsed.type === 'subscribe-session') {
-        socket.send(JSON.stringify({ type: 'session-subscription-success', sessionId: parsed.sessionId,
-          teachingSessionId: parsed.sessionId, requestId: parsed.requestId }));
+        socket.send(JSON.stringify({ type: 'session-subscription-success', ...(parsed.supervisionContextId
+          ? { supervisionContextId: parsed.supervisionContextId, contextAuthorityRevision: parsed.contextAuthorityRevision }
+          : { sessionId: parsed.sessionId, teachingSessionId: parsed.sessionId }), requestId: parsed.requestId }));
         return;
       }
       if (parsed.type !== "auth") return;
@@ -327,6 +333,17 @@ async function configureDashboard(page, {
           },
         },
       });
+      return;
+    }
+    if (pathname === '/api/classpilot/dashboard-activity') {
+      activityRequests.push({ schoolId: request.headers()['x-school-id'] });
+      const value = typeof dashboardActivity === 'function' ? await dashboardActivity(request) : dashboardActivity;
+      await route.fulfill(value?.status >= 400 ? { status: value.status, json: value.body || { error: 'Assignment unavailable' } } : { json: value });
+      return;
+    }
+    const activitySettings = pathname.match(/^\/api\/classpilot\/supervision-contexts\/([^/]+)\/settings$/);
+    if (activitySettings) {
+      await route.fulfill({ json: { settings: { supervisionContextId: activitySettings[1], lifecycleRevision: 1, raiseHandEnabled: true, chatEnabled: true } } });
       return;
     }
     if (pathname === "/api/flight-paths") {
@@ -416,8 +433,9 @@ async function configureDashboard(page, {
       await route.fulfill({ json: { messages: [] } });
       return;
     }
-    if (/^\/api\/classpilot\/teaching-sessions\/[^/]+\/observation-lease$/.test(pathname)) {
+    if (/^\/api\/classpilot\/(?:teaching-sessions|supervision-contexts)\/[^/]+\/observation-lease$/.test(pathname)) {
       observationLeaseRequests.push({
+        schoolId: request.headers()['x-school-id'], contextAuthorityRevision: request.headers()['x-classpilot-context-authority-revision'],
         method: request.method(),
         pathname,
         body: request.postData() ? request.postDataJSON() : null,
@@ -433,7 +451,7 @@ async function configureDashboard(page, {
     if (pathname === "/api/classpilot/tiles/screenshots" || pathname === "/api/classpilot/tiles/history") {
       const body = request.postDataJSON();
       tileRequests.push({
-        pathname,
+        pathname, contextAuthorityRevision: request.headers()['x-classpilot-context-authority-revision'],
         body,
       });
       const suppliedResponse = pathname.endsWith("/screenshots") ? screenshotTiles : historyTiles;
@@ -483,10 +501,12 @@ async function configureDashboard(page, {
     sessionRequests,
     claimedRosterRequests,
     coverageSummaryRequests,
-    websocketConnections,
+    activityRequests,
+    websocketConnections, websocketMessages,
     setActiveSession(session) { activeSession = session; },
     setAllSessions(sessions) { allSessions = sessions; },
     setCoverageSummary(summary) { coverageSummary = summary; },
+    setDashboardActivity(activity) { dashboardActivity = activity; },
     setClaimedStudents(students) { claimedStudents = students; },
     async disconnectWebSocket() {
       const previous = dashboardSocket;
@@ -628,8 +648,8 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   );
   assert.match(
     dashboardSource,
-    /const LIVE_VIEW_UI_ENABLED = false;/,
-    "the unstable WebRTC entrypoint must stay dormant while its implementation is retained",
+    /const LEGACY_LIVE_VIEW_UI_ENABLED = false;/,
+    "legacy WebRTC stays dormant; scheduled classrooms require capability negotiation",
   );
   assert.match(
     dashboardSource,
@@ -4173,4 +4193,329 @@ test('assigned testing ignores legacy, missing, malformed and failed ownership m
     assert.deepEqual(harness.pageErrors, []);
     await page.close();
   }
+});
+
+
+function scheduledActivityResponse(current, { next = null, serverTime = '2026-09-15T13:10:55Z', nextBoundaryAt = null } = {}) {
+  return { enabled: true, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, revision: `${current?.id || 'idle'}:${current?.studentCount || 0}`, serverTime,
+    current, activities: current ? [current] : [], next, nextBoundaryAt: nextBoundaryAt || current?.endsAt || next?.startsAt || null };
+}
+function scheduledTestingActivity(overrides = {}) {
+  return { id: OWN_TESTING_CONTEXT_ID, source: 'scheduled_testing', name: 'Grade 5 Reading MAP',
+    startsAt: '2026-09-15T13:11:00Z', endsAt: '2026-09-15T13:15:00Z', status: 'active', studentCount: 23,
+    authority: { supervisionContextId: OWN_TESTING_CONTEXT_ID }, contextAuthorityRevision: '0',
+    capabilities: { commands: ['open-tab', 'close-tabs', 'teacher-message', 'timer', 'poll', 'student-sign-out'],
+      fab: true, chat: true, raiseHand: true, polls: true, timers: true, liveView: true, screenshots: true, settings: true }, ...overrides };
+}
+function scheduledClassActivity(overrides = {}) {
+  return { id: OWN_SESSION_ID, source: 'scheduled_class', name: 'Grade 5 Homeroom', startsAt: '2026-09-15T12:30:00Z', endsAt: '2026-09-15T13:11:00Z',
+    status: 'active', studentCount: 1, authority: { teachingSessionId: OWN_SESSION_ID }, ...overrides };
+}
+const offlineTestingRoster = () => Array.from({ length: 23 }, (_, index) => student({
+  studentId: `offline-test-${index}`, studentName: `Testing student ${index + 1}`, isLoggedIn: false, loginState: 'not_logged_in', status: 'offline',
+  activityState: 'inactive', contextId: OWN_TESTING_CONTEXT_ID, supervisionState: 'temporary_coverage',
+  supervisionContext: { id: OWN_TESTING_CONTEXT_ID, type: 'testing', assignedStaffId: ADMIN_ID },
+}));
+
+test('automatic scheduled Class renders Homeroom then all 23 offline testing tiles then the next applied class without clicks', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
+  const aggregate = aggregateController({ scoped: success([student({ studentName: 'Homeroom student' })]) });
+  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledClassActivity()),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  aggregate.setScopedResponse(success(offlineTestingRoster()));
+  harness.setDashboardActivity(scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:00Z' }));
+  await page.clock.fastForward(5000);
+  await page.getByTestId('scheduled-class-banner').getByText('Testing: Grade 5 Reading MAP', { exact: true }).waitFor();
+  await page.getByTestId('card-student-offline-test-22').waitFor();
+  assert.equal(await page.locator('[data-testid^="card-student-"]').count(), 23);
+  await assertPickupView(page, 'class');
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
+  assert.equal(await page.getByTestId('button-end-session').count(), 0, 'Testing does not offer End Class for the underlying Homeroom');
+  assert.ok(aggregate.requests.some(request => request.supervisionContextId === OWN_TESTING_CONTEXT_ID));
+  assert.ok(aggregate.requests.every(request => request.teachingSessionId || request.supervisionContextId), 'Never request a school-wide roster');
+  const next = scheduledClassActivity({ id: OBSERVED_SESSION_ID, name: 'Grade 5 Specials', startsAt: '2026-09-15T13:15:00Z', endsAt: '2026-09-15T13:55:00Z', authority: { teachingSessionId: OBSERVED_SESSION_ID } });
+  aggregate.setScopedResponse(success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Specials student' })]));
+  harness.setDashboardActivity(scheduledActivityResponse(next, { serverTime: '2026-09-15T13:15:00Z' }));
+  await page.clock.fastForward(240000);
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Specials', { exact: true }).waitFor();
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId('card-student-offline-test-0').count(), 0);
+  await assertPickupView(page, 'class');
+  assert.deepEqual(harness.pageErrors, []);
+  assert.deepEqual(harness.coverageMutationRequests, [], 'Transitions use reads; they never recreate claims');
+});
+
+test('automatic scheduled Class permits browsing between boundaries and ignores same-assignment extensions', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, colorScheme: 'dark' });
+  await page.clock.install({ time: new Date('2026-09-15T13:11:00Z') });
+  const aggregate = aggregateController({ scoped: success(offlineTestingRoster()) });
+  const harness = await configureDashboard(page, { aggregate, acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:00Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('card-student-offline-test-0').waitFor();
+  await page.getByTestId('button-view-available-students').click();
+  await assertPickupView(page, 'available');
+  const readCount = harness.activityRequests.length;
+  harness.setDashboardActivity(scheduledActivityResponse(scheduledTestingActivity({ endsAt: '2026-09-15T13:20:00Z', studentCount: 22 }), { serverTime: '2026-09-15T13:11:00Z' }));
+  await harness.sendWebSocketMessage({ type: 'dashboard-activity-updated', schoolId: SCHOOL_ID });
+  await waitUntil(() => harness.activityRequests.length > readCount, 'A refresh must read the extended assignment');
+  await assertPickupView(page, 'available');
+  harness.setDashboardActivity(scheduledActivityResponse(scheduledClassActivity({ id: OBSERVED_SESSION_ID, name: 'Next class', startsAt: '2026-09-15T13:20:00Z', endsAt: '2026-09-15T14:00:00Z', authority: { teachingSessionId: OBSERVED_SESSION_ID } }), { serverTime: '2026-09-15T13:20:00Z' }));
+  aggregate.setScopedResponse(success([student({ studentName: 'Next class student' })]));
+  await page.clock.fastForward(540000);
+  await assertPickupView(page, 'class');
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Next class', { exact: true }).waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('automatic scheduled Class resumes the same regular session without restoring its old browsing choice', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:10:55Z') });
+  const regular = scheduledClassActivity({ endsAt: '2026-09-15T13:30:00Z' });
+  const aggregate = aggregateController({ scoped: success([student()]) });
+  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(regular, { nextBoundaryAt: '2026-09-15T13:11:00Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await page.getByTestId('button-view-available-students').click();
+  await assertPickupView(page, 'available');
+  aggregate.setScopedResponse(success(offlineTestingRoster()));
+  harness.setDashboardActivity(scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:00Z' }));
+  await page.clock.fastForward(5000);
+  await page.getByTestId('card-student-offline-test-22').waitFor();
+  await assertPickupView(page, 'class');
+  aggregate.setScopedResponse(success([student()]));
+  harness.setDashboardActivity(scheduledActivityResponse(regular, { serverTime: '2026-09-15T13:15:00Z' }));
+  await page.clock.fastForward(240000);
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await assertPickupView(page, 'class');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('automatic scheduled Class expires private during failed refresh and retries reads without a supervision mutation', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:14:59Z') });
+  const aggregate = aggregateController({ scoped: success(offlineTestingRoster()) });
+  const harness = await configureDashboard(page, { aggregate, acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:14:59Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('card-student-offline-test-0').waitFor();
+  harness.setDashboardActivity({ status: 503 });
+  await page.clock.fastForward(1000);
+  await page.getByRole('button', { name: 'Retry class assignment' }).waitFor();
+  assert.equal(await page.getByTestId('card-student-offline-test-0').count(), 0);
+  assert.ok(aggregate.requests.every(request => request.teachingSessionId || request.supervisionContextId));
+  harness.setDashboardActivity(scheduledActivityResponse(null, { serverTime: '2026-09-15T13:15:00Z', next: { source: 'scheduled_class', name: 'Specials', startsAt: '2026-09-15T13:15:00Z', endsAt: '2026-09-15T13:55:00Z', status: 'waiting' } }));
+  await page.getByRole('button', { name: 'Retry class assignment' }).click();
+  await page.getByTestId('scheduled-class-banner').getByText('Awaiting live supervision', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-testid^="card-student-"]').count(), 0);
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+test('scheduled classroom tools use one supervision authority and drop outgoing media and dialogs at handoff', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const row = student({ supervisionState: 'temporary_coverage',
+    supervisionContext: { id: OWN_TESTING_CONTEXT_ID, type: 'testing', assignedStaffId: ADMIN_ID },
+    capabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true, liveViewNegotiationV1: true, screenshotTrackingWindowLeaseV1: true },
+    lastSeenAt: '2026-09-15T13:11:30Z', realtimeObservedAt: '2026-09-15T13:11:30Z',
+  });
+  const aggregate = aggregateController({ scoped: success([row]) });
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity({ studentCount: 1,
+      capabilities: { ...scheduledTestingActivity().capabilities, commands: ['open-tab', 'close-tabs', 'teacher-message', 'timer', 'poll', 'attention-mode', 'student-sign-out'] },
+    }), { serverTime: '2026-09-15T13:11:30Z' }),
+    screenshotTiles: { tiles: [{ studentId: STUDENT_ID, screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL,
+      timestamp: Date.parse('2026-09-15T13:11:30Z'), capturedAt: '2026-09-15T13:11:30Z' } }] },
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  const commandRequests = [];
+  const commandHeaders = [];
+  const settingsRequests = [];
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); commandRequests.push(body); commandHeaders.push(route.request().headers()['x-classpilot-context-authority-revision']);
+    await route.fulfill({ json: { command: { id: `synthetic-${commandRequests.length}`, ...body,
+      targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'acknowledged' })) } } });
+  });
+  await page.route(`**/api/classpilot/supervision-contexts/${OWN_TESTING_CONTEXT_ID}/settings`, async route => {
+    const request = route.request();
+    const body = request.method() === 'PATCH' ? request.postDataJSON() : {};
+    if (request.method() === 'PATCH') settingsRequests.push(body);
+    await route.fulfill({ json: { settings: { supervisionContextId: OWN_TESTING_CONTEXT_ID, lifecycleRevision: 2,
+      raiseHandEnabled: body.raiseHandEnabled ?? true, chatEnabled: body.chatEnabled ?? true } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await waitUntil(() => harness.tileRequests.some(row => row.pathname.endsWith('/screenshots')), 'Scheduled tiles load screenshot batches');
+  assert.ok(harness.tileRequests.every(row => row.body.supervisionContextId === OWN_TESTING_CONTEXT_ID && !row.body.teachingSessionId && row.contextAuthorityRevision === '0'));
+  assert.ok(harness.observationLeaseRequests.some(row => row.method === 'PUT' && row.pathname.includes(OWN_TESTING_CONTEXT_ID) && row.schoolId === SCHOOL_ID && row.contextAuthorityRevision === '0'));
+  await page.getByTestId(`button-live-view-${STUDENT_ID}`).click();
+  await waitUntil(() => harness.websocketMessages.some(row => row.type === 'request-stream'), 'Live View starts with an exact context');
+  const requestStream = harness.websocketMessages.find(row => row.type === 'request-stream');
+  assert.equal(requestStream.supervisionContextId, OWN_TESTING_CONTEXT_ID);
+  assert.equal(requestStream.contextAuthorityRevision, '0');
+  assert.equal(requestStream.teachingSessionId, undefined);
+  await harness.sendWebSocketMessage({ type: 'live-view-requested', schoolId: SCHOOL_ID, supervisionContextId: OWN_TESTING_CONTEXT_ID,
+    studentId: STUDENT_ID, contextAuthorityRevision: '0', negotiationId: 'scheduled-negotiation' });
+  await waitUntil(() => harness.websocketMessages.some(row => row.type === 'offer'), 'Negotiated offer retains the exact context');
+  const openTools = async () => page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await openTools();
+  await page.getByRole('button', { name: 'Timer', exact: true }).click();
+  await page.getByTestId('button-start-timer').click();
+  await waitUntil(() => commandRequests.some(row => row.commandType === 'timer'), 'Timer uses scheduled authority');
+  await openTools();
+  await page.getByRole('button', { name: 'Poll', exact: true }).click();
+  await page.getByTestId('input-poll-question').fill('Ready for reading?');
+  await page.getByTestId('input-poll-option-0').fill('Ready');
+  await page.getByTestId('input-poll-option-1').fill('Need help');
+  await page.getByTestId('button-create-poll').click();
+  await waitUntil(() => commandRequests.some(row => row.commandType === 'poll'), 'Poll uses scheduled authority');
+  await openTools();
+  await page.getByRole('button', { name: 'Attention', exact: true }).click();
+  await page.getByTestId('button-activate-attention').click();
+  await waitUntil(() => commandRequests.some(row => row.commandType === 'attention-mode'), 'Attention uses scheduled authority');
+  await page.getByTestId('button-cancel-attention').click();
+  await openTools();
+  await page.getByRole('button', { name: 'Hands', exact: true }).click();
+  await page.getByRole('switch').click();
+  await waitUntil(() => settingsRequests.length === 1, 'Scheduled hand settings are editable');
+  assert.equal(settingsRequests[0].raiseHandEnabled, false);
+  assert.equal(settingsRequests[0].expectedRevision, 2);
+  assert.ok(commandHeaders.every(revision => revision === '0'));
+  assert.ok(commandRequests.every(row => row.supervisionContextId === OWN_TESTING_CONTEXT_ID && !row.teachingSessionId
+    && row.targetScope === 'students' && row.targetStudentIds.length === 1 && row.targetStudentIds[0] === STUDENT_ID));
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  // A form left open cannot submit an outgoing assignment after the boundary.
+  await openTools();
+  await page.getByRole('button', { name: /^Messages/ }).click();
+  await page.getByTitle('Send message', { exact: true }).click();
+  await page.getByTestId('input-send-message').fill('Do not carry me into the next class');
+  harness.setDashboardActivity(scheduledActivityResponse(null, { serverTime: '2026-09-15T13:15:00Z' }));
+  await page.clock.fastForward(210000);
+  await page.getByTestId('scheduled-class-banner').getByText('No class active', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('dialog-send-message').count(), 0);
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
+  assert.ok(harness.websocketMessages.some(row => row.type === 'stop-share' && row.supervisionContextId === OWN_TESTING_CONTEXT_ID));
+  assert.equal(commandRequests.filter(row => row.commandType === 'teacher-message').length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+test('scheduled classroom restores acknowledged timer and poll after reload and gates older extensions', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const aggregate = aggregateController({ scoped: success([student({
+    supervisionState: 'temporary_coverage', supervisionContext: { id: OWN_TESTING_CONTEXT_ID, type: 'testing', assignedStaffId: ADMIN_ID },
+    lastSeenAt: '2026-09-15T13:11:30Z', realtimeObservedAt: '2026-09-15T13:11:30Z', capabilities: {},
+  })]) });
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity({ studentCount: 1 }), { serverTime: '2026-09-15T13:11:30Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  const stateReads = [];
+  await page.route('**/api/commands/active-state?**', async route => {
+    const url = new URL(route.request().url()); stateReads.push(url.searchParams.toString());
+    await route.fulfill({ json: { states: [], transient: {
+      timer: { commandId: 'persisted-timer', message: 'Keep working', endsAt: '2026-09-15T13:14:00Z', completedTargetCount: 1, pendingTargetCount: 0 },
+      poll: { id: 'persisted-poll', supervisionContextId: OWN_TESTING_CONTEXT_ID, isActive: true, question: 'Ready?', options: ['Yes', 'No'] },
+    } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await page.getByText('Extension update required for full testing tools on some student Chromebooks.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop Timer', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Poll (0)', exact: true }).waitFor();
+  assert.ok(stateReads.every(query => query === `supervisionContextId=${OWN_TESTING_CONTEXT_ID}`));
+  assert.equal(await page.getByTestId(`button-live-view-${STUDENT_ID}`).count(), 0);
+  assert.deepEqual(harness.tileRequests.filter(row => row.pathname.endsWith('/screenshots')), [], 'Unsupported clients never use previous-class previews');
+  await page.getByRole('button', { name: 'Stop Timer', exact: true }).click();
+  assert.deepEqual(harness.commandPosts, [], 'Unsupported tool actions must not be reported as submitted');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+test('scheduled classroom layout retains offline tiles on desktop and mobile in both themes', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  for (const [size, viewport] of [['desktop', { width: 1360, height: 900 }], ['mobile', { width: 390, height: 844 }]]) {
+    for (const theme of ['light', 'dark']) {
+      const page = await browser.newPage({ viewport });
+      await page.addInitScript(theme => localStorage.setItem('sp_theme', theme), theme);
+      await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+      const harness = await configureDashboard(page, { aggregate: aggregateController({ scoped: success(offlineTestingRoster()) }),
+        userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+        dashboardActivity: scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:30Z' }),
+        coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+      });
+      await page.goto(`${baseURL}/classpilot`);
+      await page.getByTestId('card-student-offline-test-22').waitFor();
+      assert.equal(await page.getByText(/^In supervision:/).count(), 0, 'Own testing tiles use the normal Class environment without a covering badge');
+      const banner = page.getByTestId('scheduled-class-banner');
+      await banner.getByText(/23 students.*0 online/).waitFor();
+      const bounds = await banner.boundingBox();
+      assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1, 'Assignment banner fits the viewport');
+      const evidence = process.env.CLASSPILOT_ACTIVITY_EVIDENCE_DIR;
+      if (evidence) {
+        mkdirSync(evidence, { recursive: true });
+        await page.screenshot({ path: path.join(evidence, `scheduled-class-${size}-${theme}.png`) });
+      }
+      assert.deepEqual(harness.pageErrors, []);
+      await page.close();
+    }
+  }
+});
+
+test('scheduled classroom details fence history to their assignment and retry failed reads without fallback', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const harness = await configureDashboard(page, { aggregate: aggregateController({ scoped: success([student({
+    supervisionState: 'temporary_coverage', supervisionContext: { id: OWN_TESTING_CONTEXT_ID, type: 'testing', assignedStaffId: ADMIN_ID },
+  })]) }), userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity({ studentCount: 1 }), { serverTime: '2026-09-15T13:11:30Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  const historyReads = [];
+  let unavailable = true;
+  await page.route(`**/api/classpilot/students/${STUDENT_ID}/timeline?**`, async route => {
+    const request = route.request(); historyReads.push({ url: new URL(request.url()), schoolId: request.headers()['x-school-id'], revision: request.headers()['x-classpilot-context-authority-revision'] });
+    await route.fulfill(unavailable ? { status: 503, json: { error: 'History temporarily unavailable' } }
+      : { json: { events: [{ id: 'testing-history', title: 'Current testing activity', occurredAt: '2026-09-15T13:11:20Z', eventType: 'classroom_context' }] } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+  await page.getByTestId('tab-timeline').click();
+  await page.getByText('Student timeline unavailable for this assignment.', { exact: true }).waitFor();
+  unavailable = false;
+  await page.getByRole('button', { name: 'Retry timeline', exact: true }).click();
+  await page.getByText('Current testing activity', { exact: true }).waitFor();
+  assert.ok(historyReads.length >= 2);
+  assert.ok(historyReads.every(read => read.schoolId === SCHOOL_ID && read.revision === '0'
+    && read.url.searchParams.get('supervisionContextId') === OWN_TESTING_CONTEXT_ID
+    && !read.url.searchParams.has('teachingSessionId')));
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
 });

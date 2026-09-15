@@ -24,6 +24,7 @@ import {
   classpilotFabStatePushFrame,
 } from "./classpilotControlStateFrame.js";
 import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPolicyRefresh.js";
+import { invalidateClasspilotLiveViewsForStudents } from "./classpilotLiveViewRevocation.js";
 
 /** Push the authoritative classroom + FAB snapshots after any class/coverage
  * ownership transition.
@@ -36,6 +37,9 @@ export async function syncClasspilotControlStatesToActiveDevices(
 ): Promise<number> {
   const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
   if (uniqueStudentIds.length === 0 || signal?.aborted) return 0;
+  let liveViewInvalidationError: unknown;
+  try { await invalidateClasspilotLiveViewsForStudents(schoolId, uniqueStudentIds); }
+  catch (error) { liveViewInvalidationError = error; }
   const { authorizedTargets, teachingSessionIds } = await runWithTenantContext({ schoolId }, async () => {
     const sessions = await getActiveSessionsForStudents(schoolId, uniqueStudentIds);
     const latestSessionByStudent = new Map<string, typeof sessions[number]>();
@@ -267,5 +271,6 @@ export async function syncClasspilotControlStatesToActiveDevices(
     }
     if (refreshFailures.length) throw new AggregateError(refreshFailures, "Screenshot policy refresh failed");
   }
+  if (liveViewInvalidationError) throw liveViewInvalidationError;
   return authorizedTargets;
 }

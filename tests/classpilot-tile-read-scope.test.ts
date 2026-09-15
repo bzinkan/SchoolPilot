@@ -45,7 +45,7 @@ const schedulerPools = await import("../dist/services/schedulerDb.js");
 const { classpilotScreenshotFallback } = await import(
   "../dist/services/classpilotScreenshotFallback.js"
 );
-const { screenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
+const { screenshotBindingVersion, supervisionBoundScreenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
 
 const { runWithTenantContext } = tenantContext;
 const {
@@ -58,6 +58,7 @@ const { signUserToken } = jwt;
 const { createApp } = appModule;
 const { and, eq, sql } = drizzle;
 const {
+  classpilotStudentControlStates,
   classpilotSupervisionContexts,
   classpilotSupervisionStudents,
   devices,
@@ -70,6 +71,7 @@ const {
   schools,
   studentDevices,
   studentSessions,
+  studentTimelineEvents,
   students,
   teachingSessions,
 } = schema;
@@ -155,14 +157,15 @@ async function requestJson(
   path: string,
   user: any,
   schoolId = schoolA.id,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  extraHeaders: Record<string, string> = {}
 ): Promise<{
   status: number;
   body: any;
   rateLimit: string | null;
 }> {
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: authHeaders(user, schoolId),
+    headers: { ...authHeaders(user, schoolId), ...extraHeaders },
     signal,
   });
   const text = await response.text();
@@ -1062,6 +1065,119 @@ describe("ClassPilot tile-read tenant scope", () => {
     );
     assert.equal(unauthorizedSchool.status, 403);
     assert.match(unauthorizedSchool.body.error, /No access to this school/i);
+  });
+
+  it("keeps scheduled classroom aggregate and screenshots on their exact supervision authority", async () => {
+    const oldMode = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
+    const oldSchools = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
+    process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
+    process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = schoolA.id;
+    const studentId = authorizedStudentIds[0]!;
+    const offlineStudentId = authorizedStudentIds[1]!;
+    const deviceId = primaryDeviceIds[0]!;
+    let contextId = "";
+    try {
+      contextId = await inSchool(schoolA.id, async () => {
+        const [context] = await db.insert(classpilotSupervisionContexts).values({
+          schoolId: schoolA.id, contextType: "testing", name: `${tag} scheduled classroom`,
+          status: "active", assignedStaffId: coTeacher.id, createdBy: admin.id,
+          startsAt: new Date(Date.now() - 60_000), endsAt: new Date(Date.now() + 3_600_000),
+          scheduleProfileApplicationId: `${tag}-application`, scheduleProfileDate: "2026-09-15",
+          scheduleProfileBlockId: `${tag}-block`,
+        }).returning({ id: classpilotSupervisionContexts.id });
+        assert.ok(context);
+        await db.insert(classpilotSupervisionStudents).values([studentId, offlineStudentId].map((id) => ({
+          schoolId: schoolA.id, contextId: context.id, studentId: id, source: "admin_reroute", assignedBy: admin.id,
+          assignedAt: new Date(Date.now() - 30_000),
+        })));
+        await db.insert(studentTimelineEvents).values([
+          { title: `${tag} before assignment`, occurredAt: new Date(Date.now() - 45_000) },
+          { title: `${tag} during assignment`, occurredAt: new Date(Date.now() - 10_000) },
+          { title: `${tag} future event`, occurredAt: new Date(Date.now() + 120_000) },
+        ].map(event => ({ ...event, schoolId: schoolA.id, studentId, eventType: 'classroom_context', sourceType: 'classpilot', sourceId: context.id })));
+        await db.update(studentSessions).set({ isActive: false, endedAt: new Date() })
+          .where(eq(studentSessions.studentId, offlineStudentId));
+        await db.insert(classpilotStudentControlStates).values({ schoolId: schoolA.id, studentId,
+          teachingSessionId: activeTeachingSessionId, revision: 4,
+          desiredState: { screenLocked: true }, hardExpiresAt: new Date(Date.now() + 3_600_000),
+        });
+        return context.id;
+      });
+      const aggregate = () => requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, coTeacher);
+      const timeline = (id = studentId, query = `supervisionContextId=${contextId}`, actor = coTeacher, revision = '0') =>
+        requestJson(`/api/classpilot/students/${id}/timeline?${query}`, actor, schoolA.id, undefined,
+          { 'X-ClassPilot-Context-Authority-Revision': revision });
+      const first = await aggregate();
+      assert.equal(first.status, 200);
+      assert.deepEqual(first.body.map((row: any) => row.studentId).sort(), [studentId, offlineStudentId].sort());
+      assert.equal(first.body.find((row: any) => row.studentId === offlineStudentId).isLoggedIn, false);
+      assert.ok(first.body.every((row: any) => row.supervisionContext.id === contextId));
+      assert.ok(first.body.every((row: any) => row.operatorCapabilities.scheduledClassroomV1));
+      assert.equal(first.body.find((row: any) => row.studentId === studentId).classroomState, undefined,
+        "the previous class desired state cannot become this supervision's state");
+      assert.doesNotMatch(JSON.stringify(first.body), /deviceId|device_id/);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${randomUUID()}`, admin)).status, 404);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, teacher)).status, 404);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}&teachingSessionId=${activeTeachingSessionId}`, admin)).status, 400);
+      assert.equal((await requestJson('/api/students-aggregated?supervisionContextId=', admin)).status, 400);
+      await inSchool(schoolA.id, () => db.update(classpilotStudentControlStates)
+        .set({ teachingSessionId: null, supervisionContextId: contextId })
+        .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId))));
+      const history = await timeline();
+      assert.equal(history.status, 200);
+      assert.equal((await timeline(studentId, `supervisionContextId=${contextId}`, coTeacher, '1')).status, 403, 'Stale tenure cannot read current history');
+      assert.deepEqual(history.body.events.filter((event: { title: string }) => event.title.startsWith(tag)).map((event: { title: string }) => event.title), [`${tag} during assignment`]);
+      assert.equal((await timeline(otherStudentId)).status, 403, 'Unassigned students have no context history');
+      assert.equal((await timeline(studentId, `supervisionContextId=${randomUUID()}`)).status, 403);
+      assert.equal((await timeline(studentId, `supervisionContextId=${contextId}`, teacher)).status, 403);
+      assert.equal((await timeline(studentId, `supervisionContextId=${contextId}&teachingSessionId=${activeTeachingSessionId}`)).status, 400);
+      const own = await aggregate();
+      assert.equal(own.body.find((row: any) => row.studentId === studentId).classroomState.supervisionContextId, contextId);
+      const binding = { ...exactScreenshotBinding(deviceId), supervisionContextId: contextId, controlRevision: 4 };
+      const screenshot = "data:image/jpeg;base64,c2NoZWR1bGVkLWNvbnRleHQ=";
+      const timestamp = Date.now();
+      assert.equal(classpilotScreenshotFallback.setSupervisionBound(binding, {
+        ...binding, screenshot, timestamp, capturedAt: new Date(timestamp).toISOString(),
+        bindingVersion: supervisionBoundScreenshotBindingVersion(binding),
+      }), true);
+      const tiles = () => postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: contextId }, coTeacher);
+      const exact = await tiles();
+      assert.equal(exact.status, 200);
+      assert.equal(exact.body.tiles[0].screenshot?.screenshot, screenshot);
+      await inSchool(schoolA.id, () => db.update(classpilotStudentControlStates).set({ revision: 5 })
+        .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId))));
+      assert.equal((await tiles()).body.tiles[0].screenshot, null, "never downgrade to the prior revision or legacy screenshot");
+      assert.equal((await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: randomUUID() }, coTeacher)).status, 404);
+      await inSchool(schoolA.id, () => db.update(classpilotSupervisionStudents).set({ releasedAt: new Date() })
+        .where(and(eq(classpilotSupervisionStudents.contextId, contextId), eq(classpilotSupervisionStudents.studentId, studentId))));
+      assert.equal((await tiles()).status, 404);
+      assert.equal((await timeline()).status, 403, 'Release revokes history in the same context');
+      assert.deepEqual((await aggregate()).body.map((row: any) => row.studentId), [offlineStudentId]);
+      process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "off";
+      assert.equal((await aggregate()).status, 404);
+      assert.equal((await tiles()).status, 404);
+      process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
+      await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts).set({
+        scheduleProfileApplicationId: null, scheduleProfileDate: null, scheduleProfileBlockId: null,
+      }).where(eq(classpilotSupervisionContexts.id, contextId)));
+      assert.equal((await aggregate()).status, 404, "ad hoc supervision does not gain a scheduled classroom");
+      assert.equal((await tiles()).status, 404);
+    } finally {
+      if (oldMode === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
+      else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = oldMode;
+      if (oldSchools === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
+      else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = oldSchools;
+      await inSchool(schoolA.id, async () => {
+        await db.delete(studentTimelineEvents).where(and(eq(studentTimelineEvents.schoolId, schoolA.id), eq(studentTimelineEvents.sourceId, contextId)));
+        await db.delete(classpilotStudentControlStates).where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId)));
+        if (contextId) {
+          await db.delete(classpilotSupervisionStudents).where(eq(classpilotSupervisionStudents.contextId, contextId));
+          await db.delete(classpilotSupervisionContexts).where(eq(classpilotSupervisionContexts.id, contextId));
+        }
+        await db.update(studentSessions).set({ isActive: true, endedAt: null }).where(eq(studentSessions.studentId, offlineStudentId));
+      });
+      seedExactScreenshots();
+    }
   });
 
   it("honors active supervision ownership over the original class teacher", async () => {

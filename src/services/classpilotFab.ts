@@ -24,6 +24,9 @@ import { publishWSBatch } from "../realtime/ws-redis.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
 import { classpilotFabStatePushFrame } from "./classpilotControlStateFrame.js";
+import { scheduledContextHasClassroomTools, scheduledSupervisionSource } from "./classpilotActivityAuthority.js";
+import { scheduledClassroomToggles } from "./classpilotScheduledClassroomTools.js";
+import { readClasspilotRealtimeStatusBatch, classpilotRealtimeFresh } from "./classpilotRealtimeStatus.js";
 
 export type FabFeature = "chat" | "hand";
 
@@ -122,6 +125,7 @@ export async function buildStudentFabState(
     schoolSettings?: Settings;
     studentSessionId?: string | null;
     dbInstance?: typeof db;
+    acceptedCapabilities?: readonly string[];
   } = {}
 ) {
   const authority = await getClasspilotFabAuthoritySnapshot(
@@ -135,6 +139,28 @@ export async function buildStudentFabState(
     : authority.studentSession?.id ?? null;
   const ownershipRevision = authority.ownershipRevision;
   if (supervision) {
+    let acceptedCapabilities = options.acceptedCapabilities;
+    if (!acceptedCapabilities && authority.studentSession && scheduledContextHasClassroomTools(supervision.context)) {
+      const session = authority.studentSession;
+      const snapshots = await readClasspilotRealtimeStatusBatch(schoolId, [{ studentId, studentSessionId: session.id, deviceId: session.deviceId }]);
+      const snapshot = snapshots.get(studentId);
+      acceptedCapabilities = snapshot?.status === "hit" && classpilotRealtimeFresh(snapshot.snapshot) ? snapshot.snapshot.acceptedCapabilities : [];
+    }
+    if (scheduledContextHasClassroomTools(supervision.context) && acceptedCapabilities?.includes("scheduledClassroomV1")) {
+      const context = supervision.context;
+      const toggles = await scheduledClassroomToggles(schoolId, context.id, options.dbInstance);
+      const hands = (await getActiveHandsForStudent(schoolId, studentId, options.dbInstance)).filter((hand) => hand.supervisionContextId === context.id);
+      return { schemaVersion: 1, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id,
+        contextSource: scheduledSupervisionSource(context), contextName: context.name, activeSessionIds: [],
+        contextAuthorityRevision: String(context.classroomAuthorityRevision),
+        activeContexts: [{ supervisionContextId: context.id }], lifecycleRevision: toggles.lifecycleRevision, revision: toggles.lifecycleRevision,
+        messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled, handRaised: hands.length > 0,
+        activeHands: hands.map((hand) => ({ supervisionContextId: context.id, studentId, raisedAt: hand.raisedAt, expiresAt: hand.expiresAt })),
+        sessions: [], supervisionContext: { id: context.id, type: context.contextType, name: context.name,
+          source: scheduledSupervisionSource(context), endsAt: context.endsAt.toISOString(),
+          contextAuthorityRevision: String(context.classroomAuthorityRevision) },
+      };
+    }
     return {
       schemaVersion: 1,
       studentId,
@@ -144,6 +170,7 @@ export async function buildStudentFabState(
       lifecycleRevision: 0,
       revision: 0,
       activeSessionIds: [],
+      activeContexts: [],
       messagingEnabled: false,
       handRaisingEnabled: false,
       handRaised: false,
@@ -164,7 +191,7 @@ export async function buildStudentFabState(
     studentId,
     options.dbInstance
   ))
-    .filter((hand) => authoritativeSessionIds.has(hand.teachingSessionId));
+    .filter((hand) => !!hand.teachingSessionId && authoritativeSessionIds.has(hand.teachingSessionId));
 
   let messagingEnabled = false;
   let handRaisingEnabled = false;
@@ -204,6 +231,7 @@ export async function buildStudentFabState(
     lifecycleRevision: sessionStates.reduce((revision, state) => Math.max(revision, state.lifecycleRevision), 0),
     revision: sessionStates.reduce((revision, state) => Math.max(revision, state.lifecycleRevision), 0),
     activeSessionIds: sessions.map((session) => session.id),
+    activeContexts: sessions.map((session) => ({ teachingSessionId: session.id })),
     messagingEnabled,
     handRaisingEnabled,
     handRaised: activeHands.length > 0,

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
@@ -21,6 +22,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "restrictionPortalFirstV1",
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
+  "scheduledClassroomV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -47,6 +49,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   restrictionPortalFirstV1: "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1",
   afterHoursSafetyOnlyV1: "CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1",
   schoolWebsiteBlockEnforcementV1: "CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1",
+  scheduledClassroomV1: "CLASSPILOT_SCHEDULED_CLASSROOM_MODE",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -66,6 +69,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "restrictionPortalFirstV1",
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
+  "scheduledClassroomV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -235,6 +239,8 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "scheduledClassroomV1"
+    && !isScheduledClassroomEnabled(scope.schoolId ?? "", env)) return false;
   if (capability === "restrictionPortalFirstV1") {
     return isClasspilotCapabilityActive("restrictionAuthPassThroughV1", scope, env);
   }
