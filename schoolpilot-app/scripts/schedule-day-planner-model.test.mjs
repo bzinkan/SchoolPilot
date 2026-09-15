@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { classPlacementCandidates, classPlacementFingerprint, classPlacementUnavailable, reviewClassPlacement } from '../src/products/classpilot/components/scheduleClassPlacement.js';
 import { buildPlannerOccurrences, buildPlannerRows, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow } from '../src/products/classpilot/components/scheduleDayPlannerModel.js';
 
 const referenceDate = '2026-09-14';
@@ -19,6 +20,99 @@ const checkedReview = {
 };
 const model = overrides => buildPlannerRows({ definition, catalog, regularSchedule, referenceDate, metadata, ...overrides });
 const all = { grade: 'all', classId: 'all', teacher: 'all', search: '', conflictsOnly: false };
+
+test('Class placement swaps the two proposed meetings atomically without renaming or duplicating either class', () => {
+  const draft = { ...structuredClone(definition), classRules: [{ classId: 'homeroom', action: 'time', startTime: '10:45', endTime: '11:20' }, { classId: 'ela', action: 'time', startTime: '12:00', endTime: '12:35' }] };
+  const before = structuredClone(draft), rows = model({ definition: draft }).classes;
+  const plan = reviewClassPlacement({ definition: draft, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' });
+  assert.equal(plan.error, undefined);
+  assert.deepEqual(plan.definition.classRules, [{ classId: 'homeroom', action: 'time', startTime: '12:00', endTime: '12:35' }, { classId: 'ela', action: 'time', startTime: '10:45', endTime: '11:20' }]);
+  assert.deepEqual(plan.definition.testingBlocks, draft.testingBlocks);
+  assert.deepEqual(plan.addedClassIds, []);
+  assert.deepEqual(draft, before, 'Opening/reviewing the placement leaves the current draft untouched');
+  const projected = model({ definition: plan.definition });
+  assert.deepEqual(projected.classes.map(row => [row.id, row.name]), rows.map(row => [row.id, row.name]));
+  assert.equal(projected.classes.filter(row => row.id === 'ela').length, 1);
+  assert.deepEqual(plan.changes.map(change => change.after), [{ startTime: '12:00', endTime: '12:35' }, { startTime: '10:45', endTime: '11:20' }]);
+});
+
+test('Move and skip restores a skipped eligible class and explicitly includes only affected outside-selection classes', () => {
+  const draft = { ...structuredClone(definition), classIds: ['math'], classRules: [{ classId: 'ela', action: 'skip' }, { classId: 'math', action: 'skip' }] };
+  // A skipped rule still needs profile inclusion to be a displayed skipped row.
+  draft.classIds.push('ela');
+  const rows = model({ definition: draft }).classes;
+  const plan = reviewClassPlacement({ definition: draft, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'move-skip' });
+  assert.equal(plan.error, undefined);
+  assert.deepEqual(plan.addedClassIds, ['homeroom']);
+  assert.deepEqual(plan.definition.classIds, ['math', 'ela', 'homeroom']);
+  assert.deepEqual(plan.definition.grades, []);
+  assert.deepEqual(plan.definition.classRules, [{ classId: 'ela', action: 'time', startTime: '08:30', endTime: '09:10' }, { classId: 'math', action: 'skip' }, { classId: 'homeroom', action: 'skip' }]);
+  assert.deepEqual(plan.changes.map(change => [change.classId, change.includedBefore, change.includedAfter]), [['homeroom', false, true], ['ela', true, true]]);
+  assert.equal(model({ definition: plan.definition }).classes.find(row => row.id === 'ela').proposedWindow.startTime, '08:30');
+  assert.equal(reviewClassPlacement({ definition: draft, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).error.includes('skipped'), true);
+  const byGrade = { ...structuredClone(definition), grades: ['5'], classIds: [] };
+  assert.deepEqual(reviewClassPlacement({ definition: byGrade, classes: model({ definition: byGrade }).classes, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).definition.classIds, ['homeroom', 'ela'], 'Both affected identities are explicit while the existing grade selection is retained');
+});
+
+test('Class placement fails closed on unknown, inactive, ineligible and incomplete meetings and enforces draft limits', () => {
+  const rows = model().classes;
+  for (const patch of [{ active: false }, { status: 'unavailable' }, { detailsUnavailable: true }, { scheduleEnabled: false }, { status: 'not_scheduled' }, { regularWindow: null }, { proposedWindow: null, action: 'time' }]) {
+    const altered = rows.map(row => row.id === 'ela' ? { ...row, ...patch } : row);
+    assert.ok(reviewClassPlacement({ definition, classes: altered, originalId: 'homeroom', selectedId: 'ela', action: 'move-skip' }).error, JSON.stringify(patch));
+  }
+  assert.ok(classPlacementUnavailable({ ...rows[0], proposedWindow: null, action: 'skip' }, true));
+  assert.equal(classPlacementUnavailable({ ...rows[0], active: false, status: 'unavailable' }), 'This class is inactive.');
+  for (const [selectedId, action] of [['missing', 'swap'], ['homeroom', 'swap'], ['ela', '']]) assert.ok(reviewClassPlacement({ definition, classes: rows, originalId: 'homeroom', selectedId, action }).error);
+  const limit = { ...definition, classIds: Array.from({ length: 500 }, (_, index) => 'other-' + index) };
+  assert.match(reviewClassPlacement({ definition: limit, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).error, /500 individually/);
+  const ruleLimit = { ...definition, classRules: Array.from({ length: 500 }, (_, index) => ({ classId: 'other-' + index, action: 'skip' })) };
+  assert.match(reviewClassPlacement({ definition: ruleLimit, classes: rows, originalId: 'homeroom', selectedId: 'ela', action: 'swap' }).error, /500 class adjustments/);
+});
+
+test('Inactive catalog references are disabled picker choices without expanding planner rows or grade inclusion', () => {
+  const inactiveClasses = [{ id: 'archived', name: 'Archived ELA', gradeLevel: '5', active: false, staff: [{ id: 'burba', name: 'Burba' }], studentCount: null }];
+  const draft = { ...definition, grades: ['5'] }, result = model({ definition: draft, catalog: { ...catalog, inactiveClasses } });
+  assert.equal(result.classes.some(row => row.id === 'archived'), false);
+  assert.equal(result.classes.filter(row => row.included).length, 2);
+  const candidates = classPlacementCandidates(result.classes, inactiveClasses), archived = candidates.find(row => row.id === 'archived');
+  assert.equal(archived.name, 'Archived ELA');
+  assert.equal(archived.regularWindow, null);
+  assert.equal(archived.proposedWindow, null);
+  assert.equal(classPlacementUnavailable(archived), 'This class is inactive.');
+  assert.ok(reviewClassPlacement({ definition: draft, classes: candidates, originalId: 'homeroom', selectedId: 'archived', action: 'swap' }).error);
+  const stale = { ...result.classes[0], id: 'archived' };
+  const deduplicated = classPlacementCandidates([...result.classes, stale], inactiveClasses);
+  assert.equal(deduplicated.filter(row => row.id === 'archived').length, 1);
+  assert.equal(classPlacementUnavailable(deduplicated.find(row => row.id === 'archived')), 'This class is inactive.', 'Fresh inactive metadata overrides a stale reviewed meeting only inside the picker');
+  assert.deepEqual(result.classes.map(row => row.id), model({ definition: draft }).classes.map(row => row.id));
+});
+
+test('A frozen placement invalidates on changed draft, date, revision, eligibility or roster and staff facts', () => {
+  const context = { definition, classes: model().classes, referenceDate, revision: 4 };
+  const fingerprint = classPlacementFingerprint(context);
+  for (const patch of [{ definition: { ...definition, classIds: [] } }, { referenceDate: '2026-09-15' }, { revision: 5 }, ...[{ status: 'not_scheduled' }, { studentCount: 12 }, { rosterFingerprint: 'same-count-different-roster' }, { staff: [{ id: 'new-teacher', name: 'New teacher' }] }].map(change => ({ classes: context.classes.map(row => row.id === 'ela' ? { ...row, ...change } : row) }))]) assert.notEqual(classPlacementFingerprint({ ...context, ...patch }), fingerprint);
+  assert.notEqual(classPlacementFingerprint({ ...context, classes: context.classes.map(row => ({ ...row, name: row.name + ' updated' })) }), fingerprint, 'The reviewed class identity stays tied to its displayed label');
+});
+
+test('After testing stays authoritative to the exact current review and never carries forward during a changed draft', () => {
+  const afterTesting = { status: 'ready', studentCount: 12, allocations: [{ kind: 'gap', studentCount: 12, classIds: ['homeroom'], blockIds: [], staff: [], at: '11:00' }] };
+  const reviewData = { ...checkedReview, testingBlocks: [{ ...checkedReview.testingBlocks[0], afterTesting }] };
+  assert.deepEqual(model({ reviewData }).testing[0].afterTesting, afterTesting);
+  assert.equal(model({ metadata: reviewData }).testing[0].afterTesting, null);
+  const changed = { ...definition, testingBlocks: [{ ...definition.testingBlocks[0], endTime: '10:30' }] };
+  assert.equal(model({ definition: changed, reviewData }).testing[0].afterTesting, null);
+  assert.equal(model({ reviewData, regularSchedule: { ...regularSchedule, revision: 8 } }).testing[0].afterTesting, null);
+  const unknownCount = { ...checkedReview, classes: checkedReview.classes.map(row => ({ ...row, studentCount: null })) };
+  assert.equal(model({ reviewData: unknownCount, catalog: { ...catalog, classes: catalog.classes.map(row => ({ ...row, studentCount: 99 })) } }).classes[0].studentCount, null);
+});
+
+test('Student conflicts use the exact server interval after testing supervision masks rather than the whole class intersection', () => {
+  const issue = { id: 'masked-student-overlap', code: 'SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT', kind: 'conflict', classIds: ['ela', 'math'], blockIds: [], overlapWindow: { startTime: '09:40', endTime: '09:55' }, studentCount: 2 };
+  const result = model({ reviewData: { ...checkedReview, issues: [issue] } });
+  assert.deepEqual(result.classes.find(row => row.id === 'ela').overlapSpans.map(span => [span.startTime, span.endTime]), [['09:40', '09:55']]);
+  const withoutInterval = model({ reviewData: { ...checkedReview, issues: [{ ...issue, overlapWindow: undefined }] } });
+  assert.equal(withoutInterval.classes.find(row => row.id === 'ela').overlapSpans.length, 0, 'A missing server interval must not invent shade');
+});
 
 test('Provisional edits shorten only an explicitly included meeting and keep a skipped row visible', () => {
   const result = model({ definition: { ...definition, classRules: [{ classId: 'homeroom', action: 'time', startTime: '08:30', endTime: '09:00' }, { classId: 'ela', action: 'skip' }] } });

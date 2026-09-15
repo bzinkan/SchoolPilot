@@ -2,6 +2,9 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DraftReviewIssues, DraftReviewStatus } from './ScheduleProfileDraftReview';
+import ScheduleClassForTime from './ScheduleClassForTime';
+import ScheduleAfterTesting from './ScheduleAfterTesting';
+import { classPlacementCandidates, classPlacementFingerprint, classPlacementUnavailable } from './scheduleClassPlacement';
 import {
   buildPlannerRows, buildPlannerOccurrences, capturePlannerRanks, filterPlannerRows, plannerAxis, plannerGradeKey, plannerGradeName,
   plannerIncluded, plannerClipWindow, plannerOutsideHours, plannerTime, plannerValidWindow, plannerWindowText,
@@ -139,7 +142,7 @@ function PlannerIssues({ issues, rowsByKey, onEditTarget, disabled }) {
   </div></details>;
 }
 
-function PlannerRow({ occurrence, timeline, axis, active, filters, definition, catalog, disabled, onChange, onEditTarget, onEditGroup, checked }) {
+function PlannerRow({ occurrence, timeline, axis, active, filters, definition, catalog, disabled, onChange, onEditTarget, onEditGroup, checked, onPlaceClass, afterTestingPending, referenceDate, classes }) {
   const { row, linked, pinned } = occurrence;
   const editorId = useId();
   const open = () => onEditTarget(targetFor(row), undefined, occurrence);
@@ -176,6 +179,7 @@ function PlannerRow({ occurrence, timeline, axis, active, filters, definition, c
         {!checked && <span className="sr-only">Checks pending or unavailable</span>}
       </div>
     </div>
+    {row.type === 'testing' && !active && <div className={timeline ? 'sticky left-0 max-w-full' : ''} style={timeline ? { width: 'var(--planner-visible-width, 100%)' } : undefined}><ScheduleAfterTesting compact data={row.afterTesting} pending={afterTestingPending} name={row.name} date={referenceDate} classes={classes} testingBlocks={definition.testingBlocks} /></div>}
     {active && <section id={editorId} aria-label={`Edit ${row.name} in Day planner`} className="sticky left-0 max-w-full space-y-3 border-t bg-background p-4" style={timeline ? { width: 'var(--planner-visible-width, 100%)' } : undefined}>
       <div className="flex items-center justify-between gap-3"><h4 className="text-sm font-semibold">Edit {row.name}</h4><Button type="button" size="sm" variant="ghost" onClick={close}>{row.type === 'testing' ? 'Close testing editor' : 'Close class editor'}<span className="sr-only"> for {row.name}</span></Button></div>
       <RowDescription row={row} classId={filters.classId} />
@@ -184,7 +188,7 @@ function PlannerRow({ occurrence, timeline, axis, active, filters, definition, c
       {row.type === 'testing' && occurrence.participation?.length > 0 && filters.classId === 'all' && <div className="text-xs text-muted-foreground">{occurrence.participation.map(part => <p key={part.classId}>{part.count} of {part.total} students in {catalog.classes.find(item => item.id === part.classId)?.name || 'associated class'} participate</p>)}</div>}
       <p className="text-xs text-muted-foreground">Regular: {row.type === 'testing' ? 'No testing block' : row.regularWindow ? plannerWindowText(row.regularWindow) : row.status === 'unavailable' ? 'Unavailable' : row.status === 'schedule_off' ? 'Schedule off' : 'Does not meet'}</p>
       <DraftReviewIssues compact issues={row.issues} />
-      {row.type === 'class' ? <ClassEditor row={row} definition={definition} disabled={disabled} onChange={onChange} /> : <><TestingEditor row={row} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditGroup={onEditGroup} /><Button type="button" size="sm" variant="outline" disabled={disabled} className="text-destructive" aria-label={`Remove testing block ${row.index + 1}`} onClick={remove}>Remove testing block</Button></>}
+      {row.type === 'class' ? <><ClassEditor row={row} definition={definition} disabled={disabled} onChange={onChange} /><div className="space-y-1"><Button type="button" size="sm" variant="outline" disabled={disabled || Boolean(classPlacementUnavailable(row, true))} aria-label={`Class for this time for ${row.name}`} onClick={event => onPlaceClass(row, event.currentTarget)}>Class for this time</Button><p className="text-xs text-muted-foreground">{classPlacementUnavailable(row, true) || 'Use another existing class at this proposed time, then review a swap or skip for this class.'}</p></div></> : <><TestingEditor row={row} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditGroup={onEditGroup} /><ScheduleAfterTesting data={row.afterTesting} pending={afterTestingPending} name={row.name} date={referenceDate} classes={classes} testingBlocks={definition.testingBlocks} /><Button type="button" size="sm" variant="outline" disabled={disabled} className="text-destructive" aria-label={`Remove testing block ${row.index + 1}`} onClick={remove}>Remove testing block</Button></>}
       <p className="text-xs text-muted-foreground">Changes update this profile draft. Save profile keeps your work; Choose dates & apply schedules it separately.</p>
     </section>}
   </article>;
@@ -194,6 +198,8 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
   const [metadata, setMetadata] = useState(null);
   const [layout, setLayout] = useState({ date: null, ranks: undefined });
   const [anchor, setAnchor] = useState(null);
+  const [placement, setPlacement] = useState(null);
+  const placementOpener = useRef(null);
   const planner = useRef(null);
   const scroller = useRef(null);
   const timeHeader = useRef(null);
@@ -227,6 +233,21 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
   // date. Pending/failed checks never retain a previous conflict verdict.
   if (review.data?.referenceDate === referenceDate && metadata !== review.data) setMetadata(review.data);
   const model = useMemo(() => buildPlannerRows({ definition, catalog, regularSchedule, referenceDate, reviewData: review.data, metadata }), [definition, catalog, regularSchedule, referenceDate, review.data, metadata]);
+  const placementClasses = useMemo(() => classPlacementCandidates(model.classes, catalog.inactiveClasses), [model.classes, catalog.inactiveClasses]);
+  const placementFingerprint = useMemo(() => classPlacementFingerprint({ definition, classes: placementClasses, referenceDate, revision: catalog.revision }), [definition, placementClasses, referenceDate, catalog.revision]);
+  const openPlacement = (row, opener) => {
+    if (disabled || classPlacementUnavailable(row, true)) return;
+    placementOpener.current = opener;
+    setPlacement({ originalId: row.id, definition: structuredClone(definition), classes: structuredClone(placementClasses), referenceDate, fingerprint: placementFingerprint });
+  };
+  const returnPlacementFocus = classId => requestAnimationFrame(() => {
+    const root = planner.current;
+    if (!root) return;
+    const editor = classId ? [...root.querySelectorAll('[data-class-editor-id]')].find(element => element.dataset.classEditorId === classId) : null;
+    const preferred = classId ? editor?.querySelector('select:not(:disabled), input:not(:disabled), button:not(:disabled)') : placementOpener.current;
+    const control = preferred?.isConnected && !preferred.matches(':disabled') ? preferred : root.querySelector('[data-review-heading]');
+    if (control) { control.focus({ preventScroll: true }); control.scrollIntoView({ block: 'center', inline: 'nearest' }); }
+  });
   const visible = useMemo(() => filterPlannerRows(model.rows, filters, activeTarget), [model, filters, activeTarget]);
   const rowsByKey = useMemo(() => new Map(model.rows.map(row => [row.key, row])), [model]);
   const ranks = useMemo(() => capturePlannerRanks(model.rows, layout.date === referenceDate ? layout.ranks : undefined), [model.rows, layout.date, layout.ranks, referenceDate]);
@@ -329,7 +350,7 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
             if (!collapsed && containsEditor) editOccurrence(null);
             onCollapsedGradesChange(collapsed ? collapsedGrades.filter(key => key !== group.key) : [...new Set([...collapsedGrades, group.key])]);
           }}>{collapsed ? <ChevronRight aria-hidden="true" className="h-4 w-4" /> : <ChevronDown aria-hidden="true" className="h-4 w-4" />}{group.label}<span className="font-normal text-muted-foreground">({group.rows.length})</span></button>,
-          ...(!collapsed ? group.rows.map(occurrence => <PlannerRow key={occurrence.key} occurrence={occurrence} timeline={timeline} axis={axis} active={occurrence.key === editorOccurrence?.key} filters={filters} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditTarget={editOccurrence} onEditGroup={onEditGroup} checked={occurrence.row.checked} />) : EMPTY)];
+          ...(!collapsed ? group.rows.map(occurrence => <PlannerRow key={occurrence.key} occurrence={occurrence} timeline={timeline} axis={axis} active={occurrence.key === editorOccurrence?.key} filters={filters} definition={definition} catalog={catalog} disabled={disabled} onChange={onChange} onEditTarget={editOccurrence} onEditGroup={onEditGroup} checked={occurrence.row.checked} onPlaceClass={openPlacement} afterTestingPending={review.pending} referenceDate={referenceDate} classes={model.classes} />) : EMPTY)];
         })}
         {!visible.length && <p className="p-4 text-sm text-muted-foreground">{filters.conflictsOnly && !model.reviewCurrent ? 'Current conflict results are not available.' : filters.conflictsOnly ? 'No conflicting schedule rows match these display filters.' : 'No schedule rows match these display filters.'}</p>}
         </div>
@@ -345,5 +366,9 @@ export default function ScheduleDayPlanner({ definition, catalog, regularSchedul
       })}</div><Button size="sm" variant="ghost" onClick={() => updateScope({ grades: [], classIds: [] })}>Clear class selection</Button>
     </fieldset></details>
     <p className="text-xs text-muted-foreground">Profile preview for {referenceDate} · {review.data?.schoolTimezone || catalog.schoolTimezone}. It uses current regular settings and this draft; actual application dates are checked separately. Ordinary class rosters stay in place.</p>
-  </section></section>;
+  </section>{placement && <ScheduleClassForTime snapshot={placement} stale={placement.fingerprint !== placementFingerprint} disabled={disabled} onClose={() => setPlacement(null)} onReturnFocus={returnPlacementFocus} onApply={plan => {
+    if (disabled || placement.fingerprint !== placementFingerprint) return;
+    onChange(plan.definition, undefined, { classId: plan.selectedId });
+    setPlacement(null);
+  }} />}</section>;
 }

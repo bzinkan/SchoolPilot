@@ -10,6 +10,7 @@ import { projectClasspilotRegularSchedule, regularScheduleReferenceDate } from "
 import { normalizeScheduleProfileId, SCHEDULE_PROFILE_LIMITS, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type ScheduleProfileWindow } from "./classpilotScheduleProfileModel.js";
 import { scheduleProfileWindowHasFullMonitoring, testingRosterHasOtherClassStudents } from "./classpilotScheduleProfileValidation.js";
 import type { HeartbeatTrackingSettings } from "./storage.js";
+import { analyzeScheduleStudents, type StudentAnalysisInterval } from "./classpilotScheduleStudentAnalysis.js";
 
 const READ_LIMITS = { classes: 5_000, staff: 5_000, relationships: 250_000, comparisons: 250_000, issues: 1_000 } as const;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -70,11 +71,15 @@ type Staff = { id: string; name: string };
 export type DraftReviewFacts = {
   referenceDate: string; revision: number; schoolTimezone: string; config: SchoolSchedulingConfig; calendar: SchedulingCalendar;
   tracking: HeartbeatTrackingSettings | undefined;
-  classes: Array<SchedulingGroup & { id: string; name: string; gradeLevel: string | null; staff: Staff[]; studentIds: string[]; unavailableStaff?: boolean }>;
+  classes: Array<SchedulingGroup & { id: string; name: string; gradeLevel: string | null; staff: Staff[]; studentIds: string[]; unavailableStaff?: boolean; unavailableRoster?: boolean }>;
   supervisionGroups: Array<{ id: string; name: string; studentIds: string[]; inactiveStudents: number; staffIds: string[] }>;
   staff: Staff[];
 };
-export type DraftReviewIssue = { id: string; kind: "conflict" | "overlap" | "incomplete"; code: string; message: string; classIds: string[]; blockIds: string[]; staffIds: string[] };
+export type DraftReviewIssue = { id: string; kind: "conflict" | "overlap" | "incomplete"; code: string; message: string; classIds: string[]; blockIds: string[]; staffIds: string[];
+  overlapWindow?: { startTime: string; endTime: string }; studentCount?: number; newStudentCount?: number; change?: "new" | "worsened" | "existing" | "reduced" };
+const numericWindow = (window: { startTime: string; endTime: string } | null): StudentAnalysisInterval | null => window && validWindow(window)
+  ? { start: Number(window.startTime.slice(0, 2)) * 60 + Number(window.startTime.slice(3)), end: Number(window.endTime.slice(0, 2)) * 60 + Number(window.endTime.slice(3)) } : null;
+const displayMinute = (value: number) => `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 
 /** Current regular configuration plus this draft, never a live or historical snapshot. */
 export function projectScheduleDraftReview(definition: ScheduleProfileDefinition, facts: DraftReviewFacts) {
@@ -82,12 +87,13 @@ export function projectScheduleDraftReview(definition: ScheduleProfileDefinition
   const issues: DraftReviewIssue[] = [];
   const seen = new Set<string>();
   let truncated = false;
-  const issue = (kind: DraftReviewIssue["kind"], code: string, message: string, classIds: string[] = [], blockIds: string[] = [], staffIds: string[] = []) => {
+  const issue = (kind: DraftReviewIssue["kind"], code: string, message: string, classIds: string[] = [], blockIds: string[] = [], staffIds: string[] = [],
+    details: Pick<DraftReviewIssue, "overlapWindow" | "studentCount" | "newStudentCount" | "change"> = {}) => {
     const refs = { classIds: [...new Set(classIds)].sort(), blockIds: [...new Set(blockIds)].sort(), staffIds: [...new Set(staffIds)].sort() };
-    const id = hash({ kind, code, ...refs }).slice(0, 24);
+    const id = hash({ kind, code, ...refs, ...details }).slice(0, 24);
     if (seen.has(id)) return;
     if (issues.length >= READ_LIMITS.issues) { truncated = true; return; }
-    seen.add(id); issues.push({ id, kind, code, message, ...refs });
+    seen.add(id); issues.push({ id, kind, code, message, ...refs, ...details });
   };
   if (!definition.name) issue("incomplete", "SCHEDULE_DRAFT_NAME_INCOMPLETE", "Enter a profile name before saving.");
   if (!regular.day.instructional) issue("incomplete", "SCHEDULE_DRAFT_REFERENCE_CLOSED", "Choose an instructional reference date to review the proposed day. This date does not activate the profile.");
@@ -113,7 +119,10 @@ export function projectScheduleDraftReview(definition: ScheduleProfileDefinition
       proposedWindow = rule.action === "skip" ? null : { startTime: rule.startTime!, endTime: rule.endTime! };
       if (rule.action === "skip") proposedStatus = "skipped";
     }
-    return { classId: source.id, name: source.name, gradeLevel: source.gradeLevel, staff: source.staff, selected, status: resolved.status, proposedStatus, regularWindow: resolved.window, proposedWindow, action };
+    return { classId: source.id, name: source.name, gradeLevel: source.gradeLevel, staff: source.staff, studentCount: source.unavailableRoster ? null : new Set(source.studentIds).size,
+      rosterFingerprint: hash({ studentIds: [...new Set(source.studentIds)].sort(), staff: [...source.staff].sort((a, b) => a.id.localeCompare(b.id)),
+        unavailableRoster: !!source.unavailableRoster, unavailableStaff: !!source.unavailableStaff }),
+      selected, status: resolved.status, proposedStatus, regularWindow: resolved.window, proposedWindow, action };
   });
   if (!classes.some((row) => row.selected) && !definition.testingBlocks.length) issue("incomplete", "SCHEDULE_DRAFT_SELECTION_INCOMPLETE", "Select classes or add a testing block to review this profile.");
   const groupById = new Map(facts.supervisionGroups.map((group) => [group.id, group]));
@@ -139,8 +148,9 @@ export function projectScheduleDraftReview(definition: ScheduleProfileDefinition
       ...facts.tracking, schoolTimezone: facts.schoolTimezone, instructionalCalendar: facts.calendar, schedulingDateOverrides: facts.config.dateOverrides,
     })) issue("conflict", "SCHEDULE_PROFILE_MONITORING_NOT_FULL", `${block.name}: full classroom monitoring must be available throughout this block. Review Monitoring Hours.`, [], [block.id], [block.assignedStaffId]);
     const classParticipation = facts.classes.flatMap((row) => {
-      const count = row.studentIds.filter((id) => targets.has(id)).length;
-      return count ? [{ classId: row.id, count, total: row.studentIds.length }] : [];
+      if (row.unavailableRoster) return [];
+      const roster = new Set(row.studentIds), count = [...roster].filter((id) => targets.has(id)).length;
+      return count ? [{ classId: row.id, count, total: roster.size }] : [];
     });
     return { blockId: block.id, name: block.name, coverageGroupId: block.coverageGroupId, groupName: group?.name ?? null,
       assignedStaffId: block.assignedStaffId, staffName: staff?.name ?? null, startTime: block.startTime, endTime: block.endTime, status, studentCount: targets.size, classParticipation };
@@ -174,10 +184,48 @@ export function projectScheduleDraftReview(definition: ScheduleProfileDefinition
       }
     }
   }
+  const toAnalysisClass = (row: typeof classes[number], baseline: boolean) => {
+    const source = sourceById.get(row.classId)!;
+    return { classId: row.classId, name: row.name, staff: row.staff, studentIds: source.unavailableRoster ? null : source.studentIds,
+      window: numericWindow(baseline ? row.regularWindow : row.proposedWindow),
+      unavailable: source.unavailableRoster || source.unavailableStaff || (baseline ? row.status === "unavailable" : row.proposedStatus === "unavailable" || row.proposedStatus === "incomplete") };
+  };
+  const studentAnalysis = analyzeScheduleStudents({ baselineClasses: classes.map((row) => toAnalysisClass(row, true)), classes: classes.map((row) => toAnalysisClass(row, false)),
+    testing: testingBlocks.map((block) => ({ blockId: block.blockId, name: block.name,
+      staff: block.staffName ? [{ id: block.assignedStaffId, name: block.staffName }] : [],
+      studentIds: groupById.has(block.coverageGroupId) && !groupById.get(block.coverageGroupId)!.inactiveStudents ? [...testingStudents.get(block.blockId)!] : null,
+      window: numericWindow(block), validForPrecedence: regular.day.instructional && block.status === "ready"
+        && !issues.some((row) => row.blockIds.includes(block.blockId) && row.kind !== "overlap") })),
+  });
+  if (regular.day.instructional) {
+    for (const classId of studentAnalysis.unavailableClassIds) {
+      if (sourceById.get(classId)?.unavailableRoster) issue("incomplete", "SCHEDULE_DRAFT_ROSTER_UNAVAILABLE", `${sourceById.get(classId)!.name}: the student roster is unavailable. This day is not fully checked.`, [classId]);
+    }
+    for (const overlap of studentAnalysis.overlaps) {
+      const isNew = overlap.newStudentCount > 0, names = overlap.classIds.map((id) => sourceById.get(id)?.name ?? "Class").join(" and ");
+      issue(isNew ? "conflict" : "overlap", isNew ? "SCHEDULE_PROFILE_STUDENT_CLASS_CONFLICT" : "SCHEDULE_DRAFT_EXISTING_STUDENT_OVERLAP",
+        `${names}: ${overlap.studentCount} student${overlap.studentCount === 1 ? " is" : "s are"} scheduled in both classes from ${displayMinute(overlap.window.start)} to ${displayMinute(overlap.window.end)}.${isNew ? " This adds overlap beyond the regular schedule. Adjust the class times or skip a displaced class." : " This overlap already exists in the regular schedule; the draft does not expand this span."}`,
+        overlap.classIds, [], overlap.staffIds, { overlapWindow: { startTime: displayMinute(overlap.window.start), endTime: displayMinute(overlap.window.end) },
+          studentCount: overlap.studentCount, newStudentCount: overlap.newStudentCount, change: overlap.change });
+    }
+    if (studentAnalysis.limitReached) truncated = true;
+  }
+  const afterTestingById = new Map(studentAnalysis.afterTesting.map((row) => [row.blockId, row]));
+  for (const row of issues) if (row.code === "SCHEDULE_DRAFT_TESTING_CLASS_OVERLAP"
+    && row.blockIds.some((id) => issues.some((other) => other.blockIds.includes(id) && other.kind !== "overlap"))) {
+    row.message = row.message.replace("Testing supervision takes precedence for participating students; the regular class remains scheduled.", "Resolve this testing block's issues before relying on testing supervision. The regular class remains scheduled.");
+  }
+  const reviewedTestingBlocks = testingBlocks.map((block) => {
+    const after = afterTestingById.get(block.blockId)!;
+    return { ...block, afterTesting: { status: after.status, studentCount: after.studentCount,
+      allocations: after.allocations.map((allocation) => ({ ...allocation, at: allocation.at === null ? null : displayMinute(allocation.at) })) } };
+  });
   if (truncated) issues.push({ id: "review-limit", kind: "incomplete", code: "SCHEDULE_DRAFT_REVIEW_LIMIT", message: "The review reached its analysis limit. The day is not fully checked; narrow the schedule or resolve existing issues before reviewing again.", classIds: [], blockIds: [], staffIds: [] });
   const counts = { conflicts: issues.filter((row) => row.kind === "conflict").length, overlaps: issues.filter((row) => row.kind === "overlap").length, incomplete: issues.filter((row) => row.kind === "incomplete").length };
   return { referenceDate: regular.referenceDate, revision: regular.revision, schoolTimezone: regular.schoolTimezone, day: regular.day,
-    requestFingerprint: hash({ referenceDate: facts.referenceDate, definition }), complete: counts.incomplete === 0, classes, testingBlocks, issues, counts };
+    requestFingerprint: hash({ referenceDate: facts.referenceDate, definition, revision: facts.revision, schoolTimezone: facts.schoolTimezone,
+      config: facts.config, calendar: facts.calendar, tracking: facts.tracking, classes: facts.classes, supervisionGroups: facts.supervisionGroups, staff: facts.staff }),
+    complete: counts.incomplete === 0, classes, testingBlocks: reviewedTestingBlocks, issues, counts };
 }
 
 /** One tenant-bound, coherent snapshot. Never calls live/session or profile application readers. */
@@ -203,7 +251,7 @@ export async function getScheduleDraftReview(options: { schoolId: string; refere
     const [classStaff, classMembers, scopeGroups, scopeMembers, assignments] = await Promise.all([
       ids.length ? tx.select({ classId: groupTeachers.groupId, staffId: groupTeachers.teacherId }).from(groupTeachers).innerJoin(groups, and(eq(groups.id, groupTeachers.groupId), eq(groups.schoolId, options.schoolId)))
         .where(inArray(groupTeachers.groupId, ids)).orderBy(groupTeachers.groupId, groupTeachers.teacherId).limit(READ_LIMITS.relationships + 1) : [],
-      ids.length && requestedGroups.length ? tx.select({ classId: groupStudents.groupId, studentId: groupStudents.studentId }).from(groupStudents).innerJoin(groups, and(eq(groups.id, groupStudents.groupId), eq(groups.schoolId, options.schoolId)))
+      ids.length ? tx.select({ classId: groupStudents.groupId, studentId: groupStudents.studentId }).from(groupStudents).innerJoin(groups, and(eq(groups.id, groupStudents.groupId), eq(groups.schoolId, options.schoolId)))
         .innerJoin(students, and(eq(students.id, groupStudents.studentId), eq(students.schoolId, options.schoolId), eq(students.status, "active")))
         .where(inArray(groupStudents.groupId, ids)).orderBy(groupStudents.groupId, groupStudents.studentId).limit(READ_LIMITS.relationships + 1) : [],
       requestedGroups.length ? tx.select({ id: classpilotCoverageScopeGroups.id, name: classpilotCoverageScopeGroups.name }).from(classpilotCoverageScopeGroups)
