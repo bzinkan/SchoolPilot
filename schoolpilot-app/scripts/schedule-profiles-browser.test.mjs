@@ -1699,6 +1699,9 @@ test('Cancellation confirms every date, prevents stale resubmission, and expires
     const dialog = page.getByRole('alertdialog', { name: 'Cancel application?', exact: true });
     assert.match(await dialog.innerText(), /September 8, 2026/); assert.match(await dialog.innerText(), /September 10, 2026/);
     await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    // Radix closes first; the production close handler restores focus in a RAF.
+    await page.waitForFunction(() => document.activeElement?.closest('[data-application-id="cutoff-application"]') && document.activeElement.textContent.trim() === 'Cancel application Old MAP profile');
     assert.equal(await opener.evaluate(button => button === document.activeElement), true); assert.equal(cancellations.length, 0);
     await opener.click();
     control.cancelResponse = () => { catalog.revision++; return { status: 409, json: { error: 'The schedule changed. Refresh status before cancelling.' } }; };
@@ -1708,6 +1711,7 @@ test('Cancellation confirms every date, prevents stale resubmission, and expires
     assert.equal(cancellations.length, 1, 'Repeated confirmations send one mutation');
     assert.equal(cancellations[0].revision, 21); assert.equal(await confirm.isDisabled(), true);
     await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     const summary = overviewCatalog(catalog).applicationSummaries[application.id];
     summary.cancellation = { canRequest: true, cutoffAt: '2026-09-08T12:01:00Z', reason: null };
     catalog.applicationSummaries = { [application.id]: summary };
@@ -1722,6 +1726,7 @@ test('Cancellation confirms every date, prevents stale resubmission, and expires
     assert.equal(await confirm.isDisabled(), true);
     assert.equal(cancellations.length, 1, 'An expired confirmation never posts another cancellation');
     await dialog.getByRole('button', { name: 'Keep application', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
     assert.equal(await opener.count(), 0);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await vite.close(); }
@@ -1794,14 +1799,25 @@ test('Unavailable cancellation cutoffs and a slow status response cannot extend 
     };
     const response = page.waitForResponse(response => response.url().endsWith('/schedule-profiles') && response.request().method() === 'GET');
     const request = page.waitForRequest(request => request.url().endsWith('/schedule-profiles') && request.method() === 'GET');
+    const previousReceivedAt = await page.evaluate(async () => (await import('/src/lib/queryClient.js')).queryClient.getQueryData(['classpilot-schedule-profiles', 'school']).overviewReceivedAt);
     await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await request;
     await page.clock.fastForward(6_000);
-    finishRead(); finishRead = null; await response;
+    finishRead(); finishRead = null; await (await response).finished();
+    // Response headers and an old enabled button can precede consuming the body.
+    // Do not move performance.now() sixteen hours before the new read is anchored.
+    await page.waitForFunction(async previous => {
+      const state = (await import('/src/lib/queryClient.js')).queryClient.getQueryState(['classpilot-schedule-profiles', 'school']);
+      return state?.fetchStatus === 'idle' && state.data.overviewReceivedAt > previous && state.data.overviewReceivedAt - state.data.overviewRequestStartedAt >= 6_000;
+    }, previousReceivedAt);
     await page.getByRole('button', { name: 'Refresh status', exact: true, disabled: false }).waitFor();
+    // Let the accepted overview render and its RAF-based clock update commit.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await row.getByRole('button', { name: /^Cancel application/ }).count(), 0, 'Time spent waiting for a response cannot create five extra seconds of cancellation');
     await row.getByText('Cancellation availability could not be checked. Refresh status to try again.', { exact: true }).waitFor();
     control.catalogResponse = null; control.failOverviewRead = true;
+    const midnightRead = page.waitForResponse(response => response.url().endsWith('/schedule-profiles') && response.request().method() === 'GET' && response.status() === 503);
     await page.clock.fastForward(16 * 60 * 60 * 1000);
+    await midnightRead;
     await page.getByText('Current application status is unavailable. Refresh status to check again.', { exact: true }).waitFor();
     await profileRow(page, profile.id).getByText('Schedule dates unavailable', { exact: true }).waitFor();
     assert.equal(await row.getByText('Applied today', { exact: true }).count(), 0, 'An unrefreshed school-date boundary does not present yesterday as today');
