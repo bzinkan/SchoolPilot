@@ -128,28 +128,43 @@ test("application review permits reduced inherited student overlap but detects t
 
 test("21-student testing handoff uses adjacent class windows and independent eligibility on each applied date", async () => {
   const data = await fixture();
+  const grade7Class = randomUUID(), grade7Skipped = randomUUID(), grade7Student = randomUUID(), grade7Group = randomUUID();
   let secondDate = datePlusDays(date, 1);
   while ([0, 6].includes(dateWeekday(secondDate))) secondDate = datePlusDays(secondDate, 1);
   await pool.query("UPDATE groups SET name='Grade 8 Math',grade_level='8',schedule_rule=$2::jsonb WHERE id=$1", [data.classId, JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [dateWeekday(date)] })]);
   await pool.query("UPDATE groups SET name='Grade 8 ELA',grade_level='8',teacher_id=$2 WHERE id=$1", [data.nextClassId, data.specialistId]);
+  await pool.query("UPDATE users SET first_name='Kenzie',last_name='Vatter' WHERE id=$1", [data.teacherId]);
+  await pool.query("UPDATE users SET first_name='Suzanne',last_name='Wendell' WHERE id=$1", [data.specialistId]);
+  await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) VALUES($1,$2,'Grade7','Fixture','active','7')", [grade7Student, data.schoolId]);
+  await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$3,$5,'Grade 7 ELA','7','admin_class','active',true,'09:00','09:50',$6::jsonb),($2,$3,$4,'Grade 7 Math','7','admin_class','active',true,'10:00','10:50',$6::jsonb)",
+    [grade7Class, grade7Skipped, data.schoolId, data.teacherId, data.specialistId, JSON.stringify(defaultClassScheduleRule())]);
+  await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$3),($2,$3)", [grade7Class, grade7Skipped, grade7Student]);
+  await pool.query("INSERT INTO classpilot_coverage_scope_groups(id,school_id,name,created_by) VALUES($1,$2,'Grade 7 MAP',$3)", [grade7Group, data.schoolId, data.adminId]);
+  await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, grade7Group, grade7Student]);
+  await pool.query("INSERT INTO classpilot_coverage_assignments(school_id,staff_id,scope_type,scope_value,permissions,created_by) VALUES($1,$2,'coverage_group',$3,'{\"claim\":true}'::jsonb,$4)", [data.schoolId, data.teacherId, grade7Group, data.adminId]);
   for (let i = 1; i < 21; i++) {
     const id = randomUUID();
     await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) VALUES($1,$2,'Grade8','Fixture','active','8')", [id, data.schoolId]);
     await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$3),($2,$3)", [data.classId, data.nextClassId, id]);
     await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, data.scopeId, id]);
   }
-  const saved = await save(data, { ...data.definition, grades: [], classIds: [data.classId, data.nextClassId], classRules: [
+  const saved = await save(data, { ...data.definition, grades: [], classIds: [data.classId, data.nextClassId, grade7Class, grade7Skipped], classRules: [
     { classId: data.classId, action: "time", startTime: "10:55", endTime: "11:40" }, { classId: data.nextClassId, action: "skip" },
-  ], testingBlocks: [{ id: "grade8testing", name: "Wendell MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "09:10", endTime: "10:55" }] });
+    { classId: grade7Class, action: "time", startTime: "10:55", endTime: "11:40" }, { classId: grade7Skipped, action: "skip" },
+  ], testingBlocks: [{ id: "grade8testing", name: "Wendell MAP", coverageGroupId: data.scopeId, assignedStaffId: data.specialistId, startTime: "09:10", endTime: "10:55" },
+    { id: "grade7testing", name: "Vatter MAP", coverageGroupId: grade7Group, assignedStaffId: data.teacherId, startTime: "09:10", endTime: "10:55" }] });
   const input = { ...request(data, saved), dates: [date, secondDate] };
   const preview = await scoped(data.schoolId, () => service.previewScheduleProfile(input));
   assert.deepEqual(preview.blockers, []);
-  const first = preview.testingWindows.find(w => w.date === date)!.afterTesting!;
+  const first = preview.testingWindows.find(w => w.date === date && w.blockId === "grade8testing")!.afterTesting!;
   assert.equal(first.status, "ready"); assert.equal(first.studentCount, 21);
   assert.deepEqual(first.allocations.map(a => [a.kind, a.classIds, a.studentCount, a.at]), [["class", [data.classId], 21, "10:55"]]);
+  assert.deepEqual(first.allocations[0]?.staff.map(s => s.name), ["Kenzie Vatter"]);
+  const grade7Return = preview.testingWindows.find(w => w.date === date && w.blockId === "grade7testing")!.afterTesting!;
+  assert.deepEqual(grade7Return.allocations.map(a => [a.kind, a.classIds, a.studentCount, a.at, a.staff.map(s => s.name)]), [["class", [grade7Class], 1, "10:55", ["Suzanne Wendell"]]]);
   assert.equal(JSON.stringify(first).includes(data.studentId), false);
   assert.equal(preview.classResults.find(r => r.classId === data.classId && r.date === secondDate)?.status, "does_not_meet");
-  assert.equal(preview.testingWindows.find(w => w.date === secondDate)?.afterTesting?.allocations[0]?.kind, "none");
+  assert.equal(preview.testingWindows.find(w => w.date === secondDate && w.blockId === "grade8testing")?.afterTesting?.allocations[0]?.kind, "none");
   const applied = await scoped(data.schoolId, () => service.applyScheduleProfile({ ...input, previewToken: preview.previewToken }));
   assert.deepEqual(applied.application.classWindows[date]?.[data.classId], { startTime: "10:55", endTime: "11:40" });
   assert.equal(Object.hasOwn(applied.application.classWindows[secondDate] ?? {}, data.classId), false);
