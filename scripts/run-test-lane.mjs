@@ -58,6 +58,8 @@ const DB_SERIAL = new Set([
   "classpilot-instructional-calendar.test.ts",
   "classpilot-monitoring-reports.test.ts",
   "classpilot-runtime-security-contract.test.ts",
+  // Live View revocation imports the tenant/database authority services.
+  "classpilot-scheduled-live-view.test.ts",
   "classpilot-safety-spine-retention.test.ts",
   "classpilot-schedule-changes.test.ts",
   "classpilot-school-status-auth.test.ts",

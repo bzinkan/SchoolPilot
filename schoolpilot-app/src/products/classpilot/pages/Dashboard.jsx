@@ -3371,14 +3371,16 @@ export default function Dashboard() {
         // unchanged tuples from cached cohorts in this same viewing context.
         || buildScreenshotCohortPlaceholderData(
           queryClient.getQueryCache().findAll({
-            queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, screenshotTileBatchContextKey],
+            // The request key normalizes absent parents/revisions. Use that
+            // exact cache prefix instead of serializing the raw view context.
+            queryKey: request.queryKey.slice(0, 2),
             exact: false,
           }),
           request,
           privacy,
         );
     }
-  )), [screenshotTileRequests, screenshotPlaceholderDeniedIds, legacyScreenshotReadsRevoked, screenshotTileBatchContextKey]);
+  )), [screenshotTileRequests, screenshotPlaceholderDeniedIds, legacyScreenshotReadsRevoked]);
   const screenshotTileQueries = useQueries({
     queries: screenshotTileRequests.map((request, index) => ({
       queryKey: request.queryKey,

@@ -17,6 +17,7 @@ import {
   createTileBatchRequests,
   indexTileScreenshots,
   screenshotCohortPlaceholderData,
+  buildScreenshotCohortPlaceholderData,
 } from '../src/products/classpilot/lib/tileBatchPolling.js';
 
 function responseError(status, code) {
@@ -663,6 +664,34 @@ test('a re-keyed screenshot cohort carries classmates forward but never a change
     placeholderClient.clear();
   }
 
+  // New useQueries observers recover from the cache rather than from a prior
+  // observer. Normalized keys omit a null tenure and add the absent-parent
+  // marker for supervision, so raw view-context JSON is not a cache prefix.
+  for (const requestContext of [
+    { ...context, contextAuthorityRevision: null },
+    { schoolId: context.schoolId, viewerId: context.viewerId, authority: 'teacher:scheduled-supervision:class',
+      supervisionContextId: 'testing-1', contextAuthorityRevision: '0' },
+  ]) {
+    const cacheClient = new QueryClient();
+    const cachedRequest = screenshotRequestFor(previousStudents, requestContext);
+    cacheClient.setQueryData(cachedRequest.queryKey, previousData);
+    const fromCache = (request) => buildScreenshotCohortPlaceholderData(
+      cacheClient.getQueryCache().findAll({ queryKey: request.queryKey.slice(0, 2) }), request,
+    );
+    const replacement = screenshotRequestFor(loginStudents, requestContext);
+    assert.deepEqual(fromCache(replacement)?.tiles.map(tile => tile.studentId), [commanded, untouched]);
+    for (const changedContext of [
+      { ...requestContext, viewerId: 'another-teacher' },
+      { ...requestContext, contextAuthorityRevision: '1' },
+      { schoolId: context.schoolId, viewerId: context.viewerId, authority: requestContext.authority,
+        supervisionContextId: 'another-testing-context', contextAuthorityRevision: '0' },
+    ]) {
+      assert.equal(fromCache(screenshotRequestFor(loginStudents, changedContext)), undefined,
+        'cached pixels cannot cross teacher, parent, or supervision tenure');
+    }
+    cacheClient.clear();
+  }
+
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
@@ -673,7 +702,7 @@ test('a re-keyed screenshot cohort carries classmates forward but never a change
   );
   assert.ok(placeholderSource.includes('deniedStudentIds: screenshotPlaceholderDeniedIds')
     && placeholderSource.includes('screenshotCohortPlaceholderData(previousData, previousQuery, request, privacy)')
-    && /buildScreenshotCohortPlaceholderData\([\s\S]*TILE_BATCH_QUERY_ROOTS\.screenshots, screenshotTileBatchContextKey[\s\S]*request,[\s\S]*privacy/.test(placeholderSource),
+    && /buildScreenshotCohortPlaceholderData\([\s\S]*queryKey: request\.queryKey\.slice\(0, 2\)[\s\S]*request,[\s\S]*privacy/.test(placeholderSource),
   'both observer and same-context cache carry-forward must use the exact revocation filter');
   assert.match(
     dashboard,

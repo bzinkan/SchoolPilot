@@ -46,7 +46,8 @@ describe("ClassPilot tile screenshot store degrade", () => {
 
     const dashboard = read("schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx");
     assert.match(dashboard, /^\s+assertTileScreenshotStoreAvailable,$/m);
-    const targeted = dashboard.indexOf("await apiRequest('POST', '/classpilot/tiles/screenshots'");
+    assert.match(dashboard, /fetchTileBatch\(allowed, requestActivityApi, signal\)/);
+    const targeted = dashboard.indexOf("await requestActivityApi('POST', '/classpilot/tiles/screenshots'");
     assert.ok(targeted >= 0);
     const guard = dashboard.indexOf("assertTileScreenshotStoreAvailable(response);", targeted);
     const merge = dashboard.indexOf("mergeTargetedTileScreenshotResponse(", targeted);

@@ -127,6 +127,7 @@ describe("ClassPilot TURN client telemetry", () => {
 
   it("mounts behind device auth, entitlement, capability, active negotiation, and current staff authority", () => {
     const route = readFileSync("src/routes/classpilot/liveViewTelemetry.ts", "utf8");
+    const authority = readFileSync("src/services/classpilotLiveViewAuthority.ts", "utf8");
     const index = readFileSync("src/routes/index.ts", "utf8");
     assert.match(route, /requireCryptographicDeviceAuth/);
     assert.match(route, /requireClasspilotEntitlement/);
@@ -134,8 +135,12 @@ describe("ClassPilot TURN client telemetry", () => {
     assert.match(route, /device-token:[^\n]*createHash\("sha256"\)/);
     assert.match(route, /isClasspilotCapabilityActive\("liveViewIceServersV1"/);
     assert.match(route, /isClasspilotLiveViewNegotiationActive/);
-    assert.match(route, /isAuthorizedClasspilotSessionStaff/);
-    assert.match(route, /controlState\?\.teachingSessionId === authority\.teachingSessionId/);
+    assert.match(route, /isClasspilotLiveViewAuthorityCurrent\(\{ \.\.\.exactBinding, \.\.\.authority \}\)/);
+    assert.match(authority, /!control\?\.supervisionContextId[\s\S]*control\?\.teachingSessionId === binding\.teachingSessionId[\s\S]*isAuthorizedClasspilotSessionStaff\(binding\.schoolId, binding\.teachingSessionId, binding\.requesterUserId\)/);
+    assert.match(authority, /control\?\.supervisionContextId !== binding\.supervisionContextId[\s\S]*control\.revision !== binding\.controlRevision/);
+    assert.match(authority, /requireScheduledClassroomContext\(\{ \.\.\.binding,[\s\S]*actorId: binding\.requesterUserId/);
+    assert.match(authority, /roster\.some\(\(\{ student \}\) => student\.id === binding\.studentId\)/);
+    assert.match(route, /if \(!authorized\)[\s\S]*if \(!await isClasspilotLiveViewNegotiationActive[\s\S]*recordClasspilotTurnTelemetry/);
     assert.match(route, /status\(202\)\.json\(\{[\s\S]*accepted:[\s\S]*duplicate:/);
     assert.match(index, /router\.use\("\/classpilot", liveViewTelemetryRoutes\)/);
   });

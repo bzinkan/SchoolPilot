@@ -51,9 +51,19 @@ describe("ClassPilot student tile batch contract", () => {
     assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "live"\)/);
     assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "history"\)/);
     assert.match(routes, /parseTileTeachingSessionId\(req\.body\)/);
-    assert.match(routes, /tileStaffScope\(req, res, sessionScope\.teachingSessionId\)/);
+    assert.equal(
+      (routes.match(/tileStaffScope\(req, res, sessionScope\.teachingSessionId, sessionScope\.supervisionContextId\)/g) ?? []).length,
+      2,
+      "Both tile reads must carry the explicit teaching or supervision parent"
+    );
+    const parser = routes.slice(
+      routes.indexOf("function parseTileTeachingSessionId("),
+      routes.indexOf("function tileStaffScope(")
+    );
+    assert.match(parser, /if \(value !== undefined \|\| typeof fields\.supervisionContextId !== "string"\) return \{ ok: false \}/);
+    assert.match(parser, /return \{ ok: true, supervisionContextId \}/);
     assert.match(routes, /error: "No accessible tiles"/);
-    assert.match(routes, /heartbeats: heartbeats\.map\(safeTileHeartbeat\)/);
+    assert.match(routes, /heartbeats: heartbeats\.filter\(\(heartbeat\) => !access\.historySince \|\| new Date\(heartbeat\.timestamp\) >= access\.historySince\)\.map\(safeTileHeartbeat\)/);
   });
 
   it("uses one Redis batch read and at most one SQL fallback per history cohort", () => {

@@ -3,7 +3,6 @@ import { db } from "../db.js";
 import { classpilotSupervisionContexts, classpilotSupervisionStudents, type ClasspilotSupervisionContext } from "../schema/classpilot.js";
 import { students } from "../schema/students.js";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
-import { classpilotRealtimeFresh, readClasspilotRealtimeStatusBatch } from "./classpilotRealtimeStatus.js";
 
 export { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 
@@ -86,6 +85,9 @@ export async function scheduledClassroomRoster(schoolId: string, supervisionCont
 }
 
 export async function scheduledClassroomBindingCapable(options: { schoolId: string; studentId: string; studentSessionId: string; deviceId: string }) {
+  // Shared storage also serves GoPilot. Only an actual scheduled classroom
+  // capability check should load the realtime Redis client.
+  const { classpilotRealtimeFresh, readClasspilotRealtimeStatusBatch } = await import("./classpilotRealtimeStatus.js");
   const snapshot = (await readClasspilotRealtimeStatusBatch(options.schoolId, [options])).get(options.studentId);
   return snapshot?.status === "hit" && classpilotRealtimeFresh(snapshot.snapshot)
     && snapshot.snapshot.acceptedCapabilities?.includes("scheduledClassroomV1") === true;
