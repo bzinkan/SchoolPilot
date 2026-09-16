@@ -1472,7 +1472,7 @@ export default function Dashboard() {
 
   const openOwnSupervision = useCallback((contexts = []) => {
     if (scheduledClassEnabled && contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
-      || ['scheduled_testing', 'scheduled_coverage'].includes(context.source))) {
+      || ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(context.source))) {
       setStudentView('class');
       void refreshDashboardActivity({ cancelRefetch: true });
       return;
@@ -5735,7 +5735,7 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
               <div>
                 <p className="font-semibold">{dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
-                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : 'Class'}: ${scheduledAssignment.name}`
+                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
                 {scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">
                   {scheduledAssignment.studentCount} students · {students.filter(student => ['online', 'idle'].includes(deriveStudentMonitoringDisplay(student, freshnessNowMs).kind)).length} online

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { isScheduledClassroomEnabled, type ClasspilotActivityAuthority } from "./classpilotActivityAuthority.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 
 /** Current Dashboard history uses the same parent and roster as its tiles.
  * No login/device is required: assigned offline students keep their history. */
@@ -9,7 +10,8 @@ export async function readActivityHistoryScope(options: {
   authority: ClasspilotActivityAuthority; contextAuthorityRevision?: string;
 }) {
   const { schoolId, staffId, studentId, allowObserve, authority } = options;
-  if (authority.supervisionContextId && !isScheduledClassroomEnabled(schoolId)) return null;
+  if (authority.supervisionContextId
+    && !isScheduledClassroomEnabled(schoolId) && !classpilotSupervisionPreviewObserved(schoolId)) return null;
   const result = await db.execute<{ stamp: string; start_ms: number; end_ms: number }>(authority.supervisionContextId ? sql`
     SELECT assignment.id || ':' || context.assigned_staff_id || ':' || context.classroom_authority_revision::text || ':' ||
         COALESCE(tenure.id, context.updated_at::text) AS stamp,
@@ -30,8 +32,6 @@ export async function readActivityHistoryScope(options: {
       AND (${allowObserve} OR context.assigned_staff_id=${staffId})
       AND context.status='active' AND context.starts_at AT TIME ZONE 'UTC' <= clock_timestamp()
       AND context.ends_at AT TIME ZONE 'UTC' > clock_timestamp()
-      AND ((context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL
-        AND context.schedule_profile_block_id IS NOT NULL) OR context.scheduled_conflict_id IS NOT NULL)
     LIMIT 1
   ` : sql`
     SELECT roster.id || ':' || session.id AS stamp,

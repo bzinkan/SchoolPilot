@@ -285,51 +285,56 @@ describe("supervision retention target stays server-side", () => {
   });
 });
 
-describe("Previews follow the claim without widening classroom tools", () => {
+describe("Claiming a student grants the same classroom it grants a scheduled block", () => {
   const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-  it("grants an ad hoc claim a preview-only authority, never the classroom toolset", () => {
+  it("admits an ad hoc claim through its own rollout, not the scheduled one", () => {
     const authority = source("src/services/classpilotActivityAuthority.ts");
-    // The preview authority is a separate export precisely so that widening it
-    // cannot hand commands, chat, timers, polls or Live View to an ad hoc claim.
-    assert.match(authority, /export async function requireSupervisionPreviewContext/);
-    assert.match(authority, /!scheduledContextHasClassroomTools\(context, now\) && !classpilotSupervisionPreviewObserved\(schoolId\)/);
-    // The strict tools gate must remain untouched by the rollout.
-    const toolsGate = authority.slice(
-      authority.indexOf("export function scheduledContextHasClassroomTools"),
-      authority.indexOf("export async function requireScheduledClassroomContext"),
-    );
-    assert.ok(toolsGate.length > 0);
-    assert.doesNotMatch(toolsGate, /SupervisionPreview/);
+    // Claiming IS the act of taking supervisory responsibility, so the gate turns
+    // on which rollout covers the school rather than on whether a schedule exists.
+    assert.match(authority, /scheduledSupervisionSource\(context\)\s*\?\s*isScheduledClassroomEnabled\(schoolId\)\s*:\s*classpilotSupervisionPreviewObserved\(schoolId\)/);
+    // Every supervision context has a source; an ad hoc claim simply has no schedule.
+    assert.match(authority, /export function supervisionActivitySource/);
+    assert.match(authority, /scheduledSupervisionSource\(context\) \?\? "ad_hoc_supervision"/);
+    // The preview-only authority existed solely to keep tools shut. That
+    // distinction is gone, so a second near-identical gate must not linger.
+    assert.doesNotMatch(authority, /requireSupervisionPreviewContext/);
   });
 
-  it("uses the preview authority for observation leases and the strict one for tools", () => {
-    const leases = source("src/routes/classpilot/monitoringEvents.ts");
-    assert.match(leases, /await requireSupervisionPreviewContext\(authority\)/);
-    // Re-asserted after the lease write, so a revoked claim cannot keep it.
-    assert.equal(leases.match(/requireSupervisionPreviewContext\(authority\)/g)?.length, 2);
-    assert.doesNotMatch(leases, /requireScheduledClassroomContext/);
-    for (const path of ["src/routes/classpilot/commands.ts", "src/routes/classpilot/chat.ts",
-      "src/services/classpilotScheduledClassroomTools.ts"]) {
-      assert.match(source(path), /requireScheduledClassroomContext/, path);
-      assert.doesNotMatch(source(path), /requireSupervisionPreviewContext/, path);
-    }
+  it("lets an ad hoc claim reach the activity feed at all", () => {
+    const activity = source("src/services/classpilotDashboardActivity.ts");
+    // The SQL prefilter used to exclude ad hoc claims before any gate ran.
+    assert.doesNotMatch(activity, /isNotNull\(classpilotSupervisionContexts\.scheduleProfileApplicationId\)/);
+    assert.match(activity, /source: supervisionActivitySource\(context\)/);
+    assert.match(activity, /isScheduledClassroomEnabled\(schoolId\) \|\| classpilotSupervisionPreviewObserved\(schoolId\)/);
+    const history = source("src/services/classpilotActivityHistory.ts");
+    assert.doesNotMatch(history, /schedule_profile_application_id IS NOT NULL/);
   });
 
-  it("drops the scheduled-origin filter only under the rollout", () => {
-    const storage = source("src/services/storage.ts");
-    // Tile authorization: the claim-holder predicate always applies; only the
-    // scheduled-origin filter is conditional.
-    assert.match(storage, /const scheduledOriginFilter = supervisionPreview \? sql`` : sql`/);
-    assert.match(storage, /context\.assigned_staff_id=\$\{options\.staffId\} OR \$\{schoolWide\}\)\$\{scheduledOriginFilter\}/);
-    // Device authority: an ad hoc claim mints supervision_context only when
-    // frames may actually be retained, so "observe" stores no pixel.
-    assert.match(storage, /const supervisionPreviewRetention = classpilotSupervisionPreviewRetentionEnabled\(options\.schoolId\)/);
-    assert.match(storage, /\.\.\.\(supervisionPreviewRetention \? \[\] : \[scheduledOrigin\]\)/);
+  it("keeps the command surface server-authoritative", () => {
+    // The route filter must never be narrower than the dispatcher's authority,
+    // or a command the school is entitled to would 400 before reaching it.
+    const coverage = source("src/routes/classpilot/coverage.ts");
+    assert.match(coverage, /const classroomTools = scheduledContextHasClassroomTools\(context\)/);
+    assert.match(coverage, /SCHEDULED_CLASSROOM_COMMANDS as readonly string\[\]\)\.includes\(commandType\)/);
+    // The client renders whatever the server says it may render.
+    assert.match(coverage, /commandTypes: classpilotSupervisionPreviewObserved\(res\.locals\.schoolId!\)/);
   });
 
-  it("gives the Claimed view the revision its lease is fenced on", () => {
+  it("still names the same one school in both the registry and the environment", () => {
     assert.match(source("src/routes/classpilot/coverage.ts"),
       /contextAuthorityRevision: context\?\.classroomAuthorityRevision \?\? null/);
+  });
+
+  it("gates every widening behind the rollout rather than shipping it on", () => {
+    const rollout = source("src/config/classpilotSupervisionPreviewRollout.ts");
+    // An empty allowlist means EVERY school to this reader, which is why the
+    // governed writer derives it from one pilot school.
+    assert.match(rollout, /allowed\.size === 0 \|\| allowed\.has\(schoolId\)/);
+    assert.equal(classpilotSupervisionPreviewObserved("school-a", {} as NodeJS.ProcessEnv), false);
+    assert.equal(classpilotSupervisionPreviewObserved("school-a",
+      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe", CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), true);
+    assert.equal(classpilotSupervisionPreviewObserved("school-b",
+      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe", CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), false);
   });
 });
