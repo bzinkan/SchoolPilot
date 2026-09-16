@@ -42,7 +42,7 @@ function TestingOutcomeSummary({ dates, fallbackCount, unavailable }) {
   return <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm">{outcomes.filter(([key]) => counts[key]).map(([key, label]) => <span key={key} className={['failed', 'missed'].includes(key) ? 'font-medium text-destructive' : key === 'unknown' ? 'text-muted-foreground' : ''}>{countText(counts[key], 'testing block')} {label}</span>)}</p>;
 }
 
-function ApplicationRow({ application, summary, catalog, testingStatuses, statusReasons, unavailable, serverNow, latestServerNow, busy, blocked, onCancel, onDeleteHistory, expanded, onToggle }) {
+function ApplicationRow({ application, summary, catalog, testingStatuses, statusReasons, unavailable, serverNow, latestServerNow, busy, blocked, onCancel, onCancelBlock, onDeleteHistory, expanded, onToggle }) {
   const cancelled = application.status === 'cancelled';
   const dates = [...application.dates].sort();
   const today = catalog.schoolLocalToday;
@@ -84,7 +84,16 @@ function ApplicationRow({ application, summary, catalog, testingStatuses, status
           {windows.map((window, index) => {
             const status = unavailable ? null : testingStatuses.get(`${application.id}:${date}:${window.blockId}`);
             const outcome = unavailable ? 'unknown' : day?.testingStatusByBlock?.[window.blockId] || 'unknown';
-            return <div key={`${window.blockId}-${index}`} className="rounded-md bg-muted/50 px-3 py-2 text-sm"><p className="flex flex-wrap justify-between gap-2"><span>{window.name}</span><span>{timeText(window)} · <span className="font-medium">{statusLabels[outcome] || 'Status unavailable'}</span></span></p>{['failed', 'missed'].includes(outcome) && <><p className="mt-1 text-destructive">{statusReasons[status?.code] || statusReasons.ACTIVATION_FAILED}</p><p className="mt-1 text-xs text-muted-foreground">Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.</p></>}</div>;
+            const blockCancelled = (application.cancelledBlocks || EMPTY).some(entry => entry.date === date && entry.blockId === window.blockId);
+            // Unlike whole-application cancellation this stays offered after the
+            // block has started, which is the point of it. Only a block that is
+            // still awaiting start or running has anything left to stop, and a
+            // status we could not read is never acted on.
+            const canCancelBlock = !cancelled && !blockCancelled && ['pending', 'active'].includes(outcome);
+            return <div key={`${window.blockId}-${index}`} className="rounded-md bg-muted/50 px-3 py-2 text-sm"><p className="flex flex-wrap justify-between gap-2"><span>{window.name}</span><span>{timeText(window)} · <span className="font-medium">{statusLabels[outcome] || 'Status unavailable'}</span></span></p>{['failed', 'missed'].includes(outcome) && <><p className="mt-1 text-destructive">{statusReasons[status?.code] || statusReasons.ACTIVATION_FAILED}</p><p className="mt-1 text-xs text-muted-foreground">Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.</p></>}
+              {blockCancelled && <p className="mt-1 text-xs text-muted-foreground">This testing block was cancelled. Its students follow the regular schedule for this time.</p>}
+              {canCancelBlock && <Button size="sm" variant="outline" className="mt-2" disabled={busy || blocked} onClick={event => onCancelBlock(application, date, window, event.currentTarget)}>Cancel block<span className="sr-only"> {window.name} on {scheduleDateText(date)}</span></Button>}
+            </div>;
           })}
         </section>;
       })}
@@ -92,7 +101,7 @@ function ApplicationRow({ application, summary, catalog, testingStatuses, status
   </article>;
 }
 
-export default function ScheduleProfilesOverview({ data, busy, blocked, refreshing, statusUnavailable, serverNow, latestServerNow, testingStatuses, statusReasons, onOpen, onDelete, onCancel, onDeleteHistory, onRefresh, applicationsHeadingRef }) {
+export default function ScheduleProfilesOverview({ data, busy, blocked, refreshing, statusUnavailable, serverNow, latestServerNow, testingStatuses, statusReasons, onOpen, onDelete, onCancel, onCancelBlock, onDeleteHistory, onRefresh, applicationsHeadingRef }) {
   const [expandedIds, setExpandedIds] = useState(() => new Set());
   const profiles = useMemo(() => [...data.profiles].sort((a, b) => a.definition.name.localeCompare(b.definition.name) || a.id.localeCompare(b.id)), [data.profiles]);
   const summaries = data.applicationSummaries;
@@ -113,7 +122,7 @@ export default function ScheduleProfilesOverview({ data, busy, blocked, refreshi
     history.sort((a, b) => [...b.dates].sort().at(-1).localeCompare([...a.dates].sort().at(-1)) || a.id.localeCompare(b.id));
     return { current, history };
   }, [data.applications, data.schoolLocalToday, summaries]);
-  const applicationRow = application => <ApplicationRow key={application.id} application={application} summary={summaries?.[application.id]} catalog={data} testingStatuses={testingStatuses} statusReasons={statusReasons} unavailable={statusUnavailable || !summaries?.[application.id]} serverNow={serverNow} latestServerNow={latestServerNow} busy={busy} blocked={blocked} onCancel={onCancel} onDeleteHistory={onDeleteHistory} expanded={expandedIds.has(application.id)} onToggle={() => setExpandedIds(current => { const next = new Set(current); if (next.has(application.id)) next.delete(application.id); else next.add(application.id); return next; })} />;
+  const applicationRow = application => <ApplicationRow key={application.id} application={application} summary={summaries?.[application.id]} catalog={data} testingStatuses={testingStatuses} statusReasons={statusReasons} unavailable={statusUnavailable || !summaries?.[application.id]} serverNow={serverNow} latestServerNow={latestServerNow} busy={busy} blocked={blocked} onCancel={onCancel} onCancelBlock={onCancelBlock} onDeleteHistory={onDeleteHistory} expanded={expandedIds.has(application.id)} onToggle={() => setExpandedIds(current => { const next = new Set(current); if (next.has(application.id)) next.delete(application.id); else next.add(application.id); return next; })} />;
   return <div className="space-y-8">
     <section aria-label="Saved profiles" className="space-y-3">
       <h3 className="text-base font-semibold">Saved profiles</h3>

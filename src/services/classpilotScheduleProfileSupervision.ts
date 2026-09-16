@@ -11,7 +11,7 @@ import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLo
 import { resolveClasspilotEntitlement } from "./classpilotEntitlement.js";
 import { resolveClasspilotMonitoringPolicy } from "./classpilotMonitoringPolicy.js";
 import { isSchedulingInstructionalDate } from "./classpilotSchedulingRules.js";
-import { normalizeScheduleProfileCollections, SCHEDULE_PROFILE_LIMITS,
+import { normalizeScheduleProfileCollections, SCHEDULE_PROFILE_LIMITS, isScheduleProfileBlockCancelled,
   type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { createSupervisionContextWithStudents, releaseSupervisionStudents, getHeartbeatTrackingSettingsForSchool,
   lockClasspilotStudentControlAuthorities, lockInstructionalCalendarDate } from "./storage.js";
@@ -65,7 +65,8 @@ export async function getScheduledProfileSupervisionStatuses(schoolId: string, a
     const key = profileSupervisionOutcomeKey(application.id, window.date, window.blockId);
     const receipt = schedule.profileActivationOutcomes[key];
     const context = byKey.get(key);
-    const status = application.status === "cancelled" ? context?.status === "active" ? "releasing" : "cancelled"
+    const status = isScheduleProfileBlockCancelled(application, window.date, window.blockId)
+      ? context?.status === "active" ? "releasing" : "cancelled"
       : context ? context.status === "ended" ? "ended" : "active"
       : receipt?.status === "started" ? "ended" : receipt?.status ?? "pending";
     return { applicationId: application.id, date: window.date, blockId: window.blockId, status,
@@ -147,7 +148,7 @@ async function reconcileWindow(schoolId: string, candidate: { applicationId: str
       eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.scheduleProfileApplicationId, application.id),
       eq(classpilotSupervisionContexts.scheduleProfileDate, window.date), eq(classpilotSupervisionContexts.scheduleProfileBlockId, window.blockId),
     )).limit(1);
-    if (application.status === "cancelled") {
+    if (isScheduleProfileBlockCancelled(application, window.date, window.blockId)) {
       if (existing?.status === "active") {
         const released = await releaseSupervisionStudents({ schoolId, contextId: existing.id, releaseReason: "schedule_profile_cancelled" }, locked);
         changedStudents.push(...released.map((row) => row.studentId));
@@ -238,13 +239,21 @@ export async function reconcileScheduledProfileSupervision(now = new Date(), sch
       .from(classpilotSupervisionContexts).where(and(eq(classpilotSupervisionContexts.schoolId, school.schoolId),
         eq(classpilotSupervisionContexts.status, "active"), isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId)))
       .limit(SCHEDULE_PROFILE_LIMITS.testingWindows);
-    const cancelledIds = new Set(entries.filter((entry) => entry.status === "cancelled").map((entry) => entry.id));
+    // A live context whose block is now withdrawn must be released, whether the
+    // withdrawal cancelled the whole application or only this one block.
+    const applicationsById = new Map(entries.map((entry) => [entry.id, entry]));
     const windows: Array<{ applicationId: string; date: string; blockId: string }> = activeCancelled
-      .filter((context) => context.applicationId && cancelledIds.has(context.applicationId))
+      .filter((context) => {
+        if (!context.applicationId || !context.date || !context.blockId) return false;
+        const application = applicationsById.get(context.applicationId);
+        return Boolean(application && isScheduleProfileBlockCancelled(application, context.date, context.blockId));
+      })
       .map((context) => ({ applicationId: context.applicationId!, date: context.date!, blockId: context.blockId! }));
     for (const application of entries) {
       if (application.status !== "scheduled") continue;
       for (const window of application.testingWindows) {
+        // A withdrawn block is never activated, including one still in the future.
+        if (isScheduleProfileBlockCancelled(application, window.date, window.blockId)) continue;
         const key = profileSupervisionOutcomeKey(application.id, window.date, window.blockId);
         if (school.outcomes[key] || localDateTimeUtc(window.date, window.startTime, school.timezone) > now) continue;
         windows.push({ applicationId: application.id, date: window.date, blockId: window.blockId });

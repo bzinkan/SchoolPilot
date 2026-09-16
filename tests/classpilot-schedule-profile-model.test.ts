@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   normalizeScheduleProfileApplication, normalizeScheduleProfileCollections,
   normalizeScheduleProfileDefinition, normalizeSavedScheduleProfile,
+  isScheduleProfileBlockCancelled,
   type ScheduleProfileApplication, type ScheduleProfileDefinition,
 } from "../src/services/classpilotScheduleProfileModel.js";
 import {
@@ -225,5 +226,56 @@ describe("Dated profile schedule resolution", () => {
 
   it("fails closed if a caller passes conflicting unnormalized applications", () => {
     assert.throws(() => resolveClassBaseWindow(fixed, "2026-09-01", { ...emptySchoolSchedulingConfig(), profileApplications: [application(), application({ id: "second" })] }, {}), /same class on the same date/);
+  });
+});
+
+describe("Withdrawing a single applied testing block", () => {
+  const cancelled = (overrides: Record<string, unknown> = {}) => ({
+    date: "2026-09-01", blockId: "reading",
+    cancelledAt: "2026-09-01T13:10:00.000Z", cancelledBy: "admin-1", ...overrides,
+  });
+
+  it("round-trips a withdrawn block and leaves untouched applications unchanged", () => {
+    const normalized = config([testingApplication({ cancelledBlocks: [cancelled()] } as Partial<ScheduleProfileApplication>)]);
+    assert.deepEqual(normalized.profileApplications?.[0]?.cancelledBlocks, [cancelled()]);
+    // Absent rather than an empty array, so stored documents that never used
+    // this field are byte-identical after a normalize round trip.
+    assert.equal("cancelledBlocks" in (config([testingApplication()]).profileApplications?.[0] ?? {}), false);
+  });
+
+  it("keeps the application scheduled so its other blocks still run", () => {
+    const application = config([testingApplication({ cancelledBlocks: [cancelled()] } as Partial<ScheduleProfileApplication>)])
+      .profileApplications![0]!;
+    assert.equal(application.status, "scheduled");
+    assert.equal(isScheduleProfileBlockCancelled(application, "2026-09-01", "reading"), true);
+    assert.equal(isScheduleProfileBlockCancelled(application, "2026-09-01", "math"), false);
+    assert.equal(isScheduleProfileBlockCancelled(application, "2026-09-02", "reading"), false);
+  });
+
+  it("treats every block of a cancelled application as withdrawn", () => {
+    const application = config([testingApplication({ status: "cancelled" })]).profileApplications![0]!;
+    assert.equal(isScheduleProfileBlockCancelled(application, "2026-09-01", "reading"), true);
+    assert.equal(isScheduleProfileBlockCancelled(application, "2026-09-01", "anything-else"), true);
+  });
+
+  it("rejects a withdrawal that names no applied testing window", () => {
+    assert.throws(() => config([testingApplication({
+      cancelledBlocks: [cancelled({ blockId: "not-applied" })] } as Partial<ScheduleProfileApplication>)]),
+      /must reference an applied testing window/);
+    assert.throws(() => config([testingApplication({
+      cancelledBlocks: [cancelled({ date: "2026-09-02" })] } as Partial<ScheduleProfileApplication>)]),
+      /must reference an applied testing window/);
+  });
+
+  it("rejects duplicate and malformed withdrawals", () => {
+    assert.throws(() => config([testingApplication({
+      cancelledBlocks: [cancelled(), cancelled()] } as Partial<ScheduleProfileApplication>)]),
+      /Cancelled testing date\/block pairs/);
+    assert.throws(() => normalizeScheduleProfileApplication({
+      ...testingApplication(), cancelledBlocks: [{ date: "2026-09-01", blockId: "reading" }] }),
+      /UTC ISO timestamps/);
+    assert.throws(() => normalizeScheduleProfileApplication({
+      ...testingApplication(), cancelledBlocks: [{ ...cancelled(), reason: "changed our minds" }] }),
+      /Cancelled testing block contains an unsupported field/);
   });
 });

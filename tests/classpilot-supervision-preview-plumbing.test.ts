@@ -257,7 +257,7 @@ describe("supervision retention target stays server-side", () => {
     const storage = read("src/services/storage.ts");
     const literal = storage.slice(
       storage.indexOf("const studentAuthority: ClasspilotScreenshotAuthorityProjection = {"),
-      storage.indexOf("if (controlState?.supervisionContextId && controlState.hardExpiresAt && isScheduledClassroomEnabled")
+      storage.indexOf("// Once the supervision-preview rollout is retaining frames")
     );
     assert.ok(literal.length > 0);
     assert.match(
@@ -282,5 +282,54 @@ describe("supervision retention target stays server-side", () => {
       /!controlState\?\.teachingSessionId\s*\|\|\s*controlState\.supervisionContextId !== null\s*\|\|\s*!controlState\.hardExpiresAt/,
       "the teaching authority gate must be unchanged"
     );
+  });
+});
+
+describe("Previews follow the claim without widening classroom tools", () => {
+  const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+  it("grants an ad hoc claim a preview-only authority, never the classroom toolset", () => {
+    const authority = source("src/services/classpilotActivityAuthority.ts");
+    // The preview authority is a separate export precisely so that widening it
+    // cannot hand commands, chat, timers, polls or Live View to an ad hoc claim.
+    assert.match(authority, /export async function requireSupervisionPreviewContext/);
+    assert.match(authority, /!scheduledContextHasClassroomTools\(context, now\) && !classpilotSupervisionPreviewObserved\(schoolId\)/);
+    // The strict tools gate must remain untouched by the rollout.
+    const toolsGate = authority.slice(
+      authority.indexOf("export function scheduledContextHasClassroomTools"),
+      authority.indexOf("export async function requireScheduledClassroomContext"),
+    );
+    assert.ok(toolsGate.length > 0);
+    assert.doesNotMatch(toolsGate, /SupervisionPreview/);
+  });
+
+  it("uses the preview authority for observation leases and the strict one for tools", () => {
+    const leases = source("src/routes/classpilot/monitoringEvents.ts");
+    assert.match(leases, /await requireSupervisionPreviewContext\(authority\)/);
+    // Re-asserted after the lease write, so a revoked claim cannot keep it.
+    assert.equal(leases.match(/requireSupervisionPreviewContext\(authority\)/g)?.length, 2);
+    assert.doesNotMatch(leases, /requireScheduledClassroomContext/);
+    for (const path of ["src/routes/classpilot/commands.ts", "src/routes/classpilot/chat.ts",
+      "src/services/classpilotScheduledClassroomTools.ts"]) {
+      assert.match(source(path), /requireScheduledClassroomContext/, path);
+      assert.doesNotMatch(source(path), /requireSupervisionPreviewContext/, path);
+    }
+  });
+
+  it("drops the scheduled-origin filter only under the rollout", () => {
+    const storage = source("src/services/storage.ts");
+    // Tile authorization: the claim-holder predicate always applies; only the
+    // scheduled-origin filter is conditional.
+    assert.match(storage, /const scheduledOriginFilter = supervisionPreview \? sql`` : sql`/);
+    assert.match(storage, /context\.assigned_staff_id=\$\{options\.staffId\} OR \$\{schoolWide\}\)\$\{scheduledOriginFilter\}/);
+    // Device authority: an ad hoc claim mints supervision_context only when
+    // frames may actually be retained, so "observe" stores no pixel.
+    assert.match(storage, /const supervisionPreviewRetention = classpilotSupervisionPreviewRetentionEnabled\(options\.schoolId\)/);
+    assert.match(storage, /\.\.\.\(supervisionPreviewRetention \? \[\] : \[scheduledOrigin\]\)/);
+  });
+
+  it("gives the Claimed view the revision its lease is fenced on", () => {
+    assert.match(source("src/routes/classpilot/coverage.ts"),
+      /contextAuthorityRevision: context\?\.classroomAuthorityRevision \?\? null/);
   });
 });

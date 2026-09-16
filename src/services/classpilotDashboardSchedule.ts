@@ -8,6 +8,7 @@ import { getSchoolSchedulingContext } from "./classpilotScheduling.js";
 import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { getApprovedScheduleChangeLegsForSchoolDate } from "./classpilotScheduleChanges.js";
 import { profileSupervisionOutcomeKey } from "./classpilotScheduleProfileSupervision.js";
+import { isScheduleProfileBlockCancelled } from "./classpilotScheduleProfileModel.js";
 import type { ClasspilotDashboardActivity } from "./classpilotDashboardActivity.js";
 
 export type PlannedActivity = { id: string; source: "scheduled_class" | "scheduled_testing" | "scheduled_coverage"; name: string;
@@ -67,6 +68,8 @@ export async function getDashboardSchedule(schoolId: string, viewerId: string,
     if (application.status !== "scheduled") continue;
     for (const window of application.testingWindows) {
       if (window.assignedStaffId !== viewerId || !window.studentIds.length) continue;
+      // A withdrawn block is not a pending assignment and owns no boundary.
+      if (isScheduleProfileBlockCancelled(application, window.date, window.blockId)) continue;
       const receipt = scheduleRows[0]?.outcomes[profileSupervisionOutcomeKey(application.id, window.date, window.blockId)];
       // A recorded start, early release or failure must not become a new pending start.
       if (receipt) continue;

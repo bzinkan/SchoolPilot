@@ -3,6 +3,7 @@ import { db } from "../db.js";
 import { classpilotSupervisionContexts, classpilotSupervisionStudents, type ClasspilotSupervisionContext } from "../schema/classpilot.js";
 import { students } from "../schema/students.js";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 
 export { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 
@@ -69,6 +70,41 @@ export async function requireScheduledClassroomContext(options: {
     || (options.actorId && context.assignedStaffId !== options.actorId && !options.allowObserve)) {
     throw Object.assign(new Error("Scheduled classroom activity is unavailable"), { status: 404, code: "CLASSROOM_ACTIVITY_UNAVAILABLE", expose: true });
   }
+  if (options.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, options.contextAuthorityRevision);
+  return context;
+}
+
+/**
+ * Preview-only supervision authority.
+ *
+ * Deliberately NOT part of `requireScheduledClassroomContext`, which also gates
+ * commands, chat, timers, polls and Live View: widening that would hand an ad
+ * hoc claim the whole classroom toolset. This grants exactly one thing — the
+ * right to hold a screenshot observation lease on students you have claimed —
+ * and only while the supervision-preview rollout is live for the school.
+ */
+export async function requireSupervisionPreviewContext(options: {
+  schoolId: string; supervisionContextId: string; actorId?: string; allowObserve?: boolean; now?: Date; lock?: boolean;
+  contextAuthorityRevision?: string;
+}, database: typeof db = db): Promise<ClasspilotSupervisionContext> {
+  const now = options.now ?? new Date();
+  const query = database.select().from(classpilotSupervisionContexts).where(and(
+    eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+    eq(classpilotSupervisionContexts.id, options.supervisionContextId),
+    eq(classpilotSupervisionContexts.status, "active"),
+    lte(classpilotSupervisionContexts.startsAt, now), gt(classpilotSupervisionContexts.endsAt, now),
+  )).limit(1);
+  const [context] = await (options.lock ? query.for("share") : query);
+  const unavailable = () => Object.assign(new Error("Supervision activity is unavailable"),
+    { status: 404, code: "CLASSROOM_ACTIVITY_UNAVAILABLE", expose: true });
+  if (!context || context.status !== "active" || context.startsAt > now || context.endsAt <= now) throw unavailable();
+  // Read the school before the predicate below: it narrows `context` away on its
+  // false branch, which would make this unreachable to the type checker.
+  const { schoolId, assignedStaffId } = context;
+  // A scheduled classroom keeps its existing authority; the rollout is what
+  // additionally admits an ad hoc claim.
+  if (!scheduledContextHasClassroomTools(context, now) && !classpilotSupervisionPreviewObserved(schoolId)) throw unavailable();
+  if (options.actorId && assignedStaffId !== options.actorId && !options.allowObserve) throw unavailable();
   if (options.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, options.contextAuthorityRevision);
   return context;
 }
