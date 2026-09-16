@@ -3406,18 +3406,42 @@ exit 0
 
         $rdsCpuLagConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $rdsCpuLagConfig.runId = "rds-cpu-publication-lag"
-        $rdsCpuLagConfig.minimumWallClockSeconds = 10
+        # These runtime cases must reach their iteration/staleness gates before
+        # cumulative acceptance, even when Windows mock sweeps exceed ten seconds.
+        # The owned-child watchdog bounds runtime; this adds no wait or threshold change.
+        $rdsCpuLagConfig.minimumWallClockSeconds = [int][Math]::Ceiling(
+            $script:MonitorCompletionWatchdogMilliseconds / 1000.0
+        )
         $rdsCpuLagConfig.maxIterations = 3
         $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "210"
         $rdsCpuLagCase = Invoke-ChildMonitorCase "rds-cpu-publication-lag" $rdsCpuLagConfig
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         Assert-Condition ($rdsCpuLagCase.exitCode -eq 2 -and
             $rdsCpuLagCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
-            $rdsCpuLagCase.result.failures -notcontains "stale_metric:rds_cpu") "A live RDS CPU series with one additional period of publication lag must remain runtime-valid without padding cumulative in-run evidence."
+            $rdsCpuLagCase.result.failures -notcontains "stale_metric:rds_cpu") (
+            "A live RDS CPU series with one additional period of publication lag must remain runtime-valid without padding cumulative in-run evidence. " +
+            "Result: $($rdsCpuLagCase.result | ConvertTo-Json -Compress -Depth 30)"
+        )
+
+        $rdsCpuLagAcceptanceConfig = $rdsCpuLagConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $rdsCpuLagAcceptanceConfig.runId = "rds-cpu-publication-lag-acceptance"
+        $rdsCpuLagAcceptanceConfig.minimumWallClockSeconds = 0
+        $rdsCpuLagAcceptanceConfig.maxIterations = 1
+        $rdsCpuLagAcceptanceConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 60 -Force
+        $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "210"
+        $rdsCpuLagAcceptanceCase = Invoke-ChildMonitorCase "rds-cpu-publication-lag-acceptance" $rdsCpuLagAcceptanceConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        Assert-Condition ($rdsCpuLagAcceptanceCase.exitCode -eq 2 -and
+            $rdsCpuLagAcceptanceCase.result.failures -contains "run_acceptance_failed" -and
+            $rdsCpuLagAcceptanceCase.result.failures -contains "telemetry_coverage:rds_cpu" -and
+            $rdsCpuLagAcceptanceCase.result.failures -contains "missing_acceptance_metric:rds" -and
+            $rdsCpuLagAcceptanceCase.result.failures -notcontains "stale_metric:rds_cpu" -and
+            $null -eq $rdsCpuLagAcceptanceCase.result.acceptance.metrics.PSObject.Properties["rds_cpu"] -and
+            -not $rdsCpuLagAcceptanceCase.result.rollback.attempted) "Runtime-fresh RDS CPU from before this run must not pad cumulative coverage or permit acceptance or infrastructure rollback."
 
         $rdsCpuStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $rdsCpuStaleConfig.runId = "rds-cpu-truly-stale"
-        $rdsCpuStaleConfig.minimumWallClockSeconds = 10
+        $rdsCpuStaleConfig.minimumWallClockSeconds = $rdsCpuLagConfig.minimumWallClockSeconds
         $rdsCpuStaleConfig.maxIterations = 4
         $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "300"
         $rdsCpuStaleCase = Invoke-ChildMonitorCase "rds-cpu-truly-stale" $rdsCpuStaleConfig
