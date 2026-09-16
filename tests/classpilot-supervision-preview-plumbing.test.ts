@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  isScheduledClassroomEnabled,
+  assertScheduledClassroomEnvironment,
+} from "../src/config/classpilotScheduledClassroom.js";
+import {
   assertClasspilotSupervisionPreviewEnv,
   classpilotSupervisionPreviewMode,
   classpilotSupervisionPreviewObserved,
@@ -331,5 +335,72 @@ describe("Previews follow the claim without widening classroom tools", () => {
   it("gives the Claimed view the revision its lease is fenced on", () => {
     assert.match(source("src/routes/classpilot/coverage.ts"),
       /contextAuthorityRevision: context\?\.classroomAuthorityRevision \?\? null/);
+  });
+});
+
+describe("The governed rollout writes exactly what the server reads", () => {
+  // These are the literal four-value tuples emitted by
+  // Get-ScheduledClassroomEnvironment in scripts/deploy-classpilot-runtime-config.ps1.
+  // If the tool and these readers ever disagree, a "one school" pilot silently
+  // becomes fleet-wide, so the contract is pinned here rather than in a comment.
+  const PILOT = "3f2a9c41-5b7e-4c8a-9d21-6ef0a4b5c7d8";
+  const OTHER = "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f";
+  const emitted = {
+    observe: {
+      CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "on",
+      CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: PILOT,
+      CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe",
+      CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: PILOT,
+    },
+    retain: {
+      CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "on",
+      CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: PILOT,
+      CLASSPILOT_SUPERVISION_PREVIEW_MODE: "on",
+      CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: PILOT,
+    },
+    off: {
+      CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "off",
+      CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: "",
+      CLASSPILOT_SUPERVISION_PREVIEW_MODE: "off",
+      CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "",
+    },
+  } as const;
+
+  it("boots on every emitted tuple", () => {
+    for (const env of Object.values(emitted)) {
+      assertScheduledClassroomEnvironment(env as NodeJS.ProcessEnv);
+      assertClasspilotSupervisionPreviewEnv(env as NodeJS.ProcessEnv);
+    }
+  });
+
+  it("scopes scheduled-classroom authority to the pilot school alone", () => {
+    for (const stage of ["observe", "retain"] as const) {
+      const env = emitted[stage] as NodeJS.ProcessEnv;
+      assert.equal(isScheduledClassroomEnabled(PILOT, env), true, stage);
+      assert.equal(isScheduledClassroomEnabled(OTHER, env), false, stage);
+    }
+    assert.equal(isScheduledClassroomEnabled(PILOT, emitted.off as NodeJS.ProcessEnv), false);
+  });
+
+  it("retains no preview pixel until the retain stage", () => {
+    const observe = emitted.observe as NodeJS.ProcessEnv;
+    assert.equal(classpilotSupervisionPreviewObserved(PILOT, observe), true);
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled(PILOT, observe), false);
+    const retain = emitted.retain as NodeJS.ProcessEnv;
+    assert.equal(classpilotSupervisionPreviewObserved(PILOT, retain), true);
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled(PILOT, retain), true);
+    // Never for a school the pilot does not name, at either stage.
+    for (const stage of ["observe", "retain"] as const) {
+      const env = emitted[stage] as NodeJS.ProcessEnv;
+      assert.equal(classpilotSupervisionPreviewObserved(OTHER, env), false, stage);
+      assert.equal(classpilotSupervisionPreviewRetentionEnabled(OTHER, env), false, stage);
+    }
+  });
+
+  it("would open the fleet if the tool ever emitted an empty school list", () => {
+    // Not a supported state - this pins WHY Assert-ScheduledClassroomRuntimeControls
+    // rejects an empty list rather than treating it as a harmless default.
+    const widened = { ...emitted.retain, CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "" };
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled(OTHER, widened as NodeJS.ProcessEnv), true);
   });
 });

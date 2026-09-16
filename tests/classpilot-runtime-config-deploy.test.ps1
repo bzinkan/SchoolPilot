@@ -981,6 +981,220 @@ try {
     Assert-Condition ($legacyRoadmapTarget.Environment.CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1 -ceq "false") `
         "Admitting one roadmap capability from legacy state must materialize the other as explicitly off."
 
+    # --- Scheduled classroom: three staged modes carrying four derived env values ---
+
+    Assert-Condition (@($script:AllCapabilities | Group-Object -CaseSensitive |
+        Where-Object Count -ne 1).Count -eq 0) `
+        "Capability registry must not contain duplicates."
+    Assert-Condition (@($script:AllowedEnvironmentNames | Group-Object -CaseSensitive |
+        Where-Object Count -ne 1).Count -eq 0) `
+        "Managed environment names must not contain duplicates."
+    Assert-Condition (@($script:ScheduledClassroomEnvironmentNames |
+        Where-Object { $_ -cin $script:RuntimeEnvironmentNames }).Count -eq 0) `
+        "Scheduled-classroom env names must stay outside the closed runtime set."
+
+    $otherSchoolId = "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
+    $scEnvNames = @($script:ScheduledClassroomEnvironmentNames)
+
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "scheduled-classroom-global-on"; pilotSchoolId = $testSchoolId
+        })
+    } "Scheduled classroom must not admit a global activation mode."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "scheduled-classroom-observe"; pilotSchoolId = "all-schools"
+        })
+    } "Scheduled-classroom observe requires one canonical school UUID."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "scheduled-classroom-off"; pilotSchoolId = $testSchoolId
+        })
+    } "Scheduled-classroom off must not retain school scope."
+
+    $scObserveIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 7; mode = "scheduled-classroom-observe"; pilotSchoolId = $testSchoolId
+    })
+    $scSource = New-TransitionSourceTask -RuntimeConfiguration $restrictionAuthPilotRuntime
+    $scObserve = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $scObserveIntent `
+        -SourceTaskDefinition $scSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $scSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $scObserve
+    $scObserveRollouts = $scObserve.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json
+    Assert-Condition ($scObserve.Environment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 -ceq "true" -and
+        $scObserveRollouts.scheduledClassroomV1.mode -ceq "on" -and
+        @($scObserveRollouts.scheduledClassroomV1.schoolIds).Count -eq 1 -and
+        $scObserveRollouts.scheduledClassroomV1.schoolIds[0] -ceq $testSchoolId -and
+        $scObserve.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -ceq "on" -and
+        $scObserve.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS -ceq $testSchoolId -and
+        $scObserve.Environment.CLASSPILOT_SUPERVISION_PREVIEW_MODE -ceq "observe" -and
+        $scObserve.Environment.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS -ceq $testSchoolId) `
+        "Observe must enable the capability for one school while retaining no preview pixel."
+
+    $scObserveSource = New-TransitionSourceTask -RuntimeConfiguration $scObserve
+    $scSourceControls = Get-RuntimeCapabilityControls -Environment $scSource.containerDefinitions[0].environment
+    $scObserveControls = Get-RuntimeCapabilityControls -Environment $scObserveSource.containerDefinitions[0].environment
+    foreach ($other in @($script:AllCapabilities | Where-Object { $_ -cne "scheduledClassroomV1" })) {
+        Assert-Condition ((Get-CanonicalJsonSha256 -Value $scSourceControls[$other]) -ceq
+            (Get-CanonicalJsonSha256 -Value $scObserveControls[$other])) `
+            "Scheduled-classroom observe must preserve the other $other controls."
+    }
+
+    $scRetainIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 7; mode = "scheduled-classroom-retain"; pilotSchoolId = $testSchoolId
+    })
+    Assert-Throws {
+        $fromOff = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $scRetainIntent `
+            -SourceTaskDefinition $scSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $scSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $fromOff
+    } "Retention must not be reachable without first observing."
+    Assert-Throws {
+        $again = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $scObserveIntent `
+            -SourceTaskDefinition $scObserveSource -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $scObserveSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $again
+    } "An active scheduled-classroom pilot must not be re-admitted over itself."
+
+    $scRetain = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $scRetainIntent `
+        -SourceTaskDefinition $scObserveSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $scObserveSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $scRetain
+    Assert-Condition ($scRetain.Environment.CLASSPILOT_SUPERVISION_PREVIEW_MODE -ceq "on" -and
+        $scRetain.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -ceq "on" -and
+        $scRetain.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS -ceq $testSchoolId -and
+        $scRetain.Environment.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS -ceq $testSchoolId) `
+        "The advance must move only the preview stage and keep both school scopes."
+
+    $scRetainSource = New-TransitionSourceTask -RuntimeConfiguration $scRetain
+    $scOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 7; mode = "scheduled-classroom-off"
+    })
+    $scOff = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $scOffIntent `
+        -SourceTaskDefinition $scRetainSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $scRetainSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $scOff
+    Assert-Condition ($scOff.Environment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 -ceq "false" -and
+        $scOff.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -ceq "off" -and
+        $scOff.Environment.CLASSPILOT_SUPERVISION_PREVIEW_MODE -ceq "off" -and
+        $scOff.Environment.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS -ceq "" -and
+        $scOff.Environment.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS -ceq "") `
+        "Off must revoke server authority, not merely the capability control."
+
+    # An empty school list means EVERY school to both readers, so it must be
+    # unreachable, as must a registry and an environment naming different schools.
+    foreach ($tamper in @("empty-ids", "other-school", "two-schools", "env-without-flag")) {
+        $tamperedEnv = @($scObserveSource.containerDefinitions[0].environment | ForEach-Object {
+            [pscustomobject]@{ name = [string]$_.name; value = [string]$_.value }
+        })
+        foreach ($entry in $tamperedEnv) {
+            if ($tamper -ceq "empty-ids" -and [string]$entry.name -cin $scEnvNames -and
+                [string]$entry.name.EndsWith("SCHOOL_IDS")) { $entry.value = "" }
+            if ($tamper -ceq "other-school" -and
+                [string]$entry.name -ceq "CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS") {
+                $entry.value = $otherSchoolId
+            }
+            if ($tamper -ceq "two-schools" -and
+                [string]$entry.name -ceq "CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS") {
+                $entry.value = "$testSchoolId,$otherSchoolId"
+            }
+            if ($tamper -ceq "env-without-flag" -and
+                [string]$entry.name -ceq "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1") {
+                $entry.value = "false"
+            }
+        }
+        Assert-Throws {
+            Assert-ScheduledClassroomRuntimeControls -Environment $tamperedEnv -Trail "Tampered"
+        } "A $tamper runtime must be rejected before it can be built on."
+    }
+
+    # A profile that does not manage these must leave production's values alone.
+    $unrelatedOff = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 6; mode = "restriction-auth-off"
+    })
+    $unrelatedTarget = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $unrelatedOff `
+        -SourceTaskDefinition $scObserveSource -ContainerName "api"
+    Assert-Condition (@($scEnvNames | Where-Object {
+        $unrelatedTarget.Environment.Contains($_) }).Count -eq 0) `
+        "An unrelated profile must not write the scheduled-classroom environment."
+
+    # --- Scheduled classroom: the extension-version floor ---
+
+    $scEvidenceNow = [DateTimeOffset]::Parse("2026-09-16T20:00:00Z")
+    function New-ScheduledClassroomEvidence {
+        param([string]$Version = "2.9.0", [hashtable]$Override = @{})
+        $value = [pscustomobject]@{
+            schemaVersion = 1
+            validatedAt = [DateTimeOffset]::Parse("2026-09-16T19:45:00Z").ToString("o")
+            pilotSchoolId = $testSchoolId
+            schoolPilotToolSha = "a" * 40
+            schoolPilotAppSha = "b" * 40
+            schoolPilotImageDigest = "sha256:" + ("c" * 64)
+            minimumObservedExtensionVersion = $Version
+            observedDeviceCount = 24
+            checks = [pscustomobject]@{
+                everyManagedDeviceAtOrAboveMinimum = $true
+                capabilityNegotiationObserved = $true
+                noStaleDeviceReportedOlder = $true
+                pilotSchoolRosterReviewed = $true
+            }
+        }
+        foreach ($key in $Override.Keys) {
+            $value | Add-Member -NotePropertyName $key -NotePropertyValue $Override[$key] -Force
+        }
+        return [pscustomobject]@{ Value = $value; Sha256 = "d" * 64 }
+    }
+    function Invoke-ScheduledClassroomEvidence {
+        param($Snapshot)
+        return Assert-ScheduledClassroomPilotEvidence -EvidenceSnapshot $Snapshot `
+            -PilotSchoolId $testSchoolId -ToolSha ("a" * 40) -AppSha ("b" * 40) `
+            -ImageDigest ("sha256:" + ("c" * 64)) -Now $scEvidenceNow
+    }
+
+    [void](Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence))
+    $script:Assertions++
+    [void](Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Version "2.10.0"))
+    $script:Assertions++
+    [void](Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Version "3.0.0"))
+    $script:Assertions++
+
+    # The subtractive failure mode: a fleet below the floor loses previews rather
+    # than gaining tools, so admission must refuse it outright.
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Version "2.8.8")
+    } "A fleet below the scheduled-classroom minimum must be refused."
+    # Lexically "2.8.10" sorts below "2.8.9"; numerically it is above the floor.
+    [void](Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Version "2.8.10"))
+    $script:Assertions++
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Version "2.9")
+    } "A non-canonical extension version must be refused."
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Override @{
+            pilotSchoolId = "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f"
+        })
+    } "Evidence must bind the school being activated."
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Override @{
+            checks = [pscustomobject]@{
+                everyManagedDeviceAtOrAboveMinimum = $false
+                capabilityNegotiationObserved = $true
+                noStaleDeviceReportedOlder = $true
+                pilotSchoolRosterReviewed = $true
+            }
+        })
+    } "A failed fleet check must refuse admission."
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Override @{
+            observedDeviceCount = 0
+        })
+    } "Evidence observing no device proves nothing."
+    Assert-Throws {
+        Invoke-ScheduledClassroomEvidence -Snapshot (New-ScheduledClassroomEvidence -Override @{
+            validatedAt = [DateTimeOffset]::Parse("2026-09-14T19:45:00Z").ToString("o")
+        })
+    } "Stale fleet evidence must be refused."
+
     $legacyGlobalSource = New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
     $legacyGlobalEnvironment = @($legacyGlobalSource.containerDefinitions[0].environment)
     $legacyGlobalRolloutEntry = @($legacyGlobalEnvironment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]

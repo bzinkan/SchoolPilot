@@ -10,6 +10,7 @@ param(
     [string]$ManagedTestWaiverPath,
     [string]$TrackingPilotEvidencePath,
     [string]$StudentGatePilotEvidencePath,
+    [string]$ScheduledClassroomPilotEvidencePath,
     [string]$FastPreviewCandidateReceiptPath,
     [string]$FastPreviewPilotEvidencePath,
     [string]$ExternalEvidenceRoot,
@@ -68,23 +69,31 @@ $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
-$script:ScheduledClassroomCapability = "scheduledClassroomV1"
 $script:RoadmapProfileCapabilities = @{
     "after-hours-safety-only-pilot" = "afterHoursSafetyOnlyV1"
     "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
     "school-website-block-pilot" = "schoolWebsiteBlockEnforcementV1"
     "school-website-block-off" = "schoolWebsiteBlockEnforcementV1"
+    "scheduled-classroom-observe" = "scheduledClassroomV1"
+    "scheduled-classroom-retain" = "scheduledClassroomV1"
+    "scheduled-classroom-off" = "scheduledClassroomV1"
 }
-$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1")
-$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot")
-$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off")
+$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", "scheduledClassroomV1")
+$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot", "scheduled-classroom-observe")
+# Staged advances re-enter an already-enabled capability for the same school, so
+# they are school-scoped like a pilot but must not begin from its off profile.
+$script:RoadmapAdvanceModes = @("scheduled-classroom-retain")
+$script:RoadmapSchoolScopedModes = @($script:RoadmapPilotModes) + @($script:RoadmapAdvanceModes)
+$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off", "scheduled-classroom-off")
+$script:ScheduledClassroomProfileModes = @(
+    "scheduled-classroom-observe", "scheduled-classroom-retain", "scheduled-classroom-off"
+)
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
     $script:FastPreviewCapability,
     $script:StudentGatePresenceCapability,
     $script:LateSignInRestrictionSsoCapability,
-    $script:RestrictionAuthPassThroughCapability,
-    $script:ScheduledClassroomCapability
+    $script:RestrictionAuthPassThroughCapability
 ) + @($script:RoadmapCapabilities)
 $script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
@@ -117,7 +126,28 @@ $script:TurnEnvironmentNames = @(
     "CLASSPILOT_TURN_HOSTS",
     "CLASSPILOT_STUN_URLS"
 )
-$script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames) + @($script:TurnEnvironmentNames)
+# Scheduled-classroom server authority and supervision-preview retention are
+# read once per process from these four names. They are deliberately NOT in
+# $script:RuntimeEnvironmentNames: that is a closed set every profile family must
+# populate in full, and its absent-tolerance is capability-keyed, so a bare
+# environment name cannot participate. Membership in AllowedEnvironmentNames is
+# what earns plan-identity binding, post-register verification and API/worker
+# parity; membership in a profile's Environment is what writes them.
+$script:ScheduledClassroomEnvironmentNames = @(
+    "CLASSPILOT_SCHEDULED_CLASSROOM_MODE",
+    "CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS",
+    "CLASSPILOT_SUPERVISION_PREVIEW_MODE",
+    "CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS"
+)
+# The fleet-wide boundary worker stays unmanaged and unwritten; activation only
+# refuses to proceed on top of it.
+$script:ScheduleBoundaryWorkerEnvironmentName = "CLASSPILOT_SCHEDULE_BOUNDARY_WORKER_MODE"
+# The first extension release that negotiates scheduledClassroomV1. Below this a
+# device loses previews under a scheduled context instead of gaining tools.
+$script:ScheduledClassroomRequiredExtensionVersion = "2.8.9"
+$script:CanonicalSchoolIdPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+$script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames) + @($script:TurnEnvironmentNames) `
+    + @($script:ScheduledClassroomEnvironmentNames)
 $script:AllowedSecretNames = @("CLASSPILOT_TURN_REST_SECRET")
 $script:EvidenceRootMarkerName = ".schoolpilot-classpilot-runtime-evidence-v1"
 $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-classpilot-runtime-evidence-v1`n")
@@ -412,6 +442,125 @@ function Assert-ExactProperties {
     if ($unknown.Count -gt 0) { throw "$Trail contains unsupported fields." }
 }
 
+<#
+.SYNOPSIS
+Derives the four scheduled-classroom runtime values from a profile mode and its
+one pilot school.
+
+.DESCRIPTION
+The values are never supplied by an operator. Both school lists are written from
+a single $ids variable, so the capability rollout registry and server-side
+authority cannot name different schools -- the divergence is not expressible.
+An empty list means EVERY school to both readers, so an enabling mode refuses to
+emit anything but one canonical UUID.
+#>
+function Get-ScheduledClassroomEnvironment {
+    param(
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [AllowEmptyString()][string]$PilotSchoolId
+    )
+    if ($Mode -cnotin $script:ScheduledClassroomProfileModes) {
+        throw "Unsupported scheduled-classroom profile mode."
+    }
+    $classroomMode = if ($Mode -ceq "scheduled-classroom-off") { "off" } else { "on" }
+    $previewMode = switch -CaseSensitive ($Mode) {
+        "scheduled-classroom-observe" { "observe" }
+        "scheduled-classroom-retain" { "on" }
+        "scheduled-classroom-off" { "off" }
+    }
+    $ids = ""
+    if ($classroomMode -ceq "on") {
+        if ([string]$PilotSchoolId -cnotmatch $script:CanonicalSchoolIdPattern) {
+            throw "Scheduled-classroom activation requires one canonical UUID school ID."
+        }
+        $ids = [string]$PilotSchoolId
+    }
+    return [ordered]@{
+        CLASSPILOT_SCHEDULED_CLASSROOM_MODE = $classroomMode
+        CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = $ids
+        CLASSPILOT_SUPERVISION_PREVIEW_MODE = $previewMode
+        CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS = $ids
+    }
+}
+
+<# Reads the four values off a task environment. Absent reads as fully off, which
+   is what both Node modules do, so a pre-adoption task is recognized as off. #>
+function Get-ScheduledClassroomEnvironmentValues {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()]$Environment)
+    $values = @{}
+    foreach ($entry in @($Environment)) { $values[[string]$entry.name] = [string]$entry.value }
+    foreach ($name in $script:ScheduledClassroomEnvironmentNames) {
+        $miscased = @($Environment | Where-Object {
+            [string]$_.name -ieq $name -and [string]$_.name -cne $name
+        })
+        if ($miscased.Count -ne 0) {
+            throw "Runtime configuration contains a mis-cased managed environment name."
+        }
+    }
+    return [ordered]@{
+        CLASSPILOT_SCHEDULED_CLASSROOM_MODE = if ($values.ContainsKey("CLASSPILOT_SCHEDULED_CLASSROOM_MODE")) { [string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_MODE } else { "off" }
+        CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = if ($values.ContainsKey("CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS")) { [string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS } else { "" }
+        CLASSPILOT_SUPERVISION_PREVIEW_MODE = if ($values.ContainsKey("CLASSPILOT_SUPERVISION_PREVIEW_MODE")) { [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_MODE } else { "off" }
+        CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS = if ($values.ContainsKey("CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS")) { [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS } else { "" }
+    }
+}
+
+<# off | observe | retain, derived from the values rather than from a profile. #>
+function Get-ScheduledClassroomStage {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()]$Environment)
+    $values = Get-ScheduledClassroomEnvironmentValues -Environment $Environment
+    if ([string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -cne "on") { return "off" }
+    if ([string]$values.CLASSPILOT_SUPERVISION_PREVIEW_MODE -ceq "on") { return "retain" }
+    return "observe"
+}
+
+<#
+.SYNOPSIS
+Positive presence-and-value proof that the rollout registry and server authority
+name the same one school.
+
+.DESCRIPTION
+Exclusion-list semantics cannot prove this: AllowedEnvironmentNames membership
+removes these names from the "nothing else changed" fingerprint, so a silent
+deletion would otherwise pass every guard. Exact string equality against the
+single registry school simultaneously forbids empty (which means every school to
+both readers), extra schools, a different school, case variance and whitespace.
+#>
+function Assert-ScheduledClassroomRuntimeControls {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()]$Environment,
+        [Parameter(Mandatory = $true)][string]$Trail
+    )
+    $controls = (Get-RuntimeCapabilityControls -Environment $Environment)["scheduledClassroomV1"]
+    $values = Get-ScheduledClassroomEnvironmentValues -Environment $Environment
+    if ([string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -cnotin @("off", "on") -or
+        [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_MODE -cnotin @("off", "observe", "on")) {
+        throw "$Trail scheduled-classroom runtime modes are invalid."
+    }
+    if ([string]$controls.flag -ceq "false") {
+        # The dangerous asymmetry: storage retention and query widening read the
+        # environment directly and never consult the capability flag.
+        if ([string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -cne "off" -or
+            [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_MODE -cne "off" -or
+            [string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS -cne "" -or
+            [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS -cne "") {
+            throw "$Trail grants scheduled-classroom server authority without its capability control."
+        }
+        return
+    }
+    if ([string]$controls.mode -cne "on" -or @($controls.schoolIds).Count -ne 1 -or
+        [string]@($controls.schoolIds)[0] -cnotmatch $script:CanonicalSchoolIdPattern) {
+        throw "$Trail scheduled-classroom capability scope is not one exact school."
+    }
+    $school = [string]@($controls.schoolIds)[0]
+    if ([string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_MODE -cne "on" -or
+        [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_MODE -cnotin @("observe", "on") -or
+        [string]$values.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS -cne $school -or
+        [string]$values.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS -cne $school) {
+        throw "$Trail rollout registry and server authority name different schools."
+    }
+}
+
 function ConvertTo-RuntimeConfiguration {
     param([Parameter(Mandatory = $true)]$Profile)
     Assert-ExactProperties -Value $Profile -Allowed @(
@@ -467,7 +616,7 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin @(
         "tracking-window-pilot", "student-gate-pilot", "late-signin-pilot",
         "fast-preview-pilot", "restriction-auth-pilot"
-    ) -or $mode -cin $script:RoadmapPilotModes) {
+    ) -or $mode -cin $script:RoadmapSchoolScopedModes) {
         $pilotSchoolId = [string]$Profile.pilotSchoolId
         if ($pilotSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "The selected pilot profile requires one canonical UUID school ID."
@@ -546,7 +695,7 @@ function ConvertTo-RuntimeConfiguration {
         $isPilot = $mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        ) -or $mode -cin $script:RoadmapPilotModes
+        ) -or $mode -cin $script:RoadmapSchoolScopedModes
         $isOff = $mode -cin @(
             "student-gate-off", "late-signin-off", "fast-preview-off",
             "restriction-auth-off"
@@ -600,6 +749,15 @@ function ConvertTo-RuntimeConfiguration {
         $environment[$script:CapabilityFlags[$capability]] = if ($enabledKillSwitch) { "true" } else { "false" }
     }
     $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
+    if ($mode -ceq "off") {
+        # Protocol-off stops negotiation, but scheduled-classroom server authority
+        # is read straight from the environment by the retention and query-widening
+        # paths, so emergency containment has to revoke it too.
+        $containment = Get-ScheduledClassroomEnvironment -Mode "scheduled-classroom-off" -PilotSchoolId ""
+        foreach ($entry in $containment.GetEnumerator()) {
+            $environment[[string]$entry.Key] = [string]$entry.Value
+        }
+    }
     if ($null -ne $turn) {
         $environment.CLASSPILOT_TURN_HOSTS = $turn.Hosts -join ","
         $environment.CLASSPILOT_STUN_URLS = @($turn.Hosts | ForEach-Object { "stun:$($_):3478" }) -join ","
@@ -701,7 +859,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     if ([string]$RuntimeIntent.Mode -cin @(
         "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
         "restriction-auth-pilot"
-    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
+    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapSchoolScopedModes) {
         $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
         if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
             throw "School-scoped capability pilot intent has an invalid school scope."
@@ -729,6 +887,13 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         }
         $environment[[string]$name] = [string]$values[[string]$name]
     }
+    if ([string]$RuntimeIntent.Mode -cin $script:ScheduledClassroomProfileModes) {
+        $scheduledClassroom = Get-ScheduledClassroomEnvironment `
+            -Mode ([string]$RuntimeIntent.Mode) -PilotSchoolId ([string]$RuntimeIntent.PilotSchoolId)
+        foreach ($entry in $scheduledClassroom.GetEnumerator()) {
+            $environment[[string]$entry.Key] = [string]$entry.Value
+        }
+    }
     $enabledCapabilities = @($script:AllCapabilities | Where-Object {
         [string]$environment[[string]$script:CapabilityFlags[$_]] -ceq "true" -and
             [string]$rollouts.$_.mode -ceq "on"
@@ -744,7 +909,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         PilotSchoolId = if ([string]$RuntimeIntent.Mode -cin @(
             "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
             "restriction-auth-pilot"
-        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapSchoolScopedModes) {
             [string]$RuntimeIntent.PilotSchoolId
         } else { $null }
     }
@@ -1147,6 +1312,87 @@ function Assert-FastPreviewPilotEvidence {
         ObservedThrough = $observedThrough.ToUniversalTime().ToString("o")
         EvidenceSha256 = [string]$EvidenceSnapshot.Sha256
     }
+}
+
+<#
+.SYNOPSIS
+Proves the pilot school's extension fleet can negotiate scheduledClassroomV1
+before that capability is switched on for it.
+
+.DESCRIPTION
+This gate exists because scheduled classroom is the only capability in this tool
+whose failure mode is SUBTRACTIVE. A client that cannot negotiate it does not
+merely miss the new tools: the device stops capturing and the teacher's tiles go
+blank, because the server mints a supervision_context authority the extension
+then refuses. The risk is fully present at the observe stage, since observe
+stages retention only, not the capability itself. So the floor is enforced on
+admission rather than documented as an operator duty.
+#>
+function Assert-ScheduledClassroomPilotEvidence {
+    param(
+        [Parameter(Mandatory = $true)]$EvidenceSnapshot,
+        [Parameter(Mandatory = $true)][string]$PilotSchoolId,
+        [Parameter(Mandatory = $true)][string]$ToolSha,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)][string]$ImageDigest,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $evidence = $EvidenceSnapshot.Value
+    $allowed = @(
+        "schemaVersion", "validatedAt", "pilotSchoolId", "schoolPilotToolSha",
+        "schoolPilotAppSha", "schoolPilotImageDigest", "minimumObservedExtensionVersion",
+        "observedDeviceCount", "checks"
+    )
+    Assert-ExactProperties -Value $evidence -Allowed $allowed -Trail "scheduled-classroom pilot evidence"
+    $present = @($evidence.PSObject.Properties.Name)
+    if (@($allowed | Where-Object { $present -cnotcontains $_ }).Count -ne 0) {
+        throw "Scheduled-classroom pilot evidence is incomplete."
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.schemaVersion) -or [long]$evidence.schemaVersion -ne 1) {
+        throw "Scheduled-classroom pilot evidence schemaVersion must be the integer 1."
+    }
+    foreach ($name in @(
+        "validatedAt", "pilotSchoolId", "schoolPilotToolSha", "schoolPilotAppSha",
+        "schoolPilotImageDigest", "minimumObservedExtensionVersion"
+    )) {
+        if ($evidence.$name -isnot [string]) { throw "Scheduled-classroom pilot evidence is incomplete." }
+    }
+    if (-not (Test-IsJsonInteger -Value $evidence.observedDeviceCount) -or
+        [long]$evidence.observedDeviceCount -lt 1) {
+        throw "Scheduled-classroom pilot evidence must observe at least one managed device."
+    }
+    [void](Get-FreshEvidenceTimestamp -Value $evidence.validatedAt -Label "scheduled-classroom pilot evidence" -Now $Now)
+    if ([string]$evidence.pilotSchoolId -cne $PilotSchoolId -or
+        [string]$evidence.schoolPilotToolSha -cne $ToolSha -or
+        [string]$evidence.schoolPilotAppSha -cne $AppSha -or
+        [string]$evidence.schoolPilotImageDigest -cne $ImageDigest) {
+        throw "Scheduled-classroom pilot evidence does not bind the requested activation."
+    }
+    $observed = [string]$evidence.minimumObservedExtensionVersion
+    if ($observed -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        throw "Scheduled-classroom pilot evidence must report a canonical extension version."
+    }
+    $required = [string]$script:ScheduledClassroomRequiredExtensionVersion
+    $observedParts = @($observed.Split(".") | ForEach-Object { [int]$_ })
+    $requiredParts = @($required.Split(".") | ForEach-Object { [int]$_ })
+    for ($index = 0; $index -lt 3; $index++) {
+        if ($observedParts[$index] -gt $requiredParts[$index]) { break }
+        if ($observedParts[$index] -lt $requiredParts[$index]) {
+            throw "The pilot school's extension fleet is below the scheduled-classroom minimum of $required."
+        }
+    }
+    $checks = $evidence.checks
+    $checkNames = @(
+        "everyManagedDeviceAtOrAboveMinimum", "capabilityNegotiationObserved",
+        "noStaleDeviceReportedOlder", "pilotSchoolRosterReviewed"
+    )
+    Assert-ExactProperties -Value $checks -Allowed $checkNames -Trail "scheduled-classroom pilot evidence checks"
+    foreach ($name in $checkNames) {
+        if ($checks.$name -isnot [bool] -or -not [bool]$checks.$name) {
+            throw "Scheduled-classroom pilot evidence check '$name' did not pass."
+        }
+    }
+    return $evidence
 }
 
 function Assert-StudentGatePilotEvidence {
@@ -2686,6 +2932,13 @@ function Assert-AllowedRuntimeTransition {
                 throw "Roadmap rollout must preserve every other capability and school scope."
             }
         }
+        # The off profile is the reconciler: admissible from any state, including a
+        # drifted or hand-edited runtime, so it is exempt from source coherence.
+        if ($roadmapMode -cin $script:ScheduledClassroomProfileModes -and
+            $roadmapMode -cnotin $script:RoadmapOffModes) {
+            Assert-ScheduledClassroomRuntimeControls `
+                -Environment @($sourceContainer[0].environment) -Trail "Source runtime"
+        }
         if ($roadmapMode -cin $script:RoadmapPilotModes) {
             if ([string]$sourceControls[$selectedCapability].mode -cne "off" -or
                 [string]$targetControls[$selectedCapability].mode -cne "on" -or
@@ -2694,8 +2947,31 @@ function Assert-AllowedRuntimeTransition {
                 throw "Roadmap activation must begin with one exact school-scoped pilot from off."
             }
         }
+        elseif ($roadmapMode -cin $script:RoadmapAdvanceModes) {
+            # An advance re-enters an already-enabled capability for the same
+            # school; the registry entry is unchanged and only the staged
+            # environment value moves.
+            if ([string]$sourceControls[$selectedCapability].mode -cne "on" -or
+                [string]$targetControls[$selectedCapability].mode -cne "on" -or
+                @($sourceControls[$selectedCapability].schoolIds).Count -ne 1 -or
+                [string]@($sourceControls[$selectedCapability].schoolIds)[0] -cne
+                    [string]$TargetRuntimeConfiguration.PilotSchoolId -or
+                [string]@($targetControls[$selectedCapability].schoolIds)[0] -cne
+                    [string]$TargetRuntimeConfiguration.PilotSchoolId) {
+                throw "Roadmap advance must retain one exact school-scoped rollout."
+            }
+        }
         elseif ([string]$targetControls[$selectedCapability].mode -cne "off") {
             throw "Roadmap rollback must disable only its selected capability."
+        }
+        if ($roadmapMode -cin $script:ScheduledClassroomProfileModes) {
+            Assert-ScheduledClassroomRuntimeControls -Environment $targetEnvironment -Trail "Target runtime"
+            $sourceStage = Get-ScheduledClassroomStage -Environment @($sourceContainer[0].environment)
+            $targetStage = Get-ScheduledClassroomStage -Environment $targetEnvironment
+            $allowedEdges = @("off>observe", "observe>retain", "observe>off", "retain>off", "off>off")
+            if ("$sourceStage>$targetStage" -cnotin $allowedEdges) {
+                throw "Scheduled-classroom staging must follow off, observe, retain, then off."
+            }
         }
         return
     }
@@ -2954,6 +3230,12 @@ function New-RuntimeTaskDefinitionRequest {
     }
     $environmentNamesToReplace = @($script:RuntimeEnvironmentNames)
     if ($null -ne $RuntimeConfiguration.Turn) { $environmentNamesToReplace += @($script:TurnEnvironmentNames) }
+    # Derived from the write set rather than a parallel condition: a name is
+    # removed exactly when it is about to be re-added, so a profile that does not
+    # manage these leaves production's values untouched.
+    $environmentNamesToReplace += @($script:ScheduledClassroomEnvironmentNames | Where-Object {
+        $RuntimeConfiguration.Environment.Contains([string]$_)
+    })
     $target.environment = @($target.environment | Where-Object { [string]$_.name -cnotin $environmentNamesToReplace })
     foreach ($entry in $RuntimeConfiguration.Environment.GetEnumerator()) {
         $target.environment += [pscustomobject]@{ name = [string]$entry.Key; value = [string]$entry.Value }
@@ -3522,6 +3804,24 @@ function Get-ValidatedProductionSnapshot {
         }
     }
     Assert-TurnAwsReadiness -RuntimeConfiguration $RuntimeConfiguration
+    if ([string]$RuntimeConfiguration.Mode -cin $script:ScheduledClassroomProfileModes -and
+        [string]$RuntimeConfiguration.Mode -cnotin $script:RoadmapOffModes) {
+        # Read-only: the boundary worker stays unmanaged. It drains a fleet-wide
+        # backlog and applies its allowlist only after claiming, so a school-scoped
+        # activation must not be layered on top of it.
+        foreach ($pair in @(
+            @{ Task = $apiResponse.taskDefinition; Container = "api" },
+            @{ Task = $workerResponse.taskDefinition; Container = "scheduler-worker" }
+        )) {
+            $containers = @($pair.Task.containerDefinitions | Where-Object name -CEQ $pair.Container)
+            $boundary = @($containers[0].environment | Where-Object {
+                [string]$_.name -ceq $script:ScheduleBoundaryWorkerEnvironmentName
+            })
+            if ($boundary.Count -ne 0 -and [string]$boundary[0].value -cne 'off') {
+                throw "Scheduled-classroom activation requires the schedule boundary worker to be off."
+            }
+        }
+    }
     $scaling = Get-ScalingSnapshot
     if ($scaling.DynamicIn -or $scaling.DynamicOut -or $scaling.Scheduled) { throw "Autoscaling is already suspended." }
     Assert-ScheduledScalingContract
@@ -3542,6 +3842,7 @@ function New-RuntimeConfigPlan {
         [string]$PrivateManagedTestWaiverPath,
         [string]$PrivateTrackingPilotEvidencePath,
         [string]$PrivateStudentGatePilotEvidencePath,
+        [string]$PrivateScheduledClassroomPilotEvidencePath,
         [string]$PrivateFastPreviewCandidateReceiptPath,
         [string]$PrivateFastPreviewPilotEvidencePath,
         [Parameter(Mandatory = $true)][string]$EvidenceRoot,
@@ -3615,6 +3916,22 @@ function New-RuntimeConfigPlan {
         $PrivateStudentGatePilotEvidencePath = Assert-PrivateInputPath `
             -Path $PrivateStudentGatePilotEvidencePath -RepositoryRoot $RepositoryRoot
         $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateStudentGatePilotEvidencePath
+    }
+    # Required on admission only: the observe -> retain edge is its own evidence.
+    $scheduledClassroomEvidenceRequired = $runtime.Mode -ceq "scheduled-classroom-observe"
+    if ($scheduledClassroomEvidenceRequired -and
+        [string]::IsNullOrWhiteSpace($PrivateScheduledClassroomPilotEvidencePath)) {
+        throw "Scheduled-classroom admission requires fresh pilot extension-version evidence."
+    }
+    if (-not $scheduledClassroomEvidenceRequired -and
+        -not [string]::IsNullOrWhiteSpace($PrivateScheduledClassroomPilotEvidencePath)) {
+        throw "Scheduled-classroom pilot evidence is valid only for scheduled-classroom-observe admission."
+    }
+    $scheduledClassroomEvidenceSnapshot = $null
+    if ($scheduledClassroomEvidenceRequired) {
+        $PrivateScheduledClassroomPilotEvidencePath = Assert-PrivateInputPath `
+            -Path $PrivateScheduledClassroomPilotEvidencePath -RepositoryRoot $RepositoryRoot
+        $scheduledClassroomEvidenceSnapshot = Read-StrictJsonSnapshot -Path $PrivateScheduledClassroomPilotEvidencePath
     }
     $fastPreviewPilotEvidenceRequired = $runtime.Mode -ceq "fast-preview-global-on"
     $fastPreviewCandidateReceiptRequired = $runtime.Mode -cin @(
@@ -3761,6 +4078,16 @@ function New-RuntimeConfigPlan {
     $syntheticValidationFile = if ($null -ne $syntheticValidationSnapshot) { "synthetic-validation.json" } else { $null }
     $managedTestWaiverFile = if ($null -ne $managedTestWaiverSnapshot) { "managed-test-waiver.json" } else { $null }
     $trackingPilotEvidenceFile = if ($null -ne $trackingPilotEvidenceSnapshot) { "tracking-pilot-evidence.json" } else { $null }
+    $scheduledClassroomEvidence = $null
+    if ($null -ne $scheduledClassroomEvidenceSnapshot) {
+        $scheduledClassroomEvidence = Assert-ScheduledClassroomPilotEvidence `
+            -EvidenceSnapshot $scheduledClassroomEvidenceSnapshot `
+            -PilotSchoolId ([string]$runtime.PilotSchoolId) `
+            -ToolSha $toolSha -AppSha $AppSha -ImageDigest $ImageDigest
+    }
+    $scheduledClassroomEvidenceFile = if ($null -ne $scheduledClassroomEvidenceSnapshot) {
+        "scheduled-classroom-pilot-evidence.json"
+    } else { $null }
     $studentGatePilotEvidenceFile = if ($null -ne $studentGatePilotEvidenceSnapshot) {
         "student-gate-pilot-evidence.json"
     } else { $null }
@@ -3785,6 +4112,10 @@ function New-RuntimeConfigPlan {
     if ($null -ne $studentGatePilotEvidenceSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $studentGatePilotEvidenceFile) `
             -Bytes $studentGatePilotEvidenceSnapshot.Bytes
+    }
+    if ($null -ne $scheduledClassroomEvidenceSnapshot) {
+        Write-PrivateBytes -Path (Join-Path $runDirectory $scheduledClassroomEvidenceFile) `
+            -Bytes $scheduledClassroomEvidenceSnapshot.Bytes
     }
     if ($null -ne $fastPreviewCandidateReceiptSnapshot) {
         Write-PrivateBytes -Path (Join-Path $runDirectory $fastPreviewCandidateReceiptFile) `
@@ -3812,6 +4143,10 @@ function New-RuntimeConfigPlan {
         managedTestWaiverSha256 = if ($null -ne $managedTestWaiver) { $managedTestWaiver.EvidenceSha256 } else { $null }
         trackingPilotEvidenceFile = $trackingPilotEvidenceFile
         trackingPilotEvidenceSha256 = if ($null -ne $trackingPilotEvidence) { $trackingPilotEvidence.EvidenceSha256 } else { $null }
+        scheduledClassroomPilotEvidenceFile = $scheduledClassroomEvidenceFile
+        scheduledClassroomPilotEvidenceSha256 = if ($null -ne $scheduledClassroomEvidenceSnapshot) {
+            $scheduledClassroomEvidenceSnapshot.Sha256
+        } else { $null }
         studentGatePilotEvidenceFile = $studentGatePilotEvidenceFile
         studentGatePilotEvidenceSha256 = if ($null -ne $studentGatePilotEvidence) {
             $studentGatePilotEvidence.EvidenceSha256
@@ -3882,6 +4217,7 @@ function Read-RuntimePlan {
         "managedTestWaiverFile", "managedTestWaiverSha256", "validationLevel", "managedValidation",
         "trackingPilotEvidenceFile", "trackingPilotEvidenceSha256",
         "studentGatePilotEvidenceFile", "studentGatePilotEvidenceSha256",
+        "scheduledClassroomPilotEvidenceFile", "scheduledClassroomPilotEvidenceSha256",
         "fastPreviewCandidateReceiptFile", "fastPreviewCandidateReceiptSha256",
         "fastPreviewClassPilotTag", "fastPreviewClassPilotMergeSha",
         "fastPreviewClassPilotZipSha256", "fastPreviewClassPilotExtensionId",
@@ -3942,6 +4278,16 @@ function Read-RuntimePlan {
             $null -ne $plan.trackingPilotEvidenceSha256 -or
             [string]$plan.profileMode -ceq "tracking-window-global-on"))) {
         throw "Runtime plan tracking-window pilot evidence identity is invalid."
+    }
+    $hasScheduledClassroomEvidence = [string]$plan.scheduledClassroomPilotEvidenceSha256 -match '^[0-9a-f]{64}$'
+    if (($hasScheduledClassroomEvidence -and
+            ([string]$plan.profileMode -cne "scheduled-classroom-observe" -or
+                [string]$plan.scheduledClassroomPilotEvidenceFile -cne "scheduled-classroom-pilot-evidence.json")) -or
+        (-not $hasScheduledClassroomEvidence -and
+            ($null -ne $plan.scheduledClassroomPilotEvidenceFile -or
+                $null -ne $plan.scheduledClassroomPilotEvidenceSha256 -or
+                [string]$plan.profileMode -ceq "scheduled-classroom-observe"))) {
+        throw "Scheduled-classroom admission evidence does not match the planned profile."
     }
     $hasStudentGatePilotEvidence = [string]$plan.studentGatePilotEvidenceSha256 -match '^[0-9a-f]{64}$'
     if (($hasStudentGatePilotEvidence -and
@@ -4028,6 +4374,11 @@ function Read-RuntimePlan {
     )
     $plan | Add-Member -NotePropertyName studentGatePilotEvidencePath -NotePropertyValue $(
         if ($hasStudentGatePilotEvidence) { Join-Path $runDirectory "student-gate-pilot-evidence.json" } else { $null }
+    )
+    $plan | Add-Member -NotePropertyName scheduledClassroomPilotEvidencePath -NotePropertyValue $(
+        if ($hasScheduledClassroomEvidence) {
+            Join-Path $runDirectory "scheduled-classroom-pilot-evidence.json"
+        } else { $null }
     )
     $plan | Add-Member -NotePropertyName fastPreviewCandidateReceiptPath -NotePropertyValue $(
         if ($hasFastPreviewCandidateReceipt) { Join-Path $runDirectory "fast-preview-candidate-receipt.json" } else { $null }
@@ -4199,6 +4550,15 @@ function Invoke-RuntimeConfigApply {
             throw "Tracking-window pilot evidence changed after planning."
         }
     }
+    $scheduledClassroomEvidenceSnapshot = $null
+    if ($runtime.Mode -ceq "scheduled-classroom-observe") {
+        $scheduledClassroomEvidenceSnapshot = Read-StrictJsonSnapshot `
+            -Path ([string]$Plan.scheduledClassroomPilotEvidencePath)
+        if ([string]$scheduledClassroomEvidenceSnapshot.Sha256 -cne
+            [string]$Plan.scheduledClassroomPilotEvidenceSha256) {
+            throw "Scheduled-classroom pilot evidence changed after planning."
+        }
+    }
     $studentGatePilotEvidenceSnapshot = $null
     if ($runtime.Mode -ceq "student-gate-global-on") {
         $studentGatePilotEvidenceSnapshot = Read-StrictJsonSnapshot `
@@ -4253,6 +4613,13 @@ function Invoke-RuntimeConfigApply {
             -WorkerTaskDefinitionArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
             -RuntimeConfigurationSha256 (Get-ManagedRuntimeFingerprint `
                 -TaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api") -Now $Now)
+    }
+    if ($runtime.Mode -ceq "scheduled-classroom-observe") {
+        [void](Assert-ScheduledClassroomPilotEvidence `
+            -EvidenceSnapshot $scheduledClassroomEvidenceSnapshot `
+            -PilotSchoolId ([string]$runtime.PilotSchoolId) `
+            -ToolSha ([string]$Plan.toolSha) -AppSha ([string]$Plan.appSha) `
+            -ImageDigest ([string]$Plan.imageDigest) -Now $Now)
     }
     if ($runtime.Mode -ceq "student-gate-global-on") {
         $sourceContainer = @($snapshot.ApiTask.taskDefinition.containerDefinitions | Where-Object name -CEQ "api")
@@ -4823,6 +5190,7 @@ function Invoke-Main {
                 -PrivateManagedTestWaiverPath $ManagedTestWaiverPath `
                 -PrivateTrackingPilotEvidencePath $TrackingPilotEvidencePath `
                 -PrivateStudentGatePilotEvidencePath $StudentGatePilotEvidencePath `
+                -PrivateScheduledClassroomPilotEvidencePath $ScheduledClassroomPilotEvidencePath `
                 -PrivateFastPreviewCandidateReceiptPath $FastPreviewCandidateReceiptPath `
                 -PrivateFastPreviewPilotEvidencePath $FastPreviewPilotEvidencePath `
                 -EvidenceRoot $ExternalEvidenceRoot `

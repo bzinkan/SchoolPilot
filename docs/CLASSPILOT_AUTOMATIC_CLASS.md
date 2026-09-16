@@ -76,11 +76,16 @@ conditions. Pending authority is never presented as a successful transition.
 3. Verify the live Chrome Web Store version before selecting a successor version,
    then follow the separate ClassPilot packaging/review/adoption procedure.
    SchoolPilot deployment does not publish the extension.
-4. For an authorized canary, set `CLASSPILOT_SCHEDULED_CLASSROOM_MODE=on` and
-   `CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS` to the intended school IDs on both
-   API and worker. Missing mode defaults off; a malformed allowlist fails closed.
-   An omitted/empty allowlist with mode on enables the rollout for all schools.
-   Keep existing protocol-v3 and scoped-authority capability gates enabled.
+4. Activate through the guarded schema-v7 profiles documented in
+   [CLASSPILOT_SCHEDULED_CLASSROOM_ROLLOUT.md](CLASSPILOT_SCHEDULED_CLASSROOM_ROLLOUT.md):
+   `scheduled-classroom-observe`, then `scheduled-classroom-retain`, with
+   `scheduled-classroom-off` as the reconciler. One governed Plan/Apply writes the
+   capability control, the rollout entry and all four runtime values to both API
+   and worker, deriving both school lists from the profile's single
+   `pilotSchoolId`. Do not set these by hand: an omitted or empty allowlist means
+   every school to the server-side readers, and a hand-edited pair is what the
+   guarded profile exists to prevent. Keep existing protocol-v3 and
+   scoped-authority capability gates enabled.
 5. Rehearse Homeroom → 9:11–9:15 testing → actual next class with a connected
    assigned teacher and compatible Chromebook. Verify rendered tiles and a real
    classroom action in addition to backend lifecycle receipts. Check separate
