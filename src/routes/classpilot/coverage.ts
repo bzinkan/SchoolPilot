@@ -79,6 +79,7 @@ import {
 import { scheduledSupervisionSource, scheduledContextHasClassroomTools, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { SCHEDULED_CLASSROOM_COMMANDS } from "../../services/classpilotDashboardActivity.js";
 import { classpilotSupervisionPreviewObserved } from "../../config/classpilotSupervisionPreviewRollout.js";
+import { getClasspilotStudentControlStates } from "../../services/storage.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   classpilotRealtimeFresh,
@@ -837,6 +838,7 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     tabSnapshot: status.tabSnapshot,
     tabSnapshotRevision: status.tabSnapshotRevision,
     extensionVersion: status.extensionVersion,
+    realtimeBinding: status.realtimeBinding,
     capabilities: status.capabilities,
     acceptedCapabilities: status.acceptedCapabilities,
     operatorCapabilities: status.operatorCapabilities,
@@ -1832,6 +1834,10 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
     );
     const staffById = new Map(staffRows.map((row) => [row.userId, row.user]));
     const contextsById = new Map(contexts.map((context) => [context.id, context]));
+    // The exact-binding tile cohort key is inert without these two: bindings
+    // read as empty and control revisions as unknown, so no pixel validates.
+    const controlStates = await getClasspilotStudentControlStates(schoolId, rows.map((row) => row.studentId));
+    const controlRevisionByStudent = new Map(controlStates.map((state) => [state.studentId, state.revision]));
     const statuses = await hydrateClasspilotCoverageStatuses({
       schoolId,
       studentIds: rows.map((row) => row.studentId),
@@ -1859,6 +1865,9 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
         // view has no other source for it.
         contextAuthorityRevision: context?.classroomAuthorityRevision ?? null,
         contextEndsAt: context?.endsAt ?? null,
+        classroomState: controlRevisionByStudent.has(row.studentId)
+          ? { revision: controlRevisionByStudent.get(row.studentId)! }
+          : null,
       };
     });
     return res.json({ schoolId, viewerId: req.authUser!.id, students });

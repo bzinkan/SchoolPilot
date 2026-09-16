@@ -11,6 +11,8 @@ import {
 import { getActiveSessionsForStudents } from "./storage.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 
+import { classpilotPublicRealtimeBinding } from "./classpilotRealtimeStatus.js";
+
 export type ClasspilotCoverageStatus = {
   status: "online" | "idle" | "offline";
   isLoggedIn: boolean;
@@ -29,6 +31,8 @@ export type ClasspilotCoverageStatus = {
   tabSnapshotRevision: number | null;
   extensionVersion: string | null;
   clientProtocolVersion: number | null;
+  /** Opaque per-session binding the tile cohort key re-keys on. */
+  realtimeBinding: string | null;
   capabilities: {
     exactTabCloseV1: boolean;
     exactTabCloseV2: boolean;
@@ -152,6 +156,7 @@ function publicStatus(
           : "offline",
     isLoggedIn,
     loginState: isLoggedIn ? "logged_in" : "not_logged_in",
+    realtimeBinding: session ? classpilotPublicRealtimeBinding(session.id) : null,
     lastSeenAt,
     activeTabTitle: realtime?.activeTabTitle || "",
     activeTabUrl: realtime?.activeTabUrl || "",

@@ -88,7 +88,7 @@ test('malformed and over-limit enabled observation scopes fail private', async (
   );
   assert.match(
     dashboard,
-    /screenshotTileReadsEnabled = \(\(studentView === 'class' && Boolean\(effectiveActivityId\)\)[\s\S]{0,100}Boolean\(claimedPreviewContext\)\)/,
+    /screenshotTileReadsEnabled = studentView === 'claimed'[\s\S]{0,200}studentView === 'class' && Boolean\(effectiveActivityId\)/,
     'a live class must still ask the server for independently authorized V2 screenshots',
   );
 });
@@ -388,7 +388,7 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   assert.match(dashboard, /useObservationLease\(/);
   assert.match(
     dashboard,
-    /return studentView === 'class' \|\| claimedPreviewContext \? \{ kind: 'class' \} : null/,
+    /return studentView === 'class' \|\| claimedPreviewActive \? \{ kind: 'class' \} : null/,
     'Class view must keep one exact full-class observation lease even when presentation filters change',
   );
   assert.match(lease, /observation-lease/);
@@ -485,7 +485,7 @@ test('authorization loss purges active tile caches without retaining denied pixe
   );
   assert.match(
     dashboard,
-    /screenshotTileReadsEnabled = \(\(studentView === 'class'[\s\S]{0,240}!\['denied', 'ineligible', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)/,
+    /screenshotTileReadsEnabled = studentView === 'claimed'[\s\S]{0,320}!\['denied', 'ineligible', 'paused_unobserved'\]\.includes\(observationLeaseStatus\)/,
     'terminal denial and a paused observation must disable full and targeted screenshot reads',
   );
   assert.match(
@@ -729,33 +729,36 @@ test('enabled observation scopes remain pending across A to B to A until their e
     'an enabled exact context must stay pending until that context records its own lease response',
   );
   assert.match(lease, /if \(stopped\) return;/);
-  assert.match(dashboard, /enabled: \(studentView === 'class' && Boolean\(effectiveActivity\?\.id\)\) \|\| Boolean\(claimedPreviewContext\)/);
+  // The Class lease is the class activity's alone; Claimed is served by one
+  // lease per claimed context instead.
+  assert.match(dashboard, /enabled: studentView === 'class' && Boolean\(effectiveActivity\?\.id\),/);
   assert.match(dashboard, /enabled: screenshotTileReadsEnabled/);
   assert.match(dashboard, /enabled: historyTileReadsEnabled/);
   assert.match(tile, /screenshotObservationStatus === 'pending'/);
   assert.match(tile, /Authorizing screen preview…/);
 });
 
-test('claimed previews use a supervision-context lease and never the class frozen-roster lease', async () => {
+test('every claimed group holds its own supervision-context lease, never the class frozen-roster lease', async () => {
   const dashboard = await readFile(
     new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
     'utf8',
   );
 
-  // Claimed is observable only through a lease held on the single claimed
-  // supervision context. With no such context it still fails closed to denied.
-  assert.match(dashboard, /studentView === 'claimed' && !claimedPreviewContext[\s\S]{0,80}\? 'denied'/);
-  assert.match(dashboard, /claimedPreviewContext = studentView === 'claimed' && displaySupervisionContexts\.length === 1/);
-  assert.match(dashboard, /previewAuthority = claimedPreviewContext[\s\S]{0,120}supervisionContextId: claimedPreviewContext\.id/);
-  // The class activity's authority is never what a Claimed read presents.
-  assert.match(dashboard, /authority: previewAuthority,[\s\S]{0,80}contextAuthorityRevision: previewAuthorityRevision/);
-  assert.match(dashboard, /screenshotTileReadsEnabled = \(\(studentView === 'class' && Boolean\(effectiveActivityId\)\)\s*\|\| Boolean\(claimedPreviewContext\)\)/);
+  // Every claimed group holds its own lease, so one group's denial cannot blank
+  // another's tiles, and a student with no context still fails closed.
+  assert.match(dashboard, /claimedPreviewContexts = useMemo\(\(\) => \([\s\S]{0,200}displaySupervisionContexts\.filter/);
+  assert.match(dashboard, /<ClaimedContextLease[\s\S]{0,200}supervisionContextId: context\.id|supervisionContextId: context\.id/);
+  assert.match(dashboard, /claimedStudentObservationStatus = useCallback\(student => \{[\s\S]{0,260}if \(!contextId\) return 'denied';/);
+  assert.match(dashboard, /return claimedLeaseStatuses\[contextId\] \|\| 'pending';/);
+  // Each claimed batch carries its own context and revision, never the class one.
+  assert.match(dashboard, /supervisionContextId: context\.id,[\s\S]{0,80}contextAuthorityRevision: context\.contextAuthorityRevision/);
+  assert.match(dashboard, /screenshotTileReadsEnabled = studentView === 'claimed'/);
   assert.match(dashboard, /historyTileReadsEnabled = studentView !== 'available'[\s\S]{0,80}observationReadsAllowed/);
   assert.match(
     dashboard,
     /if \(studentView === 'class'\) return;[\s\S]{0,300}purgeLegacyScreenshotTileCaches\(queryClient\)/,
   );
-  assert.match(dashboard, /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,240}studentView !== 'class'/);
+  assert.match(dashboard, /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,320}claimedTileStatus !== 'observed'[\s\S]{0,200}studentView !== 'class'/);
 });
 
 test('A to B switches replace the complete realtime routing context before queued events can flush', async () => {
