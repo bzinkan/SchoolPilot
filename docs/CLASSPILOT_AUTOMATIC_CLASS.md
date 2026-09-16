@@ -34,9 +34,13 @@ the assigned staff member, current entitlement and the enabled rollout. No
 synthetic teaching session is created for testing. Observe remains read-only.
 
 The extension negotiates `scheduledClassroomV1`, dependent on
-`scopedAuthorityChecksV1`. Full testing tools include messages/replies, raised
-hands, polls, timers, settings, Live View, preview capture and ordinary authorized
-class commands. Unsupported clients show an update requirement. Neither version
+`scopedAuthorityChecksV1`. Testing tools include messages/replies, raised
+hands, polls, timers, settings, preview capture and ordinary authorized
+class commands. Live View remains backend-only in this release: its authority and
+extension protocol support are retained, but the Dashboard does not expose start,
+expand or stop controls, including when the scheduled-classroom rollout is enabled.
+Automatic screen previews, Tabs and Details remain available. Unsupported clients
+show an update requirement. Neither version
 text nor a Dashboard tab establishes authority. Media, overlays and delayed
 commands remain bound to the exact student/session and activity; old class images
 are never used as a fallback after a handoff.

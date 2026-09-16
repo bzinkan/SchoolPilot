@@ -648,8 +648,8 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   );
   assert.match(
     dashboardSource,
-    /const LEGACY_LIVE_VIEW_UI_ENABLED = false;/,
-    "legacy WebRTC stays dormant; scheduled classrooms require capability negotiation",
+    /const LIVE_VIEW_UI_ENABLED = false;/,
+    "Dashboard WebRTC stays dormant for both regular and scheduled classrooms",
   );
   assert.match(
     dashboardSource,
@@ -4332,7 +4332,7 @@ test('automatic scheduled Class expires private during failed refresh and retrie
 });
 
 
-test('scheduled classroom tools use one supervision authority and drop outgoing media and dialogs at handoff', { timeout: 90_000 }, async context => {
+test('scheduled classroom tools retain passive previews without Live View and close outgoing dialogs at handoff', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
@@ -4370,15 +4370,12 @@ test('scheduled classroom tools use one supervision authority and drop outgoing 
   await waitUntil(() => harness.tileRequests.some(row => row.pathname.endsWith('/screenshots')), 'Scheduled tiles load screenshot batches');
   assert.ok(harness.tileRequests.every(row => row.body.supervisionContextId === OWN_TESTING_CONTEXT_ID && !row.body.teachingSessionId && row.contextAuthorityRevision === '0'));
   assert.ok(harness.observationLeaseRequests.some(row => row.method === 'PUT' && row.pathname.includes(OWN_TESTING_CONTEXT_ID) && row.schoolId === SCHOOL_ID && row.contextAuthorityRevision === '0'));
-  await page.getByTestId(`button-live-view-${STUDENT_ID}`).click();
-  await waitUntil(() => harness.websocketMessages.some(row => row.type === 'request-stream'), 'Live View starts with an exact context');
-  const requestStream = harness.websocketMessages.find(row => row.type === 'request-stream');
-  assert.equal(requestStream.supervisionContextId, OWN_TESTING_CONTEXT_ID);
-  assert.equal(requestStream.contextAuthorityRevision, '0');
-  assert.equal(requestStream.teachingSessionId, undefined);
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`button-live-view-${STUDENT_ID}`).count(), 0, 'Scheduled testing must not expose View or Stop controls');
+  assert.equal(await page.getByTestId(`button-expand-${STUDENT_ID}`).count(), 0, 'Scheduled testing must not expose expanded Live View');
+  assert.equal(await page.getByTestId('video-portal').count(), 0);
   await harness.sendWebSocketMessage({ type: 'live-view-requested', schoolId: SCHOOL_ID, supervisionContextId: OWN_TESTING_CONTEXT_ID,
     studentId: STUDENT_ID, contextAuthorityRevision: '0', negotiationId: 'scheduled-negotiation' });
-  await waitUntil(() => harness.websocketMessages.some(row => row.type === 'offer'), 'Negotiated offer retains the exact context');
   const openTools = async () => page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
   await openTools();
   await page.getByRole('button', { name: 'Timer', exact: true }).click();
@@ -4416,7 +4413,7 @@ test('scheduled classroom tools use one supervision authority and drop outgoing 
   await page.getByTestId('scheduled-class-banner').getByText('No class active', { exact: true }).waitFor();
   assert.equal(await page.getByTestId('dialog-send-message').count(), 0);
   assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 0);
-  assert.ok(harness.websocketMessages.some(row => row.type === 'stop-share' && row.supervisionContextId === OWN_TESTING_CONTEXT_ID));
+  assert.equal(harness.websocketMessages.some(row => ['request-stream', 'offer', 'ice'].includes(row.type)), false, 'Dormant Dashboard must not negotiate Live View even for a supported scheduled assignment');
   assert.equal(commandRequests.filter(row => row.commandType === 'teacher-message').length, 0);
   assert.deepEqual(harness.pageErrors, []);
 });

@@ -175,9 +175,9 @@ const SESSION_SUBSCRIPTION_RETRY_MS = Object.freeze([1_000, 2_000, 5_000, 10_000
 const SCREENSHOT_EVENT_COALESCE_MS = 1_000;
 const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;
 const SCREENSHOT_EVENT_MAX_CONCURRENCY = 3;
-// The WebRTC implementation remains dormant for a future managed-Chromebook
-// validation, but screenshots are the only student-tile viewing surface.
-const LEGACY_LIVE_VIEW_UI_ENABLED = false;
+// Retain the WebRTC integration without exposing it in the Dashboard.
+// Scheduled classrooms also use passive screenshots as their viewing surface.
+const LIVE_VIEW_UI_ENABLED = false;
 const CLASSROOM_SELECTION_STORAGE_PREFIX = "classpilot:classroom-selection:v1";
 const classroomSelectionCache = new Map();
 
@@ -496,7 +496,6 @@ export default function Dashboard() {
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
-  const LIVE_VIEW_UI_ENABLED = scheduledClassEnabled || LEGACY_LIVE_VIEW_UI_ENABLED;
   const activeSessionQueryKey = useMemo(
     () => ['/api/sessions/active', activeSchoolId, currentUser?.id],
     [activeSchoolId, currentUser?.id],
@@ -1882,6 +1881,7 @@ export default function Dashboard() {
               }
             }
             if (message.type === 'live-view-requested') {
+              if (!LIVE_VIEW_UI_ENABLED) return;
               if (!classRealtimeMessageEligibility(message)) return;
               void webrtc.handleLiveViewRequested(
                 message.studentId,
@@ -1892,6 +1892,7 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'live-view-busy' || message.type === 'live-view-unavailable') {
+              if (!LIVE_VIEW_UI_ENABLED) return;
               if (!classRealtimeMessageEligibility(message)) return;
               if (activeLiveViewStudentIdRef.current !== message.studentId) return;
               webrtc.stopLiveView(message.studentId);
@@ -1904,10 +1905,12 @@ export default function Dashboard() {
               });
             }
             if (message.type === 'answer') {
+              if (!LIVE_VIEW_UI_ENABLED) return;
               if (!classRealtimeMessageEligibility(message)) return;
               webrtc.handleAnswer(message.from, message.sdp, message.negotiationId);
             }
             if (message.type === 'ice') {
+              if (!LIVE_VIEW_UI_ENABLED) return;
               if (!classRealtimeMessageEligibility(message)) return;
               webrtc.handleIceCandidate(message.from, message.candidate, message.negotiationId);
             }
@@ -2656,6 +2659,7 @@ export default function Dashboard() {
   };
 
   const handleStartLiveView = async (studentId, studentName) => {
+    if (!LIVE_VIEW_UI_ENABLED) return;
     if (!wsAuthenticated) {
       toast({ title: "Not Ready", description: "Please wait for connection to be established", variant: "destructive" });
       return;

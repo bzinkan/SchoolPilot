@@ -219,7 +219,7 @@ test('subgroup membership queries are fenced by group and subgroup identity', as
   assert.equal(calls[0][3].signal, signal);
 });
 
-test('legacy Live View stays gated while scheduled classrooms negotiate explicit authority', async () => {
+test('Live View stays dormant in every Dashboard activity while passive previews remain available', async () => {
   const [dashboard, tile, portal, sidebar] = await Promise.all([
     readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/products/classpilot/components/StudentTile.jsx', import.meta.url), 'utf8'),
@@ -227,10 +227,15 @@ test('legacy Live View stays gated while scheduled classrooms negotiate explicit
     readFile(new URL('../src/products/classpilot/components/ClassPilotSidebar.jsx', import.meta.url), 'utf8'),
   ]);
 
-  assert.equal(dashboard.match(/<VideoPortal/g)?.length, 1, 'dashboard must render exactly one Live View portal');
-  assert.match(dashboard, /const LEGACY_LIVE_VIEW_UI_ENABLED = false;/);
+  assert.equal(dashboard.match(/<VideoPortal/g)?.length, 1, 'retain one dormant Live View portal integration');
+  assert.match(dashboard, /const LIVE_VIEW_UI_ENABLED = false;/);
+  assert.doesNotMatch(dashboard, /LIVE_VIEW_UI_ENABLED = scheduledClassEnabled/);
   assert.match(dashboard, /LIVE_VIEW_UI_ENABLED && dashboardCapabilities\.canUseLiveView && liveViewState\.expanded/);
   assert.match(dashboard, /onStartLiveView=\{LIVE_VIEW_UI_ENABLED &&/);
+  assert.match(dashboard, /onStopLiveView=\{LIVE_VIEW_UI_ENABLED &&/);
+  assert.match(dashboard, /onExpandLiveView=\{LIVE_VIEW_UI_ENABLED \?/);
+  assert.match(dashboard, /if \(message\.type === 'live-view-requested'\) \{\s*if \(!LIVE_VIEW_UI_ENABLED\) return;/);
+  assert.match(dashboard, /const handleStartLiveView = async \(studentId, studentName\) => \{\s*if \(!LIVE_VIEW_UI_ENABLED\) return;/);
   assert.doesNotMatch(tile, /<VideoPortal|querySelector|portal-video-slot/);
   assert.doesNotMatch(portal, /querySelector|portal-video-slot/);
   assert.match(portal, /stream=|srcObject = stream/);
