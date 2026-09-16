@@ -358,7 +358,8 @@ async function waitForClassEditorFocus(page, id) {
   await page.waitForFunction(classId => document.querySelector(`[data-class-editor-id="${classId}"]`)?.contains(document.activeElement), id);
 }
 
-async function addTestingBlock(dialog, index, teacher) {    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+async function addTestingBlock(dialog, index, teacher) {
+    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
   await dialog.getByLabel(`Testing block ${index} name`, { exact: true }).fill(`${teacher[0].toUpperCase()}${teacher.slice(1)} MAP`);
   await dialog.getByLabel(`Testing block ${index} Supervision group`, { exact: true }).selectOption(`${teacher}-group`);
   await dialog.getByLabel(`Testing block ${index} assigned staff`, { exact: true }).selectOption(teacher);
@@ -809,7 +810,8 @@ test('Preview-date drafts retain revisions and selections, and duplication and S
     await workspace.getByRole('button', { name: 'Edit profile', exact: true }).click();
     await date.fill('2026-09-14');
     await workspace.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('3');
-    await workspace.getByLabel('Find a class or teacher', { exact: true }).fill('Zinkan');    assert.equal(await date.inputValue(), '2026-09-14');
+    await workspace.getByLabel('Find a class or teacher', { exact: true }).fill('Zinkan');
+    assert.equal(await date.inputValue(), '2026-09-14');
     assert.equal(await workspace.getByLabel('Find a class or teacher', { exact: true }).inputValue(), 'Zinkan');
     assert.equal(await workspace.getByRole('combobox', { name: 'Review grade', exact: true }).inputValue(), '3');
     await workspace.getByRole('button', { name: 'List', exact: true }).click();
@@ -877,7 +879,8 @@ test('Testing groups retain explicit page selections, enforce the total limit, a
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await workspace.getByLabel('Profile name', { exact: true }).fill('Whole-school MAP');
-    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();    assert.equal(await workspace.locator('[data-class-editor-id]').count(), 0, 'Closed row editors have no reachable controls');
+    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    assert.equal(await workspace.locator('[data-class-editor-id]').count(), 0, 'Closed row editors have no reachable controls');
     await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).first().click();
     const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
     await picker.getByRole('button', { name: 'Select this page', exact: true }).click();
@@ -980,7 +983,8 @@ test('Inline group creation preserves the profile and picker drafts through canc
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await workspace.getByLabel('Profile name', { exact: true }).fill('Inline MAP draft');
-    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();    await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).first().click();
+    await workspace.getByRole('button', { name: 'Load regular schedule', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Add testing groups', exact: true }).first().click();
     const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
     await picker.getByLabel('Common testing start', { exact: true }).fill('09:30');
     await picker.getByRole('button', { name: 'Create group', exact: true }).click();
@@ -1093,7 +1097,8 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await dialog.getByLabel('Grade 3 Math profile start').fill('08:15');
     await dialog.getByLabel('Grade 3 Math profile end').fill('09:00');
     await editClass(dialog, 'Grade 3 Reading');
-    await dialog.getByLabel('Grade 3 Reading schedule action').selectOption('skip');    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+    await dialog.getByLabel('Grade 3 Reading schedule action').selectOption('skip');
+    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
     await dialog.getByLabel('Testing block 1 name', { exact: true }).fill('MAP testing');
     await dialog.getByLabel('Testing block 1 Supervision group', { exact: true }).selectOption('map');
     assert.deepEqual(await dialog.getByLabel('Testing block 1 assigned staff', { exact: true }).locator('option').allTextContents(), ['Choose group staff', 'Ms. Rivera', 'Mr. Lane']);
@@ -1526,7 +1531,8 @@ test('Draft review discards stale date and definition responses and keeps incomp
   try {
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     await dialog.getByLabel('Profile name', { exact: true }).fill('Draft checks');
-    await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Start blank', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Add testing block', exact: true }).click();
     await check.getByText('Draft review is incomplete.', { exact: true }).waitFor();
     assert.equal(await check.getByText('No blocking conflicts on this preview date.', { exact: true }).count(), 0);
     await dialog.getByRole('button', { name: 'Save profile', exact: true }).click();
@@ -1611,10 +1617,12 @@ test('Saving opens the exact returned profile even if catalog refresh or saved r
     assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0, 'A reference-day review never authorizes an application');
     await dialog.getByRole('button', { name: 'Preview application', exact: true }).click();
     await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
-    assert.equal(previews[0].profileId, control.savedProfile.id); assert.equal(previews[0].profileRevision, control.savedProfile.revision); assert.equal(previews[0].revision, catalog.revision);    await dialog.getByLabel('Preview schedule for', { exact: true }).fill('2026-09-11');
+    assert.equal(previews[0].profileId, control.savedProfile.id); assert.equal(previews[0].profileRevision, control.savedProfile.revision); assert.equal(previews[0].revision, catalog.revision);
+    await dialog.getByLabel('Preview schedule for', { exact: true }).fill('2026-09-11');
     await review.getByRole('combobox', { name: 'Review grade', exact: true }).selectOption('4');
     assert.equal(await dialog.getByRole('region', { name: 'Profile application preview', exact: true }).count(), 1, 'Actual dates remain clearly labelled beside the profile preview');
-    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 1);    await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
+    assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 1);
+    await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).waitFor();
     assert.equal(previews.length, 1, 'Reference-date and view filters do not change an already reviewed application');
     await dialog.getByLabel('Add an individual date', { exact: true }).fill('2026-09-09'); await dialog.getByRole('button', { name: 'Add selected date', exact: true }).click();
     assert.equal(await dialog.getByRole('button', { name: 'Apply reviewed dates', exact: true }).count(), 0);
@@ -1628,7 +1636,8 @@ test('Saving opens the exact returned profile even if catalog refresh or saved r
     assert.equal(previews.at(-1).definition.classRules[0].startTime, '10:25');
     assert.deepEqual(previews.at(-1).dates, ['2026-09-08', '2026-09-09']);
     const beforeGroup = structuredClone(previews.at(-1)), reviewsBeforeGroup = reviews.length;
-    control.failCatalogRefresh = false;    await dialog.getByRole('button', { name: 'Add testing groups', exact: true }).first().click();
+    control.failCatalogRefresh = false;
+    await dialog.getByRole('button', { name: 'Add testing groups', exact: true }).first().click();
     const picker = page.getByRole('dialog', { name: 'Add testing groups', exact: true });
     await picker.getByRole('button', { name: 'Create group', exact: true }).click();
     const groupEditor = page.getByRole('dialog', { name: 'Create Supervision Group', exact: true });
@@ -2829,4 +2838,51 @@ test('A delayed history deletion response cannot alter the new school after a sc
     assert.equal(await page.getByText(/History entry deleted|list refresh unavailable/).count(), 0, 'A completed old-school request cannot write a success or refresh-error notice in the new school');
     assert.deepEqual(errors, []);
   } finally { finishDelete?.(); await browser.close(); await vite.close(); }
+});
+
+test('Applying onto a date that already has custom schedules needs an explicit acknowledgement', { timeout: 120_000 }, async context => {
+  const { browser, vite, page, catalog, control, previews, applies, errors } = await createClassPlacementFixture(context);
+  try {
+    catalog.profiles = [classPlacementProfile()];
+    // A varying token models a genuinely new preview; an identical one would
+    // legitimately keep the acknowledgement, because nothing changed.
+    control.previewResponse = () => ({ json: { previewToken: `occupied-${previews.length}`, schoolTimezone: catalog.schoolTimezone,
+      affectedClasses: 1, blockers: [], changes: [], testingWindows: [],
+      warnings: [
+        { code: 'SCHEDULE_APPLICATION_ALREADY_APPLIED', message: 'Fall MAP Day 1 is already applied to this date.',
+          date: '2026-09-11', applicationId: 'application_existing', profileName: 'Fall MAP Day 1', testingBlockNames: ['MAP Reading'] },
+      ] } });
+    await page.reload(); await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Choose dates & apply Class placement day', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByLabel('Add an individual date', { exact: true }).fill('2026-09-11');
+    await workspace.getByRole('button', { name: 'Add selected date', exact: true }).click();
+    await workspace.getByRole('button', { name: 'Preview application', exact: true }).click();
+    const warning = workspace.getByRole('region', { name: 'Custom schedules already applied', exact: true });
+    await warning.waitFor();
+    // The weekday is what an administrator recognises, and the existing testing
+    // block is named so they can tell which schedule is already there.
+    assert.match(await warning.innerText(), /Friday, September 11, 2026/);
+    assert.match(await warning.innerText(), /Fall MAP Day 1/);
+    assert.match(await warning.innerText(), /MAP Reading/);
+    const applyButton = workspace.getByRole('button', { name: 'Apply reviewed dates', exact: true });
+    await applyButton.waitFor();
+    assert.equal(await applyButton.isDisabled(), true, 'Apply stays blocked until the existing schedules are acknowledged');
+    const acknowledgement = warning.getByRole('checkbox');
+    await acknowledgement.check();
+    assert.equal(await applyButton.isDisabled(), false);
+    // Re-previewing must clear the acknowledgement: it is keyed to the token.
+    await workspace.getByRole('button', { name: 'Preview application', exact: true }).click();
+    await warning.waitFor();
+    assert.equal(await warning.getByRole('checkbox').isChecked(), false, 'A fresh preview must be acknowledged again');
+    assert.equal(await applyButton.isDisabled(), true);
+    await warning.getByRole('checkbox').check();
+    await applyButton.click();
+    await workspace.waitFor({ state: 'hidden' });
+    assert.equal(applies.length, 1);
+    assert.equal(applies[0].acknowledgeExistingApplications, true, 'The server re-checks, so the acknowledgement must be sent');
+    assert.deepEqual(applies[0].dates, ['2026-09-08', '2026-09-11']);
+    assert.ok(previews.length >= 2);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
 });

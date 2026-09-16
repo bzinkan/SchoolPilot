@@ -49,11 +49,21 @@ router.delete("/:id", async (req, res, next) => {
 });
 router.post("/apply", async (req, res, next) => {
   try {
-    const result = await applyScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, profileId: req.body.profileId, profileRevision: req.body.profileRevision, dates: req.body.dates, definition: req.body.definition, previewToken: req.body.previewToken });
+    const acknowledge = req.body.acknowledgeExistingApplications;
+    if (acknowledge !== undefined && typeof acknowledge !== "boolean") {
+      throw schedulingError("acknowledgeExistingApplications must be a boolean.", "SCHEDULE_PROFILE_INVALID", 400);
+    }
+    const result = await applyScheduleProfile({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, revision: req.body.revision, profileId: req.body.profileId, profileRevision: req.body.profileRevision, dates: req.body.dates, definition: req.body.definition, previewToken: req.body.previewToken, acknowledgeExistingApplications: acknowledge });
     await logAudit({ schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.schedule_profile.applied", entityType: "schedule_profile_application", entityId: result.application.id, metadata: { profileId: result.application.profileId, profileRevision: result.application.profileRevision, dateCount: result.application.dates.length, testingWindows: result.application.testingWindows.length } });
     await broadcastClasspilotScheduleChangeUpdate({ schoolId: res.locals.schoolId!, revision: result.revision }).catch(() => undefined);
     res.status(201).json(result);
-  } catch (error) { next(error); }
+  } catch (error) {
+    const failure = error as Error & { code?: string; warnings?: unknown };
+    if (failure?.code === "SCHEDULE_EXISTING_APPLICATIONS") {
+      return res.status(409).json({ error: failure.message, code: failure.code, warnings: failure.warnings ?? [] });
+    }
+    next(error);
+  }
 });
 router.post("/applications/:id/cancel", async (req, res, next) => {
   try {

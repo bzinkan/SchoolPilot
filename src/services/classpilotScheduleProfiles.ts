@@ -19,7 +19,15 @@ import { applicationCancellation, applicationHistoryRemoval, createApplicationTi
 
 type Database = typeof db;
 type Blocker = { code: string; message: string; date?: string };
+/**
+ * Advisory, never blocking. Two applications may legitimately share a date - the
+ * hard rules only refuse a shared staff member or student on overlapping times -
+ * so stacking them is allowed but should never be accidental.
+ */
+export type ApplyWarning = { code: string; message: string; date: string; applicationId: string;
+  profileName: string; testingBlockNames: string[] };
 type ProfileRequest = { schoolId: string; revision: number; profileId: string; profileRevision: number; dates: string[]; definition?: unknown; actorId: string; now?: Date };
+const warningKey = (warning: ApplyWarning) => warning.applicationId + ":" + warning.date;
 function fail(message: string, code = "SCHEDULE_PROFILE_INVALID", status = 400): never { throw schedulingError(message, code, status); }
 function revision(value: number) { if (!Number.isSafeInteger(value) || value < 0) fail("A current schedule revision is required."); }
 function stable(value: unknown): string {
@@ -305,10 +313,28 @@ async function buildPreview(options: ProfileRequest, database: Database = db) {
   blockers.push(...studentReview.blockers);
   if (!changes.length && !testingWindows.length) block("No eligible class meetings or testing blocks were found on these dates.");
   const uniqueBlockers = [...new Map(blockers.map((b) => [b.code + ":" + b.date + ":" + b.message, b])).values()].slice(0, 100);
+  // historyHiddenAt is overview visibility only; a hidden application is still
+  // operational, so it must still be named here.
+  const requestedDates = new Set(dates);
+  const warnings: ApplyWarning[] = (data.context.config.profileApplications ?? [])
+    .filter((existing) => existing.status === "scheduled" && existing.id !== application.id)
+    .flatMap((existing) => existing.dates.filter((date) => requestedDates.has(date)).map((date) => ({
+      code: "SCHEDULE_APPLICATION_ALREADY_APPLIED",
+      // No student identifiers: preview summaries must never carry them.
+      message: `${existing.profileName} is already applied to this date.`,
+      date,
+      applicationId: existing.id,
+      profileName: existing.profileName,
+      testingBlockNames: existing.testingWindows
+        .filter((window) => window.date === date && !isScheduleProfileBlockCancelled(existing, date, window.blockId))
+        .map((window) => window.name),
+    })))
+    .sort((left, right) => left.date.localeCompare(right.date) || left.profileName.localeCompare(right.profileName))
+    .slice(0, 100);
   const previewToken = digest({ revision: data.context.revision, application, scheduling: scheduling.previewToken, testing: testingValidation.fingerprint, students: studentReview.fingerprint, classes: data.classes, staff: data.staff, groups: data.supervisionGroups, classMembers: data.classMembers, coTeachers: data.coTeachers, activeContexts: data.activeContexts, supervisedStudents: data.supervisedStudents, today });
   return { revision: data.context.revision, previewToken, blockers: uniqueBlockers, changes, classResults, testingWindows: testingWindows.map(w => ({ ...w,
     afterTesting: studentReview.afterTesting.find(s => s.blockId === w.blockId && s.date === w.date) })),
-    studentConflicts: studentReview.studentConflicts, studentReviewComplete: studentReview.complete,
+    studentConflicts: studentReview.studentConflicts, studentReviewComplete: studentReview.complete, warnings,
     affectedClasses: new Set(changes.map((c) => c.classId)).size, schoolTimezone: data.schoolTimezone, application, config };
 }
 export async function previewScheduleProfile(options: ProfileRequest) {
@@ -317,13 +343,25 @@ export async function previewScheduleProfile(options: ProfileRequest) {
     return publicPreview;
   }, { isolationLevel: "repeatable read" });
 }
-export async function applyScheduleProfile(options: ProfileRequest & { previewToken: string }) {
+export async function applyScheduleProfile(options: ProfileRequest & { previewToken: string; acknowledgeExistingApplications?: boolean }) {
   if (!/^[a-f0-9]{64}$/.test(options.previewToken)) fail("Review a current preview before applying a profile.");
   return locked(options.schoolId, options.actorId, async (database) => {
     const validationStarted = Date.now(), checkedAt = options.now ?? new Date();
     const preview = await buildPreview({ ...options, now: checkedAt }, database);
     if (preview.previewToken !== options.previewToken) fail("The schedule, roster, or staff changed. Preview this application again.", "SCHEDULE_PREVIEW_STALE", 409);
     if (preview.blockers[0]) fail(preview.blockers[0].message, preview.blockers[0].code, 409);
+    // Re-derived inside the transaction rather than trusted from the preview, so
+    // a second administrator's application landing in between is still caught.
+    if (preview.warnings.length > 0 && options.acknowledgeExistingApplications !== true) {
+      throw Object.assign(
+        schedulingError(
+          "Other custom schedules are already applied to these dates. Review them and confirm to proceed.",
+          "SCHEDULE_EXISTING_APPLICATIONS",
+          409,
+        ),
+        { warnings: preview.warnings, expose: true },
+      );
+    }
     const commitAt = new Date(checkedAt.getTime() + Date.now() - validationStarted);
     const starts = preview.changes.flatMap((change) => [change.before, change.after].filter((window): window is BellWindow => Boolean(window)).map((window) => localDateTimeUtc(change.date, window.startTime, preview.schoolTimezone)));
     starts.push(...preview.testingWindows.map((window) => localDateTimeUtc(window.date, window.startTime, preview.schoolTimezone)));

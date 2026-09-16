@@ -205,6 +205,13 @@ test("a previous testing application cannot mask new class conflicts after its g
   const placement = await save(data, { ...data.definition, classRules: [{ classId: data.classId, action: "time", startTime: "10:00", endTime: "10:30" }] }, applied.revision);
   const before = await scoped(data.schoolId, () => service.previewScheduleProfile(request(data, placement)));
   assert.deepEqual(before.blockers, []);
+  // Stacking onto an occupied date stays legal, but must never be silent.
+  assert.deepEqual(before.warnings.map(warning => [warning.code, warning.date, warning.profileName, warning.testingBlockNames]),
+    [["SCHEDULE_APPLICATION_ALREADY_APPLIED", date, "Earlier testing", ["Existing MAP"]]]);
+  assert.equal(JSON.stringify(before.warnings).includes(data.studentId), false);
+  await assert.rejects(
+    scoped(data.schoolId, () => service.applyScheduleProfile({ ...request(data, placement), previewToken: before.previewToken })),
+    (error: Error & { code?: string }) => error.code === "SCHEDULE_EXISTING_APPLICATIONS");
   const added = randomUUID();
   await pool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Added','Student','active')", [added, data.schoolId]);
   await pool.query("INSERT INTO classpilot_coverage_scope_group_members(school_id,coverage_group_id,student_id) VALUES($1,$2,$3)", [data.schoolId, data.scopeId, added]);
