@@ -2355,6 +2355,7 @@ export function setupWebSocket(
                 studentId: target.studentId,
                 teachingSessionId: target.teachingSessionId,
                 supervisionContextId: target.supervisionContextId,
+                contextAuthorityRevision: target.contextAuthorityRevision,
                 controlRevision: target.controlRevision,
                 negotiationId: negotiation.negotiationId,
                 expiresAt: monitoringExpiresAt,
@@ -2389,6 +2390,7 @@ export function setupWebSocket(
               studentId: outcome.studentId,
               teachingSessionId: outcome.teachingSessionId,
               supervisionContextId: outcome.supervisionContextId,
+              contextAuthorityRevision: outcome.contextAuthorityRevision,
               controlRevision: outcome.controlRevision,
               negotiationId: outcome.negotiationId,
               setupExpiresAt: new Date(
