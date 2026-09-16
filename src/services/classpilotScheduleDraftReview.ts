@@ -5,7 +5,7 @@ import { schools, schoolMemberships, users } from "../schema/core.js";
 import { students } from "../schema/students.js";
 import { settings } from "../schema/shared.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
-import { emptySchoolSchedulingConfig, normalizeSchoolSchedulingConfig, schedulingError, type SchoolSchedulingConfig, type SchedulingCalendar, type SchedulingGroup } from "./classpilotSchedulingRules.js";
+import { readStoredSchoolSchedulingConfig, schedulingError, type SchoolSchedulingConfig, type SchedulingCalendar, type SchedulingGroup } from "./classpilotSchedulingRules.js";
 import { projectClasspilotRegularSchedule, regularScheduleReferenceDate } from "./classpilotRegularSchedule.js";
 import { normalizeScheduleProfileId, SCHEDULE_PROFILE_LIMITS, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type ScheduleProfileWindow } from "./classpilotScheduleProfileModel.js";
 import { scheduleProfileWindowHasFullMonitoring, testingRosterHasOtherClassStudents } from "./classpilotScheduleProfileValidation.js";
@@ -280,7 +280,7 @@ export async function getScheduleDraftReview(options: { schoolId: string; refere
       return result;
     }
     const teachers = index(classStaff.map((row) => ({ parent: row.classId, value: row.staffId }))), rosters = index(classMembers.map((row) => ({ parent: row.classId, value: row.studentId })));
-    const config = scheduleRows[0] ? normalizeSchoolSchedulingConfig(scheduleRows[0].config) : emptySchoolSchedulingConfig();
+    const config = readStoredSchoolSchedulingConfig(scheduleRows[0]?.config);
     return projectScheduleDraftReview(definition, { referenceDate, revision: scheduleRows[0]?.revision ?? 0, schoolTimezone: schoolRows[0].timezone || "America/New_York", config,
       calendar: settingRows[0].instructionalCalendar ?? {}, tracking: { ...settingRows[0], schoolTimezone: schoolRows[0].timezone }, staff,
       classes: classRows.map((row) => {
