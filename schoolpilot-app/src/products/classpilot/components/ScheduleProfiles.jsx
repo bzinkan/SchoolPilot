@@ -19,6 +19,9 @@ const EMPTY = [];
 const inputClass = 'min-w-0 w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
 const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const copy = value => structuredClone(value);
+// scheduleDateText omits the weekday and is used throughout; this is a sibling,
+// because "already set for Friday" is what an administrator actually recognises.
+const weekdayDateText = date => (date ? `${weekdays[new Date(`${date}T12:00:00Z`).getUTCDay()]}, ${scheduleDateText(date)}` : 'Date unavailable');
 const errorMessage = error => error?.response?.data?.error || error?.message || 'The schedule profile action failed.';
 const timeText = value => !value || value.action === 'skip' || value.meets === false ? 'Does not meet' : typeof value === 'string' ? value : `${value.startTime || '—'}–${value.endTime || '—'}`;
 const blankDefinition = () => ({ name: '', grades: [], classIds: [], classRules: [], testingBlocks: [] });
@@ -93,13 +96,21 @@ function RegularScheduleReference({ date, onDateChange, onRefresh, query, schedu
   </section>;
 }
 
-function Preview({ preview, catalog }) {
+function Preview({ preview, catalog, acknowledged, onAcknowledge }) {
   const [page, setPage] = useState(0);
   const changes = preview.changes || EMPTY;
   const count = typeof preview.affectedClasses === 'number' ? preview.affectedClasses : preview.affectedClasses?.length ?? new Set(changes.map(row => row.classId)).size;
   return <section aria-label="Profile application preview" tabIndex={-1} className="space-y-3 rounded-lg border p-4">
     <h4 className="font-semibold">Review this application</h4><p className="text-sm text-muted-foreground">{count} affected classes · Times use {preview.schoolTimezone || catalog.schoolTimezone}.</p>
     {(preview.blockers || EMPTY).map((blocker, index) => <p key={index} role="alert" className="text-sm text-destructive">{blocker.date ? `${blocker.date}: ` : ''}{blocker.message}</p>)}
+    {(preview.warnings || EMPTY).length > 0 && <section aria-label="Custom schedules already applied" className="space-y-2 rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+      <h5 className="text-sm font-semibold">Custom schedules are already applied to these dates</h5>
+      <ul className="max-h-40 list-inside list-disc overflow-y-auto text-sm">{preview.warnings.map(warning => <li key={`${warning.applicationId}:${warning.date}`}>
+        <strong>{weekdayDateText(warning.date)}</strong> — {warning.profileName}{warning.testingBlockNames?.length ? ` · ${warning.testingBlockNames.join(', ')}` : ''}
+      </li>)}</ul>
+      <p className="text-xs text-muted-foreground">Applying this profile does not replace them. Both stay scheduled unless they share a staff member or student at overlapping times.</p>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={acknowledged} onChange={event => onAcknowledge(event.target.checked)} aria-label="I have reviewed the custom schedules already applied to these dates" /><span>I have reviewed these and still want to apply this profile.</span></label>
+    </section>}
     {changes.length > 0 ? <><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th className="p-2">Date / class</th><th className="p-2">Before</th><th className="p-2">After</th></tr></thead><tbody>{changes.slice(page * 50, (page + 1) * 50).map((change, index) => <tr className="border-t" key={`${change.date}-${change.classId}-${index}`}><td className="p-2">{change.date}<span className="block font-medium">{change.className}</span></td><td className="p-2">{timeText(change.before)}</td><td className="p-2">{timeText(change.after)}</td></tr>)}</tbody></table></div>{changes.length > 50 && <div className="flex items-center gap-3"><Button size="sm" variant="outline" disabled={!page} onClick={() => setPage(value => value - 1)}>Previous changes</Button><span className="text-xs">{page * 50 + 1}–{Math.min(changes.length, (page + 1) * 50)} of {changes.length}</span><Button size="sm" variant="outline" disabled={(page + 1) * 50 >= changes.length} onClick={() => setPage(value => value + 1)}>Next changes</Button></div>}</> : <p className="text-sm">No ordinary class times change.</p>}
     {preview.classResults?.length > 0 && <section aria-label="Class rules on each application date" className="max-h-64 space-y-2 overflow-y-auto"><h5 className="text-sm font-semibold">Class rules on each date</h5>{preview.classResults.map(result => <div key={`${result.date}:${result.classId}`} data-application-class-result={`${result.date}:${result.classId}`} className="rounded border p-2 text-sm"><p>{result.date} · {result.className}</p><p>{result.status === 'time' ? `Custom time: ${result.startTime}–${result.endTime}` : result.status === 'skipped' ? 'Does not meet — skipped by this profile' : result.status === 'does_not_meet' ? 'Does not meet on this date — this class rule is not used' : 'Schedule unavailable — review this class before applying'}</p>{result.reason && <p className="text-xs text-muted-foreground">{result.reason}</p>}</div>)}</section>}
     {(preview.testingWindows || EMPTY).length > 0 && <div className="max-h-96 space-y-3 overflow-auto"><h5 className="text-sm font-semibold">Testing windows</h5>{preview.testingWindows.map((window, index) => <div key={`${window.date}-${window.blockId}-${index}`} className="space-y-2 rounded bg-muted p-2 text-sm"><p>{window.date} · {window.name} · {window.startTime}–{window.endTime}<span className="block text-xs text-muted-foreground">{catalog.staff?.find(person => person.id === window.assignedStaffId)?.name || 'Assigned staff'} · {window.studentIds?.length ?? window.afterTesting?.studentCount ?? 'Unknown'} students</span></p><ScheduleAfterTesting data={window.afterTesting} name={window.name} date={window.date} classes={catalog.classes} testingBlocks={preview.testingWindows.filter(block => block.date === window.date)} /></div>)}</div>}
@@ -159,6 +170,9 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState(null);
+  const [acknowledgedToken, setAcknowledgedToken] = useState('');
+  const existingApplicationsAcknowledged = Boolean(preview?.previewToken) && acknowledgedToken === preview.previewToken;
+  const existingApplicationsPending = (preview?.warnings || EMPTY).length > 0 && !existingApplicationsAcknowledged;
   const [oneDate, setOneDate] = useState('');
   const [rangeStart, setRangeStart] = useState('');
   const [rangeEnd, setRangeEnd] = useState('');
@@ -377,7 +391,8 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     setSession(current => ({ ...current, focusTarget: { applicationPreview: true } }));
   });
   const apply = () => execute(async () => {
-    const result = await apiRequest('POST', `${API}/apply`, { ...preview.payload, previewToken: preview.previewToken }, { headers: { 'X-School-Id': activeSchoolId } });
+    const result = await apiRequest('POST', `${API}/apply`, { ...preview.payload, previewToken: preview.previewToken,
+      ...((preview.warnings || EMPTY).length > 0 ? { acknowledgeExistingApplications: true } : {}) }, { headers: { 'X-School-Id': activeSchoolId } });
     if (!mounted.current) return;
     client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, applications: [...current.applications.filter(application => application.id !== result.application.id), result.application] } : current);
     setSession(null); setPreview(null); setNotice('Schedule profile applied to the reviewed dates.');
@@ -564,7 +579,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {session.mode === 'view' && <Button variant="outline" disabled={blockedByAdvancedDraft} onClick={editSaved}>Edit profile</Button>}
     {session.mode === 'edit' && <Button disabled={session.setup || blockedByAdvancedDraft || !isReferenceDate(referenceDate)} onClick={() => saveProfile()}>{busy ? 'Saving…' : 'Save profile'}</Button>}
     {session.mode !== 'apply' && session.profile && <Button disabled={blockedByAdvancedDraft || reusableDirty} onClick={chooseDates}>Choose dates & apply</Button>}
-    {session.mode === 'apply' && <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft} onClick={apply}>Apply reviewed dates</Button>}</>}
+    {session.mode === 'apply' && <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft || existingApplicationsPending} onClick={apply}>Apply reviewed dates</Button>}</>}
   </fieldset>;
   return <div data-testid="schedule-profiles"><Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-60 flex-1 space-y-1.5"><CardTitle ref={listHeading} tabIndex={-1} className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
     <details open={!data?.profiles?.length}><summary className="cursor-pointer text-sm font-medium">How profiles work</summary><ol aria-label="Schedule profile workflow" className="grid gap-4 rounded-md bg-muted/40 p-4 text-sm sm:grid-cols-3">
@@ -619,7 +634,9 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
         {session.mode === 'apply' && session.customize && <div className="flex flex-wrap items-end gap-2 rounded-md bg-muted p-3"><label className="min-w-48 flex-1 space-y-1 text-sm"><span>Name for new profile</span><input className={inputClass} maxLength={80} value={newName} onChange={event => setNewName(event.target.value)} /></label><Button variant="outline" disabled={!isReferenceDate(referenceDate) || blockedByAdvancedDraft} onClick={() => saveProfile(true)}>Save as new profile</Button><p className="w-full text-xs text-muted-foreground">Saves these settings and the preview date as a separate draft. Select its application dates separately afterward.</p></div>}
         {notice && <p role="status" className="text-sm">{notice}</p>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {preview && <Preview key={preview.previewToken} preview={preview} catalog={data} />}
+        {preview && <Preview key={preview.previewToken} preview={preview} catalog={data}
+          acknowledged={existingApplicationsAcknowledged}
+          onAcknowledge={checked => setAcknowledgedToken(checked ? preview.previewToken : '')} />}
       </fieldset></div></>}
     </section>}
     {testingPicker && session && <ScheduleTestingGroupPicker key={session.id} open schoolId={activeSchoolId} actorId={user?.id} remaining={30 - session.definition.testingBlocks.length} onOpenChange={setTestingPicker} onAdd={(blocks, groups) => {
