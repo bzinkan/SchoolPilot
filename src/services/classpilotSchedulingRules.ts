@@ -131,6 +131,20 @@ export function normalizeSchoolSchedulingConfig(value: unknown): SchoolSchedulin
   const profileCollections = normalizeScheduleProfileCollections(row.scheduleProfiles, row.profileApplications);
   return { schemaVersion: 1, yearStart, yearEnd, cycleAnchorDate, cycleAnchorDay, periods, profiles, defaultProfileId, weekdayProfiles, dateOverrides, ...profileCollections };
 }
+/**
+ * A stored scheduling document is not always author-written: the schedule
+ * boundary migration seeds `{}` for every school so the queue has a row to
+ * wake, including schools that never opened the scheduling editor. An empty
+ * document is a school on the default schedule, not a corrupt tenant, so read
+ * it as the default. A populated document is still held to the version check.
+ */
+export function readStoredSchoolSchedulingConfig(value: unknown): SchoolSchedulingConfig {
+  if (value === null || value === undefined) return emptySchoolSchedulingConfig();
+  if (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) {
+    return emptySchoolSchedulingConfig();
+  }
+  return normalizeSchoolSchedulingConfig(value);
+}
 export function isSchedulingInstructionalDate(date: string, calendar: SchedulingCalendar, overrides: SchoolSchedulingConfig["dateOverrides"] = {}): boolean {
   return overrides[date]?.instructional ?? (![0, 6].includes(dateWeekday(date)) && !(calendar[date.slice(0, 7)]?.nonInstructionalDates ?? []).includes(date));
 }

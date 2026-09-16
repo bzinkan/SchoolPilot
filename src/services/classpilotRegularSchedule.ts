@@ -4,7 +4,7 @@ import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { schools } from "../schema/core.js";
 import { settings } from "../schema/shared.js";
 import {
-  classScheduleRuleMatchesDate, emptySchoolSchedulingConfig, isSchedulingDate, normalizeClassScheduleRule, normalizeSchoolSchedulingConfig,
+  classScheduleRuleMatchesDate, isSchedulingDate, normalizeClassScheduleRule, readStoredSchoolSchedulingConfig,
   resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError,
   type BellWindow, type SchedulingCalendar, type SchedulingGroup, type SchoolSchedulingConfig,
 } from "./classpilotSchedulingRules.js";
@@ -96,7 +96,7 @@ export async function getClasspilotRegularSchedule(options: {
     ]);
     if (!schoolRows[0]) throw schedulingError("School not found.", "SCHOOL_NOT_FOUND", 404);
     if (!calendarRows[0]) throw schedulingError("School calendar settings are unavailable.", "INSTRUCTIONAL_CALENDAR_SETTINGS_UNAVAILABLE", 500);
-    const config = scheduleRows[0] ? normalizeSchoolSchedulingConfig(scheduleRows[0].config) : emptySchoolSchedulingConfig();
+    const config = readStoredSchoolSchedulingConfig(scheduleRows[0]?.config);
     return projectClasspilotRegularSchedule({ referenceDate, revision: scheduleRows[0]?.revision ?? 0,
       schoolTimezone: schoolRows[0].timezone || "America/New_York", config, calendar: calendarRows[0].calendar ?? {}, classes: classRows });
   }, { isolationLevel: "repeatable read", accessMode: "read only" });

@@ -9,8 +9,8 @@ import { localDateInTimeZone, localDateTimeUtc } from "../util/schoolTime.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import {
-  datePlusDays, emptySchoolSchedulingConfig, findScheduleOverlap,
-  normalizeClassScheduleRule, normalizeSchoolSchedulingConfig, resolveClassBaseWindow,
+  datePlusDays, findScheduleOverlap,
+  normalizeClassScheduleRule, normalizeSchoolSchedulingConfig, readStoredSchoolSchedulingConfig, resolveClassBaseWindow,
   resolveSchoolScheduleDay, schedulingError,
   type ClasspilotScheduleRule, type SchedulingCalendar, type SchoolSchedulingConfig, type SchedulingGroup,
 } from "./classpilotSchedulingRules.js";
@@ -22,7 +22,7 @@ export async function getSchoolSchedulingContext(schoolId: string, dbInstance: t
     dbInstance.select({ calendar: settings.instructionalCalendar }).from(settings).where(eq(settings.schoolId, schoolId)).limit(1),
   ]);
   if (!calendarRows[0]) throw schedulingError("School calendar settings are unavailable.", "INSTRUCTIONAL_CALENDAR_SETTINGS_UNAVAILABLE", 500);
-  return { config: records[0] ? normalizeSchoolSchedulingConfig(records[0].config) : emptySchoolSchedulingConfig(), revision: records[0]?.revision ?? 0, calendar: calendarRows[0].calendar ?? {} };
+  return { config: readStoredSchoolSchedulingConfig(records[0]?.config), revision: records[0]?.revision ?? 0, calendar: calendarRows[0].calendar ?? {} };
 }
 export async function getClasspilotBaseScheduleWindow(options: { schoolId: string; group: SchedulingGroup; scheduledDate: string; dbInstance?: typeof db; context?: SchoolSchedulingContext }) {
   const context = options.context ?? await getSchoolSchedulingContext(options.schoolId, options.dbInstance);

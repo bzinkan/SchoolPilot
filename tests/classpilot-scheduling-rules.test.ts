@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   defaultClassScheduleRule, emptySchoolSchedulingConfig, findScheduleOverlap,
-  normalizeClassScheduleRule, normalizeSchoolSchedulingConfig,
+  normalizeClassScheduleRule, normalizeSchoolSchedulingConfig, readStoredSchoolSchedulingConfig,
   resolveClassBaseWindow, resolveSchoolScheduleDay,
 } from "../src/services/classpilotSchedulingRules.js";
 
@@ -105,5 +105,26 @@ describe("School scheduling rules", () => {
   it("does not start A/B classes outside the configured school year", () => {
     const a = { ...period, scheduleRule: { ...period.scheduleRule, cycleDay: "A" as const } };
     assert.equal(resolveClassBaseWindow(a, "2027-09-01", config, {}), null);
+  });
+});
+
+describe("Stored scheduling documents", () => {
+  it("reads the seeded empty document as the default schedule", () => {
+    assert.deepEqual(readStoredSchoolSchedulingConfig({}), emptySchoolSchedulingConfig());
+    assert.deepEqual(readStoredSchoolSchedulingConfig(null), emptySchoolSchedulingConfig());
+    assert.deepEqual(readStoredSchoolSchedulingConfig(undefined), emptySchoolSchedulingConfig());
+  });
+  it("normalizes a populated stored document exactly as the editor would", () => {
+    assert.deepEqual(readStoredSchoolSchedulingConfig(config), config);
+  });
+  it("still refuses a populated document from an unknown version", () => {
+    assert.throws(() => readStoredSchoolSchedulingConfig({ ...config, schemaVersion: 2 }), /Unsupported school schedule version/);
+    assert.throws(() => readStoredSchoolSchedulingConfig({ yearStart: "2026-09-01" }), /Unsupported school schedule version/);
+    assert.throws(() => readStoredSchoolSchedulingConfig([]), /must be an object/);
+  });
+  // Saving is a different contract from reading: an empty body must not be
+  // accepted as an instruction to erase a school's configured schedule.
+  it("keeps the save path strict about the empty document", () => {
+    assert.throws(() => normalizeSchoolSchedulingConfig({}), /Unsupported school schedule version/);
   });
 });
