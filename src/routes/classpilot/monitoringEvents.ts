@@ -37,7 +37,7 @@ import {
   releaseClasspilotSupervisionObservationLeaseWithState,
 } from "../../services/classpilotObservationLease.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
-import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision, scheduledClassroomRoster } from "../../services/classpilotActivityAuthority.js";
+import { requireScheduledClassroomRequestRevision, requireSupervisionPreviewContext, scheduledClassroomRoster } from "../../services/classpilotActivityAuthority.js";
 import {
   classpilotSessionReportCsv,
   classpilotSessionReportDto,
@@ -287,7 +287,7 @@ router.put("/supervision-contexts/:id/observation-lease", ...staffAuth, requireC
     const contextAuthorityRevision = requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision"));
     const authority = { schoolId, supervisionContextId, actorId: req.authUser!.id,
       allowObserve: isAdmin(req, res), contextAuthorityRevision };
-    await requireScheduledClassroomContext(authority);
+    await requireSupervisionPreviewContext(authority);
     const viewerInstanceId = typeof req.body?.viewerInstanceId === "string" ? req.body.viewerInstanceId.trim() : "";
     if (!/^[a-zA-Z0-9_-]{8,128}$/.test(viewerInstanceId)) return res.status(400).json({ error: "Invalid viewerInstanceId", code: "OBSERVATION_SCOPE_INVALID" });
     const roster = await scheduledClassroomRoster(schoolId, supervisionContextId);
@@ -305,7 +305,7 @@ router.put("/supervision-contexts/:id/observation-lease", ...staffAuth, requireC
     const lease = await renewClasspilotSupervisionObservationLease({ schoolId, supervisionContextId,
       viewerUserId: req.authUser!.id, viewerInstanceId, scope });
     try {
-      await requireScheduledClassroomContext(authority);
+      await requireSupervisionPreviewContext(authority);
     } catch (error) {
       await releaseClasspilotSupervisionObservationLeaseWithState({ schoolId, supervisionContextId,
         viewerUserId: req.authUser!.id, viewerInstanceId });

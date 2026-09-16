@@ -29,6 +29,19 @@ export type ScheduleProfileTestingWindow = {
   startTime: string;
   endTime: string;
 };
+/**
+ * A single testing block withdrawn from an otherwise scheduled application,
+ * identified by the same date/blockId pair that keys `testingWindows`. Whole
+ * applications still cancel through `status`; this is the narrower withdrawal
+ * that stays legal after the application's earliest start, so an administrator
+ * can stop one morning's test without cancelling the rest of the week.
+ */
+export type ScheduleProfileCancelledBlock = {
+  date: string;
+  blockId: string;
+  cancelledAt: string;
+  cancelledBy: string;
+};
 export type ScheduleProfileApplication = {
   id: string;
   profileId: string;
@@ -39,12 +52,30 @@ export type ScheduleProfileApplication = {
   classWindows: Record<string, Record<string, ScheduleProfileWindow | null>>;
   testingWindows: ScheduleProfileTestingWindow[];
   status: "scheduled" | "cancelled";
+  /** Omitted entirely when empty, so existing stored documents stay unchanged. */
+  cancelledBlocks?: ScheduleProfileCancelledBlock[];
   createdBy: string;
   createdAt: string;
   /** Overview visibility only; dated snapshots and operational dependencies remain intact. */
   historyHiddenAt?: string;
   historyHiddenBy?: string;
 };
+/**
+ * True when this testing window must not run, whether because the whole
+ * application was cancelled before its earliest start or because this single
+ * block was withdrawn afterwards. Every suppression site consults this rather
+ * than `status` alone, so a per-block withdrawal behaves exactly like an
+ * application cancellation for that one block and nothing else.
+ */
+export function isScheduleProfileBlockCancelled(
+  application: Pick<ScheduleProfileApplication, "status" | "cancelledBlocks">,
+  date: string,
+  blockId: string,
+): boolean {
+  return application.status === "cancelled"
+    || (application.cancelledBlocks ?? []).some((entry) => entry.date === date && entry.blockId === blockId);
+}
+
 export const SCHEDULE_PROFILE_LIMITS = {
   profiles: 30, applications: 100, dates: 31, classes: 500, blocks: 30,
   classWindows: 15_500, testingWindows: 2_000, studentsPerWindow: 500, grades: 30,
@@ -147,7 +178,7 @@ export function normalizeSavedScheduleProfile(value: unknown): SavedScheduleProf
 
 export function normalizeScheduleProfileApplication(value: unknown): ScheduleProfileApplication {
   const row = object(value, "Schedule profile application");
-  keys(row, ["id", "profileId", "profileName", "profileRevision", "dates", "definition", "classWindows", "testingWindows", "status", "createdBy", "createdAt", "historyHiddenAt", "historyHiddenBy"], "Schedule profile application");
+  keys(row, ["id", "profileId", "profileName", "profileRevision", "dates", "definition", "classWindows", "testingWindows", "status", "cancelledBlocks", "createdBy", "createdAt", "historyHiddenAt", "historyHiddenBy"], "Schedule profile application");
   if ((row.historyHiddenAt === undefined) !== (row.historyHiddenBy === undefined)) throw invalid("History hiding requires its timestamp and administrator together.");
   const dates = unique(list(row.dates, SCHEDULE_PROFILE_LIMITS.dates, "Application dates").map(value => date(value)), "Application dates").sort();
   if (!dates.length) throw invalid("Choose at least one application date.");
@@ -190,10 +221,22 @@ export function normalizeScheduleProfileApplication(value: unknown): SchedulePro
     if (!result.studentIds.length) throw invalid("Each applied testing window needs at least one student.");
     return result;
   }).sort((a, b) => a.date.localeCompare(b.date) || a.blockId.localeCompare(b.blockId));
-  unique(testingWindows.map((w) => `${w.date}:${w.blockId}`), "Testing date/block pairs");
+  const testingPairs = new Set(unique(testingWindows.map((w) => `${w.date}:${w.blockId}`), "Testing date/block pairs"));
+  const cancelledBlocks = (row.cancelledBlocks === undefined ? [] : list(row.cancelledBlocks,
+    SCHEDULE_PROFILE_LIMITS.dates * SCHEDULE_PROFILE_LIMITS.blocks, "Cancelled testing blocks")).map((value) => {
+    const entry = object(value, "Cancelled testing block");
+    keys(entry, ["date", "blockId", "cancelledAt", "cancelledBy"], "Cancelled testing block");
+    const result = { date: date(entry.date), blockId: normalizeScheduleProfileId(entry.blockId),
+      cancelledAt: timestamp(entry.cancelledAt), cancelledBy: normalizeScheduleProfileId(entry.cancelledBy) };
+    // A withdrawal that names no applied window would silently suppress nothing.
+    if (!testingPairs.has(`${result.date}:${result.blockId}`)) throw invalid("Cancelled testing blocks must reference an applied testing window.");
+    return result;
+  }).sort((a, b) => a.date.localeCompare(b.date) || a.blockId.localeCompare(b.blockId));
+  unique(cancelledBlocks.map((entry) => `${entry.date}:${entry.blockId}`), "Cancelled testing date/block pairs");
   if (row.status !== "scheduled" && row.status !== "cancelled") throw invalid("Application status must be scheduled or cancelled.");
   return { id: normalizeScheduleProfileId(row.id), profileId: normalizeScheduleProfileId(row.profileId), profileName,
     profileRevision: revision(row.profileRevision), dates, definition, classWindows, testingWindows, status: row.status,
+    ...(cancelledBlocks.length ? { cancelledBlocks } : {}),
     createdBy: normalizeScheduleProfileId(row.createdBy), createdAt: timestamp(row.createdAt),
     ...(row.historyHiddenAt !== undefined ? { historyHiddenAt: timestamp(row.historyHiddenAt), historyHiddenBy: normalizeScheduleProfileId(row.historyHiddenBy) } : {}) };
 }

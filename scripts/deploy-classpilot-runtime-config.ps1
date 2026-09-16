@@ -68,6 +68,7 @@ $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
+$script:ScheduledClassroomCapability = "scheduledClassroomV1"
 $script:RoadmapProfileCapabilities = @{
     "after-hours-safety-only-pilot" = "afterHoursSafetyOnlyV1"
     "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
@@ -82,7 +83,8 @@ $script:AdditiveCapabilities = @(
     $script:FastPreviewCapability,
     $script:StudentGatePresenceCapability,
     $script:LateSignInRestrictionSsoCapability,
-    $script:RestrictionAuthPassThroughCapability
+    $script:RestrictionAuthPassThroughCapability,
+    $script:ScheduledClassroomCapability
 ) + @($script:RoadmapCapabilities)
 $script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
@@ -105,6 +107,7 @@ $script:CapabilityFlags = [ordered]@{
     liveViewIceServersV1          = "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1"
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
     kioskLaunchTicketV2           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2"
+    scheduledClassroomV1          = "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1"
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",

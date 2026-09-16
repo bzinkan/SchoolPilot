@@ -1106,7 +1106,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /return studentView === 'class' \? \{ kind: 'class' \} : null/,
+  /return studentView === 'class' \|\| claimedPreviewContext \? \{ kind: 'class' \} : null/,
   'subgroup presentation filters must not narrow the active-view screenshot cadence',
 );
 assert.match(

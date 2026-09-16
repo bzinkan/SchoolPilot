@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, lte } from "drizzle-orm";
-import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
+import { isScheduledClassroomEnabled, isScheduleBoundaryWorkerEnabled } from "../config/classpilotScheduledClassroom.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
 import { groups, teachingSessions, classpilotSupervisionContexts } from "../schema/classpilot.js";
 import { schools } from "../schema/core.js";
@@ -11,6 +11,7 @@ import { resolveClassBaseWindow } from "./classpilotSchedulingRules.js";
 import { getApprovedScheduleChangeLegsForSchoolDate } from "./classpilotScheduleChanges.js";
 import { getClasspilotGroupsReadyAtEffectiveWindow, processScheduledClassAutoStart, expireScheduledClassConflictsForSchool } from "./classpilotScheduledStart.js";
 import { reconcileScheduledProfileSupervision, profileSupervisionOutcomeKey } from "./classpilotScheduleProfileSupervision.js";
+import { isScheduleProfileBlockCancelled } from "./classpilotScheduleProfileModel.js";
 import { releaseExpiredClasspilotSupervisionContexts } from "./storage.js";
 import { finalizeClasspilotSession } from "./classpilotSessionLifecycle.js";
 import { syncClasspilotControlStatesToActiveDevices } from "./classpilotControlStateDelivery.js";
@@ -60,7 +61,7 @@ export async function completeScheduleBoundary(lease: ScheduleBoundaryLease, nex
 
 /** Recovery discovery is deliberately minute-paced, not part of the one-second lane. */
 export async function discoverScheduleBoundarySchools(): Promise<void> {
-  if (process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE !== "on") return;
+  if (!isScheduleBoundaryWorkerEnabled()) return;
   await schedulerPool.query(`INSERT INTO classpilot_school_schedules(school_id,config,next_boundary_at)
     SELECT s.id,'{}'::jsonb,now() FROM schools s WHERE s.deleted_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM classpilot_school_schedules q WHERE q.school_id=s.id)
@@ -118,6 +119,8 @@ export async function computeNextSchoolScheduleBoundary(schoolId: string, now: D
   for (const application of context.config.profileApplications ?? []) {
     if (application.status !== "scheduled") continue;
     for (const window of application.testingWindows) {
+      // A withdrawn block never becomes due, so it must not pull the boundary in.
+      if (isScheduleProfileBlockCancelled(application, window.date, window.blockId)) continue;
       const start = localDateTimeUtc(window.date, window.startTime, timezone);
       const key = profileSupervisionOutcomeKey(application.id, window.date, window.blockId);
       if (!scheduleRows[0]?.outcomes[key]) {
@@ -169,7 +172,7 @@ export async function reconcileSchoolScheduleBoundary(schoolId: string, now: Dat
 }
 
 export async function runDueClasspilotScheduleBoundaries(now = new Date()): Promise<void> {
-  if (process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE !== "on") return;
+  if (!isScheduleBoundaryWorkerEnabled()) return;
   const capacity = MAX_SCHOOLS - occupiedBoundarySlots;
   if (capacity <= 0) return;
   // Reserve before the asynchronous claim. A slow school holds only its own

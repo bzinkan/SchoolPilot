@@ -10,7 +10,7 @@ import { getSchoolSchedulingContext, previewSchoolScheduling } from "./classpilo
 import { validateScheduleProfileTestingWindows } from "./classpilotScheduleProfileValidation.js";
 import { reviewScheduleApplicationStudents } from "./classpilotScheduleApplicationStudentReview.js";
 import { normalizeSchoolSchedulingConfig, resolveClassBaseWindow, resolveSchoolScheduleDay, schedulingError, isSchedulingDate, datePlusDays, type SchoolSchedulingConfig, type BellWindow } from "./classpilotSchedulingRules.js";
-import { normalizeScheduleProfileDefinition, normalizeScheduleProfileId, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
+import { normalizeScheduleProfileDefinition, normalizeScheduleProfileId, normalizeScheduleProfilePreviewDate, scheduleProfileWindowsOverlap, isScheduleProfileBlockCancelled, type ScheduleProfileDefinition, type SavedScheduleProfile, type ScheduleProfileApplication, type ScheduleProfileTestingWindow } from "./classpilotScheduleProfileModel.js";
 import { getStaffBySchool, withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup } from "./storage.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
@@ -361,5 +361,52 @@ export async function cancelScheduleProfileApplication(options: { schoolId: stri
   // Cancellation is already durable. The worker retries interrupted releases;
   // a status-refresh failure must not disguise the successful calendar write.
   const testingStatuses = await cancelProfileSupervision(options.schoolId, options.applicationId).catch(() => undefined);
+  return { ...result, testingStatuses, ...(testingStatuses ? {} : { testingStatusUnavailable: true }) };
+}
+
+/**
+ * Withdraw a single testing block from an otherwise scheduled application.
+ *
+ * Unlike whole-application cancellation this stays legal after the block has
+ * started, which is the point: it is the abort for one morning's test. It never
+ * rewrites class windows, so it needs no restoration preview and cannot be
+ * refused because some unrelated class dependency is unavailable. Students are
+ * released and then handed back to whatever regular class the bell schedule
+ * says owns that time.
+ */
+export async function cancelScheduleProfileTestingBlock(options: {
+  schoolId: string; actorId: string; revision: number; applicationId: string;
+  date: string; blockId: string; now?: Date;
+}) {
+  revision(options.revision);
+  const result = await locked(options.schoolId, options.actorId, async (database) => {
+    const context = await getSchoolSchedulingContext(options.schoolId, database);
+    const application = context.config.profileApplications?.find((a) => a.id === options.applicationId);
+    if (!application) fail("Schedule application not found.", "NOT_FOUND", 404);
+    if (!application.testingWindows.some((w) => w.date === options.date && w.blockId === options.blockId)) {
+      fail("That testing block is not part of this application.", "NOT_FOUND", 404);
+    }
+    // Idempotent: a repeated cancel, or one inside an already-cancelled
+    // application, is a no-op rather than a second revision bump.
+    if (isScheduleProfileBlockCancelled(application, options.date, options.blockId)) return { revision: context.revision };
+    if (context.revision !== options.revision) fail("Schedules changed. Reload before cancelling.", "SCHEDULE_PREVIEW_STALE", 409);
+    const now = options.now ?? new Date();
+    const cancelledBlocks = [...(application.cancelledBlocks ?? []),
+      { date: options.date, blockId: options.blockId, cancelledAt: now.toISOString(), cancelledBy: options.actorId }]
+      .sort((a, b) => a.date.localeCompare(b.date) || a.blockId.localeCompare(b.blockId));
+    const config = { ...context.config, profileApplications: context.config.profileApplications!.map(
+      (a) => a.id === application.id ? { ...a, cancelledBlocks } : a) };
+    const nextRevision = await persist(options.schoolId, options.actorId, config, options.revision, database);
+    return { revision: nextRevision };
+  });
+  const { cancelProfileSupervision } = await import("./classpilotScheduleProfileSupervision.js");
+  // The withdrawn block now reports "releasing" for any live context, so the
+  // ordinary release path drains it without a block-specific variant.
+  const testingStatuses = await cancelProfileSupervision(options.schoolId, options.applicationId).catch(() => undefined);
+  // The regular bell-schedule class covering this time is already an auto-start
+  // candidate once testing stops holding its students. A targeted reconcile
+  // hands them back now instead of up to a minute later on the next tick.
+  const { reconcileClasspilotScheduledSessions } = await import("./scheduler.js");
+  await reconcileClasspilotScheduledSessions(new Date(), options.schoolId).catch(() => undefined);
   return { ...result, testingStatuses, ...(testingStatuses ? {} : { testingStatusUnavailable: true }) };
 }

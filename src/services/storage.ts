@@ -20,7 +20,7 @@ import {
   classpilotSessionReportV2Mode,
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
-import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { classpilotSupervisionPreviewObserved, classpilotSupervisionPreviewRetentionEnabled } from "../config/classpilotSupervisionPreviewRollout.js";
 import { scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, requireScheduledClassroomContext, assertScheduledClassroomAuthorityRevision } from "./classpilotActivityAuthority.js";
 import { finalizeScheduledClassroomTools, persistScheduledClassroomStateRecords, releaseScheduledClassroomStudentTools } from "./classpilotScheduledClassroomTools.js";
 import { syncSupervisionActivityReports, supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
@@ -9117,15 +9117,20 @@ export function buildClassPilotTileAuthorizationQuery(
   const schoolWide = hasSchoolWideTileRead(options);
   if (options.teachingSessionId && options.supervisionContextId) throw new Error("Exactly one tile activity is required");
 
+  // The staff predicate below already scopes this to the claim holder. The extra
+  // scheduled-origin filter is what excludes an ad hoc claim, so the supervision
+  // preview rollout drops it and nothing else.
+  const supervisionPreview = classpilotSupervisionPreviewObserved(options.schoolId);
+  const scheduledOriginFilter = supervisionPreview ? sql`` : sql`
+          AND (context.scheduled_conflict_id IS NOT NULL OR (context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL AND context.schedule_profile_block_id IS NOT NULL))`;
   const authorizedStudents = options.supervisionContextId
-    ? isScheduledClassroomEnabled(options.schoolId) ? sql`
+    ? isScheduledClassroomEnabled(options.schoolId) || supervisionPreview ? sql`
         SELECT supervised.student_id FROM ${classpilotSupervisionStudents} supervised
         INNER JOIN ${classpilotSupervisionContexts} context ON context.id=supervised.context_id AND context.school_id=${options.schoolId}
         INNER JOIN requested_students requested ON requested.student_id=supervised.student_id
         WHERE supervised.school_id=${options.schoolId} AND supervised.released_at IS NULL
           AND context.id=${options.supervisionContextId} AND context.status='active' AND context.starts_at<=now() AND context.ends_at>now()
-          AND (context.assigned_staff_id=${options.staffId} OR ${schoolWide})
-          AND (context.scheduled_conflict_id IS NOT NULL OR (context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL AND context.schedule_profile_block_id IS NOT NULL))
+          AND (context.assigned_staff_id=${options.staffId} OR ${schoolWide})${scheduledOriginFilter}
       ` : sql`SELECT NULL::text AS student_id WHERE false`
     : options.teachingSessionId
     ? schoolWide
@@ -23297,7 +23302,16 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
       ? session.manualLeaseExpiresAt
       : null,
   };
-  if (controlState?.supervisionContextId && controlState.hardExpiresAt && isScheduledClassroomEnabled(options.schoolId)) {
+  // Once the supervision-preview rollout is retaining frames, ANY active claim
+  // the staff member holds may carry a preview, so the scheduled discriminator
+  // is dropped. Without that rollout only scheduled testing/coverage mints this
+  // authority, which is the pre-existing behaviour exactly.
+  const supervisionPreviewRetention = classpilotSupervisionPreviewRetentionEnabled(options.schoolId);
+  if (controlState?.supervisionContextId && controlState.hardExpiresAt
+    && (isScheduledClassroomEnabled(options.schoolId) || supervisionPreviewRetention)) {
+    const scheduledOrigin = or(isNotNull(classpilotSupervisionContexts.scheduledConflictId), and(
+      isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId), isNotNull(classpilotSupervisionContexts.scheduleProfileDate),
+      isNotNull(classpilotSupervisionContexts.scheduleProfileBlockId)));
     const [claim] = await dbInstance.select({ context: classpilotSupervisionContexts, assignedAt: classpilotSupervisionStudents.assignedAt })
       .from(classpilotSupervisionContexts).innerJoin(classpilotSupervisionStudents, and(
         eq(classpilotSupervisionStudents.contextId, classpilotSupervisionContexts.id),
@@ -23305,9 +23319,8 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
         isNull(classpilotSupervisionStudents.releasedAt)))
       .where(and(eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.id, controlState.supervisionContextId),
         eq(classpilotSupervisionContexts.status, "active"), lte(classpilotSupervisionContexts.startsAt, new Date()),
-        gt(classpilotSupervisionContexts.endsAt, new Date()), or(isNotNull(classpilotSupervisionContexts.scheduledConflictId), and(
-          isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId), isNotNull(classpilotSupervisionContexts.scheduleProfileDate),
-          isNotNull(classpilotSupervisionContexts.scheduleProfileBlockId))))).limit(1).for("share");
+        gt(classpilotSupervisionContexts.endsAt, new Date()),
+        ...(supervisionPreviewRetention ? [] : [scheduledOrigin]))).limit(1).for("share");
     const retention = claim && await resolveClasspilotSupervisionRetentionTarget({ schoolId: options.schoolId, studentId: options.studentId,
       supervisionContextId: claim.context.id, controlRevision, hardExpiresAt: controlState.hardExpiresAt, scheduledEndAt: controlState.scheduledEndAt }, dbInstance);
     if (claim && retention) return {

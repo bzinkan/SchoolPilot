@@ -144,6 +144,9 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const [cancelError, setCancelError] = useState('');
   const [cancelStale, setCancelStale] = useState(false);
   const cancelOpener = useRef(null);
+  const [cancellingBlock, setCancellingBlock] = useState(null);
+  const [cancelBlockError, setCancelBlockError] = useState('');
+  const cancelBlockOpener = useRef(null);
   const [deleteError, setDeleteError] = useState('');
   const [deleteStale, setDeleteStale] = useState(false);
   const [deleteRefreshFailed, setDeleteRefreshFailed] = useState(false);
@@ -170,6 +173,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const statusUnavailable = Boolean(query.error || dateStale);
   const cancelAvailability = cancelling ? cancellationState(cancelling.application, data?.applicationSummaries?.[cancelling.application.id], serverNow, statusUnavailable, latestServerNow) : null;
   const cancellationChanged = Boolean(cancelling && (cancelStale || cancelling.revision !== data?.revision));
+  const blockCancellationChanged = Boolean(cancellingBlock && cancellingBlock.revision !== data?.revision);
   const historyAvailability = removingHistory ? historyRemovalState(removingHistory.application, data?.applicationSummaries?.[removingHistory.application.id], statusUnavailable) : null;
   const historyChanged = Boolean(removingHistory && (historyStale || removingHistory.revision !== data?.revision || !data?.applications.some(application => application.id === removingHistory.application.id && !application.historyHiddenAt)));
   const showEditor = Boolean(session && (session.mode === 'edit' || session.customize));
@@ -414,6 +418,43 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     try { await refresh(true); }
     catch { if (mounted.current) { setNotice('Schedule application cancelled; list refresh unavailable.'); setCommittedRefreshNotice('Schedule application cancelled.'); } }
   });
+  const requestCancelBlock = (application, date, window, opener) => {
+    if (busyRef.current || blockedByAdvancedDraft || application.status === 'cancelled') return;
+    cancelBlockOpener.current = opener;
+    setCancelBlockError('');
+    setCancellingBlock({ application: copy(application), date, window: copy(window),
+      revision: data.revision, schoolId: activeSchoolId, actorId: user.id });
+  };
+  const cancelTestingBlock = () => execute(async () => {
+    const captured = cancellingBlock;
+    if (!captured || captured.schoolId !== activeSchoolId || captured.actorId !== user.id
+      || blockCancellationChanged || blockedByAdvancedDraft) return;
+    let result;
+    try {
+      result = await apiRequest('POST', `${API}/applications/${encodeURIComponent(captured.application.id)}`
+        + `/dates/${encodeURIComponent(captured.date)}/blocks/${encodeURIComponent(captured.window.blockId)}/cancel`,
+        { revision: captured.revision }, { headers: { 'X-School-Id': captured.schoolId } });
+    } catch (failure) {
+      if (!mounted.current) return;
+      setCancelBlockError(errorMessage(failure));
+      if (failure?.response?.status === 409) {
+        try { await refresh(true); }
+        catch { if (mounted.current) setCancelBlockError(`${errorMessage(failure)} Status could not refresh. Close this confirmation and retry the read.`); }
+      }
+      return;
+    }
+    if (!mounted.current) return;
+    // The release and the hand-back to the regular class settle server-side, so
+    // drop this application's summary rather than predicting its new statuses.
+    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision,
+      applicationSummaries: Object.fromEntries(Object.entries(current.applicationSummaries || {}).filter(([id]) => id !== captured.application.id)),
+    } : current);
+    setCancellingBlock(null);
+    setNotice('Testing block cancelled. Students follow their regular schedule for that time.');
+    setCommittedRefreshNotice(null);
+    try { await refresh(true); }
+    catch { if (mounted.current) { setNotice('Testing block cancelled; list refresh unavailable.'); setCommittedRefreshNotice('Testing block cancelled.'); } }
+  });
   const seedGroupMetadata = groups => {
     const byId = new Map(groups.map(group => [group.id, group]));
     const people = new Map(groups.flatMap(group => group.staff || []).map(person => [person.id, person]));
@@ -537,7 +578,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {notice && <p role="status" className="text-sm text-green-700 dark:text-green-400">{notice}</p>}{deleteRefreshFailed && <Button size="sm" variant="outline" disabled={busy} onClick={retryDeletedList}>Retry profile list refresh</Button>}{committedRefreshNotice && <Button size="sm" variant="outline" disabled={busy} onClick={retryCommittedList}>Retry schedule list refresh</Button>}
     {!session && error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {data && <><p className="text-xs text-muted-foreground">School timezone: {data.schoolTimezone}. Saving a profile does not schedule it.</p>
-      <ScheduleProfilesOverview data={data} busy={busy} blocked={blockedByAdvancedDraft} refreshing={query.isFetching} statusUnavailable={statusUnavailable} serverNow={serverNow} latestServerNow={latestServerNow} testingStatuses={testingStatuses} statusReasons={testingStatusReasons} onOpen={open} onDelete={requestDelete} onCancel={requestCancel} onDeleteHistory={requestDeleteHistory} onRefresh={query.refetch} applicationsHeadingRef={applicationsHeading} />
+      <ScheduleProfilesOverview data={data} busy={busy} blocked={blockedByAdvancedDraft} refreshing={query.isFetching} statusUnavailable={statusUnavailable} serverNow={serverNow} latestServerNow={latestServerNow} testingStatuses={testingStatuses} statusReasons={testingStatusReasons} onOpen={open} onDelete={requestDelete} onCancel={requestCancel} onCancelBlock={requestCancelBlock} onDeleteHistory={requestDeleteHistory} onRefresh={query.refetch} applicationsHeadingRef={applicationsHeading} />
     </>}
   </CardContent></Card>
     {session && data && <section ref={workspaceRef} aria-label="Schedule profile workspace" className="min-w-0 space-y-5" data-testid="schedule-profile-workspace" onBlurCapture={() => { editGroup.current = null; }}>
@@ -606,6 +647,16 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
         {!cancellationChanged && cancelling && !cancelAvailability?.canRequest && <p role="alert" className="text-sm text-destructive">{cancelAvailability?.reason === 'started' ? 'The first affected window has started. Cancellation is no longer available.' : 'Cancellation availability could not be confirmed. Close this confirmation and refresh status.'}</p>}
         {cancelError && <p role="alert" className="text-sm text-destructive">{cancelError}</p>}
         <AlertDialogFooter><AlertDialogCancel disabled={busy}>Keep application</AlertDialogCancel><Button variant="destructive" disabled={busy || blockedByAdvancedDraft || cancellationChanged || !cancelAvailability?.canRequest} onClick={cancelApplication}>{busy ? 'Cancelling…' : 'Cancel all applied dates'}</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={Boolean(cancellingBlock)} onOpenChange={open => { if (!open && !busyRef.current) setCancellingBlock(null); }}>
+      <AlertDialogContent onEscapeKeyDown={event => { if (busyRef.current) event.preventDefault(); }} onCloseAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => (cancelBlockOpener.current?.isConnected ? cancelBlockOpener.current : listHeading.current)?.focus()); }}>
+        <AlertDialogHeader><AlertDialogTitle>Cancel this testing block?</AlertDialogTitle><AlertDialogDescription asChild><div className="space-y-2"><p>Cancel <strong>{cancellingBlock?.window.name}</strong> on {cancellingBlock ? scheduleDateText(cancellingBlock.date) : ''}?</p><p>Any students currently in this block are released now and follow their regular scheduled class for that time. Other testing blocks, other dates and all class changes in this application are unaffected.</p><p>This cannot be undone. Reapply the profile if the block is needed again.</p></div></AlertDialogDescription></AlertDialogHeader>
+        {cancellingBlock && <p className="text-sm">{cancellingBlock.window.studentIds?.length || 0} student{(cancellingBlock.window.studentIds?.length || 0) === 1 ? '' : 's'} assigned</p>}
+        {blockCancellationChanged && <p role="alert" className="text-sm text-destructive">Scheduling changed. Close this confirmation, refresh status, and reopen it before cancelling.</p>}
+        {cancelBlockError && <p role="alert" className="text-sm text-destructive">{cancelBlockError}</p>}
+        <AlertDialogFooter><AlertDialogCancel disabled={busy}>Keep testing block</AlertDialogCancel><Button variant="destructive" disabled={busy || blockedByAdvancedDraft || blockCancellationChanged} onClick={cancelTestingBlock}>{busy ? 'Cancelling…' : 'Cancel this block'}</Button></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
 

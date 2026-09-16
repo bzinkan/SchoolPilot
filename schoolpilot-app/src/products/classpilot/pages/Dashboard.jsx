@@ -937,9 +937,13 @@ export default function Dashboard() {
   const activityScopeRef = useRef(activityScopeKey);
   useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
   const requestActivityApi = useCallback(async (method, path, body, options = {}) => {
+    // A Claimed-view preview read is fenced by its own supervision context
+    // revision, not the Class activity's.
+    const { contextAuthorityRevision: revisionOverride, ...requestOptions } = options;
     try {
       const data = await apiRequest(method, path, body, {
-        ...options, headers: { ...options.headers, ...activityRequestHeaders(activeSchoolId, contextAuthorityRevision) },
+        ...requestOptions,
+        headers: { ...requestOptions.headers, ...activityRequestHeaders(activeSchoolId, revisionOverride ?? contextAuthorityRevision) },
       });
       if (activityScopeRef.current !== activityScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError');
       return data;
@@ -2881,12 +2885,23 @@ export default function Dashboard() {
     signOutEligibleBindingsByStudent,
     studentView,
   ]);
+  // Previews follow the claim: the staff member holding a supervision context
+  // may observe its students from Claimed. Scoped to exactly one displayed
+  // context because an observation lease is per-context; with several claimed
+  // groups on screen there is no single authority to hold, so previews stay off.
+  const claimedPreviewContext = studentView === 'claimed' && displaySupervisionContexts.length === 1
+    && displaySupervisionContexts[0]?.contextAuthorityRevision
+    ? displaySupervisionContexts[0] : null;
+  const previewAuthority = claimedPreviewContext
+    ? { supervisionContextId: claimedPreviewContext.id } : effectiveAuthority;
+  const previewAuthorityRevision = claimedPreviewContext
+    ? claimedPreviewContext.contextAuthorityRevision : contextAuthorityRevision;
   const observationScope = useMemo(() => {
     // Rapid previews cover the exact frozen class while Class view is open.
     // Grade/subgroup filters are presentation-only and must not silently slow
     // the rest of the authorized class back to the background cadence.
-    return studentView === 'class' ? { kind: 'class' } : null;
-  }, [studentView]);
+    return studentView === 'class' || claimedPreviewContext ? { kind: 'class' } : null;
+  }, [studentView, claimedPreviewContext]);
   const refreshDeniedObservationSession = useCallback(() => {
     const context = classReadContextRef.current;
     if (context?.session) lastDeniedSelectionRef.current = {
@@ -2897,16 +2912,18 @@ export default function Dashboard() {
   const observationLeaseStatus = useObservationLease({
     // Scheduled classrooms use their real context; ad hoc Claimed supervision
     // retains its existing telemetry-only tools.
-    enabled: studentView === 'class' && Boolean(effectiveActivity?.id),
-    eligible: classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
-    schoolId: activeSchoolId, contextAuthorityRevision,
-    ...effectiveAuthority,
+    enabled: (studentView === 'class' && Boolean(effectiveActivity?.id)) || Boolean(claimedPreviewContext),
+    eligible: claimedPreviewContext
+      ? !terminalSessionError
+      : classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
+    schoolId: activeSchoolId, contextAuthorityRevision: previewAuthorityRevision,
+    ...previewAuthority,
     scope: observationScope,
     authorityKey: sessionReadAuthorityKey,
     retryEpoch: readRetryEpoch,
     onDenied: refreshDeniedObservationSession,
   });
-  const tileScreenshotObservationStatus = studentView === 'claimed'
+  const tileScreenshotObservationStatus = studentView === 'claimed' && !claimedPreviewContext
     ? 'denied'
     : observationLeaseStatus;
   useEffect(() => {
@@ -3200,8 +3217,8 @@ export default function Dashboard() {
   const observationReadsAllowed = observationLeaseStatus === 'observed'
     || observationLeaseStatus === 'legacy'
     || observationLeaseStatus === 'error';
-  const screenshotTileReadsEnabled = studentView === 'class'
-    && Boolean(effectiveActivityId)
+  const screenshotTileReadsEnabled = ((studentView === 'class' && Boolean(effectiveActivityId))
+    || Boolean(claimedPreviewContext))
     && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
     && !tileGlobalAuthorizationDenied;
   const legacyScreenshotReadsRevoked = ['denied', 'ineligible', 'paused_unobserved'].includes(
@@ -3214,7 +3231,8 @@ export default function Dashboard() {
   // Its successful completion must not discard that first authorized response
   // without changing the query key. Revocation still changes enabled state and
   // the generation; rendering retains the existing exact/legacy lease guards.
-  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${screenshotTileReadsEnabled}\n${tileGlobalAuthorizationDenied}`;
+  const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${screenshotTileReadsEnabled}\n${tileGlobalAuthorizationDenied}
+${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
   if (targetedScreenshotFenceGenerationRef.current.key !== targetedScreenshotFenceKey) {
     targetedScreenshotFenceGenerationRef.current = {
       key: targetedScreenshotFenceKey,
@@ -3226,7 +3244,8 @@ export default function Dashboard() {
     fenceGeneration: targetedScreenshotFenceGenerationRef.current.generation,
     enabled: screenshotTileReadsEnabled
       && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus),
-    authority: effectiveAuthority,
+    authority: previewAuthority,
+    contextAuthorityRevision: previewAuthorityRevision,
     sessionAuthorityKey: sessionReadAuthorityKey,
     requests: classScreenshotTileRequests,
     authorities: screenshotReadAuthorities,
@@ -3268,7 +3287,7 @@ export default function Dashboard() {
         let response = await requestActivityApi('POST', '/classpilot/tiles/screenshots', {
           studentIds: requestedIds,
           ...snapshot.authority,
-        }, { signal: controller.signal });
+        }, { signal: controller.signal, contextAuthorityRevision: snapshot.contextAuthorityRevision });
         assertTileScreenshotStoreAvailable(response);
         if (
           targetedScreenshotContextRef.current?.fenceKey !== snapshot.fenceKey

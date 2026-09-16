@@ -93,6 +93,7 @@ import {
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { discoverScheduleBoundarySchools, runDueClasspilotScheduleBoundaries, SCHEDULE_BOUNDARY_POLL_MS } from "./classpilotScheduleBoundaries.js";
+import { isScheduleBoundaryWorkerEnabled } from "../config/classpilotScheduledClassroom.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -237,7 +238,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   const staffIdentityScanEveryTicks =
     getStaffIdentityIntegrityScanIntervalMinutes();
   console.log("Dismissal scheduler started (checking every 60s)");
-  if (process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE === "on") {
+  if (isScheduleBoundaryWorkerEnabled()) {
     const tickBoundary = () => {
       if (schedulerStopping) return;
       const pending = runDueClasspilotScheduleBoundaries().catch((err) => {

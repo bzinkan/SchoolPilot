@@ -1846,6 +1846,11 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
         ...coverageStatusPayload(statuses.get(row.studentId)!),
         supervisionGroup: group ? { id: group.id, name: group.name } : null,
         assignedStaff: staff ? { id: staff.id, displayName: staffName(staff) } : null,
+        // Required to hold a screenshot observation lease on this claim: the
+        // lease routes fence on the context authority revision, and the Claimed
+        // view has no other source for it.
+        contextAuthorityRevision: context?.classroomAuthorityRevision ?? null,
+        contextEndsAt: context?.endsAt ?? null,
       };
     });
     return res.json({ schoolId, viewerId: req.authUser!.id, students });

@@ -49,7 +49,13 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   restrictionPortalFirstV1: "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1",
   afterHoursSafetyOnlyV1: "CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1",
   schoolWebsiteBlockEnforcementV1: "CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1",
-  scheduledClassroomV1: "CLASSPILOT_SCHEDULED_CLASSROOM_MODE",
+  // The capability kill switch is a plain boolean like every other capability,
+  // deliberately separate from CLASSPILOT_SCHEDULED_CLASSROOM_MODE. The mode
+  // variable is the per-school display and authority rollout and accepts only
+  // "off"/"on"; the managed runtime-config deploy path writes capability flags
+  // as "true"/"false", and pointing it at the mode variable would let a deploy
+  // write a value that fails assertScheduledClassroomEnvironment at boot.
+  scheduledClassroomV1: "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
