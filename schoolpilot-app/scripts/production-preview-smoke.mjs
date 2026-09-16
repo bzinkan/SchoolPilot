@@ -387,6 +387,17 @@ export function responseBodyFor(
   }
 
   const classpilotResponses = {
+    '/api/classpilot/dashboard-activity': {
+      enabled: false,
+      schoolId: testCase.persona.schoolId,
+      viewerId: testCase.persona.auth.user.id,
+      revision: 'activity-v1:preview-disabled',
+      serverTime: now.toISOString(),
+      current: null,
+      activities: [],
+      next: null,
+      nextBoundaryAt: null,
+    },
     '/api/students-aggregated': { students: [] },
     '/api/settings': { settings: {} },
     '/api/flight-paths': { flightPaths: [] },

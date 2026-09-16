@@ -52,6 +52,46 @@ test('returns the exact additive coverage-summary DTO without query parameters',
   );
 });
 
+test('returns the school-bound Dashboard activity DTO with the rollout disabled', () => {
+  assert.deepEqual(
+    respond(personas.classpilotTeacher, {
+      url: `${baseUrl}/api/classpilot/dashboard-activity`,
+      schoolId: personas.classpilotTeacher.schoolId,
+    }),
+    {
+      enabled: false,
+      schoolId: personas.classpilotTeacher.schoolId,
+      viewerId: personas.classpilotTeacher.auth.user.id,
+      revision: 'activity-v1:preview-disabled',
+      serverTime: fixedNow.toISOString(),
+      current: null,
+      activities: [],
+      next: null,
+      nextBoundaryAt: null,
+    }
+  );
+});
+
+test('Dashboard activity fixture preserves strict read, school, and persona boundaries', () => {
+  const url = `${baseUrl}/api/classpilot/dashboard-activity`;
+  assert.throws(
+    () => respond(personas.classpilotTeacher, {
+      url, method: 'POST', schoolId: personas.classpilotTeacher.schoolId,
+    }),
+    /preview_api_method_invalid/
+  );
+  for (const schoolId of [undefined, 'preview-other-school']) {
+    assert.throws(
+      () => respond(personas.classpilotTeacher, { url, schoolId }),
+      /preview_api_school_binding_invalid/
+    );
+  }
+  assert.throws(
+    () => respond(personas.anonymous, { url }),
+    /preview_api_request_not_allowlisted/
+  );
+});
+
 test('does not allow historical GoPilot parent routes to fetch product data', () => {
   assert.throws(
     () => respond(personas.gopilotHistoricalParent, {
@@ -140,6 +180,7 @@ test('rejects missing, extra, duplicate, or incorrect query semantics', () => {
     `${baseUrl}/api/admin/attendance?date=2026-07-24&productContext=gopilot`,
     `${baseUrl}/api/settings?unexpected=true`,
     `${baseUrl}/api/coverage/summary?unexpected=true`,
+    `${baseUrl}/api/classpilot/dashboard-activity?schoolId=preview-other-school`,
   ]) {
     assert.throws(
       () =>
