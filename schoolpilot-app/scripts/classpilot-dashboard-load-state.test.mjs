@@ -4242,12 +4242,12 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
   await page.goto(`${baseURL}/classpilot`);
-  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor();
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor({ state: 'attached' });
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   aggregate.setScopedResponse(success(offlineTestingRoster()));
   harness.setDashboardActivity(scheduledActivityResponse(scheduledTestingActivity(), { serverTime: '2026-09-15T13:11:00Z' }));
   await page.clock.fastForward(5000);
-  await page.getByTestId('scheduled-class-banner').getByText('Testing: Grade 5 Reading MAP', { exact: true }).waitFor();
+  await page.getByTestId('scheduled-class-banner').getByText('Testing: Grade 5 Reading MAP', { exact: true }).waitFor({ state: 'attached' });
   await page.getByTestId('card-student-offline-test-22').waitFor();
   assert.equal(await page.locator('[data-testid^="card-student-"]').count(), 23);
   await assertPickupView(page, 'class');
@@ -4259,7 +4259,7 @@ test('automatic scheduled Class renders Homeroom then all 23 offline testing til
   aggregate.setScopedResponse(success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Specials student' })]));
   harness.setDashboardActivity(scheduledActivityResponse(next, { serverTime: '2026-09-15T13:15:00Z' }));
   await page.clock.fastForward(240000);
-  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Specials', { exact: true }).waitFor();
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Specials', { exact: true }).waitFor({ state: 'attached' });
   await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
   assert.equal(await page.getByTestId('card-student-offline-test-0').count(), 0);
   await assertPickupView(page, 'class');
@@ -4289,7 +4289,7 @@ test('automatic scheduled Class permits browsing between boundaries and ignores 
   aggregate.setScopedResponse(success([student({ studentName: 'Next class student' })]));
   await page.clock.fastForward(540000);
   await assertPickupView(page, 'class');
-  await page.getByTestId('scheduled-class-banner').getByText('Class: Next class', { exact: true }).waitFor();
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Next class', { exact: true }).waitFor({ state: 'attached' });
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -4316,7 +4316,7 @@ test('automatic scheduled Class resumes the same regular session without restori
   aggregate.setScopedResponse(success([student()]));
   harness.setDashboardActivity(scheduledActivityResponse(regular, { serverTime: '2026-09-15T13:15:00Z' }));
   await page.clock.fastForward(240000);
-  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor();
+  await page.getByTestId('scheduled-class-banner').getByText('Class: Grade 5 Homeroom', { exact: true }).waitFor({ state: 'attached' });
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await assertPickupView(page, 'class');
   assert.deepEqual(harness.pageErrors, []);
@@ -4485,7 +4485,13 @@ test('scheduled classroom layout retains offline tiles on desktop and mobile in 
       await page.getByTestId('card-student-offline-test-22').waitFor();
       assert.equal(await page.getByText(/^In supervision:/).count(), 0, 'Own testing tiles use the normal Class environment without a covering badge');
       const banner = page.getByTestId('scheduled-class-banner');
-      await banner.getByText(/23 students.*0 online/).waitFor();
+      // The class name is announced to assistive technology but not drawn: the
+      // header pill already names the class, so the banner must not repeat it.
+      await banner.getByText('Testing: Grade 5 Reading MAP', { exact: true }).waitFor({ state: 'attached' });
+      // The roster line repeated the header's end time and counted idle students
+      // as online, so it read "1 online" while the card below read "0 Online Now".
+      assert.equal(await banner.getByText(/students · .*online/).count(), 0,
+        'The banner must not restate the roster, the end time, or a second online count');
       const bounds = await banner.boundingBox();
       assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1, 'Assignment banner fits the viewport');
       const evidence = process.env.CLASSPILOT_ACTIVITY_EVIDENCE_DIR;
