@@ -570,31 +570,31 @@ export async function getSchoolById(
   return school;
 }
 
-export async function getSchoolByDomain(
-  domain: string
-): Promise<School | undefined> {
-  const [school] = await db
-    .select()
-    .from(schools)
-    .where(eq(schools.domain, domain.toLowerCase()))
-    .limit(1);
-  return school;
-}
-
+/**
+ * The live schools that own a student email domain. Soft-deleted schools hold
+ * no domain claim. Suspended schools do: they still resolve and then fail at
+ * entitlement, so a suspended district sibling's students are never re-mapped
+ * onto the surviving school. The order is deterministic so no caller depends
+ * on physical row order.
+ */
 export async function getSchoolsByDomain(
   domain: string
 ): Promise<School[]> {
   return db
     .select()
     .from(schools)
-    .where(eq(schools.domain, domain.toLowerCase()));
+    .where(and(eq(schools.domain, domain.toLowerCase()), isNull(schools.deletedAt)))
+    .orderBy(asc(schools.createdAt), asc(schools.id));
 }
 
 /**
  * Resolve which school a student belongs to from their email.
- * - Single-school domain: returns that school (fast path).
- * - Multi-school domain: looks up the student record to disambiguate.
- * - Returns undefined if no school found or student not yet imported on a shared domain.
+ * - Single live school on the domain: returns that school (fast path).
+ * - Several live schools share the domain (a district): the student's roster
+ *   row decides, and the oldest roster row wins so a later duplicate import in
+ *   a sibling school cannot take over an already-rostered student.
+ * - Returns undefined if no live school owns the domain, or the student is not
+ *   yet rostered on a shared domain.
  */
 export async function resolveSchoolForStudent(
   email: string
@@ -620,10 +620,11 @@ export async function resolveSchoolForStudent(
           inArray(students.schoolId, schoolIds)
         )
       )
+      .orderBy(asc(students.createdAt), asc(students.id))
       .limit(1),
   );
 
-  if (!student) return undefined; // Student not imported yet
+  if (!student) return undefined; // Student not rostered yet
 
   const school = matchingSchools.find((s) => s.id === student.schoolId);
   return school ? { school, isSharedDomain: true } : undefined;

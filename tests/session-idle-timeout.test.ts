@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sessionIdleTimeout } from "../src/middleware/sessionIdleTimeout.js";
+import {
+  bypassesSessionIdleTimeout,
+  sessionIdleTimeout,
+} from "../src/middleware/sessionIdleTimeout.js";
 
 function invoke(
   session: Record<string, unknown>,
@@ -105,7 +108,6 @@ describe("session idle persistence", () => {
     for (const [method, path] of [
       ["POST", "/auth/login"],
       ["POST", "/login"],
-      ["POST", "/auth/register"],
       ["POST", "/auth/exchange-code"],
       ["GET", "/auth/google"],
       ["GET", "/auth/google/callback"],
@@ -115,6 +117,11 @@ describe("session idle persistence", () => {
       assert.equal(result.nextCalls, 1, `${method} ${path}`);
       assert.equal(result.destroyed, false, `${method} ${path}`);
     }
+  });
+
+  it("no longer treats the retired public registration route as a session bootstrap", () => {
+    assert.equal(bypassesSessionIdleTimeout("POST", "/auth/register"), false);
+    assert.equal(bypassesSessionIdleTimeout("POST", "/auth/login"), true);
   });
 
   it("still enforces admin idle expiry when a normal web request also has a bearer token", () => {

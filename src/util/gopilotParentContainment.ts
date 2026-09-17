@@ -23,19 +23,6 @@ export function sendGoPilotParentPortalDisabled(res: Response) {
 export const disabledGoPilotParentPortalHandler: RequestHandler = (_req, res) =>
   sendGoPilotParentPortalDisabled(res);
 
-/**
- * Public registration remains available for staff-created schools, while the
- * retired school-slug parent-registration path fails before validation or any
- * user/school lookup can occur.
- */
-export const rejectGoPilotParentRegistration: RequestHandler = (req, res, next) => {
-  const schoolSlug = req.body?.schoolSlug;
-  if (typeof schoolSlug === "string" && schoolSlug.trim().length > 0) {
-    return sendGoPilotParentPortalDisabled(res);
-  }
-  return next();
-};
-
 export function isDisabledGoPilotParentRole(role: string | null | undefined): boolean {
   return role === "parent";
 }

@@ -25,19 +25,6 @@ export const loginSchema = z.object({
 });
 export type LoginData = z.infer<typeof loginSchema>;
 
-export const registerSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: STRONG_PASSWORD,
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  phone: z.string().optional(),
-  // Public registration provisions a school administrator only. Historical
-  // school-slug parent enrollment is terminally rejected before validation.
-  schoolName: z.string().trim().min(1, "School name is required"),
-  timezone: z.string().optional(),
-}).strict();
-export type RegisterData = z.infer<typeof registerSchema>;
-
 // ============================================================================
 // User management
 // ============================================================================

@@ -9,7 +9,6 @@ import {
   disabledGoPilotParentPortalHandler,
   isDisabledNativeGoPilotOAuthRedirect,
   isAuthorizedPickupManagerRole,
-  rejectGoPilotParentRegistration,
   toAuthorizedPickupDto,
 } from "../src/util/gopilotParentContainment.js";
 import { effectiveGoPilotRole } from "../src/services/gopilotAccess.js";
@@ -42,29 +41,6 @@ async function runMiddleware(
 }
 
 describe("GoPilot parent containment", () => {
-  it("rejects school-slug registration before any downstream validation or mutation", async () => {
-    const known = await runMiddleware(rejectGoPilotParentRegistration, {
-      body: { schoolSlug: "known-school", email: "known@example.invalid" },
-    });
-    const unknown = await runMiddleware(rejectGoPilotParentRegistration, {
-      body: { schoolSlug: "missing-school", email: "unknown@example.invalid" },
-    });
-
-    assert.deepEqual(known, {
-      status: 410,
-      body: { code: GOPILOT_PARENT_PORTAL_DISABLED },
-      nextCalls: 0,
-      nextError: undefined,
-    });
-    assert.deepEqual(unknown, known, "school and account existence must not change the response");
-
-    const staff = await runMiddleware(rejectGoPilotParentRegistration, {
-      body: { schoolName: "Staff School", schoolSlug: "   " },
-    });
-    assert.equal(staff.nextCalls, 1, "staff school registration remains available");
-    assert.equal(staff.body, undefined);
-  });
-
   it("terminates retired child and linking surfaces without invoking data handlers", async () => {
     const first = await runMiddleware(disabledGoPilotParentPortalHandler, {
       params: { studentId: "student-that-exists" },
