@@ -180,7 +180,13 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
   };
 }
 
-async function waitUntil(predicate, message, timeoutMs = 7_500) {
+// The budget is wall-clock, and a loaded CI runner is roughly four times
+// slower than a local one: at 7.5s the aggregate-reconcile assertion below
+// flaked three times in one day on diffs that could not reach it. Waiting
+// longer costs nothing on a passing run, because the poll returns as soon as
+// the predicate holds; it only changes how long a genuine failure takes to
+// report. Matches the 30s budget assertInitialPreview already uses.
+async function waitUntil(predicate, message, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;

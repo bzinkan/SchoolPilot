@@ -57,8 +57,11 @@ function supervisionPayload(overrides: Partial<ScreenshotData> = {}): Screenshot
 }
 
 describe("supervision preview rollout flag", () => {
-  it("defaults to off for absent, empty, and unrecognized values", () => {
-    for (const value of [undefined, "", "ON", "enabled", "true", "1"]) {
+  it("defaults to on when absent, and still reads an unrecognized value as off", () => {
+    // Absent is the resting state for every school, current and future.
+    assert.equal(classpilotSupervisionPreviewMode(undefined), "on");
+    // A typo must never retain a frame the operator did not ask for.
+    for (const value of ["", "ON", "enabled", "true", "1"]) {
       assert.equal(classpilotSupervisionPreviewMode(value), "off", `value=${String(value)}`);
     }
     assert.equal(classpilotSupervisionPreviewMode("off"), "off");
@@ -66,23 +69,35 @@ describe("supervision preview rollout flag", () => {
     assert.equal(classpilotSupervisionPreviewMode("on"), "on");
   });
 
-  it("retains only when on, and only for a school in the allowlist", () => {
+  it("retains for every school except one that is explicitly carved out", () => {
+    // No configuration at all: a school nobody has touched retains previews.
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", {} as NodeJS.ProcessEnv), true);
+    assert.equal(classpilotSupervisionPreviewObserved("school-1", {} as NodeJS.ProcessEnv), true);
+
     const on = { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "on" } as NodeJS.ProcessEnv;
     assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", on), true);
 
-    const scoped = {
-      CLASSPILOT_SUPERVISION_PREVIEW_MODE: "on",
-      CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: " school-1 , school-2 ",
+    const carved = {
+      CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: " school-1 , school-2 ",
     } as NodeJS.ProcessEnv;
-    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", scoped), true);
-    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-3", scoped), false);
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", carved), false);
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-2", carved), false);
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-3", carved), true);
+
+    // A malformed carve-out list refuses every school rather than guessing
+    // which entry was meant, so a typo cannot enable the school it excluded.
+    const malformed = {
+      CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: "school-1,",
+    } as NodeJS.ProcessEnv;
+    assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-3", malformed), false);
+    assert.equal(classpilotSupervisionPreviewObserved("school-3", malformed), false);
 
     // observe runs the paths but must never retain.
     const observe = { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe" } as NodeJS.ProcessEnv;
     assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", observe), false);
     assert.equal(classpilotSupervisionPreviewObserved("school-1", observe), true);
 
-    const off = {} as NodeJS.ProcessEnv;
+    const off = { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "off" } as NodeJS.ProcessEnv;
     assert.equal(classpilotSupervisionPreviewRetentionEnabled("school-1", off), false);
     assert.equal(classpilotSupervisionPreviewObserved("school-1", off), false);
   });
@@ -99,6 +114,28 @@ describe("supervision preview rollout flag", () => {
         (value === undefined ? {} : { CLASSPILOT_SUPERVISION_PREVIEW_MODE: value }) as NodeJS.ProcessEnv
       ));
     }
+  });
+
+  it("refuses to boot on the retired allowlist or an unparseable carve-out", () => {
+    // Leaving the allowlist set would read as "these schools have previews"
+    // while every other school had them too. Refuse rather than mislead.
+    assert.throws(
+      () => assertClasspilotSupervisionPreviewEnv({
+        CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "school-1",
+      } as NodeJS.ProcessEnv),
+      /CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS is retired/
+    );
+    // An empty value is what a copied .env.example leaves behind; it carries no
+    // claim about any school, so it must not stop a developer booting.
+    assert.doesNotThrow(() => assertClasspilotSupervisionPreviewEnv({
+      CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "",
+    } as NodeJS.ProcessEnv));
+    assert.throws(
+      () => assertClasspilotSupervisionPreviewEnv({
+        CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: "school-1,,school-2",
+      } as NodeJS.ProcessEnv),
+      /EXCLUDED_SCHOOL_IDS must contain nonempty school identifiers/
+    );
   });
 });
 
@@ -326,15 +363,27 @@ describe("Claiming a student grants the same classroom it grants a scheduled blo
       /contextAuthorityRevision: context\?\.classroomAuthorityRevision \?\? null/);
   });
 
-  it("gates every widening behind the rollout rather than shipping it on", () => {
+  it("reaches every school, carving out only the schools that are named", () => {
     const rollout = source("src/config/classpilotSupervisionPreviewRollout.ts");
-    // An empty allowlist means EVERY school to this reader, which is why the
-    // governed writer derives it from one pilot school.
-    assert.match(rollout, /allowed\.size === 0 \|\| allowed\.has\(schoolId\)/);
-    assert.equal(classpilotSupervisionPreviewObserved("school-a", {} as NodeJS.ProcessEnv), false);
+    // The reader must go through the shared carve-out helper. An allowlist here
+    // narrows previews to whatever a stale variable happens to name, and a
+    // school onboarded afterwards never receives them at all — which is not
+    // visible from the product, only from this file.
+    assert.match(rollout,
+      /schoolIsOutsideScope\(schoolId, env\.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS\)/);
+    // The retired allowlist has to stop a boot rather than quietly do nothing.
+    assert.match(rollout, /assertRetiredClasspilotAllowlist\(\s*env\.CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS/);
+    // A school nobody has configured is in the rollout. This is the assertion
+    // every future school depends on.
+    assert.equal(classpilotSupervisionPreviewObserved("school-a", {} as NodeJS.ProcessEnv), true);
     assert.equal(classpilotSupervisionPreviewObserved("school-a",
-      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe", CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), true);
+      { CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), false);
     assert.equal(classpilotSupervisionPreviewObserved("school-b",
-      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe", CLASSPILOT_SUPERVISION_PREVIEW_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), false);
+      { CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: "school-a" } as NodeJS.ProcessEnv), true);
+    // observe still runs the paths without retaining, and off still stops both.
+    assert.equal(classpilotSupervisionPreviewObserved("school-a",
+      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "observe" } as NodeJS.ProcessEnv), true);
+    assert.equal(classpilotSupervisionPreviewObserved("school-a",
+      { CLASSPILOT_SUPERVISION_PREVIEW_MODE: "off" } as NodeJS.ProcessEnv), false);
   });
 });

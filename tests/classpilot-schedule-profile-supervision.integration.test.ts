@@ -298,9 +298,7 @@ test("expiry cannot restart a testing block and retains its durable receipt", as
 
 test("fast boundary lifecycle gives testing its roster within five seconds and resumes the real class", async () => {
   const previousMode = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
-  const previousSchools = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
   process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
-  process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = ids.school;
   const regularGroup = randomUUID(), regularSession = randomUUID();
   const worker = await import("../src/services/classpilotScheduleBoundaries.js");
   const { getClasspilotDashboardActivity } = await import("../src/services/classpilotDashboardActivity.js");
@@ -347,7 +345,6 @@ test("fast boundary lifecycle gives testing its roster within five seconds and r
     await statement(sql`DELETE FROM group_students WHERE group_id=${regularGroup}`);
     await statement(sql`DELETE FROM groups WHERE id=${regularGroup}`);
     if (previousMode === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE; else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = previousMode;
-    if (previousSchools === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS; else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = previousSchools;
   }
 });
 
