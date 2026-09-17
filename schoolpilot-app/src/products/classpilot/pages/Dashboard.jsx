@@ -5812,14 +5812,10 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
             data-testid="scheduled-class-banner" className="mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="font-semibold">{dashboardActivityError ? 'Class assignment could not refresh'
+                <p className={dashboardActivityError || scheduledActivity.pending || !scheduledAssignment ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
                     : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
-                {scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">
-                  {scheduledAssignment.studentCount} students · {students.filter(student => ['online', 'idle'].includes(deriveStudentMonitoringDisplay(student, freshnessNowMs).kind)).length} online
-                  {scheduledAssignment.endsAt ? ` · Ends ${new Date(scheduledAssignment.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}` : ' · Manual class'}
-                </p> : null}
                 {scheduledActivity.next ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
                   {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
                   {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
