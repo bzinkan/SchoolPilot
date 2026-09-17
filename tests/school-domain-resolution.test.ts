@@ -24,7 +24,7 @@ async function createSchool(name: string): Promise<any> {
     name: `${TAG}_${name}`,
     domain: DOMAIN,
     slug: `${TAG}-${name}`.toLowerCase(),
-  } as any);
+  });
   schoolIds.push(school.id);
   return school;
 }
@@ -46,7 +46,7 @@ async function rosterStudent(schoolId: string, email: string, daysAgo: number): 
       firstName: "Shared",
       lastName: "Student",
       email,
-    } as any)
+    })
   );
   await setCreatedAt("students", student.id, daysAgo);
   return student;
@@ -138,7 +138,7 @@ describe("school creation domain guard", () => {
         name: `${TAG}_Guarded`,
         domain: DOMAIN,
         slug: `${TAG}-guarded`.toLowerCase(),
-      } as any),
+      }),
       (error: any) => {
         assert.equal(error.code, "SCHOOL_DOMAIN_ALREADY_IN_USE");
         assert.equal(error.status, 409);
@@ -170,7 +170,7 @@ describe("school creation domain guard", () => {
     const { school, sharedDomainWith } = await storage.createSchoolWithDomainGuard({
       name: `${TAG}_NoDomain`,
       slug: `${TAG}-nodomain`.toLowerCase(),
-    } as any);
+    });
     schoolIds.push(school.id);
     assert.equal(school.domain, null);
     assert.deepEqual(sharedDomainWith, []);
@@ -181,13 +181,13 @@ describe("school creation domain guard", () => {
     const results = await Promise.allSettled([
       storage.createSchoolWithDomainGuard({
         name: `${TAG}_RaceA`, domain: fresh, slug: `${TAG}-race-a`.toLowerCase(),
-      } as any),
+      }),
       storage.createSchoolWithDomainGuard({
         name: `${TAG}_RaceB`, domain: fresh, slug: `${TAG}-race-b`.toLowerCase(),
-      } as any),
+      }),
     ]);
     for (const result of results) {
-      if (result.status === "fulfilled") schoolIds.push((result.value as any).school.id);
+      if (result.status === "fulfilled") schoolIds.push((result.value).school.id);
     }
     assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
     const rejected: any = results.find((result) => result.status === "rejected");

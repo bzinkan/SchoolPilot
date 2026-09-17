@@ -96,12 +96,12 @@ before(async () => {
     firstName: "Super",
     lastName: "Admin",
     isSuperAdmin: true,
-  } as any);
+  });
   existing = await storage.createSchool({
     name: `${TAG} Existing`,
     domain: DOMAIN,
     slug: `${TAG}-existing`,
-  } as any);
+  });
   createdSchoolIds.push(existing.id);
 
   const { createApp } = await import("../dist/app.js");

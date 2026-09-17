@@ -70,7 +70,7 @@ before(async () => {
     email: `existing@${DOMAIN}`,
     firstName: "Existing",
     lastName: "User",
-  } as any);
+  });
 
   const { createApp } = await import("../dist/app.js");
   server = createServer(createApp());
