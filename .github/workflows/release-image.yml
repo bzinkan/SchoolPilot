@@ -125,7 +125,7 @@ jobs:
             > schoolpilot-release-image.json
 
       - name: Upload immutable release evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: schoolpilot-release-image-${{ env.APPLICATION_SHA }}
           path: |
