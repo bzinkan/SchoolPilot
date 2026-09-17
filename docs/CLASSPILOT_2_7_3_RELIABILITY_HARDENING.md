@@ -235,6 +235,19 @@ rollout entry are absent—as this same tracking-off state; either half-present
 configuration fails closed. Emergency protocol-wide containment remains the
 separate schema-version-1 `off` profile.
 
+### Releasing the pilot scope without the wholesale profile
+
+A tracking window that shipped to one pilot school and stayed pinned there is
+released to every school by the schema-version-9 `school-scope-unpin` profile
+(`docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`). It is source-preserving: it copies the
+live registry and removes only the `schoolIds` key from
+`screenshotTrackingWindowLeaseV1` together with the other two members of its fixed
+set, takes no TURN input and no pilot evidence, and is admitted only from
+`tracking-window-pilot` or `tracking-window-global-on`. It does not replace
+`tracking-window-global-on` as a base mode, and the schema-version-1 `global-on`
+profile above remains the capability rollback; rolling back an applied unpin plan
+restores the pinned task-definition pair.
+
 This runtime activation does not require a database migration or another
 extension package. Confirm client support from negotiated capabilities rather
 than a displayed version number.

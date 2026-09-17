@@ -73,9 +73,10 @@ fleet-wide as a side effect of a monitoring change. That is a separate decision
 with its own evidence, and it has no bearing on tiles or toolbars.
 
 The other three pinned capabilities — `screenshotTrackingWindowLeaseV1`,
-`screenshotActiveObservationCadenceV1`, `studentAuthGatePresenceV1` — still carry a
-literal school id in production and still need unpinning before a second school is
-onboarded. `student-gate-global-on` and `fast-preview-global-on` already exist for
-two of them; the tracking window needs an additive twin, because
-`tracking-window-global-on` is a wholesale base mode whose dependency gate would
-force the live school through several applies with capabilities switched off.
+`screenshotActiveObservationCadenceV1`, `studentAuthGatePresenceV1` — are released
+to every school by the schema-version-9 `school-scope-unpin` profile documented in
+`docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`. That profile is the additive twin this
+paragraph used to anticipate: it drops the school list from exactly those three
+entries in one apply and changes nothing else. `tracking-window-global-on` is still
+not the tool for this, because it is a wholesale base mode whose dependency gate
+would force the live school through several applies with capabilities switched off.

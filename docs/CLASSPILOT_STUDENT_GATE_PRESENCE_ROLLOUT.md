@@ -61,6 +61,12 @@ autoscaling posture.
 
 The pilot is admitted only from a completed global repaired-capability runtime.
 Global activation is admitted only from the school-scoped student-gate pilot.
+A pilot that has already shipped and remains pinned alongside the tracking window
+and fast preview is also released to every school by the schema-version-9
+`school-scope-unpin` profile (`docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`), which
+advances it from `pilot` to `global-on` without fresh student-gate evidence
+because the capability is already live for the pilot school; `student-gate-off`
+remains the stop action afterwards.
 The `student-gate-off` profile is admitted only while the capability is active.
 The older schema-version-1 `global-on` profile remains a broader compatibility
 rollback and explicitly keeps `studentAuthGatePresenceV1` off; use
