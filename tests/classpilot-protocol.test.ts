@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CLASSPILOT_SERVER_PROTOCOL_VERSION,
+  classpilotCapabilitiesPinnedToSchools,
   classpilotCapabilityRolloutMode,
   isClasspilotCapabilityActive,
   negotiateClasspilotProtocol,
@@ -473,4 +474,44 @@ test("observation leases keep class and explicit student scopes fail closed", as
     else process.env.REDIS_URL = previousRedis;
     resetClasspilotObservationLeasesForTests();
   }
+});
+
+test("capabilities pinned to a school list are named, because a later school never receives them", () => {
+  // This is the shape that broke multi-school onboarding once already: four
+  // shipped capabilities carried a literal school id in production, so a second
+  // school would have had no screenshot lease, no active capture cadence and no
+  // auth-gate presence, with nothing in the product to say why.
+  const pinned = classpilotCapabilitiesPinnedToSchools({
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on" },
+      screenshotTrackingWindowLeaseV1: { mode: "on", schoolIds: ["school-1"] },
+      studentAuthGatePresenceV1: { mode: "on", schoolIds: ["school-1", "school-2"] },
+      // An off capability reaches nobody by design, so its list is not a trap.
+      kioskLaunchTicketV1: { mode: "off", schoolIds: ["school-1"] },
+      // A canary names its schools on purpose and is the mechanism the warning
+      // recommends, so flagging it would contradict the advice it gives.
+      exactTabCloseV2: { mode: "canary", schoolIds: ["school-1"], canaryPercent: 25 },
+    }),
+  } as NodeJS.ProcessEnv);
+  assert.deepEqual(pinned, [
+    { capability: "screenshotTrackingWindowLeaseV1", schoolCount: 1 },
+    { capability: "studentAuthGatePresenceV1", schoolCount: 2 },
+  ]);
+
+  // A capability on for everyone is the state onboarding depends on, so it must
+  // not be reported as pinned.
+  assert.deepEqual(classpilotCapabilitiesPinnedToSchools({
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on" },
+      scheduledClassroomV1: { mode: "on" },
+    }),
+  } as NodeJS.ProcessEnv), []);
+
+  // No map and a malformed map both report nothing: the first has no pins, and
+  // the second already fails closed and refuses to boot elsewhere. Reporting a
+  // pin for either would be noise on top of a louder failure.
+  assert.deepEqual(classpilotCapabilitiesPinnedToSchools({} as NodeJS.ProcessEnv), []);
+  assert.deepEqual(classpilotCapabilitiesPinnedToSchools({
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: "{ not json",
+  } as NodeJS.ProcessEnv), []);
 });

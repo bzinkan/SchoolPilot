@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "../src/db/classpilotScheduledClassroomMigration.js";
-import { isScheduledClassroomEnabled } from "../src/config/classpilotScheduledClassroom.js";
+import { assertScheduledClassroomEnvironment, isScheduledClassroomEnabled } from "../src/config/classpilotScheduledClassroom.js";
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
 delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
+delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS;
 const ids = { school: randomUUID(), otherSchool: randomUUID(), teacher: randomUUID(), nextTeacher: randomUUID(), student: randomUUID(), device: randomUUID() };
 let database: typeof import("../src/db.js").default;
 let pool: typeof import("../src/db.js").pool;
@@ -85,10 +86,29 @@ after(async () => {
   await Promise.all([pool.end(), (await import("../src/db.js")).sessionPool.end(), scheduler.schedulerPool.end(), scheduler.schedulerLockPool.end()]);
 });
 
-test("rollout and authority parsing fail closed", () => {
-  assert.equal(isScheduledClassroomEnabled(ids.school, {}), false);
-  assert.equal(isScheduledClassroomEnabled(ids.school, { CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "on", CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: `${ids.school},` }), false);
-  assert.equal(isScheduledClassroomEnabled(ids.school, { CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "on", CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: ids.otherSchool }), false);
+test("the rollout reaches every school and authority parsing fails closed", () => {
+  // The resting state is on. A school onboarded tomorrow is covered by this
+  // assertion, which is the whole point of the default: nothing has to be
+  // remembered for it to work.
+  assert.equal(isScheduledClassroomEnabled(ids.school, {}), true);
+  assert.equal(isScheduledClassroomEnabled(ids.otherSchool, {}), true);
+  // A school with no id is still refused: an empty tenant is never a rollout.
+  assert.equal(isScheduledClassroomEnabled("", {}), false);
+  // The global kill switch and the per-school carve-out both still work.
+  assert.equal(isScheduledClassroomEnabled(ids.school, { CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "off" }), false);
+  assert.equal(isScheduledClassroomEnabled(ids.school,
+    { CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS: ids.school }), false);
+  assert.equal(isScheduledClassroomEnabled(ids.school,
+    { CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS: ids.otherSchool }), true);
+  // A malformed carve-out list refuses every school rather than guessing. A
+  // typo must never silently enable the one school it was written to exclude.
+  assert.equal(isScheduledClassroomEnabled(ids.school,
+    { CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS: `${ids.otherSchool},` }), false);
+  // The retired allowlist must stop a boot rather than silently narrowing the
+  // rollout back to the schools it names.
+  assert.throws(() => assertScheduledClassroomEnvironment(
+    { CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS: ids.school } as NodeJS.ProcessEnv),
+    /CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS is retired/);
   assert.equal(authority.parseClasspilotActivityAuthority({ teachingSessionId: "one", supervisionContextId: "two" }), null);
   assert.equal(authority.parseClasspilotActivityAuthority({ teachingSessionId: {}, supervisionContextId: "two" }), null);
   assert.deepEqual(authority.parseClasspilotActivityAuthority({ supervisionContextId: context.id }), { supervisionContextId: context.id });

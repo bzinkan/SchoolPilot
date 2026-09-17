@@ -212,6 +212,44 @@ export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = p
         `(${omitted.join(", ")}); each stays off for every school until it is added to the map.`
     );
   }
+
+  // A capability pinned to a literal school list reaches those schools and no
+  // others, including every school onboarded afterwards. That is invisible from
+  // the product: the new school's extension simply never negotiates the
+  // capability, and the symptom is a broken feature rather than a missing
+  // config line. Name them at boot so a pin is a deliberate, observed state
+  // rather than something discovered by the next school.
+  const pinned = classpilotCapabilitiesPinnedToSchools(env);
+  if (pinned.length > 0) {
+    console.warn(
+      "[env] WARNING: CLASSPILOT_CAPABILITY_ROLLOUTS_JSON pins capabilities to explicit school lists " +
+        `(${pinned.map(({ capability, schoolCount }) => `${capability}: ${schoolCount} school(s)`).join(", ")}). ` +
+        "Any school not named — including every school onboarded later — does not receive them. " +
+        "Use mode canary with canaryPercent for a staged rollout, or remove schoolIds to reach every school."
+    );
+  }
+}
+
+/**
+ * The capabilities restricted to an explicit school list, with how many schools
+ * each reaches. Exported so a boot warning, a health probe, and a test can all
+ * ask the same question rather than re-parsing the map three ways.
+ */
+export function classpilotCapabilitiesPinnedToSchools(
+  env: NodeJS.ProcessEnv = process.env,
+): { capability: ClasspilotProtocolCapability; schoolCount: number }[] {
+  const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
+  if (!parsed.configured || !parsed.valid) return [];
+  return Object.entries(parsed.rollouts)
+    // Only mode "on" counts. A canary is explicitly a staged rollout and names
+    // its schools on purpose; an "on" capability carrying a school list is the
+    // one that reads as finished while reaching nobody else.
+    .filter(([, rollout]) => rollout && rollout.mode === "on" && rollout.schoolIds.size > 0)
+    .map(([capability, rollout]) => ({
+      capability: capability as ClasspilotProtocolCapability,
+      schoolCount: rollout!.schoolIds.size,
+    }))
+    .sort((a, b) => a.capability.localeCompare(b.capability));
 }
 
 function schoolCanaryBucket(capability: ClasspilotProtocolCapability, schoolId: string): number {

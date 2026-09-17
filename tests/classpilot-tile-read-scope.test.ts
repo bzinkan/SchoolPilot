@@ -1069,9 +1069,8 @@ describe("ClassPilot tile-read tenant scope", () => {
 
   it("keeps scheduled classroom aggregate and screenshots on their exact supervision authority", async () => {
     const oldMode = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
-    const oldSchools = process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
+    const oldPreview = process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
     process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
-    process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = schoolA.id;
     const studentId = authorizedStudentIds[0]!;
     const offlineStudentId = authorizedStudentIds[1]!;
     const deviceId = primaryDeviceIds[0]!;
@@ -1160,13 +1159,33 @@ describe("ClassPilot tile-read tenant scope", () => {
       await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts).set({
         scheduleProfileApplicationId: null, scheduleProfileDate: null, scheduleProfileBlockId: null,
       }).where(eq(classpilotSupervisionContexts.id, contextId)));
-      assert.equal((await aggregate()).status, 404, "ad hoc supervision does not gain a scheduled classroom");
+      // An ad hoc claim is the same classroom a scheduled block gets. A teacher who
+      // claims students has taken responsibility for them, so the holder keeps the
+      // roster once the scheduled origin is gone.
+      const adHoc = await aggregate();
+      assert.equal(adHoc.status, 200, "an ad hoc claim keeps the classroom a scheduled block had");
+      assert.deepEqual(adHoc.body.map((row: any) => row.studentId), [offlineStudentId]);
+      // Origin widens no boundary. A released student stays out, a teacher who does
+      // not hold the claim still cannot read it, and a bogus id is still absent.
+      assert.equal((await tiles()).status, 404, "release revokes tiles for an ad hoc claim too");
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, teacher)).status, 404,
+        "an ad hoc claim is no more readable by a teacher who does not hold it");
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${randomUUID()}`, coTeacher)).status, 404);
+      // The two switches cover different origins: the scheduled mode governs a
+      // scheduled block, the preview mode governs an ad hoc claim. Turning off the
+      // scheduled one alone must NOT be mistaken for having stopped both.
+      process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "off";
+      assert.equal((await aggregate()).status, 200, "the scheduled switch does not govern an ad hoc claim");
+      process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = "off";
+      assert.equal((await aggregate()).status, 404, "the preview switch does govern an ad hoc claim");
       assert.equal((await tiles()).status, 404);
+      process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
+      delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
     } finally {
       if (oldMode === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE;
       else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = oldMode;
-      if (oldSchools === undefined) delete process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS;
-      else process.env.CLASSPILOT_SCHEDULED_CLASSROOM_SCHOOL_IDS = oldSchools;
+      if (oldPreview === undefined) delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
+      else process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = oldPreview;
       await inSchool(schoolA.id, async () => {
         await db.delete(studentTimelineEvents).where(and(eq(studentTimelineEvents.schoolId, schoolA.id), eq(studentTimelineEvents.sourceId, contextId)));
         await db.delete(classpilotStudentControlStates).where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId)));
