@@ -2667,7 +2667,16 @@ test('live preview eligibility follows sign-in without replaying denied or super
     });
     await deniedPage.goto(`${baseURL}/classpilot`);
     await waitUntil(() => screenshots(deniedHarness).length > 0, 'establish the unchanged-authority screenshot read before denial');
+    // Socket authentication refetches the aggregate once (auth-success calls
+    // refetchQueries on the aggregate key). On a fast machine that fetch lands
+    // before networkidle; on a loaded CI runner the CPU-bound React work after
+    // auth-success can leave the network quiet for 500ms first, so networkidle
+    // resolves with the refetch still to come. The baseline below was then one
+    // short and "exactly one reconcile" could never be observed. Wait for the
+    // auth reconcile explicitly before taking the baseline.
+    const aggregateBeforeAuth = scopedRequests(deniedAggregate).length;
     await deniedHarness.authenticateWebSocket();
+    await waitUntil(() => scopedRequests(deniedAggregate).length >= aggregateBeforeAuth + 1, 'socket authentication must reconcile the aggregate before the denial baseline is taken');
     await deniedPage.waitForLoadState('networkidle');
     const screenshotsBeforeDenial = screenshots(deniedHarness).length;
     const aggregateBeforeDenial = scopedRequests(deniedAggregate).length;
