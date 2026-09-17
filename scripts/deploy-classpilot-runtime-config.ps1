@@ -69,6 +69,16 @@ $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
 $script:ScheduledClassroomCapability = "scheduledClassroomV1"
+# The shipped capabilities a school-scope unpin may release to every school. Each
+# already has a global shape in this tool, so releasing it changes who reaches the
+# capability, never what it does. restrictionAuthPassThroughV1 and
+# lateSignInRestrictionSsoV1 are deliberately absent: their readers admit exactly
+# one school and no global arm exists. Extend only by review.
+$script:UnpinnableCapabilities = @(
+    $script:TrackingWindowCapability,
+    $script:FastPreviewCapability,
+    $script:StudentGatePresenceCapability
+)
 $script:RoadmapProfileCapabilities = @{
     "after-hours-safety-only-pilot" = "afterHoursSafetyOnlyV1"
     "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
@@ -432,6 +442,10 @@ function ConvertTo-RuntimeConfiguration {
     # product moved away from, and leaving the mode unavailable is what stops it
     # coming back.
     $schemaEightModes = @("scheduled-classroom-global-on", "scheduled-classroom-off")
+    # Schema 9 releases already-shipped capabilities from a single-school pin in one
+    # apply. No pilot arm, no evidence, no options: it drops schoolIds from the fixed
+    # unpinnable set and changes nothing else.
+    $schemaNineModes = @("school-scope-unpin")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -440,7 +454,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 6 -and $mode -cnotin $schemaSixModes) -or
         ($schemaVersion -eq 7 -and $mode -cnotin $schemaSevenModes) -or
         ($schemaVersion -eq 8 -and $mode -cnotin $schemaEightModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8)) {
+        ($schemaVersion -eq 9 -and $mode -cnotin $schemaNineModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -511,6 +526,9 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin $schemaEightModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Scheduled-classroom profiles must preserve existing TURN runtime wiring."
     }
+    if ($mode -cin $schemaNineModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "School-scope unpin profiles must preserve existing TURN runtime wiring."
+    }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
     }
@@ -543,8 +561,11 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes)) {
-        $selectedCapability = if ($mode -cin $schemaSevenModes) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes)) {
+        $isUnpin = $mode -cin $schemaNineModes
+        $selectedCapability = if ($isUnpin) {
+            $null
+        } elseif ($mode -cin $schemaSevenModes) {
             $script:RoadmapProfileCapabilities[$mode]
         } elseif ($mode -cin $schemaEightModes) {
             $script:ScheduledClassroomCapability
@@ -566,7 +587,9 @@ function ConvertTo-RuntimeConfiguration {
         return [pscustomobject]@{
             Mode = $mode
             SchoolScopeCount = if ($isPilot) { 1 } else { 0 }
-            EnabledCapabilities = if ($isOff) { @() } else {
+            EnabledCapabilities = if ($isOff) { @() } elseif ($isUnpin) {
+                @($script:UnpinnableCapabilities)
+            } else {
                 @($selectedCapability)
             }
             Environment = [ordered]@{}
@@ -645,7 +668,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "late-signin-pilot", "late-signin-off",
         "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off",
         "restriction-auth-pilot", "restriction-auth-off",
-        "scheduled-classroom-global-on", "scheduled-classroom-off"
+        "scheduled-classroom-global-on", "scheduled-classroom-off",
+        "school-scope-unpin"
     ) -and -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -689,56 +713,88 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         $rollouts[$capability] = $copy
     }
 
-    $isFastPreviewIntent = [string]$RuntimeIntent.Mode -cin @(
-        "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
-    )
-    $isLateSignInIntent = [string]$RuntimeIntent.Mode -cin @(
-        "late-signin-pilot", "late-signin-off"
-    )
-    $isRestrictionAuthIntent = [string]$RuntimeIntent.Mode -cin @(
-        "restriction-auth-pilot", "restriction-auth-off"
-    )
-    $isScheduledClassroomIntent = [string]$RuntimeIntent.Mode -cin @(
-        "scheduled-classroom-global-on", "scheduled-classroom-off"
-    )
-    $selectedCapability = if ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
-        $script:RoadmapProfileCapabilities[[string]$RuntimeIntent.Mode]
-    } elseif ($isScheduledClassroomIntent) {
-        $script:ScheduledClassroomCapability
-    } elseif ($isRestrictionAuthIntent) {
-        $script:RestrictionAuthPassThroughCapability
-    } elseif ($isFastPreviewIntent) {
-        $script:FastPreviewCapability
-    } elseif ($isLateSignInIntent) {
-        $script:LateSignInRestrictionSsoCapability
-    } else { $script:StudentGatePresenceCapability }
-    $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
-        "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off",
-        "scheduled-classroom-off"
-    ) -and [string]$RuntimeIntent.Mode -cnotin $script:RoadmapOffModes
-    $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
-    if ([string]$RuntimeIntent.Mode -cin @(
-        "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
-        "restriction-auth-pilot"
-    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
-        $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
-        if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
-            throw "School-scoped capability pilot intent has an invalid school scope."
+    $isUnpinIntent = [string]$RuntimeIntent.Mode -ceq "school-scope-unpin"
+    if ($isUnpinIntent) {
+        # Every entry and every kill switch was copied from the source above. The
+        # only bytes that change are the schoolIds keys on the unpinnable entries.
+        # The set is strict: a member that is not already on is refused rather than
+        # skipped, because "release to every school" must never quietly become
+        # "switch on for every school".
+        $pinnedSchoolIds = @()
+        foreach ($capability in $script:UnpinnableCapabilities) {
+            $entry = $rollouts[$capability]
+            if ([string]$entry.mode -cne "on" -or
+                [string]$values[[string]$script:CapabilityFlags[$capability]] -cne "true") {
+                throw "School-scope unpin requires every unpinnable capability to already be on."
+            }
+            if (-not $entry.Contains("schoolIds")) { continue }
+            $schoolIds = @($entry.schoolIds)
+            if ($schoolIds.Count -ne 1 -or
+                [string]$schoolIds[0] -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+                throw "School-scope unpin requires each pinned capability to name exactly one canonical school."
+            }
+            $pinnedSchoolIds += [string]$schoolIds[0]
+            $entry.Remove("schoolIds")
         }
-        $gateEntry.schoolIds = @($profileSchoolId)
+        if ($pinnedSchoolIds.Count -eq 0) {
+            throw "School-scope unpin found no pinned capability; the runtime already reaches every school."
+        }
+        if (@($pinnedSchoolIds | Sort-Object -Unique).Count -ne 1) {
+            throw "School-scope unpin requires every pinned capability to name the same school."
+        }
     }
-    $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
-        [string]$sourceRollouts.$selectedCapability.mode
-    } else { "off" }
-    if (([string]$RuntimeIntent.Mode -cin @(
-        "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
-        "restriction-auth-pilot"
-    ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) -and
-        $sourceSelectedMode -cne "off") {
-        throw "A school-scoped capability pilot must begin from its off profile."
+    else {
+        $isFastPreviewIntent = [string]$RuntimeIntent.Mode -cin @(
+            "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off"
+        )
+        $isLateSignInIntent = [string]$RuntimeIntent.Mode -cin @(
+            "late-signin-pilot", "late-signin-off"
+        )
+        $isRestrictionAuthIntent = [string]$RuntimeIntent.Mode -cin @(
+            "restriction-auth-pilot", "restriction-auth-off"
+        )
+        $isScheduledClassroomIntent = [string]$RuntimeIntent.Mode -cin @(
+            "scheduled-classroom-global-on", "scheduled-classroom-off"
+        )
+        $selectedCapability = if ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
+            $script:RoadmapProfileCapabilities[[string]$RuntimeIntent.Mode]
+        } elseif ($isScheduledClassroomIntent) {
+            $script:ScheduledClassroomCapability
+        } elseif ($isRestrictionAuthIntent) {
+            $script:RestrictionAuthPassThroughCapability
+        } elseif ($isFastPreviewIntent) {
+            $script:FastPreviewCapability
+        } elseif ($isLateSignInIntent) {
+            $script:LateSignInRestrictionSsoCapability
+        } else { $script:StudentGatePresenceCapability }
+        $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
+            "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off",
+            "scheduled-classroom-off"
+        ) -and [string]$RuntimeIntent.Mode -cnotin $script:RoadmapOffModes
+        $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
+        if ([string]$RuntimeIntent.Mode -cin @(
+            "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+            "restriction-auth-pilot"
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) {
+            $profileSchoolId = [string]$RuntimeIntent.PilotSchoolId
+            if ($profileSchoolId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$') {
+                throw "School-scoped capability pilot intent has an invalid school scope."
+            }
+            $gateEntry.schoolIds = @($profileSchoolId)
+        }
+        $sourceSelectedMode = if ($sourceRollouts.PSObject.Properties.Name -ccontains $selectedCapability) {
+            [string]$sourceRollouts.$selectedCapability.mode
+        } else { "off" }
+        if (([string]$RuntimeIntent.Mode -cin @(
+            "student-gate-pilot", "late-signin-pilot", "fast-preview-pilot",
+            "restriction-auth-pilot"
+        ) -or [string]$RuntimeIntent.Mode -cin $script:RoadmapPilotModes) -and
+            $sourceSelectedMode -cne "off") {
+            throw "A school-scoped capability pilot must begin from its off profile."
+        }
+        $rollouts[$selectedCapability] = $gateEntry
+        $values[[string]$script:CapabilityFlags[$selectedCapability]] = if ($gateOn) { "true" } else { "false" }
     }
-    $rollouts[$selectedCapability] = $gateEntry
-    $values[[string]$script:CapabilityFlags[$selectedCapability]] = if ($gateOn) { "true" } else { "false" }
     $values.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
 
     $environment = [ordered]@{}
@@ -2939,6 +2995,61 @@ function Assert-AllowedRuntimeTransition {
         elseif ([string]$source.ScheduledClassroomMode -cne "global-on" -or
             [string]$target.ScheduledClassroomMode -cne "off") {
             throw "Scheduled-classroom rollback must disable only the scheduled-classroom capability."
+        }
+        return
+    }
+    if ([string]$TargetRuntimeConfiguration.Mode -ceq "school-scope-unpin") {
+        # The target legitimately reclassifies: tracking-window-pilot becomes
+        # tracking-window-global-on, and the pinned student-gate and fast-preview
+        # pilots become global-on. Everything outside the unpinnable set must be
+        # byte-identical. This block returns before the generic tracking-window
+        # dependency gate below, which would otherwise refuse a global tracking
+        # target while student gate, fast preview or restriction auth are on.
+        if ([string]$source.Mode -cnotin @("tracking-window-pilot", "tracking-window-global-on") -or
+            [string]$target.Mode -cne "tracking-window-global-on" -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.StudentGateMode -cnotin @("pilot", "global-on") -or
+            [string]$target.StudentGateMode -cne "global-on" -or
+            [string]$source.FastPreviewMode -cnotin @("pilot", "global-on") -or
+            [string]$target.FastPreviewMode -cne "global-on" -or
+            [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
+            [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId -or
+            [string]$source.ScheduledClassroomMode -cne [string]$target.ScheduledClassroomMode) {
+            throw "School-scope unpin must release only the unpinnable capabilities and preserve every other runtime state."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "School-scope unpin source identity changed after resolution."
+        }
+        $releasedSchoolIds = @()
+        foreach ($capability in $script:AllCapabilities) {
+            if ($capability -cnotin $script:UnpinnableCapabilities) {
+                if ((Get-CanonicalJsonSha256 -Value $sourceControls[$capability]) -cne
+                    (Get-CanonicalJsonSha256 -Value $targetControls[$capability])) {
+                    throw "School-scope unpin must preserve every other capability and school scope."
+                }
+                continue
+            }
+            $sourceControl = $sourceControls[$capability]
+            $targetControl = $targetControls[$capability]
+            if ([string]$sourceControl.flag -cne "true" -or [string]$sourceControl.mode -cne "on" -or
+                [string]$targetControl.flag -cne "true" -or [string]$targetControl.mode -cne "on" -or
+                @($targetControl.schoolIds).Count -ne 0) {
+                throw "School-scope unpin may only remove a school scope from a capability that is already on."
+            }
+            if (@($sourceControl.schoolIds).Count -gt 1) {
+                throw "School-scope unpin requires each pinned capability to name exactly one school."
+            }
+            $releasedSchoolIds += @($sourceControl.schoolIds | ForEach-Object { [string]$_ })
+        }
+        if ($releasedSchoolIds.Count -eq 0) {
+            # Applying twice is not a no-op; it is a lost rollback point.
+            throw "School-scope unpin is refused when no unpinnable capability carries a school scope."
+        }
+        if (@($releasedSchoolIds | Sort-Object -Unique).Count -ne 1) {
+            throw "School-scope unpin requires every pinned capability to name the same school."
         }
         return
     }

@@ -1019,6 +1019,189 @@ try {
         ) -ContainerName "api" -TargetRuntimeConfiguration $scheduledOnRuntime
     } "Scheduled-classroom activation must be refused when it is already on."
 
+    # --- School-scope unpin: release shipped capabilities from a single-school pin ---
+
+    Assert-Condition ((@($script:UnpinnableCapabilities) -join ",") -ceq
+        "screenshotTrackingWindowLeaseV1,screenshotActiveObservationCadenceV1,studentAuthGatePresenceV1") `
+        "The unpinnable set is fixed by review and excludes restriction auth pass-through and late sign-in."
+    $unpinIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 9; mode = "school-scope-unpin"
+    })
+    Assert-Condition ($unpinIntent.RequiresSourceRuntime -and
+        $unpinIntent.Environment.Count -eq 0 -and
+        $null -eq $unpinIntent.Turn -and
+        $unpinIntent.Mode -ceq "school-scope-unpin" -and
+        $unpinIntent.SchoolScopeCount -eq 0 -and
+        $null -eq $unpinIntent.PilotSchoolId -and
+        (@($unpinIntent.EnabledCapabilities) -join ",") -ceq (@($script:UnpinnableCapabilities) -join ",")) `
+        "School-scope unpin must be a source-preserving, unscoped intent naming exactly the unpinnable set."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 9; mode = "school-scope-unpin"; pilotSchoolId = $testSchoolId
+        })
+    } "School-scope unpin must not carry a pilot school."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 9; mode = "school-scope-unpin"; turn = $turn
+        })
+    } "School-scope unpin must preserve existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 8; mode = "school-scope-unpin"
+        })
+    } "School-scope unpin must be refused under another schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 9; mode = "scheduled-classroom-global-on"
+        })
+    } "Schema 9 must not admit scheduled-classroom mode names."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 9; mode = "SCHOOL-SCOPE-UNPIN"
+        })
+    } "School-scope unpin mode names must be matched case-sensitively."
+
+    # The production shape: tracking window, fast preview, student gate and
+    # restriction auth each pinned to the same school, late sign-in off, scheduled
+    # classroom reaching every school. Built through the tool's own intents so it
+    # is a shape the tool can actually produce.
+    $pinnedFastPreviewRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $fastPreviewPilotIntent `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime) `
+        -ContainerName "api"
+    $pinnedRestrictionAuthRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $restrictionAuthPilotIntent `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $pinnedFastPreviewRuntime) `
+        -ContainerName "api"
+    $productionShapeRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $scheduledGlobalIntent `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $pinnedRestrictionAuthRuntime) `
+        -ContainerName "api"
+    $productionShapeSource = New-TransitionSourceTask -RuntimeConfiguration $productionShapeRuntime
+    $productionShapeState = Get-RuntimeActivationState `
+        -Environment @($productionShapeSource.containerDefinitions[0].environment) -AllowBaseline
+    Assert-Condition ($productionShapeState.Mode -ceq "tracking-window-pilot" -and
+        [string]$productionShapeState.SchoolId -ceq $testSchoolId -and
+        $productionShapeState.StudentGateMode -ceq "pilot" -and
+        $productionShapeState.FastPreviewMode -ceq "pilot" -and
+        $productionShapeState.RestrictionAuthMode -ceq "pilot" -and
+        $productionShapeState.LateSignInMode -ceq "off" -and
+        $productionShapeState.ScheduledClassroomMode -ceq "global-on" -and
+        @($productionShapeRuntime.EnabledCapabilities).Count -eq 14) `
+        "The production-shape fixture must classify exactly as the live registry does."
+
+    $unpinRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $unpinIntent -SourceTaskDefinition $productionShapeSource -ContainerName "api"
+    $productionShapeRollouts = [string]$productionShapeRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    $unpinRollouts = [string]$unpinRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    foreach ($capability in $script:UnpinnableCapabilities) {
+        Assert-Condition (@($productionShapeRollouts.$capability.schoolIds).Count -eq 1 -and
+            [string]$unpinRollouts.$capability.mode -ceq "on" -and
+            -not ($unpinRollouts.$capability.PSObject.Properties.Name -contains "schoolIds")) `
+            "School-scope unpin must drop only the school list from $capability and leave it on."
+    }
+    foreach ($capability in @($script:AllCapabilities | Where-Object { $_ -cnotin $script:UnpinnableCapabilities })) {
+        $sourceEntry = $productionShapeRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $unpinRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "School-scope unpin must preserve the existing $capability rollout entry."
+    }
+    foreach ($capability in $script:AllCapabilities) {
+        $flagName = [string]$script:CapabilityFlags[$capability]
+        Assert-Condition ([string]$unpinRuntime.Environment[$flagName] -ceq
+            [string]$productionShapeRuntime.Environment[$flagName]) `
+            "School-scope unpin must leave the $capability kill switch untouched."
+    }
+    Assert-Condition (@($unpinRollouts.restrictionAuthPassThroughV1.schoolIds).Count -eq 1 -and
+        [string]$unpinRollouts.restrictionAuthPassThroughV1.schoolIds[0] -ceq $testSchoolId -and
+        [string]$unpinRollouts.lateSignInRestrictionSsoV1.mode -ceq "off") `
+        "Restriction auth pass-through must stay pinned and late sign-in must stay off."
+    Assert-Condition ($unpinRuntime.SchoolScopeCount -eq 0 -and
+        $unpinRuntime.SourceMode -ceq "tracking-window-pilot" -and
+        $null -eq $unpinRuntime.PilotSchoolId -and
+        $null -eq $unpinRuntime.Turn -and
+        @($unpinRuntime.EnabledCapabilities).Count -eq @($productionShapeRuntime.EnabledCapabilities).Count) `
+        "School-scope unpin must change reach, not the enabled-capability count."
+    $unpinState = Get-RuntimeActivationState -Environment @(
+        (New-TransitionSourceTask -RuntimeConfiguration $unpinRuntime).containerDefinitions[0].environment
+    )
+    Assert-Condition ($unpinState.Mode -ceq "tracking-window-global-on" -and
+        $null -eq $unpinState.SchoolId -and
+        $unpinState.StudentGateMode -ceq "global-on" -and
+        $unpinState.FastPreviewMode -ceq "global-on" -and
+        $unpinState.RestrictionAuthMode -ceq "pilot" -and
+        [string]$unpinState.RestrictionAuthSchoolId -ceq $testSchoolId -and
+        $unpinState.LateSignInMode -ceq "off" -and
+        $unpinState.ScheduledClassroomMode -ceq "global-on") `
+        "The unpinned runtime must read back as global tracking, student gate and fast preview with restriction auth still pinned."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $productionShapeSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $unpinRuntime
+
+    # Applying twice is a lost rollback point, exactly as for scheduled classroom.
+    Assert-Throws {
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $unpinIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $unpinRuntime) -ContainerName "api"
+    } "School-scope unpin must be refused when nothing is pinned."
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition (
+            New-TransitionSourceTask -RuntimeConfiguration $unpinRuntime
+        ) -ContainerName "api" -TargetRuntimeConfiguration $unpinRuntime
+    } "School-scope unpin transition must be refused when the source already reaches every school."
+    # The set is strict: a member that is off refuses the whole apply rather than
+    # being switched on as a side effect (the student-gate pilot runtime has fast preview off).
+    Assert-Throws {
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $unpinIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $studentGatePilotRuntime) `
+            -ContainerName "api"
+    } "School-scope unpin must refuse a source where an unpinnable capability is off."
+    $mixedPinSource = New-TransitionSourceTask -RuntimeConfiguration $productionShapeRuntime
+    $mixedPinEntry = @($mixedPinSource.containerDefinitions[0].environment |
+        Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+    $mixedPinRollouts = [string]$mixedPinEntry.value | ConvertFrom-Json -Depth 10
+    $mixedPinRollouts.studentAuthGatePresenceV1.schoolIds = @("123e4567-e89b-42d3-a456-426614174111")
+    $mixedPinEntry.value = $mixedPinRollouts | ConvertTo-Json -Depth 10 -Compress
+    Assert-Throws {
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $unpinIntent `
+            -SourceTaskDefinition $mixedPinSource -ContainerName "api"
+    } "School-scope unpin must refuse capabilities pinned to different schools."
+    # The wholesale base mode stays gated from the production shape; the unpin is the only path.
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $productionShapeSource `
+            -ContainerName "api" -TargetRuntimeConfiguration $trackingGlobalRuntime
+    } "tracking-window-global-on must remain refused while dependent capabilities are on."
+    # A source that already tracks globally with only the student gate pinned is admitted.
+    $partiallyPinnedSource = New-TransitionSourceTask -RuntimeConfiguration (
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $studentGatePilotIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $fastPreviewGlobalRuntime) `
+            -ContainerName "api"
+    )
+    $partialUnpinRuntime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $unpinIntent `
+        -SourceTaskDefinition $partiallyPinnedSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $partiallyPinnedSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $partialUnpinRuntime
+    Assert-Condition ($partialUnpinRuntime.SourceMode -ceq "tracking-window-global-on") `
+        "School-scope unpin must accept an already globally tracked source and release only the remaining pin."
+    # A target that also changes a capability outside the set is a valid state but the wrong transition.
+    $overreachEnvironment = [ordered]@{}
+    foreach ($entry in $unpinRuntime.Environment.GetEnumerator()) {
+        $overreachEnvironment[[string]$entry.Key] = [string]$entry.Value
+    }
+    $overreachRollouts = [string]$overreachEnvironment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
+    $overreachRollouts.scheduledClassroomV1 = [pscustomobject]@{ mode = "off" }
+    $overreachEnvironment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $overreachRollouts | ConvertTo-Json -Depth 10 -Compress
+    $overreachEnvironment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 = "false"
+    $overreachRuntime = [pscustomobject]@{
+        Mode = "school-scope-unpin"; SchoolScopeCount = 0; EnabledCapabilities = @()
+        Environment = $overreachEnvironment; Turn = $null; RequiresSourceRuntime = $false
+        SourceMode = "tracking-window-pilot"; PilotSchoolId = $null
+    }
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $productionShapeSource `
+            -ContainerName "api" -TargetRuntimeConfiguration $overreachRuntime
+    } "School-scope unpin must not carry any other capability change."
+
     $script:ClassPilotReleaseTag = $finalLateSignInReleaseTag
     $script:ClassPilotMergeSha = $finalLateSignInMergeSha
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
@@ -3105,6 +3288,57 @@ try {
         $roadmapPlanText = [IO.File]::ReadAllText($roadmapPlanResult.PlanPath)
         Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
     }
+    # --- School-scope unpin through the guarded mocked plan/apply/rollback path ---
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    # Production carries TURN wiring alongside the pinned registry, so the mocked
+    # source layers the production-shape registry onto the TURN-carrying global runtime.
+    $unpinE2eSourceEnvironment = [ordered]@{}
+    foreach ($entry in $productionShapeRuntime.Environment.GetEnumerator()) {
+        $unpinE2eSourceEnvironment[[string]$entry.Key] = [string]$entry.Value
+    }
+    foreach ($name in $script:TurnEnvironmentNames) {
+        $unpinE2eSourceEnvironment[[string]$name] = [string]$globalRuntime.Environment[[string]$name]
+    }
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration ([pscustomobject]@{
+        Environment = $unpinE2eSourceEnvironment; Turn = $globalRuntime.Turn
+    })
+    $unpinProfilePath = Join-Path $testRoot "school-scope-unpin-profile.json"
+    Write-TestJson -Path $unpinProfilePath -Value ([pscustomobject]@{ schemaVersion = 9; mode = "school-scope-unpin" })
+    $unpinPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $unpinProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha `
+        -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    $unpinPlan = Read-RuntimePlan -Path $unpinPlanResult.PlanPath -ExpectedSha256 $unpinPlanResult.PlanSha256
+    Assert-Condition ([string]$unpinPlan.profileMode -ceq "school-scope-unpin" -and
+        [int]$unpinPlan.schoolScopeCount -eq 0 -and
+        [int]$unpinPlan.enabledCapabilityCount -eq 14 -and
+        [string]$unpinPlan.validationLevel -ceq "not_applicable" -and
+        [string]$unpinPlan.managedValidation -ceq "not_applicable") `
+        "School-scope unpin plan must record an unscoped, evidence-free, count-preserving activation."
+    Assert-Condition (-not ([IO.File]::ReadAllText($unpinPlanResult.PlanPath)).Contains($testSchoolId)) `
+        "School-scope unpin public plan evidence must not expose school IDs."
+    $unpinApply = Invoke-RuntimeConfigApply -Plan $unpinPlan -PlanSha256 $unpinPlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($unpinApply.status -ceq "applied") "School-scope unpin must pass the guarded mocked plan/apply path."
+    $unpinApi = $global:RuntimeConfigTestState.TaskResponses[$unpinApply.candidateApiTaskDefinitionArn].taskDefinition
+    $unpinWorker = $global:RuntimeConfigTestState.TaskResponses[$unpinApply.candidateWorkerTaskDefinitionArn].taskDefinition
+    $unpinApiControls = Get-RuntimeCapabilityControls -Environment $unpinApi.containerDefinitions[0].environment
+    $unpinWorkerControls = Get-RuntimeCapabilityControls -Environment $unpinWorker.containerDefinitions[0].environment
+    Assert-Condition ((Get-CanonicalJsonSha256 -Value $unpinApiControls) -ceq
+        (Get-CanonicalJsonSha256 -Value $unpinWorkerControls)) "School-scope unpin API and worker controls must be identical."
+    foreach ($capability in $script:UnpinnableCapabilities) {
+        Assert-Condition ([string]$unpinApiControls[$capability].mode -ceq "on" -and
+            [string]$unpinApiControls[$capability].flag -ceq "true" -and
+            @($unpinApiControls[$capability].schoolIds).Count -eq 0) `
+            "School-scope unpin must leave $capability on for every school after apply."
+    }
+    Assert-Condition (@($unpinApiControls["restrictionAuthPassThroughV1"].schoolIds).Count -eq 1) `
+        "School-scope unpin must leave restriction auth pass-through pinned after apply."
+    $unpinRollback = Invoke-RuntimeConfigRollback -Plan $unpinPlan -PlanSha256 $unpinPlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($unpinRollback.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+        "Rollback of the school-scope unpin must restore the exact original API/worker pair."
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3

@@ -128,6 +128,14 @@ not claims that capacity has already been demonstrated.
 7. Apply `fast-preview-global-on` only with the same candidate receipt and
    exact fresh pilot soak/load evidence for that artifact.
 
+A cadence that already shipped to the pilot school and stayed pinned there is
+released to every school by the schema-version-9 `school-scope-unpin` profile
+(`docs/CLASSPILOT_SCHOOL_SCOPE_UNPIN.md`) together with the tracking window and
+the auth-gate presence pilot. That path needs no candidate receipt or soak
+evidence because the capability is already live; `fast-preview-global-on`
+remains the evidence-bound path for promoting a new pilot, and
+`fast-preview-off` remains the stop action either way.
+
 At the first latency, error-rate, WAF, Redis, authorization, or privacy stop
 condition, apply `fast-preview-off`. This disables only five-second active
 cadence and restores the established 30-second tracking-window behavior; no
