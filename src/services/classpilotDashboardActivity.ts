@@ -5,7 +5,8 @@ import { db } from "../db.js";
 import { classpilotSessionStaff, classpilotSessionStudents, classpilotSupervisionContexts, groups, teachingSessions } from "../schema/classpilot.js";
 import { students } from "../schema/students.js";
 import { isScheduledClassroomEnabled, scheduledClassroomRoster, scheduledContextHasClassroomTools, scheduledSupervisionSource,
-  type ClasspilotActivityAuthority, type ClasspilotActivitySource } from "./classpilotActivityAuthority.js";
+  supervisionActivitySource, type ClasspilotActivityAuthority, type ClasspilotActivitySource } from "./classpilotActivityAuthority.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 
 export const SCHEDULED_CLASSROOM_COMMANDS = ["open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message",
   "apply-flight-path", "remove-flight-path", "apply-block-list", "remove-block-list", "attention-mode", "timer", "poll",
@@ -28,7 +29,9 @@ export function classroomActivityCapabilities() {
 
 /** Personal assignment only. School-wide Observe access is never a personal activity. */
 export async function getClasspilotDashboardActivity(schoolId: string, viewerId: string, now = new Date(), database: typeof db = db) {
-  const enabled = isScheduledClassroomEnabled(schoolId);
+  // Either rollout makes the activity feed authoritative: scheduled blocks for
+  // the scheduled-classroom rollout, ad hoc claims for the supervision-preview one.
+  const enabled = isScheduledClassroomEnabled(schoolId) || classpilotSupervisionPreviewObserved(schoolId);
   const activities: ClasspilotDashboardActivity[] = [];
   const identities: unknown[] = [];
   const futureContexts: PlannedActivity[] = [];
@@ -36,9 +39,8 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
     const contexts = await database.select().from(classpilotSupervisionContexts).where(and(
       eq(classpilotSupervisionContexts.schoolId, schoolId), eq(classpilotSupervisionContexts.assignedStaffId, viewerId),
       eq(classpilotSupervisionContexts.status, "active"), gt(classpilotSupervisionContexts.endsAt, now),
-      or(isNotNull(classpilotSupervisionContexts.scheduledConflictId), and(
-        isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId),
-        isNotNull(classpilotSupervisionContexts.scheduleProfileDate), isNotNull(classpilotSupervisionContexts.scheduleProfileBlockId))),
+      // No scheduled-origin filter: scheduledContextHasClassroomTools below decides
+      // per context, so an ad hoc claim reaches the same gate a scheduled block does.
     )).orderBy(classpilotSupervisionContexts.startsAt, classpilotSupervisionContexts.id).limit(201);
     if (contexts.length > 200) throw Object.assign(new Error("Personal activity scope is too large to load completely"), { status: 422 });
     for (const context of contexts) {
@@ -49,7 +51,7 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
       const roster = await scheduledClassroomRoster(schoolId, context.id, database);
       if (!roster.length) continue;
       identities.push([context.id, context.updatedAt, roster.map((row) => [row.assignment.id, row.student.id])]);
-      activities.push({ id: context.id, source: scheduledSupervisionSource(context)!, name: context.name,
+      activities.push({ id: context.id, source: supervisionActivitySource(context), name: context.name,
         startsAt: context.startsAt.toISOString(), endsAt: context.endsAt.toISOString(), status: "active",
         authority: { supervisionContextId: context.id }, studentCount: roster.length, teacherId: context.assignedStaffId,
         staffIds: [context.assignedStaffId], contextAuthorityRevision: String(context.classroomAuthorityRevision),

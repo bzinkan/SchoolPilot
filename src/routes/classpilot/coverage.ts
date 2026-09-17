@@ -77,6 +77,9 @@ import {
   publishClasspilotCoverageSummaryUpdated,
 } from "../../services/classpilotCoverageSummary.js";
 import { scheduledSupervisionSource, scheduledContextHasClassroomTools, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
+import { SCHEDULED_CLASSROOM_COMMANDS } from "../../services/classpilotDashboardActivity.js";
+import { classpilotSupervisionPreviewObserved } from "../../config/classpilotSupervisionPreviewRollout.js";
+import { getClasspilotStudentControlStates } from "../../services/storage.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   classpilotRealtimeFresh,
@@ -201,6 +204,12 @@ async function setupCapabilityPayload(req: any, res: any) {
     canManageSupervisionSetup: access.canSetup,
     isSchoolwideSetupManager: access.isSchoolwide,
     setupScopes: access.isAdmin ? [] : await assignmentResponse(res.locals.schoolId!, access.assignments),
+    // Claiming is the act of taking supervisory responsibility, so under the
+    // rollout a claim offers the same commands a class does. The dispatcher
+    // re-checks per context; this only tells the UI what to render.
+    commandTypes: classpilotSupervisionPreviewObserved(res.locals.schoolId!)
+      ? [...SCHEDULED_CLASSROOM_COMMANDS]
+      : [...COVERAGE_COMMAND_TYPES],
   };
 }
 
@@ -829,6 +838,7 @@ function coverageStatusPayload(status: ClasspilotCoverageStatus) {
     tabSnapshot: status.tabSnapshot,
     tabSnapshotRevision: status.tabSnapshotRevision,
     extensionVersion: status.extensionVersion,
+    realtimeBinding: status.realtimeBinding,
     capabilities: status.capabilities,
     acceptedCapabilities: status.acceptedCapabilities,
     operatorCapabilities: status.operatorCapabilities,
@@ -1824,6 +1834,10 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
     );
     const staffById = new Map(staffRows.map((row) => [row.userId, row.user]));
     const contextsById = new Map(contexts.map((context) => [context.id, context]));
+    // The exact-binding tile cohort key is inert without these two: bindings
+    // read as empty and control revisions as unknown, so no pixel validates.
+    const controlStates = await getClasspilotStudentControlStates(schoolId, rows.map((row) => row.studentId));
+    const controlRevisionByStudent = new Map(controlStates.map((state) => [state.studentId, state.revision]));
     const statuses = await hydrateClasspilotCoverageStatuses({
       schoolId,
       studentIds: rows.map((row) => row.studentId),
@@ -1851,6 +1865,9 @@ router.get("/coverage/claimed-students", ...auth, requireClasspilotFullMonitorin
         // view has no other source for it.
         contextAuthorityRevision: context?.classroomAuthorityRevision ?? null,
         contextEndsAt: context?.endsAt ?? null,
+        classroomState: controlRevisionByStudent.has(row.studentId)
+          ? { revision: controlRevisionByStudent.get(row.studentId)! }
+          : null,
       };
     });
     return res.json({ schoolId, viewerId: req.authUser!.id, students });
@@ -2457,7 +2474,11 @@ router.post("/coverage/contexts/:id/commands", ...auth, requireClasspilotFullMon
     }
 
     const commandType = String(req.body.commandType || "").trim();
-    if (!COVERAGE_COMMAND_TYPES.has(commandType)) {
+    // A context carrying classroom tools accepts the full class command set; the
+    // dispatcher re-checks that authority, so this must never be the narrower gate.
+    const classroomTools = scheduledContextHasClassroomTools(context);
+    if (!COVERAGE_COMMAND_TYPES.has(commandType)
+      && !(classroomTools && (SCHEDULED_CLASSROOM_COMMANDS as readonly string[]).includes(commandType))) {
       return res.status(400).json({ error: "Unsupported coverage command type" });
     }
     const targetScope = String(req.body.targetScope || "").trim();

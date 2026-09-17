@@ -1091,7 +1091,7 @@ assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
 assert.match(
   dashboardSource,
-  /const screenshotTileQueryStudents = effectiveActivityId[\s\S]{0,80}\? students[\s\S]{0,80}: EMPTY_LIST/,
+  /const screenshotTileQueryStudents = effectiveActivityId[\s\S]{0,120}studentView === 'claimed' && claimedPreviewActive[\s\S]{0,60}\? students[\s\S]{0,40}: EMPTY_LIST/,
   'class screenshot cohorts must remain bound to the full frozen aggregate across temporary dashboard views',
 );
 assert.doesNotMatch(
@@ -1106,7 +1106,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /return studentView === 'class' \|\| claimedPreviewContext \? \{ kind: 'class' \} : null/,
+  /return studentView === 'class' \|\| claimedPreviewActive \? \{ kind: 'class' \} : null/,
   'subgroup presentation filters must not narrow the active-view screenshot cadence',
 );
 assert.match(
@@ -1156,7 +1156,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,240}studentView !== 'class'/,
+  /tileScreenshotRevoked = tileSharedPrivacyRevoked[\s\S]{0,320}claimedTileStatus !== 'observed'[\s\S]{0,200}studentView !== 'class'/,
   'cached Class pixels must never render in Available, Claimed, or Coverage views',
 );
 assert.match(

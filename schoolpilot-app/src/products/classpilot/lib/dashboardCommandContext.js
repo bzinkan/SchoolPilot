@@ -436,7 +436,7 @@ export function deriveDashboardCapabilities({
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
   const scheduledSupervision = Boolean(studentView === 'class' && !observedSession
     && scheduledActivity?.status === 'active' && activityAuthority(scheduledActivity)?.supervisionContextId
-    && ['scheduled_testing', 'scheduled_coverage'].includes(scheduledActivity.source));
+    && ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(scheduledActivity.source));
   const ownedClassSession = Boolean(
     studentView === 'class'
     && effectiveSession?.id

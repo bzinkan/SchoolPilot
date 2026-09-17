@@ -44,6 +44,7 @@ import {
   buildScreenshotCohortPlaceholderData,
   changedTileBindingStudentIds,
   createTileBatchRequests,
+  buildTileStudentBindings,
   fetchTileBatch,
   indexTileHistory,
   indexTileScreenshots,
@@ -157,6 +158,7 @@ import { classpilotReconciliationIntervalMs } from '../lib/monitoringReconciliat
 import { reconcileGraceCohort } from '../lib/graceReconciliation';
 
 const EMPTY_LIST = Object.freeze([]);
+const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_TILE_MAP = new Map();
 const EMPTY_PICKUP_DATA = Object.freeze({
   students: EMPTY_LIST,
@@ -377,6 +379,26 @@ function sessionEndToastDescription(data, wasScheduled) {
 
 function isStudentInTemporarySupervision(student) {
   return student?.supervisionState === "temporary_coverage";
+}
+
+function ClaimedContextLease({ context, schoolId, eligible, scope, authorityKey, retryEpoch, onStatus, onDenied }) {
+  const status = useObservationLease({
+    enabled: true,
+    eligible,
+    schoolId,
+    supervisionContextId: context.id,
+    contextAuthorityRevision: context.contextAuthorityRevision,
+    scope,
+    authorityKey,
+    retryEpoch,
+    onDenied,
+  });
+  const contextId = context.id;
+  useEffect(() => {
+    onStatus(contextId, status);
+    return () => onStatus(contextId, null);
+  }, [contextId, status, onStatus]);
+  return null;
 }
 
 function AvailableStudentActivity({ student, nowMs }) {
@@ -1472,7 +1494,7 @@ export default function Dashboard() {
 
   const openOwnSupervision = useCallback((contexts = []) => {
     if (scheduledClassEnabled && contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
-      || ['scheduled_testing', 'scheduled_coverage'].includes(context.source))) {
+      || ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(context.source))) {
       setStudentView('class');
       void refreshDashboardActivity({ cancelRefetch: true });
       return;
@@ -2885,23 +2907,32 @@ export default function Dashboard() {
     signOutEligibleBindingsByStudent,
     studentView,
   ]);
-  // Previews follow the claim: the staff member holding a supervision context
-  // may observe its students from Claimed. Scoped to exactly one displayed
-  // context because an observation lease is per-context; with several claimed
-  // groups on screen there is no single authority to hold, so previews stay off.
-  const claimedPreviewContext = studentView === 'claimed' && displaySupervisionContexts.length === 1
-    && displaySupervisionContexts[0]?.contextAuthorityRevision
-    ? displaySupervisionContexts[0] : null;
-  const previewAuthority = claimedPreviewContext
-    ? { supervisionContextId: claimedPreviewContext.id } : effectiveAuthority;
-  const previewAuthorityRevision = claimedPreviewContext
-    ? claimedPreviewContext.contextAuthorityRevision : contextAuthorityRevision;
+  // Previews follow the claim, for every group the staff member holds. A lease is
+  // per context, so each claimed context gets its own; a teacher running two tests
+  // sees both rather than neither.
+  const claimedPreviewContexts = useMemo(() => (
+    studentView === 'claimed'
+      ? displaySupervisionContexts.filter(context => context?.id && context?.contextAuthorityRevision)
+      : EMPTY_LIST
+  ), [studentView, displaySupervisionContexts]);
+  const [claimedLeaseStatuses, setClaimedLeaseStatuses] = useState(EMPTY_OBJECT);
+  const recordClaimedLeaseStatus = useCallback((contextId, status) => {
+    setClaimedLeaseStatuses(current => {
+      if (status === null) {
+        if (!(contextId in current)) return current;
+        const { [contextId]: _removed, ...rest } = current;
+        return rest;
+      }
+      return current[contextId] === status ? current : { ...current, [contextId]: status };
+    });
+  }, []);
+  const claimedPreviewActive = claimedPreviewContexts.length > 0;
   const observationScope = useMemo(() => {
     // Rapid previews cover the exact frozen class while Class view is open.
     // Grade/subgroup filters are presentation-only and must not silently slow
     // the rest of the authorized class back to the background cadence.
-    return studentView === 'class' || claimedPreviewContext ? { kind: 'class' } : null;
-  }, [studentView, claimedPreviewContext]);
+    return studentView === 'class' || claimedPreviewActive ? { kind: 'class' } : null;
+  }, [studentView, claimedPreviewActive]);
   const refreshDeniedObservationSession = useCallback(() => {
     const context = classReadContextRef.current;
     if (context?.session) lastDeniedSelectionRef.current = {
@@ -2910,21 +2941,27 @@ export default function Dashboard() {
     void refreshParentSessions().catch(() => {});
   }, [refreshParentSessions]);
   const observationLeaseStatus = useObservationLease({
-    // Scheduled classrooms use their real context; ad hoc Claimed supervision
-    // retains its existing telemetry-only tools.
-    enabled: (studentView === 'class' && Boolean(effectiveActivity?.id)) || Boolean(claimedPreviewContext),
-    eligible: claimedPreviewContext
-      ? !terminalSessionError
-      : classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
-    schoolId: activeSchoolId, contextAuthorityRevision: previewAuthorityRevision,
-    ...previewAuthority,
+    enabled: studentView === 'class' && Boolean(effectiveActivity?.id),
+    eligible: classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
+    schoolId: activeSchoolId, contextAuthorityRevision,
+    ...effectiveAuthority,
     scope: observationScope,
     authorityKey: sessionReadAuthorityKey,
     retryEpoch: readRetryEpoch,
     onDenied: refreshDeniedObservationSession,
   });
-  const tileScreenshotObservationStatus = studentView === 'claimed' && !claimedPreviewContext
-    ? 'denied'
+  // In Claimed a student's status is its own context's lease, not one global
+  // scalar: one group being denied must not blank another group's tiles.
+  const claimedStudentObservationStatus = useCallback(student => {
+    const contextId = student?.contextId || student?.supervisionContext?.id || '';
+    if (!contextId) return 'denied';
+    return claimedLeaseStatuses[contextId] || 'pending';
+  }, [claimedLeaseStatuses]);
+  const claimedAggregateObservationStatus = claimedPreviewActive
+    ? (Object.values(claimedLeaseStatuses).find(status => status === 'observed') || 'pending')
+    : 'denied';
+  const tileScreenshotObservationStatus = studentView === 'claimed'
+    ? claimedAggregateObservationStatus
     : observationLeaseStatus;
   useEffect(() => {
     if (
@@ -2961,7 +2998,10 @@ export default function Dashboard() {
     nearViewportStudentIds,
     getTileRef,
   } = useTileViewport();
+  // `students` is already the view's list. Claimed becomes eligible on its own
+  // leases, without changing what Class and Available resolve to.
   const screenshotTileQueryStudents = effectiveActivityId
+    || (studentView === 'claimed' && claimedPreviewActive)
     ? students
     : EMPTY_LIST;
   const historyTileQueryStudents = studentView === 'available'
@@ -3203,10 +3243,33 @@ export default function Dashboard() {
     ).filter((request) => request.kind === 'screenshots'),
     [eligibleScreenshotStudentBindingsKey, screenshotTileBatchContext],
   );
-  const screenshotTileRequests = studentView === 'class'
-    && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
-    ? classScreenshotTileRequests
-    : EMPTY_LIST;
+  const claimedScreenshotTileRequests = useMemo(() => {
+    if (studentView !== 'claimed') return EMPTY_LIST;
+    const eligible = new Set(JSON.parse(eligibleScreenshotStudentBindingsKey).map(entry => entry.studentId));
+    return claimedPreviewContexts.flatMap(context => {
+      const status = claimedLeaseStatuses[context.id];
+      if (['denied', 'ineligible', 'paused_unobserved'].includes(status)) return EMPTY_LIST;
+      const contextStudents = filteredClaimedStudents.filter(student => (
+        (student?.contextId || student?.supervisionContext?.id) === context.id && eligible.has(student.studentId)
+      ));
+      if (!contextStudents.length) return EMPTY_LIST;
+      return createTileBatchRequests(buildTileStudentBindings(contextStudents), {
+        schoolId: activeSchoolId || '',
+        viewerId: currentUser?.id || '',
+        authority: `${dashboardViewerRole}:${dashboardCapabilities.mode}:claimed`,
+        supervisionContextId: context.id,
+        contextAuthorityRevision: context.contextAuthorityRevision,
+      }).filter(request => request.kind === 'screenshots');
+    });
+  }, [studentView, claimedPreviewContexts, claimedLeaseStatuses, filteredClaimedStudents,
+    eligibleScreenshotStudentBindingsKey, activeSchoolId, currentUser?.id, dashboardViewerRole,
+    dashboardCapabilities.mode]);
+  const screenshotTileRequests = studentView === 'claimed'
+    ? claimedScreenshotTileRequests
+    : studentView === 'class'
+      && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
+      ? classScreenshotTileRequests
+      : EMPTY_LIST;
   const historyTileRequests = useMemo(
     () => createTileBatchRequests(
       JSON.parse(historyTileStudentBindingsKey),
@@ -3217,10 +3280,11 @@ export default function Dashboard() {
   const observationReadsAllowed = observationLeaseStatus === 'observed'
     || observationLeaseStatus === 'legacy'
     || observationLeaseStatus === 'error';
-  const screenshotTileReadsEnabled = ((studentView === 'class' && Boolean(effectiveActivityId))
-    || Boolean(claimedPreviewContext))
-    && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
-    && !tileGlobalAuthorizationDenied;
+  const screenshotTileReadsEnabled = studentView === 'claimed'
+    ? claimedScreenshotTileRequests.length > 0 && !tileGlobalAuthorizationDenied
+    : studentView === 'class' && Boolean(effectiveActivityId)
+      && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus)
+      && !tileGlobalAuthorizationDenied;
   const legacyScreenshotReadsRevoked = ['denied', 'ineligible', 'paused_unobserved'].includes(
     observationLeaseStatus,
   );
@@ -3232,7 +3296,7 @@ export default function Dashboard() {
   // without changing the query key. Revocation still changes enabled state and
   // the generation; rendering retains the existing exact/legacy lease guards.
   const targetedScreenshotFenceKey = `${screenshotTileBindingTransitionKey}\n${eligibleScreenshotStudentBindingsKey}\n${JSON.stringify([...screenshotReadAuthorities])}\n${studentView}\n${screenshotTileReadsEnabled}\n${tileGlobalAuthorizationDenied}
-${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
+${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorityRevision}:${claimedLeaseStatuses[context.id] || ''}`).join(',')}`;
   if (targetedScreenshotFenceGenerationRef.current.key !== targetedScreenshotFenceKey) {
     targetedScreenshotFenceGenerationRef.current = {
       key: targetedScreenshotFenceKey,
@@ -3244,8 +3308,8 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
     fenceGeneration: targetedScreenshotFenceGenerationRef.current.generation,
     enabled: screenshotTileReadsEnabled
       && !['denied', 'ineligible', 'paused_unobserved'].includes(observationLeaseStatus),
-    authority: previewAuthority,
-    contextAuthorityRevision: previewAuthorityRevision,
+    authority: effectiveAuthority,
+    contextAuthorityRevision,
     sessionAuthorityKey: sessionReadAuthorityKey,
     requests: classScreenshotTileRequests,
     authorities: screenshotReadAuthorities,
@@ -5452,6 +5516,21 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
 
   return (
     <div className="min-h-screen">
+      {/* One observation lease per claimed supervision group. Rendered rather
+          than looped in a hook, because a hook cannot be called in a map. */}
+      {claimedPreviewContexts.map(context => (
+        <ClaimedContextLease
+          key={context.id}
+          context={context}
+          schoolId={activeSchoolId}
+          eligible={!terminalSessionError}
+          scope={observationScope}
+          authorityKey={sessionReadAuthorityKey}
+          retryEpoch={readRetryEpoch}
+          onStatus={recordClaimedLeaseStatus}
+          onDenied={refreshDeniedObservationSession}
+        />
+      ))}
       {/* Header */}
       <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-700 relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-400 to-amber-500" />
@@ -5735,7 +5814,7 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
               <div>
                 <p className="font-semibold">{dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
-                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : 'Class'}: ${scheduledAssignment.name}`
+                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
                 {scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">
                   {scheduledAssignment.studentCount} students · {students.filter(student => ['online', 'idle'].includes(deriveStudentMonitoringDisplay(student, freshnessNowMs).kind)).length} online
@@ -6367,11 +6446,19 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
                 || observationLeaseStatus === 'denied'
                 || observationLeaseStatus === 'ineligible'
                 || observationLeaseStatus === 'paused_unobserved';
+              // A pixel is only ever shown under the authority that captured it.
+              // In Claimed that is this student's own context lease, never the
+              // class lease and never another group's - otherwise a class
+              // screenshot would leak into a view that never authorized it.
+              const claimedTileStatus = studentView === 'claimed'
+                ? claimedStudentObservationStatus(student) : null;
               const tileScreenshotRevoked = tileSharedPrivacyRevoked
                 || hardDeniedScreenshotStudentIds.has(student.studentId)
-                || observationLeaseStatus === 'denied'
-                || observationLeaseStatus === 'ineligible'
-                || studentView !== 'class'
+                || (studentView === 'claimed'
+                  ? claimedTileStatus !== 'observed'
+                  : observationLeaseStatus === 'denied'
+                    || observationLeaseStatus === 'ineligible'
+                    || studentView !== 'class')
                 || !scheduledClientSupported(student);
               // This is the tile's 15-second active-view stale cue, and it mirrors the
               // server capture policy exactly: an observed lease AND the student's
@@ -6455,7 +6542,7 @@ ${claimedPreviewContext?.id || ''}:${previewAuthorityRevision || ''}`;
                     flightPaths={supervisedElsewhere ? EMPTY_LIST : flightPaths}
                     monitoringDisplay={monitoringDisplay || undefined}
                     freshnessNowMs={freshnessNowMs}
-                    screenshotObservationStatus={tileScreenshotObservationStatus}
+                    screenshotObservationStatus={claimedTileStatus ?? tileScreenshotObservationStatus}
                     screenshotCaptureCadence={screenshotCaptureCadence}
                     screenshotAuthorizationDenied={tileScreenshotRevoked}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveActivity?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}

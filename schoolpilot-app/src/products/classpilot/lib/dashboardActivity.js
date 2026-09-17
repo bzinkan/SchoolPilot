@@ -1,4 +1,4 @@
-const SOURCES = new Set(['class', 'scheduled_class', 'scheduled_testing', 'scheduled_coverage']);
+const SOURCES = new Set(['class', 'scheduled_class', 'scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision']);
 
 export function activityRequestHeaders(schoolId, contextAuthorityRevision) {
   return { ...(schoolId ? { 'X-School-Id': schoolId } : {}),
