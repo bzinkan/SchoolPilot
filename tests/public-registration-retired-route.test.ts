@@ -155,7 +155,7 @@ describe("POST /api/auth/register is retired", () => {
       tagged.rows.map((row: any) => row.user_email),
       [`existing@${DOMAIN}`, `founder@${DOMAIN}`, `parent@${DOMAIN}`]
     );
-    for (const row of tagged.rows as any[]) {
+    for (const row of tagged.rows) {
       assert.equal(row.school_id, null);
       assert.equal(typeof row.metadata?.ip, "string");
       assert.notEqual(row.metadata.ip, "");

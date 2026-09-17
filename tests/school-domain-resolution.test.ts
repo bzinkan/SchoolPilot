@@ -158,7 +158,7 @@ describe("school creation domain guard", () => {
 
   it("creates the school when the shared domain is acknowledged", async () => {
     const { school, sharedDomainWith } = await storage.createSchoolWithDomainGuard(
-      { name: `${TAG}_Sibling`, domain: DOMAIN.toUpperCase(), slug: `${TAG}-sibling`.toLowerCase() } as any,
+      { name: `${TAG}_Sibling`, domain: DOMAIN.toUpperCase(), slug: `${TAG}-sibling`.toLowerCase() },
       { acknowledgeExistingDomain: true }
     );
     schoolIds.push(school.id);
