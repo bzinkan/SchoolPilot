@@ -123,7 +123,7 @@ jobs:
 
       - name: Upload SOC 2 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-backend
           path: soc2-evidence/
@@ -192,7 +192,7 @@ jobs:
 
       - name: Upload SOC 2 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-cross-tenant
           path: soc2-evidence/
@@ -274,7 +274,7 @@ jobs:
 
       - name: Upload SOC 2 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-rls-enabled
           path: soc2-evidence/
@@ -543,7 +543,7 @@ jobs:
 
       - name: Upload frontend dependency audit evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-dependency-audit
           path: schoolpilot-app/audit-evidence/
@@ -561,7 +561,7 @@ jobs:
 
       - name: Upload SOC 2 evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-frontend
           path: soc2-evidence/
@@ -592,7 +592,7 @@ jobs:
 
       - name: Upload SOC 2 deployment evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-deployment
           path: soc2-evidence/deployments/
@@ -622,7 +622,7 @@ jobs:
 
       - name: Upload SOC 2 incident evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-incidents
           path: soc2-evidence/incidents/
@@ -652,7 +652,7 @@ jobs:
 
       - name: Upload SOC 2 tenant isolation evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-tenant-isolation
           path: soc2-evidence/tenant-isolation/
@@ -680,7 +680,7 @@ jobs:
 
       - name: Upload SOC 2 AI/privacy evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-ai-privacy
           path: soc2-evidence/ai-privacy/
@@ -707,7 +707,7 @@ jobs:
 
       - name: Upload SOC 2 privileged access evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-privileged-access
           path: soc2-evidence/privileged-access/
@@ -736,7 +736,7 @@ jobs:
 
       - name: Upload SOC 2 monitoring evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-monitoring
           path: soc2-evidence/monitoring/
@@ -1004,7 +1004,7 @@ jobs:
 
       - name: Upload SOC 2 approval queue
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-approval-queue
           path: soc2-evidence/approvals/
@@ -1012,7 +1012,7 @@ jobs:
 
       - name: Upload SOC 2 private evidence readiness
         if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: soc2-private-evidence-readiness
           path: soc2-evidence/private-readiness/
