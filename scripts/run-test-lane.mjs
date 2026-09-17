@@ -103,6 +103,7 @@ const DB_SERIAL = new Set([
   // not be repeated through the restricted RLS connection.
   "rls-policy.test.ts",
   "scheduler-lock.test.ts",
+  "school-domain-guard-routes.test.ts",
   "school-domain-resolution.test.ts",
   "school-lifecycle-inquiries.test.ts",
   "student-email-domain.test.ts",

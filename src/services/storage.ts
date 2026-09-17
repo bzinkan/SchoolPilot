@@ -647,7 +647,10 @@ function generateSlug(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export async function createSchool(data: InsertSchool): Promise<School> {
+export async function createSchool(
+  data: InsertSchool,
+  dbInstance: typeof db = db
+): Promise<School> {
   // Auto-generate slug from school name if not provided
   if (!data.slug && data.name) {
     let base = generateSlug(data.name);
@@ -661,8 +664,59 @@ export async function createSchool(data: InsertSchool): Promise<School> {
     }
     data.slug = slug;
   }
-  const [school] = await db.insert(schools).values(data).returning();
+  const [school] = await dbInstance.insert(schools).values(data).returning();
   return school!;
+}
+
+export type SchoolDomainSibling = { id: string; name: string; status: string };
+
+export class SchoolDomainInUseError extends Error {
+  readonly code = "SCHOOL_DOMAIN_ALREADY_IN_USE";
+  readonly status = 409;
+  readonly expose = true;
+
+  constructor(readonly existingSchools: SchoolDomainSibling[]) {
+    super(
+      "Another school already uses this domain. Confirm it is a district or sibling school to continue."
+    );
+    this.name = "SchoolDomainInUseError";
+  }
+}
+
+/**
+ * Create a school, refusing a domain that a live school already uses unless
+ * the caller acknowledges it explicitly. District sibling schools legitimately
+ * share a Workspace domain, so this is a confirmation, not a prohibition; what
+ * it prevents is a second school landing on a live school's domain by accident,
+ * which would move that school's un-rostered students onto the roster-based
+ * resolution path and break their sign-in. The check runs under a per-domain
+ * advisory lock inside the insert transaction so two concurrent unacknowledged
+ * creates cannot both pass.
+ */
+export async function createSchoolWithDomainGuard(
+  data: InsertSchool,
+  options: { acknowledgeExistingDomain?: boolean } = {}
+): Promise<{ school: School; sharedDomainWith: string[] }> {
+  const domain = normalizeDomain(data.domain);
+  if (!domain) {
+    return { school: await createSchool(data), sharedDomainWith: [] };
+  }
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await transactionDb.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`school-domain:${domain}`}, 0::bigint))`
+    );
+    const existing = await transactionDb
+      .select({ id: schools.id, name: schools.name, status: schools.status })
+      .from(schools)
+      .where(and(eq(schools.domain, domain), isNull(schools.deletedAt)))
+      .orderBy(asc(schools.createdAt), asc(schools.id));
+    if (existing.length > 0 && options.acknowledgeExistingDomain !== true) {
+      throw new SchoolDomainInUseError(existing);
+    }
+    const school = await createSchool({ ...data, domain }, transactionDb);
+    return { school, sharedDomainWith: existing.map((row) => row.id) };
+  });
 }
 
 // ============================================================================

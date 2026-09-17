@@ -148,6 +148,10 @@ export const createSchoolSchema = z.object({
   // Canonical ClassPilot classes require an updated PassPilot client fleet.
   // License selection alone is never sufficient admission.
   passpilotClassModelAcknowledged: z.literal(true).optional(),
+  // Another live school already uses the domain (a district sibling). The
+  // server lists them and answers 409 SCHOOL_DOMAIN_ALREADY_IN_USE until the
+  // super admin acknowledges the shared domain explicitly.
+  acknowledgeExistingDomain: z.boolean().optional(),
 });
 export type CreateSchoolData = z.infer<typeof createSchoolSchema>;
 

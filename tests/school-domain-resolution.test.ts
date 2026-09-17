@@ -75,11 +75,11 @@ after(async () => {
   }
 });
 
-describe("school resolution by student email domain", () => {
-  let first: any;
-  let deleted: any;
-  let older: any;
+let first: any;
+let deleted: any;
+let older: any;
 
+describe("school resolution by student email domain", () => {
   it("takes the fast path when one live school owns the domain", async () => {
     first = await createSchool("First");
     await setCreatedAt("schools", first.id, 5);
@@ -128,5 +128,69 @@ describe("school resolution by student email domain", () => {
     const resolved = await storage.resolveSchoolForStudent(email);
     assert.equal(resolved?.school.id, older.id);
     assert.equal(resolved?.isSharedDomain, true);
+  });
+});
+
+describe("school creation domain guard", () => {
+  it("refuses a live domain unless acknowledged and lists live siblings with their status", async () => {
+    await assert.rejects(
+      storage.createSchoolWithDomainGuard({
+        name: `${TAG}_Guarded`,
+        domain: DOMAIN,
+        slug: `${TAG}-guarded`.toLowerCase(),
+      } as any),
+      (error: any) => {
+        assert.equal(error.code, "SCHOOL_DOMAIN_ALREADY_IN_USE");
+        assert.equal(error.status, 409);
+        assert.deepEqual(
+          error.existingSchools.map((school: any) => [school.id, school.status]),
+          [[older.id, "suspended"], [first.id, "active"]],
+          "live siblings only, oldest first, the deleted school absent"
+        );
+        return true;
+      }
+    );
+    const count: any = await asSystem(() =>
+      db.execute(sql`SELECT count(*)::int AS count FROM schools WHERE domain = ${DOMAIN} AND deleted_at IS NULL`)
+    );
+    assert.equal(count.rows[0].count, 2, "a refused create must not insert");
+  });
+
+  it("creates the school when the shared domain is acknowledged", async () => {
+    const { school, sharedDomainWith } = await storage.createSchoolWithDomainGuard(
+      { name: `${TAG}_Sibling`, domain: DOMAIN.toUpperCase(), slug: `${TAG}-sibling`.toLowerCase() } as any,
+      { acknowledgeExistingDomain: true }
+    );
+    schoolIds.push(school.id);
+    assert.equal(school.domain, DOMAIN, "the stored domain is normalised");
+    assert.deepEqual(sharedDomainWith, [older.id, first.id]);
+  });
+
+  it("creates a school without a domain unguarded", async () => {
+    const { school, sharedDomainWith } = await storage.createSchoolWithDomainGuard({
+      name: `${TAG}_NoDomain`,
+      slug: `${TAG}-nodomain`.toLowerCase(),
+    } as any);
+    schoolIds.push(school.id);
+    assert.equal(school.domain, null);
+    assert.deepEqual(sharedDomainWith, []);
+  });
+
+  it("lets exactly one of two concurrent unacknowledged creates win a fresh domain", async () => {
+    const fresh = `fresh.${DOMAIN}`;
+    const results = await Promise.allSettled([
+      storage.createSchoolWithDomainGuard({
+        name: `${TAG}_RaceA`, domain: fresh, slug: `${TAG}-race-a`.toLowerCase(),
+      } as any),
+      storage.createSchoolWithDomainGuard({
+        name: `${TAG}_RaceB`, domain: fresh, slug: `${TAG}-race-b`.toLowerCase(),
+      } as any),
+    ]);
+    for (const result of results) {
+      if (result.status === "fulfilled") schoolIds.push((result.value as any).school.id);
+    }
+    assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+    const rejected: any = results.find((result) => result.status === "rejected");
+    assert.equal(rejected.reason.code, "SCHOOL_DOMAIN_ALREADY_IN_USE");
   });
 });
