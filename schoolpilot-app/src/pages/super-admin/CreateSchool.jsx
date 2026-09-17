@@ -119,9 +119,18 @@ export default function CreateSchool() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  // Set when the server answers 409 SCHOOL_DOMAIN_ALREADY_IN_USE: the live
+  // schools that already use the typed domain. The super admin confirms a
+  // district or sibling school explicitly before the request is resent.
+  const [domainConflict, setDomainConflict] = useState(null);
+  const [acknowledgeExistingDomain, setAcknowledgeExistingDomain] = useState(false);
 
   const handleChange = (e) => {
     const { name, value, type } = e.target;
+    if (name === 'domain') {
+      setDomainConflict(null);
+      setAcknowledgeExistingDomain(false);
+    }
     setForm({ ...form, [name]: type === 'number' ? parseInt(value) || 0 : value });
   };
 
@@ -143,6 +152,9 @@ export default function CreateSchool() {
       if (!createsCanonicalPassPilotSchool) {
         delete payload.passpilotClassModelAcknowledged;
       }
+      if (acknowledgeExistingDomain) {
+        payload.acknowledgeExistingDomain = true;
+      }
       // Only include schoolHours if products require it and hours are enabled
       const needsHours = payload.products.includes('CLASSPILOT') || payload.products.includes('PASSPILOT');
       if (!needsHours || !payload.schoolHours?.enabled) {
@@ -151,7 +163,15 @@ export default function CreateSchool() {
       const res = await api.post('/super-admin/schools', payload);
       setResult(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to create school');
+      const data = err.response?.data;
+      if (err.response?.status === 409 && data?.code === 'SCHOOL_DOMAIN_ALREADY_IN_USE') {
+        setDomainConflict({
+          existingSchools: Array.isArray(data.existingSchools) ? data.existingSchools : [],
+        });
+        setError(null);
+      } else {
+        setError(data?.error || data?.message || 'Failed to create school');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -241,6 +261,40 @@ export default function CreateSchool() {
               <input name="domain" value={form.domain} onChange={handleChange} required
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
                 placeholder="school.edu" />
+              {domainConflict ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4" data-testid="domain-conflict">
+                  <p className="text-sm font-semibold text-amber-900">
+                    Another school already uses {form.domain}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm text-amber-900">
+                    {domainConflict.existingSchools.map((school) => (
+                      <li key={school.id} className="flex items-center gap-2">
+                        <button type="button" className="underline"
+                          onClick={() => navigate(`/super-admin/schools/${school.id}`)}>
+                          {school.name}
+                        </button>
+                        <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-xs text-amber-800">
+                          {school.status}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={acknowledgeExistingDomain}
+                      onChange={(event) => setAcknowledgeExistingDomain(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-amber-900">
+                      This is a district or sibling school that shares {form.domain}. Create it anyway.
+                    </span>
+                  </label>
+                  <p className="mt-2 text-xs text-amber-800">
+                    Student sign-in on a shared domain resolves by roster, so every student must be imported into exactly one of these schools.
+                  </p>
+                </div>
+              ) : null}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>

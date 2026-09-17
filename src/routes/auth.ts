@@ -1,14 +1,11 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { google } from "googleapis";
-import { loginSchema, registerSchema } from "../schema/validation.js";
-import { hashPassword, comparePassword } from "../util/password.js";
+import { loginSchema } from "../schema/validation.js";
+import { comparePassword } from "../util/password.js";
 import { signUserToken } from "../services/jwt.js";
 import {
   getUserByEmail,
-  createUser,
-  createSchool,
-  createMembership,
   getMembershipsWithSchool,
   getEmailDomain,
   getProductLicenses,
@@ -20,7 +17,6 @@ import {
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
-import { sendEmail } from "../services/email.js";
 import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
 import { issueAuthCode, consumeAuthCode } from "../services/authCodeExchange.js";
 import { logAudit as logSchoolAudit, logSystemAudit, type AuditEntry } from "../services/audit.js";
@@ -29,10 +25,11 @@ import {
 } from "../util/googleOAuthTokenExchange.js";
 import { establishWebSession } from "../services/webSession.js";
 import { clearSessionCookie } from "../config/sessionCookie.js";
+import { isDisabledNativeGoPilotOAuthRedirect } from "../util/gopilotParentContainment.js";
 import {
-  isDisabledNativeGoPilotOAuthRedirect,
-  rejectGoPilotParentRegistration,
-} from "../util/gopilotParentContainment.js";
+  retiredRegistrationAuditEmail,
+  sendPublicRegistrationRetired,
+} from "../util/publicRegistrationRetired.js";
 import {
   buildVerifiedSchoolIdentities,
   type VerifiedSchoolIdentity,
@@ -300,98 +297,21 @@ router.post("/login", authLimiter, async (req, res, next) => {
 });
 
 // POST /api/auth/register
-// GoPilot-style: creates user + optionally a school
-router.post("/register", rejectGoPilotParentRegistration, authLimiter, async (req, res, next) => {
+// Retired. Schools are provisioned by a super admin (POST /api/admin/schools,
+// POST /api/schools) and prospects arrive through POST /admin/school-inquiries.
+// The public route created an active school on the caller's unverified email
+// domain, which could put a second school on a live school's domain and break
+// student sign-in there. The response body is request-independent so account
+// and school existence cannot be inferred; the hit is recorded as a system
+// audit event, bounded by the shared auth rate limiter.
+router.post("/register", authLimiter, async (req, res, next) => {
   try {
-    const parsed = registerSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res
-        .status(400)
-        .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
-    }
-
-    const { email, password, firstName, lastName, phone, schoolName, timezone } =
-      parsed.data;
-
-    // Check if user exists
-    const existing = await getUserByEmail(email);
-    if (existing) {
-      return res.status(409).json({ error: "Email already registered" });
-    }
-
-    const hashedPassword = await hashPassword(password);
-
-    const user = await createUser({
-      email: email.toLowerCase(),
-      password: hashedPassword,
-      firstName,
-      lastName,
-      displayName: `${firstName} ${lastName}`,
-      phone: phone || null,
+    await logAudit({
+      action: "auth.register.retired",
+      userEmail: retiredRegistrationAuditEmail(req.body),
+      metadata: { ip: clientIp(req) },
     });
-
-    let school = null;
-    let membership = null;
-
-    if (schoolName) {
-      // Admin registration: create a new school
-      school = await createSchool({
-        name: schoolName,
-        domain: email.split("@")[1]?.toLowerCase() || null,
-        status: "active",
-        planTier: "basic",
-        schoolTimezone: timezone || "America/New_York",
-      });
-
-      membership = await createMembership({
-        userId: user.id,
-        schoolId: school.id,
-        role: "admin",
-      });
-
-      // Notify super admin of new school registration
-      sendEmail({
-        to: "support@school-pilot.net",
-        subject: `New School Registration: ${schoolName}`,
-        html: `<h3>New School Registered</h3>
-          <p><strong>School:</strong> ${schoolName}</p>
-          <p><strong>Admin:</strong> ${email}</p>
-          <p><strong>Domain:</strong> ${email.split("@")[1] || "N/A"}</p>
-          <p><strong>Time:</strong> ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}</p>
-          <p><a href="https://school-pilot.net/super-admin">View in Super Admin Dashboard</a></p>`,
-      }).catch(() => { /* non-blocking */ });
-
-    }
-
-    await establishWebSession(req, {
-      userId: user.id,
-      email: user.email,
-      role: membership?.role || "teacher",
-      schoolId: membership?.schoolId || null,
-      schoolSessionVersion: school?.schoolSessionVersion,
-      authVersion: user.authVersion,
-    });
-
-    // Persist session to PostgreSQL before responding
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
-
-    const token = signUserToken({
-      userId: user.id,
-      email: user.email,
-      isSuperAdmin: false,
-      authVersion: user.authVersion,
-    });
-
-    const { password: _, ...safeUser } = user;
-
-    return res.status(201).json({
-      token,
-      user: safeUser,
-      school,
-      membership,
-    });
+    return sendPublicRegistrationRetired(res);
   } catch (err) {
     next(err);
   }

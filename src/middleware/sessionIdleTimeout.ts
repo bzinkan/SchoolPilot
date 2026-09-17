@@ -25,7 +25,6 @@ const SESSION_BOOTSTRAP_ROUTES = new Set([
   "POST /auth/exchange-code",
   "POST /auth/login",
   "POST /auth/logout",
-  "POST /auth/register",
   "POST /auth/register/parent",
   // Legacy ClassPilot/PassPilot aliases are rewritten after this middleware.
   "POST /login",

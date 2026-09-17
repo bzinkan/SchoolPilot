@@ -204,19 +204,6 @@ export function AuthProvider({ children }) {
     return res.data;
   };
 
-  const register = async (data) => {
-    const res = await api.post('/auth/register', data);
-
-    if (res.data.token) {
-      await acceptToken(res.data.token);
-    }
-
-    selectActiveSchool(res.data.membership?.schoolId || res.data.school?.id || null);
-    setSchoolSelectionRequired(false);
-    await fetchUser({ throwOnError: true });
-    return res.data;
-  };
-
   const logout = async () => {
     authRequestIdRef.current += 1;
     try {
@@ -263,7 +250,6 @@ export function AuthProvider({ children }) {
         licenses,
         loading,
         login,
-        register,
         logout,
         stopImpersonating,
         switchSchool,

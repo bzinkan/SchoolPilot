@@ -120,7 +120,7 @@ Express API (src/app.ts, src/index.ts)   |
 
 ### Auth And Licensing
 
-- `AuthContext` owns user, memberships, licenses, active school, JWT token, login/register/logout, and school switching.
+- `AuthContext` owns user, memberships, licenses, active school, JWT token, login/logout, and school switching.
 - `LicenseContext` derives product access and default route.
 - `NativeContext` detects Capacitor/native product builds.
 - `shared/utils/api.js` is the Axios client. It handles web cookies, native JWTs, CSRF token fetching, and 401 redirects.

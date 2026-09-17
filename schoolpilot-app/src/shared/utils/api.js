@@ -200,7 +200,6 @@ api.interceptors.request.use(async (config) => {
     // Skip the csrf endpoint itself and auth bootstrap routes
     const isCsrfBootstrap = url.includes('/auth/csrf') ||
                              url.includes('/auth/login') ||
-                             url.includes('/auth/register') ||
                              url.includes('/auth/forgot-password') ||
                              url.includes('/auth/reset-password');
     if (!isCsrfBootstrap) {

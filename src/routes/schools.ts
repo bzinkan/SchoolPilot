@@ -13,7 +13,8 @@ import {
 } from "../schema/validation.js";
 import {
   getSchoolById,
-  createSchool,
+  createSchoolWithDomainGuard,
+  SchoolDomainInUseError,
   updateSchool,
   softDeleteSchool,
   getAllSchools,
@@ -135,13 +136,19 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
       products,
       timezone,
       passpilotClassModelAcknowledged,
+      acknowledgeExistingDomain,
       ...schoolData
     } = parsed.data;
 
-    const school = await createSchool({
-      ...schoolData,
-      schoolTimezone: timezone || "America/New_York",
-    });
+    // See POST /api/super-admin/schools: a live school on the same domain
+    // answers 409 with the list until the super admin acknowledges it.
+    const { school, sharedDomainWith } = await createSchoolWithDomainGuard(
+      {
+        ...schoolData,
+        schoolTimezone: timezone || "America/New_York",
+      },
+      { acknowledgeExistingDomain: acknowledgeExistingDomain === true }
+    );
 
     if (products && products.length > 0) {
       for (const product of products) {
@@ -178,12 +185,21 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
       metadata: {
         passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
         passpilotClassModelAcknowledged: startsCanonical,
+        domainAcknowledged: acknowledgeExistingDomain === true,
+        sharedDomainWith,
       },
     });
 
     const licenses = await getProductLicenses(school.id);
     return res.status(201).json({ school, licenses });
   } catch (err) {
+    if (err instanceof SchoolDomainInUseError) {
+      return res.status(err.status).json({
+        error: err.message,
+        code: err.code,
+        existingSchools: err.existingSchools,
+      });
+    }
     next(err);
   }
 });

@@ -570,31 +570,31 @@ export async function getSchoolById(
   return school;
 }
 
-export async function getSchoolByDomain(
-  domain: string
-): Promise<School | undefined> {
-  const [school] = await db
-    .select()
-    .from(schools)
-    .where(eq(schools.domain, domain.toLowerCase()))
-    .limit(1);
-  return school;
-}
-
+/**
+ * The live schools that own a student email domain. Soft-deleted schools hold
+ * no domain claim. Suspended schools do: they still resolve and then fail at
+ * entitlement, so a suspended district sibling's students are never re-mapped
+ * onto the surviving school. The order is deterministic so no caller depends
+ * on physical row order.
+ */
 export async function getSchoolsByDomain(
   domain: string
 ): Promise<School[]> {
   return db
     .select()
     .from(schools)
-    .where(eq(schools.domain, domain.toLowerCase()));
+    .where(and(eq(schools.domain, domain.toLowerCase()), isNull(schools.deletedAt)))
+    .orderBy(asc(schools.createdAt), asc(schools.id));
 }
 
 /**
  * Resolve which school a student belongs to from their email.
- * - Single-school domain: returns that school (fast path).
- * - Multi-school domain: looks up the student record to disambiguate.
- * - Returns undefined if no school found or student not yet imported on a shared domain.
+ * - Single live school on the domain: returns that school (fast path).
+ * - Several live schools share the domain (a district): the student's roster
+ *   row decides, and the oldest roster row wins so a later duplicate import in
+ *   a sibling school cannot take over an already-rostered student.
+ * - Returns undefined if no live school owns the domain, or the student is not
+ *   yet rostered on a shared domain.
  */
 export async function resolveSchoolForStudent(
   email: string
@@ -620,10 +620,11 @@ export async function resolveSchoolForStudent(
           inArray(students.schoolId, schoolIds)
         )
       )
+      .orderBy(asc(students.createdAt), asc(students.id))
       .limit(1),
   );
 
-  if (!student) return undefined; // Student not imported yet
+  if (!student) return undefined; // Student not rostered yet
 
   const school = matchingSchools.find((s) => s.id === student.schoolId);
   return school ? { school, isSharedDomain: true } : undefined;
@@ -646,7 +647,10 @@ function generateSlug(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export async function createSchool(data: InsertSchool): Promise<School> {
+export async function createSchool(
+  data: InsertSchool,
+  dbInstance: typeof db = db
+): Promise<School> {
   // Auto-generate slug from school name if not provided
   if (!data.slug && data.name) {
     let base = generateSlug(data.name);
@@ -660,8 +664,59 @@ export async function createSchool(data: InsertSchool): Promise<School> {
     }
     data.slug = slug;
   }
-  const [school] = await db.insert(schools).values(data).returning();
+  const [school] = await dbInstance.insert(schools).values(data).returning();
   return school!;
+}
+
+export type SchoolDomainSibling = { id: string; name: string; status: string };
+
+export class SchoolDomainInUseError extends Error {
+  readonly code = "SCHOOL_DOMAIN_ALREADY_IN_USE";
+  readonly status = 409;
+  readonly expose = true;
+
+  constructor(readonly existingSchools: SchoolDomainSibling[]) {
+    super(
+      "Another school already uses this domain. Confirm it is a district or sibling school to continue."
+    );
+    this.name = "SchoolDomainInUseError";
+  }
+}
+
+/**
+ * Create a school, refusing a domain that a live school already uses unless
+ * the caller acknowledges it explicitly. District sibling schools legitimately
+ * share a Workspace domain, so this is a confirmation, not a prohibition; what
+ * it prevents is a second school landing on a live school's domain by accident,
+ * which would move that school's un-rostered students onto the roster-based
+ * resolution path and break their sign-in. The check runs under a per-domain
+ * advisory lock inside the insert transaction so two concurrent unacknowledged
+ * creates cannot both pass.
+ */
+export async function createSchoolWithDomainGuard(
+  data: InsertSchool,
+  options: { acknowledgeExistingDomain?: boolean } = {}
+): Promise<{ school: School; sharedDomainWith: string[] }> {
+  const domain = normalizeDomain(data.domain);
+  if (!domain) {
+    return { school: await createSchool(data), sharedDomainWith: [] };
+  }
+  return db.transaction(async (tx) => {
+    const transactionDb = tx as unknown as typeof db;
+    await transactionDb.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`school-domain:${domain}`}, 0::bigint))`
+    );
+    const existing = await transactionDb
+      .select({ id: schools.id, name: schools.name, status: schools.status })
+      .from(schools)
+      .where(and(eq(schools.domain, domain), isNull(schools.deletedAt)))
+      .orderBy(asc(schools.createdAt), asc(schools.id));
+    if (existing.length > 0 && options.acknowledgeExistingDomain !== true) {
+      throw new SchoolDomainInUseError(existing);
+    }
+    const school = await createSchool({ ...data, domain }, transactionDb);
+    return { school, sharedDomainWith: existing.map((row) => row.id) };
+  });
 }
 
 // ============================================================================

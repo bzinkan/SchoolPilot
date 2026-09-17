@@ -139,8 +139,8 @@ async function testGoPilot() {
 
   // Auth
   await test("GoPilot", "POST", "/auth/login", [200, 400, 401]);
-  await test("GoPilot", "POST", "/auth/register", [200, 400]);
-  await test("GoPilot", "POST", "/auth/register/parent", [200, 400, 404], "GP parent register");
+  await test("GoPilot", "POST", "/auth/register", [410], "retired public registration");
+  await test("GoPilot", "POST", "/auth/register/parent", [410], "GP parent register (retired)");
   await test("GoPilot", "GET", "/auth/me", [200, 401]);
 
   // User profile

@@ -15,6 +15,10 @@ creation; the second is what the **school's IT admin** does before devices conne
      (the sub-domain), **not** `lincoln.org`.
    - If a school uses more than one student domain, tell us — the current model is
      one primary domain per school.
+   - If another live school already uses the domain, creation answers `409` and
+     lists those schools. Tick the "district or sibling school" confirmation to
+     proceed. Every student must then be imported into exactly one of the schools,
+     because sign-in on a shared domain resolves by roster.
 3. **Products** — select the licenses the school bought (`CLASSPILOT`, `PASSPILOT`,
    `GOPILOT`). ⚠️ Without a license, that product's features are blocked for the
    school. Only include what they paid for.

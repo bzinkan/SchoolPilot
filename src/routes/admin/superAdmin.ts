@@ -5,7 +5,8 @@ import { bindTenantContext } from "../../middleware/tenantContext.js";
 import {
   getAllSchools,
   getSchoolById,
-  createSchool,
+  createSchoolWithDomainGuard,
+  SchoolDomainInUseError,
   updateSchool,
   softDeleteSchool,
   getMembershipsBySchool,
@@ -163,6 +164,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
       products,
       schoolHours,
       passpilotClassModelAcknowledged,
+      acknowledgeExistingDomain,
     } = req.body;
 
     if (!name) {
@@ -173,6 +175,12 @@ router.post("/schools", ...auth, async (req, res, next) => {
     }
     if (status !== undefined && !["active", "suspended"].includes(status)) {
       return res.status(400).json({ error: "status must be active or suspended", code: "INVALID_SCHOOL_STATUS" });
+    }
+    if (acknowledgeExistingDomain !== undefined && typeof acknowledgeExistingDomain !== "boolean") {
+      return res.status(400).json({
+        error: "acknowledgeExistingDomain must be a boolean.",
+        code: "INVALID_ACKNOWLEDGEMENT",
+      });
     }
 
     // Validate domain format if provided (must look like a real domain)
@@ -215,7 +223,13 @@ router.post("/schools", ...auth, async (req, res, next) => {
     if (maxStudents !== undefined) schoolData.maxStudents = maxStudents;
     if (schoolHours?.timezone) schoolData.schoolTimezone = schoolHours.timezone;
 
-    const school = await createSchool(schoolData as any);
+    // A live school on the same domain answers 409 with the list unless the
+    // super admin acknowledged it. District sibling schools legitimately share
+    // a domain; a second school on a live school's domain by accident is what
+    // breaks student sign-in there, so it needs an explicit confirmation.
+    const { school, sharedDomainWith } = await createSchoolWithDomainGuard(schoolData as any, {
+      acknowledgeExistingDomain: acknowledgeExistingDomain === true,
+    });
 
     // Create product licenses if provided
     if (Array.isArray(products) && products.length > 0) {
@@ -305,11 +319,20 @@ router.post("/schools", ...auth, async (req, res, next) => {
       metadata: {
         passpilotClassSource: startsCanonical ? "classpilot_groups" : "legacy_grades",
         passpilotClassModelAcknowledged: startsCanonical,
+        domainAcknowledged: acknowledgeExistingDomain === true,
+        sharedDomainWith,
       },
     });
 
     return res.status(201).json({ school, tempPassword });
   } catch (err) {
+    if (err instanceof SchoolDomainInUseError) {
+      return res.status(err.status).json({
+        error: err.message,
+        code: err.code,
+        existingSchools: err.existingSchools,
+      });
+    }
     if (sendStaffIdentityError(res, err)) return;
     next(err);
   }

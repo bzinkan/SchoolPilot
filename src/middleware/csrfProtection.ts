@@ -23,7 +23,9 @@ import type { RequestHandler } from "express";
  * schoolpilot-app/src/shared/utils/api.js as an axios request interceptor.
  *
  * Whitelisted paths bypass CSRF (intentional):
- *   - /api/auth/login, /api/auth/register* — no session yet to attach token to
+ *   - /api/auth/login — no session yet to attach a token to. Retired auth
+ *     routes that answer 410 (public registration, the parent portal) need no
+ *     exemption: an anonymous POST never reaches the token check.
  *   - /api/auth/csrf — the endpoint that issues the token
  *   - /api/auth/google* — OAuth flow has its own state parameter
  *   - /api/monitoring/browser-error — mounted before this middleware with its
@@ -41,8 +43,6 @@ import type { RequestHandler } from "express";
 
 const CSRF_EXEMPT_PATHS = [
   "/auth/login",
-  "/auth/register",
-  "/auth/register-parent",
   "/auth/csrf",
   "/auth/exchange-code",
   "/auth/google",

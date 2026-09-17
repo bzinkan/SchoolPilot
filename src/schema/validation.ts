@@ -25,19 +25,6 @@ export const loginSchema = z.object({
 });
 export type LoginData = z.infer<typeof loginSchema>;
 
-export const registerSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: STRONG_PASSWORD,
-  firstName: z.string().min(1, "First name is required"),
-  lastName: z.string().min(1, "Last name is required"),
-  phone: z.string().optional(),
-  // Public registration provisions a school administrator only. Historical
-  // school-slug parent enrollment is terminally rejected before validation.
-  schoolName: z.string().trim().min(1, "School name is required"),
-  timezone: z.string().optional(),
-}).strict();
-export type RegisterData = z.infer<typeof registerSchema>;
-
 // ============================================================================
 // User management
 // ============================================================================
@@ -161,6 +148,10 @@ export const createSchoolSchema = z.object({
   // Canonical ClassPilot classes require an updated PassPilot client fleet.
   // License selection alone is never sufficient admission.
   passpilotClassModelAcknowledged: z.literal(true).optional(),
+  // Another live school already uses the domain (a district sibling). The
+  // server lists them and answers 409 SCHOOL_DOMAIN_ALREADY_IN_USE until the
+  // super admin acknowledges the shared domain explicitly.
+  acknowledgeExistingDomain: z.boolean().optional(),
 });
 export type CreateSchoolData = z.infer<typeof createSchoolSchema>;
 
