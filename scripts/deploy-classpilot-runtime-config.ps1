@@ -426,6 +426,12 @@ function ConvertTo-RuntimeConfiguration {
     $schemaFiveModes = @("fast-preview-pilot", "fast-preview-global-on", "fast-preview-off")
     $schemaSixModes = @("restriction-auth-pilot", "restriction-auth-off")
     $schemaSevenModes = @($script:RoadmapProfileCapabilities.Keys)
+    # Scheduled classroom is the first capability whose activation is not a pilot.
+    # It reaches every school or none, so this family has a global-on and an off and
+    # deliberately NO pilot mode: a per-school scheduled classroom is the shape the
+    # product moved away from, and leaving the mode unavailable is what stops it
+    # coming back.
+    $schemaEightModes = @("scheduled-classroom-global-on", "scheduled-classroom-off")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -433,7 +439,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 5 -and $mode -cnotin $schemaFiveModes) -or
         ($schemaVersion -eq 6 -and $mode -cnotin $schemaSixModes) -or
         ($schemaVersion -eq 7 -and $mode -cnotin $schemaSevenModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7)) {
+        ($schemaVersion -eq 8 -and $mode -cnotin $schemaEightModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -501,6 +508,9 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -cin $schemaSevenModes -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "Roadmap profiles must preserve existing TURN runtime wiring."
     }
+    if ($mode -cin $schemaEightModes -and $Profile.PSObject.Properties.Name -contains "turn") {
+        throw "Scheduled-classroom profiles must preserve existing TURN runtime wiring."
+    }
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
     }
@@ -533,9 +543,11 @@ function ConvertTo-RuntimeConfiguration {
         throw "The selected profile requires verified TURN inputs."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes)) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes)) {
         $selectedCapability = if ($mode -cin $schemaSevenModes) {
             $script:RoadmapProfileCapabilities[$mode]
+        } elseif ($mode -cin $schemaEightModes) {
+            $script:ScheduledClassroomCapability
         } elseif ($mode -cin $schemaSixModes) {
             $script:RestrictionAuthPassThroughCapability
         } elseif ($mode -cin $schemaFiveModes) {
@@ -549,7 +561,7 @@ function ConvertTo-RuntimeConfiguration {
         ) -or $mode -cin $script:RoadmapPilotModes
         $isOff = $mode -cin @(
             "student-gate-off", "late-signin-off", "fast-preview-off",
-            "restriction-auth-off"
+            "restriction-auth-off", "scheduled-classroom-off"
         ) -or $mode -cin $script:RoadmapOffModes
         return [pscustomobject]@{
             Mode = $mode
@@ -632,7 +644,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "student-gate-pilot", "student-gate-global-on", "student-gate-off",
         "late-signin-pilot", "late-signin-off",
         "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off",
-        "restriction-auth-pilot", "restriction-auth-off"
+        "restriction-auth-pilot", "restriction-auth-off",
+        "scheduled-classroom-global-on", "scheduled-classroom-off"
     ) -and -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -685,8 +698,13 @@ function Resolve-SourcePreservingRuntimeConfiguration {
     $isRestrictionAuthIntent = [string]$RuntimeIntent.Mode -cin @(
         "restriction-auth-pilot", "restriction-auth-off"
     )
+    $isScheduledClassroomIntent = [string]$RuntimeIntent.Mode -cin @(
+        "scheduled-classroom-global-on", "scheduled-classroom-off"
+    )
     $selectedCapability = if ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         $script:RoadmapProfileCapabilities[[string]$RuntimeIntent.Mode]
+    } elseif ($isScheduledClassroomIntent) {
+        $script:ScheduledClassroomCapability
     } elseif ($isRestrictionAuthIntent) {
         $script:RestrictionAuthPassThroughCapability
     } elseif ($isFastPreviewIntent) {
@@ -695,7 +713,8 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         $script:LateSignInRestrictionSsoCapability
     } else { $script:StudentGatePresenceCapability }
     $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
-        "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off"
+        "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off",
+        "scheduled-classroom-off"
     ) -and [string]$RuntimeIntent.Mode -cnotin $script:RoadmapOffModes
     $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
     if ([string]$RuntimeIntent.Mode -cin @(
@@ -2327,6 +2346,7 @@ function Get-RuntimeActivationState {
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
             RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
+            ScheduledClassroomMode = "off"
         }
     }
     $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
@@ -2388,6 +2408,7 @@ function Get-RuntimeActivationState {
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
             RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
+            ScheduledClassroomMode = "off"
         }
     }
 
@@ -2514,6 +2535,33 @@ function Get-RuntimeActivationState {
         $restrictionAuthSchoolId = [string]$restrictionAuthSchoolIds[0]
     }
 
+    $scheduledClassroomFlag = [string]$script:CapabilityFlags[$script:ScheduledClassroomCapability]
+    $scheduledClassroomFlagValue = [string]$values[$scheduledClassroomFlag]
+    $scheduledClassroomRollout = $rollouts.$($script:ScheduledClassroomCapability)
+    if ($scheduledClassroomFlagValue -cnotin @("true", "false")) {
+        throw "Scheduled classroom kill switch is invalid."
+    }
+    $scheduledClassroomMode = "off"
+    if ($scheduledClassroomFlagValue -ceq "false") {
+        if ([string]$scheduledClassroomRollout.mode -cne "off" -or
+            $scheduledClassroomRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Scheduled classroom requires both matching activation controls."
+        }
+    }
+    elseif ([string]$scheduledClassroomRollout.mode -cne "on") {
+        throw "Scheduled classroom requires both matching activation controls."
+    }
+    elseif ($scheduledClassroomRollout.PSObject.Properties.Name -contains "schoolIds") {
+        # There is no pilot arm on purpose. A per-school scheduled classroom is the
+        # shape the product moved away from: a school that is not named loses screen
+        # previews under a claim or a testing block and nothing says why. Refusing
+        # the scope here is what stops it being reintroduced by hand.
+        throw "Scheduled classroom reaches every school or none; it must not carry a school scope."
+    }
+    else {
+        $scheduledClassroomMode = "global-on"
+    }
+
     $fastPreviewFlag = [string]$script:CapabilityFlags[$script:FastPreviewCapability]
     $fastPreviewFlagValue = [string]$values[$fastPreviewFlag]
     $fastPreviewRollout = $rollouts.$($script:FastPreviewCapability)
@@ -2581,6 +2629,7 @@ function Get-RuntimeActivationState {
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
                 RestrictionAuthMode = $restrictionAuthMode; RestrictionAuthSchoolId = $restrictionAuthSchoolId
+                ScheduledClassroomMode = $scheduledClassroomMode
             }
         }
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
@@ -2590,6 +2639,7 @@ function Get-RuntimeActivationState {
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
                 RestrictionAuthMode = $restrictionAuthMode; RestrictionAuthSchoolId = $restrictionAuthSchoolId
+                ScheduledClassroomMode = $scheduledClassroomMode
             }
         }
         if ($trackingWindowRollout.schoolIds -isnot [Array]) {
@@ -2612,6 +2662,7 @@ function Get-RuntimeActivationState {
             FastPreviewSchoolId = $fastPreviewSchoolId
             RestrictionAuthMode = $restrictionAuthMode
             RestrictionAuthSchoolId = $restrictionAuthSchoolId
+            ScheduledClassroomMode = $scheduledClassroomMode
         }
     }
 
@@ -2649,6 +2700,7 @@ function Get-RuntimeActivationState {
         LateSignInMode = "off"; LateSignInSchoolId = $null
         FastPreviewMode = "off"; FastPreviewSchoolId = $null
         RestrictionAuthMode = "off"; RestrictionAuthSchoolId = $null
+        ScheduledClassroomMode = "off"
     }
 }
 
@@ -2718,7 +2770,8 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
             [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
             [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
-            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId -or
+            [string]$source.ScheduledClassroomMode -cne [string]$target.ScheduledClassroomMode) {
             throw "Student-gate rollout must preserve the existing repaired and screenshot runtime state."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2757,7 +2810,8 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
             [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
             [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
-            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId -or
+            [string]$source.ScheduledClassroomMode -cne [string]$target.ScheduledClassroomMode) {
             throw "Late-sign-in rollout must preserve the existing repaired, screenshot, and student-gate runtime state."
         }
         if ([string]$TargetRuntimeConfiguration.Mode -ceq "late-signin-pilot") {
@@ -2788,7 +2842,8 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
             [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
             [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
-            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId -or
+            [string]$source.ScheduledClassroomMode -cne [string]$target.ScheduledClassroomMode) {
             throw "Fast-preview rollout must preserve every existing runtime capability."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2832,7 +2887,8 @@ function Assert-AllowedRuntimeTransition {
             [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
             [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
             [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
-            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId) {
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
+            [string]$source.ScheduledClassroomMode -cne [string]$target.ScheduledClassroomMode) {
             throw "Restriction-auth rollout must preserve every existing runtime capability."
         }
         if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
@@ -2849,6 +2905,40 @@ function Assert-AllowedRuntimeTransition {
         elseif ([string]$source.RestrictionAuthMode -cnotin @("off", "pilot") -or
             [string]$target.RestrictionAuthMode -cne "off") {
             throw "Restriction-auth rollback must disable only the restriction-auth capability."
+        }
+        return
+    }
+    if ([string]$TargetRuntimeConfiguration.Mode -cin @(
+        "scheduled-classroom-global-on", "scheduled-classroom-off"
+    )) {
+        if ([string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.StudentGateMode -cne [string]$target.StudentGateMode -or
+            [string]$source.StudentGateSchoolId -cne [string]$target.StudentGateSchoolId -or
+            [string]$source.LateSignInMode -cne [string]$target.LateSignInMode -or
+            [string]$source.LateSignInSchoolId -cne [string]$target.LateSignInSchoolId -or
+            [string]$source.FastPreviewMode -cne [string]$target.FastPreviewMode -or
+            [string]$source.FastPreviewSchoolId -cne [string]$target.FastPreviewSchoolId -or
+            [string]$source.RestrictionAuthMode -cne [string]$target.RestrictionAuthMode -or
+            [string]$source.RestrictionAuthSchoolId -cne [string]$target.RestrictionAuthSchoolId) {
+            throw "Scheduled-classroom rollout must preserve every existing runtime capability."
+        }
+        if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+            [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode) {
+            throw "Scheduled-classroom rollout source identity changed after resolution."
+        }
+        if ([string]$TargetRuntimeConfiguration.Mode -ceq "scheduled-classroom-global-on") {
+            # Only off -> global-on. There is no pilot to advance from, which is the
+            # point: this capability reaches every school or none.
+            if ([string]$source.ScheduledClassroomMode -cne "off" -or
+                [string]$target.ScheduledClassroomMode -cne "global-on") {
+                throw "Scheduled-classroom activation must move every school from off to global-on."
+            }
+        }
+        elseif ([string]$source.ScheduledClassroomMode -cne "global-on" -or
+            [string]$target.ScheduledClassroomMode -cne "off") {
+            throw "Scheduled-classroom rollback must disable only the scheduled-classroom capability."
         }
         return
     }
@@ -3836,8 +3926,8 @@ function New-RuntimeConfigPlan {
         fastPreviewPilotEvidenceSha256 = if ($null -ne $fastPreviewPilotEvidence) {
             $fastPreviewPilotEvidence.EvidenceSha256
         } else { $null }
-        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) { "managed" } else { "not_applicable" }
-        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) { "passed" } else { "not_applicable" }
+        validationLevel = if ($syntheticOnlyWaiver) { "synthetic_only" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "managed" } else { "not_applicable" }
+        managedValidation = if ($syntheticOnlyWaiver) { "waived_not_passed" } elseif ($runtime.Mode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) { "passed" } else { "not_applicable" }
         protectedWindowProductionMutation = [bool]$ConfirmProtectedWindowProductionMutation
         repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
         toolSha = $toolSha
@@ -4003,7 +4093,7 @@ function Read-RuntimePlan {
             throw "Runtime plan synthetic-only activation authority is invalid."
         }
     }
-    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on")) {
+    elseif ([string]$plan.profileMode -cin @("global-on", "tracking-window-global-on", "student-gate-global-on", "fast-preview-global-on", "scheduled-classroom-global-on")) {
         if ([string]$plan.validationLevel -cne "managed" -or [string]$plan.managedValidation -cne "passed") {
             throw "Runtime plan strict managed activation authority is invalid."
         }

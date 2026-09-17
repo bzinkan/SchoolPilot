@@ -805,6 +805,59 @@ try {
             schemaVersion = 6; mode = "restriction-auth-global-on"
         })
     } "Restriction-auth profiles must not expose a global activation mode."
+
+    # --- Scheduled classroom: a capability with no per-school shape at all ---
+
+    $scheduledGlobalIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 8; mode = "scheduled-classroom-global-on"
+    })
+    Assert-Condition ($scheduledGlobalIntent.RequiresSourceRuntime -and
+        $scheduledGlobalIntent.Environment.Count -eq 0 -and
+        $scheduledGlobalIntent.Mode -ceq "scheduled-classroom-global-on" -and
+        $scheduledGlobalIntent.SchoolScopeCount -eq 0 -and
+        @($scheduledGlobalIntent.EnabledCapabilities).Count -eq 1 -and
+        @($scheduledGlobalIntent.EnabledCapabilities)[0] -ceq $script:ScheduledClassroomCapability) `
+        "Scheduled-classroom activation must select exactly its own capability, source-preserving and unscoped."
+    $scheduledOffIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 8; mode = "scheduled-classroom-off"
+    })
+    Assert-Condition ($scheduledOffIntent.RequiresSourceRuntime -and
+        @($scheduledOffIntent.EnabledCapabilities).Count -eq 0) `
+        "Scheduled-classroom rollback must enable nothing."
+
+    # gateOn is computed by exclusion, so the off mode being absent from that list
+    # would make the profile named "off" enable the capability for every school.
+    # This is the assertion that catches it.
+    Assert-Condition (@($scheduledOffIntent.EnabledCapabilities) -cnotcontains $script:ScheduledClassroomCapability) `
+        "The scheduled-classroom off profile must never appear as an activation."
+
+    # There is deliberately no pilot mode: a per-school scheduled classroom is the
+    # shape this replaced, and the mode simply not existing is what prevents it.
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 8; mode = "scheduled-classroom-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "A scheduled-classroom pilot mode must not exist."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 8; mode = "scheduled-classroom-global-on"; pilotSchoolId = $testSchoolId
+        })
+    } "Scheduled-classroom profiles must not carry a pilot school."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 8; mode = "scheduled-classroom-global-on"; turn = $turn
+        })
+    } "Scheduled-classroom profiles must preserve existing TURN wiring."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "scheduled-classroom-global-on"
+        })
+    } "Scheduled-classroom modes must be refused under another schema version."
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 8; mode = "SCHEDULED-CLASSROOM-GLOBAL-ON"
+        })
+    } "Scheduled-classroom mode names must be matched case-sensitively."
     $restrictionAuthPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 6; mode = "restriction-auth-pilot"; pilotSchoolId = $testSchoolId
     })
@@ -873,6 +926,99 @@ try {
             ConvertTo-Json -Depth 10 -Compress
         Get-RuntimeActivationState -Environment $unsafeGlobalRestrictionAuthEnvironment -AllowBaseline
     } "Restriction-auth activation must reject a global rollout."
+
+    # --- Reading scheduled classroom back out of a live environment ---
+
+    function New-ScheduledClassroomEnvironment {
+        param([string]$Flag, [string]$Mode, [string[]]$SchoolIds)
+        $source = New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime
+        $environment = @($source.containerDefinitions[0].environment)
+        $flagName = [string]$script:CapabilityFlags[$script:ScheduledClassroomCapability]
+        @($environment | Where-Object name -CEQ $flagName)[0].value = $Flag
+        $rolloutEntry = @($environment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+        $rollouts = [string]$rolloutEntry.value | ConvertFrom-Json -Depth 10
+        $entry = [ordered]@{ mode = $Mode }
+        if ($SchoolIds) { $entry.schoolIds = @($SchoolIds) }
+        $rollouts.($script:ScheduledClassroomCapability) = [pscustomobject]$entry
+        $rolloutEntry.value = $rollouts | ConvertTo-Json -Depth 10 -Compress
+        return $environment
+    }
+
+    $scheduledGlobalState = Get-RuntimeActivationState `
+        -Environment (New-ScheduledClassroomEnvironment -Flag "true" -Mode "on") -AllowBaseline
+    Assert-Condition ($scheduledGlobalState.ScheduledClassroomMode -ceq "global-on") `
+        "An unscoped scheduled-classroom rollout must read back as reaching every school."
+    $scheduledOffState = Get-RuntimeActivationState `
+        -Environment (New-ScheduledClassroomEnvironment -Flag "false" -Mode "off") -AllowBaseline
+    Assert-Condition ($scheduledOffState.ScheduledClassroomMode -ceq "off") `
+        "A disabled scheduled classroom must read back as off."
+
+    # The capability reaches every school or none. A school scope here is the exact
+    # state that left one school with the feature and every later school without it,
+    # visible nowhere in the product, so it must not be representable.
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (
+            New-ScheduledClassroomEnvironment -Flag "true" -Mode "on" -SchoolIds @($testSchoolId)
+        ) -AllowBaseline
+    } "A school-scoped scheduled classroom must be refused."
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (
+            New-ScheduledClassroomEnvironment -Flag "true" -Mode "off"
+        ) -AllowBaseline
+    } "A scheduled-classroom kill switch must agree with its rollout entry."
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (
+            New-ScheduledClassroomEnvironment -Flag "false" -Mode "on"
+        ) -AllowBaseline
+    } "A disabled scheduled-classroom flag must not carry an active rollout entry."
+
+    # --- The transition gate: off -> global-on -> off, preserving everything else ---
+
+    $scheduledOnSource = New-TransitionSourceTask -RuntimeConfiguration $restrictionAuthOffRuntime
+    $scheduledOnRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $scheduledGlobalIntent -SourceTaskDefinition $scheduledOnSource -ContainerName "api"
+    $scheduledOnRollouts = [string]$scheduledOnRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition (
+        [string]$scheduledOnRuntime.Environment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 -ceq "true" -and
+        [string]$scheduledOnRollouts.scheduledClassroomV1.mode -ceq "on" -and
+        -not ($scheduledOnRollouts.scheduledClassroomV1.PSObject.Properties.Name -contains "schoolIds")
+    ) "Scheduled-classroom activation must set both controls and name no school."
+    # The registry is authoritative once configured: the entry, not the kill switch,
+    # is what makes the capability reachable by any school at all.
+    Assert-Condition ($scheduledOnRollouts.PSObject.Properties.Name -ccontains "scheduledClassroomV1") `
+        "Scheduled-classroom activation must write a registry entry, not only a kill switch."
+    foreach ($capability in @($script:AllCapabilities | Where-Object {
+        $_ -cne $script:ScheduledClassroomCapability
+    })) {
+        $sourceEntry = $restrictionAuthOffRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        $targetEntry = $scheduledOnRollouts.$capability | ConvertTo-Json -Depth 10 -Compress
+        Assert-Condition ($sourceEntry -ceq $targetEntry) `
+            "Scheduled-classroom activation must preserve the existing $capability rollout entry."
+    }
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $scheduledOnSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $scheduledOnRuntime
+
+    $scheduledOffSource = New-TransitionSourceTask -RuntimeConfiguration $scheduledOnRuntime
+    $scheduledOffRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+        -RuntimeIntent $scheduledOffIntent -SourceTaskDefinition $scheduledOffSource -ContainerName "api"
+    $scheduledOffRollouts = [string]$scheduledOffRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
+        ConvertFrom-Json -Depth 10
+    Assert-Condition (
+        [string]$scheduledOffRuntime.Environment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 -ceq "false" -and
+        [string]$scheduledOffRollouts.scheduledClassroomV1.mode -ceq "off"
+    ) "Scheduled-classroom rollback must clear both controls."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $scheduledOffSource `
+        -ContainerName "api" -TargetRuntimeConfiguration $scheduledOffRuntime
+
+    # Activating twice is not a no-op, it is a lost rollback point: the source must
+    # still be off for an activation to be admitted.
+    Assert-Throws {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition (
+            New-TransitionSourceTask -RuntimeConfiguration $scheduledOnRuntime
+        ) -ContainerName "api" -TargetRuntimeConfiguration $scheduledOnRuntime
+    } "Scheduled-classroom activation must be refused when it is already on."
+
     $script:ClassPilotReleaseTag = $finalLateSignInReleaseTag
     $script:ClassPilotMergeSha = $finalLateSignInMergeSha
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
