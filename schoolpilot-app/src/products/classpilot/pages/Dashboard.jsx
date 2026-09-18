@@ -1441,6 +1441,15 @@ export default function Dashboard() {
     activeSession,
     school?.schoolTimezone || school?.timezone,
   );
+  // While a class is running the header carries what comes next, so the activity
+  // banner has nothing left to say for a routine period and does not draw at all.
+  // With no class running the banner keeps it, where it is the only thing on
+  // screen describing the rest of the day.
+  const nextScheduledActivity = scheduledClassEnabled ? scheduledActivity?.next : null;
+  const nextActivityLabel = nextScheduledActivity?.name && nextScheduledActivity?.startsAt
+    ? `${nextScheduledActivity.name} · ${new Date(nextScheduledActivity.startsAt).toLocaleTimeString([], {
+      hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}`
+    : null;
   const selectedTeacherStartGroup = groups.find((group) => group.id === startGroupId);
   const selectedAdminStartGroup = adminTeachingGroups.find((group) => group.id === adminStartGroupId);
 
@@ -5571,6 +5580,11 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                   Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
                 </div>
               )}
+              {scheduledAssignment && nextActivityLabel && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-next-activity">
+                  Next: {nextActivityLabel}
+                </div>
+              )}
               {isTeacher && !scheduledSupervisionId && (
                 <>
                   {activeSession ? (
@@ -5666,6 +5680,11 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
                           <Clock className="h-3.5 w-3.5" />
                           Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+                        </div>
+                      )}
+                      {scheduledAssignment && nextActivityLabel && (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-admin-next-activity">
+                          Next: {nextActivityLabel}
                         </div>
                       )}
                       {!activeSessionIsScheduled && (
@@ -5820,7 +5839,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
             && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
           const bannerActions = studentView !== 'class' || adminObservedSessionId || dashboardActivityError
             || (scheduledSupervisionId && studentView === 'class');
-          const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next)
+          const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next && !scheduledAssignment)
             || bannerExtensionWarning || Boolean(bannerActions);
           return (
           <section ref={activityBannerRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true"
@@ -5834,7 +5853,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                   : scheduledActivity.pending ? 'Updating class'
                     : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
-                {scheduledActivity.next ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
+                {scheduledActivity.next && !scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
                   {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
                   {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
                 {scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student))
