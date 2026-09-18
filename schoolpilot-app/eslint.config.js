@@ -24,6 +24,14 @@ export default defineConfig([
     },
     rules: {
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // eslint-plugin-react-hooks 7.1 promotes its React Compiler readiness heuristics
+      // into `recommended`. This app does not run under the compiler and the 28 sites
+      // they flag (lazy ref initialisation, setState inside effects, in-place updates
+      // in the chat hooks) work today, so keep them visible as warnings and fix them
+      // deliberately, file by file, rather than as part of a lint upgrade.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/immutability': 'warn',
     },
   },
 ])
