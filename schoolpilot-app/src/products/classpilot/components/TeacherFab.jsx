@@ -1,12 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Eye, EyeOff, Timer, Clock, BarChart3, Hand, MessageSquare, X, Send, GraduationCap, MoreHorizontal } from "lucide-react";
-import { Button } from "../../../components/ui/button";
-import { Input } from "../../../components/ui/input";
+import { Eye, EyeOff, Timer, Clock, BarChart3, Hand, MessageSquare, X, GraduationCap } from "lucide-react";
 import { Switch } from "../../../components/ui/switch";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
 import { cn } from "../../../lib/utils";
-import { formatChatTimestamp } from "../lib/chatTimestamp";
-import { CANNED_REPLIES, CHAT_REPLY_MAX_CHARS, looksLikeQuestion } from "../lib/chatThreads";
 
 const FAB_POSITION_KEY = "classpilot-fab-position";
 
@@ -25,23 +20,13 @@ function TeacherFab({
   onDismissHand,
   handRaisingEnabled = true,
   onToggleHandRaising,
-  studentMessages,
-  onMarkMessageRead,
-  onDismissMessage,
-  onReplyToMessage,
-  replyPending,
+  unreadMessageCount = 0,
+  onOpenChat,
   studentMessagingEnabled = true,
-  onToggleStudentMessaging,
   fabSettingsPending = false,
-  chatReplies = {},
-  onClearThread,
-  onEndChat,
-  openThreadRequest = null,
-  onSendMessage,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [activePanel, setActivePanel] = useState(null);
-  const [replyTexts, setReplyTexts] = useState({});
 
   // Draggable FAB state
   const [position, setPosition] = useState({ x: 24, y: 24 }); // bottom-right offset
@@ -171,43 +156,9 @@ function TeacherFab({
     });
   }, [setExpanded, setActivePanel]);
 
-  const chatEndRefs = useRef({});
-  // A tile badge asks for one student's thread: open the Messages panel and
-  // bring that thread into view once it has rendered.
-  const openThreadNonce = openThreadRequest?.nonce ?? 0;
-  const openThreadStudentId = openThreadRequest?.studentId ?? null;
-  useEffect(() => {
-    if (!openThreadNonce) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setExpanded(true);
-    setActivePanel('messages');
-  }, [openThreadNonce]);
-  useEffect(() => {
-    if (!openThreadNonce || activePanel !== 'messages' || !openThreadStudentId) return;
-    chatEndRefs.current[openThreadStudentId]?.scrollIntoView({ block: 'nearest' });
-  }, [openThreadNonce, openThreadStudentId, activePanel]);
-  const unreadCount = studentMessages.filter(m => !m.read).length;
+  const unreadCount = unreadMessageCount;
   const handsCount = raisedHands.size;
   const totalNotifications = unreadCount + handsCount;
-
-  const handleReply = async (studentId) => {
-    const text = (replyTexts[studentId] || "").trim();
-    if (text) {
-      try {
-        await onReplyToMessage(studentId, text);
-        setReplyTexts(prev => ({ ...prev, [studentId]: "" }));
-      } catch {
-        // Keep the draft in place; the parent mutation surfaces the error toast.
-      }
-    }
-  };
-
-  // Auto-scroll chat threads when messages change
-  useEffect(() => {
-    Object.keys(chatEndRefs.current).forEach(sid => {
-      chatEndRefs.current[sid]?.scrollIntoView({ behavior: 'smooth' });
-    });
-  }, [studentMessages, chatReplies]);
 
   return (
     <div
@@ -280,225 +231,22 @@ function TeacherFab({
         </div>
       )}
 
-      {/* Messages Panel — Chat Thread */}
-      {activePanel === 'messages' && (() => {
-        // Group messages by student
-        const grouped = {};
-        studentMessages.forEach(msg => {
-          const key = msg.studentId || 'unknown';
-          if (!grouped[key]) grouped[key] = { studentName: msg.studentName || 'Unknown', messages: [] };
-          grouped[key].messages.push(msg);
-        });
-        const studentIds = Object.keys(grouped);
-
-        return (
-        <div data-testid="chat-panel" className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-80 max-h-[500px] overflow-hidden animate-in slide-in-from-bottom-2 duration-200 flex flex-col">
-          <div className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-3 flex items-center justify-between shrink-0">
-            <span className="text-white font-semibold flex items-center gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Messages (<span data-testid="chat-panel-unread-count">{unreadCount}</span> new)
-            </span>
-            <div className="flex items-center gap-2">
-              {onSendMessage && (
-                <button
-                  onClick={() => {
-                    onSendMessage();
-                    setActivePanel(null);
-                    setExpanded(false);
-                  }}
-                  className="text-white/80 hover:text-white"
-                  title="Send message"
-                  data-testid="chat-broadcast"
-                >
-                  <Send className="h-4 w-4" />
-                </button>
-              )}
-              {onToggleStudentMessaging && (
-                <Switch
-                  data-testid="chat-messaging-switch"
-                  checked={studentMessagingEnabled}
-                  onCheckedChange={(checked) => onToggleStudentMessaging(checked)}
-                  disabled={fabSettingsPending}
-                  className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
-                />
-              )}
-              <button
-                onClick={() => setActivePanel(null)}
-                className="text-white/80 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          <div className={cn("overflow-y-auto flex-1", !studentMessagingEnabled && "opacity-50 pointer-events-none")}>
-            {studentMessages.length === 0 ? (
-              <div data-testid="chat-empty" className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                No messages from students
-              </div>
-            ) : (
-              studentIds.map((sid) => {
-                const group = grouped[sid];
-                // Merge student messages + teacher replies into a timeline
-                const thread = [
-                  ...group.messages.map(m => ({ id: m.id, message: m.message, timestamp: m.timestamp, sender: 'student' })),
-                  ...(chatReplies[sid] || []).map((r, i) => ({ id: r.id || `reply-${sid}-${i}`, message: r.message, timestamp: r.timestamp, sender: 'teacher', status: r.status, errorMessage: r.errorMessage })),
-                ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                return (
-                  <div key={sid} data-testid={`chat-thread-${sid}`} className="border-b border-gray-200 dark:border-gray-600 last:border-b-0 flex flex-col">
-                    {/* Student header: clear locally, or end the chat on the student's device */}
-                    <div className="px-4 py-2 bg-gray-50 dark:bg-gray-750 flex items-center justify-between gap-2 shrink-0">
-                      <span className="font-semibold text-sm text-gray-800 dark:text-gray-200 truncate">{group.studentName}</span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => onClearThread ? onClearThread(sid) : group.messages.forEach(m => onDismissMessage(m.id))}
-                          className="text-xs px-2 py-1 rounded text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700 font-medium transition-colors"
-                          title="Hide this conversation here. Message history is kept and the student's chat is not affected."
-                          data-testid={`chat-thread-clear-${sid}`}
-                        >
-                          Clear thread
-                        </button>
-                        {onEndChat && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                className="p-1 rounded text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700 transition-colors"
-                                aria-label={`More actions for ${group.studentName}`}
-                                data-testid={`chat-thread-menu-${sid}`}
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem
-                                className="text-red-600 focus:text-red-600 dark:text-red-400"
-                                title="Tells the student the chat has ended and clears it on their device. History is kept on the server."
-                                data-testid={`chat-thread-end-${sid}`}
-                                onSelect={() => onEndChat(sid)}
-                              >
-                                End chat for student
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </div>
-                    </div>
-                    {/* Chat thread */}
-                    <div className="max-h-48 overflow-y-auto px-3 py-2 space-y-1.5" onClick={() => group.messages.forEach(m => { if (!m.read) onMarkMessageRead(m.id); })}>
-                      {thread.map((item) => (
-                        <div
-                          key={item.id}
-                          className={cn(
-                            "flex",
-                            item.sender === 'teacher' ? "justify-end" : "justify-start"
-                          )}
-                        >
-                          <div className="max-w-[80%]">
-                            <div
-                              data-testid={item.sender === 'student' && looksLikeQuestion(item.message) ? `chat-question-${item.id}` : `chat-bubble-${item.id}`}
-                              className={cn(
-                                "px-3 py-1.5 rounded-2xl text-sm break-words",
-                                item.sender === 'teacher'
-                                  ? "bg-blue-500 text-white rounded-br-md"
-                                  : "bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-md",
-                                item.sender === 'student' && looksLikeQuestion(item.message) && "border-l-2 border-amber-400"
-                              )}
-                            >
-                              {item.message}
-                            </div>
-                            <div
-                              data-testid="chat-message-time"
-                              className={cn(
-                                "mt-0.5 text-[10px]",
-                                item.sender === 'teacher' ? "text-right" : "text-left",
-                                item.sender === 'teacher' && item.status === 'failed' ? "text-red-500" : "text-gray-400 dark:text-gray-500"
-                              )}
-                            >
-                              <time dateTime={item.timestamp}>{formatChatTimestamp(item.timestamp)}</time>
-                              {item.sender === 'teacher' && item.status && (
-                                <>
-                                  <span aria-hidden="true"> · </span>
-                                  <span>{item.status === 'delivered' ? 'Delivered' : item.status === 'failed' ? (item.errorMessage || 'Failed') : 'Sending'}</span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={el => { chatEndRefs.current[sid] = el; }} />
-                    </div>
-                    {/* Reply: one-tap replies, then the free-text input — always visible */}
-                    <div className="px-3 pt-2 flex gap-1.5 overflow-x-auto shrink-0 border-t border-gray-100 dark:border-gray-700">
-                      {CANNED_REPLIES.map((reply) => reply.ack ? (
-                        <button
-                          key={reply.id}
-                          type="button"
-                          disabled={replyPending}
-                          onClick={() => onReplyToMessage(sid, reply.text).catch(() => {})}
-                          className="shrink-0 text-xs px-2.5 py-1 rounded-full bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 font-medium transition-colors"
-                          title={'Send "Got it" right away'}
-                          data-testid={`chat-ack-${sid}`}
-                        >
-                          {reply.text}
-                        </button>
-                      ) : (
-                        <button
-                          key={reply.id}
-                          type="button"
-                          onClick={() => setReplyTexts(prev => ({ ...prev, [sid]: reply.text }))}
-                          className="shrink-0 text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 transition-colors"
-                          data-testid={`chat-canned-${reply.id}`}
-                        >
-                          {reply.text}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="px-3 py-2 flex gap-2 shrink-0">
-                      <Input
-                        value={replyTexts[sid] || ""}
-                        onChange={(e) => setReplyTexts(prev => ({ ...prev, [sid]: e.target.value }))}
-                        placeholder="Type reply..."
-                        className="h-8 text-sm"
-                        maxLength={CHAT_REPLY_MAX_CHARS}
-                        data-testid={`chat-reply-input-${sid}`}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && (replyTexts[sid] || "").trim()) {
-                            handleReply(sid);
-                          }
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        className="h-8 px-3"
-                        disabled={!(replyTexts[sid] || "").trim() || replyPending}
-                        onClick={() => handleReply(sid)}
-                        data-testid={`chat-reply-send-${sid}`}
-                        aria-label="Send reply"
-                      >
-                        <Send className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-        );
-      })()}
-
       {/* FAB Menu Items */}
       {expanded && (
         <div className="flex flex-col gap-2 animate-in slide-in-from-bottom-2 duration-200">
           {/* Messages */}
           <button
             data-testid="chat-open"
-            onClick={() => setActivePanel(activePanel === 'messages' ? null : 'messages')}
+            onClick={(event) => {
+              onOpenChat?.(event.currentTarget);
+              setExpanded(false);
+              setActivePanel(null);
+            }}
             className={cn(
               "flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105",
               !studentMessagingEnabled
                 ? "bg-gray-400 text-white/70"
-                : activePanel === 'messages' || unreadCount > 0
+                : unreadCount > 0
                   ? "bg-blue-500 text-white"
                   : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
             )}
