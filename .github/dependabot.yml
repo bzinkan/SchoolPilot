@@ -16,6 +16,17 @@ updates:
     labels:
       - "dependencies"
       - "backend"
+    ignore:
+      # Deliberate migrations, not weekly bumps: zod 4 rewrites error access in a
+      # dozen route files and TypeScript majors are taken by hand (decisions of
+      # 2026-09-17, #184 and #10); @types/node tracks the Node major the image
+      # actually runs (22), so its majors move with the Dockerfile, not on their own.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       production-deps:
         applies-to: version-updates
