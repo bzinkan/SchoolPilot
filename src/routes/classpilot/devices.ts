@@ -1003,6 +1003,12 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       screenshotActiveObservationCadenceV1: acceptedCapabilities.has(
         "screenshotActiveObservationCadenceV1"
       ),
+      // Every heartbeat broadcasts this frame and the dashboard cache replaces
+      // its acceptedCapabilities wholesale, so the aggregate emitting these
+      // is not enough: without them here a tile would light on page load and
+      // go dark again on the next heartbeat.
+      scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
+      scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
     },
     activityFresh,
     activityState: snapshot.activityState,

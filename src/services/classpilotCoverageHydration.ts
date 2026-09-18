@@ -47,6 +47,8 @@ export type ClasspilotCoverageStatus = {
   };
   acceptedCapabilities: {
     restrictionAuthPassThroughV1: boolean;
+    scheduledClassroomV1: boolean;
+    scopedAuthorityChecksV1: boolean;
   };
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
   operatorCapabilities: {
@@ -120,6 +122,10 @@ function coverageAcceptedCapabilities(status: ClasspilotRealtimeStatus | null) {
     restrictionAuthPassThroughV1: acceptedCapabilities.has(
       "restrictionAuthPassThroughV1"
     ),
+    // The Claimed view gates tiles and tools on these exactly as the Class view
+    // does, and reads them from this projection rather than the aggregate.
+    scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
+    scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
   };
 }
 
