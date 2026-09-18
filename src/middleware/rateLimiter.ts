@@ -66,9 +66,11 @@ export async function redisCommand(
 ): Promise<unknown | undefined> {
   if (!redisClient || !waitForReady) return undefined;
   await waitForReady(options.readyTimeoutMs);
+  // node-redis 6 names the option abortSignal; a stray `signal` key would be
+  // ignored silently at runtime (tsc rejects it as an excess property).
   return redisClient.sendCommand(
     args,
-    options.signal ? { signal: options.signal } : undefined
+    options.signal ? { abortSignal: options.signal } : undefined
   );
 }
 

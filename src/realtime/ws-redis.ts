@@ -351,7 +351,7 @@ export async function executeRealtimeRedisCommand<T = unknown>(
   const commandTimer = setTimeout(() => controller.abort(), timeoutMs);
   commandTimer.unref?.();
   try {
-    return await redisPublisher.sendCommand<T>(command, { signal: controller.signal });
+    return await redisPublisher.sendCommand<T>(command, { abortSignal: controller.signal });
   } catch (error) {
     // Do not log the command because coordination keys can contain scoped
     // identifiers. The shared Redis warning already reports infrastructure
@@ -541,7 +541,7 @@ export async function publishOrderedWS(
       String(ORDERED_PUBLISH_TTL_SECONDS),
       redisChannel,
       serialized,
-    ], options.signal ? { signal: options.signal } : undefined);
+    ], options.signal ? { abortSignal: options.signal } : undefined);
     if (subscriberCount === -1) {
       return { status: "stale", subscriberCount: 0 };
     }
