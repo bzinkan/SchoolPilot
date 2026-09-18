@@ -1,10 +1,10 @@
-import { createClient } from "redis";
+import { createClient, type RedisClientType } from "redis";
 import type { NormalizedMonitorEvent } from "./errorMonitor.js";
 
 const MONITOR_BUCKET_TTL_SECONDS = 7 * 60;
 const MONITOR_REDIS_INITIALIZATION_SHUTDOWN_GRACE_MS = 500;
 const MONITOR_REDIS_DISCONNECT_GRACE_MS = 250;
-type MonitorRedisClient = ReturnType<typeof createClient>;
+type MonitorRedisClient = RedisClientType;
 
 export type MonitorAggregationStatus = {
   mode: "redis" | "local";

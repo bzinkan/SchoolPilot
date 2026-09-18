@@ -1,4 +1,4 @@
-import { createClient } from "redis";
+import { createClient, type RedisClientType } from "redis";
 
 const DEFAULT_TIMEZONE = "America/New_York";
 const ROLLUP_MINIMUM_LOCAL_HOUR = 2;
@@ -116,8 +116,8 @@ function safeMarkerPart(value: string): string {
 export class DailyUsageRollupMarkers {
   private readonly redisUrl: string | undefined;
   private readonly keyPrefix: string;
-  private client: ReturnType<typeof createClient> | null = null;
-  private connectPromise: Promise<ReturnType<typeof createClient> | null> | null = null;
+  private client: RedisClientType | null = null;
+  private connectPromise: Promise<RedisClientType | null> | null = null;
   private retryAfter = 0;
   private warned = false;
   private readonly localExpiry = new Map<string, number>();
@@ -161,7 +161,7 @@ export class DailyUsageRollupMarkers {
     console.warn(`[ClassPilot] Redis rollup markers unavailable; using local fallback: ${message}`);
   }
 
-  private async redis(): Promise<ReturnType<typeof createClient> | null> {
+  private async redis(): Promise<RedisClientType | null> {
     if (!this.redisUrl) return null;
     if (this.client?.isReady) return this.client;
     if (this.client) {
