@@ -260,7 +260,10 @@ describe("frontend dependency audit engine", () => {
     ];
 
     assert.equal(packageJson.dependencies["@capacitor/cli"], undefined);
-    assert.equal(packageJson.devDependencies["@capacitor/cli"], "^8.4.1");
+    // Tooling-only and on the Capacitor 8 line; the exact patch level follows the
+    // lockfile so a routine dev-dependency bump does not have to edit this test.
+    const capacitorCliRange = packageJson.devDependencies["@capacitor/cli"];
+    assert.match(capacitorCliRange, /^\^8\.\d+\.\d+$/);
     assert.equal(packageJson.overrides, undefined);
     assert.equal(
       packageLock.packages[""].dependencies["@capacitor/cli"],
@@ -268,7 +271,7 @@ describe("frontend dependency audit engine", () => {
     );
     assert.equal(
       packageLock.packages[""].devDependencies["@capacitor/cli"],
-      "^8.4.1"
+      capacitorCliRange
     );
     assert.equal(packageLock.packages["node_modules/@capacitor/cli"].dev, true);
 

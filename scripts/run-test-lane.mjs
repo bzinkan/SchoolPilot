@@ -88,6 +88,7 @@ const DB_SERIAL = new Set([
   "gopilot-settings.test.ts",
   "gopilot-setup-deletion.test.ts",
   "gopilot-socket-containment.test.ts",
+  "helmet-response-headers.test.ts",
   "gopilot-two-instance-realtime.test.ts",
   "google-staff-import-error-sanitization.test.ts",
   "heartbeat-tracking-settings-cache.test.ts",

@@ -42,6 +42,13 @@ updates:
     labels:
       - "dependencies"
       - "frontend"
+    ignore:
+      # Vite 8 (Rolldown) and its React plugin are a deliberate migration, not a
+      # weekly bump (2026-09-17 decision).
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@vitejs/plugin-react"
+        update-types: ["version-update:semver-major"]
     groups:
       production-deps:
         applies-to: version-updates
@@ -49,6 +56,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+        exclude-patterns:
+          # The router is exact-pinned as SOC 2 reachability evidence and is bumped
+          # deliberately together with scripts/check-router-reachability.mjs,
+          # scripts/frontend-dependency-audit.mjs and tests/frontend-dependency-audit.test.ts.
+          - "react-router-dom"
       dev-deps:
         applies-to: version-updates
         dependency-type: "development"
@@ -79,3 +91,8 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      # Stay on the Node LTS line CI validates; a Node major is a deliberate move across
+      # both Dockerfiles, every CI node-version pin and engines (2026-09-17 decision).
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
