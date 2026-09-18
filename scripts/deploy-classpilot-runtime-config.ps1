@@ -1790,10 +1790,29 @@ function Assert-ApiTargetHealth {
         [ValidateSet("Exact", "Converging")][string]$Mode = "Exact"
     )
     $healthy = Get-ApiHealthyTargetCount -ApiService $ApiService
-    $minimum = if ($Mode -ceq "Exact") { $ExpectedDesiredCount } else { [Math]::Max(1, $ExpectedDesiredCount - 1) }
-    $maximum = if ($Mode -ceq "Converging" -and $ExpectedDesiredCount -eq 1) { 2 } else { $ExpectedDesiredCount }
+    if ($Mode -ceq "Exact") {
+        $minimum = $ExpectedDesiredCount
+        $maximum = $ExpectedDesiredCount
+        $posture = "exact"
+    }
+    else {
+        # ECS rolling contract: the task ceiling is desired x maximumPercent / 100, rounded down.
+        # The reviewed 100/200 posture starts every replacement before it drains an incumbent,
+        # so healthy ALB targets legitimately reach 2N mid-rollout; no-growth containment
+        # (maximumPercent 100) caps them at N. The floor keeps the reviewed one-target
+        # tolerance for a transient ALB health-check flap; the Exact gates before mutation
+        # and after convergence still require exactly N.
+        $configuration = $ApiService.PSObject.Properties["deploymentConfiguration"]
+        if ($null -eq $configuration -or $null -eq $configuration.Value) {
+            throw "Production API deployment configuration is missing; the converging health gate cannot be derived."
+        }
+        $bounds = Get-ServiceDeploymentBounds -Service $ApiService
+        $minimum = [Math]::Max(1, $ExpectedDesiredCount - 1)
+        $maximum = [int][Math]::Floor(($ExpectedDesiredCount * [int]$bounds.Maximum) / 100.0)
+        $posture = "$([int]$bounds.Minimum)/$([int]$bounds.Maximum)"
+    }
     if ($healthy -lt $minimum -or $healthy -gt $maximum) {
-        throw "Production API healthy targets left the reviewed runtime-config range."
+        throw "Production API healthy targets left the reviewed runtime-config range (mode=$Mode, bounds=$posture, healthy=$healthy, desired=$ExpectedDesiredCount, minimum=$minimum, maximum=$maximum)."
     }
     return $healthy
 }

@@ -63,7 +63,9 @@ the whole apply is refused. "Release to every school" must never quietly become
 4. The profile file and the evidence root are private (owner and SYSTEM only,
    inheritance disabled), exactly as for every other reviewed profile.
 5. Apply runs outside the protected weekday 04:45–05:59 ET window and with the
-   API at its scheduled desired count and minimum capacity.
+   API at its scheduled desired count and minimum capacity. Any admitted count
+   from one to three is fine; a mid-rollout rise to twice that many healthy ALB
+   targets is expected under the `100/200` configuration and is not a failure.
 
 ## The profile
 
@@ -101,7 +103,9 @@ pwsh -NoProfile -File scripts/deploy-classpilot-runtime-config.ps1 -Operation Ap
 ```
 
 Plan and Apply belong to one sitting: a merge to `main` in between changes the
-tool SHA and forces a new plan.
+tool SHA and forces a new plan. Capacity rules, the terminal statuses, and the
+manual recovery after `apply_failed_manual_intervention` are in
+[CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md](CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md).
 
 ## Proof after apply
 
