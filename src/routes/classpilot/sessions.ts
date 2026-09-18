@@ -642,14 +642,17 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
         code: "SESSION_NOT_LIVE",
       });
     }
-    const { chatEnabled, raiseHandEnabled } = req.body;
+    const { chatEnabled, raiseHandEnabled, chatPaused } = req.body;
     if (chatEnabled !== undefined && typeof chatEnabled !== "boolean") {
       return res.status(400).json({ error: "chatEnabled must be a boolean" });
     }
     if (raiseHandEnabled !== undefined && typeof raiseHandEnabled !== "boolean") {
       return res.status(400).json({ error: "raiseHandEnabled must be a boolean" });
     }
-    if (chatEnabled === undefined && raiseHandEnabled === undefined) {
+    if (chatPaused !== undefined && typeof chatPaused !== "boolean") {
+      return res.status(400).json({ error: "chatPaused must be a boolean" });
+    }
+    if (chatEnabled === undefined && raiseHandEnabled === undefined && chatPaused === undefined) {
       return res.status(400).json({ error: "At least one session setting is required" });
     }
     const result = await updateAndFanoutSessionFabSettings({
@@ -658,8 +661,17 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
       actorId: req.authUser!.id,
       chatEnabled,
       raiseHandEnabled,
+      chatPaused,
       expectedRevision: Number.isInteger(req.body?.expectedRevision) ? req.body.expectedRevision : undefined,
     });
+    if (chatPaused !== undefined) {
+      await logAudit({
+        schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole,
+        action: chatPaused ? "classpilot.chat.paused" : "classpilot.chat.resumed",
+        entityType: "teaching_session", entityId: sessionId,
+        metadata: { lifecycleRevision: result.settings.lifecycleRevision, targetedStudentCount: result.targetedStudentCount },
+      });
+    }
     return res.json({
       settings: result.settings,
       state: result.state,

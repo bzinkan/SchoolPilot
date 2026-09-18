@@ -26,6 +26,9 @@ import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority
 import { classpilotFabStatePushFrame } from "./classpilotControlStateFrame.js";
 import { scheduledContextHasClassroomTools, scheduledSupervisionSource } from "./classpilotActivityAuthority.js";
 import { scheduledClassroomToggles } from "./classpilotScheduledClassroomTools.js";
+import { resolveChatPause, type ChatPauseReason } from "./classpilotChatChannelControl.js";
+
+export { resolveChatPause, type ChatPauseReason } from "./classpilotChatChannelControl.js";
 import { readClasspilotRealtimeStatusBatch, classpilotRealtimeFresh } from "./classpilotRealtimeStatus.js";
 
 export type FabFeature = "chat" | "hand";
@@ -60,6 +63,10 @@ export async function getEffectiveFabToggles(
   schoolHandRaisingEnabled: boolean;
   sessionMessagingEnabled: boolean;
   sessionHandRaisingEnabled: boolean;
+  /** Soft pause: the channel stays visible on the device but student sends are refused. */
+  messagesPaused: boolean;
+  pauseReason: ChatPauseReason;
+  sessionChatPaused: boolean;
   lifecycleRevision: number;
 }> {
   const schoolSettings = knownSchoolSettings ?? await getSettingsForSchool(schoolId, dbInstance);
@@ -70,14 +77,20 @@ export async function getEffectiveFabToggles(
   const schoolHandRaisingEnabled = schoolSettings?.handRaisingEnabled !== false;
   const sessionMessagingEnabled = sessionSettings?.chatEnabled !== false;
   const sessionHandRaisingEnabled = sessionSettings?.raiseHandEnabled !== false;
+  const sessionChatPaused = sessionSettings?.chatPaused === true;
+  // A class session is never a testing block; only the teacher's pause applies.
+  const pause = resolveChatPause({ chatPaused: sessionChatPaused, contextSource: null });
 
   return {
-    messagingEnabled: schoolMessagingEnabled && sessionMessagingEnabled,
+    messagingEnabled: schoolMessagingEnabled && sessionMessagingEnabled && !pause.messagesPaused,
     handRaisingEnabled: schoolHandRaisingEnabled && sessionHandRaisingEnabled,
     schoolMessagingEnabled,
     schoolHandRaisingEnabled,
     sessionMessagingEnabled,
     sessionHandRaisingEnabled,
+    messagesPaused: pause.messagesPaused,
+    pauseReason: pause.pauseReason,
+    sessionChatPaused,
     lifecycleRevision: sessionSettings?.lifecycleRevision ?? 0,
   };
 }
@@ -148,13 +161,14 @@ export async function buildStudentFabState(
     }
     if (scheduledContextHasClassroomTools(supervision.context) && acceptedCapabilities?.includes("scheduledClassroomV1")) {
       const context = supervision.context;
-      const toggles = await scheduledClassroomToggles(schoolId, context.id, options.dbInstance);
+      const toggles = await scheduledClassroomToggles(schoolId, context, options.dbInstance);
       const hands = (await getActiveHandsForStudent(schoolId, studentId, options.dbInstance)).filter((hand) => hand.supervisionContextId === context.id);
       return { schemaVersion: 1, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id,
         contextSource: scheduledSupervisionSource(context), contextName: context.name, activeSessionIds: [],
         contextAuthorityRevision: String(context.classroomAuthorityRevision),
         activeContexts: [{ supervisionContextId: context.id }], lifecycleRevision: toggles.lifecycleRevision, revision: toggles.lifecycleRevision,
-        messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled, handRaised: hands.length > 0,
+        messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled,
+        messagesPaused: toggles.messagesPaused, pauseReason: toggles.pauseReason, handRaised: hands.length > 0,
         activeHands: hands.map((hand) => ({ supervisionContextId: context.id, studentId, raisedAt: hand.raisedAt, expiresAt: hand.expiresAt })),
         sessions: [], supervisionContext: { id: context.id, type: context.contextType, name: context.name,
           source: scheduledSupervisionSource(context), endsAt: context.endsAt.toISOString(),
@@ -173,6 +187,8 @@ export async function buildStudentFabState(
       activeContexts: [],
       messagingEnabled: false,
       handRaisingEnabled: false,
+      messagesPaused: false,
+      pauseReason: null,
       handRaised: false,
       activeHands: [],
       sessions: [],
@@ -195,10 +211,14 @@ export async function buildStudentFabState(
 
   let messagingEnabled = false;
   let handRaisingEnabled = false;
+  let messagesPaused = false;
+  let pauseReason: ChatPauseReason = null;
   const sessionStates: Array<{
     sessionId: string;
     messagingEnabled: boolean;
     handRaisingEnabled: boolean;
+    messagesPaused: boolean;
+    pauseReason: ChatPauseReason;
     handRaised: boolean;
     lifecycleRevision: number;
   }> = [];
@@ -213,10 +233,14 @@ export async function buildStudentFabState(
     const handRaised = activeHands.some((hand) => hand.teachingSessionId === session.id);
     messagingEnabled = messagingEnabled || toggles.messagingEnabled;
     handRaisingEnabled = handRaisingEnabled || toggles.handRaisingEnabled;
+    messagesPaused = messagesPaused || toggles.messagesPaused;
+    pauseReason = pauseReason ?? toggles.pauseReason;
     sessionStates.push({
       sessionId: session.id,
       messagingEnabled: toggles.messagingEnabled,
       handRaisingEnabled: toggles.handRaisingEnabled,
+      messagesPaused: toggles.messagesPaused,
+      pauseReason: toggles.pauseReason,
       handRaised,
       lifecycleRevision: toggles.lifecycleRevision,
     });
@@ -234,6 +258,8 @@ export async function buildStudentFabState(
     activeContexts: sessions.map((session) => ({ teachingSessionId: session.id })),
     messagingEnabled,
     handRaisingEnabled,
+    messagesPaused,
+    pauseReason,
     handRaised: activeHands.length > 0,
     activeHands: activeHands.map((hand) => ({
       sessionId: hand.teachingSessionId,
@@ -281,6 +307,7 @@ export async function updateAndFanoutSessionFabSettings(options: {
   actorId: string;
   chatEnabled?: boolean;
   raiseHandEnabled?: boolean;
+  chatPaused?: boolean;
   expectedRevision?: number;
 }) {
   let settings;
@@ -291,6 +318,7 @@ export async function updateAndFanoutSessionFabSettings(options: {
       {
         ...(options.chatEnabled !== undefined ? { chatEnabled: options.chatEnabled } : {}),
         ...(options.raiseHandEnabled !== undefined ? { raiseHandEnabled: options.raiseHandEnabled } : {}),
+        ...(options.chatPaused !== undefined ? { chatPaused: options.chatPaused } : {}),
       },
       { expectedRevision: options.expectedRevision, actorId: options.actorId }
     );
@@ -303,6 +331,8 @@ export async function updateAndFanoutSessionFabSettings(options: {
         activeSessionIds: [options.teachingSessionId],
         messagingEnabled: toggles.messagingEnabled,
         handRaisingEnabled: toggles.handRaisingEnabled,
+        messagesPaused: toggles.messagesPaused,
+        pauseReason: toggles.pauseReason,
         revision: toggles.lifecycleRevision,
         lifecycleRevision: toggles.lifecycleRevision,
       };
@@ -348,7 +378,7 @@ export async function updateAndFanoutSessionFabSettings(options: {
       });
     }
     const legacyCommands = [
-      ...(options.chatEnabled !== undefined ? [{
+      ...(options.chatEnabled !== undefined || options.chatPaused !== undefined ? [{
         type: "messaging-toggle",
         data: {
           sessionId: options.teachingSessionId,
@@ -356,6 +386,8 @@ export async function updateAndFanoutSessionFabSettings(options: {
           studentSessionId: binding.studentSessionId,
           enabled: toggles.messagingEnabled,
           messagingEnabled: toggles.messagingEnabled,
+          messagesPaused: toggles.messagesPaused,
+          pauseReason: toggles.pauseReason,
           revision: settings.lifecycleRevision,
         },
       }] : []),
@@ -404,6 +436,8 @@ export async function updateAndFanoutSessionFabSettings(options: {
       activeSessionIds: [options.teachingSessionId],
       messagingEnabled: toggles.messagingEnabled,
       handRaisingEnabled: toggles.handRaisingEnabled,
+      messagesPaused: toggles.messagesPaused,
+      pauseReason: toggles.pauseReason,
       revision: settings.lifecycleRevision,
       lifecycleRevision: settings.lifecycleRevision,
     },

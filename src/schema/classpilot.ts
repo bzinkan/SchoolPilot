@@ -1129,6 +1129,7 @@ export const sessionSettings = pgTable("session_settings", {
     supervisionContextId: varchar("supervision_context_id"),
   chatEnabled: boolean("chat_enabled").default(true),
   raiseHandEnabled: boolean("raise_hand_enabled").default(true),
+  chatPaused: boolean("chat_paused").notNull().default(false),
   lifecycleRevision: integer("lifecycle_revision").notNull().default(1),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),

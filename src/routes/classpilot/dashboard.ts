@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import { requireScheduledClassroomContext, parseClasspilotActivityAuthority } from "../../services/classpilotActivityAuthority.js";
-import { getScheduledClassroomHands } from "../../services/classpilotScheduledClassroomTools.js";
+import { activeScheduledTestingStudentIds, getScheduledClassroomHands } from "../../services/classpilotScheduledClassroomTools.js";
+import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
+import { logAudit } from "../../services/audit.js";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
@@ -85,6 +87,7 @@ function safeSchoolSettingsResponse(
     blockedDomains: schoolSettings?.blockedDomains || [],
     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
     aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+    pauseChatDuringTesting: schoolSettings?.pauseChatDuringTesting !== false,
     enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
     trackingStartTime: schoolSettings?.trackingStartTime ?? "08:00",
     trackingEndTime: schoolSettings?.trackingEndTime ?? "15:00",
@@ -197,6 +200,9 @@ router.get("/settings", ...auth, async (req, res, next) => {
       sessionStudentMessagingEnabled: fabToggles.sessionMessagingEnabled,
       schoolHandRaisingEnabled: fabToggles.schoolHandRaisingEnabled,
       schoolStudentMessagingEnabled: fabToggles.schoolMessagingEnabled,
+      sessionChatPaused: fabToggles.sessionChatPaused,
+      sessionMessagesPaused: fabToggles.messagesPaused,
+      sessionChatPauseReason: fabToggles.pauseReason,
       activeSessionId: activeSession?.id || null,
       sessionFabRevision: fabToggles.lifecycleRevision,
       // School-wide settings (from settings table)
@@ -221,6 +227,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
       centralEmailRecipientUserId,
       enableTrackingHours, trackingStartTime, trackingEndTime, trackingDays, schoolTimezone, afterHoursMode,
       sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
+      pauseChatDuringTesting,
     } = req.body;
 
     // Teacher-specific settings
@@ -239,7 +246,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
       || enableTrackingHours !== undefined || trackingStartTime !== undefined || trackingEndTime !== undefined
       || trackingDays !== undefined || schoolTimezone !== undefined || afterHoursMode !== undefined
       || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
-      || sharedChromebookPinLoginEnabled !== undefined;
+      || sharedChromebookPinLoginEnabled !== undefined || pauseChatDuringTesting !== undefined;
 
     let normalizedCentralEmailRecipientUserId: string | null | undefined;
     if (isAdminSettingsRequest) {
@@ -327,6 +334,10 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (allowedDomains !== undefined) schoolData.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
+      if (pauseChatDuringTesting !== undefined) {
+        if (typeof pauseChatDuringTesting !== "boolean") return res.status(400).json({ error: "pauseChatDuringTesting must be a boolean" });
+        schoolData.pauseChatDuringTesting = pauseChatDuringTesting;
+      }
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
       if (normalizedCentralEmailRecipientUserId !== undefined) {
         schoolData.centralEmailRecipientUserId = normalizedCentralEmailRecipientUserId;
@@ -347,10 +358,24 @@ router.post("/settings", ...auth, async (req, res, next) => {
         schoolData.sharedChromebookPinLoginEnabled = method === "name_pin";
       }
 
+      const previousPauseChatDuringTesting = pauseChatDuringTesting !== undefined
+        ? (await getSettingsForSchool(schoolId))?.pauseChatDuringTesting !== false
+        : undefined;
       if (Object.keys(schoolData).length > 0) {
         savedSchoolSettings = await upsertSettings(schoolId, schoolData, { validateClasspilotMonitoring: true });
       } else {
         savedSchoolSettings = await getSettingsForSchool(schoolId);
+      }
+      if (previousPauseChatDuringTesting !== undefined && previousPauseChatDuringTesting !== pauseChatDuringTesting) {
+        // Students sitting in a live testing block see the pause flip at once.
+        const testingStudentIds = await activeScheduledTestingStudentIds(schoolId);
+        await syncClasspilotControlStatesToActiveDevices(schoolId, testingStudentIds);
+        await logAudit({
+          schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole,
+          action: "classpilot.chat.testing_pause_updated", entityType: "settings", entityId: schoolId,
+          changes: { pauseChatDuringTesting: { from: previousPauseChatDuringTesting, to: pauseChatDuringTesting } },
+          metadata: { resyncedStudentCount: testingStudentIds.length },
+        });
       }
 
       // Broadcast updated global blacklist to all connected students

@@ -64,6 +64,7 @@ export const settings = pgTable("settings", {
     .$type<"off" | "limited" | "full">(),
   handRaisingEnabled: boolean("hand_raising_enabled").default(true),
   studentMessagingEnabled: boolean("student_messaging_enabled").default(true),
+  pauseChatDuringTesting: boolean("pause_chat_during_testing").notNull().default(true),
   aiSafetyEmailsEnabled: boolean("ai_safety_emails_enabled").default(true),
   centralEmailRecipientUserId: text("central_email_recipient_user_id"),
   autoBlockUnsafeUrls: boolean("auto_block_unsafe_urls").default(true),

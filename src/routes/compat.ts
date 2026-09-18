@@ -206,6 +206,7 @@ function publicClasspilotExtensionContract(
       studentAuthGatePresenceV1: extensionCapabilities.has("studentAuthGatePresenceV1"),
       lateSignInRestrictionSsoV1: extensionCapabilities.has("lateSignInRestrictionSsoV1"),
       restrictionAuthPassThroughV1: extensionCapabilities.has("restrictionAuthPassThroughV1"),
+      chatPauseV1: extensionCapabilities.has("chatPauseV1"),
       minExtensionVersion: "2.6.0",
     },
     acceptedCapabilities: {

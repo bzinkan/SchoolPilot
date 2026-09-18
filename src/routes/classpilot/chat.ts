@@ -1,6 +1,8 @@
 import crypto from "crypto";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { redisStore } from "../../middleware/rateLimiter.js";
+import { STUDENT_CHAT_COOLDOWN, studentChatRetryAfterMs } from "../../services/classpilotChatChannelControl.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
@@ -76,6 +78,9 @@ export function pollResponseRateLimitKey(req: any, res: any): string {
   return `ip:${ipKeyGenerator(req.ip || req.socket?.remoteAddress || "0.0.0.0")}`;
 }
 
+/** Every per-student limiter in this file keys on the authenticated student session. */
+export const studentSessionRateLimitKey = pollResponseRateLimitKey;
+
 const pollResponseLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
@@ -84,6 +89,30 @@ const pollResponseLimiter = rateLimit({
   keyGenerator: pollResponseRateLimitKey,
   message: { error: "Too many poll responses. Please wait a moment." },
 });
+
+// Student chat cooldown: a short burst window catches a mashed Enter key, a
+// longer one catches a running commentary. Redis-backed so the count is the
+// same on every task; the device reads retryAfterMs and waits instead of
+// retrying into the same window.
+function studentChatCooldownLimiter(prefix: string, limit: { windowMs: number; max: number }) {
+  return rateLimit({
+    windowMs: limit.windowMs,
+    max: limit.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: studentSessionRateLimitKey,
+    store: redisStore(prefix),
+    passOnStoreError: true,
+    handler: (req: Request, res: Response) => {
+      const info = (req as Request & { rateLimit?: { resetTime?: Date } }).rateLimit;
+      const retryAfterMs = studentChatRetryAfterMs(info?.resetTime, limit.windowMs);
+      res.set("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+      res.status(429).json({ error: "You're sending messages too quickly. Please wait a moment.", code: "CHAT_COOLDOWN", retryAfterMs });
+    },
+  });
+}
+const studentChatBurstLimiter = studentChatCooldownLimiter("rl:classpilot-chat-burst:", STUDENT_CHAT_COOLDOWN.burst);
+const studentChatSustainedLimiter = studentChatCooldownLimiter("rl:classpilot-chat-sustained:", STUDENT_CHAT_COOLDOWN.sustained);
 
 function isClasspilotAdmin(req: any, res: any): boolean {
   return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
@@ -125,7 +154,12 @@ function handleFabContractError(error: unknown, res: any): boolean {
     && Number.isInteger((error as any).status)
     && typeof (error as any).code === "string"
   ) {
-    res.status((error as any).status).json({ error: error.message, code: (error as any).code });
+    const pauseReason = (error as any).pauseReason;
+    res.status((error as any).status).json({
+      error: error.message,
+      code: (error as any).code,
+      ...(typeof pauseReason === "string" ? { pauseReason } : {}),
+    });
     return true;
   }
   return false;
@@ -255,7 +289,7 @@ router.post("/student/lower-hand", ...studentAuth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/student/send-message
-router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
+router.post("/student/send-message", requireDeviceAuth, studentChatBurstLimiter, studentChatSustainedLimiter, requireClasspilotEntitlement, async (req, res, next) => {
   try {
     if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
       const options = scheduledStudentAction(req, res);

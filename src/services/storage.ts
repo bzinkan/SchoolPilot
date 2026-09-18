@@ -15747,7 +15747,7 @@ export async function getSessionSettings(
 export async function upsertSessionSettings(
   schoolId: string,
   sessionId: string,
-  data: { chatEnabled?: boolean; raiseHandEnabled?: boolean },
+  data: { chatEnabled?: boolean; raiseHandEnabled?: boolean; chatPaused?: boolean },
   options: { expectedRevision?: number; actorId: string }
 ): Promise<SessionSetting> {
   return db.transaction(async (tx) => {
@@ -18266,6 +18266,7 @@ async function withAuthorizedStudentFabMutation<T>(options: {
       .select({
         chatEnabled: sessionSettings.chatEnabled,
         raiseHandEnabled: sessionSettings.raiseHandEnabled,
+        chatPaused: sessionSettings.chatPaused,
       })
       .from(sessionSettings)
       .where(and(
@@ -18284,6 +18285,14 @@ async function withAuthorizedStudentFabMutation<T>(options: {
         : schoolSettings?.handRaisingEnabled !== false && perSession?.raiseHandEnabled !== false;
     if (!enabled) {
       throw classpilotFabMutationError(403, "fab_feature_disabled", "This FAB feature is disabled for the active class");
+    }
+    // A paused channel is still visible on the device; only new student
+    // messages are refused, and the device is told who paused it.
+    if (options.feature === "chat" && perSession?.chatPaused === true) {
+      throw Object.assign(
+        classpilotFabMutationError(403, "chat_paused", "Messaging is paused by your teacher"),
+        { pauseReason: "teacher" as const }
+      );
     }
     return mutate(transactionDb, { student, teachingSession: owner.session });
   });
