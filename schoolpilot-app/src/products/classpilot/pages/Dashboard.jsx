@@ -138,6 +138,7 @@ import {
 } from '../lib/scheduleChanges';
 import { useObservationLease } from '../hooks/useObservationLease';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
+import { countUnreadByStudent, looksLikeQuestion } from '../lib/chatThreads';
 import {
   classpilotObservationSessionEligible,
   classpilotSessionAuthorityKey,
@@ -1652,6 +1653,15 @@ export default function Dashboard() {
     dismissedMessageIds,
   });
   const { studentMessages, chatReplies } = chat;
+  const unreadByStudent = useMemo(() => countUnreadByStudent(studentMessages), [studentMessages]);
+  // A tile badge opens one student's thread. The request lives here because the
+  // FAB remounts whenever the chat scope changes and would lose it.
+  const [chatView, setChatView] = useState({ open: false, studentId: null, nonce: 0 });
+  const chatOpenerRef = useRef(null);
+  const openChatThread = useCallback((studentId, opener) => {
+    chatOpenerRef.current = opener || null;
+    setChatView((current) => ({ open: true, studentId, nonce: current.nonce + 1 }));
+  }, []);
 
   // Sync initial raised hands to state
   useEffect(() => {
@@ -1998,7 +2008,7 @@ export default function Dashboard() {
               };
               if (!chat.receiveStudentMessage(newMsg)) return;
               toast({
-                title: message.data.messageType === 'question' ? "Question" : "Message",
+                title: message.data.messageType === 'question' || looksLikeQuestion(message.data.message) ? "Question" : "Message",
                 description: `${message.data.studentName}: ${message.data.message.slice(0, 50)}${message.data.message.length > 50 ? '...' : ''}`,
               });
             }
@@ -5393,13 +5403,13 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
     }
   };
 
-  const closeChat = async (studentId) => {
-    const msg = studentMessages.find(m => m.studentId === studentId);
+  // Clearing hides the thread on this dashboard only; the student keeps their
+  // copy. Ending also tells the device the chat is over (it clears its thread).
+  const clearChatThread = (studentId) => { chat.closeThread(studentId); };
+  const endChat = async (studentId) => {
     if (!chat.closeThread(studentId)) return;
-    if (msg) {
-      try { await requestActivityApi('POST', '/teacher/close-chat', { ...activityLegacyBody(effectiveAuthority), studentId }); } catch (error) {
-        console.error('Failed to send close-chat:', error);
-      }
+    try { await requestActivityApi('POST', '/teacher/close-chat', { ...activityLegacyBody(effectiveAuthority), studentId }); } catch (error) {
+      console.error('Failed to send close-chat:', error);
     }
   };
 
@@ -6526,6 +6536,10 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                     onOpenDetails={tileDetailsRevoked
                       ? undefined
                       : (opener) => openStudentDetails(student, opener)}
+                    unreadMessageCount={unreadByStudent.get(student.studentId) || 0}
+                    onOpenChat={dashboardCapabilities.canUseTeacherFab && !supervisedElsewhere
+                      ? (opener) => openChatThread(student.studentId, opener)
+                      : undefined}
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
@@ -7506,7 +7520,9 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
           fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending}
           chatReplies={chatReplies}
-          onCloseChat={closeChat}
+          onClearThread={clearChatThread}
+          onEndChat={endChat}
+          openThreadRequest={chatView.open ? chatView : null}
           onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
         />
       )}

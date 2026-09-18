@@ -119,6 +119,8 @@ function StudentTile({
   screenshotUpdating = false,
   screenshotCaptureCadence: negotiatedCaptureCadence = 'background',
   observationActive = false,
+  unreadMessageCount = 0,
+  onOpenChat,
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
@@ -480,6 +482,18 @@ function StudentTile({
                   ? student.studentName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
                   : '?'}
               </div>
+              {unreadMessageCount > 0 && onOpenChat && !monitoringSuppressed && (
+                <button
+                  type="button"
+                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold leading-[18px] text-center shadow ring-2 ring-white dark:ring-gray-900 hover:bg-blue-700"
+                  aria-label={`${unreadMessageCount} unread ${unreadMessageCount === 1 ? 'message' : 'messages'} from ${student.studentName || 'this student'}`}
+                  title="Open this student's messages"
+                  data-testid={`chat-unread-${student.studentId}`}
+                  onClick={(event) => { event.stopPropagation(); onOpenChat(event.currentTarget); }}
+                >
+                  {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                </button>
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-sm" data-testid={`text-student-name-${student.studentId}`}>
@@ -1118,6 +1132,7 @@ const CALLBACK_PROPS = new Set([
   'onOpenScreenshot',
   'onCommand',
   'onReturnToClass',
+  'onOpenChat',
 ]);
 
 // A tile paints the DECODED frame, which can lag or diverge from the props
