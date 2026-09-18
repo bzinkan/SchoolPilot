@@ -13,18 +13,7 @@ import {
   markStudentSignInMethod,
 } from "../src/services/classpilotStudentSignInDiagnostics.js";
 import { snapshotRuntimePerformanceMetrics } from "../src/services/runtimePerformanceMetrics.js";
-
-type Event = { event: string; reason: string; diagnosticId: string; httpStatus: number | null };
-
-function capture(t: TestContext): Event[] {
-  const records: Event[] = [];
-  t.mock.method(console, "log", (line: unknown) => {
-    if (typeof line !== "string" || !line.startsWith("{")) return;
-    const record = JSON.parse(line) as Event;
-    if (typeof record.reason === "string") records.push(record);
-  });
-  return records;
-}
+import { captureStudentSignInRecords, normalizeVolatileFields } from "./helpers/signInDiagnosticRecords.js";
 
 async function serve(t: TestContext, app: express.Express) {
   const server = createServer(app);
@@ -38,7 +27,7 @@ async function serve(t: TestContext, app: express.Express) {
 
 describe("student sign-in ingress diagnostics", () => {
   it("covers aliases before body parsing and preserves generic responses and inbound request headers", async (t) => {
-    const records = capture(t);
+    const records = captureStudentSignInRecords(t);
     const app = express();
     app.use(requestId, studentSignInDiagnostics, express.json());
     app.post(["/api/extension/student-login", "/api/classpilot/extension/student-login"], (req, res) => {
@@ -61,11 +50,13 @@ describe("student sign-in ingress diagnostics", () => {
     assert.equal(records.length, 3);
     assert.ok(records.every((record) => record.reason === "PIN_MISMATCH" && record.httpStatus === 401));
     assert.equal(new Set(records.map((record) => record.diagnosticId)).size, 3);
-    assert.doesNotMatch(JSON.stringify(records), /private-|9876|secret|x-request-id/);
+    // Random identifiers (diagnosticId, the process InstanceId, a release SHA) can contain any
+    // digit run, including the private PIN; the helper proves their shape before masking them.
+    assert.doesNotMatch(JSON.stringify(normalizeVolatileFields(records)), /private-|9876|secret|x-request-id/);
   });
 
   it("records malformed JSON before the route runs without exporting parser bodies or messages", async (t) => {
-    const records = capture(t);
+    const records = captureStudentSignInRecords(t);
     const app = express();
     app.use(requestId, studentSignInDiagnostics, express.json());
     let routeCalls = 0;
@@ -86,11 +77,11 @@ describe("student sign-in ingress diagnostics", () => {
     assert.equal(records.length, 1);
     assert.equal(records[0]!.httpStatus, 400);
     assert.equal(records[0]!.reason, "REQUEST_BODY_INVALID");
-    assert.doesNotMatch(JSON.stringify(records), /private-student|9876|Unexpected|SyntaxError/);
+    assert.doesNotMatch(JSON.stringify(normalizeVolatileFields(records)), /private-student|9876|Unexpected|SyntaxError/);
   });
 
   it("distinguishes a real global limiter rejection and preserves its limit, headers and body", async (t) => {
-    const records = capture(t);
+    const records = captureStudentSignInRecords(t);
     snapshotRuntimePerformanceMetrics({ reset: true });
     const app = express();
     app.set("trust proxy", 1);
@@ -123,7 +114,7 @@ describe("student sign-in ingress diagnostics", () => {
   });
 
   it("ignores non-login paths and is installed before parsers, limiters and the existing error handler", async (t) => {
-    const records = capture(t);
+    const records = captureStudentSignInRecords(t);
     const app = express();
     app.use(studentSignInDiagnostics);
     app.all("*", (req, res) => {
