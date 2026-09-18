@@ -1,5 +1,5 @@
 import { activityAuthorityQuery, activityParentPath, activityRequestHeaders } from '../lib/dashboardActivity';
-import { useState, useMemo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useLayoutEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../../lib/queryClient";
 import api from "../../../shared/utils/api";
@@ -18,6 +18,7 @@ import { calculateURLSessions, formatDuration, isSessionOffTask } from "../../..
 import { useToast } from "../../../hooks/use-toast";
 import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
 import StudentBrowsingHistory from "./StudentBrowsingHistory";
+import { useResizablePanelWidth } from "../hooks/useResizablePanelWidth";
 
 function StudentDetailDrawer({
   student,
@@ -64,38 +65,7 @@ function StudentDetailDrawer({
     return null;
   }, [student, urlSessions]);
 
-  const [panelWidth, setPanelWidth] = useState(700);
-  const isResizing = useRef(false);
-
-  const handleMouseDown = useCallback((e) => {
-    e.preventDefault();
-    isResizing.current = true;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'col-resize';
-  }, []);
-
-  useEffect(() => {
-    const handleMouseMove = (e) => {
-      if (!isResizing.current) return;
-      const newWidth = window.innerWidth - e.clientX;
-      const maxWidth = window.innerWidth * 0.9;
-      setPanelWidth(Math.max(400, Math.min(maxWidth, newWidth)));
-    };
-
-    const handleMouseUp = () => {
-      if (!isResizing.current) return;
-      isResizing.current = false;
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
+  const { width: panelWidth, onResizeStart: handleMouseDown } = useResizablePanelWidth({ initial: 700, min: 400 });
 
   // Fetch 7-day usage trend from rollup data
   const usageDateRange = useMemo(() => {

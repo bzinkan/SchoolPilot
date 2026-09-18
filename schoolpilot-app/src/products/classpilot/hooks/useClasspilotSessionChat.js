@@ -196,8 +196,9 @@ export function useClasspilotSessionChat({
       sessionId: current.sessionId, authority: current.authority, studentId, version: ++current.sequence,
     };
     current.pendingReplies.add(request);
+    notify();
     return request;
-  }, [currentScope]);
+  }, [currentScope, notify]);
   const isCurrentReply = useCallback((request) => {
     const current = currentScope();
     return Boolean(request && current?.generation === request.generation
@@ -230,8 +231,8 @@ export function useClasspilotSessionChat({
   }, [currentScope, isCurrentReply, notify]);
   const finishReply = useCallback((request) => {
     const current = currentScope();
-    if (request && current?.generation === request.generation) current.pendingReplies.delete(request);
-  }, [currentScope]);
+    if (request && current?.generation === request.generation && current.pendingReplies.delete(request)) notify();
+  }, [currentScope, notify]);
 
   const markRead = useCallback((id) => {
     const current = currentScope();
@@ -239,6 +240,17 @@ export function useClasspilotSessionChat({
     if (!message || message.read) return;
     current.messages.set(id, { ...message, read: true });
     notify();
+  }, [currentScope, notify]);
+  const markThreadRead = useCallback((studentId) => {
+    const current = currentScope();
+    if (!current || !studentId) return;
+    let changed = false;
+    for (const [id, message] of current.messages) {
+      if (message.studentId !== studentId || message.senderType === 'teacher' || message.read) continue;
+      current.messages.set(id, { ...message, read: true });
+      changed = true;
+    }
+    if (changed) notify();
   }, [currentScope, notify]);
   const dismiss = useCallback((id) => {
     const current = currentScope();
@@ -266,7 +278,9 @@ export function useClasspilotSessionChat({
   const studentLookup = new Map(students.map((student) => [student.studentId || student.id, student]));
   const studentMessages = [];
   const chatReplies = {};
+  const pendingReplyStudentIds = new Set();
   if (scopeKey && scope.key === scopeKey && !scope.denied) {
+    for (const reply of scope.pendingReplies) pendingReplyStudentIds.add(reply.studentId);
     for (const message of scope.messages.values()) {
       if (message.senderType === 'teacher') {
         (chatReplies[message.studentId] ||= []).push(message);
@@ -283,6 +297,6 @@ export function useClasspilotSessionChat({
     }
   }
   studentMessages.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-  return { generation: scope.generation, studentMessages, chatReplies, receiveStudentMessage, receiveDelivery,
-    beginReply, isCurrentReply, receiveReply, finishReply, markRead, dismiss, closeThread };
+  return { generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
+    beginReply, isCurrentReply, receiveReply, finishReply, markRead, markThreadRead, dismiss, closeThread };
 }

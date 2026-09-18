@@ -41,10 +41,10 @@ const sheetVariants = cva(
   }
 );
 
-function SheetContent({ ref, side = "right", className, children, ...props }) {
+function SheetContent({ ref, side = "right", className, children, overlay = true, ...props }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      {overlay && <SheetOverlay />}
       <SheetPrimitive.Content
         ref={ref}
         className={cn(sheetVariants({ side }), className)}

@@ -3337,23 +3337,38 @@ async function chatEvidence(page, name, facts = {}) {
 }
 
 async function openChatPanel(page) {
-  if (await page.getByTestId('chat-panel').count()) return;
+  if (await page.getByTestId('chat-drawer').count()) return;
   const menu = page.getByTestId('chat-open');
   if (!await menu.count()) await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
   await menu.click();
-  await page.getByTestId('chat-panel').waitFor();
+  await page.getByTestId('chat-drawer').waitFor();
 }
 
 // Chat selectors live here so a panel redesign changes one place, not every test.
+// The drawer is an inbox: the conversation list previews each thread's last
+// line, and the selected thread shows every bubble. Selecting a thread reads it.
 async function expectChatUnread(page, count) {
-  await page.getByTestId('chat-panel-unread-count').getByText(String(count), { exact: true }).waitFor();
+  await page.getByTestId('chat-drawer-unread-count').getByText(String(count), { exact: true }).waitFor();
 }
-function replyInput(page, studentId = STUDENT_ID) {
-  return page.getByTestId(`chat-reply-input-${studentId}`);
+async function selectConversation(page, studentId = STUDENT_ID) {
+  const thread = page.getByTestId('chat-thread');
+  if (await thread.count() && await thread.getAttribute('data-student-id') === studentId) return;
+  await page.getByTestId(`chat-conversation-${studentId}`).click();
+  await page.getByTestId('chat-thread').waitFor();
+}
+function listText(page, text) {
+  return page.getByTestId('chat-conversations').getByText(text, { exact: true });
+}
+function threadText(page, text) {
+  return page.getByTestId('chat-thread').getByText(text, { exact: true });
+}
+function replyInput(page) {
+  return page.getByTestId('chat-composer-input');
 }
 async function endChat(page, studentId = STUDENT_ID) {
-  await page.getByTestId(`chat-thread-menu-${studentId}`).click();
-  await page.getByTestId(`chat-thread-end-${studentId}`).click();
+  await selectConversation(page, studentId);
+  await page.getByTestId('chat-thread-menu').click();
+  await page.getByTestId('chat-thread-end').click();
 }
 async function expectChatEmpty(page) {
   await page.getByTestId('chat-empty').waitFor();
@@ -3364,32 +3379,32 @@ test('chat recovery: a live student reply survives roster rehydration with unrea
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   await expectChatUnread(page, 1);
   await chatEvidence(page, 'realtime-visible', { visible: true, canonicalHistory: 'empty', messageCount: 1 });
   await fixture.updateRoster({ refetchAggregate: false });
-  const retained = await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count() === 1;
+  const retained = await listText(page, CHAT_MESSAGE_TEXT).count() === 1;
   await chatEvidence(page, 'after-roster-update', { retained, canonicalHistory: 'empty', studentTelemetryChanged: true });
   if (!retained && process.env.CLASSPILOT_CHAT_BASELINE_SOURCE) {
     fixture.setMessages([row]);
     await page.reload();
     await openChatPanel(page);
-    await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+    await listText(page, CHAT_MESSAGE_TEXT).waitFor();
     await chatEvidence(page, 'baseline-reload-restored', { restored: true, canonicalHistory: 'committed reply', noStudentResend: true });
   }
   assert.equal(retained, true, 'A roster update must not replace a live student reply with the older cached empty history');
   await expectChatUnread(page, 1);
   await harness.sendWebSocketMessage(studentChatEvent(row));
   await fixture.updateRoster();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1, 'Duplicate WebSocket delivery must not duplicate a reply');
+  assert.equal(await listText(page, CHAT_MESSAGE_TEXT).count(), 1, 'Duplicate WebSocket delivery must not duplicate a reply');
   await expectChatUnread(page, 1);
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).click();
+  await selectConversation(page);
   await expectChatUnread(page, 0);
   fixture.setMessages([row]);
   await fixture.refetch('/api/teacher/messages');
   await fixture.updateRoster();
   await expectChatUnread(page, 0);
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 1);
   const readsBeforeReconnect = fixture.reads.length;
   await harness.disconnectWebSocket();
   await harness.authenticateWebSocket();
@@ -3397,7 +3412,7 @@ test('chat recovery: a live student reply survives roster rehydration with unrea
   await chatHistorySettled(page);
   assert.equal(fixture.reads.length, readsBeforeReconnect + 1);
   await expectChatUnread(page, 0);
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 1);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3413,8 +3428,9 @@ test('chat safety net: a message that only reaches server history appears while 
   fixture.setMessages([row]);
   await page.clock.fastForward(16_000);
   await waitUntil(() => fixture.reads.length > readsBefore, 'A connected dashboard must re-read chat history on its own interval');
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   await expectChatUnread(page, 1);
+  await selectConversation(page);
   const stamp = page.getByTestId('chat-message-time').first();
   assert.match(await stamp.innerText(), /\d{1,2}:\d{2}/, 'Each bubble carries the time the message was sent');
   assert.equal(await stamp.locator('time').getAttribute('datetime'), row.createdAt);
@@ -3425,7 +3441,7 @@ test('chat safety net: a message that only reaches server history appears while 
   });
   await waitUntil(() => fixture.reads.length > readsBeforeFocus, 'Returning to the tab must re-read chat history');
   await chatHistorySettled(page);
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1, 'A re-read never duplicates a known message');
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 1, 'A re-read never duplicates a known message');
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3434,8 +3450,8 @@ test('chat quick wins: Clear thread hides the conversation locally and never end
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByTestId(`chat-thread-${STUDENT_ID}`).waitFor();
-  await page.getByTestId(`chat-thread-clear-${STUDENT_ID}`).click();
+  await selectConversation(page);
+  await page.getByTestId('chat-thread-clear').click();
   await expectChatEmpty(page);
   // Clearing is local: canonical history still holds the row and a re-read must not resurrect it.
   fixture.setMessages([row]);
@@ -3445,7 +3461,7 @@ test('chat quick wins: Clear thread hides the conversation locally and never end
   assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/close-chat').length, 0, 'Clearing never tells the student device the chat ended');
   const next = storedChatMessage({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', content: 'Synthetic follow-up after clearing' });
   await harness.sendWebSocketMessage(studentChatEvent(next));
-  await page.getByText(next.content, { exact: true }).waitFor();
+  await listText(page, next.content).waitFor();
   await expectChatUnread(page, 1);
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -3455,10 +3471,11 @@ test('chat quick wins: a one-tap acknowledgement sends "Got it" and a trailing q
   const { page, harness } = fixture;
   const question = storedChatMessage({ content: 'Can I use the printer?' });
   await harness.sendWebSocketMessage(studentChatEvent(question));
+  await selectConversation(page);
   await page.getByTestId(`chat-question-${question.id}`).waitFor();
   const ack = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: 'Got it', deliveryStatus: 'sent' });
   fixture.setReplyResponder(async () => ({ message: ack, queued: true }));
-  await page.getByTestId(`chat-ack-${STUDENT_ID}`).click();
+  await page.getByTestId('chat-ack').click();
   await waitUntil(() => fixture.mutations.some(mutation => mutation.pathname === '/api/teacher/reply' && mutation.body?.message === 'Got it'),
     'The acknowledgement must post the canned text without typing');
   await page.getByTestId(`chat-bubble-${CHAT_REPLY_ID}`).getByText('Got it', { exact: true }).waitFor();
@@ -3475,12 +3492,114 @@ test('chat quick wins: the student tile shows an unread count that opens that th
   const badge = page.getByTestId(`chat-unread-${STUDENT_ID}`);
   await badge.getByText('1', { exact: true }).waitFor();
   await badge.click();
-  await page.getByTestId('chat-panel').waitFor();
-  await page.getByTestId(`chat-thread-${STUDENT_ID}`).getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
-  await expectChatUnread(page, 1);
-  await page.getByTestId(`chat-thread-${STUDENT_ID}`).getByText(CHAT_MESSAGE_TEXT, { exact: true }).click();
+  await page.getByTestId('chat-drawer').waitFor();
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  // Opening the thread reads it: the header count and the tile badge both clear.
   await expectChatUnread(page, 0);
   await badge.waitFor({ state: 'hidden' });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+const SECOND_STUDENT_ID = '99999999-9999-4999-8999-999999999999';
+
+test('chat drawer: conversations list unread first, opening one reads it, and the FAB badge tracks the total', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  const adaRow = storedChatMessage({ createdAt: '2026-09-18T14:00:00.000Z' });
+  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question', createdAt: '2026-09-18T14:02:00.000Z' });
+  await harness.sendWebSocketMessage(studentChatEvent(adaRow));
+  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student', studentEmail: 'ben@example.edu' } });
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByTestId('chat-open').getByText('2', { exact: true }).waitFor();
+  await openChatPanel(page);
+  await expectChatUnread(page, 2);
+  const rows = page.getByTestId('chat-conversations').locator('[data-testid^="chat-conversation-"]:not([data-testid*="unread"])');
+  assert.deepEqual(await rows.evaluateAll(nodes => nodes.map(node => node.dataset.testid)),
+    [`chat-conversation-${SECOND_STUDENT_ID}`, `chat-conversation-${STUDENT_ID}`], 'Both unread: newest activity first');
+  await page.getByTestId(`chat-conversation-unread-${STUDENT_ID}`).getByText('1', { exact: true }).waitFor();
+  await selectConversation(page);
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectChatUnread(page, 1);
+  await page.getByTestId(`chat-conversation-unread-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  await page.getByTestId(`chat-conversation-unread-${SECOND_STUDENT_ID}`).getByText('1', { exact: true }).waitFor();
+  assert.deepEqual(await rows.evaluateAll(nodes => nodes.map(node => node.dataset.testid)),
+    [`chat-conversation-${SECOND_STUDENT_ID}`, `chat-conversation-${STUDENT_ID}`], 'The unread thread stays on top of the read one');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByTestId('chat-open').getByText('1', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat drawer: an open thread survives a class-scope remount and replies target the new authority', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await selectConversation(page);
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  const replacement = teachingSession({ id: OBSERVED_SESSION_ID });
+  harness.setActiveSession(replacement);
+  harness.setAllSessions([replacement]);
+  await fixture.refetch('/api/sessions/active');
+  await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'The replacement session starts its own history read');
+  await chatHistorySettled(page);
+  await page.getByTestId('chat-drawer').waitFor();
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'The superseded thread is gone from the open drawer');
+  const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
+  await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
+  await selectConversation(page);
+  await threadText(page, replacementRow.content).waitFor();
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, sessionId: OBSERVED_SESSION_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
+  await replyInput(page).fill(CHAT_REPLY_TEXT);
+  await replyInput(page).press('Enter');
+  await threadText(page, CHAT_REPLY_TEXT).waitFor();
+  const replies = fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply');
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].body.sessionId, OBSERVED_SESSION_ID, 'The reply carries the replacement authority, never the superseded one');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat drawer: a pending reply disables only its own composer', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question' });
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student' } });
+  let finishReply;
+  const heldReply = new Promise(resolve => { finishReply = resolve; });
+  context.after(() => finishReply());
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => { await heldReply; return { message: reply, queued: true }; });
+  await selectConversation(page);
+  await replyInput(page).fill(CHAT_REPLY_TEXT);
+  await replyInput(page).press('Enter');
+  await waitUntil(() => fixture.mutations.some(mutation => mutation.pathname === '/api/teacher/reply'), 'The reply POST is pending');
+  assert.equal(await replyInput(page).isDisabled(), true, 'The pending thread cannot double-send');
+  await selectConversation(page, SECOND_STUDENT_ID);
+  assert.equal(await replyInput(page).isDisabled(), false, 'Another thread stays usable while a reply is in flight');
+  await selectConversation(page);
+  assert.equal(await replyInput(page).isDisabled(), true);
+  finishReply();
+  await threadText(page, CHAT_REPLY_TEXT).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat drawer: it is non-modal, so a tile badge switches threads without closing it', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  await page.getByTestId('chat-no-selection').waitFor();
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  const badge = page.getByTestId(`chat-unread-${STUDENT_ID}`);
+  await badge.getByText('1', { exact: true }).waitFor();
+  await badge.click();
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  assert.equal(await page.getByTestId('chat-drawer').count(), 1, 'One drawer, still open');
+  await badge.waitFor({ state: 'hidden' });
+  // The grid behind the drawer is still interactive: opening a tile's details works while chat is open.
+  await page.getByTestId(`card-student-${STUDENT_ID}`).click();
+  assert.equal(await page.getByTestId('chat-drawer').count(), 1);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3503,10 +3622,11 @@ test('chat recovery: an older in-flight history cannot erase realtime messages, 
   await waitUntil(() => fixture.reads.length > previousReads, 'The older history request must start before the live message');
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await selectConversation(page);
   await replyInput(page).fill(CHAT_REPLY_TEXT);
   await replyInput(page).press('Enter');
-  await page.getByText(CHAT_REPLY_TEXT, { exact: true }).waitFor();
+  await threadText(page, CHAT_REPLY_TEXT).waitFor();
   await page.getByText('Sending', { exact: true }).waitFor();
   await harness.sendWebSocketMessage({
     type: 'chat-message-delivery', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID,
@@ -3516,10 +3636,10 @@ test('chat recovery: an older in-flight history cannot erase realtime messages, 
   finishHistory();
   await chatHistorySettled(page);
   await fixture.updateRoster();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1);
-  assert.equal(await page.getByText(CHAT_REPLY_TEXT, { exact: true }).count(), 1);
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 1);
+  assert.equal(await threadText(page, CHAT_REPLY_TEXT).count(), 1);
   await page.getByText('Delivered', { exact: true }).waitFor();
-  await expectChatUnread(page, 1);
+  await expectChatUnread(page, 0, 'The open thread was read; a stale history cannot flag it unread again');
   assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/reply').length, 1, 'History refreshes must never replay the teacher reply POST');
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -3529,7 +3649,8 @@ test('chat recovery: closing a thread survives stale history, duplicate events a
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await selectConversation(page);
   let finishReply;
   const heldReply = new Promise(resolve => { finishReply = resolve; });
   context.after(() => finishReply());
@@ -3550,7 +3671,7 @@ test('chat recovery: closing a thread survives stale history, duplicate events a
   await replyResponse;
   const newRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', content: 'A new synthetic question after close' });
   await harness.sendWebSocketMessage(studentChatEvent(newRow));
-  await page.getByText(newRow.content, { exact: true }).waitFor();
+  await listText(page, newRow.content).waitFor();
   await fixture.updateRoster();
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'Closing must keep the old student item hidden');
   assert.equal(await page.getByText(CHAT_REPLY_TEXT, { exact: true }).count(), 0, 'A reply submitted before close cannot reappear in a newly opened thread');
@@ -3565,7 +3686,7 @@ test('chat recovery: session changes fence old history and realtime data', { tim
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   let finishOldHistory;
   const heldHistory = new Promise(resolve => { finishOldHistory = resolve; });
   context.after(() => finishOldHistory());
@@ -3591,7 +3712,7 @@ test('chat recovery: session changes fence old history and realtime data', { tim
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'A superseded session cannot retain or restore message content');
   const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
   await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
-  await page.getByText(replacementRow.content, { exact: true }).waitFor();
+  await listText(page, replacementRow.content).waitFor();
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -3601,7 +3722,7 @@ test('chat recovery: a global authorization denial clears and latches chat until
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   fixture.setHistoryResponder(async () => ({ status: 403, body: { error: 'Access denied' } }));
   await fixture.refetch('/api/teacher/messages');
   await chatHistorySettled(page);
@@ -3627,7 +3748,7 @@ test('chat recovery: a global authorization denial clears and latches chat until
   await fixture.refetch('/api/sessions/active');
   await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'New authoritative session re-arms its history read');
   await openChatPanel(page);
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3637,7 +3758,7 @@ test('chat recovery: a fast browser clock cannot hide a new reply recovered from
   const { page, harness } = fixture;
   const oldRow = storedChatMessage({ createdAt: new Date(serverNow).toISOString() });
   await harness.sendWebSocketMessage(studentChatEvent(oldRow));
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
   await endChat(page);
   await expectChatEmpty(page);
   const missedRow = storedChatMessage({
@@ -3649,14 +3770,14 @@ test('chat recovery: a fast browser clock cannot hide a new reply recovered from
   // No student-message event delivers this row. Only a fresh server snapshot
   // can recover it, independently of the browser's wall-clock skew.
   await fixture.refetch('/api/teacher/messages');
-  await page.getByText(missedRow.content, { exact: true }).waitFor();
+  await listText(page, missedRow.content).waitFor();
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
   const previousReads = fixture.reads.length;
   await harness.disconnectWebSocket();
   await harness.authenticateWebSocket();
   await waitUntil(() => fixture.reads.length > previousReads, 'Reconnect reconciles server history after close');
   await chatHistorySettled(page);
-  assert.equal(await page.getByText(missedRow.content, { exact: true }).count(), 1);
+  assert.equal(await listText(page, missedRow.content).count(), 1);
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -3702,8 +3823,8 @@ test('chat recovery: reconnect fetches history newer than an empty request begun
     assert.fail(`${error.message}: ${JSON.stringify({ sockets: harness.websocketConnections, console: fixture.socketConsole, queryState, pageErrors: harness.pageErrors })}`);
   }
   await chatHistorySettled(page);
-  await page.getByText(offlineRow.content, { exact: true }).waitFor();
-  assert.equal(await page.getByText(offlineRow.content, { exact: true }).count(), 1);
+  await listText(page, offlineRow.content).waitFor();
+  assert.equal(await listText(page, offlineRow.content).count(), 1);
   assert.deepEqual(fixture.mutations, [], 'Recovery only reads history; no message is resent');
   assert.deepEqual(harness.pageErrors, []);
 });
