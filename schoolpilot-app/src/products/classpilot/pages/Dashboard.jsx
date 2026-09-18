@@ -1441,6 +1441,15 @@ export default function Dashboard() {
     activeSession,
     school?.schoolTimezone || school?.timezone,
   );
+  // While a class is running the header carries what comes next, so the activity
+  // banner has nothing left to say for a routine period and does not draw at all.
+  // With no class running the banner keeps it, where it is the only thing on
+  // screen describing the rest of the day.
+  const nextScheduledActivity = scheduledClassEnabled ? scheduledActivity?.next : null;
+  const nextActivityLabel = nextScheduledActivity?.name && nextScheduledActivity?.startsAt
+    ? `${nextScheduledActivity.name} · ${new Date(nextScheduledActivity.startsAt).toLocaleTimeString([], {
+      hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}`
+    : null;
   const selectedTeacherStartGroup = groups.find((group) => group.id === startGroupId);
   const selectedAdminStartGroup = adminTeachingGroups.find((group) => group.id === adminStartGroupId);
 
@@ -5571,6 +5580,11 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                   Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
                 </div>
               )}
+              {scheduledAssignment && nextActivityLabel && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-next-activity">
+                  Next: {nextActivityLabel}
+                </div>
+              )}
               {isTeacher && !scheduledSupervisionId && (
                 <>
                   {activeSession ? (
@@ -5666,6 +5680,11 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-sky-400/15 border border-sky-400/30 text-sky-300" data-testid="badge-admin-automatic-session">
                           <Clock className="h-3.5 w-3.5" />
                           Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
+                        </div>
+                      )}
+                      {scheduledAssignment && nextActivityLabel && (
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-admin-next-activity">
+                          Next: {nextActivityLabel}
                         </div>
                       )}
                       {!activeSessionIsScheduled && (
@@ -5807,16 +5826,34 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
       <main className={`transition-all duration-300 ${showSidebar ? 'lg:ml-80' : ''}`}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
-        {scheduledClassEnabled ? (
+        {scheduledClassEnabled ? (() => {
+          // Each part of the banner is conditional, so it can end up with nothing
+          // drawn at all - a class running with no next period, which is simply
+          // the last class of the day. The card chrome would then be an empty
+          // bordered box. Keep the section mounted either way so the live region
+          // still announces a class change to a screen reader, and drop the
+          // chrome when there is nothing to show.
+          const bannerTitleDrawn = dashboardActivityError || scheduledActivity.pending
+            || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'));
+          const bannerExtensionWarning = Boolean(scheduledSupervisionId
+            && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
+          const bannerActions = studentView !== 'class' || adminObservedSessionId || dashboardActivityError
+            || (scheduledSupervisionId && studentView === 'class');
+          const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next && !scheduledAssignment)
+            || bannerExtensionWarning || Boolean(bannerActions);
+          return (
           <section ref={activityBannerRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true"
-            data-testid="scheduled-class-banner" className="mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring">
+            data-testid="scheduled-class-banner" className={bannerVisible
+              ? "mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring" : "sr-only"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className={dashboardActivityError || scheduledActivity.pending || !scheduledAssignment ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
+                <p className={dashboardActivityError || scheduledActivity.pending
+                  || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'))
+                  ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
                     : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
-                {scheduledActivity.next ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
+                {scheduledActivity.next && !scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
                   {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
                   {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
                 {scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student))
@@ -5834,7 +5871,8 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
               </div>
             </div>
           </section>
-        ) : null}
+          );
+        })() : null}
         {/* Remote Control Toolbar */}
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
