@@ -151,6 +151,15 @@ function Copy-RegisteredTask {
     return [pscustomobject]@{ taskDefinition = $copy; tags = $tags }
 }
 
+function Add-MockHealthyTargetRead {
+    # Queue healthy-target counts for describe-target-health reads that follow the next
+    # task-definition update; reads before that update (the pre-mutation exact gates)
+    # keep returning the desired count.
+    param([Parameter(Mandatory = $true)][int[]]$Counts)
+    foreach ($count in $Counts) { $global:RuntimeConfigTestState.HealthyApiTargetReadQueue.Enqueue($count) }
+    $global:RuntimeConfigTestState.HealthyApiTargetReadGateIndex = $global:RuntimeConfigTestState.Events.Count
+}
+
 function Reset-MockDeploymentState {
     param([string]$ApiArn, [string]$WorkerArn, [string]$Digest, [string]$SecretArn)
     $global:RuntimeConfigTestState = [ordered]@{
@@ -182,6 +191,8 @@ function Reset-MockDeploymentState {
         TurnSecretDeleted = $false
         ApiDesiredCount = 1
         HealthyApiTargetCountOverride = $null
+        HealthyApiTargetReadQueue = [Collections.Generic.Queue[int]]::new()
+        HealthyApiTargetReadGateIndex = 0
         ApiMinimumHealthyPercent = 100
         ApiMaximumPercent = 200
         WorkerMinimumHealthyPercent = 100
@@ -2001,7 +2012,15 @@ try {
                 if ($targetGroupArn -cne "arn:aws:elasticloadbalancing:us-east-1:135775632425:targetgroup/schoolpilot-production-api/abcdef0123456789") {
                     throw "Unexpected mocked target group."
                 }
-                $count = if ($null -eq $state.HealthyApiTargetCountOverride) {
+                $count = if ($state.HealthyApiTargetReadQueue.Count -gt 0 -and
+                    @($state.Events | Select-Object -Skip $state.HealthyApiTargetReadGateIndex | Where-Object { $_ -like "update:*" }).Count -gt 0) {
+                    # Model the rolling surge: a queued healthy-target read is served only after a
+                    # task-definition update issued since it was queued, so the pre-mutation exact
+                    # gates never see it.
+                    $surge = [int]$state.HealthyApiTargetReadQueue.Dequeue()
+                    $state.Events.Add("target-health:$surge")
+                    $surge
+                } elseif ($null -eq $state.HealthyApiTargetCountOverride) {
                     [int]$state.ApiDesiredCount
                 } else {
                     [int]$state.HealthyApiTargetCountOverride
@@ -2103,6 +2122,65 @@ try {
     Assert-Throws {
         Assert-ApiTargetHealth -ApiService $unhealthyApi -ExpectedDesiredCount 1 -Mode Exact
     } "An exact runtime health gate must reject extra healthy ALB targets."
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $null
+
+    # The converging gate is derived from the live ECS deployment configuration:
+    # ceiling = floor(desired x maximumPercent / 100), which is 2N under the reviewed
+    # 100/200 posture and N under no-growth containment; floor = max(1, desired - 1).
+    $healthGateRows = @(
+        @{ Desired = 1; Minimum = 100; Maximum = 200; Floor = 1; Ceiling = 2 },
+        @{ Desired = 2; Minimum = 100; Maximum = 200; Floor = 1; Ceiling = 4 },
+        @{ Desired = 3; Minimum = 100; Maximum = 200; Floor = 2; Ceiling = 6 },
+        @{ Desired = 4; Minimum = 100; Maximum = 200; Floor = 3; Ceiling = 8 },
+        @{ Desired = 5; Minimum = 100; Maximum = 200; Floor = 4; Ceiling = 10 },
+        @{ Desired = 6; Minimum = 100; Maximum = 200; Floor = 5; Ceiling = 12 },
+        @{ Desired = 2; Minimum = 50; Maximum = 100; Floor = 1; Ceiling = 2 },
+        @{ Desired = 3; Minimum = 66; Maximum = 100; Floor = 2; Ceiling = 3 },
+        @{ Desired = 4; Minimum = 75; Maximum = 100; Floor = 3; Ceiling = 4 },
+        @{ Desired = 5; Minimum = 80; Maximum = 100; Floor = 4; Ceiling = 5 },
+        @{ Desired = 6; Minimum = 83; Maximum = 100; Floor = 5; Ceiling = 6 }
+    )
+    foreach ($healthGateRow in $healthGateRows) {
+        $healthGateService = New-TestService -Role api -TaskDefinitionArn $global:RuntimeConfigTestState.ApiSourceArn `
+            -DesiredCount $healthGateRow.Desired -MinimumHealthyPercent $healthGateRow.Minimum -MaximumPercent $healthGateRow.Maximum
+        $healthGateLabel = "desired=$($healthGateRow.Desired) bounds=$($healthGateRow.Minimum)/$($healthGateRow.Maximum)"
+        $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Floor
+        Assert-Condition ((Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Converging) -eq $healthGateRow.Floor) `
+            "The converging gate must admit the floor ($healthGateLabel)."
+        $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Ceiling
+        Assert-Condition ((Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Converging) -eq $healthGateRow.Ceiling) `
+            "The converging gate must admit the ECS task ceiling ($healthGateLabel)."
+        $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Floor - 1
+        Assert-Throws {
+            Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Converging
+        } "The converging gate must reject a fleet below the floor ($healthGateLabel)."
+        $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Ceiling + 1
+        Assert-Throws {
+            Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Converging
+        } "The converging gate must reject targets beyond the ECS task ceiling ($healthGateLabel)."
+        if ($healthGateRow.Maximum -eq 200) {
+            $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Desired
+            Assert-Condition ((Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Exact) -eq $healthGateRow.Desired) `
+                "The exact gate must admit exactly the desired count ($healthGateLabel)."
+            $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $healthGateRow.Desired + 1
+            Assert-Throws {
+                Assert-ApiTargetHealth -ApiService $healthGateService -ExpectedDesiredCount $healthGateRow.Desired -Mode Exact
+            } "The exact gate must still reject one extra healthy target ($healthGateLabel)."
+        }
+    }
+    $headlessService = New-TestService -Role api -TaskDefinitionArn $global:RuntimeConfigTestState.ApiSourceArn -DesiredCount 2
+    $headlessService.PSObject.Properties.Remove("deploymentConfiguration")
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = 2
+    Assert-Throws {
+        Assert-ApiTargetHealth -ApiService $headlessService -ExpectedDesiredCount 2 -Mode Converging
+    } "The converging gate must fail closed without a live deployment configuration."
+    $surgeService = New-TestService -Role api -TaskDefinitionArn $global:RuntimeConfigTestState.ApiSourceArn -DesiredCount 2
+    $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = 5
+    $healthGateMessage = ""
+    try { [void](Assert-ApiTargetHealth -ApiService $surgeService -ExpectedDesiredCount 2 -Mode Converging) }
+    catch { $healthGateMessage = [string]$_.Exception.Message }
+    Assert-Condition ($healthGateMessage -ceq "Production API healthy targets left the reviewed runtime-config range (mode=Converging, bounds=100/200, healthy=5, desired=2, minimum=1, maximum=4).") `
+        "The health-gate failure must report the observed and admitted counts."
     $global:RuntimeConfigTestState.HealthyApiTargetCountOverride = $null
 
     Acquire-OperationLock -RunId "lease-owner-a" -PlanSha256 ("1" * 64)
@@ -3343,6 +3421,7 @@ try {
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
     $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    Add-MockHealthyTargetRead -Counts 6
     $sequencedFloorPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
         -PrivateProfilePath $trackingPilotProfilePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
@@ -3362,7 +3441,12 @@ try {
         [Array]::LastIndexOf($sequencedFloorApplyEvents, "transition:api-converging") -lt
         [Array]::IndexOf($sequencedFloorApplyEvents, "update:worker:candidate")) `
         "A three-task ordinary apply must converge the API before mutating the worker so the two 200% overlaps never coincide."
+    Assert-Condition ($global:RuntimeConfigTestState.HealthyApiTargetReadQueue.Count -eq 0 -and
+        [Array]::IndexOf($sequencedFloorApplyEvents, "target-health:6") -gt [Array]::IndexOf($sequencedFloorApplyEvents, "update:api:candidate") -and
+        [Array]::IndexOf($sequencedFloorApplyEvents, "target-health:6") -lt [Array]::IndexOf($sequencedFloorApplyEvents, "update:worker:candidate")) `
+        "A three-task ordinary apply must tolerate the 100/200 API rollout surging to six healthy targets before the worker mutates."
     $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    Add-MockHealthyTargetRead -Counts 6
     $sequencedFloorRollbackResult = Invoke-RuntimeConfigRollback -Plan $sequencedFloorPlan `
         -PlanSha256 $sequencedFloorPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0
@@ -3373,10 +3457,19 @@ try {
         [Array]::LastIndexOf($sequencedFloorRollbackEvents, "transition:api-converging") -lt
         [Array]::IndexOf($sequencedFloorRollbackEvents, "update:worker:source")) `
         "A three-task ordinary rollback must converge the API before mutating the worker."
+    Assert-Condition ($global:RuntimeConfigTestState.HealthyApiTargetReadQueue.Count -eq 0 -and
+        [Array]::LastIndexOf($sequencedFloorRollbackEvents, "target-health:6") -gt [Array]::IndexOf($sequencedFloorRollbackEvents, "update:api:source") -and
+        [Array]::LastIndexOf($sequencedFloorRollbackEvents, "target-health:6") -lt [Array]::IndexOf($sequencedFloorRollbackEvents, "update:worker:source")) `
+        "A three-task ordinary rollback must tolerate the same API surge before the worker mutates."
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 2
     $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining = 1
+    # The 2026-09-17 production shape: the 100/200 rollout surged to three, then four (2N),
+    # healthy ALB targets while the candidate pair was still replacing incumbents.
+    $global:RuntimeConfigTestState.TransitionApiDescribeReadsRemaining = 2
+    Add-MockHealthyTargetRead -Counts 3
+    Add-MockHealthyTargetRead -Counts 4
     $concurrentPairPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
         -PrivateProfilePath $trackingPilotProfilePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
@@ -3386,11 +3479,103 @@ try {
         -ExpectedSha256 $concurrentPairPlanResult.PlanSha256
     $concurrentPairApplyResult = Invoke-RuntimeConfigApply -Plan $concurrentPairPlan `
         -PlanSha256 $concurrentPairPlanResult.PlanSha256 -Now $now `
-        -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+        -ConvergenceAttempts 4 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
     Assert-Condition ($concurrentPairApplyResult.status -ceq "applied" -and
         $global:RuntimeConfigTestState.ConvergingApiDescribeReadsRemaining -eq 1 -and
         -not (@($global:RuntimeConfigTestState.Events) -contains "transition:api-converging")) `
         "A one- or two-task ordinary apply must keep the concurrent API/worker rollout."
+    $concurrentPairApplyEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($global:RuntimeConfigTestState.HealthyApiTargetReadQueue.Count -eq 0 -and
+        $global:RuntimeConfigTestState.TransitionApiDescribeReadsRemaining -eq 0 -and
+        [Array]::IndexOf($concurrentPairApplyEvents, "target-health:3") -gt [Array]::IndexOf($concurrentPairApplyEvents, "update:worker:candidate") -and
+        [Array]::IndexOf($concurrentPairApplyEvents, "target-health:4") -gt [Array]::IndexOf($concurrentPairApplyEvents, "target-health:3") -and
+        [Array]::IndexOf($concurrentPairApplyEvents, "target-health:4") -lt [Array]::LastIndexOf($concurrentPairApplyEvents, "scaling:restore")) `
+        "A two-task ordinary apply must tolerate the 100/200 rollout surging to twice the desired healthy targets."
+
+    # A read beyond the ECS task ceiling (five healthy targets at two tasks under 100/200)
+    # must still stop the apply, and the failure ladder's rollback must now certify itself
+    # instead of stranding the scaling hold and the fenced lease.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 2
+    Add-MockHealthyTargetRead -Counts 5
+    $surgeBeyondCeilingPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $surgeBeyondCeilingPlan = Read-RuntimePlan -Path $surgeBeyondCeilingPlanResult.PlanPath `
+        -ExpectedSha256 $surgeBeyondCeilingPlanResult.PlanSha256
+    $surgeBeyondCeilingMessage = ""
+    try {
+        [void](Invoke-RuntimeConfigApply -Plan $surgeBeyondCeilingPlan `
+            -PlanSha256 $surgeBeyondCeilingPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck)
+    }
+    catch { $surgeBeyondCeilingMessage = [string]$_.Exception.Message }
+    $surgeBeyondCeilingResult = Read-StrictJson -Path ([string]$surgeBeyondCeilingPlan.resultPath)
+    $surgeBeyondCeilingEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($surgeBeyondCeilingMessage -clike "*(mode=Converging, bounds=100/200, healthy=5, desired=2, minimum=1, maximum=4).") `
+        "A fleet beyond the ECS task ceiling must stop the apply and report the observed and admitted counts."
+    Assert-Condition ($surgeBeyondCeilingResult.status -ceq "apply_failed_rolled_back" -and $surgeBeyondCeilingResult.scalingRestored -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn -and
+        -not $global:RuntimeConfigTestState.DynamicIn -and -not $global:RuntimeConfigTestState.DynamicOut) `
+        "A health-gate abort must restore the source pair and autoscaling."
+    Assert-Condition ([Array]::IndexOf($surgeBeyondCeilingEvents, "target-health:5") -lt [Array]::IndexOf($surgeBeyondCeilingEvents, "update:api:source") -and
+        @($surgeBeyondCeilingEvents | Where-Object { $_ -like "lease:release:*" }).Count -eq 1 -and -not $script:OperationLockHeld) `
+        "A health-gate abort must release the fenced lease once the rollback has certified itself."
+
+    # Zero healthy targets mid-rollout is still a hard stop.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 2
+    Add-MockHealthyTargetRead -Counts 0
+    $zeroHealthyPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $zeroHealthyPlan = Read-RuntimePlan -Path $zeroHealthyPlanResult.PlanPath -ExpectedSha256 $zeroHealthyPlanResult.PlanSha256
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $zeroHealthyPlan -PlanSha256 $zeroHealthyPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    } "Zero healthy ALB targets mid-rollout must still stop the apply."
+    $zeroHealthyResult = Read-StrictJson -Path ([string]$zeroHealthyPlan.resultPath)
+    Assert-Condition ($zeroHealthyResult.status -ceq "apply_failed_rolled_back" -and $zeroHealthyResult.scalingRestored -and
+        (@($global:RuntimeConfigTestState.Events) -contains "target-health:0")) `
+        "A zero-healthy abort must still recover the source pair and restore autoscaling."
+
+    # The 2026-09-17 16:05 ET incident: a mutation failure after the API update, with the
+    # rollback's own 100/200 replacement surging to three healthy targets at two tasks. The old
+    # desired-capped gate rejected that read, so the rollback could not certify itself and the
+    # run stranded the scaling hold and the fenced lease as apply_failed_manual_intervention.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 2
+    $global:RuntimeConfigTestState.FailWorkerCandidateOnce = $true
+    Add-MockHealthyTargetRead -Counts 3
+    $incidentPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $trackingPilotProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn `
+        -Now $now -SkipRepositoryCheck
+    $incidentPlan = Read-RuntimePlan -Path $incidentPlanResult.PlanPath -ExpectedSha256 $incidentPlanResult.PlanSha256
+    Assert-Throws {
+        Invoke-RuntimeConfigApply -Plan $incidentPlan -PlanSha256 $incidentPlanResult.PlanSha256 -Now $now `
+            -ConvergenceAttempts 3 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck
+    } "A worker candidate failure must fail after bounded source-pair recovery."
+    $incidentResult = Read-StrictJson -Path ([string]$incidentPlan.resultPath)
+    $incidentEvents = @($global:RuntimeConfigTestState.Events)
+    Assert-Condition ($incidentResult.status -ceq "apply_failed_rolled_back" -and $incidentResult.scalingRestored -and
+        $global:RuntimeConfigTestState.WorkerCandidateFailureConsumed -and
+        [Array]::IndexOf($incidentEvents, "target-health:3") -gt [Array]::IndexOf($incidentEvents, "update:api:source")) `
+        "An ordinary two-task rollback must accept its own 100/200 surge and record a coherent source-pair recovery."
+    Assert-Condition ($global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn -and
+        -not $global:RuntimeConfigTestState.DynamicIn -and -not $global:RuntimeConfigTestState.DynamicOut -and
+        -not $script:OperationLockHeld) `
+        "The recovered incident shape must leave the source pair live, autoscaling restored, and the lease released."
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
     $offProfilePath = Join-Path $testRoot "off-profile.json"

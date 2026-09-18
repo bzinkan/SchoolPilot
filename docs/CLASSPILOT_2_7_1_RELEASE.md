@@ -120,7 +120,9 @@ Both Plan and Apply must include `-ConfirmProductionMutation` and
 global activation additionally requires
 `-ConfirmSyntheticOnlyGlobalActivation`; omitting any one of the three fails
 before mutation. Ordinary feature-enabling plans remain outside the protected
-window and accept only one, two, or three stable API tasks.
+window and accept only one, two, or three stable API tasks. Apply is admitted at
+any of those counts: the converging health gate mirrors the live `100/200` bounds,
+so a rollout's transient rise to twice the desired count of healthy targets passes.
 
 Both `off` and an explicitly protected feature-enabling plan use these exact
 temporary API `minimumHealthyPercent/maximumPercent` bounds:

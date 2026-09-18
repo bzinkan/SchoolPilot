@@ -874,7 +874,16 @@ rehearsal, and receipt modes. The only admitted API desired counts and temporary
 `minimumHealthyPercent/maximumPercent` mappings are `1=100/200`, `2=50/100`,
 `3=66/100`, `4=75/100`, `5=80/100`, and `6=83/100`; the singleton worker uses
 `0/100`. Counts 2–6 therefore permit exactly one stop with no capacity growth,
-while count 1 permits one availability-preserving replacement slot. The script
+while count 1 permits one availability-preserving replacement slot. Those envelopes
+hold only while the containment bounds are installed: an ordinary
+`deploy-classpilot-runtime-config.ps1` Apply keeps the reviewed `100/200`
+configuration, under which ECS starts every replacement before it drains an
+incumbent, so healthy ALB targets legitimately rise to twice the desired count
+mid-rollout (three were observed at two tasks on 2026-09-17). The tool's converging
+health gate is therefore derived from the live deployment configuration with ECS
+rounding, `[max(1, N-1), floor(N × maximumPercent / 100)]`: `[max(1, N-1), 2N]` under
+`100/200` and exactly the table above under containment. The gates before mutation
+and after convergence still require exactly N healthy targets. The script
 suspends dynamic and scheduled scaling, proves the live target-health floor,
 converges the API before mutating the worker, restores the exact prior ECS
 deployment configurations, and releases scaling only after validating the exact
@@ -1215,3 +1224,5 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
 8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Production schema changes are handled by the explicit deploy-script migration task (`RUN_MIGRATIONS_ONLY=true`), not by normal web/worker startup.
+9. **Busy main checkout** — When `C:\GitHub\SchoolPilot` is on another branch or dirty (another agent may be working there), run `deploy.sh` and `deploy-classpilot-runtime-config.ps1` from a throwaway clean worktree on `main` (`git worktree add C:\GitHub\SchoolPilot-plan main`, then `git pull --ff-only` inside it). Both tools derive their repository root from their own location and their guards are cwd-relative; `--frontend` runs its own `npm ci`. Never switch or reset the main checkout out from under the other session.
+10. **Runtime-config apply capacity** — `deploy-classpilot-runtime-config.ps1` applies at any admitted API desired count (1–3 ordinary; 1–6 only inside an admitted protected-window run). Under the ordinary `100/200` configuration ECS surges before it drains, so `describe-target-health` showing up to twice the desired count healthy mid-rollout is expected and passes: the converging gate mirrors the live deployment configuration (`[max(1, N-1), floor(N × maximumPercent / 100)]`) and only the pre-mutation and post-convergence gates require exactly N. A run that still ends `apply_failed_manual_intervention` leaves autoscaling suspended and the DynamoDB lease `mutating` by design; follow `docs/CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md` to recover before any new Plan.
