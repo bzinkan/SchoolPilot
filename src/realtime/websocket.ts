@@ -67,6 +67,7 @@ import {
   getActiveSessionsForStudents,
   acknowledgeClasspilotStudentControlState,
   acknowledgeTeacherChatDelivery,
+  classpilotTeacherChatAckRejection,
   withClasspilotStudentControlDeliveryAuthority,
   withClasspilotStudentWebSocketBootstrapAuthority,
 } from "../services/storage.js";
@@ -75,6 +76,7 @@ import {
   terminalClasspilotCommandAckReceipt,
 } from "../services/classpilotAckReceipt.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { parseTeacherChatAckStatus } from "../services/classpilotStudentChat.js";
 import { db } from "../db.js";
 import { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
 import {
@@ -1812,9 +1814,14 @@ export function setupWebSocket(
           (message.type === "chat-message-ack" || message.type === "chat_delivery_ack")
         ) {
           const messageId = String(message.messageId || message.chatMessageId || "").trim();
-          const rawStatus = String(message.deliveryStatus || message.status || "").trim();
-          const deliveryStatus = rawStatus === "failed" ? "failed" : rawStatus === "delivered" ? "delivered" : null;
-          if (!messageId || !deliveryStatus) return;
+          const deliveryStatus = parseTeacherChatAckStatus(message.deliveryStatus || message.status);
+          if (!messageId || !deliveryStatus) {
+            // A malformed ack can never succeed; tell the outbox so it drops it.
+            if (message.ackId) {
+              ws.send(JSON.stringify({ type: "chat-message-ack-receipt", ackId: String(message.ackId), messageId, accepted: false, code: "INVALID_CHAT_ACK" }));
+            }
+            return;
+          }
 
           const acknowledged = await runWithTenantContext({ schoolId: client.schoolId }, () =>
             acknowledgeTeacherChatDelivery({
@@ -1832,7 +1839,7 @@ export function setupWebSocket(
           if (acknowledged?.message.supervisionContextId) {
             const payload = { type: "chat-message-delivery", supervisionContextId: acknowledged.message.supervisionContextId,
               messageId, studentId: acknowledged.message.studentId, deliveryStatus: acknowledged.message.deliveryStatus,
-              errorMessage: acknowledged.message.errorMessage };
+              seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage };
             const context = await runWithTenantContext({ schoolId: client.schoolId }, () =>
               requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: acknowledged.message.supervisionContextId! })
                 .catch((error) => {
@@ -1852,17 +1859,21 @@ export function setupWebSocket(
               messageId,
               studentId: acknowledged.message.studentId,
               deliveryStatus: acknowledged.message.deliveryStatus,
+              seenAt: acknowledged.message.seenAt,
               errorMessage: acknowledged.message.errorMessage,
             };
             broadcastToStaffSessionLocal(client.schoolId, acknowledged.message.sessionId, payload);
             void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId: acknowledged.message.sessionId }, payload);
           }
           if (message.ackId) {
+            const code = acknowledged ? undefined : await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              classpilotTeacherChatAckRejection({ schoolId: client.schoolId!, chatMessageId: messageId, studentId: client.studentId! }));
             ws.send(JSON.stringify({
               type: "chat-message-ack-receipt",
               ackId: String(message.ackId),
               messageId,
               accepted: !!acknowledged,
+              ...(code ? { code } : {}),
             }));
           }
           return;

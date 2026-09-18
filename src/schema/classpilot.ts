@@ -1172,10 +1172,15 @@ export const chatMessages = pgTable(
     deliveryStatus: text("delivery_status")
       .notNull()
       .default("sent")
-      .$type<"sent" | "delivered" | "failed">(),
+      .$type<"sent" | "delivered" | "failed" | "seen">(),
     deliveredAt: timestamp("delivered_at"),
     failedAt: timestamp("failed_at"),
     errorMessage: text("error_message"),
+    // Device-reported: the teacher's message was on screen (delivery_status 'seen').
+    seenAt: timestamp("seen_at", { withTimezone: true }),
+    // Dashboard-side: authorized staff opened this student message. Never sent to students.
+    readAt: timestamp("read_at", { withTimezone: true }),
+    readBy: text("read_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
