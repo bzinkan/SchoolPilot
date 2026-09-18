@@ -5812,7 +5812,9 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
             data-testid="scheduled-class-banner" className="mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className={dashboardActivityError || scheduledActivity.pending || !scheduledAssignment ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
+                <p className={dashboardActivityError || scheduledActivity.pending
+                  || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'))
+                  ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
                     : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
