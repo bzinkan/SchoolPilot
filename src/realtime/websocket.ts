@@ -112,6 +112,7 @@ import {
 } from "../services/classpilotClassroomState.js";
 import { classpilotControlStateAckRequired } from "../services/classpilotControlStateAckGate.js";
 import { recordHeartbeatHotPathCounter } from "../services/heartbeatHotPathMetrics.js";
+import { reportStudentChatFanOut } from "../services/classpilotChatDelivery.js";
 import {
   classpilotClassroomStatePushFrame,
   classpilotControlStateExactBinding,
@@ -732,6 +733,10 @@ export function setupWebSocket(
   });
 
   // --- Redis cross-instance message delivery ---
+  const relayedStudentMessageId = (message: unknown): string => {
+    const id = (message as { data?: { id?: unknown } })?.data?.id;
+    return typeof id === "string" ? id : "unknown";
+  };
   const deliverRedisMessage = (target: WsRedisTarget, message: unknown) => {
     if (!webSocketWork.canStart()) return;
     const msgType = (message as { type?: string })?.type ?? "unknown";
@@ -759,12 +764,22 @@ export function setupWebSocket(
       case "staff-user":
         sendToStaffUserLocal(target.schoolId, target.userId, message);
         break;
-      case "staff-context":
-        broadcastToStaffContextLocal(target.schoolId, target.supervisionContextId, message, target.assignedStaffId, target.contextAuthorityRevision);
+      case "staff-context": {
+        const delivered = broadcastToStaffContextLocal(target.schoolId, target.supervisionContextId, message, target.assignedStaffId, target.contextAuthorityRevision);
+        if (msgType === "student-message") {
+          reportStudentChatFanOut({ schoolId: target.schoolId, authority: { kind: "supervision-context", id: target.supervisionContextId },
+            messageId: relayedStudentMessageId(message), source: "relay", delivered });
+        }
         break;
-      case "staff-session":
-        broadcastToStaffSessionLocal(target.schoolId, target.sessionId, message);
+      }
+      case "staff-session": {
+        const delivered = broadcastToStaffSessionLocal(target.schoolId, target.sessionId, message);
+        if (msgType === "student-message") {
+          reportStudentChatFanOut({ schoolId: target.schoolId, authority: { kind: "teaching-session", id: target.sessionId },
+            messageId: relayedStudentMessageId(message), source: "relay", delivered });
+        }
         break;
+      }
       case "students":
         broadcastToStudentsLocal(target.schoolId, message, undefined, target.targetDeviceIds);
         break;

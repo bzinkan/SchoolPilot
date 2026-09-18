@@ -16,7 +16,7 @@
     "test:classpilot-realtime-cache": "node --test scripts/classpilot-realtime-cache.test.mjs",
     "test:classpilot-dashboard-load-state": "node --test scripts/classpilot-dashboard-load-state.test.mjs",
     "test:classpilot-signal-loss": "node --test scripts/classpilot-signal-loss.test.mjs",
-    "test:classpilot-command-context": "node --test scripts/classpilot-command-context.test.mjs scripts/dashboard-activity.test.mjs",
+    "test:classpilot-command-context": "node --test scripts/classpilot-command-context.test.mjs scripts/dashboard-activity.test.mjs scripts/chat-timestamp.test.mjs",
     "test:classpilot-tile-tabs": "node --test scripts/classpilot-tile-tabs.test.mjs",
     "test:classpilot-coverage-summary": "node --test scripts/classpilot-coverage-summary.test.mjs",
     "test:classpilot-coverage-group-editor": "node --test scripts/coverage-group-editor-browser.test.mjs",
