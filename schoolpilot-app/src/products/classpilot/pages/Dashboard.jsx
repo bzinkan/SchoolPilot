@@ -5807,9 +5807,25 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
       <main className={`transition-all duration-300 ${showSidebar ? 'lg:ml-80' : ''}`}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
-        {scheduledClassEnabled ? (
+        {scheduledClassEnabled ? (() => {
+          // Each part of the banner is conditional, so it can end up with nothing
+          // drawn at all - a class running with no next period, which is simply
+          // the last class of the day. The card chrome would then be an empty
+          // bordered box. Keep the section mounted either way so the live region
+          // still announces a class change to a screen reader, and drop the
+          // chrome when there is nothing to show.
+          const bannerTitleDrawn = dashboardActivityError || scheduledActivity.pending
+            || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'));
+          const bannerExtensionWarning = Boolean(scheduledSupervisionId
+            && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
+          const bannerActions = studentView !== 'class' || adminObservedSessionId || dashboardActivityError
+            || (scheduledSupervisionId && studentView === 'class');
+          const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next)
+            || bannerExtensionWarning || Boolean(bannerActions);
+          return (
           <section ref={activityBannerRef} tabIndex={-1} role="status" aria-live="polite" aria-atomic="true"
-            data-testid="scheduled-class-banner" className="mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring">
+            data-testid="scheduled-class-banner" className={bannerVisible
+              ? "mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring" : "sr-only"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className={dashboardActivityError || scheduledActivity.pending
@@ -5836,7 +5852,8 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
               </div>
             </div>
           </section>
-        ) : null}
+          );
+        })() : null}
         {/* Remote Control Toolbar */}
         {(isAdmin || isTeacher) && (
           <RemoteControlToolbar
