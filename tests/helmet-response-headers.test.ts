@@ -5,9 +5,22 @@ import test from "node:test";
 // Parity guard for the helmet posture in src/app.ts: every reviewed response header is
 // pinned byte-for-byte so a helmet major bump (or a changed default) shows up here first,
 // not in production. NODE_ENV=test keeps HSTS off, as it is outside production.
+// The CSP is compared as a directive set: helmet 7 serialised the overridden directives
+// first while helmet 8 keeps its default order, and the policy is order-independent.
+const PINNED_CSP_DIRECTIVES = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+  "font-src 'self' https: data:",
+  "img-src 'self' data:",
+  "object-src 'none'",
+  "script-src 'self'",
+  "script-src-attr 'none'",
+  "style-src 'self' https: 'unsafe-inline'",
+  "upgrade-insecure-requests",
+].sort();
 const PINNED_HEADERS: Record<string, string> = {
-  "content-security-policy":
-    "default-src 'none';base-uri 'none';form-action 'none';frame-ancestors 'none';font-src 'self' https: data:;img-src 'self' data:;object-src 'none';script-src 'self';script-src-attr 'none';style-src 'self' https: 'unsafe-inline';upgrade-insecure-requests",
   "cross-origin-opener-policy": "same-origin",
   "cross-origin-resource-policy": "same-origin",
   "origin-agent-cluster": "?1",
@@ -40,6 +53,12 @@ test("every response carries the reviewed security headers", { timeout: 120_000 
   for (const path of ["/api/security-headers-probe", "/livez"]) {
     const response = await fetch(`${origin}${path}`);
     await response.text();
+    const csp = response.headers.get("content-security-policy") ?? "";
+    assert.deepEqual(
+      csp.split(";").map((directive) => directive.trim()).filter(Boolean).sort(),
+      PINNED_CSP_DIRECTIVES,
+      `${path} must carry the pinned content-security-policy directives`,
+    );
     const actual: Record<string, string | null> = {};
     for (const name of Object.keys(PINNED_HEADERS)) actual[name] = response.headers.get(name);
     assert.deepEqual(actual, PINNED_HEADERS, `${path} must carry the pinned security headers`);
