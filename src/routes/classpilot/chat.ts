@@ -26,6 +26,8 @@ import {
   authorizeClasspilotTeacherCloseChat,
   getActiveSessionsForStudents,
   isAuthorizedClasspilotSessionStaff,
+  markAuthorizedClasspilotStudentMessagesRead,
+  classpilotTeacherChatAckRejection,
   withClasspilotStudentControlDeliveryAuthority,
   withClasspilotSupervisionTelemetryAuthority,
   getClasspilotStudentControlState,
@@ -47,6 +49,7 @@ import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCom
 import {
   parseClasspilotClientMessageId,
   parseClasspilotTeachingSessionId,
+  parseTeacherChatAckStatus,
 } from "../../services/classpilotStudentChat.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireScheduledClassroomContext, parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
@@ -396,10 +399,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
         : typeof raw?.chatMessageId === "string"
           ? raw.chatMessageId.trim().slice(0, 128)
           : "";
-      const rawStatus = raw?.deliveryStatus ?? raw?.status;
-      const status = rawStatus === "failed" ? "failed" as const
-        : rawStatus === "delivered" ? "delivered" as const
-        : null;
+      const status = parseTeacherChatAckStatus(raw?.deliveryStatus ?? raw?.status);
       if (!ackId || !messageId || !status) {
         receipts.push({ ackId, messageId, accepted: false, code: "INVALID_CHAT_ACK" });
         continue;
@@ -416,7 +416,9 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
           ? String(raw.errorMessage ?? raw.error).slice(0, 500)
           : null,
       });
-      receipts.push({ ackId, messageId, accepted: !!acknowledged });
+      receipts.push(acknowledged
+        ? { ackId, messageId, accepted: true }
+        : { ackId, messageId, accepted: false, code: await classpilotTeacherChatAckRejection({ schoolId, chatMessageId: messageId, studentId }) });
       if (acknowledged?.message.sessionId) {
         const payload = {
           type: "chat-message-delivery",
@@ -424,6 +426,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
           messageId,
           studentId,
           deliveryStatus: acknowledged.message.deliveryStatus,
+          seenAt: acknowledged.message.seenAt,
           errorMessage: acknowledged.message.errorMessage,
         };
         broadcastToStaffSessionLocal(schoolId, acknowledged.message.sessionId, payload);
@@ -431,7 +434,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
       } else if (acknowledged?.message.supervisionContextId) {
         const context = await requireScheduledClassroomContext({ schoolId, supervisionContextId: acknowledged.message.supervisionContextId });
         await publishScheduledClassroomEvent(context, { type: "chat-message-delivery", messageId, studentId,
-          deliveryStatus: acknowledged.message.deliveryStatus, errorMessage: acknowledged.message.errorMessage });
+          deliveryStatus: acknowledged.message.deliveryStatus, seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage });
       }
     }
     return res.json({ receipts });
@@ -468,6 +471,47 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
     }
     const messages = await getChatMessages(sessionId, schoolId);
     return res.json({ messages: messages.map(publicChatMessage) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/teacher/messages/read - Teacher-side read state.
+// Observe is read-only: an admin watching a class never marks a teacher's
+// inbox read, and students are never told about read state.
+router.post("/teacher/messages/read", ...staffAuth, async (req, res, next) => {
+  try {
+    const rawIds = Array.isArray(req.body?.messageIds) ? req.body.messageIds : null;
+    if (!rawIds || rawIds.length < 1 || rawIds.length > 200
+      || rawIds.some((id: unknown) => typeof id !== "string" || !id.trim() || id.length > 128)) {
+      return res.status(400).json({ error: "messageIds must contain between 1 and 200 message ids", code: "INVALID_MESSAGE_IDS" });
+    }
+    const messageIds: string[] = rawIds.map((id: string) => id.trim());
+    const schoolId = res.locals.schoolId!;
+    const actorId = req.authUser!.id;
+    if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
+      const authority = parseClasspilotActivityAuthority(req.body);
+      if (!authority?.supervisionContextId || req.body.sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+      const context = await requireScheduledClassroomContext({ schoolId, supervisionContextId: authority.supervisionContextId, actorId });
+      const result = await markAuthorizedClasspilotStudentMessagesRead({ schoolId, actorId, messageIds, authority: { supervisionContextId: context.id } });
+      if (result.updatedIds.length > 0) {
+        await publishScheduledClassroomEvent(context, { type: "chat-messages-read", messageIds: result.updatedIds,
+          readAt: result.readAt.toISOString(), readBy: actorId });
+      }
+      return res.json({ readAt: result.readAt.toISOString(), updatedIds: result.updatedIds });
+    }
+    const sessionId = String(req.body?.sessionId || "").trim();
+    if (!sessionId) return res.status(400).json({ error: "sessionId required" });
+    if (!(await authorizedStaffSession(req, res, sessionId, { mutate: true }))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const result = await markAuthorizedClasspilotStudentMessagesRead({ schoolId, actorId, messageIds, authority: { sessionId } });
+    if (result.updatedIds.length > 0) {
+      const payload = { type: "chat-messages-read", sessionId, messageIds: result.updatedIds, readAt: result.readAt.toISOString(), readBy: actorId };
+      broadcastToStaffSessionLocal(schoolId, sessionId, payload);
+      await publishWS({ kind: "staff-session", schoolId, sessionId }, payload);
+    }
+    return res.json({ readAt: result.readAt.toISOString(), updatedIds: result.updatedIds });
   } catch (err) {
     next(err);
   }

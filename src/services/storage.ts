@@ -49,6 +49,8 @@ import { assertGopilotEntitled } from "./gopilotEntitlement.js";
 import {
   isCurrentClasspilotStudentMessageSession,
   isExactIdempotentStudentMessage,
+  nextTeacherChatDeliveryState,
+  type TeacherChatAckStatus
 } from "./classpilotStudentChat.js";
 import { assertClasspilotScreenshotEvidenceAuthority } from "./classpilotEvidenceAuthority.js";
 import {
@@ -18582,6 +18584,37 @@ export async function getChatMessages(
     .orderBy(asc(chatMessages.createdAt));
 }
 
+/**
+ * Teacher-side read state. Only student-authored rows under the caller's own
+ * classroom authority are touched; the first reader wins and later calls are
+ * no-ops, so the returned ids are exactly the rows that changed. Students are
+ * never told about read state.
+ */
+export async function markAuthorizedClasspilotStudentMessagesRead(options: {
+  schoolId: string;
+  actorId: string;
+  messageIds: readonly string[];
+  authority: { sessionId: string } | { supervisionContextId: string };
+}): Promise<{ readAt: Date; updatedIds: string[] }> {
+  const readAt = new Date();
+  const messageIds = [...new Set(options.messageIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (messageIds.length === 0) return { readAt, updatedIds: [] };
+  const rows = await db
+    .update(chatMessages)
+    .set({ readAt, readBy: options.actorId })
+    .where(and(
+      eq(chatMessages.schoolId, options.schoolId),
+      eq(chatMessages.senderType, "student"),
+      inArray(chatMessages.id, messageIds),
+      isNull(chatMessages.readAt),
+      "sessionId" in options.authority
+        ? eq(chatMessages.sessionId, options.authority.sessionId)
+        : eq(chatMessages.supervisionContextId, options.authority.supervisionContextId)
+    ))
+    .returning({ id: chatMessages.id });
+  return { readAt, updatedIds: rows.map((row) => row.id) };
+}
+
 export async function createChatMessage(
   data: InsertChatMessage
 ): Promise<ChatMessage> {
@@ -18764,7 +18797,7 @@ export async function acknowledgeTeacherChatDelivery(options: {
   studentId: string;
   studentSessionId: string;
   deviceId: string;
-  status: "delivered" | "failed";
+  status: TeacherChatAckStatus;
   errorMessage?: string | null;
   studentControlRevision?: number;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery } | undefined> {
@@ -18806,41 +18839,61 @@ export async function acknowledgeTeacherChatDelivery(options: {
       eq(chatMessages.studentId, options.studentId)
     )).limit(1);
     if (!existingMessage) return undefined;
-    if (delivery.state === "delivered" || existingMessage.deliveryStatus === "delivered") {
-      return { message: existingMessage, delivery };
-    }
     const now = new Date();
+    const transition = nextTeacherChatDeliveryState(existingMessage, { status: options.status, at: now, errorMessage: options.errorMessage });
+    if (!transition.changed) return { message: existingMessage, delivery };
+    // The outbox has no 'seen' state; a seen message is a delivered one there.
     const [updatedDelivery] = await tx
       .update(classpilotChatDeliveries)
-      .set({
-        state: options.status === "delivered" ? "delivered" : "retry",
-        deliveredAt: options.status === "delivered" ? now : null,
-        nextAttemptAt: options.status === "failed" ? new Date(now.getTime() + 30_000) : now,
-        lastError: options.status === "failed" ? String(options.errorMessage || "Device reported delivery failure").slice(0, 500) : null,
+      .set(transition.outboxState === "delivered" ? {
+        state: "delivered",
+        deliveredAt: delivery.deliveredAt ?? now,
+        nextAttemptAt: now,
+        lastError: null,
+        updatedAt: now,
+      } : {
+        state: "retry",
+        deliveredAt: null,
+        nextAttemptAt: new Date(now.getTime() + 30_000),
+        lastError: transition.message.errorMessage,
         updatedAt: now,
       })
       .where(eq(classpilotChatDeliveries.id, delivery.id))
       .returning();
     const [message] = await tx
       .update(chatMessages)
-      .set(options.status === "delivered" ? {
-        deliveryStatus: "delivered",
-        deliveredAt: sql<Date>`coalesce(${chatMessages.deliveredAt}, ${now})`,
-        failedAt: null,
-        errorMessage: null,
-      } : {
-        deliveryStatus: "sent",
-        errorMessage: String(options.errorMessage || "Device reported delivery failure").slice(0, 500),
-      })
+      .set(transition.message)
       .where(and(
         eq(chatMessages.id, options.chatMessageId),
         eq(chatMessages.schoolId, options.schoolId),
         eq(chatMessages.studentId, options.studentId),
-        ne(chatMessages.deliveryStatus, "delivered")
+        ne(chatMessages.deliveryStatus, "seen")
       ))
       .returning();
     return updatedDelivery && message ? { message, delivery: updatedDelivery } : undefined;
   });
+}
+
+/**
+ * Why an acknowledgement was refused, so the device can drop acks that can
+ * never succeed instead of retrying them for a day. A delivery row that exists
+ * but did not match this binding or authority is merely stale.
+ */
+export async function classpilotTeacherChatAckRejection(options: {
+  schoolId: string;
+  chatMessageId: string;
+  studentId: string;
+}): Promise<"CHAT_MESSAGE_NOT_FOUND" | "CHAT_ACK_STALE"> {
+  const [delivery] = await db
+    .select({ id: classpilotChatDeliveries.id })
+    .from(classpilotChatDeliveries)
+    .where(and(
+      eq(classpilotChatDeliveries.schoolId, options.schoolId),
+      eq(classpilotChatDeliveries.chatMessageId, options.chatMessageId),
+      eq(classpilotChatDeliveries.studentId, options.studentId)
+    ))
+    .limit(1);
+  return delivery ? "CHAT_ACK_STALE" : "CHAT_MESSAGE_NOT_FOUND";
 }
 
 type ClasspilotTeacherChatBinding = {

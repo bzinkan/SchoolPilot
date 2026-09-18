@@ -34,6 +34,7 @@ const DB_SERIAL = new Set([
   "classpilot-schedule-config-repair.integration.test.ts",
   "classpilot-scheduled-classroom.integration.test.ts",
   "classpilot-chat-channel-control.integration.test.ts",
+  "classpilot-chat-oversight.integration.test.ts",
   "classpilot-schedule-profiles.integration.test.ts",
   "safety-notification-bundling.integration.test.ts",
   "safety-report-pagination.integration.test.ts",
