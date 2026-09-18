@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { chatMessages, classpilotActiveHands, classpilotChatDeliveries, classpilotClassroomStates,
   classpilotStudentControlStates, classpilotSupervisionContexts, classpilotSupervisionStudents, polls, sessionSettings,
@@ -6,7 +6,8 @@ import { chatMessages, classpilotActiveHands, classpilotChatDeliveries, classpil
 import { students } from "../schema/students.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { lockClasspilotStudentControlAuthorities, getSettingsForSchool, getActiveSessionsForStudents, hasCurrentClasspilotStudentControlAuthority } from "./storage.js";
-import { requireScheduledClassroomContext, scheduledContextHasClassroomTools, scheduledClassroomBindingCapable } from "./classpilotActivityAuthority.js";
+import { requireScheduledClassroomContext, scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, scheduledSupervisionSource } from "./classpilotActivityAuthority.js";
+import { resolveChatPause } from "./classpilotChatChannelControl.js";
 import { broadcastToStaffContextLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 
@@ -20,16 +21,40 @@ export async function getScheduledClassroomSettings(schoolId: string, contextId:
   return row;
 }
 
-export async function scheduledClassroomToggles(schoolId: string, contextId: string, database: typeof db = db) {
-  const settings = await getScheduledClassroomSettings(schoolId, contextId, database);
+export type ScheduledToggleContext = Pick<ClasspilotSupervisionContext,
+  "id" | "scheduleProfileApplicationId" | "scheduleProfileDate" | "scheduleProfileBlockId" | "scheduledConflictId">;
+
+/**
+ * `messagingChannelEnabled` is the hard switch (school + activity chatEnabled);
+ * `messagingEnabled` also folds in the soft pause. Teacher replies check the
+ * channel only, so a paused class can still hear its teacher.
+ */
+export async function scheduledClassroomToggles(schoolId: string, context: ScheduledToggleContext, database: typeof db = db) {
+  const settings = await getScheduledClassroomSettings(schoolId, context.id, database);
   const school = await getSettingsForSchool(schoolId, database);
-  return { messagingEnabled: school?.studentMessagingEnabled !== false && settings?.chatEnabled !== false,
+  const messagingChannelEnabled = school?.studentMessagingEnabled !== false && settings?.chatEnabled !== false;
+  const pause = resolveChatPause({ chatPaused: settings?.chatPaused === true, contextSource: scheduledSupervisionSource(context),
+    pauseChatDuringTesting: school?.pauseChatDuringTesting });
+  return { messagingEnabled: messagingChannelEnabled && !pause.messagesPaused, messagingChannelEnabled,
+    messagesPaused: pause.messagesPaused, pauseReason: pause.pauseReason,
     handRaisingEnabled: school?.handRaisingEnabled !== false && settings?.raiseHandEnabled !== false,
     lifecycleRevision: settings?.lifecycleRevision ?? 0, settings };
 }
 
+/** Students currently assigned to a live scheduled testing block, for re-pushing FAB state after a school-wide pause change. */
+export async function activeScheduledTestingStudentIds(schoolId: string, database: typeof db = db): Promise<string[]> {
+  const rows = await database.select({ studentId: classpilotSupervisionStudents.studentId }).from(classpilotSupervisionStudents)
+    .innerJoin(classpilotSupervisionContexts, and(eq(classpilotSupervisionContexts.schoolId, classpilotSupervisionStudents.schoolId),
+      eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId)))
+    .where(and(eq(classpilotSupervisionStudents.schoolId, schoolId), isNull(classpilotSupervisionStudents.releasedAt),
+      eq(classpilotSupervisionContexts.status, "active"), gt(classpilotSupervisionContexts.endsAt, new Date()),
+      isNotNull(classpilotSupervisionContexts.scheduleProfileApplicationId), isNotNull(classpilotSupervisionContexts.scheduleProfileDate),
+      isNotNull(classpilotSupervisionContexts.scheduleProfileBlockId)));
+  return [...new Set(rows.map((row) => row.studentId))];
+}
+
 export async function updateScheduledClassroomSettings(options: {
-  schoolId: string; contextId: string; actorId: string; expectedRevision: number; chatEnabled?: boolean; raiseHandEnabled?: boolean; contextAuthorityRevision?: string;
+  schoolId: string; contextId: string; actorId: string; expectedRevision: number; chatEnabled?: boolean; raiseHandEnabled?: boolean; chatPaused?: boolean; contextAuthorityRevision?: string;
 }) {
   return db.transaction(async (tx) => {
     const database = tx as unknown as typeof db;
@@ -43,7 +68,8 @@ export async function updateScheduledClassroomSettings(options: {
       throw activityError("Classroom settings changed; refresh before trying again", "SETTINGS_REVISION_CONFLICT");
     }
     const patch = { ...(options.chatEnabled !== undefined ? { chatEnabled: options.chatEnabled } : {}),
-      ...(options.raiseHandEnabled !== undefined ? { raiseHandEnabled: options.raiseHandEnabled } : {}), updatedAt: new Date() };
+      ...(options.raiseHandEnabled !== undefined ? { raiseHandEnabled: options.raiseHandEnabled } : {}),
+      ...(options.chatPaused !== undefined ? { chatPaused: options.chatPaused } : {}), updatedAt: new Date() };
     const [row] = current ? await tx.update(sessionSettings).set({ ...patch, lifecycleRevision: current.lifecycleRevision + 1 })
       .where(and(eq(sessionSettings.id, current.id), eq(sessionSettings.schoolId, options.schoolId))).returning()
       : await tx.insert(sessionSettings).values({ ...patch, schoolId: options.schoolId, sessionId: null,
@@ -88,7 +114,7 @@ export async function withScheduledStudentAction<T>(options: ScheduledStudentAct
 
 export async function mutateScheduledStudentHand(options: ScheduledStudentAction & { raised: boolean }) {
   return withScheduledStudentAction(options, async (database, context) => {
-    const toggles = await scheduledClassroomToggles(options.schoolId, context.id, database);
+    const toggles = await scheduledClassroomToggles(options.schoolId, context, database);
     if (options.raised && !toggles.handRaisingEnabled) throw activityError("Hand raising is disabled", "FAB_FEATURE_DISABLED", 403);
     const now = new Date();
     const [existing] = await database.select().from(classpilotActiveHands).where(and(eq(classpilotActiveHands.schoolId, options.schoolId),
@@ -110,8 +136,10 @@ export async function createScheduledStudentMessage(options: ScheduledStudentAct
     throw activityError("A message of 1–500 characters and clientMessageId are required", "MESSAGE_INVALID", 400);
   }
   return withScheduledStudentAction(options, async (database, context) => {
-    if (!(await scheduledClassroomToggles(options.schoolId, context.id, database)).messagingEnabled) {
-      throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
+    const toggles = await scheduledClassroomToggles(options.schoolId, context, database);
+    if (!toggles.messagingChannelEnabled) throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
+    if (toggles.messagesPaused) {
+      throw Object.assign(activityError("Messaging is paused", "CHAT_PAUSED", 403), { pauseReason: toggles.pauseReason });
     }
     const [existing] = await database.select().from(chatMessages).where(and(eq(chatMessages.schoolId, options.schoolId),
       eq(chatMessages.studentId, options.studentId), eq(chatMessages.studentSessionId, options.studentSessionId),
@@ -141,7 +169,8 @@ export async function createScheduledTeacherReply(options: { schoolId: string; c
       .where(and(eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.contextId, context.id),
         eq(classpilotSupervisionStudents.studentId, options.studentId), isNull(classpilotSupervisionStudents.releasedAt))).limit(1).for("share");
     if (!assignment) throw activityError("Student is no longer in this classroom activity");
-    if (!(await scheduledClassroomToggles(options.schoolId, context.id, database)).messagingEnabled) throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
+    // Teachers may still reach a paused class; only the hard channel switch stops replies.
+    if (!(await scheduledClassroomToggles(options.schoolId, context, database)).messagingChannelEnabled) throw activityError("Messaging is disabled", "FAB_FEATURE_DISABLED", 403);
     const [message] = await tx.insert(chatMessages).values({ schoolId: options.schoolId, sessionId: null, supervisionContextId: context.id,
       studentId: options.studentId, senderId: options.actorId, senderType: "teacher", content: options.content,
       messageType: "message", deliveryStatus: "sent" }).returning();
