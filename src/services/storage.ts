@@ -18575,7 +18575,7 @@ export async function getChatMessages(
   sessionId: string,
   schoolId?: string
 ): Promise<ChatMessage[]> {
-  const conditions: SQL[] = [eq(chatMessages.sessionId, sessionId)];
+  const conditions: SQL[] = [eq(chatMessages.sessionId, sessionId), isNull(chatMessages.deletedAt)];
   if (schoolId) conditions.push(eq(chatMessages.schoolId, schoolId));
   return db
     .select()
@@ -18613,6 +18613,61 @@ export async function markAuthorizedClasspilotStudentMessagesRead(options: {
     ))
     .returning({ id: chatMessages.id });
   return { readAt, updatedIds: rows.map((row) => row.id) };
+}
+
+export type ClasspilotChatTranscriptPage = { messages: ChatMessage[]; nextCursor: { at: string; id: string } | null };
+
+/**
+ * One page of a student's chat history, newest first by (created_at, id) and
+ * returned oldest-first for display. Parent scoping (a class session or a
+ * supervision context) is the caller's authority decision; an unscoped read is
+ * the admin's. Deleted rows are hidden unless the caller may see them.
+ */
+export async function listAuthorizedClasspilotStudentChatTranscript(options: {
+  schoolId: string;
+  studentId: string;
+  authority: { teachingSessionId?: string | null; supervisionContextId?: string | null } | null;
+  from: Date;
+  to: Date;
+  limit: number;
+  cursor?: { at: string; id: string } | null;
+  anchorMessageId?: string | null;
+  includeDeleted?: boolean;
+}): Promise<ClasspilotChatTranscriptPage> {
+  const limit = Math.min(Math.max(Math.trunc(options.limit) || 1, 1), 200);
+  const conditions: SQL[] = [
+    eq(chatMessages.schoolId, options.schoolId),
+    eq(chatMessages.studentId, options.studentId),
+    gte(chatMessages.createdAt, options.from),
+    lt(chatMessages.createdAt, options.to),
+  ];
+  if (options.authority?.supervisionContextId) conditions.push(eq(chatMessages.supervisionContextId, options.authority.supervisionContextId));
+  else if (options.authority?.teachingSessionId) conditions.push(eq(chatMessages.sessionId, options.authority.teachingSessionId));
+  if (!options.includeDeleted) conditions.push(isNull(chatMessages.deletedAt));
+  // Keyset positions carry the column's full microsecond precision as text: a
+  // JavaScript Date would truncate to milliseconds and skip or repeat rows.
+  const cursorAt = sql<string>`to_char(${chatMessages.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.US')`;
+  if (options.cursor) {
+    conditions.push(sql`(${chatMessages.createdAt}, ${chatMessages.id}) < (${options.cursor.at}::timestamp, ${options.cursor.id})`);
+  } else if (options.anchorMessageId) {
+    const [anchor] = await db
+      .select({ cursorAt, id: chatMessages.id })
+      .from(chatMessages)
+      .where(and(eq(chatMessages.schoolId, options.schoolId), eq(chatMessages.studentId, options.studentId), eq(chatMessages.id, options.anchorMessageId)))
+      .limit(1);
+    // The page starts at the anchor and runs older, so the anchor is on it.
+    if (anchor) conditions.push(sql`(${chatMessages.createdAt}, ${chatMessages.id}) <= (${anchor.cursorAt}::timestamp, ${anchor.id})`);
+  }
+  const rows = await db
+    .select({ row: chatMessages, cursorAt })
+    .from(chatMessages)
+    .where(and(...conditions))
+    .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
+    .limit(limit + 1);
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const nextCursor = rows.length > limit && last ? { at: last.cursorAt, id: last.row.id } : null;
+  return { messages: page.map((entry) => entry.row).reverse(), nextCursor };
 }
 
 export async function createChatMessage(
@@ -19136,7 +19191,7 @@ export async function deleteAuthorizedClasspilotChatMessage(options: {
       ))
       .limit(1)
       .for("update");
-    if (!message) {
+    if (!message || message.deletedAt) {
       throw classpilotFabMutationError(404, "chat_message_not_found", "Message not found");
     }
     const [authorizedStaff] = message.sessionId ? await tx
@@ -19162,11 +19217,19 @@ export async function deleteAuthorizedClasspilotChatMessage(options: {
       eq(classpilotChatDeliveries.chatMessageId, message.id),
       eq(classpilotChatDeliveries.schoolId, options.schoolId)
     ));
-    await tx.delete(chatMessages).where(and(
-      eq(chatMessages.id, message.id),
-      eq(chatMessages.schoolId, options.schoolId)
-    ));
-    return message;
+    // Soft delete: the class stops seeing the row, the transcript keeps it,
+    // retention removes it with the rest of the safety spine.
+    const [deleted] = await tx
+      .update(chatMessages)
+      .set({ deletedAt: new Date(), deletedBy: options.actorId })
+      .where(and(
+        eq(chatMessages.id, message.id),
+        eq(chatMessages.schoolId, options.schoolId),
+        isNull(chatMessages.deletedAt)
+      ))
+      .returning();
+    if (!deleted) throw classpilotFabMutationError(404, "chat_message_not_found", "Message not found");
+    return deleted;
   });
 }
 

@@ -67,9 +67,18 @@ test("every safety spine statement is tenant-scoped, case-aware, and batched", a
     "student_safety_cases",
     "messages",
     "classpilot_chat_deliveries",
+    "chat_messages",
   ]) {
     assert.match(section, new RegExp(`table: "${table}"`), `missing retention statement for ${table}`);
   }
+  // Chat rows purge after their deliveries and never while a delivery still points at them.
+  assert.ok(
+    section.indexOf('table: "classpilot_chat_deliveries"') < section.indexOf('table: "chat_messages"'),
+    "chat deliveries must purge before chat messages"
+  );
+  assert.match(section, /chat\.created_at < \$2/);
+  assert.match(section, /NOT EXISTS \(SELECT 1 FROM classpilot_chat_deliveries AS delivery\s+WHERE delivery\.school_id = \$1 AND delivery\.chat_message_id = chat\.id\)/);
+  assert.match(section, /chatMessages=\$\{totals\.chatMessages\}/);
   assert.doesNotMatch(section, /productLicenses/, "licensing must never gate retention");
 
   // Timeline rows delete before their case so the join still sees closed_at.

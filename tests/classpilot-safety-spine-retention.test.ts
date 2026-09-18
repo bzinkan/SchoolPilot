@@ -60,6 +60,11 @@ const rows = {
   queuedDeliveryA: randomUUID(),
   expiredDeliveryB: randomUUID(),
   artifact: randomUUID(),
+  chatOldA: randomUUID(),
+  chatNewA: randomUUID(),
+  chatOldReferencedA: randomUUID(),
+  chatReferencedDeliveryA: randomUUID(),
+  chatOldB: randomUUID(),
 };
 
 const TENANT_TABLES = [
@@ -68,6 +73,7 @@ const TENANT_TABLES = [
   "student_safety_cases",
   "messages",
   "classpilot_chat_deliveries",
+  "chat_messages",
   "evidence_artifacts",
 ] as const;
 
@@ -77,6 +83,7 @@ const expectedTotals = {
   closedCases: 1,
   messages: 1,
   chatDeliveries: 2,
+  chatMessages: 1,
 };
 
 async function insertCase(input: {
@@ -175,6 +182,14 @@ async function idsIn(table: (typeof TENANT_TABLES)[number], schoolId: string): P
   return new Set(result.rows.map((row) => row.id));
 }
 
+async function insertChatMessage(input: { id: string; schoolId: string; sessionId: string; studentId: string; createdDaysAgo: number }): Promise<void> {
+  await schedulerPool.query(
+    `INSERT INTO chat_messages (id, school_id, session_id, student_id, sender_id, sender_type, content, message_type, created_at)
+     VALUES ($1, $2, $3, $4, $4, 'student', 'Retention fixture', 'message', $5)`,
+    [input.id, input.schoolId, input.sessionId, input.studentId, daysAgo(input.createdDaysAgo)]
+  );
+}
+
 async function snapshot(schoolId: string): Promise<Record<string, string[]>> {
   const entries: Record<string, string[]> = {};
   for (const table of TENANT_TABLES) {
@@ -255,6 +270,18 @@ describe("ClassPilot safety spine retention purge", () => {
     await insertDelivery({ id: rows.liveLeaseDeliveryA, schoolId: schoolA, sessionId: sessionA, studentId: studentA, state: "leased", expiresAt: daysAgo(40), leaseExpiresAt: new Date(base + 60 * 60 * 1000) });
     await insertDelivery({ id: rows.queuedDeliveryA, schoolId: schoolA, sessionId: sessionA, studentId: studentA, state: "queued", expiresAt: daysAgo(-1), leaseExpiresAt: null });
     await insertDelivery({ id: rows.expiredDeliveryB, schoolId: schoolB, sessionId: sessionB, studentId: studentB, state: "expired", expiresAt: daysAgo(40), leaseExpiresAt: null });
+
+    // Chat rows: an old one purges, a new one stays, an old one still referenced
+    // by a live delivery stays, and school B's old one is untouched.
+    await insertChatMessage({ id: rows.chatOldA, schoolId: schoolA, sessionId: sessionA, studentId: studentA, createdDaysAgo: 40 });
+    await insertChatMessage({ id: rows.chatNewA, schoolId: schoolA, sessionId: sessionA, studentId: studentA, createdDaysAgo: 5 });
+    await insertChatMessage({ id: rows.chatOldReferencedA, schoolId: schoolA, sessionId: sessionA, studentId: studentA, createdDaysAgo: 40 });
+    await schedulerPool.query(
+      `INSERT INTO classpilot_chat_deliveries (id, school_id, chat_message_id, teaching_session_id, student_id, state, expires_at)
+       VALUES ($1, $2, $3, $4, $5, 'queued', $6)`,
+      [rows.chatReferencedDeliveryA, schoolA, rows.chatOldReferencedA, sessionA, studentA, daysAgo(-1)]
+    );
+    await insertChatMessage({ id: rows.chatOldB, schoolId: schoolB, sessionId: sessionB, studentId: studentB, createdDaysAgo: 40 });
   });
 
   after(async () => {
@@ -333,9 +360,13 @@ describe("ClassPilot safety spine retention purge", () => {
     assert.deepEqual(await idsIn("messages", schoolA), new Set([rows.messageNewA]));
     assert.deepEqual(
       await idsIn("classpilot_chat_deliveries", schoolA),
-      new Set([rows.liveLeaseDeliveryA, rows.queuedDeliveryA])
+      new Set([rows.liveLeaseDeliveryA, rows.queuedDeliveryA, rows.chatReferencedDeliveryA])
     );
     assert.deepEqual(await idsIn("evidence_artifacts", schoolA), new Set([rows.artifact]));
+    const chats = await idsIn("chat_messages", schoolA);
+    assert.equal(chats.has(rows.chatOldA), false, "an old chat row past the window purges");
+    assert.equal(chats.has(rows.chatNewA), true, "a recent chat row stays");
+    assert.equal(chats.has(rows.chatOldReferencedA), true, "a chat row a live delivery still references stays");
   });
 
   it("a second delete run finds nothing left to purge", async () => {
@@ -351,6 +382,7 @@ describe("ClassPilot safety spine retention purge", () => {
       closedCases: 0,
       messages: 0,
       chatDeliveries: 0,
+      chatMessages: 0,
     });
   });
 
