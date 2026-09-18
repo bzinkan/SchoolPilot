@@ -145,8 +145,13 @@ export function studentSupportsCapability(student, capabilityName) {
 
 export function studentSupportsScheduledClassroom(student) {
   // Full classroom tools need the accepted protocol, not a raw extension claim.
+  // The server sends acceptedCapabilities as an object of booleans (it is the
+  // same shape studentMonitoringDisplay reads for the capture cadence), so that
+  // is the form that must be honoured here. The array form is kept for callers
+  // that pass a bare negotiated list.
   return ['scheduledClassroomV1', 'scopedAuthorityChecksV1'].every(capability => (
     student?.capabilities?.[capability] === true
+    || student?.acceptedCapabilities?.[capability] === true
     || Array.isArray(student?.acceptedCapabilities) && student.acceptedCapabilities.includes(capability)
   ));
 }

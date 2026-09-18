@@ -77,6 +77,61 @@ describe("ClassPilot coverage bulk hydration", () => {
     assert.equal(metrics.realtimeRedisCommands, 1);
   });
 
+  it("projects the scheduled-classroom capabilities from the accepted set, never the advertisement", async () => {
+    // The Claimed view gates tiles, tools and Live View on these two flags and
+    // reads them from this projection. A device that has negotiated both must
+    // read true; one that merely advertises them must stay false, because the
+    // server-side tile read (devices.ts) admits a supervision-bound frame only
+    // for a negotiated client and the dashboard must agree with it.
+    const now = Date.now();
+    const schoolId = "coverage-hydration-scheduled-school";
+    const negotiated = {
+      studentId: "coverage-hydration-scheduled-negotiated",
+      studentSessionId: "coverage-hydration-scheduled-negotiated-session",
+      deviceId: "coverage-hydration-scheduled-negotiated-device",
+    };
+    const advertisedOnly = {
+      studentId: "coverage-hydration-scheduled-advertised",
+      studentSessionId: "coverage-hydration-scheduled-advertised-session",
+      deviceId: "coverage-hydration-scheduled-advertised-device",
+    };
+    for (const [target, acceptedCapabilities] of [
+      [negotiated, ["scopedAuthorityChecksV1", "scheduledClassroomV1"]],
+      [advertisedOnly, []],
+    ] as const) {
+      const write = await writeClasspilotRealtimeStatus({
+        schoolId,
+        ...target,
+        heartbeatId: `${target.studentId}-heartbeat`,
+        observedAt: now,
+        trackingStatus: "ACTIVE",
+        extensionCapabilities: ["scopedAuthorityChecksV1", "scheduledClassroomV1"],
+        acceptedCapabilities: [...acceptedCapabilities],
+      });
+      assert.ok(write.snapshot);
+    }
+
+    const result = await hydrateClasspilotCoverageStatuses({
+      schoolId,
+      studentIds: [negotiated.studentId, advertisedOnly.studentId],
+      knownSessions: [negotiated, advertisedOnly].map((target) => ({
+        id: target.studentSessionId,
+        studentId: target.studentId,
+        deviceId: target.deviceId,
+        lastSeenAt: new Date(now),
+      })),
+      now,
+    });
+
+    const accepted = result.get(negotiated.studentId)?.acceptedCapabilities;
+    assert.equal(accepted?.scheduledClassroomV1, true);
+    assert.equal(accepted?.scopedAuthorityChecksV1, true);
+    const advertised = result.get(advertisedOnly.studentId)?.acceptedCapabilities;
+    assert.equal(advertised?.scheduledClassroomV1, false,
+      "an advertisement alone must not read as negotiated");
+    assert.equal(advertised?.scopedAuthorityChecksV1, false);
+  });
+
   it("projects domain preservation from the raw extension advertisement", async () => {
     const now = Date.now();
     const schoolId = "coverage-hydration-domain-preservation-school";

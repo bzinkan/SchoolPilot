@@ -83,5 +83,14 @@ test('full testing tools require accepted capabilities, not raw feature advertis
   assert.equal(studentSupportsScheduledClassroom({ extensionCapabilities: ['scheduledClassroomV1', 'scopedAuthorityChecksV1'] }), false);
   assert.equal(studentSupportsScheduledClassroom({ capabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true } }), true);
   assert.equal(studentSupportsScheduledClassroom({ capabilities: { scheduledClassroomV1: true } }), false);
+  // This is the shape the server actually sends (compat.ts publicClasspilotExtensionContract,
+  // devices.ts publicRealtimeFields, classpilotCoverageHydration.ts): an object of
+  // booleans, not an array. Before this was honoured every testing-block and claimed
+  // tile read "not authorized" in production while the fixture-built array form passed.
+  assert.equal(studentSupportsScheduledClassroom({ acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true } }), true);
+  assert.equal(studentSupportsScheduledClassroom({ acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: false } }), false);
+  assert.equal(studentSupportsScheduledClassroom({ acceptedCapabilities: { scheduledClassroomV1: true } }), false);
+  // A device that only advertises the capability still has not negotiated it.
+  assert.equal(studentSupportsScheduledClassroom({ extensionCapabilities: ['scheduledClassroomV1', 'scopedAuthorityChecksV1'], acceptedCapabilities: {} }), false);
   assert.equal(normalizeSessionFabState({ supervisionContextId: 'test', lifecycleRevision: 3, raiseHandEnabled: false, chatEnabled: false }, current).messagingEnabled, false);
 });

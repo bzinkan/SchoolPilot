@@ -667,6 +667,19 @@ describe("ClassPilot cluster-safe realtime status", () => {
       contract,
       /acceptedCapabilities:[\s\S]*restrictionAuthPassThroughV1: acceptedCapabilities\.has/
     );
+    // The dashboard gates every scheduled-classroom tile, tool and Live View on
+    // the student having ACCEPTED these two. They must come from the negotiated
+    // set: an advertisement-only device is exactly the one that must stay off.
+    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1"]) {
+      assert.ok(
+        contract.includes(`${capability}: acceptedCapabilities.has("${capability}")`),
+        `${capability} must be projected from the accepted set`,
+      );
+      assert.ok(
+        !contract.includes(`${capability}: extensionCapabilities.has`),
+        `${capability} must never be projected from the raw advertisement`,
+      );
+    }
     assert.doesNotMatch(contract, /deviceId|studentSessionId|schoolId/);
     assert.match(aggregate, /publicClasspilotExtensionContract\(capabilityRealtime\)/);
     assert.match(aggregate, /normalizeClasspilotPublicClassroomControls\([\s\S]*?visibleRealtime\?\.classroomControls/);
@@ -679,6 +692,15 @@ describe("ClassPilot cluster-safe realtime status", () => {
     assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.extensionCapabilities\)/);
     assert.match(deviceProjection, /normalizeClasspilotPublicCapabilities\(snapshot\.acceptedCapabilities\)/);
     assert.match(deviceProjection, /normalizeClasspilotPublicClassroomControls\([\s\S]*?snapshot\.classroomControls/);
+    // The heartbeat frame replaces the dashboard's acceptedCapabilities wholesale,
+    // so it must carry the same two flags or a tile lights on load and goes dark
+    // on the next heartbeat.
+    for (const capability of ["scheduledClassroomV1", "scopedAuthorityChecksV1"]) {
+      assert.ok(
+        deviceProjection.includes(`${capability}: acceptedCapabilities.has("${capability}")`),
+        `${capability} must reach the heartbeat frame from the accepted set`,
+      );
+    }
     assert.match(
       deviceProjection,
       /domainPreservingRestrictionsV1: extensionCapabilities\.has\("domainPreservingRestrictionsV1"\)/

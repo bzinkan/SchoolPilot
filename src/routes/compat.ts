@@ -215,6 +215,13 @@ function publicClasspilotExtensionContract(
       screenshotActiveObservationCadenceV1: acceptedCapabilities.has(
         "screenshotActiveObservationCadenceV1"
       ),
+      // The dashboard gates every scheduled-classroom tile, tool and Live View
+      // on the student having ACCEPTED these two. Until they were emitted here
+      // the client could never see them, so every testing-block and claimed
+      // tile read "not authorized" even with the rollout fully on. The accepted
+      // set is the negotiated one, never the raw extension advertisement.
+      scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
+      scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
     },
   };
 }
