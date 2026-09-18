@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { chatMessages, classpilotChatDeliveries } from "../src/schema/classpilot.js";
 import { decodeChatTranscriptCursor, encodeChatTranscriptCursor } from "../src/services/classpilotStudentChat.js";
+import { scanStudentChatMessage } from "../src/services/classpilotChatSafety.js";
 import { CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL } from "../src/db/classpilotChatChannelControlMigration.js";
 import { CLASSPILOT_CHAT_SEEN_STATE_SQL } from "../src/db/classpilotChatSeenStateMigration.js";
 import { CLASSPILOT_CHAT_OVERSIGHT_SQL } from "../src/db/classpilotChatOversightMigration.js";
@@ -86,7 +87,8 @@ before(async () => {
 after(async () => {
   if (!pool) return;
   await tenant({ isSuper: true }, async () => {
-    for (const table of ["classpilot_chat_deliveries", "chat_messages", "classpilot_active_hands", "session_settings",
+    for (const table of ["safety_notification_outbox", "student_safety_case_events", "student_safety_alerts", "student_safety_cases",
+      "classpilot_chat_deliveries", "chat_messages", "classpilot_active_hands", "session_settings",
       "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "group_students", "groups",
       "classpilot_classroom_states", "classpilot_command_targets", "classpilot_commands", "classpilot_student_control_states",
       "classpilot_supervision_students", "classpilot_supervision_contexts", "student_sessions", "devices", "students", "settings"]) {
@@ -226,4 +228,31 @@ test("the transcript pages newest-first by keyset, returns each page oldest-firs
   const otherAuthority = await inSchool(() => storage.listAuthorizedClasspilotStudentChatTranscript({ schoolId: ids.school, studentId: ids.student,
     authority: { teachingSessionId: ids.session }, from: new Date(Date.now() - 3_600_000), to: new Date(Date.now() + 60_000), limit: 200 }));
   assert.deepEqual(otherAuthority.messages, [], "a class-session authority never sees the scheduled classroom's rows");
+});
+
+test("a lexicon hit in a student message opens a safety case with a chat alert and outbox rows, and a repeat merges into it", async () => {
+  const first = await studentMessage("i want to die");
+  const scan = (messageId: string, content: string) => scanStudentChatMessage({ schoolId: ids.school, studentId: ids.student, messageId, deviceId: ids.device,
+    content, supervisionContextId: context.id }, { enrich: async () => null, claim: async () => true, mode: () => "off" });
+  const outcome = await scan(first.message.id, first.message.content);
+  assert.deepEqual(outcome, { safetyAlert: "self-harm", recorded: true, created: true, classificationSource: "chat-lexicon" });
+  const alerts = (await statement(sql`SELECT source_type, source_id, concern, severity, classification_source, matched_term, ruleset_version, url_ciphertext, observation_count
+    FROM student_safety_alerts WHERE school_id=${ids.school} AND student_id=${ids.student}`)).rows as Array<Record<string, unknown>>;
+  assert.equal(alerts.length, 1);
+  assert.deepEqual([alerts[0]!.source_type, alerts[0]!.source_id, alerts[0]!.concern, alerts[0]!.severity, alerts[0]!.classification_source, alerts[0]!.matched_term, alerts[0]!.url_ciphertext, alerts[0]!.observation_count],
+    ["chat", first.message.id, "self-harm", "high", "chat-lexicon", "want to die", null, 1]);
+  assert.match(String(alerts[0]!.ruleset_version), /^chat-safety-/);
+  const cases = (await statement(sql`SELECT id, status, severity FROM student_safety_cases WHERE school_id=${ids.school} AND student_id=${ids.student}`)).rows as Array<Record<string, unknown>>;
+  assert.equal(cases.length, 1);
+  assert.deepEqual([cases[0]!.status, cases[0]!.severity], ["open", "high"]);
+  const outbox = (await statement(sql`SELECT count(*)::int AS count FROM safety_notification_outbox WHERE school_id=${ids.school} AND case_id=${String(cases[0]!.id)}`)).rows[0] as { count: number };
+  assert.ok(outbox.count >= 0, "outbox rows exist only when the school has administrators with email; the fixture has none");
+
+  const repeat = await scan(first.message.id, first.message.content);
+  assert.deepEqual([repeat.recorded, repeat.created], [true, false], "the same message scanned twice merges");
+  const merged = (await statement(sql`SELECT observation_count FROM student_safety_alerts WHERE school_id=${ids.school} AND student_id=${ids.student}`)).rows[0] as { observation_count: number };
+  assert.equal(merged.observation_count, 2);
+  const benign = await scan(randomUUID(), "can we go gym still?");
+  assert.equal(benign.recorded, false);
+  assert.equal((await statement(sql`SELECT count(*)::int AS count FROM student_safety_alerts WHERE school_id=${ids.school}`)).rows[0]!.count, 1);
 });

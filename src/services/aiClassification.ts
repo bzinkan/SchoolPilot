@@ -539,14 +539,24 @@ export function matchUnsafeSearchQuery(
   for (const negative of NEGATIVE_SEARCH_PHRASES) {
     query = query.replace(negative, " ");
   }
-  for (const tier of UNSAFE_SEARCH_TIERS) {
+  return matchSearchTiers(query, UNSAFE_SEARCH_TIERS, isSelfHarmSupportMatch) as { safetyAlert: UnsafeSearchType; label: string } | null;
+}
+
+type SelfHarmExemption = (query: string, matchIndex: number, label: string) => boolean;
+
+function matchSearchTiers(
+  query: string,
+  tiers: readonly { safetyAlert: string; rules: SearchRule[] }[],
+  exempt: SelfHarmExemption
+): { safetyAlert: string; label: string } | null {
+  for (const tier of tiers) {
     for (const rule of tier.rules) {
       if (rule.unless?.test(query)) continue;
       // Inspect each occurrence so a help-seeking clause cannot suppress a
       // separate explicit concern elsewhere in the same bounded query.
       const matches = query.matchAll(new RegExp(rule.pattern.source, `${rule.pattern.flags}g`));
       for (const match of matches) {
-        if (tier.safetyAlert === "self-harm" && isSelfHarmSupportMatch(query, match.index, rule.label)) continue;
+        if (tier.safetyAlert === "self-harm" && exempt(query, match.index, rule.label)) continue;
         return { safetyAlert: tier.safetyAlert, label: rule.label };
       }
     }
@@ -851,5 +861,130 @@ ${truncatedBody}`;
       reasoning: "Classification unavailable",
       classifiedAt: Date.now(),
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Class chat safety. The search lexicon covers method requests and explicit
+// terms; chat adds first-person disclosures, direct threats and a deliberately
+// small bullying set. Lexicon first, always: the AI provider only ever sees a
+// message that already matched, and only to grade severity and explain it.
+// ---------------------------------------------------------------------------
+export const CHAT_SAFETY_RULESET_VERSION = "chat-safety-2026-09-18.1";
+
+export type ChatSafetyMatch = { safetyAlert: string; label: string; source: "search-lexicon" | "chat-lexicon" };
+
+type ChatSafetyTier = { safetyAlert: string; rules: SearchRule[] };
+
+export const CHAT_SAFETY_RULES: readonly ChatSafetyTier[] = [
+  { safetyAlert: "self-harm", rules: [
+    { label: "wants to die", pattern: /\bi\s+(really\s+|just\s+)?(want|wanna|wish)\s+(to\s+)?(die|be\s+dead|disappear|not\s+exist|not\s+be\s+here|not\s+wake\s+up)\b/ },
+    { label: "does not want to live", pattern: /\bi\s+(don\s*t|do\s+not|dont)\s+want\s+to\s+(live|be\s+alive|be\s+here)\s+(anymore|any\s+more)?\b/ },
+    { label: "going to hurt self", pattern: /\bi\s*(m|am|will|ll|might|could|should)\s+(going\s+to\s+|gonna\s+)?(kill|hurt|cut|harm|end)\s+(myself|my\s+life|it\s+all)\b/ },
+    { label: "nobody would care", pattern: /\b(nobody|no\s+one|noone)\s+(would|will)\s+(care|notice|miss\s+me)\s+(if|when)\s+i\s*(m|am|was|were)?\s*(gone|dead|died|die)\b/ },
+    { label: "better off without me", pattern: /\b(everyone|everybody|they|you)\s*(d|would)?\s+be\s+better\s+off\s+without\s+me\b/ },
+    { label: "hurting self", pattern: /\bi\s*(ve|have|m|am)\s+(been\s+)?(cutting|hurting|starving)\s+myself\b/ },
+  ] },
+  { safetyAlert: "violence", rules: [
+    { label: "threat to kill", pattern: /\bi\s*(m|am|will|ll)\s+(going\s+to\s+|gonna\s+)?(kill|murder|stab|shoot|strangle|beat\s+up|hurt)\s+(you|him|her|them|everyone|everybody|all\s+of\s+you|that\s+(kid|boy|girl|teacher))\b/, unless: GAME_CONTEXT },
+    { label: "school attack", pattern: /\b(shoot|shooting|blow|blowing)\s+(up\s+)?(the\s+|this\s+|my\s+)?(school|class|classroom)\b/, unless: GAME_CONTEXT },
+    { label: "bringing a weapon", pattern: /\bi\s*(m|am|will|ll)\s+(going\s+to\s+|gonna\s+)?(bring|bringing)\s+(a\s+|my\s+)?(gun|knife|weapon|pistol|rifle|bomb)\b/, unless: GAME_CONTEXT },
+  ] },
+  { safetyAlert: "weapons", rules: [
+    { label: "weapon at school", pattern: /\bi\s+(have|got|brought)\s+(a\s+|my\s+)?(gun|knife|pistol|rifle|weapon)\s+(in\s+my\s+(bag|backpack|locker)|at\s+school|with\s+me)\b/, unless: GAME_CONTEXT },
+  ] },
+  { safetyAlert: "bullying", rules: [
+    { label: "told to die", pattern: /\b(kill\s+yourself|kys|go\s+die|you\s+should\s+die|drink\s+bleach)\b/ },
+    { label: "targeted hate", pattern: /\b(everyone|everybody)\s+hates\s+you\b|\b(nobody|no\s+one)\s+likes\s+you\b|\byou\s*(re|are)\s+(worthless|a\s+waste\s+of\s+(space|air|oxygen))\b/ },
+  ] },
+];
+
+/**
+ * Lexicon classification for one chat message. The search lexicon runs first
+ * (it already understands negations, game context and help-seeking); the chat
+ * tiers add first-person and second-person phrasing that a search never has.
+ */
+const CHAT_CONTRACTIONS: Array<[RegExp, string]> = [
+  // Chat drops apostrophes; the negation and support checks expect "don t".
+  [/\b(do|does|did|is|are|was|were|could|would|should|has|have|had|must)nt\b/g, "$1 not"],
+  [/\bcant\b/g, "can not"],
+  [/\bwont\b/g, "will not"],
+  [/\bim\b/g, "i am"],
+  [/\bive\b/g, "i have"],
+  [/\bill\b/g, "i will"],
+  [/\bidk\b/g, "i do not know"],
+];
+
+export function classifyChatMessage(rawContent: string): ChatSafetyMatch | null {
+  let text = normalizeSearchQuery(String(rawContent ?? ""));
+  if (!text) return null;
+  for (const [pattern, replacement] of CHAT_CONTRACTIONS) text = text.replace(pattern, replacement);
+  for (const negative of NEGATIVE_SEARCH_PHRASES) text = text.replace(negative, " ");
+  // "i do not want to hurt myself anymore" is a disclosure of the opposite;
+  // chat phrasing puts the negation a clause before the term, unlike a search.
+  const exempt: SelfHarmExemption = (query, index, label) => isSelfHarmSupportMatch(query, index, label) || isChatNegatedIntent(query, index);
+  const search = matchSearchTiers(text, UNSAFE_SEARCH_TIERS, exempt);
+  if (search) return { safetyAlert: search.safetyAlert, label: search.label, source: "search-lexicon" };
+  const chat = matchSearchTiers(text, CHAT_SAFETY_RULES, exempt);
+  return chat ? { safetyAlert: chat.safetyAlert, label: chat.label, source: "chat-lexicon" } : null;
+}
+
+function isChatNegatedIntent(query: string, matchIndex: number): boolean {
+  const prefix = query.slice(0, matchIndex);
+  return /\b(do|does|did|will|would|could|should)\s+not\s+(really\s+|ever\s+)?(want|wanna|plan|intend|going|gonna|try|trying|mean)\s+(to\s+)?$/.test(prefix)
+    || /\b(never|not)\s+(going|gonna|trying|want|wanted|wanting)\s+(to\s+)?$/.test(prefix);
+}
+
+export type ChatTextClassification = {
+  safetyAlert: string | null;
+  severity: "low" | "medium" | "high" | "critical";
+  confidence: number;
+  reasoning: string;
+  modelVersion: string;
+};
+
+const CHAT_TEXT_MODEL = "claude-haiku-4-5-20251001";
+
+/** Enrichment only: called after a lexicon hit, never on unflagged text. Null when the provider is unavailable. */
+export async function classifyChatText(content: string): Promise<ChatTextClassification | null> {
+  if (!anthropic) return null;
+  const text = String(content ?? "").slice(0, 500);
+  const prompt = `You are a K-12 student safety reviewer. A student sent this message to their teacher in a classroom chat and it already matched a safety keyword rule. Grade how urgent it is.
+
+Respond ONLY with valid JSON, no other text:
+{
+  "safetyAlert": "self-harm" | "violence" | "weapons" | "bullying" | "sexual" | "drugs" | null,
+  "confidence": 0-100,
+  "severity": "low" | "medium" | "high" | "critical",
+  "reasoning": "one short sentence for a school administrator"
+}
+
+Rules:
+- critical = imminent risk (a plan, a weapon at school, a threat for today); high = serious concern; medium = warrants review; low = likely benign phrasing (a game, a quote, a joke about homework).
+- Do not repeat the message text in the reasoning.
+
+Message:
+${text}`;
+  const response = await runBoundedProviderCall((signal) => anthropic!.messages.create({
+    model: CHAT_TEXT_MODEL,
+    max_tokens: 300,
+    messages: [{ role: "user", content: prompt }],
+  }, { signal }));
+  if (!response) return null;
+  try {
+    const block = response.content.find((item) => item.type === "text");
+    const raw = block && "text" in block ? block.text : "";
+    const parsed = JSON.parse(raw.replace(/^```(?:json)?/m, "").replace(/```$/m, "").trim());
+    const severity = ["low", "medium", "high", "critical"].includes(parsed?.severity) ? parsed.severity : "medium";
+    return {
+      safetyAlert: typeof parsed?.safetyAlert === "string" ? parsed.safetyAlert : null,
+      severity,
+      confidence: Number.isFinite(parsed?.confidence) ? Math.max(0, Math.min(100, Math.round(parsed.confidence))) : 0,
+      reasoning: typeof parsed?.reasoning === "string" ? parsed.reasoning.slice(0, 500) : "",
+      modelVersion: CHAT_TEXT_MODEL,
+    };
+  } catch {
+    recordRuntimePerformanceCounter("aiProviderFailures");
+    return null;
   }
 }
