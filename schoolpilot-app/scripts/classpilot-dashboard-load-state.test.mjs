@@ -3385,6 +3385,34 @@ test('chat recovery: a live student reply survives roster rehydration with unrea
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('chat safety net: a message that only reaches server history appears while connected and shows when it was sent', { timeout: 60_000 }, async context => {
+  // A live student-message event can be dropped before it reaches this socket
+  // (subscription, assignment or authority-revision mismatch, relay gap). The
+  // WebSocket is the fast path, never the only path: the connected dashboard
+  // must re-read history on its own, count the row as new, and stamp its time.
+  const fixture = await chatBrowserFixture(context, { clockTime: '2026-09-18T14:05:00.000Z' });
+  const { page, harness } = fixture;
+  const readsBefore = fixture.reads.length;
+  const row = storedChatMessage({ createdAt: '2026-09-18T14:03:00.000Z' });
+  fixture.setMessages([row]);
+  await page.clock.fastForward(16_000);
+  await waitUntil(() => fixture.reads.length > readsBefore, 'A connected dashboard must re-read chat history on its own interval');
+  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await page.getByText('Messages (1 new)', { exact: true }).waitFor();
+  const stamp = page.getByTestId('chat-message-time').first();
+  assert.match(await stamp.innerText(), /\d{1,2}:\d{2}/, 'Each bubble carries the time the message was sent');
+  assert.equal(await stamp.locator('time').getAttribute('datetime'), row.createdAt);
+  const readsBeforeFocus = fixture.reads.length;
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await waitUntil(() => fixture.reads.length > readsBeforeFocus, 'Returning to the tab must re-read chat history');
+  await chatHistorySettled(page);
+  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 1, 'A re-read never duplicates a known message');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 async function chatHistorySettled(page) {
   await page.waitForFunction(async () => {
     const { queryClient } = await import('/src/lib/queryClient.js');

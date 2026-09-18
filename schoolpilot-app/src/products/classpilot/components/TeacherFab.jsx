@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Switch } from "../../../components/ui/switch";
 import { cn } from "../../../lib/utils";
+import { formatChatTimestamp } from "../lib/chatTimestamp";
 
 const FAB_POSITION_KEY = "classpilot-fab-position";
 
@@ -356,14 +357,22 @@ function TeacherFab({
                             >
                               {item.message}
                             </div>
-                            {item.sender === 'teacher' && item.status && (
-                              <div className={cn(
-                                "mt-0.5 text-[10px] text-right",
-                                item.status === 'failed' ? "text-red-500" : "text-gray-400 dark:text-gray-500"
-                              )}>
-                                {item.status === 'delivered' ? 'Delivered' : item.status === 'failed' ? (item.errorMessage || 'Failed') : 'Sending'}
-                              </div>
-                            )}
+                            <div
+                              data-testid="chat-message-time"
+                              className={cn(
+                                "mt-0.5 text-[10px]",
+                                item.sender === 'teacher' ? "text-right" : "text-left",
+                                item.sender === 'teacher' && item.status === 'failed' ? "text-red-500" : "text-gray-400 dark:text-gray-500"
+                              )}
+                            >
+                              <time dateTime={item.timestamp}>{formatChatTimestamp(item.timestamp)}</time>
+                              {item.sender === 'teacher' && item.status && (
+                                <>
+                                  <span aria-hidden="true"> · </span>
+                                  <span>{item.status === 'delivered' ? 'Delivered' : item.status === 'failed' ? (item.errorMessage || 'Failed') : 'Sending'}</span>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}

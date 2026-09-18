@@ -5,11 +5,16 @@ import { apiRequest } from '../../../lib/queryClient';
 
 let nextGeneration = 0;
 const DENIED_STATUSES = new Set([401, 403, 404]);
+// The WebSocket is the fast path, never the only path: while connected the
+// canonical history is still re-read on a modest interval and whenever the tab
+// regains focus, so a dropped or filtered live event surfaces without a reload.
+export const CHAT_HISTORY_POLL_CONNECTED_MS = 15000;
+export const CHAT_HISTORY_POLL_DISCONNECTED_MS = 30000;
 
 function newChatScope(key, schoolId, viewerId, sessionId, authority, contextAuthorityRevision) {
   return {
     key, schoolId, viewerId, sessionId, authority, contextAuthorityRevision, generation: ++nextGeneration,
-    sequence: 0, requestSequence: 0, reconnectSequence: 0, appliedRequest: 0, denied: false,
+    sequence: 0, requestSequence: 0, reconnectSequence: 0, appliedRequest: 0, denied: false, historyApplied: false,
     messages: new Map(), deliveries: new Map(), dismissed: new Set(), closedThreads: new Map(), pendingReplies: new Set(),
   };
 }
@@ -28,6 +33,11 @@ function historyMessage(row, sessionId, schoolId, authority) {
 function applyHistory(scope, rows, request, dismissedIds) {
   if (request.id < scope.appliedRequest) return;
   scope.appliedRequest = request.id;
+  // The first snapshot of a classroom is prior history and reads as seen. A row
+  // that later reaches the dashboard only through a re-read (a live event that
+  // was dropped or filtered) is new to the teacher and must count as unread.
+  const unknownRowsAreRead = !scope.historyApplied;
+  scope.historyApplied = true;
   const previous = scope.messages;
   const next = new Map();
   for (const row of rows) {
@@ -49,7 +59,7 @@ function applyHistory(scope, rows, request, dismissedIds) {
     // that happened after the request began, nor mark an unread event read.
     const merged = existing?.version > request.version
       ? { ...message, ...existing }
-      : { ...message, read: existing?.read ?? true, version: existing?.version || 0 };
+      : { ...message, read: existing?.read ?? (unknownRowsAreRead || message.senderType === 'teacher'), version: existing?.version || 0 };
     const delivery = scope.deliveries.get(message.id);
     if (delivery && (delivery.version > request.version || delivery.status === 'delivered')) {
       Object.assign(merged, delivery);
@@ -125,7 +135,9 @@ export function useClasspilotSessionChat({
       }
     },
     enabled: Boolean(scopeKey && !scope.denied),
-    refetchInterval: wsAuthenticated || scope.denied ? false : 30000,
+    refetchInterval: scope.denied ? false : wsAuthenticated ? CHAT_HISTORY_POLL_CONNECTED_MS : CHAT_HISTORY_POLL_DISCONNECTED_MS,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: 'always',
     retry: (count, error) => !DENIED_STATUSES.has(error?.response?.status) && count < 1,
     gcTime: 0,
   });

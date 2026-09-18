@@ -34,6 +34,7 @@ import {
   sendToStudentBindingLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import { reportStudentChatFanOut } from "../../services/classpilotChatDelivery.js";
 import {
   FAB_HAND_TTL_MS,
   FabContractError,
@@ -260,7 +261,11 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
       const options = scheduledStudentAction(req, res);
       const result = await createScheduledStudentMessage({ ...options, content: String(req.body.message || "").trim(), clientMessageId: String(req.body.clientMessageId || "") });
       const message = publicChatMessage(result.message);
-      if (result.created) await publishScheduledClassroomEvent(result.context, { type: "student-message", data: message });
+      if (result.created) {
+        const fanOut = await publishScheduledClassroomEvent(result.context, { type: "student-message", data: message });
+        reportStudentChatFanOut({ schoolId: result.context.schoolId, authority: { kind: "supervision-context", id: result.context.id },
+          messageId: message.id, source: "local", ...fanOut });
+      }
       return res.json({ message, messageId: message.id, clientMessageId: message.clientMessageId, supervisionContextId: result.context.id,
         delivered: true, duplicate: !result.created, messages: [message] });
     }
@@ -316,8 +321,10 @@ router.post("/student/send-message", ...studentAuth, async (req, res, next) => {
       },
     };
     if (created) {
-      broadcastToStaffSessionLocal(schoolId, teachingSession.id, broadcastPayload);
-      await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, broadcastPayload);
+      const delivered = broadcastToStaffSessionLocal(schoolId, teachingSession.id, broadcastPayload);
+      const relayAccepted = await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, broadcastPayload);
+      reportStudentChatFanOut({ schoolId, authority: { kind: "teaching-session", id: teachingSession.id },
+        messageId: msg.id, source: "local", delivered, relayAccepted });
     }
 
     return res.json({

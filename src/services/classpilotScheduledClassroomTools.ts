@@ -151,12 +151,13 @@ export async function createScheduledTeacherReply(options: { schoolId: string; c
   });
 }
 
-export async function publishScheduledClassroomEvent(context: ClasspilotSupervisionContext, payload: Record<string, unknown>) {
+export async function publishScheduledClassroomEvent(context: ClasspilotSupervisionContext, payload: Record<string, unknown>): Promise<{ delivered: number; relayAccepted: boolean }> {
   const contextAuthorityRevision = String(context.classroomAuthorityRevision);
   const event = { ...payload, supervisionContextId: context.id, contextAuthorityRevision };
-  broadcastToStaffContextLocal(context.schoolId, context.id, event, context.assignedStaffId, contextAuthorityRevision);
-  await publishWS({ kind: "staff-context", schoolId: context.schoolId, supervisionContextId: context.id,
+  const delivered = broadcastToStaffContextLocal(context.schoolId, context.id, event, context.assignedStaffId, contextAuthorityRevision);
+  const relayAccepted = await publishWS({ kind: "staff-context", schoolId: context.schoolId, supervisionContextId: context.id,
     assignedStaffId: context.assignedStaffId, contextAuthorityRevision }, event);
+  return { delivered, relayAccepted };
 }
 
 export async function authorizeScheduledTeacherStudentAction(options: {
