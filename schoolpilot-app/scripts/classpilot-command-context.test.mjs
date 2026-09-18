@@ -22,6 +22,7 @@ import {
   isLateSignInRestrictionTarget,
   lateSignInRestrictionGateEnabled,
   mergeCommandUpdateIntoBatches,
+  mergeFabSettingsResponse,
   normalizeSessionFabState,
   parseTabSelectionKey,
   partitionCoverageCurrentPageWaypointTargets,
@@ -905,4 +906,34 @@ test('session FAB toggles round-trip authoritative revision from off to on', () 
   }, 'session-2');
   assert.equal(replacement.teachingSessionId, 'session-2');
   assert.equal(replacement.handRaisingEnabled, false);
+});
+
+test('session FAB state carries the soft pause separately from the hard channel switch', () => {
+  const paused = normalizeSessionFabState({
+    teachingSessionId: 'session-1', chatEnabled: true, messagingEnabled: false, chatPaused: true, messagesPaused: true, pauseReason: 'teacher', lifecycleRevision: 3,
+  }, 'session-1');
+  assert.deepEqual([paused.messagingEnabled, paused.chatPaused, paused.messagesPaused, paused.pauseReason, paused.revision], [true, true, true, 'teacher', 3],
+    'the channel stays on while paused; the effective flag the server reports does not flip the switch');
+  const testing = normalizeSessionFabState({ supervisionContextId: 'ctx-1', chatEnabled: true, chatPaused: false, messagesPaused: true, pauseReason: 'testing', lifecycleRevision: 0 },
+    { supervisionContextId: 'ctx-1' });
+  assert.deepEqual([testing.chatPaused, testing.messagesPaused, testing.pauseReason], [false, true, 'testing']);
+  const legacy = normalizeSessionFabState({ activeSessionId: 'session-1', studentMessagingEnabled: true, sessionFabRevision: 1 }, 'session-1');
+  assert.deepEqual([legacy.messagingEnabled, legacy.chatPaused, legacy.messagesPaused, legacy.pauseReason], [true, false, false, null], 'older servers without pause fields read as not paused');
+  const off = normalizeSessionFabState({ teachingSessionId: 'session-1', chatEnabled: false, messagesPaused: false, lifecycleRevision: 2 }, 'session-1');
+  assert.equal(off.messagingEnabled, false);
+  assert.deepEqual(sessionFabSettingsPayload(paused, { chatPaused: false }), { chatPaused: false, expectedRevision: 3 });
+});
+
+test('a settings response folds the stored row and the effective state into one FAB value', () => {
+  const merged = mergeFabSettingsResponse({
+    settings: { supervisionContextId: 'ctx-1', chatEnabled: true, raiseHandEnabled: true, chatPaused: false, lifecycleRevision: 2 },
+    state: { messagingEnabled: false, handRaisingEnabled: true, messagesPaused: true, pauseReason: 'testing', lifecycleRevision: 2 },
+  });
+  assert.deepEqual(merged, { supervisionContextId: 'ctx-1', chatEnabled: true, raiseHandEnabled: true, chatPaused: false, lifecycleRevision: 2,
+    messagingEnabled: false, handRaisingEnabled: true, messagesPaused: true, pauseReason: 'testing' });
+  const normalized = normalizeSessionFabState(merged, { supervisionContextId: 'ctx-1' });
+  assert.deepEqual([normalized.messagingEnabled, normalized.messagesPaused, normalized.pauseReason, normalized.revision], [true, true, 'testing', 2]);
+  assert.deepEqual(mergeFabSettingsResponse({ settings: { chatEnabled: false, lifecycleRevision: 1 } }), { chatEnabled: false, lifecycleRevision: 1 });
+  assert.deepEqual(mergeFabSettingsResponse({ teachingSessionId: 's', messagingEnabled: true }), { teachingSessionId: 's', messagingEnabled: true }, 'a bare state passes through');
+  assert.equal(mergeFabSettingsResponse(null), null);
 });

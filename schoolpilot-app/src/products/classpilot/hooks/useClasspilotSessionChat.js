@@ -2,6 +2,7 @@ import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activi
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../../../lib/queryClient';
+import { mergeDeliveryStatus } from '../lib/chatThreads';
 
 let nextGeneration = 0;
 const DENIED_STATUSES = new Set([401, 403, 404]);
@@ -27,6 +28,8 @@ function historyMessage(row, sessionId, schoolId, authority) {
     id: row.id, sessionId, studentId: row.studentId, senderType: row.senderType,
     message: row.content, messageType: row.messageType || 'message', timestamp: row.createdAt,
     read: true, status: row.deliveryStatus || 'sent', errorMessage: row.errorMessage, version: 0,
+    // Server-side trust signals (absent until the backend that writes them ships).
+    readAt: row.readAt ?? null, seenAt: row.seenAt ?? null,
   };
 }
 
@@ -57,12 +60,19 @@ function applyHistory(scope, rows, request, dismissedIds) {
     }
     // A GET is authoritative for older history, but cannot undo a local event
     // that happened after the request began, nor mark an unread event read.
+    // A row another tab already read (readAt) is read here too; otherwise the
+    // local answer wins, then the first-snapshot rule.
+    const serverRead = message.senderType === 'teacher' || message.readAt !== null;
     const merged = existing?.version > request.version
-      ? { ...message, ...existing }
-      : { ...message, read: existing?.read ?? (unknownRowsAreRead || message.senderType === 'teacher'), version: existing?.version || 0 };
+      ? { ...message, ...existing, read: existing.read || serverRead }
+      : { ...message, read: existing?.read || serverRead || unknownRowsAreRead, version: existing?.version || 0 };
     const delivery = scope.deliveries.get(message.id);
-    if (delivery && (delivery.version > request.version || delivery.status === 'delivered')) {
-      Object.assign(merged, delivery);
+    if (delivery) {
+      merged.status = mergeDeliveryStatus(merged.status, delivery.status);
+      if (merged.status === delivery.status) {
+        merged.errorMessage = delivery.errorMessage;
+        if (delivery.seenAt) merged.seenAt = delivery.seenAt;
+      }
     }
     next.set(message.id, merged);
   }
@@ -176,16 +186,30 @@ export function useClasspilotSessionChat({
     return true;
   }, [currentScope, dismissedMessageIds, notify]);
 
-  const receiveDelivery = useCallback((id, status, errorMessage) => {
+  const receiveDelivery = useCallback((id, status, errorMessage, seenAt = null) => {
     const current = currentScope();
     if (!current || !id || current.dismissed.has(id)) return;
     const previous = current.deliveries.get(id);
-    if (previous?.status === 'delivered' && status !== 'delivered') return;
-    const delivery = { status, errorMessage, version: ++current.sequence };
+    const next = mergeDeliveryStatus(previous?.status, status);
+    if (!next || next === previous?.status) return;
+    const delivery = { status: next, errorMessage: next === 'failed' ? errorMessage : null, seenAt: seenAt || previous?.seenAt || null, version: ++current.sequence };
     current.deliveries.set(id, delivery);
     const message = current.messages.get(id);
-    if (message) current.messages.set(id, { ...message, ...delivery });
+    if (message) current.messages.set(id, { ...message, status: delivery.status, errorMessage: delivery.errorMessage, seenAt: delivery.seenAt, version: delivery.version });
     notify();
+  }, [currentScope, notify]);
+  // Read receipts from this dashboard's own POST or another tab's broadcast.
+  const receiveReadReceipt = useCallback((messageIds, readAt) => {
+    const current = currentScope();
+    if (!current || !Array.isArray(messageIds)) return;
+    let changed = false;
+    for (const id of messageIds) {
+      const message = current.messages.get(id);
+      if (!message || message.senderType === 'teacher' || (message.read && message.readAt)) continue;
+      current.messages.set(id, { ...message, read: true, readAt: readAt || message.readAt || new Date().toISOString() });
+      changed = true;
+    }
+    if (changed) notify();
   }, [currentScope, notify]);
 
   const beginReply = useCallback((studentId) => {
@@ -234,23 +258,31 @@ export function useClasspilotSessionChat({
     if (request && current?.generation === request.generation && current.pendingReplies.delete(request)) notify();
   }, [currentScope, notify]);
 
+  // Both return the ids that still need a server read receipt.
   const markRead = useCallback((id) => {
     const current = currentScope();
     const message = current?.messages.get(id);
-    if (!message || message.read) return;
-    current.messages.set(id, { ...message, read: true });
-    notify();
+    if (!message || message.senderType === 'teacher') return [];
+    if (!message.read) {
+      current.messages.set(id, { ...message, read: true });
+      notify();
+    }
+    return message.readAt ? [] : [id];
   }, [currentScope, notify]);
   const markThreadRead = useCallback((studentId) => {
     const current = currentScope();
-    if (!current || !studentId) return;
+    if (!current || !studentId) return [];
+    const unsynced = [];
     let changed = false;
     for (const [id, message] of current.messages) {
-      if (message.studentId !== studentId || message.senderType === 'teacher' || message.read) continue;
+      if (message.studentId !== studentId || message.senderType === 'teacher') continue;
+      if (!message.readAt) unsynced.push(id);
+      if (message.read) continue;
       current.messages.set(id, { ...message, read: true });
       changed = true;
     }
     if (changed) notify();
+    return unsynced;
   }, [currentScope, notify]);
   const dismiss = useCallback((id) => {
     const current = currentScope();
@@ -298,5 +330,5 @@ export function useClasspilotSessionChat({
   }
   studentMessages.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   return { generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
-    beginReply, isCurrentReply, receiveReply, finishReply, markRead, markThreadRead, dismiss, closeThread };
+    receiveReadReceipt, beginReply, isCurrentReply, receiveReply, finishReply, markRead, markThreadRead, dismiss, closeThread };
 }

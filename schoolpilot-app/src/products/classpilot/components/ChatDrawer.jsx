@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import { MessageSquare, Send } from 'lucide-react';
+import { MessageSquare, MoreHorizontal, PauseCircle, Send } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '../../../components/ui/sheet';
 import { Switch } from '../../../components/ui/switch';
 import { cn } from '../../../lib/utils';
 import { deriveStudentMonitoringDisplay } from '../lib/studentMonitoringDisplay';
+import { describeChatPause } from '../lib/chatThreads';
 import { useResizablePanelWidth } from '../hooks/useResizablePanelWidth';
 import ChatConversationList from './ChatConversationList';
 import ChatThread from './ChatThread';
@@ -33,9 +35,12 @@ function ChatDrawer({
   freshnessNowMs,
   studentMessagingEnabled = true,
   onToggleStudentMessaging,
+  fabState = null,
+  onTogglePause,
   fabSettingsPending = false,
   onSendMessage,
 }) {
+  const pause = describeChatPause(fabState);
   const { width, onResizeStart } = useResizablePanelWidth({ initial: 640, min: 400, storageKey: 'classpilot-chat-drawer-width' });
   const [drafts, setDrafts] = useState({});
   const singlePane = width < SINGLE_PANE_BELOW;
@@ -92,18 +97,50 @@ function ChatDrawer({
                 <Send className="h-4 w-4" />
               </button>
             )}
+            {onTogglePause && studentMessagingEnabled && (
+              <label className="flex items-center gap-2 text-xs text-white/90">
+                <span data-testid="chat-pause-label">{pause ? (pause.locked ? 'Paused for testing' : 'Messages: Paused') : 'Messages: On'}</span>
+                <Switch
+                  data-testid="chat-messaging-switch"
+                  checked={!pause}
+                  onCheckedChange={(checked) => onTogglePause(!checked)}
+                  disabled={fabSettingsPending || Boolean(pause?.locked)}
+                  aria-label={pause?.locked ? 'Student messages are paused for testing' : 'Pause student messages'}
+                  className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
+                />
+              </label>
+            )}
             {onToggleStudentMessaging && (
-              <Switch
-                data-testid="chat-messaging-switch"
-                checked={studentMessagingEnabled}
-                onCheckedChange={(checked) => onToggleStudentMessaging(checked)}
-                disabled={fabSettingsPending}
-                aria-label="Student messaging"
-                className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
-              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className="text-white/80 hover:text-white" aria-label="More messaging options" data-testid="chat-drawer-menu">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={fabSettingsPending}
+                    data-testid="chat-channel-toggle"
+                    onSelect={() => onToggleStudentMessaging(!studentMessagingEnabled)}
+                  >
+                    {studentMessagingEnabled ? 'Turn off messaging for this class' : 'Turn on messaging for this class'}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
         </div>
+        {pause && studentMessagingEnabled && (
+          <div className="px-4 py-2 text-xs bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 border-b border-amber-100 dark:border-amber-900 flex items-start gap-2 shrink-0" data-testid="chat-pause-banner" data-pause-reason={pause.reason}>
+            <PauseCircle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span><span className="font-semibold">{pause.title}.</span> {pause.detail}</span>
+          </div>
+        )}
+        {!studentMessagingEnabled && (
+          <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-off-banner">
+            Messaging is turned off for this class. Students do not see a chat.
+          </div>
+        )}
         <div className={cn('flex flex-1 min-h-0', !studentMessagingEnabled && 'opacity-60')}>
           {showList && (
             <div className={cn('min-h-0 overflow-y-auto', singlePane ? 'flex-1' : 'w-72 shrink-0 border-r border-gray-200 dark:border-gray-700')}>
@@ -120,6 +157,7 @@ function ChatDrawer({
               {selected ? (
                 <ChatThread
                   conversation={selected}
+                  monitoring={monitoringByStudent.get(selected.studentId) || null}
                   onClearThread={onClearThread}
                   onEndChat={onEndChat}
                   onMarkThreadRead={onMarkThreadRead}

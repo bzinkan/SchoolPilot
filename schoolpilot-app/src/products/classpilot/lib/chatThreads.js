@@ -33,6 +33,45 @@ export function countUnreadByStudent(studentMessages) {
   return counts;
 }
 
+/**
+ * Delivery only moves forward on the dashboard: a stray "delivered" after
+ * "seen", or a history re-read carrying an older status, never regresses a
+ * bubble. Sent and failed share a rank so the latest of the two wins.
+ */
+export const DELIVERY_RANK = Object.freeze({ sent: 1, failed: 1, delivered: 2, seen: 3 });
+
+export function mergeDeliveryStatus(current, incoming) {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  return (DELIVERY_RANK[incoming] || 0) < (DELIVERY_RANK[current] || 0) ? current : incoming;
+}
+
+export function deliveryLabel(status, errorMessage) {
+  if (status === 'seen') return 'Seen';
+  if (status === 'delivered') return 'Delivered';
+  if (status === 'failed') return errorMessage || 'Failed';
+  return 'Sending';
+}
+
+/** What the drawer should say about a paused channel, or null when it is not paused. */
+export function describeChatPause(fabState) {
+  if (!fabState?.messagesPaused) return null;
+  if (fabState.pauseReason === 'testing') {
+    return {
+      reason: 'testing',
+      title: 'Paused for testing',
+      detail: 'Student messages pause automatically during a testing block. You can still message students.',
+      locked: true,
+    };
+  }
+  return {
+    reason: 'teacher',
+    title: 'Messages paused',
+    detail: 'Students cannot send messages until you resume. You can still message them.',
+    locked: false,
+  };
+}
+
 function timeValue(timestamp) {
   const value = Date.parse(timestamp);
   return Number.isFinite(value) ? value : 0;
