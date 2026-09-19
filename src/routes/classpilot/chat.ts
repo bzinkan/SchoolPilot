@@ -28,6 +28,8 @@ import {
   isAuthorizedClasspilotSessionStaff,
   markAuthorizedClasspilotStudentMessagesRead,
   classpilotTeacherChatAckRejection,
+  listAuthorizedClasspilotStudentChatTranscript,
+  getStudentById,
   withClasspilotStudentControlDeliveryAuthority,
   withClasspilotSupervisionTelemetryAuthority,
   getClasspilotStudentControlState,
@@ -47,10 +49,15 @@ import {
 import { assertClasspilotEntitled } from "../../services/classpilotEntitlement.js";
 import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import {
+  chatTranscriptWindow,
+  decodeChatTranscriptCursor,
+  encodeChatTranscriptCursor,
   parseClasspilotClientMessageId,
   parseClasspilotTeachingSessionId,
   parseTeacherChatAckStatus,
 } from "../../services/classpilotStudentChat.js";
+import { logAudit, logAuditStrict } from "../../services/audit.js";
+import { readActivityHistoryScope } from "../../services/classpilotActivityHistory.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireScheduledClassroomContext, parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { createScheduledStudentMessage, mutateScheduledStudentHand, createScheduledTeacherReply,
@@ -457,8 +464,8 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
     if (typeof req.query.supervisionContextId === "string") {
       const context = await requireScheduledClassroomContext({ schoolId: res.locals.schoolId!, supervisionContextId: req.query.supervisionContextId,
         actorId: req.authUser!.id, allowObserve: isClasspilotAdmin(req, res) });
-      const messages = await db.select().from(chatMessages).where(and(eq(chatMessages.schoolId, context.schoolId), eq(chatMessages.supervisionContextId, context.id)))
-        .orderBy(chatMessages.createdAt).limit(500);
+      const messages = await db.select().from(chatMessages).where(and(eq(chatMessages.schoolId, context.schoolId), eq(chatMessages.supervisionContextId, context.id),
+        isNull(chatMessages.deletedAt))).orderBy(chatMessages.createdAt).limit(500);
       return res.json({ messages: messages.map(publicChatMessage) });
     }
     const sessionId = String(req.query.sessionId || "").trim();
@@ -628,15 +635,87 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
 router.delete("/teacher/messages/:messageId", ...staffAuth, async (req, res, next) => {
   try {
     const messageId = param(req, "messageId");
-    await deleteAuthorizedClasspilotChatMessage({
+    const deleted = await deleteAuthorizedClasspilotChatMessage({
       schoolId: res.locals.schoolId!,
       messageId,
       actorId: req.authUser!.id,
       contextAuthorityRevision: req.get("X-ClassPilot-Context-Authority-Revision"),
     });
+    // A removal must leave a trail; the row itself stays for the transcript. Never the content.
+    await logAuditStrict({
+      schoolId: res.locals.schoolId!, userId: req.authUser!.id, userRole: res.locals.membershipRole,
+      action: "classpilot.chat.message_deleted", entityType: "chat_message", entityId: messageId,
+      metadata: { studentId: deleted.studentId, senderType: deleted.senderType, sessionId: deleted.sessionId, supervisionContextId: deleted.supervisionContextId },
+    });
     return res.json({ ok: true });
   } catch (err) {
     if (handleFabContractError(err, res)) return;
+    next(err);
+  }
+});
+
+// GET /api/classpilot/students/:studentId/messages - Read-only transcript.
+// Staff read the class or supervision context they actually hold (admins may
+// observe one); an unscoped read is admin-only and capped at 90 days. Every
+// read is audited without content.
+router.get("/students/:studentId/messages", ...staffAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const studentId = param(req, "studentId");
+    const admin = isClasspilotAdmin(req, res);
+    const scopeRequested = "teachingSessionId" in req.query || "supervisionContextId" in req.query || "sessionId" in req.query;
+    const authority = scopeRequested ? parseClasspilotActivityAuthority(req.query) : null;
+    if (scopeRequested && !authority) return res.status(400).json({ error: "Exactly one classroom authority is required" });
+    if (!authority && !admin) {
+      return res.status(403).json({ error: "A classroom authority is required to read messages", code: "CHAT_TRANSCRIPT_SCOPE_REQUIRED" });
+    }
+    const limitValue = Number(req.query.limit);
+    const limit = Number.isSafeInteger(limitValue) && limitValue > 0 ? Math.min(limitValue, 200) : 100;
+    const cursor = req.query.cursor === undefined ? null : decodeChatTranscriptCursor(req.query.cursor);
+    if (req.query.cursor !== undefined && !cursor) return res.status(400).json({ error: "Invalid transcript cursor", code: "CHAT_TRANSCRIPT_CURSOR_INVALID" });
+    const parseDate = (value: unknown) => {
+      if (value === undefined || value === null || value === "") return null;
+      const date = new Date(String(value));
+      return Number.isNaN(date.getTime()) ? undefined : date;
+    };
+    const requestedFrom = parseDate(req.query.from), requestedTo = parseDate(req.query.to);
+    if (requestedFrom === undefined || requestedTo === undefined) return res.status(400).json({ error: "from and to must be dates" });
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) return res.status(404).json({ error: "Student not found", code: "student_not_found" });
+    const scopeOptions = authority ? {
+      schoolId, staffId: req.authUser!.id, studentId, authority,
+      contextAuthorityRevision: authority.supervisionContextId
+        ? requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) : undefined,
+      allowObserve: admin,
+    } : null;
+    const historyScope = scopeOptions ? await readActivityHistoryScope(scopeOptions) : null;
+    if (scopeOptions && !historyScope) {
+      return res.status(403).json({ error: "Classroom activity is no longer available", code: "CHAT_TRANSCRIPT_UNAVAILABLE" });
+    }
+    const window = chatTranscriptWindow({ requestedFrom, requestedTo, scope: historyScope });
+    const includeDeleted = admin && req.query.includeDeleted === "true";
+    const page = await listAuthorizedClasspilotStudentChatTranscript({
+      schoolId, studentId, authority, from: window.from, to: window.to, limit, cursor,
+      anchorMessageId: typeof req.query.anchorMessageId === "string" ? req.query.anchorMessageId.slice(0, 128) : null,
+      includeDeleted,
+    });
+    if (scopeOptions && historyScope) {
+      const latest = await readActivityHistoryScope(scopeOptions);
+      if (!latest || latest.stamp !== historyScope.stamp) return res.status(409).json({ error: "Classroom activity changed; refresh history", code: "CHAT_TRANSCRIPT_SCOPE_CHANGED" });
+    }
+    await logAudit({
+      schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole,
+      action: "classpilot.chat.transcript_read", entityType: "student", entityId: studentId,
+      metadata: { teachingSessionId: authority?.teachingSessionId ?? null, supervisionContextId: authority?.supervisionContextId ?? null,
+        from: window.from.toISOString(), to: window.to.toISOString(), count: page.messages.length, includeDeleted },
+    });
+    return res.json({
+      student: { id: student.id, firstName: student.firstName, lastName: student.lastName },
+      window: { from: window.from.toISOString(), to: window.to.toISOString() },
+      messages: page.messages.map(publicChatMessage),
+      nextCursor: page.nextCursor ? encodeChatTranscriptCursor(page.nextCursor) : null,
+    });
+  } catch (err) {
     next(err);
   }
 });
@@ -736,6 +815,8 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
             sendToStudentBindingLocal(target, payload); await publishWS(target, payload);
           });
       }
+      await logAudit({ schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.chat.closed",
+        entityType: "student", entityId: String(studentId || ""), metadata: { supervisionContextId: result.context.id } });
       return res.json({ ok: true });
     }
 
@@ -768,6 +849,8 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
       await publishWS({ kind: "device", schoolId, deviceId: binding.deviceId }, payload);
     }
 
+    await logAudit({ schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.chat.closed",
+      entityType: "student", entityId: String(studentId), metadata: { teachingSessionId: teachingSession.id } });
     return res.json({ ok: true });
   } catch (err) {
     if (handleFabContractError(err, res)) return;

@@ -1181,6 +1181,9 @@ export const chatMessages = pgTable(
     // Dashboard-side: authorized staff opened this student message. Never sent to students.
     readAt: timestamp("read_at", { withTimezone: true }),
     readBy: text("read_by"),
+    // Soft delete: hidden from class views, kept for transcripts until retention.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [

@@ -47,6 +47,8 @@ import { CLASSPILOT_SCHEDULE_BOUNDARY_SQL } from "./db/classpilotScheduleBoundar
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "./db/classpilotScheduledClassroomMigration.js";
 import { CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL } from "./db/classpilotChatChannelControlMigration.js";
 import { CLASSPILOT_CHAT_SEEN_STATE_SQL } from "./db/classpilotChatSeenStateMigration.js";
+import { CLASSPILOT_CHAT_OVERSIGHT_SQL } from "./db/classpilotChatOversightMigration.js";
+import { CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL } from "./db/classpilotChatTranscriptIndexMigration.js";
 import { ROSTER_INTEGRATIONS_SQL } from "./db/rosterIntegrationsMigration.js";
 import { CLASSPILOT_SCHOOL_WEBSITE_POLICY_SQL } from "./db/classpilotSchoolWebsitePolicyMigration.js";
 import { CLASSPILOT_CONTENT_CATEGORIES_SQL } from "./db/classpilotContentCategoriesMigration.js";
@@ -4989,6 +4991,8 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
   await pool.query(CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL);
   await pool.query(CLASSPILOT_CHAT_SEEN_STATE_SQL);
+  await pool.query(CLASSPILOT_CHAT_OVERSIGHT_SQL);
+  await pool.query(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL);
 }
 
 async function startServer(): Promise<void> {

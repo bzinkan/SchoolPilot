@@ -125,3 +125,51 @@ export function isExactIdempotentStudentMessage(
     && existing.content === expected.content
     && existing.clientMessageId === expected.clientMessageId;
 }
+
+export type ChatTranscriptCursor = { at: string; id: string };
+
+export function encodeChatTranscriptCursor(cursor: ChatTranscriptCursor): string {
+  return Buffer.from(JSON.stringify({ at: cursor.at, id: cursor.id })).toString("base64url");
+}
+
+/** Null for anything that is not a cursor this server issued. */
+export function decodeChatTranscriptCursor(value: unknown): ChatTranscriptCursor | null {
+  if (typeof value !== "string" || !value || value.length > 512) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString());
+    if (!parsed || typeof parsed !== "object" || typeof parsed.at !== "string" || typeof parsed.id !== "string") return null;
+    if (parsed.id.length === 0 || parsed.id.length > 128 || !Number.isFinite(Date.parse(parsed.at))) return null;
+    return { at: parsed.at, id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
+export const CHAT_TRANSCRIPT_MAX_WINDOW_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A scoped read (a class or supervision context the caller holds) is clamped
+ * to that activity's interval; an unscoped admin read defaults to the last 90
+ * days and can never span more than that. `from >= to` means an empty window.
+ */
+export function chatTranscriptWindow(options: {
+  requestedFrom?: Date | null;
+  requestedTo?: Date | null;
+  scope?: { from: Date; to: Date } | null;
+  now?: Date;
+}): { from: Date; to: Date } {
+  const now = options.now ?? new Date();
+  const requestedFrom = options.requestedFrom ?? null;
+  const requestedTo = options.requestedTo ?? null;
+  if (options.scope) {
+    const from = new Date(Math.max(options.scope.from.getTime(), requestedFrom?.getTime() ?? 0));
+    const to = new Date(Math.min(options.scope.to.getTime(), requestedTo?.getTime() ?? Infinity));
+    return from < to ? { from, to } : { from: to, to };
+  }
+  const maxSpan = CHAT_TRANSCRIPT_MAX_WINDOW_DAYS * DAY_MS;
+  const to = new Date(Math.min(requestedTo?.getTime() ?? now.getTime(), now.getTime()));
+  const earliest = new Date(to.getTime() - maxSpan);
+  const from = new Date(Math.max(requestedFrom?.getTime() ?? earliest.getTime(), earliest.getTime()));
+  return from < to ? { from, to } : { from: to, to };
+}

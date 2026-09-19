@@ -1648,6 +1648,7 @@ export type ClasspilotSafetySpineRetentionTotals = {
   closedCases: number;
   messages: number;
   chatDeliveries: number;
+  chatMessages: number;
 };
 
 type SafetySpineRetentionStatement = {
@@ -1795,7 +1796,23 @@ export async function purgeClasspilotSafetySpineRetentionForSchool(input: {
     [schoolId, cutoff]
   );
 
-  return { aiDecisions, timelineEvents, closedCases, messages, chatDeliveries };
+  // Class chat rows share the tenant window. A row a delivery still references
+  // waits for that delivery to purge first, so the outbox never dangles.
+  const chatMessages = await applySafetySpineRetentionStatement(
+    mode,
+    {
+      table: "chat_messages",
+      from: "chat_messages AS chat",
+      targetId: "chat.id",
+      where: `chat.school_id = $1
+        AND chat.created_at < $2
+        AND NOT EXISTS (SELECT 1 FROM classpilot_chat_deliveries AS delivery
+          WHERE delivery.school_id = $1 AND delivery.chat_message_id = chat.id)`,
+    },
+    [schoolId, cutoff]
+  );
+
+  return { aiDecisions, timelineEvents, closedCases, messages, chatDeliveries, chatMessages };
 }
 
 export async function purgeSafetyRawBrowserUrlsForSchool(schoolId: string, cutoff: Date): Promise<void> {
@@ -1818,6 +1835,7 @@ async function purgeClasspilotSafetySpineRetention() {
     closedCases: 0,
     messages: 0,
     chatDeliveries: 0,
+    chatMessages: 0,
   };
   let tenants = 0;
   let failedTenants = 0;
@@ -1851,6 +1869,7 @@ async function purgeClasspilotSafetySpineRetention() {
         totals.closedCases += schoolTotals.closedCases;
         totals.messages += schoolTotals.messages;
         totals.chatDeliveries += schoolTotals.chatDeliveries;
+        totals.chatMessages += schoolTotals.chatMessages;
         // Yield between schools
         await new Promise((resolve) => setTimeout(resolve, 50));
       } catch (schoolError) {
@@ -1873,7 +1892,8 @@ async function purgeClasspilotSafetySpineRetention() {
   console.log(
     `[ClassPilot] Safety spine retention mode=${mode} tenants=${tenants} failed=${failedTenants} ` +
       `aiDecisions=${totals.aiDecisions} timelineEvents=${totals.timelineEvents} ` +
-      `closedCases=${totals.closedCases} messages=${totals.messages} chatDeliveries=${totals.chatDeliveries}`
+      `closedCases=${totals.closedCases} messages=${totals.messages} chatDeliveries=${totals.chatDeliveries} ` +
+      `chatMessages=${totals.chatMessages}`
   );
 }
 

@@ -20,6 +20,8 @@ import { classpilotScheduledClassroomMigration } from "./classpilotScheduledClas
 import { classpilotScheduleConfigRepairMigration } from "./classpilotScheduleConfigRepairMigration.js";
 import { classpilotChatChannelControlMigration } from "./classpilotChatChannelControlMigration.js";
 import { classpilotChatSeenStateMigration } from "./classpilotChatSeenStateMigration.js";
+import { classpilotChatOversightMigration } from "./classpilotChatOversightMigration.js";
+import { classpilotChatTranscriptIndexMigration } from "./classpilotChatTranscriptIndexMigration.js";
 
 export { STAFF_IDENTITY_NORMALIZED_EMAIL_SQL } from "./staffIdentityIntegrityMigration.js";
 
@@ -485,6 +487,8 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotScheduleConfigRepairMigration,
   classpilotChatChannelControlMigration,
   classpilotChatSeenStateMigration,
+  classpilotChatOversightMigration,
+  classpilotChatTranscriptIndexMigration,
   staffIdentityIntegrityMigration,
 ];
 
