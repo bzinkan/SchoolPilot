@@ -12,6 +12,7 @@ const COUNTER_NAMES = [
   "safetyAlertsCreated", "safetyObservationsMerged", "safetyExceptionsApplied",
   "safetyEmailsSent", "safetyFollowupsSent", "safetyEmailFailures", "safetyEmailUnknown",
   "studentChatFanOutDelivered", "studentChatFanOutMissed",
+  "chatSafetyScanFailed", "chatSafetyAlertsRecorded",
   ...STUDENT_SIGN_IN_COUNTER_NAMES,
 ] as const;
 

@@ -41,6 +41,7 @@ import {
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
 import { reportStudentChatFanOut } from "../../services/classpilotChatDelivery.js";
+import { scanStudentChatMessage } from "../../services/classpilotChatSafety.js";
 import {
   FAB_HAND_TTL_MS,
   FabContractError,
@@ -309,6 +310,9 @@ router.post("/student/send-message", requireDeviceAuth, studentChatBurstLimiter,
         const fanOut = await publishScheduledClassroomEvent(result.context, { type: "student-message", data: message });
         reportStudentChatFanOut({ schoolId: result.context.schoolId, authority: { kind: "supervision-context", id: result.context.id },
           messageId: message.id, source: "local", ...fanOut });
+        // Safety scan is off the send path: lexicon first, AI only on a hit, never throws.
+        void scanStudentChatMessage({ schoolId: result.context.schoolId, studentId: options.studentId, messageId: message.id, deviceId: options.deviceId,
+          content: result.message.content, supervisionContextId: result.context.id, occurredAt: result.message.createdAt });
       }
       return res.json({ message, messageId: message.id, clientMessageId: message.clientMessageId, supervisionContextId: result.context.id,
         delivered: true, duplicate: !result.created, messages: [message] });
@@ -369,6 +373,7 @@ router.post("/student/send-message", requireDeviceAuth, studentChatBurstLimiter,
       const relayAccepted = await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, broadcastPayload);
       reportStudentChatFanOut({ schoolId, authority: { kind: "teaching-session", id: teachingSession.id },
         messageId: msg.id, source: "local", delivered, relayAccepted });
+      void scanStudentChatMessage({ schoolId, studentId, messageId: msg.id, deviceId, content, teachingSessionId: teachingSession.id, occurredAt: msg.createdAt });
     }
 
     return res.json({

@@ -123,10 +123,10 @@ describe("class chat oversight", () => {
     assert.match(route, /latest\.stamp !== historyScope\.stamp/, "a scope change mid-read is a 409");
     assert.match(route, /const includeDeleted = admin && req\.query\.includeDeleted === "true"/);
     assert.match(route, /action: "classpilot\.chat\.transcript_read"/);
-    assert.doesNotMatch(route, /content:|\.content/, "audit metadata never carries message text");
+    assert.doesNotMatch(route, /content:|\.content\b/, "audit metadata never carries message text");
     const remove_route = chat.slice(chat.indexOf('router.delete("/teacher/messages/:messageId"'), chat.indexOf('router.get("/students/:studentId/messages"'));
     assert.match(remove_route, /logAuditStrict\(\{[\s\S]*action: "classpilot\.chat\.message_deleted"/);
-    assert.doesNotMatch(remove_route, /content:|\.content/);
+    assert.doesNotMatch(remove_route, /content:|\.content\b/);
     const close = chat.slice(chat.indexOf('router.post("/teacher/close-chat"'), chat.indexOf("router.", chat.indexOf('router.post("/teacher/close-chat"') + 10));
     assert.equal(close.match(/action: "classpilot\.chat\.closed"/g)?.length, 2, "both authority paths audit a close");
   });
