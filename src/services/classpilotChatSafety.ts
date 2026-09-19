@@ -1,4 +1,3 @@
-import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   CHAT_SAFETY_RULESET_VERSION,
   classifyChatMessage,
@@ -6,9 +5,8 @@ import {
   type ChatSafetyMatch,
   type ChatTextClassification,
 } from "./aiClassification.js";
-import { claimClasspilotSafetyAlert } from "./classpilotSafetyCooldown.js";
 import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
-import { recordSafetyAlert, type SafetyObservation } from "./safetyCenter.js";
+import type { SafetyObservation } from "./safetyCenter.js";
 
 export type ChatSafetyScanMode = "hit" | "off";
 
@@ -50,11 +48,22 @@ export type ChatSafetyScanDependencies = {
   log: { warn: (line: string) => void };
 };
 
+// The claim and record paths reach Redis and the database; they are resolved lazily so
+// importing this module (as the pure unit lane does) never opens either connection.
 const defaultDependencies: ChatSafetyScanDependencies = {
   classify: classifyChatMessage,
   enrich: classifyChatText,
-  claim: claimClasspilotSafetyAlert,
-  record: (observation) => runWithTenantContext({ schoolId: observation.schoolId }, () => recordSafetyAlert(observation)),
+  claim: async (input) => {
+    const { claimClasspilotSafetyAlert } = await import("./classpilotSafetyCooldown.js");
+    return claimClasspilotSafetyAlert(input);
+  },
+  record: async (observation) => {
+    const [{ runWithTenantContext }, { recordSafetyAlert }] = await Promise.all([
+      import("../middleware/tenantContext.js"),
+      import("./safetyCenter.js"),
+    ]);
+    return runWithTenantContext({ schoolId: observation.schoolId }, () => recordSafetyAlert(observation));
+  },
   mode: chatSafetyScanMode,
   log: console,
 };
