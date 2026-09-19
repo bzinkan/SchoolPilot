@@ -3,7 +3,7 @@ import { useState, useMemo, useCallback, useLayoutEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../../lib/queryClient";
 import api from "../../../shared/utils/api";
-import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, LayoutGrid, Calendar as CalendarIcon, AlertTriangle, BarChart3, Activity, Download } from "lucide-react";
+import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, MessageSquare, LayoutGrid, Calendar as CalendarIcon, AlertTriangle, BarChart3, Activity, Download } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Badge } from "../../../components/ui/badge";
 import { ScrollArea } from "../../../components/ui/scroll-area";
@@ -18,6 +18,7 @@ import { calculateURLSessions, formatDuration, isSessionOffTask } from "../../..
 import { useToast } from "../../../hooks/use-toast";
 import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
 import StudentBrowsingHistory from "./StudentBrowsingHistory";
+import StudentChatTranscript from "./StudentChatTranscript";
 import { useResizablePanelWidth } from "../hooks/useResizablePanelWidth";
 
 function StudentDetailDrawer({
@@ -29,6 +30,7 @@ function StudentDetailDrawer({
   activeClassName,
   teachingSessionId, supervisionContextId, schoolId, contextAuthorityRevision,
   canViewHistoricalUsage = false,
+  canViewChatTranscript = false,
   freshnessNowMs,
 }) {
   const { toast } = useToast();
@@ -229,6 +231,12 @@ function StudentDetailDrawer({
                     <HistoryIcon className="h-4 w-4 mr-2" />
                     History
                   </TabsTrigger>
+                  {canViewChatTranscript && (
+                    <TabsTrigger value="messages" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none" data-testid="tab-messages">
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      Messages
+                    </TabsTrigger>
+                  )}
                 </TabsList>
               </div>
 
@@ -844,6 +852,25 @@ function StudentDetailDrawer({
                   </div>
                 </ScrollArea>
               </TabsContent>
+
+              {/* Messages Tab: read-only transcript for the class the viewer holds */}
+              {canViewChatTranscript && (
+                <TabsContent value="messages" className="flex-1 overflow-hidden m-0">
+                  <ScrollArea className="h-full">
+                    <div className="p-6">
+                      <h3 className="text-sm font-semibold mb-3">Messages in this class</h3>
+                      <StudentChatTranscript
+                        key={student.studentId}
+                        studentId={student.studentId}
+                        schoolId={schoolId}
+                        teachingSessionId={teachingSessionId}
+                        supervisionContextId={supervisionContextId}
+                        contextAuthorityRevision={contextAuthorityRevision}
+                      />
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              )}
             </Tabs>
           </div>
         </SheetContent>

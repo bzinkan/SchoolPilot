@@ -23,6 +23,7 @@ function TeacherFab({
   unreadMessageCount = 0,
   onOpenChat,
   studentMessagingEnabled = true,
+  messagesPaused = false,
   fabSettingsPending = false,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -252,7 +253,7 @@ function TeacherFab({
             )}
           >
             <MessageSquare className="h-5 w-5" />
-            <span className="font-medium">Messages{!studentMessagingEnabled ? " (Off)" : ""}</span>
+            <span className="font-medium">Messages{!studentMessagingEnabled ? " (Off)" : messagesPaused ? " (Paused)" : ""}</span>
             {unreadCount > 0 && studentMessagingEnabled && (
               <span className="bg-white text-blue-600 text-xs font-bold px-2 py-0.5 rounded-full">
                 {unreadCount}

@@ -140,6 +140,7 @@ import {
 import { useObservationLease } from '../hooks/useObservationLease';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import { countUnreadByStudent, deriveChatConversations, looksLikeQuestion } from '../lib/chatThreads';
+import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
 import {
   classpilotObservationSessionEligible,
   classpilotSessionAuthorityKey,
@@ -1051,7 +1052,7 @@ export default function Dashboard() {
   }, [signOutOnlySelectionActive]);
   useEffect(() => {
     if (scheduledSupervisionId) {
-      setSessionFabState(normalizeSessionFabState(scheduledFabSettings?.settings || scheduledFabSettings?.state || scheduledFabSettings, effectiveAuthority));
+      setSessionFabState(normalizeSessionFabState(mergeFabSettingsResponse(scheduledFabSettings), effectiveAuthority));
       return;
     }
     const sessionId = effectiveActivity?.id || null;
@@ -1063,6 +1064,11 @@ export default function Dashboard() {
       teachingSessionId: settings?.activeSessionId,
       handRaisingEnabled: settings?.handRaisingEnabled,
       studentMessagingEnabled: settings?.studentMessagingEnabled,
+      // The session-level channel flag and pause; the school-wide flag is a separate switch.
+      chatEnabled: settings?.sessionStudentMessagingEnabled,
+      chatPaused: settings?.sessionChatPaused,
+      messagesPaused: settings?.sessionMessagesPaused,
+      pauseReason: settings?.sessionChatPauseReason,
       revision: settings?.sessionFabRevision,
     }, sessionId));
   }, [
@@ -1072,6 +1078,10 @@ export default function Dashboard() {
     settings?.handRaisingEnabled,
     settings?.sessionFabRevision,
     settings?.studentMessagingEnabled,
+    settings?.sessionStudentMessagingEnabled,
+    settings?.sessionChatPaused,
+    settings?.sessionMessagesPaused,
+    settings?.sessionChatPauseReason,
     scheduledSupervisionId, scheduledFabSettings, effectiveAuthority,
   ]);
   // Past sessions are fetched only after the teacher opens the popover so the
@@ -2029,7 +2039,7 @@ export default function Dashboard() {
               const chatViewNow = chatViewRef.current;
               if (chatViewNow.open && chatViewNow.studentId === message.data.studentId && document.visibilityState === 'visible') {
                 // The teacher is looking at this thread: it reads as seen and needs no toast.
-                chat.markRead(newMsg.id);
+                queueReadReceipts(chat.markRead(newMsg.id));
                 return;
               }
               toast({
@@ -2042,7 +2052,11 @@ export default function Dashboard() {
               const messageId = message.messageId || message.data?.messageId;
               if (!messageId) return;
               chat.receiveDelivery(messageId, message.deliveryStatus || message.data?.deliveryStatus,
-                message.errorMessage || message.data?.errorMessage);
+                message.errorMessage || message.data?.errorMessage, message.seenAt || message.data?.seenAt || null);
+            }
+            if (message.type === 'chat-messages-read') {
+              if (!classRealtimeMessageEligibility(message)) return;
+              chat.receiveReadReceipt(message.messageIds || message.data?.messageIds, message.readAt || message.data?.readAt);
             }
             if (message.type === 'student-registered') {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
@@ -5417,7 +5431,30 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
     sendMessageMutation.mutate({ message: sendMessageText.trim() });
   };
 
-  const markChatThreadRead = chat.markThreadRead;
+  // Read receipts are teacher-side only. They are batched so a burst of
+  // arrivals in an open thread costs one request, and a failure only means
+  // another tab will not see the read state until its own re-read.
+  const pendingReadReceiptsRef = useRef({ ids: new Set(), timer: null });
+  const flushReadReceipts = useCallback(() => {
+    const pending = pendingReadReceiptsRef.current;
+    pending.timer = null;
+    const messageIds = [...pending.ids];
+    pending.ids.clear();
+    if (messageIds.length === 0 || !effectiveAuthorityRef.current) return;
+    requestActivityApi('POST', '/teacher/messages/read', { ...activityLegacyBody(effectiveAuthorityRef.current), messageIds })
+      .then((data) => { if (Array.isArray(data?.updatedIds)) chat.receiveReadReceipt(data.updatedIds, data.readAt); })
+      .catch(() => { /* best effort; history re-reads carry the server state */ });
+  }, [chat, requestActivityApi]);
+  const queueReadReceipts = useCallback((messageIds) => {
+    if (!messageIds?.length) return;
+    const pending = pendingReadReceiptsRef.current;
+    for (const id of messageIds) pending.ids.add(id);
+    if (!pending.timer) pending.timer = setTimeout(flushReadReceipts, 300);
+  }, [flushReadReceipts]);
+  useEffect(() => () => { if (pendingReadReceiptsRef.current.timer) clearTimeout(pendingReadReceiptsRef.current.timer); }, []);
+  const markChatThreadRead = useCallback((studentId) => {
+    queueReadReceipts(chat.markThreadRead(studentId));
+  }, [chat, queueReadReceipts]);
 
   // Clearing hides the thread on this dashboard only; the student keeps their
   // copy. Ending also tells the device the chat is over (it clears its thread).
@@ -5467,6 +5504,31 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
     },
   });
 
+  const toggleChatPauseMutation = useMutation({
+    mutationFn: async (paused) => {
+      if (!dashboardCapabilities.canChangeFabSettings || !effectiveActivity?.id) throw new Error('Session settings are available only for your active class.');
+      return requestActivityApi(scheduledSupervisionId ? 'PATCH' : 'PUT', activityParentPath(effectiveAuthority, 'settings'), sessionFabSettingsPayload(
+        sessionFabState,
+        { chatPaused: paused },
+      ), { headers: { 'X-School-Id': activeSchoolId } });
+    },
+    onSuccess: (data) => {
+      const nextState = normalizeSessionFabState(mergeFabSettingsResponse(data), effectiveAuthorityRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      const paused = nextState?.messagesPaused === true;
+      toast({ title: paused ? "Messages Paused" : "Messages Resumed", description: paused ? "Students cannot send messages until you resume" : "Students can send messages again" });
+    },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return;
+      const current = error?.response?.data?.current || error?.data?.current;
+      const nextState = normalizeSessionFabState(current, effectiveAuthorityRef.current);
+      if (nextState) setSessionFabState(nextState);
+      queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+      toast({ variant: "destructive", title: "Error", description: error.message });
+    },
+  });
+
   const toggleStudentMessagingMutation = useMutation({
     mutationFn: async (enabled) => {
       if (!dashboardCapabilities.canChangeFabSettings || !effectiveActivity?.id) throw new Error('Session settings are available only for your active class.');
@@ -5476,7 +5538,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
       ), { headers: { 'X-School-Id': activeSchoolId } });
     },
     onSuccess: (data) => {
-      const nextState = normalizeSessionFabState(data?.settings || data?.state, effectiveAuthorityRef.current);
+      const nextState = normalizeSessionFabState(mergeFabSettingsResponse(data), effectiveAuthorityRef.current);
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       const enabled = nextState?.messagingEnabled === true;
@@ -6678,6 +6740,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           activeClassName={effectiveActivity ? groups.find(g => g.id === effectiveActivity.groupId)?.name : null}
           teachingSessionId={effectiveAuthority?.teachingSessionId} supervisionContextId={scheduledSupervisionId}
           canViewHistoricalUsage={isAdmin}
+          canViewChatTranscript={dashboardCapabilities.canUseTeacherFab || isAdmin}
           freshnessNowMs={freshnessNowMs}
         />
       )}
@@ -6699,7 +6762,9 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           freshnessNowMs={freshnessNowMs}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
-          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending}
+          fabState={sessionFabState}
+          onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}
+          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
           onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
         />
       )}
@@ -7561,7 +7626,8 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           unreadMessageCount={chatConversations.totalUnread}
           onOpenChat={(opener) => openChatThread(null, opener)}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
-          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending}
+          messagesPaused={sessionFabState?.messagesPaused === true}
+          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
         />
       )}
     </div>

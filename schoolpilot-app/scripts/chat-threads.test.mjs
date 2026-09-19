@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CANNED_REPLIES, CHAT_REPLY_MAX_CHARS, countUnreadByStudent, looksLikeQuestion, deriveChatConversations } from '../src/products/classpilot/lib/chatThreads.js';
+import { CANNED_REPLIES, CHAT_REPLY_MAX_CHARS, countUnreadByStudent, looksLikeQuestion, deriveChatConversations, DELIVERY_RANK, mergeDeliveryStatus, deliveryLabel, describeChatPause } from '../src/products/classpilot/lib/chatThreads.js';
 
 test('a message is a question when it ends with a question mark', () => {
   assert.equal(looksLikeQuestion('can we go gym still?????'), true);
@@ -68,4 +68,33 @@ test('conversations ignore rows without ids or students and tolerate bad timesta
   assert.equal(conversations[0].items.length, 1);
   assert.equal(totalUnread, 1);
   assert.deepEqual(deriveChatConversations(undefined, undefined), { conversations: [], totalUnread: 0 });
+});
+
+test('delivery status only moves forward and the latest of sent/failed wins', () => {
+  assert.equal(mergeDeliveryStatus('sent', 'delivered'), 'delivered');
+  assert.equal(mergeDeliveryStatus('delivered', 'seen'), 'seen');
+  assert.equal(mergeDeliveryStatus('seen', 'delivered'), 'seen', 'a stray delivered never regresses seen');
+  assert.equal(mergeDeliveryStatus('delivered', 'sent'), 'delivered', 'a history re-read cannot undo delivery');
+  assert.equal(mergeDeliveryStatus('delivered', 'failed'), 'delivered');
+  assert.equal(mergeDeliveryStatus('sent', 'failed'), 'failed');
+  assert.equal(mergeDeliveryStatus('failed', 'sent'), 'sent');
+  assert.equal(mergeDeliveryStatus(undefined, 'delivered'), 'delivered');
+  assert.equal(mergeDeliveryStatus('seen', undefined), 'seen');
+  assert.equal(mergeDeliveryStatus('seen', 'bogus'), 'seen');
+  assert.deepEqual(DELIVERY_RANK, { sent: 1, failed: 1, delivered: 2, seen: 3 });
+  assert.equal(deliveryLabel('seen'), 'Seen');
+  assert.equal(deliveryLabel('delivered'), 'Delivered');
+  assert.equal(deliveryLabel('failed', 'No device'), 'No device');
+  assert.equal(deliveryLabel('failed'), 'Failed');
+  assert.equal(deliveryLabel('sent'), 'Sending');
+});
+
+test('a pause is described by who paused it, and a testing pause is locked', () => {
+  assert.equal(describeChatPause(null), null);
+  assert.equal(describeChatPause({ messagesPaused: false, pauseReason: null }), null);
+  const teacher = describeChatPause({ messagesPaused: true, pauseReason: 'teacher' });
+  assert.deepEqual([teacher.reason, teacher.locked, teacher.title], ['teacher', false, 'Messages paused']);
+  const testing = describeChatPause({ messagesPaused: true, pauseReason: 'testing' });
+  assert.deepEqual([testing.reason, testing.locked, testing.title], ['testing', true, 'Paused for testing']);
+  assert.equal(describeChatPause({ messagesPaused: true }).reason, 'teacher', 'an unknown reason reads as the teacher');
 });

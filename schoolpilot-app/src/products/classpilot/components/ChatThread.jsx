@@ -3,7 +3,8 @@ import { ArrowLeft, MoreHorizontal } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { cn } from '../../../lib/utils';
 import { formatChatTimestamp } from '../lib/chatTimestamp';
-import { looksLikeQuestion } from '../lib/chatThreads';
+import { deliveryLabel, looksLikeQuestion } from '../lib/chatThreads';
+import LastSeenTime from './LastSeenTime';
 
 export function ChatMessageBubble({ item }) {
   const question = item.sender === 'student' && looksLikeQuestion(item.message);
@@ -34,7 +35,7 @@ export function ChatMessageBubble({ item }) {
           {item.sender === 'teacher' && item.status && (
             <>
               <span aria-hidden="true"> · </span>
-              <span>{item.status === 'delivered' ? 'Delivered' : item.status === 'failed' ? (item.errorMessage || 'Failed') : 'Sending'}</span>
+              <span data-testid={`chat-delivery-${item.id}`}>{deliveryLabel(item.status, item.errorMessage)}</span>
             </>
           )}
         </div>
@@ -48,7 +49,7 @@ export function ChatMessageBubble({ item }) {
  * it is open on a visible tab, marks the student's messages read. Only this
  * thread auto-scrolls.
  */
-function ChatThread({ conversation, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
+function ChatThread({ conversation, monitoring = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
   const endRef = useRef(null);
   const { studentId, studentName, items } = conversation;
   const itemCount = items.length;
@@ -78,7 +79,24 @@ function ChatThread({ conversation, onClearThread, onEndChat, onMarkThreadRead, 
               <ArrowLeft className="h-4 w-4" />
             </button>
           )}
-          <span className="font-semibold text-sm text-gray-800 dark:text-gray-200 truncate">{studentName}</span>
+          <span className="min-w-0">
+            <span className="block font-semibold text-sm text-gray-800 dark:text-gray-200 truncate">{studentName}</span>
+            {monitoring && (
+              <span className="flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400" data-testid="chat-thread-status">
+                <span
+                  className={cn('w-2 h-2 rounded-full', monitoring.status === 'online' ? 'bg-green-500' : monitoring.status === 'reconnecting' || monitoring.status === 'idle' ? 'bg-amber-400' : 'bg-gray-400')}
+                  aria-hidden="true"
+                />
+                <span>{monitoring.label}</span>
+                {monitoring.observedAtMs !== null && monitoring.observedAtMs !== undefined && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <LastSeenTime observedAt={new Date(monitoring.observedAtMs).toISOString()} />
+                  </>
+                )}
+              </span>
+            )}
+          </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button
@@ -116,6 +134,11 @@ function ChatThread({ conversation, onClearThread, onEndChat, onMarkThreadRead, 
           )}
         </div>
       </div>
+      {monitoring && !monitoring.telemetryCurrent && (
+        <div className="px-3 py-1.5 text-xs bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-b border-amber-100 dark:border-amber-900 shrink-0" data-testid="chat-thread-offline-note">
+          Device isn’t reporting — replies deliver when it reconnects.
+        </div>
+      )}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5" data-testid="chat-thread-messages">
         {items.map((item) => <ChatMessageBubble key={item.id} item={item} />)}
         <div ref={endRef} />

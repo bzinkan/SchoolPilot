@@ -869,11 +869,40 @@ export function normalizeSessionFabState(value, teachingSessionId) {
     : { teachingSessionId: value?.teachingSessionId || value?.activeSessionId });
   if (!authority || activityAuthorityKey(stateAuthority) !== activityAuthorityKey(authority)) return null;
   const revisionValue = Number(value?.revision ?? value?.lifecycleRevision ?? value?.sessionFabRevision);
+  const chatPaused = value?.chatPaused === true;
+  // The hard switch (chatEnabled) is what the teacher toggles; the effective
+  // messagingEnabled the server reports is false while paused, so prefer the
+  // channel flag whenever the response carries one.
+  const messagingEnabled = (value?.chatEnabled ?? value?.messagingChannelEnabled
+    ?? value?.messagingEnabled ?? value?.studentMessagingEnabled) !== false;
+  const messagesPaused = value?.messagesPaused === true || chatPaused;
+  const pauseReason = value?.pauseReason === 'testing' || value?.pauseReason === 'teacher'
+    ? value.pauseReason : messagesPaused ? 'teacher' : null;
   return {
     ...authority,
     handRaisingEnabled: (value?.handRaisingEnabled ?? value?.raiseHandEnabled) !== false,
-    messagingEnabled: (value?.messagingEnabled ?? value?.studentMessagingEnabled ?? value?.chatEnabled) !== false,
+    messagingEnabled,
+    chatPaused,
+    messagesPaused,
+    pauseReason,
     revision: Number.isSafeInteger(revisionValue) && revisionValue >= 0 ? revisionValue : 0,
+  };
+}
+
+/**
+ * Settings routes answer `{ settings, state }`: the stored row (chatEnabled,
+ * chatPaused, lifecycleRevision, parent id) and the effective state (a testing
+ * pause only exists there). Fold both into one value for normalizeSessionFabState.
+ */
+export function mergeFabSettingsResponse(data) {
+  if (!data || typeof data !== 'object') return null;
+  const settings = data.settings && typeof data.settings === 'object' ? data.settings : null;
+  const state = data.state && typeof data.state === 'object' ? data.state : null;
+  if (!settings && !state) return data;
+  return {
+    ...(state || {}),
+    ...(settings || {}),
+    ...(state && 'messagesPaused' in state ? { messagesPaused: state.messagesPaused, pauseReason: state.pauseReason ?? null } : {}),
   };
 }
 

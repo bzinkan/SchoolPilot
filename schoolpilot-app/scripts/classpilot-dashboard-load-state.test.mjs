@@ -3277,13 +3277,16 @@ async function chatBrowserFixture(context, options = {}) {
         : { json: response });
       return;
     }
-    if (request.method() === 'POST' && ['/api/teacher/reply', '/api/teacher/close-chat'].includes(url.pathname)) {
-      mutations.push({ pathname: url.pathname, body: request.postDataJSON() });
+    if (request.method() === 'POST' && ['/api/teacher/reply', '/api/teacher/close-chat', '/api/teacher/messages/read'].includes(url.pathname)) {
+      const body = request.postDataJSON();
+      mutations.push({ pathname: url.pathname, body });
       const response = url.pathname.endsWith('/reply')
         ? replyResponder ? await replyResponder(request) : {
           message: storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' }), queued: true,
         }
-        : { ok: true };
+        : url.pathname.endsWith('/read')
+          ? { readAt: new Date().toISOString(), updatedIds: body?.messageIds || [] }
+          : { ok: true };
       await route.fulfill({ status: url.pathname.endsWith('/reply') ? 202 : 200, json: response });
       return;
     }
@@ -3602,6 +3605,187 @@ test('chat drawer: it is non-modal, so a tile badge switches threads without clo
   assert.equal(await page.getByTestId('chat-drawer').count(), 1);
   assert.deepEqual(harness.pageErrors, []);
 });
+
+test('chat trust signals: Sent, Delivered, Seen never regress on a stray delivered or a history re-read', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await selectConversation(page);
+  await replyInput(page).fill(CHAT_REPLY_TEXT);
+  await replyInput(page).press('Enter');
+  const status = page.getByTestId(`chat-delivery-${CHAT_REPLY_ID}`);
+  await status.getByText('Sending', { exact: true }).waitFor();
+  const delivery = (deliveryStatus, extra = {}) => harness.sendWebSocketMessage({
+    type: 'chat-message-delivery', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID, messageId: CHAT_REPLY_ID, studentId: STUDENT_ID, deliveryStatus, ...extra,
+  });
+  await delivery('delivered');
+  await status.getByText('Delivered', { exact: true }).waitFor();
+  await delivery('seen', { seenAt: new Date().toISOString() });
+  await status.getByText('Seen', { exact: true }).waitFor();
+  await delivery('delivered');
+  await delivery('failed', { errorMessage: 'late failure' });
+  await fixture.updateRoster();
+  assert.equal(await status.innerText(), 'Seen', 'A stray delivered or a late failure never regresses seen');
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'delivered' });
+  fixture.setMessages([storedChatMessage(), reply]);
+  await fixture.refetch('/api/teacher/messages');
+  await chatHistorySettled(page);
+  assert.equal(await status.innerText(), 'Seen', 'A history row that still says delivered cannot regress seen');
+  const seenRow = { ...reply, deliveryStatus: 'seen', seenAt: new Date().toISOString() };
+  fixture.setMessages([storedChatMessage(), seenRow]);
+  await page.reload();
+  await openChatPanel(page);
+  await selectConversation(page);
+  await status.getByText('Seen', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat trust signals: the thread header shows device status and an offline note until the device reports again', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await selectConversation(page);
+  // The fixture student was last seen weeks ago: not current.
+  await page.getByTestId('chat-thread-offline-note').waitFor();
+  await page.getByTestId('chat-thread-status').waitFor();
+  await fixture.updateRoster();
+  await page.getByTestId('chat-thread-offline-note').waitFor({ state: 'hidden' });
+  assert.match(await page.getByTestId('chat-thread-status').innerText(), /Online|Active|Signing in|On task|Idle/i);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat trust signals: opening a thread posts one read receipt and another tab\'s receipt reads a thread here', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  const row = storedChatMessage();
+  await harness.sendWebSocketMessage(studentChatEvent(row));
+  await expectChatUnread(page, 1);
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/messages/read').length, 0, 'Nothing is read until the teacher opens the thread');
+  await selectConversation(page);
+  await expectChatUnread(page, 0);
+  await waitUntil(() => fixture.mutations.some(mutation => mutation.pathname === '/api/teacher/messages/read'), 'Opening the thread posts a read receipt');
+  const receipts = fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/messages/read');
+  assert.equal(receipts.length, 1);
+  assert.deepEqual(receipts[0].body.messageIds, [row.id]);
+  assert.equal(receipts[0].body.sessionId, OWN_SESSION_ID);
+  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question' });
+  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student' } });
+  await expectChatUnread(page, 1);
+  await harness.sendWebSocketMessage({ type: 'chat-messages-read', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID, messageIds: [benRow.id], readAt: new Date().toISOString(), readBy: ADMIN_ID });
+  await expectChatUnread(page, 0);
+  await fixture.updateRoster();
+  assert.equal(receipts.length, fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/messages/read').length, 'A receipt from elsewhere is not re-posted');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat trust signals: the Messages tab reads the scoped transcript read-only and says so when unavailable', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  let transcriptStatus = 200;
+  const transcriptReads = [];
+  const rows = [storedChatMessage({ createdAt: '2026-09-18T14:00:00.000Z' }),
+    storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'seen', createdAt: '2026-09-18T14:01:00.000Z' })];
+  await page.route(`**/api/classpilot/students/${STUDENT_ID}/messages*`, async route => {
+    const url = new URL(route.request().url());
+    transcriptReads.push({ query: Object.fromEntries(url.searchParams), schoolId: route.request().headers()['x-school-id'] });
+    if (transcriptStatus !== 200) { await route.fulfill({ status: transcriptStatus, json: { error: 'Access denied' } }); return; }
+    await route.fulfill({ json: { student: { id: STUDENT_ID }, messages: rows, nextCursor: null } });
+  });
+  await page.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+  await page.getByTestId('student-tabs').waitFor();
+  await page.getByTestId('tab-messages').click();
+  await page.getByTestId('student-transcript').waitFor();
+  await page.getByTestId('student-transcript').getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor();
+  await page.getByTestId('student-transcript').getByTestId(`chat-delivery-${CHAT_REPLY_ID}`).getByText('Seen', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-composer').count(), 0, 'The transcript is read-only');
+  assert.equal(transcriptReads.length, 1);
+  assert.deepEqual(transcriptReads[0].query, { teachingSessionId: OWN_SESSION_ID }, 'The read is scoped to the class the viewer holds');
+  assert.equal(transcriptReads[0].schoolId, SCHOOL_ID);
+  await page.keyboard.press('Escape');
+  await page.getByTestId('student-transcript').waitFor({ state: 'hidden' });
+  transcriptStatus = 403;
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    queryClient.removeQueries({ queryKey: ['/api/classpilot/students/messages'] });
+  });
+  await page.getByTestId(`button-student-details-${STUDENT_ID}`).click();
+  await page.getByTestId('student-tabs').waitFor();
+  await page.getByTestId('tab-messages').click();
+  await page.getByTestId('student-transcript-unavailable').waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat trust signals: the drawer pause switch writes chatPaused and a testing pause shows as locked with no settings request', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
+  const row = student({ supervisionState: 'temporary_coverage',
+    supervisionContext: { id: OWN_TESTING_CONTEXT_ID, type: 'testing', assignedStaffId: ADMIN_ID },
+    capabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true },
+    lastSeenAt: '2026-09-15T13:11:30Z', realtimeObservedAt: '2026-09-15T13:11:30Z',
+  });
+  const aggregate = aggregateController({ scoped: success([row]) });
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledTestingActivity({ studentCount: 1 }), { serverTime: '2026-09-15T13:11:30Z' }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+  });
+  const settingsRequests = [];
+  let stored = { supervisionContextId: OWN_TESTING_CONTEXT_ID, lifecycleRevision: 2, raiseHandEnabled: true, chatEnabled: true, chatPaused: false };
+  let effective = { messagingEnabled: true, handRaisingEnabled: true, messagesPaused: false, pauseReason: null, lifecycleRevision: 2 };
+  await page.route(`**/api/classpilot/supervision-contexts/${OWN_TESTING_CONTEXT_ID}/settings`, async route => {
+    const request = route.request();
+    if (request.method() === 'PATCH') {
+      const body = request.postDataJSON();
+      settingsRequests.push(body);
+      stored = { ...stored, ...('chatPaused' in body ? { chatPaused: body.chatPaused } : {}), ...('chatEnabled' in body ? { chatEnabled: body.chatEnabled } : {}), lifecycleRevision: stored.lifecycleRevision + 1 };
+      effective = { ...effective, messagesPaused: stored.chatPaused, pauseReason: stored.chatPaused ? 'teacher' : null, messagingEnabled: stored.chatEnabled && !stored.chatPaused, lifecycleRevision: stored.lifecycleRevision };
+    }
+    await route.fulfill({ json: { settings: stored, state: effective } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await openToolbarByKeyboard(page);
+  await page.getByTestId('chat-open').getByText('Messages', { exact: true }).waitFor();
+  await page.getByTestId('chat-open').click({ force: true });
+  await page.getByTestId('chat-drawer').waitFor();
+  await page.getByTestId('chat-pause-label').getByText('Messages: On', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-pause-banner').count(), 0);
+  await page.getByTestId('chat-messaging-switch').click();
+  await waitUntil(() => settingsRequests.length === 1, 'The switch writes the soft pause');
+  assert.deepEqual(settingsRequests[0], { chatPaused: true, expectedRevision: 2 }, 'Pause never touches the hard channel switch');
+  await page.getByTestId('chat-pause-banner').waitFor();
+  assert.equal(await page.getByTestId('chat-pause-banner').getAttribute('data-pause-reason'), 'teacher');
+  await page.getByTestId('chat-pause-label').getByText('Messages: Paused', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-messaging-switch').isDisabled(), false, 'A teacher pause can be resumed');
+  await page.keyboard.press('Escape');
+  await openToolbarByKeyboard(page);
+  await page.getByTestId('chat-open').getByText('Messages (Paused)', { exact: true }).waitFor();
+  await page.getByTestId('chat-open').click({ force: true });
+  // A testing block pauses on its own: the server reports the pause without chatPaused.
+  stored = { ...stored, chatPaused: false, lifecycleRevision: 4 };
+  effective = { ...effective, messagesPaused: true, pauseReason: 'testing', messagingEnabled: false, lifecycleRevision: 4 };
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.invalidateQueries({ queryKey: ['/api/classpilot/activity-settings'] });
+  });
+  await page.getByTestId('chat-pause-label').getByText('Paused for testing', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-pause-banner').getAttribute('data-pause-reason'), 'testing');
+  assert.equal(await page.getByTestId('chat-messaging-switch').isDisabled(), true, 'A testing pause is not the teacher\'s to lift');
+  await page.getByTestId('chat-messaging-switch').click({ force: true });
+  await page.waitForTimeout(300);
+  assert.equal(settingsRequests.length, 1, 'A locked switch sends nothing');
+  await page.getByTestId('chat-drawer-menu').click();
+  await page.getByTestId('chat-channel-toggle').getByText('Turn off messaging for this class', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+async function openToolbarByKeyboard(page) {
+  // Toasts stack over the toolbar corner, so drive it from the keyboard.
+  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('chat-open').waitFor();
+}
 
 async function chatHistorySettled(page) {
   await page.waitForFunction(async () => {
