@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '../../../comp
 import { Switch } from '../../../components/ui/switch';
 import { cn } from '../../../lib/utils';
 import { deriveStudentMonitoringDisplay } from '../lib/studentMonitoringDisplay';
-import { describeChatPause } from '../lib/chatThreads';
+import { describeChatDeviceReadiness, describeChatPause } from '../lib/chatThreads';
 import { useResizablePanelWidth } from '../hooks/useResizablePanelWidth';
 import ChatConversationList from './ChatConversationList';
 import ChatThread from './ChatThread';
@@ -33,6 +33,7 @@ function ChatDrawer({
   onMarkThreadRead,
   students,
   freshnessNowMs,
+  authority = null,
   studentMessagingEnabled = true,
   onToggleStudentMessaging,
   fabState = null,
@@ -56,6 +57,16 @@ function ChatDrawer({
     }
     return map;
   }, [students, freshnessNowMs]);
+  const readinessByStudent = useMemo(() => {
+    const map = new Map();
+    for (const student of students || []) {
+      const id = student.studentId || student.id;
+      if (!id) continue;
+      const readiness = describeChatDeviceReadiness({ student, monitoring: monitoringByStudent.get(id) || null, authority });
+      if (readiness) map.set(id, readiness);
+    }
+    return map;
+  }, [students, monitoringByStudent, authority]);
   const showList = !singlePane || !selected;
   const showThread = !singlePane || Boolean(selected);
 
@@ -149,6 +160,7 @@ function ChatDrawer({
                 selectedStudentId={selectedStudentId}
                 onSelect={onSelectConversation}
                 monitoringByStudent={monitoringByStudent}
+                readinessByStudent={readinessByStudent}
               />
             </div>
           )}
@@ -158,6 +170,7 @@ function ChatDrawer({
                 <ChatThread
                   conversation={selected}
                   monitoring={monitoringByStudent.get(selected.studentId) || null}
+                  readiness={readinessByStudent.get(selected.studentId) || null}
                   onClearThread={onClearThread}
                   onEndChat={onEndChat}
                   onMarkThreadRead={onMarkThreadRead}

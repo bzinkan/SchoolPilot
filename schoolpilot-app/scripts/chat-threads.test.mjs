@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CANNED_REPLIES, CHAT_REPLY_MAX_CHARS, countUnreadByStudent, looksLikeQuestion, deriveChatConversations, DELIVERY_RANK, mergeDeliveryStatus, deliveryLabel, describeChatPause } from '../src/products/classpilot/lib/chatThreads.js';
+import { CANNED_REPLIES, CHAT_REPLY_MAX_CHARS, countUnreadByStudent, looksLikeQuestion, deriveChatConversations, describeChatDeviceReadiness, DELIVERY_RANK, mergeDeliveryStatus, deliveryLabel, describeChatPause } from '../src/products/classpilot/lib/chatThreads.js';
 
 test('a message is a question when it ends with a question mark', () => {
   assert.equal(looksLikeQuestion('can we go gym still?????'), true);
@@ -97,4 +97,76 @@ test('a pause is described by who paused it, and a testing pause is locked', () 
   const testing = describeChatPause({ messagesPaused: true, pauseReason: 'testing' });
   assert.deepEqual([testing.reason, testing.locked, testing.title], ['testing', true, 'Paused for testing']);
   assert.equal(describeChatPause({ messagesPaused: true }).reason, 'teacher', 'an unknown reason reads as the teacher');
+});
+
+test('device readiness: not reporting wins over everything and keeps the offline test id', () => {
+  const offline = { telemetryCurrent: false, status: 'signal_lost' };
+  const readiness = describeChatDeviceReadiness({
+    student: { fabSyncPending: true, enforcementHealth: 'pending' },
+    monitoring: offline,
+    authority: { teachingSessionId: 'session-a' },
+  });
+  assert.equal(readiness.kind, 'offline');
+  assert.equal(readiness.testId, 'chat-thread-offline-note');
+  assert.equal(describeChatDeviceReadiness({ student: {}, monitoring: offline, authority: null }).kind, 'offline');
+});
+
+test('device readiness: never guesses without a drawer authority or a student', () => {
+  const online = { telemetryCurrent: true, status: 'online' };
+  assert.equal(describeChatDeviceReadiness({ student: {}, monitoring: online, authority: null }), null);
+  assert.equal(describeChatDeviceReadiness({ student: null, monitoring: online, authority: { teachingSessionId: 'session-a' } }), null);
+  assert.equal(describeChatDeviceReadiness(), null);
+});
+
+test('device readiness: a device with no classroom state has not joined the class', () => {
+  const readiness = describeChatDeviceReadiness({
+    student: { studentId: 's1' },
+    monitoring: { telemetryCurrent: true, status: 'online' },
+    authority: { teachingSessionId: 'session-a' },
+  });
+  assert.equal(readiness.kind, 'not_in_class');
+  assert.equal(readiness.testId, 'chat-thread-readiness-note');
+  assert.match(readiness.label, /under this class/);
+});
+
+test('device readiness: another class or a coverage context owning the device is reported', () => {
+  const online = { telemetryCurrent: true, status: 'online' };
+  const otherSession = describeChatDeviceReadiness({
+    student: { classroomState: { teachingSessionId: 'session-b', supervisionContextId: null } },
+    monitoring: online,
+    authority: { teachingSessionId: 'session-a' },
+  });
+  assert.equal(otherSession.kind, 'other_authority');
+  const otherContext = describeChatDeviceReadiness({
+    student: { classroomState: { teachingSessionId: null, supervisionContextId: 'context-b' } },
+    monitoring: online,
+    authority: { supervisionContextId: 'context-a' },
+  });
+  assert.equal(otherContext.kind, 'other_authority');
+  const matchingContext = describeChatDeviceReadiness({
+    student: { classroomState: { teachingSessionId: null, supervisionContextId: 'context-a' }, enforcementHealth: 'synced' },
+    monitoring: online,
+    authority: { supervisionContextId: 'context-a' },
+  });
+  assert.equal(matchingContext, null);
+});
+
+test('device readiness: applying settings, then a re-sent FAB, then nothing in the way', () => {
+  const online = { telemetryCurrent: true, status: 'online' };
+  const authority = { teachingSessionId: 'session-a' };
+  const owned = { teachingSessionId: 'session-a', supervisionContextId: null };
+  assert.equal(describeChatDeviceReadiness({
+    student: { classroomState: owned, enforcementHealth: 'pending', fabSyncPending: true }, monitoring: online, authority,
+  }).kind, 'applying', 'an unacknowledged control revision outranks the FAB re-send');
+  const syncing = describeChatDeviceReadiness({
+    student: { classroomState: owned, enforcementHealth: 'synced', fabSyncPending: true }, monitoring: online, authority,
+  });
+  assert.equal(syncing.kind, 'fab_syncing');
+  assert.match(syncing.detail, /last check-in/);
+  assert.equal(describeChatDeviceReadiness({
+    student: { classroomState: owned, enforcementHealth: 'synced', fabSyncPending: false }, monitoring: online, authority,
+  }), null);
+  assert.equal(describeChatDeviceReadiness({
+    student: { classroomState: owned, enforcementHealth: 'synced' }, monitoring: null, authority,
+  }), null, 'no monitoring projection is not treated as offline');
 });

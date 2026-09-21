@@ -32,6 +32,7 @@ const REALTIME_FIELDS = Object.freeze([
   'tabsTruncated',
   'classroomState',
   'enforcementHealth',
+  'fabSyncPending',
   'status',
   'loginState',
   'isLoggedIn',
@@ -117,6 +118,7 @@ function resetForRealtimeBinding(row, binding) {
     tabsTruncated: false,
     classroomState: undefined,
     enforcementHealth: 'unsupported',
+    fabSyncPending: false,
     status: 'offline',
     loginState: 'not_logged_in',
     isLoggedIn: false,
@@ -291,6 +293,7 @@ function mapStudentUpdate(row, event) {
   copy('activeFlightPathName');
   copy('classroomState');
   copy('enforcementHealth');
+  copy('fabSyncPending');
 
   const classification = normalizedClassification(event);
   if (classification) {
@@ -375,6 +378,7 @@ function mapSignedOut(row, event) {
     classificationPending: false,
     openTabCount: 0,
     tabsTruncated: false,
+    fabSyncPending: false,
     ...(revision === null ? {} : { realtimeRevision: revision }),
     ...(time === null ? {} : { realtimeObservedAt: new Date(time).toISOString() }),
     _realtimeSignedOut: true,
