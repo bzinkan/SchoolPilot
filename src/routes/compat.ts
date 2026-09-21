@@ -1372,6 +1372,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         screenshotHealth: visibleRealtime?.screenshotHealth || undefined,
         classroomState: authoritativeClassroomState,
         enforcementHealth,
+        appliedFabRevision: visibleRealtime?.appliedFabRevision ?? null,
         enforcementUnavailableReason: restrictionAuthUpdateRequired
           ? "Extension update required for sign-in-safe Waypoint or Flight Path"
           : null,
