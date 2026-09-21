@@ -744,3 +744,34 @@ test('delegated aggregate state suppresses sockets until REST explicitly clears 
   assert.equal(returned[0]._realtimeSuppressed, undefined);
   assert.equal(returned[0].activeTabUrl, 'https://returned.example');
 });
+
+test('carries fabSyncPending through updates, clears it on a later frame, a new binding, and sign-out', () => {
+  const flagged = applyStudentRealtimeEvents(base(), [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1', deviceId: 'device-1',
+    revision: 4, observedAtMs: Date.parse('2026-08-13T12:00:10.000Z'),
+    classroomState: { schemaVersion: 1, revision: 2, teachingSessionId: 'session-a', supervisionContextId: null },
+    enforcementHealth: 'synced',
+    fabSyncPending: true,
+  }]);
+  assert.equal(flagged[0].fabSyncPending, true);
+  assert.equal(flagged[0].classroomState.teachingSessionId, 'session-a');
+  const cleared = applyStudentRealtimeEvents(flagged, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1', deviceId: 'device-1',
+    revision: 5, observedAtMs: Date.parse('2026-08-13T12:00:20.000Z'), fabSyncPending: false,
+  }]);
+  assert.equal(cleared[0].fabSyncPending, false);
+  const untouched = applyStudentRealtimeEvents(flagged, [{
+    type: 'student-update', schoolId: 'school-1', studentId: 'student-1', deviceId: 'device-1',
+    revision: 5, observedAtMs: Date.parse('2026-08-13T12:00:20.000Z'), activeTabUrl: 'https://example.test/next',
+  }]);
+  assert.equal(untouched[0].fabSyncPending, true, 'a frame without the field keeps the last value');
+  const rebound = applyStudentRealtimeEvents(flagged, [{
+    type: 'student-update', eventVersion: 2, schoolId: 'school-1', studentId: 'student-1', deviceId: 'device-1',
+    realtimeBinding: 'binding-b', revision: 1, observedAtMs: Date.parse('2026-08-13T12:01:00.000Z'),
+  }]);
+  assert.equal(rebound[0].fabSyncPending, false, 'a new realtime binding resets the flag');
+  const signedOut = applyStudentRealtimeEvents(flagged, [{
+    type: 'student-signed-out', schoolId: 'school-1', studentId: 'student-1', deviceId: 'device-1', revision: 6,
+  }]);
+  assert.equal(signedOut[0].fabSyncPending, false);
+});

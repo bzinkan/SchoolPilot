@@ -3654,6 +3654,51 @@ test('chat trust signals: the thread header shows device status and an offline n
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('chat device readiness: the thread and row say when the device has not joined the class or is still syncing chat controls', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context);
+  const { page, harness } = fixture;
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await selectConversation(page);
+  // A current device with no classroom state is not under this class's control yet.
+  await fixture.updateRoster();
+  await page.getByTestId('chat-thread-offline-note').waitFor({ state: 'hidden' });
+  const note = page.getByTestId('chat-thread-readiness-note');
+  await note.waitFor();
+  assert.equal(await note.getAttribute('data-kind'), 'not_in_class');
+  const marker = page.getByTestId(`chat-conversation-readiness-${STUDENT_ID}`);
+  await marker.waitFor();
+  assert.equal(await marker.getAttribute('data-kind'), 'not_in_class');
+  const frame = (revision, extra) => ({
+    type: 'student-update', eventVersion: 2, schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    studentId: STUDENT_ID, realtimeBinding: 'binding-a', revision, observedAtMs: Date.now() + revision,
+    ...extra,
+  });
+  // The device reports this class as its controlling authority and has applied it.
+  await harness.sendWebSocketMessage(frame(1000, {
+    classroomState: { schemaVersion: 1, revision: 1, teachingSessionId: OWN_SESSION_ID, supervisionContextId: null },
+    enforcementHealth: 'synced',
+    fabSyncPending: false,
+  }));
+  await note.waitFor({ state: 'hidden' });
+  await marker.waitFor({ state: 'hidden' });
+  // The server re-sent the FAB state on the last heartbeat because the class-start push missed.
+  await harness.sendWebSocketMessage(frame(1001, { fabSyncPending: true }));
+  await note.waitFor();
+  assert.equal(await note.getAttribute('data-kind'), 'fab_syncing');
+  assert.match(await note.innerText(), /syncing to this device/);
+  assert.equal(await marker.getAttribute('data-kind'), 'fab_syncing');
+  await harness.sendWebSocketMessage(frame(1002, { fabSyncPending: false }));
+  await note.waitFor({ state: 'hidden' });
+  await marker.waitFor({ state: 'hidden' });
+  // Another class owning the device is reported, never guessed from the switch.
+  await harness.sendWebSocketMessage(frame(1003, {
+    classroomState: { schemaVersion: 1, revision: 2, teachingSessionId: '99999999-9999-4999-8999-999999999999', supervisionContextId: null },
+  }));
+  await note.waitFor();
+  assert.equal(await note.getAttribute('data-kind'), 'other_authority');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('chat trust signals: opening a thread posts one read receipt and another tab\'s receipt reads a thread here', { timeout: 60_000 }, async context => {
   const fixture = await chatBrowserFixture(context);
   const { page, harness } = fixture;

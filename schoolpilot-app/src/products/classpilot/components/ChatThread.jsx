@@ -49,7 +49,7 @@ export function ChatMessageBubble({ item }) {
  * it is open on a visible tab, marks the student's messages read. Only this
  * thread auto-scrolls.
  */
-function ChatThread({ conversation, monitoring = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
+function ChatThread({ conversation, monitoring = null, readiness = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
   const endRef = useRef(null);
   const { studentId, studentName, items } = conversation;
   const itemCount = items.length;
@@ -134,9 +134,13 @@ function ChatThread({ conversation, monitoring = null, onClearThread, onEndChat,
           )}
         </div>
       </div>
-      {monitoring && !monitoring.telemetryCurrent && (
-        <div className="px-3 py-1.5 text-xs bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-b border-amber-100 dark:border-amber-900 shrink-0" data-testid="chat-thread-offline-note">
-          Device isn’t reporting — replies deliver when it reconnects.
+      {readiness && (
+        <div
+          className="px-3 py-1.5 text-xs bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-b border-amber-100 dark:border-amber-900 shrink-0"
+          data-testid={readiness.testId}
+          data-kind={readiness.kind}
+        >
+          {readiness.label}{readiness.detail ? ` ${readiness.detail}` : ''}
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5" data-testid="chat-thread-messages">

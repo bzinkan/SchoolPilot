@@ -123,3 +123,59 @@ export function deriveChatConversations(studentMessages, chatReplies) {
     || a.studentName.localeCompare(b.studentName));
   return { conversations, totalUnread: conversations.reduce((total, conversation) => total + conversation.unreadCount, 0) };
 }
+
+const OFFLINE_NOTE = 'Device isn\u2019t reporting \u2014 replies deliver when it reconnects.';
+
+/**
+ * Why a student's device may not be able to chat right now, from data the
+ * dashboard already holds. The class-level switch says what the teacher
+ * allows; this says what the device has actually received. Precedence:
+ * not reporting > no drawer authority (never guess) > not under this class's
+ * control > still applying the class settings > FAB re-sent on the last
+ * check-in. Returns null when nothing is known to be in the way; it never
+ * claims the student can send.
+ */
+export function describeChatDeviceReadiness({ student, monitoring, authority } = {}) {
+  if (monitoring && !monitoring.telemetryCurrent) {
+    return { kind: 'offline', label: OFFLINE_NOTE, detail: null, testId: 'chat-thread-offline-note' };
+  }
+  if (!authority || !student) return null;
+  const classroomState = student.classroomState;
+  if (!classroomState || typeof classroomState !== 'object') {
+    return {
+      kind: 'not_in_class',
+      label: 'This device isn\u2019t under this class\u2019s control yet.',
+      detail: 'Chat and hand raise stay unavailable on it until it joins.',
+      testId: 'chat-thread-readiness-note',
+    };
+  }
+  const sessionMismatch = authority.teachingSessionId
+    && classroomState.teachingSessionId !== authority.teachingSessionId;
+  const contextMismatch = authority.supervisionContextId
+    && classroomState.supervisionContextId !== authority.supervisionContextId;
+  if (sessionMismatch || contextMismatch) {
+    return {
+      kind: 'other_authority',
+      label: 'Another class or coverage controls this device right now.',
+      detail: 'Messages from here will not reach it until that ends.',
+      testId: 'chat-thread-readiness-note',
+    };
+  }
+  if (student.enforcementHealth === 'pending') {
+    return {
+      kind: 'applying',
+      label: 'Device is still applying this class\u2019s settings.',
+      detail: null,
+      testId: 'chat-thread-readiness-note',
+    };
+  }
+  if (student.fabSyncPending === true) {
+    return {
+      kind: 'fab_syncing',
+      label: 'Chat controls are syncing to this device.',
+      detail: 'Re-sent on its last check-in.',
+      testId: 'chat-thread-readiness-note',
+    };
+  }
+  return null;
+}

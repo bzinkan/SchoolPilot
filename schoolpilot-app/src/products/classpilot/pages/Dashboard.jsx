@@ -6760,6 +6760,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           onMarkThreadRead={markChatThreadRead}
           students={students}
           freshnessNowMs={freshnessNowMs}
+          authority={effectiveAuthority}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
           fabState={sessionFabState}

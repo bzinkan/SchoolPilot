@@ -16,8 +16,11 @@ function statusDotClass(status) {
   return 'bg-gray-400';
 }
 
-/** Inbox rows: unread first, then newest. `monitoringByStudent` supplies the presence dot. */
-function ChatConversationList({ conversations, selectedStudentId, onSelect, monitoringByStudent }) {
+/**
+ * Inbox rows: unread first, then newest. `monitoringByStudent` supplies the
+ * presence dot; `readinessByStudent` marks a device that cannot chat yet.
+ */
+function ChatConversationList({ conversations, selectedStudentId, onSelect, monitoringByStudent, readinessByStudent }) {
   if (conversations.length === 0) {
     return (
       <div data-testid="chat-empty" className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -30,6 +33,8 @@ function ChatConversationList({ conversations, selectedStudentId, onSelect, moni
       {conversations.map((conversation) => {
         const { studentId, studentName, lastItem, lastAt, unreadCount } = conversation;
         const monitoring = monitoringByStudent?.get(studentId);
+        const readiness = readinessByStudent?.get(studentId);
+        const blocked = readiness && readiness.kind !== 'offline' ? readiness : null;
         const selected = studentId === selectedStudentId;
         return (
           <li key={studentId}>
@@ -58,7 +63,16 @@ function ChatConversationList({ conversations, selectedStudentId, onSelect, moni
                   <span className={cn('truncate text-sm', unreadCount > 0 ? 'font-semibold text-gray-900 dark:text-gray-100' : 'font-medium text-gray-800 dark:text-gray-200')}>
                     {studentName}
                   </span>
-                  <span className="shrink-0 text-[10px] text-gray-400 dark:text-gray-500">
+                  <span className="shrink-0 flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
+                    {blocked && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-amber-400"
+                        title={blocked.label}
+                        aria-label={blocked.label}
+                        data-testid={`chat-conversation-readiness-${studentId}`}
+                        data-kind={blocked.kind}
+                      />
+                    )}
                     <time dateTime={lastAt || undefined}>{formatChatTimestamp(lastAt)}</time>
                   </span>
                 </span>
