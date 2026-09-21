@@ -49,11 +49,11 @@
     "test": "node --env-file-if-exists=.env --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 \"tests/**/*.test.ts\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.125.0",
-    "@aws-sdk/client-s3": "^3.1132.0",
-    "@aws-sdk/s3-request-presigner": "^3.1132.0",
+    "@anthropic-ai/sdk": "^0.126.0",
+    "@aws-sdk/client-s3": "^3.1135.0",
+    "@aws-sdk/s3-request-presigner": "^3.1135.0",
     "@sendgrid/mail": "^8.1.6",
-    "@sentry/node": "^10.74.0",
+    "@sentry/node": "^10.75.0",
     "bcryptjs": "^3.0.3",
     "connect-pg-simple": "^10.0.0",
     "cookie-parser": "^1.4.7",
