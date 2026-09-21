@@ -13,6 +13,8 @@ const COUNTER_NAMES = [
   "safetyEmailsSent", "safetyFollowupsSent", "safetyEmailFailures", "safetyEmailUnknown",
   "studentChatFanOutDelivered", "studentChatFanOutMissed",
   "chatSafetyScanFailed", "chatSafetyAlertsRecorded",
+  "fabSyncLocalDeliveryMissed", "fabSyncPendingMarked", "fabSyncPendingMarkFallback",
+  "fabSyncPendingServed", "fabSyncPendingTakeUnavailable",
   ...STUDENT_SIGN_IN_COUNTER_NAMES,
 ] as const;
 

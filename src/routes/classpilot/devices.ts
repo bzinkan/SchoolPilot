@@ -243,6 +243,11 @@ import {
   renewClasspilotStudentAuthGatePresence,
 } from "../../services/classpilotStudentAuthGatePresence.js";
 import {
+  markClasspilotFabSyncPending,
+  takeClasspilotFabSyncPending,
+} from "../../services/classpilotFabSyncPending.js";
+import { recordRuntimePerformanceCounter } from "../../services/runtimePerformanceMetrics.js";
+import {
   classpilotStudentRosterTransferDecision,
   classpilotStudentSessionTransferDecision,
 } from "../../services/classpilotStudentSessionTransfer.js";
@@ -1037,6 +1042,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     screenshotHealth: snapshot.screenshotHealth,
     classroomState: snapshot.classroomState,
     enforcementHealth: snapshot.enforcementHealth,
+    appliedFabRevision: snapshot.appliedFabRevision ?? null,
   };
 }
 
@@ -3710,6 +3716,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       flightPathActive, activeFlightPathName, screenshotHealth,
       extensionVersion, chromeVersion, appliedClassroomStateRevision,
       appliedAuthPolicyRevision: reportedAppliedAuthPolicyRevision,
+      fabStateRevision: reportedFabStateRevision,
       capabilities, extensionCapabilities, tabSnapshotRevision,
       activeTabRef,
       classroomStateOutcome,
@@ -3721,6 +3728,14 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       && Number.isSafeInteger(reportedAppliedAuthPolicyRevision)
       && reportedAppliedAuthPolicyRevision >= 0
     ) ? reportedAppliedAuthPolicyRevision : null;
+    // The FAB revision the device last applied. Revisions reset per teaching
+    // session and the device does not name the session, so this is recorded
+    // for diagnostics and a future acknowledgement signal, not for gating.
+    const appliedFabRevision = (
+      typeof reportedFabStateRevision === "number"
+      && Number.isSafeInteger(reportedFabStateRevision)
+      && reportedFabStateRevision >= 0
+    ) ? reportedFabStateRevision : null;
     // These variables are replaced with a school-policy-derived, origin-only
     // projection before any database/cache/realtime/classification use.
     let activeTabUrl = reportedActiveTabUrl;
@@ -3760,6 +3775,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         studentSessionId,
       })
     );
+    // A pending FAB sync flag is consumed by the next regular heartbeat below.
+    // This burst short-circuit only covers a repeat within five seconds, so it
+    // is never the only heartbeat a flagged device sends.
     if (
       !protocol.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
       && !protocol.acceptedCapabilities.includes("restrictionAuthPassThroughV1")
@@ -4220,15 +4238,20 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       enforcementHealth,
       restrictionAuthState,
       appliedAuthPolicyRevision,
+      appliedFabRevision,
     });
     // A write-through cache must never keep serving an older complete list when
     // this heartbeat could not be inserted into Redis. Finish the single Redis
     // round trip after releasing PostgreSQL, then fail closed by deleting (or
     // locally suppressing) the affected cache key before the HTTP response.
-    const [heartbeatTileCacheWritten, realtimeStatusMutation, screenshotPolicy] = await Promise.all([
+    // The fab-sync-pending GETDEL joins this same concurrent round; it never
+    // adds a serial wait.
+    const fabSyncPendingTake = takeClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
+    const [heartbeatTileCacheWritten, realtimeStatusMutation, screenshotPolicy, fabSyncPending] = await Promise.all([
       heartbeatTileCacheWrite,
       realtimeStatusWrite,
       screenshotPolicyPromise,
+      fabSyncPendingTake,
     ]);
     if (!heartbeatTileCacheWritten) {
       // invalidate() marks this process fail-closed before its first await.
@@ -4245,6 +4268,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         // A newer heartbeat or a sign-out tombstone already owns the latest
         // status. Preserve the accepted historical row but never broadcast or
         // classify this delayed request as current activity.
+        if (fabSyncPending) void markClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
         return res.json({
           ok: true,
           planStatus: school.planStatus || "active",
@@ -4300,6 +4324,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       studentId,
       schoolId,
       visibilityState,
+      // True only on the heartbeat that re-delivers a FAB state the class-start
+      // push could not reach; the next frame reports false again.
+      fabSyncPending: fabSyncPending === true,
       isScreenRecording,
       status: trackingStatus,
       timestamp: new Date().toISOString(),
@@ -4745,7 +4772,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
                 observationStatus: heartbeatObservationStatus,
               })
             : screenshotPolicy;
-          const finalFab = req.body?.requestFabState === true
+          const finalFab = req.body?.requestFabState === true || fabSyncPending
             ? await buildStudentFabState(schoolId, studentId, {
                 studentSessionId,
                 acceptedCapabilities: protocol.acceptedCapabilities,
@@ -4766,6 +4793,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           };
         },
         (_claimed, prepared) => {
+          if (fabSyncPending && prepared.deliveredFab) {
+            recordRuntimePerformanceCounter("fabSyncPendingServed");
+          }
           if (prepared.withheldReason === "late_sign_in_capability_required") {
             recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
           } else if (

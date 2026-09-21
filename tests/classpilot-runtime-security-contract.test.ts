@@ -83,6 +83,14 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     );
     assert.match(heartbeat, /\.\.\.\(prepared\.deliveredFab \? \{ fab: prepared\.deliveredFab \} : \{\}\)/);
     assert.equal(heartbeat.match(/buildStudentFabState\(/g)?.length, 1);
+    // A device flagged because the class-start push found no socket gets the
+    // FAB state on its next regular heartbeat through the same single call.
+    assert.match(heartbeat, /req\.body\?\.requestFabState === true \|\| fabSyncPending/);
+    assert.match(heartbeat, /takeClasspilotFabSyncPending\(\{ schoolId, studentId, studentSessionId, deviceId \}\)/);
+    assert.match(heartbeat, /await Promise\.all\(\[\s*heartbeatTileCacheWrite,\s*realtimeStatusWrite,\s*screenshotPolicyPromise,\s*fabSyncPendingTake,\s*\]\)/);
+    const beforeShortCircuit = heartbeat.slice(0, heartbeat.indexOf("return res.status(204).send();"));
+    assert.doesNotMatch(beforeShortCircuit, /takeClasspilotFabSyncPending\(/);
+    assert.match(heartbeat, /fabSyncPending: fabSyncPending === true,/);
   });
 
   it("targets claimed-student realtime updates to only the assigned staff user", async () => {

@@ -128,6 +128,8 @@ export type ClasspilotRealtimeStatus = {
   restrictionAuthState?: ClasspilotRestrictionAuthState;
   /** Exact school SSO policy revision the extension reports as applied. */
   appliedAuthPolicyRevision?: number;
+  /** FAB (chat/hand-raise) state revision the extension reports as applied. */
+  appliedFabRevision?: number;
   screenshotHealth?: ClasspilotScreenshotHealth;
   aiClassification?: ClasspilotRealtimeClassification;
   classificationPending: boolean;
@@ -182,6 +184,7 @@ export type ClasspilotRealtimeWriteInput = {
   enforcementHealth?: "synced" | "pending" | "failed" | "unsupported" | "expired";
   restrictionAuthState?: unknown;
   appliedAuthPolicyRevision?: unknown;
+  appliedFabRevision?: unknown;
 };
 
 export type ClasspilotRealtimeClassificationPatch = {
@@ -787,6 +790,13 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   ) {
     snapshot.appliedAuthPolicyRevision = row.appliedAuthPolicyRevision;
   }
+  if (
+    typeof row.appliedFabRevision === "number"
+    && Number.isSafeInteger(row.appliedFabRevision)
+    && row.appliedFabRevision >= 0
+  ) {
+    snapshot.appliedFabRevision = row.appliedFabRevision;
+  }
   return snapshot;
 }
 
@@ -887,6 +897,13 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
     && input.appliedAuthPolicyRevision >= 0
   ) {
     snapshot.appliedAuthPolicyRevision = input.appliedAuthPolicyRevision;
+  }
+  if (
+    typeof input.appliedFabRevision === "number"
+    && Number.isSafeInteger(input.appliedFabRevision)
+    && input.appliedFabRevision >= 0
+  ) {
+    snapshot.appliedFabRevision = input.appliedFabRevision;
   }
   return enforceSnapshotByteLimit(snapshot);
 }

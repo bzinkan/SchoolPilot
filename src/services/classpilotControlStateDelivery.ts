@@ -15,6 +15,12 @@ import {
 } from "./classpilotClassroomState.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import {
+  clearClasspilotFabSyncPending,
+  markClasspilotFabSyncPending,
+  reportClasspilotFabSyncMiss,
+  type ClasspilotFabSyncMissReport,
+} from "./classpilotFabSyncPending.js";
+import {
   classpilotRealtimeFresh,
   readClasspilotRealtimeStatusBatch,
 } from "./classpilotRealtimeStatus.js";
@@ -59,6 +65,10 @@ export async function syncClasspilotControlStatesToActiveDevices(
     );
 
     const publications: PublishWSBatchItem[] = [];
+    // Devices whose local fab-state-sync send found no exact-binding socket.
+    // The pending flag makes their next heartbeat carry the FAB state; the
+    // report line is emitted after the cross-instance batch settles.
+    const fabSyncMisses: Array<Omit<ClasspilotFabSyncMissReport, "relay"> & { publicationIndex: number }> = [];
     let authorizedTargets = 0;
     for (const studentId of uniqueStudentIds) {
       if (signal?.aborted) break;
@@ -229,20 +239,52 @@ export async function syncClasspilotControlStatesToActiveDevices(
       if (!delivery.authorized) continue;
       if (signal?.aborted) break;
       authorizedTargets += 1;
-      for (const publication of delivery.value.publications) {
-        if (publication.target.kind !== "student-binding") continue;
-        sendToStudentBindingLocal(publication.target, publication.message, {
+      let fabDeliveredLocally: boolean | null = null;
+      let fabPublicationIndex = -1;
+      delivery.value.publications.forEach((publication, index) => {
+        if (publication.target.kind !== "student-binding") return;
+        const deliveredLocally = sendToStudentBindingLocal(publication.target, publication.message, {
           requiredCapability: publication.target.requiredCapability,
           requiredCapabilities: publication.target.requiredCapabilities,
         });
+        if ((publication.message as { type?: unknown }).type === "fab-state-sync") {
+          fabDeliveredLocally = deliveredLocally;
+          fabPublicationIndex = publications.length + index;
+        }
+      });
+      if (fabDeliveredLocally === false) {
+        const fabData = (delivery.value.publications[fabPublicationIndex - publications.length]?.message as {
+          data?: { teachingSessionId?: unknown; supervisionContextId?: unknown };
+        } | undefined)?.data;
+        const pending = await markClasspilotFabSyncPending(exactTarget);
+        fabSyncMisses.push({
+          ...exactTarget,
+          teachingSessionId: typeof fabData?.teachingSessionId === "string" ? fabData.teachingSessionId : null,
+          supervisionContextId: typeof fabData?.supervisionContextId === "string" ? fabData.supervisionContextId : null,
+          pending,
+          publicationIndex: fabPublicationIndex,
+        });
+      } else if (fabDeliveredLocally === true) {
+        // A socket took the frame; drop any flag left by an earlier miss.
+        void clearClasspilotFabSyncPending(exactTarget);
       }
       publications.push(...delivery.value.publications);
     }
+    let accepted: boolean[] = [];
+    let batchPublished = false;
     if (publications.length > 0 && !signal?.aborted) {
-      const accepted = await publishWSBatch(publications);
-      if (process.env.REDIS_URL && accepted.some((published) => !published)) {
-        throw new Error("Classroom/FAB publication unavailable");
-      }
+      accepted = await publishWSBatch(publications);
+      batchPublished = true;
+    }
+    for (const miss of fabSyncMisses) {
+      const { publicationIndex, ...report } = miss;
+      reportClasspilotFabSyncMiss({
+        ...report,
+        relay: !batchPublished ? "skipped" : accepted[publicationIndex] ? "accepted" : "unavailable",
+      });
+    }
+    if (batchPublished && process.env.REDIS_URL && accepted.some((published) => !published)) {
+      throw new Error("Classroom/FAB publication unavailable");
     }
     const teachingSessionIds = [...new Set(publications.flatMap((publication) => {
       const classroomState = (publication.message as {

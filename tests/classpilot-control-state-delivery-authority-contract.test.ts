@@ -55,6 +55,16 @@ test("lifecycle control-state fanout stays inside exact student-binding authorit
   );
   assert.doesNotMatch(syncAuthorityCallback, /sendToStudentBindingLocal|publishWSBatch/);
   assert.doesNotMatch(sync, /sendToDeviceLocal|kind: "device"|CURRENT_URL/);
+  // A missed local fab-state-sync send flags the exact binding so the device's
+  // next heartbeat re-delivers the FAB state; the flag and its report line are
+  // written outside the authority callback and after the cross-instance batch.
+  assert.match(
+    sync,
+    /if \(!delivery\.authorized\) continue;[\s\S]*sendToStudentBindingLocal\(publication\.target[\s\S]*if \(fabDeliveredLocally === false\) \{[\s\S]*markClasspilotFabSyncPending\(exactTarget\)/
+  );
+  assert.doesNotMatch(syncAuthorityCallback, /markClasspilotFabSyncPending|clearClasspilotFabSyncPending|reportClasspilotFabSyncMiss/);
+  assert.ok(sync.indexOf("reportClasspilotFabSyncMiss(") > sync.indexOf("publishWSBatch(publications)"));
+  assert.match(sync, /relay: !batchPublished \? "skipped" : accepted\[publicationIndex\] \? "accepted" : "unavailable"/);
 
   const lifecycleRows = lifecycle.slice(
     lifecycle.indexOf("async function publishControlStateRows"),
