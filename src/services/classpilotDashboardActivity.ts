@@ -7,13 +7,14 @@ import { students } from "../schema/students.js";
 import { isScheduledClassroomEnabled, scheduledClassroomRoster, scheduledContextHasClassroomTools, scheduledSupervisionSource,
   supervisionActivitySource, type ClasspilotActivityAuthority, type ClasspilotActivitySource } from "./classpilotActivityAuthority.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { supervisionActivityPresentation, type ClasspilotActivityPurpose } from "./classpilotSupervisionPurpose.js";
 
 export const SCHEDULED_CLASSROOM_COMMANDS = ["open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message",
   "apply-flight-path", "remove-flight-path", "apply-block-list", "remove-block-list", "attention-mode", "timer", "poll",
   "student-sign-out", "temp-unblock", "limit-tabs", "lesson-activity"] as const;
 
 export type ClasspilotDashboardActivity = {
-  id: string; source: ClasspilotActivitySource; name: string; startsAt: string; endsAt: string | null;
+  id: string; source: ClasspilotActivitySource; purpose: ClasspilotActivityPurpose; contextType?: string; name: string; startsAt: string; endsAt: string | null;
   status: "active"; authority: ClasspilotActivityAuthority; studentCount: number;
   groupId?: string; teacherId: string; staffIds: string[];
   contextAuthorityRevision?: string;
@@ -51,7 +52,8 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
       const roster = await scheduledClassroomRoster(schoolId, context.id, database);
       if (!roster.length) continue;
       identities.push([context.id, context.updatedAt, roster.map((row) => [row.assignment.id, row.student.id])]);
-      activities.push({ id: context.id, source: supervisionActivitySource(context), name: context.name,
+      activities.push({ id: context.id, source: supervisionActivitySource(context),
+        ...supervisionActivityPresentation(context, roster.map(row => row.assignment)),
         startsAt: context.startsAt.toISOString(), endsAt: context.endsAt.toISOString(), status: "active",
         authority: { supervisionContextId: context.id }, studentCount: roster.length, teacherId: context.assignedStaffId,
         staffIds: [context.assignedStaffId], contextAuthorityRevision: String(context.classroomAuthorityRevision),
@@ -76,14 +78,15 @@ export async function getClasspilotDashboardActivity(schoolId: string, viewerId:
       const staff = await database.select({ id: classpilotSessionStaff.staffId }).from(classpilotSessionStaff)
         .where(and(eq(classpilotSessionStaff.schoolId, schoolId), eq(classpilotSessionStaff.teachingSessionId, session.id)));
       identities.push([session.id, session.controlUpdatedAt, roster, staff]);
-      activities.push({ id: session.id, source: session.scheduledDate ? "scheduled_class" : "class", name: session.classNameSnapshot || group.name,
+      activities.push({ id: session.id, source: session.scheduledDate ? "scheduled_class" : "class", purpose: "class", name: session.classNameSnapshot || group.name,
         startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: session.scheduledEndAt?.toISOString() ?? null,
         status: "active", authority: { teachingSessionId: session.id }, studentCount: roster.length, groupId: group.id,
         sessionMode: "live", rosterSnapshotCompletedAt: session.rosterSnapshotCompletedAt!.toISOString(), endTime: null,
         teacherId: session.teacherId, staffIds: staff.map((row) => row.id), capabilities: classroomActivityCapabilities() });
     }
   }
-  const current = activities[0] ?? null;
+  // A pickup belongs in Claimed; it must not replace the teacher's current class.
+  const current = activities.find(activity => activity.purpose !== "claim") ?? null;
   const schedule = enabled ? await getDashboardSchedule(schoolId, viewerId, current, now, database, futureContexts) : { next: null, nextBoundaryAt: null };
   return { enabled, schoolId, viewerId, serverTime: now.toISOString(),
     revision: `activity-v1:${createHash("sha256").update(JSON.stringify([enabled, activities, identities, schedule.next])).digest("base64url")}`,

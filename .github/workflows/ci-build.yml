@@ -180,6 +180,34 @@ jobs:
       - name: DB and ordinary cross-tenant tests (serial)
         run: npm run test:db-serial
 
+      - name: Checkout released ClassPilot 2.9.3 capture runtime
+        uses: actions/checkout@v7
+        with:
+          repository: bzinkan/ClassPilot
+          ref: ccaf2c8d1b0df3aa1f8ea74754e457990a74498a
+          path: .preview-extension
+          sparse-checkout: extension
+
+      - name: Install preview browser dependencies
+        run: |
+          npm ci --prefix schoolpilot-app
+          cd schoolpilot-app
+          npx playwright install --with-deps chromium
+
+      - name: Real extension capture to observed and claimed tiles (serial)
+        timeout-minutes: 5
+        env:
+          CLASSPILOT_REPO_PATH: ${{ github.workspace }}/.preview-extension
+        run: node --import ./tests/test-environment.mjs --import tsx scripts/classpilot-preview-chrome.mjs
+
+      - name: Upload real capture evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: classpilot-preview-chrome
+          path: evidence-artifacts/preview-chrome/
+          if-no-files-found: warn
+
       - name: Collect SOC 2 evidence
         if: always()
         env:
@@ -188,7 +216,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Cross-tenant isolation tests"
           --controls "SP-SEC-002,SP-SEC-004"
-          --summary "Cross-tenant isolation regression suite ran against the application storage layer."
+          --summary "Cross-tenant isolation regressions and the pinned ClassPilot extension's real capture/upload/read/render browser regression ran serially against the application API and storage layer."
 
       - name: Upload SOC 2 evidence
         if: always()

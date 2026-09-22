@@ -83,3 +83,31 @@ export function matchesActivityAuthority(message, authority) {
   });
   return activityAuthorityKey(expected) === activityAuthorityKey(actual);
 }
+
+// Purpose is server-derived. Saved group names never establish testing authority.
+export function activityPurpose(activity) {
+  if (['class', 'testing', 'coverage', 'supervision', 'claim'].includes(activity?.purpose)) return activity.purpose;
+  if (activity?.source === 'scheduled_testing' || activity?.contextType === 'state_testing') return 'testing';
+  if (activity?.source === 'scheduled_coverage' || activity?.scheduledConflictId) return 'coverage';
+  if (activity?.contextType === 'direct_pickup') return 'claim';
+  return activityAuthority(activity)?.supervisionContextId ? 'supervision' : 'class';
+}
+
+export function activityPurposeLabel(activity) {
+  return { class: 'Class', testing: 'Testing', coverage: 'Coverage', supervision: 'Supervising', claim: 'Claimed students' }[activityPurpose(activity)];
+}
+
+export function activityEndLabel(activity) {
+  return { class: 'End class', testing: 'End testing', coverage: 'End coverage', supervision: 'End supervision', claim: 'Release all' }[activityPurpose(activity)];
+}
+
+export function normalizeObservableActivities(data) {
+  return (Array.isArray(data?.activities) ? data.activities : []).flatMap(activity => {
+    const authority = activityAuthority(activity);
+    const revision = activity.contextAuthorityRevision ?? activity.authority?.contextAuthorityRevision;
+    if (!activity.id || !authority || activity.capabilities?.observe !== true
+      || authority.supervisionContextId && (revision == null || !/^(0|[1-9]\d*)$/.test(String(revision)))) return [];
+    return [{ ...activity, authority, contextAuthorityRevision: revision ?? null,
+      status: 'active', groupName: activity.name, teacherId: activity.owner?.id, accessMode: 'observe' }];
+  });
+}

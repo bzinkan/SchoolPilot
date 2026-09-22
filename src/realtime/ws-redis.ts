@@ -12,7 +12,7 @@ export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
   | { kind: "staff-user"; schoolId: string; userId: string }
   | { kind: "staff-session"; schoolId: string; sessionId: string }
-  | { kind: "staff-context"; schoolId: string; supervisionContextId: string; assignedStaffId: string; contextAuthorityRevision: string }
+  | { kind: "staff-context"; schoolId: string; supervisionContextId: string; assignedStaffId: string; contextAuthorityRevision: string; audience?: "owner-and-observers" }
   | { kind: "live-view-authority"; schoolId: string; studentIds: string[] }
   | { kind: "students"; schoolId: string; targetDeviceIds?: string[] }
   | { kind: "device"; schoolId: string; deviceId: string }

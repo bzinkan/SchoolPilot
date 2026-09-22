@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityParentPath, activityRequestHeaders,
-  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority } from '../src/products/classpilot/lib/dashboardActivity.js';
+  activityTransitionKey, normalizeDashboardActivity, resolveActivityView, matchesActivityAuthority, activityPurposeLabel, activityEndLabel, normalizeObservableActivities } from '../src/products/classpilot/lib/dashboardActivity.js';
 import { deriveDashboardCapabilities, resolveCommandTargets, normalizeSessionFabState,
   buildStudentSignOutCommandRequest, studentSupportsScheduledClassroom } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { createTileBatchRequests } from '../src/products/classpilot/lib/tileBatchPolling.js';
@@ -93,4 +93,23 @@ test('full testing tools require accepted capabilities, not raw feature advertis
   // A device that only advertises the capability still has not negotiated it.
   assert.equal(studentSupportsScheduledClassroom({ extensionCapabilities: ['scheduledClassroomV1', 'scopedAuthorityChecksV1'], acceptedCapabilities: {} }), false);
   assert.equal(normalizeSessionFabState({ supervisionContextId: 'test', lifecycleRevision: 3, raiseHandEnabled: false, chatEnabled: false }, current).messagingEnabled, false);
+});
+
+
+test('purpose labels never infer testing from group names and explicit Observe always stays read-only', () => {
+  const claim = { ...current, source: 'ad_hoc_supervision', purpose: 'claim', name: 'MAP testing group' };
+  assert.equal(activityPurposeLabel(claim), 'Claimed students');
+  assert.equal(activityEndLabel(claim), 'Release all');
+  assert.equal(activityPurposeLabel({ ...claim, purpose: 'coverage' }), 'Coverage');
+  assert.equal(activityEndLabel({ ...claim, purpose: 'coverage' }), 'End coverage');
+  const [observed] = normalizeObservableActivities({ activities: [{ ...claim,
+    authority: { supervisionContextId: 'test', contextAuthorityRevision: '4' },
+    owner: { id: 'admin', name: 'Admin' }, capabilities: { observe: true, screenshots: true } }] });
+  assert.equal(observed.contextAuthorityRevision, '4');
+  const capabilities = deriveDashboardCapabilities({ studentView: 'class', isAdmin: true, currentUserId: 'admin', observedSession: observed });
+  assert.equal(capabilities.observedOtherClass, true);
+  assert.equal(capabilities.canUseRemoteControls, false);
+  assert.equal(capabilities.canUseTeacherFab, false);
+  assert.deepEqual(capabilities.authority, { supervisionContextId: 'test' });
+  assert.deepEqual(normalizeObservableActivities({ activities: [{ ...claim, capabilities: { observe: true } }] }), [], 'No supervision revision means no observable authority');
 });

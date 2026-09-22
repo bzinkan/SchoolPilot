@@ -4,6 +4,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getClasspilotDashboardActivity } from "../../services/classpilotDashboardActivity.js";
+import { getClasspilotObservableActivities } from "../../services/classpilotObservableActivities.js";
 import { requireScheduledClassroomContext, scheduledClassroomRoster, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { getScheduledClassroomSettings, scheduledClassroomToggles, updateScheduledClassroomSettings } from "../../services/classpilotScheduledClassroomTools.js";
 import { logAudit } from "../../services/audit.js";
@@ -12,6 +13,13 @@ import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
 
 const router = Router();
+router.get("/observable-activities", authenticate, requireSchoolContext, requireClasspilotEntitlement,
+  requireRole("admin", "school_admin"), requireClasspilotFullMonitoring, async (_req, res, next) => {
+    try {
+      res.set("Cache-Control", "no-store, private");
+      res.json(await getClasspilotObservableActivities(res.locals.schoolId!));
+    } catch (error) { next(error); }
+  });
 const auth = [authenticate, requireSchoolContext, requireClasspilotEntitlement, requireRole("admin", "school_admin", "teacher", "office_staff")] as const;
 function scheduledClassroomState(toggles: Awaited<ReturnType<typeof scheduledClassroomToggles>>) {
   return { messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled,

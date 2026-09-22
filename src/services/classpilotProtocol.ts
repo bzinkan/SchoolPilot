@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
+import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
@@ -300,7 +301,8 @@ export function isClasspilotCapabilityActive(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   if (capability === "scheduledClassroomV1"
-    && !isScheduledClassroomEnabled(scope.schoolId ?? "", env)) return false;
+    && !isScheduledClassroomEnabled(scope.schoolId ?? "", env)
+    && !classpilotSupervisionPreviewObserved(scope.schoolId ?? "", env)) return false;
   if (capability === "restrictionPortalFirstV1") {
     return isClasspilotCapabilityActive("restrictionAuthPassThroughV1", scope, env);
   }

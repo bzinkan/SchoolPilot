@@ -168,3 +168,9 @@ test('overlapping lifecycle events share work without swallowing a subsequent au
   await refresh('class-a', work);
   assert.equal(requests, 5);
 });
+
+
+test('a stale supervision revision revokes the selected read authority', () => {
+  assert.equal(isClasspilotSessionUnavailable({ response: { status: 409, data: { code: 'CLASSROOM_AUTHORITY_CHANGED' } } }, 'context'), true);
+  assert.equal(isClasspilotSessionUnavailable({ response: { status: 409, data: { code: 'OBSERVATION_LEASE_UNAVAILABLE' } } }, 'context'), false);
+});

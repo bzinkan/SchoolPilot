@@ -437,7 +437,8 @@ export function deriveDashboardCapabilities({
   const observedOtherClass = Boolean(
     isAdmin
     && observedSession
-    && String(observedSession.teacherId || '') !== String(currentUserId || ''),
+    && (observedSession.accessMode === 'observe'
+      || String(observedSession.teacherId || '') !== String(currentUserId || '')),
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
   const scheduledSupervision = Boolean(studentView === 'class' && !observedSession
@@ -479,7 +480,7 @@ export function deriveDashboardCapabilities({
             : 'read-only',
     effectiveSession,
     authority: scheduledSupervision ? activityAuthority(scheduledActivity)
-      : effectiveSession?.id ? { teachingSessionId: effectiveSession.id } : null,
+      : activityAuthority(effectiveSession?.authority || { teachingSessionId: effectiveSession?.id }),
     scheduledSupervision,
     observedOtherClass,
     ownedClassSession,

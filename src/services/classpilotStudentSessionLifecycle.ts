@@ -3,7 +3,7 @@ import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   broadcastToStaffSessionLocal,
-  sendToStaffUserLocal,
+  broadcastToStaffContextLocal,
 } from "../realtime/ws-broadcast.js";
 import { removeDeviceStatus } from "../realtime/student-statuses.js";
 import {
@@ -181,13 +181,18 @@ export async function publishClasspilotStudentSessionEnded(
       const supervisionMessage = {
         ...message,
         supervisionContextId: target.supervisionContextId,
+        contextAuthorityRevision: target.contextAuthorityRevision,
       };
       await publishToAudience({
-        kind: "staff-user",
+        kind: "staff-context",
         schoolId: options.schoolId,
-        userId: target.assignedStaffId,
+        supervisionContextId: target.supervisionContextId,
+        assignedStaffId: target.assignedStaffId,
+        contextAuthorityRevision: target.contextAuthorityRevision,
+        audience: "owner-and-observers",
       }, orderedKey, supervisionMessage, () => {
-        sendToStaffUserLocal(options.schoolId, target.assignedStaffId, supervisionMessage);
+        broadcastToStaffContextLocal(options.schoolId, target.supervisionContextId, supervisionMessage,
+          target.assignedStaffId, target.contextAuthorityRevision, "owner-and-observers");
       });
     }, dbInstance)
   );

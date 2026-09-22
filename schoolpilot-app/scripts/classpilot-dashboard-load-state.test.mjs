@@ -248,6 +248,8 @@ async function configureDashboard(page, {
   acknowledgeSessionSubscriptions = false,
   sessionSubscriptionResponse = null,
   dashboardActivity = { enabled: false, schoolId: SCHOOL_ID, viewerId: ADMIN_ID },
+  observableActivities = null,
+  expectedWebsocketRole = null,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -286,7 +288,7 @@ async function configureDashboard(page, {
       if (parsed.type !== "auth") return;
       connection.authenticationRequests += 1;
       dashboardSocket = socket;
-      assert.equal(parsed.role, userRole === "teacher" ? "teacher" : "school_admin");
+      assert.equal(parsed.role, expectedWebsocketRole ? expectedWebsocketRole() : userRole === "teacher" ? "teacher" : "school_admin");
       assert.equal(parsed.userToken, "dashboard-load-state-token");
       assert.equal(Object.hasOwn(parsed, "token"), false);
       if (acknowledgeSessionSubscriptions) {
@@ -369,6 +371,18 @@ async function configureDashboard(page, {
     }
     if (pathname === "/api/teacher/groups") {
       await route.fulfill({ json: { groups: GROUPS } });
+      return;
+    }
+    if (pathname === '/api/classpilot/observable-activities') {
+      sessionRequests.push(pathname);
+      const activities = typeof observableActivities === 'function' ? await observableActivities(request) : observableActivities
+        || allSessions.filter(session => session.sessionMode === 'live' && !session.endTime && session.rosterSnapshotCompletedAt).map(session => ({
+          ...session, name: GROUPS.find(group => group.id === session.groupId)?.name || 'Class', purpose: 'class', source: 'class',
+          authority: { teachingSessionId: session.id }, owner: { id: session.teacherId, name: 'Staff member' }, studentCount: 1,
+          startsAt: session.startTime, endsAt: null,
+          capabilities: { observe: true, screenshots: true, commands: false, fab: false, liveView: false },
+        }));
+      await route.fulfill({ json: { activities } });
       return;
     }
     if (pathname === "/api/sessions/all") {
@@ -2473,14 +2487,9 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
       aggregate: aggregateController({ scoped: success(rows()) }), activeSession: null, allSessions: [nonLive],
     });
     await ineligiblePage.goto(`${baseURL}/classpilot`);
-    await ineligiblePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-    await ineligiblePage.getByTestId('screenshot-observation-ineligible').waitFor();
-    await ineligiblePage.clock.fastForward(120_000);
-    await lifecycleBurst(ineligiblePage);
-    await settle();
-    assert.equal(ineligibleHarness.observationLeaseRequests.filter((request) => request.method === 'PUT').length, 0);
-    assert.equal(ineligibleHarness.tileRequests.filter((request) => request.pathname.endsWith('/screenshots')).length, 0);
-    await assertObserveEntryPointsUnavailable(ineligiblePage, ineligibleHarness.commandPosts, [STUDENT_ID], ineligibleHarness.coverageMutationRequests);
+    await ineligiblePage.getByTestId('select-admin-observe').waitFor();
+    assert.equal(await ineligiblePage.locator(`[data-testid="select-admin-observe"] option[value="${OBSERVED_SESSION_ID}"]`).count(), 0);
+    assert.equal(ineligibleHarness.observationLeaseRequests.filter(request => request.method === 'PUT').length, 0);
     assert.deepEqual(ineligibleHarness.pageErrors, []);
   } finally {
     for (const page of pages) await page.close().catch(() => {});
@@ -3113,7 +3122,7 @@ test(`Dashboard ${userRole} claims keep partial successes visible and automatic 
     claimResponse: async request => {
       const body = request.postDataJSON();
       claimRequests.push({ body, schoolId: request.headers()['x-school-id'] });
-      if (body.supervisionGroupId === 'claim-group-1') {
+      if (body.studentIds.includes(SIGNED_OUT_STUDENT_ID)) {
         return { status: 409, body: { error: 'Another teacher already claimed this student.' } };
       }
       harness.setCoverageSummary(ownSupervisionSummary([{ id: OWN_TESTING_CONTEXT_ID, name: 'Claim group 0' }]));
@@ -3132,6 +3141,7 @@ test(`Dashboard ${userRole} claims keep partial successes visible and automatic 
   assert.equal(await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).count(), 0);
   assert.equal(claimRequests.length, 2);
   assert(claimRequests.every(request => request.schoolId === SCHOOL_ID));
+  assert(claimRequests.every(request => !request.body.supervisionGroupId && !request.body.coverageGroupId), 'Saved permission groups never become claim destinations');
   await harness.authenticateWebSocket();
   harness.setCoverageSummary(ownSupervisionSummary([]));
   harness.setClaimedStudents([]);
@@ -4926,7 +4936,7 @@ test('scheduled classroom restores acknowledged timer and poll after reload and 
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
-  await page.getByText('Extension update required for full testing tools on some student Chromebooks.', { exact: true }).waitFor();
+  await page.getByText('Extension update required for full classroom tools on some student Chromebooks.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Class tools', exact: true }).click();
   await page.getByRole('tab', { name: 'Tools', exact: true }).click();
   await page.getByRole('button', { name: 'Stop timer', exact: true }).waitFor();
@@ -5174,7 +5184,7 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
 });
 }
 
-test('Observe waits for live supervision and recovers when the same scheduled class becomes live', { timeout: 60_000 }, async context => {
+test('Observe excludes reporting occurrences and admits the same class when live', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   const now = new Date();
@@ -5193,21 +5203,16 @@ test('Observe waits for live supervision and recovers when the same scheduled cl
         bindingVersion: 'v2:observe-promotion', tabTitle: `Observed screen ${observedCapture}`, tabUrl: 'https://lesson.example.edu/observe' } }] }),
   });
   await page.goto(`${baseURL}/classpilot`);
-  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-  await page.getByTestId('screenshot-observation-ineligible').waitFor();
-  await harness.authenticateWebSocket();
-  await new Promise(resolve => setTimeout(resolve, 250));
-  await chatEvidence(page, 'observe-awaiting-live');
-  assert.equal(harness.websocketMessages.filter(message => message.type === 'subscribe-session').length, 0,
-    'An active reporting-only occurrence must not request a live subscription and be mislabeled closed');
-  assert.equal(await page.getByTestId('session-subscription-error').count(), 0);
+  await page.getByTestId('select-admin-observe').waitFor();
+  assert.equal(await page.locator(`[data-testid="select-admin-observe"] option[value="${OBSERVED_SESSION_ID}"]`).count(), 0,
+    'Reporting-only scheduled occurrences are not observable activities');
   assert.equal(harness.observationLeaseRequests.filter(request => request.method === 'PUT').length, 0);
-
   observed = { ...observed, sessionMode: 'live', rosterSnapshotCompletedAt: now.toISOString() };
   harness.setAllSessions([observed]);
   // No websocket event or selection change: the reporting occurrence keeps
   // its identity when the teacher starts supervising it.
   await page.clock.fastForward(10_100);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
   await waitUntil(() => harness.websocketMessages.some(message => message.type === 'subscribe-session'
     && message.sessionId === OBSERVED_SESSION_ID), 'Observe must subscribe after the same occurrence becomes live');
   await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
@@ -5261,6 +5266,153 @@ test('Observe selection stays scoped when a refresh removes the observed class',
     'The empty class list is reconciled');
   await page.getByTestId('select-admin-observe').selectOption('');
   await page.getByTestId('observe-read-only-banner').waitFor({ state: 'hidden' });
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+test('ordinary claims from an inactive testing group open neutral Claimed and preserve the current class', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const own = scheduledClassActivity({ startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' });
+  const claim = { id: OWN_TESTING_CONTEXT_ID, name: 'Claimed students', purpose: 'claim', source: 'ad_hoc_supervision',
+    contextType: 'direct_pickup', assignedStaffId: ADMIN_ID, endsAt: '2026-09-14T16:00:00Z' };
+  const claimed = { ...testingStudent(STUDENT_ID, claim.id), purpose: 'claim', contextName: 'Claimed students', contextAuthorityRevision: '2' };
+  let claimedNow = false;
+  let released = false;
+  const harness = await configureDashboard(page, {
+    userRole: 'teacher', activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+    aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Own class student' })]) }),
+    dashboardActivity: scheduledActivityResponse(own, { serverTime: TESTING_TIME.toISOString() }),
+    availableStudents: [{ ...claimed, matchingGroups: [{ id: 'saved-testing-group', name: 'Reading MAP' }] }],
+    claimedStudents: () => claimedNow && !released ? [claimed] : [],
+    coverageSummary: () => ({ ...ownSupervisionSummary(claimedNow && !released ? [claim] : []), ownAdHocContexts: claimedNow && !released ? [{ ...claim, activeStudentCount: 1 }] : [] }),
+    claimResponse: request => { assert.deepEqual(request.postDataJSON(), { studentIds: [STUDENT_ID] }); claimedNow = true; return { context: claim }; },
+  });
+  await page.route(`**/api/coverage/contexts/${claim.id}/release`, async route => {
+    assert.deepEqual(route.request().postDataJSON().studentIds, [STUDENT_ID]);
+    assert.equal(route.request().headers()['x-classpilot-context-authority-revision'], '2');
+    released = true; await route.fulfill({ json: { releasedCount: 1 } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('button-view-available-students').click();
+  await page.getByTestId('button-claim-all-students').click();
+  await assertPickupView(page, 'claimed');
+  await page.getByRole('heading', { name: 'Claimed students', exact: true }).waitFor();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'End testing', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Release student', exact: true }).waitFor();
+  await page.getByTestId('button-view-class-students').click();
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  await page.getByTestId('button-view-claimed-students').click();
+  await page.getByRole('button', { name: 'Release all', exact: true }).click();
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  assert.equal(released, true);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('administrator Observe renders revision-bound previews for active testing and claimed groups without controls', { timeout: 90_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  let activities = [
+    { id: OWN_TESTING_CONTEXT_ID, purpose: 'testing', name: 'Active MAP', owner: { id: OTHER_TEACHER_ID, name: 'Teacher' } },
+    { id: OTHER_TESTING_CONTEXT_ID, purpose: 'claim', name: 'Claimed students', owner: { id: ADMIN_ID, name: 'Administrator' } },
+  ].map(activity => ({ ...activity, source: activity.purpose === 'testing' ? 'scheduled_testing' : 'ad_hoc_supervision',
+    authority: { supervisionContextId: activity.id, contextAuthorityRevision: '7' }, studentCount: 1,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z',
+    capabilities: { observe: true, screenshots: true, commands: false, fab: false, liveView: false } }));
+  const aggregate = aggregateController();
+  let frame = 1;
+  const harness = await configureDashboard(page, {
+    activeSession: null, observableActivities: () => activities, acknowledgeSessionSubscriptions: true, aggregate,
+    dashboardActivity: scheduledActivityResponse(scheduledClassActivity({ name: 'Own unrelated class', startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' }), { serverTime: TESTING_TIME.toISOString() }),
+    screenshotTiles: body => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: `v3:${body.supervisionContextId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: `v3:${body.supervisionContextId}`,
+      timestamp: new Date(TESTING_TIME.getTime() + frame * 1000).toISOString(), tabTitle: `Observed capture ${frame}`, tabUrl: 'https://lesson.example.edu',
+    } }] }),
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  for (const activity of activities) {
+    aggregate.setScopedResponse(success([{ ...testingStudent(STUDENT_ID, activity.id),
+      supervisionContext: { id: activity.id, type: 'testing', assignedStaffId: activity.owner.id },
+      acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true }, contextAuthorityRevision: '7' }]));
+    await page.getByTestId('select-admin-observe').selectOption(activity.id);
+    await page.getByTestId('observe-read-only-banner').waitFor();
+    assert.match(await page.getByTestId('scheduled-class-banner').innerText(), new RegExp(activity.name));
+    assert.doesNotMatch(await page.getByTestId('scheduled-class-banner').innerText(), /Own unrelated class/);
+    await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+    assert(harness.observationLeaseRequests.some(request => request.method === 'PUT' && request.pathname.includes(activity.id) && request.contextAuthorityRevision === '7'));
+    assert(harness.tileRequests.some(request => request.body.supervisionContextId === activity.id && request.contextAuthorityRevision === '7'));
+    assert(harness.websocketMessages.some(message => message.type === 'subscribe-session' && message.supervisionContextId === activity.id && message.accessMode === 'observe'));
+    assert.equal(await page.getByTestId('teacher-fab').count(), 0);
+    assert.equal(await page.getByRole('button', { name: /End testing|Release all|Release student|Teach Class|End Class/ }).count(), 0);
+    frame += 1;
+    await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, supervisionContextId: activity.id, contextAuthorityRevision: '7', studentId: STUDENT_ID });
+    await page.clock.fastForward(1100);
+    await page.getByTestId(`card-student-${STUDENT_ID}`).getByText(`Observed capture ${frame}`, { exact: true }).waitFor();
+    await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+    await page.getByTestId('expanded-screenshot-dialog').waitFor();
+    await page.keyboard.press('Escape');
+  }
+  const selectedId = activities[1].id;
+  aggregate.setScopedResponse(success([]));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    supervisionContextId: selectedId, contextAuthorityRevision: '7', studentId: STUDENT_ID });
+  await page.clock.fastForward(1100);
+  assert.equal(await page.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0, 'A released student cannot regain pixels through a delayed notice');
+  activities = [];
+  await harness.sendWebSocketMessage({ type: 'dashboard-activity-updated', schoolId: SCHOOL_ID, supervisionContextId: selectedId });
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), selectedId);
+  await waitUntil(() => harness.websocketMessages.some(message => message.type === 'unsubscribe-session' && message.supervisionContextId === selectedId), 'Ended Observe subscription is released');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+test('Observe authority clears on administrator role loss and does not return after role restoration', { timeout: 60_000 }, async context => {
+  const entry = `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {MemoryRouter} from 'react-router-dom'; import {QueryClientProvider} from '@tanstack/react-query';
+    import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
+    import {LicenseProvider} from '/src/contexts/LicenseContext.jsx'; import {ThemeProvider} from '/src/contexts/ThemeContext.jsx';
+    import {queryClient} from '/src/lib/queryClient.js'; import Dashboard from '/src/products/classpilot/pages/Dashboard.jsx'; import '/src/index.css';
+    function Bridge(){const auth=useAuth();React.useEffect(()=>{window.__refreshObserveUser=auth.refetchUser;},[auth.refetchUser]);return null;}
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(LicenseProvider,null,React.createElement(ThemeProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(Bridge),React.createElement(Dashboard))))))));
+  `;
+  const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: [{
+    name: 'observe-role-fixture',
+    configureServer(server) { server.middlewares.use(async (req, res, next) => {
+      if (req.url !== '/__observe-role') return next();
+      res.setHeader('Content-Type', 'text/html');
+      res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><body><div id="root"></div><script type="module" src="/__observe-role-entry.jsx"></script></body></html>'));
+    }); },
+    resolveId(id) { if (id === '/__observe-role-entry.jsx') return '\0observe-role-entry'; },
+    load(id) { if (id === '\0observe-role-entry') return entry; },
+  }] });
+  const page = await browser.newPage();
+  let role = 'admin';
+  const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+  const harness = await configureDashboard(page, {
+    activeSession: null, allSessions: [observed], acknowledgeSessionSubscriptions: true,
+    authentication: () => authResponse(role), expectedWebsocketRole: () => role === 'admin' ? 'school_admin' : 'teacher',
+    aggregate: aggregateController({ scoped: success([student()]) }),
+  });
+  await page.goto(`${baseURL}/__observe-role`);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+  await page.getByTestId('observe-read-only-banner').waitFor();
+  role = 'teacher'; await page.evaluate(() => window.__refreshObserveUser());
+  await page.getByTestId('select-admin-observe').waitFor({ state: 'hidden' });
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  role = 'admin'; await page.evaluate(() => window.__refreshObserveUser());
+  await page.getByTestId('select-admin-observe').waitFor();
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), '');
+  assert.equal(await page.getByTestId('observe-read-only-banner').count(), 0);
   assert.deepEqual(harness.commandPosts, []);
   assert.deepEqual(harness.pageErrors, []);
 });

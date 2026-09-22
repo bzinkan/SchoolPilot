@@ -74,7 +74,7 @@ test("typed subscriptions reject mixed IDs and never fan context events into sam
     const contextMessage = once(contextSocket.client, "message");
     assert.equal(broadcastToStaffContextLocal("school", "same-id", { type: "hand-update", teachingSessionId: "wrong", sessionId: "wrong" }, "teacher", "0"), 1);
     const [received] = await contextMessage;
-    assert.deepEqual(JSON.parse(String(received)), { type: "hand-update", supervisionContextId: "same-id" });
+    assert.deepEqual(JSON.parse(String(received)), { type: "hand-update", supervisionContextId: "same-id", contextAuthorityRevision: "0" });
     const teachingMessage = once(teachingSocket.client, "message");
     assert.equal(broadcastToStaffSessionLocal("school", "same-id", { type: "hand-update" }), 1);
     const [teachingReceived] = await teachingMessage;

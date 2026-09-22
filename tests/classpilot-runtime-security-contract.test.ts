@@ -93,7 +93,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /fabSyncPending: fabSyncPending === true,/);
   });
 
-  it("targets claimed-student realtime updates to only the assigned staff user", async () => {
+  it("targets claimed-student realtime updates to the owner and revision-bound observers", async () => {
     const [devices, storage, lifecycle] = await Promise.all([
       source("src/routes/classpilot/devices.ts"),
       source("src/services/storage.ts"),
@@ -107,8 +107,10 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.doesNotMatch(publisher, /snapshot\.classroomState/);
     assert.match(publisher, /withClasspilotTeachingTelemetryAuthority/);
     assert.match(publisher, /withClasspilotSupervisionTelemetryAuthority/);
-    assert.match(publisher, /kind: "staff-user"/);
-    assert.match(publisher, /sendToStaffUserLocal/);
+    assert.match(publisher, /kind: "staff-context"/);
+    assert.match(publisher, /audience: "owner-and-observers"/);
+    assert.match(publisher, /contextAuthorityRevision: target.contextAuthorityRevision/);
+    assert.match(publisher, /broadcastToStaffContextLocal/);
     assert.doesNotMatch(publisher, /targetDeviceIds|message\.deviceId/);
     const authority = storage.slice(
       storage.indexOf("export async function withClasspilotSupervisionTelemetryAuthority"),
@@ -469,7 +471,8 @@ describe("ClassPilot WebSocket signaling containment", () => {
       websocket.indexOf("// --- Staff session subscriptions"),
       websocket.indexOf("// --- Student FAB chat delivery acknowledgements")
     );
-    assert.match(subscription, /client\.role === "school_admin" \|\| client\.role === "super_admin"\) return true/);
+    assert.match(subscription, /return owner \|\| client\.role === "school_admin" \|\| client\.role === "super_admin"/);
+    assert.match(subscription, /observe \|\|= !owner/);
     const resolver = websocket.slice(
       websocket.indexOf("const resolveLiveTarget = async"),
       websocket.indexOf("// --- WebRTC signaling")

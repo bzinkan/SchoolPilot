@@ -46,6 +46,8 @@ const { classpilotScreenshotFallback } = await import(
   "../dist/services/classpilotScreenshotFallback.js"
 );
 const { screenshotBindingVersion, supervisionBoundScreenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
+const { setClasspilotRealtimeStatusCommandForTests } = await import("../dist/services/classpilotRealtimeStatus.js");
+const { setHeartbeatTileCacheCommandForTests } = await import("../dist/services/heartbeatTileCache.js");
 
 const { runWithTenantContext } = tenantContext;
 const {
@@ -181,7 +183,8 @@ async function postJson(
   body: unknown,
   user: any,
   schoolId = schoolA.id,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  extraHeaders: Record<string, string> = {}
 ): Promise<{
   status: number;
   body: any;
@@ -193,6 +196,7 @@ async function postJson(
     headers: {
       ...authHeaders(user, schoolId),
       "content-type": "application/json",
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
     signal,
@@ -1107,6 +1111,22 @@ describe("ClassPilot tile-read tenant scope", () => {
         requestJson(`/api/classpilot/students/${id}/timeline?${query}`, actor, schoolA.id, undefined,
           { 'X-ClassPilot-Context-Authority-Revision': revision });
       const first = await aggregate();
+      const discovery = await requestJson('/api/classpilot/observable-activities', admin);
+      assert.equal(discovery.status, 200);
+      const observed = discovery.body.activities.find((row: { id: string }) => row.id === contextId);
+      assert.equal(observed.purpose, 'testing');
+      assert.equal(observed.authority.supervisionContextId, contextId);
+      assert.equal(observed.authority.contextAuthorityRevision, '0');
+      assert.equal(observed.owner.id, coTeacher.id);
+      assert.equal(observed.studentCount, 2);
+      assert.equal(observed.capabilities.commands, false);
+      assert.equal(observed.capabilities.fab, false);
+      assert.doesNotMatch(JSON.stringify(discovery.body), /deviceId|studentSessionId|chat|content/);
+      assert.equal((await requestJson('/api/classpilot/observable-activities', teacher)).status, 403);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, admin,
+        schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '1' })).status, 409);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, admin,
+        schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '0' })).status, 200);
       assert.equal(first.status, 200);
       assert.deepEqual(first.body.map((row: any) => row.studentId).sort(), [studentId, offlineStudentId].sort());
       assert.equal(first.body.find((row: any) => row.studentId === offlineStudentId).isLoggedIn, false);
@@ -1143,12 +1163,75 @@ describe("ClassPilot tile-read tenant scope", () => {
       const exact = await tiles();
       assert.equal(exact.status, 200);
       assert.equal(exact.body.tiles[0].screenshot?.screenshot, screenshot);
-      await inSchool(schoolA.id, () => db.update(classpilotStudentControlStates).set({ revision: 5 })
-        .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId))));
+      const observedTile = await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: contextId },
+        admin, schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '0' });
+      assert.equal(observedTile.status, 200);
+      assert.equal(observedTile.body.tiles[0].screenshot?.screenshot, screenshot);
+      try {
+        setClasspilotRealtimeStatusCommandForTests(async args => {
+          if (args[0] !== 'MGET') return undefined;
+          await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
+            .set({ classroomAuthorityRevision: 1 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+          return args.slice(1).map(() => null);
+        });
+        const revokedDuringRead = await postJson('/api/classpilot/tiles/screenshots',
+          { studentIds: [studentId], supervisionContextId: contextId }, admin, schoolA.id, undefined,
+          { 'X-ClassPilot-Context-Authority-Revision': '0' });
+        assert.equal(revokedDuringRead.status, 409, 'An in-flight cache read cannot return pixels after context revision changes');
+        assert.equal(JSON.stringify(revokedDuringRead.body).includes(screenshot), false);
+      } finally {
+        setClasspilotRealtimeStatusCommandForTests(undefined);
+        await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
+          .set({ classroomAuthorityRevision: 0 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+      }
+      try {
+        setHeartbeatTileCacheCommandForTests(async args => {
+          if (args[0] !== 'EVAL') return undefined;
+          await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
+            .set({ classroomAuthorityRevision: 1 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+          return undefined;
+        });
+        const revokedHistory = await postJson('/api/classpilot/tiles/history',
+          { studentIds: [studentId], supervisionContextId: contextId }, admin, schoolA.id, undefined,
+          { 'X-ClassPilot-Context-Authority-Revision': '0' });
+        assert.equal(revokedHistory.status, 409, 'An in-flight history read cannot outlive its context revision');
+      } finally {
+        setHeartbeatTileCacheCommandForTests(undefined);
+        await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
+          .set({ classroomAuthorityRevision: 0 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+      }
+      assert.equal((await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: contextId },
+        admin, schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '1' })).status, 409);
+      assert.equal((await requestJson(`/api/students-aggregated?supervisionContextId=${contextId}`, teacher)).status, 404,
+        'Observe does not transfer the existing owner');
+      try {
+        setClasspilotRealtimeStatusCommandForTests(async args => {
+          if (args[0] !== 'MGET') return undefined;
+          await inSchool(schoolA.id, () => db.update(classpilotStudentControlStates).set({ revision: 5 })
+            .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId))));
+          return args.slice(1).map(() => null);
+        });
+        assert.equal((await tiles()).body.tiles[0].screenshot, null,
+          'A student control change during cache reads cannot return the earlier capture');
+      } finally {
+        setClasspilotRealtimeStatusCommandForTests(undefined);
+      }
       assert.equal((await tiles()).body.tiles[0].screenshot, null, "never downgrade to the prior revision or legacy screenshot");
       assert.equal((await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: randomUUID() }, coTeacher)).status, 404);
-      await inSchool(schoolA.id, () => db.update(classpilotSupervisionStudents).set({ releasedAt: new Date() })
-        .where(and(eq(classpilotSupervisionStudents.contextId, contextId), eq(classpilotSupervisionStudents.studentId, studentId))));
+      try {
+        setClasspilotRealtimeStatusCommandForTests(async args => {
+          if (args[0] !== 'MGET') return undefined;
+          await inSchool(schoolA.id, () => db.update(classpilotSupervisionStudents).set({ releasedAt: new Date() })
+            .where(and(eq(classpilotSupervisionStudents.contextId, contextId), eq(classpilotSupervisionStudents.studentId, studentId))));
+          return args.slice(1).map(() => null);
+        });
+        const releasedDuringHydration = await aggregate();
+        assert.equal(releasedDuringHydration.status, 200);
+        assert.deepEqual(releasedDuringHydration.body.map((row: { studentId: string }) => row.studentId), [offlineStudentId],
+          'A release during realtime hydration removes only that student and preserves offline roster members');
+      } finally {
+        setClasspilotRealtimeStatusCommandForTests(undefined);
+      }
       assert.equal((await tiles()).status, 404);
       assert.equal((await timeline()).status, 403, 'Release revokes history in the same context');
       assert.deepEqual((await aggregate()).body.map((row: any) => row.studentId), [offlineStudentId]);

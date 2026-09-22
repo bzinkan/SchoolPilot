@@ -15,6 +15,7 @@ import {
 import { redisCommand } from "../dist/middleware/rateLimiter.js";
 import {
   addGroupStudentsDetailed,
+  assignAdHocSupervisionStudents,
   acknowledgeClasspilotStudentControlState,
   createCoverageAssignment,
   countClasspilotLateSignInStampedStates,
@@ -1453,6 +1454,17 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const afterClassStart = await inSchool(school.id, () => getOnlineUnassignedStudents(school.id));
     assert.ok(ids(afterClassStart).has(studentUnassigned.id));
     assert.ok(!ids(afterClassStart).has(studentInClass.id));
+    await inSchool(school.id, () => db.execute(sql`DELETE FROM group_students WHERE group_id=${group.id} AND student_id=${studentInClass.id}`));
+    assert.ok(!ids(await inSchool(school.id, () => getOnlineUnassignedStudents(school.id))).has(studentInClass.id),
+      "the frozen live class roster remains authoritative after saved membership changes");
+    await inSchool(school.id, () => addGroupStudentsDetailed(group.id, [studentInClass.id]));
+    await inSchool(school.id, () => db.execute(sql`UPDATE teaching_sessions SET start_time=now()+interval '1 hour' WHERE id=${session.id}`));
+    assert.ok(ids(await inSchool(school.id, () => getOnlineUnassignedStudents(school.id))).has(studentInClass.id), "future classes do not claim current availability");
+    await inSchool(school.id, () => db.execute(sql`UPDATE teaching_sessions SET start_time=${session.startTime.toISOString()},session_mode='scheduled_report' WHERE id=${session.id}`));
+    assert.ok(ids(await inSchool(school.id, () => getOnlineUnassignedStudents(school.id))).has(studentInClass.id), "report-only occurrences do not create classroom authority");
+    await inSchool(school.id, () => db.execute(sql`UPDATE teaching_sessions SET session_mode='live',start_time=now()-interval '2 minutes',scheduled_date=to_char(now(),'YYYY-MM-DD'),scheduled_timezone='UTC',scheduled_state='active',scheduled_start_at=now()-interval '2 minutes',scheduled_end_at=now()-interval '1 minute' WHERE id=${session.id}`));
+    assert.ok(ids(await inSchool(school.id, () => getOnlineUnassignedStudents(school.id))).has(studentInClass.id), "elapsed classes do not hide Available students");
+    await inSchool(school.id, () => db.execute(sql`UPDATE teaching_sessions SET start_time=${session.startTime.toISOString()},scheduled_date=NULL,scheduled_timezone=NULL,scheduled_state=NULL,scheduled_start_at=NULL,scheduled_end_at=NULL WHERE id=${session.id}`));
 
     const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
       context: {
@@ -3576,7 +3588,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       }, teacherAuth);
       assert.equal(directClaimRes.status, 201);
       assert.equal(directClaimRes.body.context.coverageGroupId, null);
-      assert.equal(directClaimRes.body.context.name, "Class: 8th");
+      assert.equal(directClaimRes.body.context.name, "Claimed students");
+      assert.equal(directClaimRes.body.context.purpose, "claim");
       expectNoDeviceIds(directClaimRes.body);
       await requestJson("POST", `/coverage/contexts/${directClaimRes.body.context.id}/release`, {
         studentIds: [studentDeviceGuard.id],
@@ -3589,7 +3602,9 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       studentIds: [studentUnassigned.id],
     }, staffAuth);
     assert.equal(claimRes.status, 201);
-    assert.equal(claimRes.body.context.coverageGroupId, groupRes.body.group.id);
+    assert.equal(claimRes.body.context.coverageGroupId, null);
+    assert.equal(claimRes.body.context.name, "Claimed students");
+    assert.equal(claimRes.body.context.purpose, "claim");
     const contextId = claimRes.body.context.id;
     expectNoDeviceIds(claimRes.body);
 
@@ -3598,7 +3613,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(staffClaimed.body.students.some((student: any) =>
       student.studentId === studentUnassigned.id &&
       student.contextId === contextId &&
-      student.supervisionGroup.id === groupRes.body.group.id
+      student.supervisionGroup === null && student.purpose === "claim"
     ));
     expectNoDeviceIds(staffClaimed.body);
 
@@ -3645,9 +3660,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       note: "API teacher send check",
     }, teacherAuth);
     assert.equal(teacherReroute.status, 201);
+    const sendContextId = teacherReroute.body.context.id;
+    assert.notEqual(sendContextId, contextId, "an explicit group send must not turn an ordinary pickup into a group context");
     assert.ok(teacherReroute.body.assignments.some((assignment: any) =>
       assignment.studentId === studentInClass.id &&
-      assignment.contextId === contextId &&
+      assignment.contextId === sendContextId &&
       assignment.source === "teacher_send"
     ));
     expectNoDeviceIds(teacherReroute.body);
@@ -3664,7 +3681,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(returnToClass.status, 200);
     assert.ok(returnToClass.body.released.some((assignment: any) =>
       assignment.studentId === studentInClass.id &&
-      assignment.contextId === contextId &&
+      assignment.contextId === sendContextId &&
       assignment.releaseReason === "returned_to_class"
     ));
     expectNoDeviceIds(returnToClass.body);
@@ -3677,7 +3694,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const returnAuditRows = await inSchool(school.id, () => getAuditLogs({
       schoolId: school.id,
       entityType: "supervision_context",
-      entityId: contextId,
+      entityId: sendContextId,
       limit: 25,
     }));
     assert.ok(returnAuditRows.some((entry: any) =>
@@ -3701,6 +3718,148 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }, staffAuth);
     assert.equal(releaseRes.status, 200);
     await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+  });
+
+  it("keeps ordinary group-authorized claims neutral and fences scheduled context reuse and racing claims", async () => {
+    const staff = await createUser({ email: `neutral-claim@${TAG}.example.edu`, firstName: "Neutral", lastName: "Claim" });
+    await createMembership({ userId: staff.id, schoolId: school.id, role: "teacher", status: "active" });
+    const staffAuth = authFor(staff, school.id);
+    const adminAuth = authFor(admin, school.id);
+    const pupil = await inSchool(school.id, () => createStudent({ schoolId: school.id, firstName: "Neutral", lastName: "Student", status: "active" }));
+    const deviceId = `${TAG}-neutral-claim-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({ schoolId: school.id, deviceId, classId: "default" });
+      await linkStudentDevice({ studentId: pupil.id, deviceId });
+      await setActiveStudentForDevice(deviceId, pupil.id);
+    });
+    const saved = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Saved MAP Test Group", studentIds: [pupil.id], staffIds: [staff.id],
+    }, adminAuth);
+    assert.equal(saved.status, 201);
+    const queue = await requestJson("GET", "/coverage/available-students", undefined, staffAuth);
+    assert.ok(queue.body.students.some((row: any) => row.studentId === pupil.id));
+    // No explicit group ID: group-only permission authorizes an ordinary pickup.
+    const claimed = await requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, staffAuth);
+    assert.equal(claimed.status, 201, JSON.stringify(claimed.body));
+    assert.equal(claimed.body.context.contextType, "direct_pickup");
+    assert.equal(claimed.body.context.coverageGroupId, null);
+    assert.equal(claimed.body.context.name, "Claimed students");
+    const feed = await requestJson("GET", "/classpilot/dashboard-activity", undefined, staffAuth);
+    assert.equal(feed.status, 200);
+    assert.equal(feed.body.current, null, "a pickup must not become the teacher's Class activity");
+    assert.ok(feed.body.activities.some((activity: any) => activity.id === claimed.body.context.id && activity.purpose === "claim"));
+    assert.deepEqual(await inSchool(school.id, () => getCoverageScopeGroupStudentIds(school.id, saved.body.group.id)), [pupil.id]);
+    const releasedClaim = await requestJson("POST", `/coverage/contexts/${claimed.body.context.id}/release`,
+      { studentIds: [pupil.id], releaseReason: "test_release" }, staffAuth);
+    assert.equal(releasedClaim.status, 200);
+
+    const endsAt = new Date(Date.now() + 30 * 60_000);
+    const scheduled = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: staff.id, createdBy: admin.id, coverageGroupId: saved.body.group.id,
+      contextType: "supervision_group", name: "Real scheduled testing", endsAt,
+      scheduleProfileApplicationId: `${TAG}-neutral-application`, scheduleProfileBlockId: "testing",
+      scheduleProfileDate: new Date().toISOString().slice(0, 10),
+    }, studentIds: [], assignedBy: admin.id, source: "schedule_profile" }));
+    const future = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: staff.id, createdBy: admin.id, coverageGroupId: saved.body.group.id,
+      contextType: "supervision_group", name: "Future supervision", startsAt: new Date(Date.now() + 10 * 60_000), endsAt,
+    }, studentIds: [], assignedBy: admin.id }));
+    const originalWindows = await inSchool(school.id, () => db.execute(sql`SELECT id,ends_at FROM classpilot_supervision_contexts WHERE id IN (${scheduled.id},${future.id}) ORDER BY id`));
+    const sent = await inSchool(school.id, () => assignAdHocSupervisionStudents({ schoolId: school.id,
+      assignedStaffId: staff.id, actorId: admin.id, studentIds: [pupil.id], source: "admin_send",
+      group: { id: saved.body.group.id, name: saved.body.group.name }, endsAt: new Date(Date.now() + 2 * 60 * 60_000) }));
+    assert.notEqual(sent.context.id, scheduled.id);
+    assert.notEqual(sent.context.id, future.id);
+    const unchanged = await inSchool(school.id, () => db.execute(sql`SELECT id,ends_at FROM classpilot_supervision_contexts WHERE id IN (${scheduled.id},${future.id}) ORDER BY id`));
+    assert.deepEqual(unchanged.rows, originalWindows.rows, "ordinary assignment must not extend actual or future testing");
+    await inSchool(school.id, () => releaseSupervisionStudents({ schoolId: school.id, contextId: sent.context.id, studentIds: [pupil.id] }));
+
+    const claims = await Promise.all([
+      requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, staffAuth),
+      requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, adminAuth),
+    ]);
+    assert.deepEqual(claims.map(result => result.status).sort(), [201, 409]);
+    const winner = claims.find(result => result.status === 201)!;
+    const ownership = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, pupil.id));
+    assert.equal(ownership?.context.id, winner.body.context.id);
+    const releasedWinner = await requestJson("POST", `/coverage/contexts/${winner.body.context.id}/release`,
+      { studentIds: [pupil.id], releaseReason: "test_release" }, adminAuth);
+    assert.equal(releasedWinner.status, 200);
+    const grants = await inSchool(school.id, () => getActiveCoverageAssignmentsForStaff(school.id, staff.id));
+    await inSchool(school.id, () => replaceCoverageScopeGroupMembers({ schoolId: school.id, groupId: saved.body.group.id, studentIds: [] }));
+    await assert.rejects(inSchool(school.id, () => assignAdHocSupervisionStudents({ schoolId: school.id,
+      assignedStaffId: staff.id, actorId: staff.id, studentIds: [pupil.id], source: "staff_claim", endsAt,
+      requireAvailable: true, coverageAssignmentReview: grants })), { code: "COVERAGE_PERMISSION_STALE" });
+    const noGrant = await requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, staffAuth);
+    assert.equal(noGrant.status, 403);
+  });
+
+  it("discovers only current nonempty Observe activities with server-proven purposes", async () => {
+    const owned = await createUser({ email: `observable-owner@${TAG}.example.edu`, firstName: "Observe", lastName: "Owner" });
+    await createMembership({ userId: owned.id, schoolId: school.id, role: "teacher", status: "active" });
+    const pupils = await inSchool(school.id, async () => {
+      const result = [];
+      for (const lastName of ["Claim", "Testing", "Coverage", "Reporting"]) {
+        result.push(await createStudent({ schoolId: school.id, firstName: "Observe", lastName, status: "active" }));
+      }
+      return result;
+    });
+    const context = (name: string, contextType: string, studentIds: string[], overrides = {}, source = "manual") => inSchool(school.id,
+      () => createSupervisionContextWithStudents({ context: { schoolId: school.id, assignedStaffId: owned.id, createdBy: admin.id,
+        name, contextType, endsAt: new Date(Date.now() + 60 * 60_000), ...overrides }, studentIds, assignedBy: admin.id, source }));
+    const claim = await context("Saved MAP Group", "supervision_group", [pupils[0]!.id], {}, "staff_claim");
+    const manual = await context("Deliberate State Testing", "state_testing", [pupils[1]!.id], {}, "admin_claim");
+    const supervision = await context("MAP Supervision", "supervision_group", [pupils[2]!.id], {}, "teacher_send");
+    const empty = await context("Empty context", "other", []);
+    const futureStudent = await inSchool(school.id, () => createStudent({ schoolId: school.id, firstName: "Future", lastName: "Assignment", status: "active" }));
+    const futureDeviceId = `${TAG}-future-observe-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({ schoolId: school.id, deviceId: futureDeviceId, classId: "default" });
+      await linkStudentDevice({ studentId: futureStudent.id, deviceId: futureDeviceId });
+      await setActiveStudentForDevice(futureDeviceId, futureStudent.id);
+    });
+    const future = await context("Future testing", "state_testing", [futureStudent.id], { startsAt: new Date(Date.now() + 10 * 60_000) });
+    assert.equal(await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, futureStudent.id)), undefined);
+    assert.ok(ids(await inSchool(school.id, () => getOnlineUnassignedStudents(school.id))).has(futureStudent.id));
+    const futureAssignment = await inSchool(school.id, () => db.execute(sql`SELECT id,released_at FROM classpilot_supervision_students WHERE context_id=${future.id}`));
+    const futureClaim = await requestJson("POST", "/coverage/claim", { studentIds: [futureStudent.id] }, authFor(admin, school.id));
+    assert.equal(futureClaim.status, 409, "claim must not silently release an existing future assignment");
+    assert.equal(futureClaim.body.code, "COVERAGE_FUTURE_ASSIGNMENT");
+    assert.deepEqual((await inSchool(school.id, () => db.execute(sql`SELECT id,released_at FROM classpilot_supervision_students WHERE context_id=${future.id}`))).rows,
+      futureAssignment.rows);
+    const ended = await context("Ended context", "other", [], { status: "ended", endedAt: new Date() });
+    const reportingGroup = await inSchool(school.id, () => createGroup({ schoolId: school.id, teacherId: owned.id,
+      name: `${TAG}_Observe_Reporting`, groupType: "admin_class", status: "active" } as Parameters<typeof createGroup>[0]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(reportingGroup.id, [pupils[3]!.id]));
+    const reporting = await inSchool(school.id, () => createTeachingSession({ groupId: reportingGroup.id, teacherId: owned.id }));
+    await inSchool(school.id, () => db.execute(sql`UPDATE teaching_sessions SET session_mode='scheduled_report' WHERE id=${reporting.id}`));
+    const discovery = await requestJson("GET", "/classpilot/observable-activities", undefined, authFor(admin, school.id));
+    assert.equal(discovery.status, 200, JSON.stringify(discovery.body));
+    const byId = new Map<string, any>(discovery.body.activities.map((activity: any) => [activity.id, activity]));
+    assert.equal(byId.get(claim.id)?.purpose, "claim");
+    assert.equal(byId.get(claim.id)?.name, "Claimed students");
+    assert.equal(byId.get(manual.id)?.purpose, "testing");
+    assert.equal(byId.get(supervision.id)?.purpose, "supervision");
+    assert.equal(byId.get(supervision.id)?.name, "MAP Supervision");
+    for (const absent of [empty.id, future.id, ended.id, reporting.id]) assert.equal(byId.has(absent), false);
+    for (const visible of [claim.id, manual.id, supervision.id]) {
+      const row = byId.get(visible);
+      assert.equal(row.owner.id, owned.id);
+      assert.equal(row.capabilities.commands, false);
+      assert.equal(row.capabilities.fab, false);
+      assert.equal(Object.hasOwn(row, "students"), false);
+      assert.equal(Object.hasOwn(row, "assignments"), false);
+    }
+    expectNoDeviceIds(discovery.body);
+    const forbidden = await requestJson("GET", "/classpilot/observable-activities", undefined, authFor(owned, school.id));
+    assert.equal(forbidden.status, 403);
+    const personal = await requestJson("GET", "/classpilot/dashboard-activity", undefined, authFor(owned, school.id));
+    assert.equal(personal.status, 200);
+    assert.equal(personal.body.current.id, manual.id);
+    assert.equal(personal.body.current.purpose, "testing");
+    await inSchool(school.id, () => endTeachingSession(reporting.id));
+    for (const row of [claim, manual, supervision]) await inSchool(school.id,
+      () => releaseSupervisionStudents({ schoolId: school.id, contextId: row.id, releaseReason: "test_release" }));
   });
 
   it("serializes exact operator gates and explicit login state for Coverage students", async () => {
