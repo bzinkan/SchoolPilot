@@ -41,11 +41,11 @@ moved {
   to   = aws_cloudwatch_metric_alarm.redis_connections[0]
 }
 
+# 0.5s sat on top of the normal school-morning p95 (2026-09-22: ~0.50-0.62s at
+# ~4,000 req/5min with zero 5xx) and flapped every few minutes. 1s sustained
+# for three consecutive minutes is a real degradation, not the daily peak.
 resource "aws_cloudwatch_metric_alarm" "alb_p95_latency" {
-  alarm_name = "${local.alarm_prefix}-alb-p95-latency"
-  # 0.5s sat on top of the normal school-morning p95 (2026-09-22: ~0.50-0.62s at
-  # ~4,000 req/5min with zero 5xx) and flapped every few minutes. 1s sustained
-  # for three consecutive minutes is a real degradation, not the daily peak.
+  alarm_name          = "${local.alarm_prefix}-alb-p95-latency"
   alarm_description   = "ALB target response p95 has stayed above 1s for 3 minutes."
   namespace           = "AWS/ApplicationELB"
   metric_name         = "TargetResponseTime"
