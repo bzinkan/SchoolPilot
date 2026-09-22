@@ -145,6 +145,7 @@ import { countUnreadByStudent, deriveChatConversations, looksLikeQuestion } from
 import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
 import {
   classpilotObservationSessionEligible,
+  classpilotSessionSubscriptionEligible,
   classpilotSessionAuthorityKey,
   clearTileReadDenials,
   createCoalescedClasspilotRefresh,
@@ -836,7 +837,10 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', '/sessions/all'),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     enabled: isAdmin,
-    refetchInterval: wsAuthenticated ? false : 10000,
+    // A reporting occurrence can become live without changing its ID, before
+    // this observer can subscribe to it. Reconcile the selected class even
+    // with a healthy school websocket so that transition cannot be missed.
+    refetchInterval: wsAuthenticated && !adminObservedSessionId ? false : 10000,
   });
   const refreshParentSessions = useCallback(() => (
     coalescedRefreshRef.current(`sessions:${classReaderKey}`, async () => {
@@ -945,7 +949,13 @@ export default function Dashboard() {
   const deniedSelection = lastDeniedSelectionRef.current?.selectionKey === classSelectionKey
     ? lastDeniedSelectionRef.current.session
     : null;
-  const retainedObservedSession = observedSession || (adminObservedSessionId ? deniedSelection : null);
+  // Keep the explicitly selected authority when an active-list refresh removes
+  // it. Falling through to the administrator's own class would change both the
+  // displayed students and the available controls without an explicit choice.
+  const unavailableObservedSelection = useMemo(() => adminObservedSessionId
+    ? { id: adminObservedSessionId } : null, [adminObservedSessionId]);
+  const retainedObservedSession = observedSession
+    || (adminObservedSessionId ? deniedSelection || unavailableObservedSelection : null);
   // A failed scoped read must not silently become an unscoped school read
   // when the parent refresh removes the ended session from its active list.
   const scheduledAssignment = scheduledClassEnabled ? scheduledActivity?.current : null;
@@ -1109,6 +1119,9 @@ export default function Dashboard() {
     refetchInterval: 60_000,
   });
   const effectiveActivityId = effectiveActivity?.id || null;
+  const sessionSubscriptionEligible = classpilotSessionSubscriptionEligible(effectiveActivity);
+  const awaitingLiveSupervision = effectiveActivity?.sessionMode === 'scheduled_report'
+    && !effectiveActivity.endTime;
   const isStudentOwnedByAnotherClass = useCallback((student) => (
     !!effectiveActivityId
     && student?.supervisionContext?.type === "class"
@@ -2352,7 +2365,7 @@ export default function Dashboard() {
     sessionSubscriptionPendingRef.current = null;
     sessionSubscriptionAttemptRef.current = 0;
 
-    if (!sessionId) {
+    if (!sessionId || !sessionSubscriptionEligible) {
       publishState('not_applicable');
       return () => {
         stopped = true;
@@ -2455,7 +2468,7 @@ export default function Dashboard() {
         }));
       }
     };
-  }, [effectiveActivityId, effectiveAuthorityKey, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveActivityId, effectiveAuthorityKey, sessionSubscriptionEligible, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     transientCommandOutcomesRef.current = new Map();
@@ -5630,7 +5643,9 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
   const updatePollOption = (index, value) => { const newOptions = [...pollOptions]; newOptions[index] = value; setPollOptions(newOptions); };
 
   const monitoringTransportUnavailable = studentsQueryError && !sessionRealtimeHealthy;
-  const connectionPresentation = !effectiveActivityId
+  const connectionPresentation = awaitingLiveSupervision
+    ? { label: 'Awaiting teacher', tone: 'neutral' }
+    : !effectiveActivityId
     ? monitoringTransportUnavailable
       ? { label: 'Monitoring updates unavailable', tone: 'unavailable' }
       : { label: 'Refreshing', tone: 'neutral' }
@@ -5886,18 +5901,19 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
                     <select
                       value={adminObservedSessionId || ""}
                       onChange={handleAdminObservedSessionChange}
-                      disabled={allActiveSessions.length === 0}
+                      disabled={allActiveSessions.length === 0 && !adminObservedSessionId}
                       aria-label="Observe active ClassPilot class"
                       data-testid="select-admin-observe"
                       className="h-7 max-w-[220px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <option value="">{allActiveSessions.length === 0 ? "No active classes" : observedSession ? "Stop observing" : "Observe Class"}</option>
+                      <option value="">{adminObservedSessionId ? "Stop observing" : allActiveSessions.length === 0 ? "No active classes" : "Observe Class"}</option>
+                      {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Class unavailable</option> : null}
                       {allActiveSessions.map((session) => {
                         const sessionGroup = groups.find(g => g.id === session.groupId);
                         const isOwnSession = session.teacherId === currentUser?.id;
                         return (
                           <option key={session.id} value={session.id}>
-                            {sessionGroup?.name || 'Unknown Class'}{isOwnSession ? " (yours)" : ""}
+                            {sessionGroup?.name || 'Unknown Class'}{isOwnSession ? " (yours)" : ""}{session.sessionMode === 'scheduled_report' ? ' · Awaiting teacher' : ''}
                           </option>
                         );
                       })}
@@ -6278,7 +6294,9 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
           </div>
         ) : observationLeaseStatus === 'ineligible' && !terminalSessionError ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-ineligible">
-            Screen previews become available when this class is live and its roster is ready.
+            {awaitingLiveSupervision
+              ? 'This scheduled class is awaiting live supervision. Screen previews will appear automatically when the teacher opens the class. The class has not been closed.'
+              : 'Screen previews become available when this class is live and its roster is ready.'}
           </div>
         ) : observationLeaseStatus === 'paused_unobserved' ? (
           <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200" role="status" data-testid="screenshot-observation-paused">

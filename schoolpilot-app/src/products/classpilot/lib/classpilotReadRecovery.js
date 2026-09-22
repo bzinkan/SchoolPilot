@@ -10,11 +10,15 @@ export function classpilotSessionAuthorityKey({ schoolId, viewerId, session }) {
   ]);
 }
 
-export function classpilotObservationSessionEligible(session) {
-  if (session?.authority?.supervisionContextId) return session.status === 'active'
-    && session.capabilities?.screenshots === true;
+export function classpilotSessionSubscriptionEligible(session) {
+  if (session?.authority?.supervisionContextId) return session.status === 'active';
   return Boolean(session?.id && session.sessionMode === 'live'
     && !session.endTime && session.rosterSnapshotCompletedAt);
+}
+
+export function classpilotObservationSessionEligible(session) {
+  return classpilotSessionSubscriptionEligible(session)
+    && (!session?.authority?.supervisionContextId || session.capabilities?.screenshots === true);
 }
 
 export function isClasspilotSessionUnavailable(error, sessionId) {
