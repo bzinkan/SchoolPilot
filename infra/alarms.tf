@@ -43,13 +43,16 @@ moved {
 
 resource "aws_cloudwatch_metric_alarm" "alb_p95_latency" {
   alarm_name          = "${local.alarm_prefix}-alb-p95-latency"
-  alarm_description   = "ALB target response p95 is above the 2,000-device load gate."
+  # 0.5s sat on top of the normal school-morning p95 (2026-09-22: ~0.50-0.62s at
+  # ~4,000 req/5min with zero 5xx) and flapped every few minutes. 1s sustained
+  # for three consecutive minutes is a real degradation, not the daily peak.
+  alarm_description   = "ALB target response p95 has stayed above 1s for 3 minutes."
   namespace           = "AWS/ApplicationELB"
   metric_name         = "TargetResponseTime"
   comparison_operator = "GreaterThanThreshold"
-  threshold           = 0.5
+  threshold           = 1.0
   evaluation_periods  = 3
-  datapoints_to_alarm = 2
+  datapoints_to_alarm = 3
   period              = 60
   extended_statistic  = "p95"
   treat_missing_data  = "notBreaching"
