@@ -770,7 +770,7 @@ test('screenshot health chips explain capture state without leaking the raw exte
   );
   assert.match(
     dashboardSource,
-    /const screenshotCaptureCadence = deriveScreenshotCaptureCadence\(\{\s*student,\s*observationLeaseStatus: tileScreenshotObservationStatus,\s*\}\);/,
+    /const screenshotCaptureCadence = deriveScreenshotCaptureCadence\(\{\s*student,\s*observationLeaseStatus: claimedTileStatus \?\? tileScreenshotObservationStatus,\s*\}\);/,
   );
   assert.match(dashboardSource, /screenshotCaptureCadence=\{screenshotCaptureCadence\}/);
   assert.match(

@@ -4809,6 +4809,7 @@ test('automatic scheduled Class expires private during failed refresh and retrie
 
 test('scheduled classroom tools retain passive previews without Live View and close outgoing dialogs at handoff', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
+  let testingCapture = 0;
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
   const row = student({ supervisionState: 'temporary_coverage',
@@ -4821,8 +4822,11 @@ test('scheduled classroom tools retain passive previews without Live View and cl
     dashboardActivity: scheduledActivityResponse(scheduledTestingActivity({ studentCount: 1,
       capabilities: { ...scheduledTestingActivity().capabilities, commands: ['open-tab', 'close-tabs', 'teacher-message', 'timer', 'poll', 'attention-mode', 'student-sign-out'] },
     }), { serverTime: '2026-09-15T13:11:30Z' }),
-    screenshotTiles: { tiles: [{ studentId: STUDENT_ID, screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL,
-      timestamp: Date.parse('2026-09-15T13:11:30Z'), capturedAt: '2026-09-15T13:11:30Z' } }] },
+    screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v3:testing-preview', screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: 'v3:testing-preview',
+      timestamp: Date.parse('2026-09-15T13:11:30Z') + testingCapture * 1000,
+      tabTitle: `Testing screen ${testingCapture}`, tabUrl: 'https://lesson.example.edu/testing',
+    } }] }),
     coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
   });
   const commandRequests = [];
@@ -4846,6 +4850,13 @@ test('scheduled classroom tools retain passive previews without Live View and cl
   assert.ok(harness.tileRequests.every(row => row.body.supervisionContextId === OWN_TESTING_CONTEXT_ID && !row.body.teachingSessionId && row.contextAuthorityRevision === '0'));
   assert.ok(harness.observationLeaseRequests.some(row => row.method === 'PUT' && row.pathname.includes(OWN_TESTING_CONTEXT_ID) && row.schoolId === SCHOOL_ID && row.contextAuthorityRevision === '0'));
   await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  testingCapture = 1;
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID });
+  await page.clock.fastForward(1100);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).getByText('Testing screen 1', { exact: true }).waitFor();
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  await page.getByTestId('expanded-screenshot-dialog').getByRole('button', { name: 'Close' }).click();
   assert.equal(await page.getByTestId(`button-live-view-${STUDENT_ID}`).count(), 0, 'Scheduled testing must not expose View or Stop controls');
   assert.equal(await page.getByTestId(`button-expand-${STUDENT_ID}`).count(), 0, 'Scheduled testing must not expose expanded Live View');
   assert.equal(await page.getByTestId('video-portal').count(), 0);
@@ -5078,6 +5089,91 @@ test('Class tools integrates support, activities and manual routines without cov
   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
 });
 
+for (const userRole of ['teacher', 'admin']) {
+test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from their own roster`, { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const contexts = [OWN_TESTING_CONTEXT_ID, OTHER_TESTING_CONTEXT_ID];
+  const rows = contexts.map((contextId, index) => ({
+    ...testingStudent(index ? SIGNED_OUT_STUDENT_ID : STUDENT_ID, contextId),
+    contextAuthorityRevision: String(index + 7), contextEndsAt: '2026-09-14T16:00:00Z',
+    classroomState: { revision: 3 },
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true, screenshotActiveObservationCadenceV1: true },
+  }));
+  let frame = 1;
+  let deniedContext = null;
+  // Production's navigation summary deliberately has no authority revision.
+  const summary = ownSupervisionSummary(contexts.map(id => ({ id, name: `Claim ${id.slice(0, 4)}` })));
+  const harness = await configureDashboard(page, {
+    aggregate: aggregateController(), userRole, activeSession: teachingSession(),
+    allSessions: [teachingSession()], acknowledgeSessionSubscriptions: true,
+    claimedStudents: rows, coverageSummary: summary,
+    observationLeaseResponse: (method, pathname) => method === 'PUT' && deniedContext && pathname.includes(deniedContext)
+      ? { status: 403, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } }
+      : { renewAfterSeconds: 30 },
+    screenshotTiles: body => {
+      const row = rows.find(student => student.contextId === body.supervisionContextId);
+      assert(row, 'A claimed preview uses its own supervision authority, never the unrelated class');
+      const bindingVersion = `v3:claim-${row.studentId}`;
+      return { tiles: [{ studentId: row.studentId, bindingVersion, screenshot: {
+        screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion, timestamp: new Date(TESTING_TIME.getTime() + frame * 1000).toISOString(),
+        tabTitle: `Claimed screen ${frame}`, tabUrl: 'https://lesson.example.edu/work',
+      } }] };
+    },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('button-view-claimed-students').click();
+  await waitUntil(() => contexts.every(id => harness.observationLeaseRequests.some(request =>
+    request.method === 'PUT' && request.pathname.includes(id))), 'Both claimed contexts must authorize previews');
+  for (const row of rows) {
+    await page.getByTestId(`screenshot-${row.studentId}`).waitFor();
+    assert(harness.tileRequests.some(request => request.body.supervisionContextId === row.contextId
+      && request.contextAuthorityRevision === row.contextAuthorityRevision));
+  }
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  await page.getByTestId('expanded-screenshot-dialog').getByRole('button', { name: 'Close' }).click();
+  const readsBeforeEvent = harness.tileRequests.length;
+  frame = 2;
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    studentId: SIGNED_OUT_STUDENT_ID, capturedAt: TESTING_TIME.toISOString() });
+  await page.clock.fastForward(1100);
+  await waitUntil(() => harness.tileRequests.length > readsBeforeEvent,
+    'A claimed screenshot notification refreshes without waiting for the 30-second fallback');
+  await page.getByTestId(`card-student-${SIGNED_OUT_STUDENT_ID}`).getByText('Claimed screen 2', { exact: true }).waitFor();
+  const authorizedReads = harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length;
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SECOND_SCHOOL_ID, studentId: STUDENT_ID });
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID, studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID });
+  await page.clock.fastForward(1100);
+  await page.waitForTimeout(100);
+  assert.equal(harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots')).length, authorizedReads,
+    'Foreign-school and unrelated teaching-session notifications cannot refresh claimed previews');
+  deniedContext = OWN_TESTING_CONTEXT_ID;
+  await page.clock.fastForward(31_000);
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  await page.getByTestId(`screenshot-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`card-student-${STUDENT_ID}`).count(), 1,
+    'Losing preview authority hides private pixels without discarding the roster');
+  deniedContext = null;
+  rows[0] = { ...rows[0], contextAuthorityRevision: '9' };
+  harness.setClaimedStudents([...rows]);
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert(harness.observationLeaseRequests.some(request => request.method === 'PUT'
+    && request.pathname.includes(OWN_TESTING_CONTEXT_ID) && request.contextAuthorityRevision === '9'),
+  'Replacement authority acquires its own lease before restoring a claimed preview');
+  harness.setClaimedStudents(rows.slice(1));
+  harness.setCoverageSummary(ownSupervisionSummary([{ id: OTHER_TESTING_CONTEXT_ID, name: 'Remaining claim' }]));
+  await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'hidden' });
+  await page.getByTestId(`screenshot-${SIGNED_OUT_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId(`screenshot-${STUDENT_ID}`).count(), 0, 'Released students lose their preview');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+}
+
 test('Observe waits for live supervision and recovers when the same scheduled class becomes live', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
@@ -5085,6 +5181,7 @@ test('Observe waits for live supervision and recovers when the same scheduled cl
   await page.clock.install({ time: now });
   let observed = { ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID }),
     sessionMode: 'scheduled_report', scheduledState: 'active', scheduledDate: now.toISOString().slice(0, 10) };
+  let observedCapture = 0;
   const harness = await configureDashboard(page, {
     activeSession: null, allSessions: [observed], acknowledgeSessionSubscriptions: true,
     aggregate: aggregateController({ scoped: success([student({ lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString() })]) }),
@@ -5092,7 +5189,8 @@ test('Observe waits for live supervision and recovers when the same scheduled cl
       ? { type: 'session-subscription-success' }
       : { type: 'session-subscription-error', code: 'SESSION_UNAVAILABLE' },
     screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:observe-promotion',
-      screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: now.toISOString(), bindingVersion: 'v2:observe-promotion' } }] }),
+      screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: new Date(now.getTime() + observedCapture * 1000).toISOString(),
+        bindingVersion: 'v2:observe-promotion', tabTitle: `Observed screen ${observedCapture}`, tabUrl: 'https://lesson.example.edu/observe' } }] }),
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
@@ -5113,6 +5211,11 @@ test('Observe waits for live supervision and recovers when the same scheduled cl
   await waitUntil(() => harness.websocketMessages.some(message => message.type === 'subscribe-session'
     && message.sessionId === OBSERVED_SESSION_ID), 'Observe must subscribe after the same occurrence becomes live');
   await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  observedCapture = 1;
+  await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    teachingSessionId: OBSERVED_SESSION_ID, studentId: STUDENT_ID });
+  await page.clock.fastForward(1100);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).getByText('Observed screen 1', { exact: true }).waitFor();
   assert.equal(await page.getByTestId('session-subscription-error').count(), 0);
   assert.equal(await page.getByTestId('screenshot-observation-ineligible').count(), 0);
   await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();

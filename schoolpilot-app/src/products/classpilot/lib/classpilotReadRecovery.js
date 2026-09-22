@@ -21,6 +21,25 @@ export function classpilotObservationSessionEligible(session) {
     && (!session?.authority?.supervisionContextId || session.capabilities?.screenshots === true);
 }
 
+// Navigation summaries are hints only. The personal claimed roster carries
+// the current authority revision used by leases and screenshot reads.
+export function claimedPreviewContextsFromRoster(contexts, students) {
+  const revisions = new Map();
+  for (const student of students || []) {
+    const id = student.contextId || student.supervisionContext?.id;
+    if (!id) continue;
+    const value = student.contextAuthorityRevision;
+    const revision = value != null && /^(0|[1-9]\d*)$/.test(String(value))
+      && Number.isSafeInteger(Number(value)) ? String(value) : null;
+    if (!revisions.has(id)) revisions.set(id, revision);
+    else if (revisions.get(id) !== revision) revisions.set(id, null);
+  }
+  return (contexts || []).flatMap(context => {
+    const revision = revisions.get(context.id);
+    return revision == null ? [] : [{ ...context, contextAuthorityRevision: revision }];
+  });
+}
+
 export function isClasspilotSessionUnavailable(error, sessionId) {
   if (!sessionId || Number(error?.response?.status) !== 404) return false;
   const code = error?.response?.data?.code;
@@ -35,7 +54,7 @@ export function tileStudentReadAuthorityKey(contextKey, student) {
     student?.isLoggedIn ?? null, student?.loginState || '',
     student?.contextId || '', student?.supervisionState || '',
     supervision?.type || supervision?.kind || '', supervision?.id || '',
-    supervision?.assignedStaffId || '',
+    supervision?.assignedStaffId || '', student?.contextAuthorityRevision ?? null,
   ]);
 }
 

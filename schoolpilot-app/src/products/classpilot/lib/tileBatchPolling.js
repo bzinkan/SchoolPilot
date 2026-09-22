@@ -158,6 +158,7 @@ export function createTileBatchRequests(students, context = {}) {
         endpoint: TILE_BATCH_ENDPOINTS.screenshots,
         queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots, contextKey, screenshotCohortKey],
         body: { studentIds: cohort, ...sessionBody },
+        ...(context.contextAuthorityRevision != null ? { contextAuthorityRevision: context.contextAuthorityRevision } : {}),
         refetchInterval: TILE_BATCH_REFETCH_INTERVAL_MS,
       },
       {
@@ -165,6 +166,7 @@ export function createTileBatchRequests(students, context = {}) {
         endpoint: TILE_BATCH_ENDPOINTS.history,
         queryKey: [TILE_BATCH_QUERY_ROOTS.history, contextKey, historyCohortKey],
         body: { studentIds: cohort, limit: TILE_BATCH_HISTORY_LIMIT, ...sessionBody },
+        ...(context.contextAuthorityRevision != null ? { contextAuthorityRevision: context.contextAuthorityRevision } : {}),
         refetchInterval: TILE_BATCH_REFETCH_INTERVAL_MS,
       }
     );
@@ -616,7 +618,10 @@ export function assertTileScreenshotStoreAvailable(response) {
 }
 
 export async function fetchTileBatch(request, requestApi, signal) {
-  const response = await requestApi('POST', request.endpoint, request.body, { signal });
+  const response = await requestApi('POST', request.endpoint, request.body, {
+    signal,
+    ...(request.contextAuthorityRevision != null ? { contextAuthorityRevision: request.contextAuthorityRevision } : {}),
+  });
   return request.kind === 'screenshots'
     ? normalizeTileScreenshotBindings(assertTileScreenshotStoreAvailable(response))
     : response;
