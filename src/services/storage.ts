@@ -1722,6 +1722,82 @@ export async function getEncryptedClasspilotPinBatch(
   );
 }
 
+/**
+ * Heal a legacy row after a successful bcrypt PIN verification. Only fills an
+ * empty column: a concurrent admin PIN change (which writes both columns) wins.
+ */
+export async function backfillEncryptedClasspilotPin(
+  schoolId: string,
+  studentId: string,
+  ciphertext: string
+): Promise<boolean> {
+  const updated = await db
+    .update(students)
+    .set({ classpilotPinEncrypted: ciphertext })
+    .where(
+      and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+        isNull(students.classpilotPinEncrypted)
+      )
+    )
+    .returning({ id: students.id });
+  return updated.length === 1;
+}
+
+export type ClasspilotPinAuditRow = {
+  id: string;
+  pinHash: string | null;
+  ciphertext: string | null;
+};
+
+/** Active students holding either PIN column, for the hash/ciphertext consistency audit. */
+export async function getClasspilotPinAuditBatch(
+  schoolId: string,
+  afterId: string | undefined,
+  batchSize: number
+): Promise<ClasspilotPinAuditRow[]> {
+  const conditions = [
+    eq(students.schoolId, schoolId),
+    eq(students.status, "active"),
+    or(isNotNull(students.classpilotPinHash), isNotNull(students.classpilotPinEncrypted)),
+  ];
+  if (afterId) conditions.push(gt(students.id, afterId));
+  return db
+    .select({
+      id: students.id,
+      pinHash: students.classpilotPinHash,
+      ciphertext: students.classpilotPinEncrypted,
+    })
+    .from(students)
+    .where(and(...conditions))
+    .orderBy(asc(students.id))
+    .limit(batchSize);
+}
+
+/** Compare-and-swap so the audit never overwrites a concurrent admin PIN change. */
+export async function replaceClasspilotPinHash(
+  schoolId: string,
+  studentId: string,
+  expectedHash: string | null,
+  replacementHash: string
+): Promise<boolean> {
+  const updated = await db
+    .update(students)
+    .set({ classpilotPinHash: replacementHash })
+    .where(
+      and(
+        eq(students.id, studentId),
+        eq(students.schoolId, schoolId),
+        expectedHash === null
+          ? isNull(students.classpilotPinHash)
+          : eq(students.classpilotPinHash, expectedHash)
+      )
+    )
+    .returning({ id: students.id });
+  return updated.length === 1;
+}
+
 /** Compare-and-swap prevents the rotation job from overwriting a concurrent PIN edit. */
 export async function replaceEncryptedClasspilotPin(
   schoolId: string,

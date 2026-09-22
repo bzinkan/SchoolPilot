@@ -233,6 +233,40 @@ not prove that the photographed Chromebook recovered. Do not restart the
 cancelled recurring monitor. Preserve this release's evidence and remove only
 its clean worktrees and verified merged branches.
 
+## PIN verification path
+
+Since 2026-09-22 the `name_pin` route verifies the entered PIN against the
+admin-visible encrypted PIN (`classpilotPinEncrypted`, decrypted and compared in
+constant time) instead of the bcrypt hash. The bcrypt compare cost about 0.9 s
+of event-loop CPU per attempt on a half-vCPU task; the new path costs
+microseconds. bcrypt is used only when a row has no decryptable encrypted PIN;
+a successful bcrypt verification backfills the encrypted column so that row is
+fast from then on. A decrypted PIN that does not match is a `PIN_MISMATCH` and
+the bcrypt hash is never consulted afterwards. The route's failure order,
+reasons and response bodies are unchanged.
+
+Counters (same `SchoolPilot/RuntimePerformance` interval record):
+`studentSignInPinVerifyEncrypted`, `studentSignInPinVerifyBcrypt` (legacy
+fallback; should trend to zero), `studentSignInPinBackfillFailed`.
+
+Kill switch: `CLASSPILOT_PIN_VERIFY_MODE=bcrypt` on the API task forces the
+legacy bcrypt path for every request without a code change. Remove the variable
+to return to the encrypted path.
+
+Pre-deploy audit: `npm run audit:classpilot-pin-consistency` (built CLI,
+`dist/cli/auditClasspilotPinConsistency.js`, run as a one-off migrate task)
+reports counts only: rows with both columns that agree, rows that disagree,
+hash-only rows (bcrypt fallback until first sign-in), encrypted-only rows and
+undecryptable ciphertexts. With `--execute`, disagreeing rows get their bcrypt
+hash re-derived from the encrypted PIN under a compare-and-swap; the encrypted
+PIN wins because it is what a teacher reads out to the student. Expected: zero
+disagreements, since every PIN write path stores both columns together.
+
+There is deliberately no per-student attempt limit (decision 2026-09-22). With
+verification this cheap, guessing is bounded only by the per-IP API limiter, so
+the `classpilot-pin-mismatch-burst` CloudWatch alarm (more than 50
+`PIN_MISMATCH` in five minutes) is the detection side of that trade-off.
+
 ## Rollback
 
 A rollback to a release with PIN lockout code restores that behavior and the

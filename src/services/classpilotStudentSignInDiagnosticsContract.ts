@@ -59,5 +59,9 @@ export const STUDENT_SIGN_IN_COUNTER_NAMES = [
   // Completed means terminal requests, including interrupted responses.
   "studentSignInCompleted", "studentSignInSuccess", "studentSignInFailure",
   "studentSignInDiagnosticSuppressed", "studentSignInDiagnosticSinkFailure",
+  // Which PIN verification path a name_pin request took. The bcrypt path is the
+  // legacy fallback for rows without a decryptable PIN; it should trend to zero.
+  "studentSignInPinVerifyEncrypted", "studentSignInPinVerifyBcrypt",
+  "studentSignInPinBackfillFailed",
   ...Object.values(STUDENT_SIGN_IN_REASON_COUNTERS),
 ] as const;

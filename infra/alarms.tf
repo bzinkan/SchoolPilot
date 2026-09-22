@@ -679,6 +679,33 @@ resource "aws_cloudwatch_metric_alarm" "websocket_disconnects" {
   }
 }
 
+# Wrong-PIN burst. PIN verification is now a constant-time compare and student
+# sign-in has, by decision, no per-student attempt limit, so a guessing run is
+# bounded only by the per-IP API limiter. This alarm is the detection side of
+# that trade-off. Metric: RuntimeStudentSignInReasonPinMismatch, emitted once
+# per UTC minute by src/services/runtimePerformanceMetrics.ts from the
+# studentSignInReasonPinMismatch counter. A busy school morning sees single
+# digits per minute; 50 in five minutes is not students mistyping.
+resource "aws_cloudwatch_metric_alarm" "classpilot_pin_mismatch_burst" {
+  alarm_name          = "${local.alarm_prefix}-classpilot-pin-mismatch-burst"
+  alarm_description   = "ClassPilot student sign-in saw an unusual burst of wrong PINs; check for PIN guessing against one student."
+  namespace           = "SchoolPilot/RuntimePerformance"
+  metric_name         = "RuntimeStudentSignInReasonPinMismatch"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 50
+  evaluation_periods  = 1
+  period              = 300
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  dimensions = {
+    Environment = var.environment
+    Service     = "api"
+  }
+}
+
 # ClassPilot heartbeat hot-path EMF metrics. The API emits these once per
 # UTC minute from src/services/heartbeatHotPathMetrics.ts
 # (HOT_PATH_EMF_COUNTERS); the metric names below must match that allowlist.

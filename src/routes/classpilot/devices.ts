@@ -37,6 +37,7 @@ import {
   getHeartbeatsByDevice,
   getHeartbeatsByDeviceInRange,
   getStudentById,
+  backfillEncryptedClasspilotPin,
   getStudentsBySchool,
   createStudent,
   resolveSchoolForStudent,
@@ -88,7 +89,7 @@ import {
   TokenExpiredError,
   verifyStudentToken,
 } from "../../services/deviceJwt.js";
-import { comparePassword } from "../../util/password.js";
+import { verifyClassPilotPin } from "../../services/classpilotPins.js";
 import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
 import {
   broadcastToStaffSessionLocal,
@@ -2861,14 +2862,28 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
 
       markStudentSignInStage(req, "credential_validation");
       const student = await getStudentById(selectedStudentId);
-      // Preserve the existing short-circuit order and single comparison. The
+      // Preserve the existing short-circuit order and single verification. The
       // reason describes the failed check, never the student's intended choice.
+      const eligible = Boolean(student && student.schoolId === school.id && student.status === "active");
+      const verification = eligible && student
+        ? await verifyClassPilotPin(student, enteredPin)
+        : undefined;
       const credentialFailure = !student ? "STUDENT_NOT_FOUND"
         : student.schoolId !== school.id ? "STUDENT_SCHOOL_MISMATCH"
         : student.status !== "active" ? "STUDENT_INACTIVE"
-        : !student.classpilotPinHash ? "PIN_NOT_CONFIGURED"
-        : !(await comparePassword(enteredPin, student.classpilotPinHash))
-          ? "PIN_MISMATCH" : undefined;
+        : verification?.ok === false ? verification.reason
+        : verification === undefined ? "PIN_NOT_CONFIGURED"
+        : undefined;
+      if (student && verification?.ok) {
+        recordRuntimePerformanceCounter(verification.via === "encrypted"
+          ? "studentSignInPinVerifyEncrypted" : "studentSignInPinVerifyBcrypt");
+        if (verification.backfillEncrypted) {
+          // Heal the legacy row so the next sign-in skips bcrypt. Never block
+          // or fail the login on it; the counter is the only trace.
+          void backfillEncryptedClasspilotPin(school.id, student.id, verification.backfillEncrypted)
+            .catch(() => recordRuntimePerformanceCounter("studentSignInPinBackfillFailed"));
+        }
+      }
       if (credentialFailure) {
         markStudentSignInFailure(req, credentialFailure);
         return res.status(401).json({
