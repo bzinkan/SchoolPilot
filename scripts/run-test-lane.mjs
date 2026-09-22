@@ -25,6 +25,7 @@ const RLS_SERIAL = new Set([
 
 const DB_SERIAL = new Set([
   "api-pool-readiness.integration.test.ts",
+  "classpilot-class-tools.integration.test.ts",
   "classpilot-fab-sync-pending.integration.test.ts",
   "classpilot-coverage-directory.integration.test.ts",
   "classpilot-coverage-deletion.integration.test.ts",

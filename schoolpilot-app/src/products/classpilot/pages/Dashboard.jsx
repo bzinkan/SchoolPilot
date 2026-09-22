@@ -13,8 +13,9 @@ import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
-import TeacherFab from '../components/TeacherFab';
-import ChatDrawer from '../components/ChatDrawer';
+import ClassToolsPanel from '../components/ClassToolsPanel';
+import ChatWorkspace from '../components/ChatWorkspace';
+import { ClassHelp, ClassActivityShortcuts, ClassToolShortcuts } from '../components/ClassToolsContent';
 import {
   Dialog,
   DialogContent,
@@ -138,6 +139,7 @@ import {
   unwrapToday,
 } from '../lib/scheduleChanges';
 import { useObservationLease } from '../hooks/useObservationLease';
+import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import { countUnreadByStudent, deriveChatConversations, looksLikeQuestion } from '../lib/chatThreads';
 import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
@@ -503,6 +505,8 @@ export default function Dashboard() {
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerMessage, setTimerMessage] = useState("");
   const [timerActive, setTimerActive] = useState(false);
+  const [timerSnapshot, setTimerSnapshot] = useState(null);
+  const [classToolsReservedWidth, setClassToolsReservedWidth] = useState(0);
   const [showPollDialog, setShowPollDialog] = useState(false);
   const [showPollResultsDialog, setShowPollResultsDialog] = useState(false);
   const [pollQuestion, setPollQuestion] = useState("");
@@ -1593,6 +1597,7 @@ export default function Dashboard() {
     const timerEnd = Date.parse(timer?.endsAt || '');
     const active = timer?.completedTargetCount > 0 && Number.isFinite(timerEnd) && timerEnd > Date.now();
     setTimerActive(active);
+    setTimerSnapshot(active ? timer : null);
     setActivePoll(restoredClassroomTransient.poll?.isActive ? restoredClassroomTransient.poll : null);
     if (!active) return;
     const deadline = setTimeout(() => setTimerActive(false), Math.min(2147483647, Math.max(0, timerEnd - Date.now())));
@@ -1668,18 +1673,20 @@ export default function Dashboard() {
   const chatConversations = useMemo(() => deriveChatConversations(studentMessages, chatReplies), [studentMessages, chatReplies]);
   // The chat drawer is a sibling of the FAB, not a child: the FAB remounts
   // whenever the chat scope changes and would lose the open thread.
-  const [chatView, setChatView] = useState({ open: false, studentId: null, nonce: 0 });
+  const [chatView, setChatView] = useState({ scopeKey: activityScopeKey, open: false, tab: 'help', studentId: null, nonce: 0 });
+  if (chatView.scopeKey !== activityScopeKey) setChatView({ scopeKey: activityScopeKey, open: false, tab: 'help', studentId: null, nonce: 0 });
   const chatViewRef = useRef(chatView);
-  useEffect(() => { chatViewRef.current = chatView; }, [chatView]);
+  useLayoutEffect(() => { chatViewRef.current = { ...chatView, visible: chatView.open && chatView.tab === 'messages' && !selectedStudent }; }, [chatView, selectedStudent]);
   const chatOpenerRef = useRef(null);
   const chatFocusGenerationRef = useRef(0);
   const openChatThread = useCallback((studentId, opener) => {
     chatFocusGenerationRef.current += 1;
     chatOpenerRef.current = opener || null;
-    setChatView((current) => ({ open: true, studentId: studentId ?? current.studentId, nonce: current.nonce + 1 }));
+    setSelectedStudent(null);
+    setChatView((current) => ({ ...current, open: true, tab: 'messages', studentId: studentId ?? current.studentId, nonce: current.nonce + 1 }));
   }, []);
   const selectChatConversation = useCallback((studentId) => {
-    setChatView((current) => ({ ...current, open: true, studentId }));
+    setChatView((current) => ({ ...current, open: true, tab: 'messages', studentId }));
   }, []);
   const closeChatDrawer = useCallback(() => {
     const opener = chatOpenerRef.current;
@@ -1691,6 +1698,10 @@ export default function Dashboard() {
       if (chatFocusGenerationRef.current === focusGeneration && opener?.isConnected) opener.focus();
     });
   }, []);
+
+  const classTools = useClassTools({ schoolId: activeSchoolId, viewerId: currentUser?.id, authority: effectiveAuthority, authorityRevision: contextAuthorityRevision,
+    scopeKey: activityScopeKey, enabled: dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable,
+    onError: error => toast({ variant: 'destructive', title: 'Class tools', description: error.message }) });
 
   // Sync initial raised hands to state
   useEffect(() => {
@@ -1915,6 +1926,7 @@ export default function Dashboard() {
                   || previousTimerEffect?.active !== currentTimerEffect?.active
                 ) {
                   setTimerActive(currentTimerEffect?.active === true);
+                  setTimerSnapshot(currentTimerEffect?.active ? currentTimerEffect.timer : null);
                 }
 
                 const previousPollEffect = latestTransientClassroomUiEffect(before, 'poll');
@@ -2037,7 +2049,7 @@ export default function Dashboard() {
               };
               if (!chat.receiveStudentMessage(newMsg)) return;
               const chatViewNow = chatViewRef.current;
-              if (chatViewNow.open && chatViewNow.studentId === message.data.studentId && document.visibilityState === 'visible') {
+              if (chatViewNow.visible && chatViewNow.studentId === message.data.studentId && document.visibilityState === 'visible') {
                 // The teacher is looking at this thread: it reads as seen and needs no toast.
                 queueReadReceipts(chat.markRead(newMsg.id));
                 return;
@@ -2046,6 +2058,9 @@ export default function Dashboard() {
                 title: message.data.messageType === 'question' || looksLikeQuestion(message.data.message) ? "Question" : "Message",
                 description: `${message.data.studentName}: ${message.data.message.slice(0, 50)}${message.data.message.length > 50 ? '...' : ''}`,
               });
+            }
+            if (message.type === 'class-tools-updated') {
+              queryClient.invalidateQueries({ queryKey: ['/api/class-tools/state', activeSchoolIdRef.current] });
             }
             if (message.type === 'chat-message-delivery') {
               if (!classRealtimeMessageEligibility(message)) return;
@@ -2446,6 +2461,7 @@ export default function Dashboard() {
     transientCommandOutcomesRef.current = new Map();
     setTransientPendingControls({ timer: false, poll: false });
     setTimerActive(false);
+    setTimerSnapshot(null);
     setActivePoll(null);
     setShowPollResultsDialog(false);
     if (commandExpiryTimeoutRef.current) {
@@ -5280,11 +5296,25 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
+  const runClassToolsCommand = async (type, payload, options = {}) => {
+    try {
+      const result = await postClassroomCommand(type, payload, options);
+      toast(result.deliveryFeedback);
+      await classTools.refresh();
+      return result;
+    } catch (error) { toast({ variant: 'destructive', title: 'Class tools', description: error.message }); throw error; }
+  };
+  const openClassPresentation = () => {
+    const params = new URLSearchParams({ ...effectiveAuthority, schoolId: activeSchoolId, ...(contextAuthorityRevision !== null ? { revision: String(contextAuthorityRevision) } : {}) });
+    window.open(`/classpilot/presentation?${params}`, '_blank', 'noopener,noreferrer');
+  };
+
   const timerMutation = useMutation({
-    mutationFn: async ({ action, seconds, message }) => postClassroomCommand('timer', { action, seconds, message }),
+    mutationFn: async (payload) => postClassroomCommand('timer', payload),
     onSuccess: (data, variables) => {
       toast(data.deliveryFeedback);
       if (variables.action === 'start') setShowTimerDialog(false);
+      classTools.refresh();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -5642,7 +5672,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
         />
       ))}
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-700 relative">
+      <header data-class-tools-navigation className="sticky top-0 z-40 bg-slate-900 border-b border-slate-700 relative">
         <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-400 to-amber-500" />
         <div className="max-w-screen-2xl mx-auto px-6 py-3">
           <div className="flex items-center justify-between gap-4">
@@ -5925,7 +5955,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
 
       {/* Sidebar + Main Content */}
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
-      <main className={`transition-all duration-300 ${showSidebar ? 'lg:ml-80' : ''}`}>
+      <main className={showSidebar ? 'lg:ml-80' : ''}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
         {scheduledClassEnabled ? (() => {
           // Each part of the banner is conditional, so it can end up with nothing
@@ -6102,7 +6132,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
 
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
-          <div className="flex items-center gap-2 flex-wrap mb-4">
+          <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
@@ -6517,7 +6547,7 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(224px,1fr))] gap-6">
+          <div style={{ marginRight: classToolsReservedWidth }} className="grid grid-cols-[repeat(auto-fill,minmax(min(224px,100%),1fr))] gap-6 motion-safe:transition-[margin] motion-safe:duration-200">
             {filteredStudents.map((student) => {
               const studentRealtimeKey = student.studentId;
               const supervisedElsewhere = isStudentMonitoringSuppressed(student);
@@ -6745,30 +6775,6 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
         />
       )}
 
-      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && (
-        <ChatDrawer
-          open={chatView.open}
-          onClose={closeChatDrawer}
-          conversations={chatConversations.conversations}
-          totalUnread={chatConversations.totalUnread}
-          selectedStudentId={chatView.studentId}
-          onSelectConversation={selectChatConversation}
-          onClearThread={clearChatThread}
-          onEndChat={endChat}
-          onReplyToMessage={replyToStudent}
-          pendingReplyStudentIds={pendingReplyStudentIds}
-          onMarkThreadRead={markChatThreadRead}
-          students={students}
-          freshnessNowMs={freshnessNowMs}
-          authority={effectiveAuthority}
-          studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
-          onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
-          fabState={sessionFabState}
-          onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}
-          fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
-          onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
-        />
-      )}
 
       <Dialog
         open={!!endClassTarget}
@@ -7607,28 +7613,53 @@ ${claimedPreviewContexts.map(context => `${context.id}:${context.contextAuthorit
             }}>End testing and release all</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive && (
-        <TeacherFab
-          key={`${classReaderKey}:${effectiveAuthorityKey}:${chat.generation}`}
-          attentionActive={attentionActive}
-          onAttentionClick={() => setShowAttentionDialog(true)}
-          attentionPending={subgroupCommandsDisabled || attentionModeMutation.isPending}
-          timerActive={timerActive}
-          onTimerClick={() => timerActive ? handleStopTimer() : setShowTimerDialog(true)}
-          timerPending={subgroupCommandsDisabled || timerMutation.isPending || timerDeliveryPending}
-          activePoll={activePoll}
-          pollTotalResponses={pollTotalResponses}
-          onPollClick={() => activePoll ? setShowPollResultsDialog(true) : setShowPollDialog(true)}
-          pollPending={subgroupCommandsDisabled || pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending}
-          raisedHands={raisedHands}
-          onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)}
-          handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
-          onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}
-          unreadMessageCount={chatConversations.totalUnread}
-          onOpenChat={(opener) => openChatThread(null, opener)}
+      {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && (
+        <ClassToolsPanel
+          key={activityScopeKey}
+          storageKey={`classpilot-tools:${activeSchoolId}:${currentUser?.id}`}
+          open={chatView.open} tab={chatView.tab} suspended={Boolean(selectedStudentRow && !selectedStudentDetailsRevoked)}
+          onOpen={(opener) => { chatOpenerRef.current = opener; setChatView(current => ({ ...current, open: true })); }}
+          onClose={closeChatDrawer} onTabChange={(tab) => setChatView(current => ({ ...current, tab }))}
+          onReserveWidth={setClassToolsReservedWidth}
+          contextLabel={effectiveActivity?.groupName || effectiveActivity?.name || groups.find(group => group.id === effectiveActivity?.groupId)?.name || 'Current class'}
+          recipientLabel={selectedStudentIds.size ? `${selectedStudentIds.size} selected students` : selectedSubgroupId ? `${subgroupMembers.size} students in selected group` : `all ${students.length} students`}
+          helpCount={classTools.data?.help?.length ?? raisedHands.size} unreadConversationCount={chatConversations.conversations.filter(conversation => conversation.unreadCount > 0).length}
+          timer={classTools.data?.timer || (timerActive ? timerSnapshot : null)}
+          renderMessages={({ width, visible }) => <ChatWorkspace
+            width={width} visible={visible}
+            onOpenStudentDetails={(studentId, opener) => { const student = students.find(row => (row.studentId || row.id) === studentId); if (student) openStudentDetails(student, opener); }}
+          conversations={chatConversations.conversations}
+          totalUnread={chatConversations.totalUnread}
+          selectedStudentId={chatView.studentId}
+          onSelectConversation={selectChatConversation}
+          onClearThread={clearChatThread}
+          onEndChat={endChat}
+          onReplyToMessage={replyToStudent}
+          pendingReplyStudentIds={pendingReplyStudentIds}
+          onMarkThreadRead={markChatThreadRead}
+          students={students}
+          freshnessNowMs={freshnessNowMs}
+          authority={effectiveAuthority}
           studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
-          messagesPaused={sessionFabState?.messagesPaused === true}
+          onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
+          fabState={sessionFabState}
+          onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}
           fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
+          onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
+          />}
+          help={<ClassHelp tools={classTools} raisedHands={raisedHands} handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
+            onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}
+            pending={!sessionFabState || toggleHandRaisingMutation.isPending} onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)} />}
+          activities={<ClassActivityShortcuts tools={classTools} onCommand={runClassToolsCommand} activePoll={activePoll} responseCount={pollTotalResponses}
+            flightPaths={flightPaths} getRecipients={() => buildCommandRequest('timer', { action: 'start', seconds: 60 }).target.targetStudentIds}
+            onPollClick={() => activePoll ? setShowPollResultsDialog(true) : setShowPollDialog(true)}
+            onPreset={(preset) => { setPollQuestion(preset.question); setPollOptions([...preset.options]); setShowPollDialog(true); }}
+            pollPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending} />}
+          tools={<ClassToolShortcuts tools={classTools} onCommand={runClassToolsCommand} onPresentation={openClassPresentation} onTimerAction={(payload) => timerMutation.mutate(payload)} timer={classTools.data?.timer || (timerActive ? timerSnapshot : null)} timerActive={timerActive}
+            timerPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || timerMutation.isPending || timerDeliveryPending}
+            onTimerClick={() => timerActive ? handleStopTimer() : setShowTimerDialog(true)}
+            attentionActive={attentionActive} attentionPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || attentionModeMutation.isPending}
+            onAttentionClick={() => setShowAttentionDialog(true)} onReleaseAttention={() => handleAttentionMode(false)} />}
         />
       )}
     </div>

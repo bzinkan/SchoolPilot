@@ -23,6 +23,11 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
   "scheduledClassroomV1",
+  "helpRequestsV1",
+  "questionParkingV1",
+  "timerControlsV1",
+  "lessonActivitiesV1",
+  "exitTicketsV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -56,6 +61,12 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   // as "true"/"false", and pointing it at the mode variable would let a deploy
   // write a value that fails assertScheduledClassroomEnvironment at boot.
   scheduledClassroomV1: "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1",
+  helpRequestsV1: "CLASSPILOT_CAP_HELP_REQUESTS_V1",
+  questionParkingV1: "CLASSPILOT_CAP_QUESTION_PARKING_V1",
+  timerControlsV1: "CLASSPILOT_CAP_TIMER_CONTROLS_V1",
+  lessonActivitiesV1: "CLASSPILOT_CAP_LESSON_ACTIVITIES_V1",
+  exitTicketsV1: "CLASSPILOT_CAP_EXIT_TICKETS_V1",
+
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -76,6 +87,11 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "afterHoursSafetyOnlyV1",
   "schoolWebsiteBlockEnforcementV1",
   "scheduledClassroomV1",
+  "helpRequestsV1",
+  "questionParkingV1",
+  "timerControlsV1",
+  "lessonActivitiesV1",
+  "exitTicketsV1",
 ]);
 
 function enabled(value: string | undefined): boolean {

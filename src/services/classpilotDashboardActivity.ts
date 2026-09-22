@@ -10,7 +10,7 @@ import { classpilotSupervisionPreviewObserved } from "../config/classpilotSuperv
 
 export const SCHEDULED_CLASSROOM_COMMANDS = ["open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message",
   "apply-flight-path", "remove-flight-path", "apply-block-list", "remove-block-list", "attention-mode", "timer", "poll",
-  "student-sign-out", "temp-unblock", "limit-tabs"] as const;
+  "student-sign-out", "temp-unblock", "limit-tabs", "lesson-activity"] as const;
 
 export type ClasspilotDashboardActivity = {
   id: string; source: ClasspilotActivitySource; name: string; startsAt: string; endsAt: string | null;

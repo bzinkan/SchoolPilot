@@ -310,10 +310,13 @@ export function transientClassroomUiEffect(entry) {
 
   if (entry.commandType === 'timer') {
     if (payload.action !== 'start' && payload.action !== 'stop') return null;
+    const endsAt = payload.deadline || payload.endsAt;
+    const legacyEnd = Date.parse(entry.command?.createdAt || '') + Number(payload.seconds || payload.durationSeconds) * 1000;
     return {
       commandId: entry.commandId,
       control: 'timer',
       active: payload.action === 'start',
+      ...(payload.action === 'start' && (endsAt || Number.isFinite(legacyEnd)) ? { timer: { ...payload, endsAt: endsAt || new Date(legacyEnd).toISOString() } } : {}),
     };
   }
 

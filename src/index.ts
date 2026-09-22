@@ -45,6 +45,7 @@ import { MAILPILOT_SAFETY_DURABILITY_SQL } from "./db/mailpilotSafetyDurabilityM
 import { CLASSPILOT_SCHEDULING_SQL } from "./db/classpilotSchedulingMigration.js";
 import { CLASSPILOT_SCHEDULE_BOUNDARY_SQL } from "./db/classpilotScheduleBoundaryMigration.js";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "./db/classpilotScheduledClassroomMigration.js";
+import { CLASSPILOT_TOOLS_SQL } from "./db/classpilotToolsMigration.js";
 import { CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL } from "./db/classpilotChatChannelControlMigration.js";
 import { CLASSPILOT_CHAT_SEEN_STATE_SQL } from "./db/classpilotChatSeenStateMigration.js";
 import { CLASSPILOT_CHAT_OVERSIGHT_SQL } from "./db/classpilotChatOversightMigration.js";
@@ -4993,6 +4994,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_CHAT_SEEN_STATE_SQL);
   await pool.query(CLASSPILOT_CHAT_OVERSIGHT_SQL);
   await pool.query(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL);
+  await pool.query(CLASSPILOT_TOOLS_SQL);
 }
 
 async function startServer(): Promise<void> {

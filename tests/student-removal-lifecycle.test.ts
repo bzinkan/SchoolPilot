@@ -196,6 +196,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM polls WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id IN (${schoolAId}, ${schoolBId}))`);
       await db.execute(sql`DELETE FROM classpilot_active_hands WHERE school_id IN (${schoolAId}, ${schoolBId})`);
+      await db.execute(sql`DELETE FROM session_settings WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM devices WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id IN (${schoolAId}, ${schoolBId})`);
       await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id IN (${schoolAId}, ${schoolBId})`);

@@ -1,3 +1,5 @@
+import { readStudentToolsSnapshot } from "./classpilotClassTools.js";
+import { classToolsPhase } from "../config/classpilotClassTools.js";
 import crypto from "crypto";
 import { db } from "../db.js";
 import type { TeachingSession } from "../schema/classpilot.js";
@@ -151,14 +153,16 @@ export async function buildStudentFabState(
     ? options.studentSessionId
     : authority.studentSession?.id ?? null;
   const ownershipRevision = authority.ownershipRevision;
-  if (supervision) {
-    let acceptedCapabilities = options.acceptedCapabilities;
-    if (!acceptedCapabilities && authority.studentSession && scheduledContextHasClassroomTools(supervision.context)) {
+  let acceptedCapabilities = options.acceptedCapabilities;
+  if (!acceptedCapabilities && authority.studentSession && (classToolsPhase(schoolId) >= 2 || supervision && scheduledContextHasClassroomTools(supervision.context))) {
       const session = authority.studentSession;
       const snapshots = await readClasspilotRealtimeStatusBatch(schoolId, [{ studentId, studentSessionId: session.id, deviceId: session.deviceId }]);
       const snapshot = snapshots.get(studentId);
       acceptedCapabilities = snapshot?.status === "hit" && classpilotRealtimeFresh(snapshot.snapshot) ? snapshot.snapshot.acceptedCapabilities : [];
-    }
+  }
+  const toolsSnapshot = (context: { teachingSessionId: string } | { supervisionContextId: string }) => authority.studentSession && studentSessionId === authority.studentSession.id
+    ? readStudentToolsSnapshot({ schoolId, studentId, studentSessionId, deviceId: authority.studentSession.deviceId, authority: context }, options.dbInstance, acceptedCapabilities) : null;
+  if (supervision) {
     if (scheduledContextHasClassroomTools(supervision.context) && acceptedCapabilities?.includes("scheduledClassroomV1")) {
       const context = supervision.context;
       const toggles = await scheduledClassroomToggles(schoolId, context, options.dbInstance);
@@ -170,6 +174,7 @@ export async function buildStudentFabState(
         messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled,
         messagesPaused: toggles.messagesPaused, pauseReason: toggles.pauseReason, handRaised: hands.length > 0,
         activeHands: hands.map((hand) => ({ supervisionContextId: context.id, studentId, raisedAt: hand.raisedAt, expiresAt: hand.expiresAt })),
+        classTools: await toolsSnapshot({ supervisionContextId: context.id }),
         sessions: [], supervisionContext: { id: context.id, type: context.contextType, name: context.name,
           source: scheduledSupervisionSource(context), endsAt: context.endsAt.toISOString(),
           contextAuthorityRevision: String(context.classroomAuthorityRevision) },
@@ -267,6 +272,7 @@ export async function buildStudentFabState(
       raisedAt: hand.raisedAt,
       expiresAt: hand.expiresAt,
     })),
+    classTools: sessions.length === 1 ? await toolsSnapshot({ teachingSessionId: sessions[0]!.id }) : null,
     sessions: sessionStates,
   };
 }

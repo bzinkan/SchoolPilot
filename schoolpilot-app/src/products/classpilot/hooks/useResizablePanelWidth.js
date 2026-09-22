@@ -1,55 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-/**
- * Drag-to-resize for a right-anchored panel. Width is measured from the right
- * edge of the viewport, clamped to [min, viewport * maxFraction], and optionally
- * remembered per browser under `storageKey`.
- */
-export function useResizablePanelWidth({ initial = 700, min = 400, maxFraction = 0.9, storageKey = null } = {}) {
-  const [width, setWidth] = useState(() => {
-    if (storageKey) {
-      try {
-        const saved = Number(window.localStorage.getItem(storageKey));
-        if (Number.isFinite(saved) && saved >= min) return saved;
-      } catch {
-        // Storage can be unavailable; the default width still works.
-      }
-    }
+/** Shared mouse/keyboard resizer, scoped persistence, and viewport clamping. */
+export function useResizablePanelWidth({ initial = 700, min = 400, maxFraction = 0.9, storageKey = null, rightOffset = 0 } = {}) {
+  const load = () => {
+    try { const saved = Number(localStorage.getItem(storageKey)); if (storageKey && Number.isFinite(saved) && saved >= min) return saved; } catch { /* optional */ }
     return initial;
-  });
+  };
+  const [state, setState] = useState(() => ({ key: storageKey, width: load() }));
+  if (state.key !== storageKey) setState({ key: storageKey, width: load() });
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const limit = useCallback((value) => Math.max(Math.min(min, window.innerWidth), Math.min(window.innerWidth * maxFraction, value)), [min, maxFraction]);
+  const width = Math.max(Math.min(min, viewportWidth), Math.min(viewportWidth * maxFraction, state.width));
   const widthRef = useRef(width);
   widthRef.current = width;
   const resizing = useRef(false);
-
+  const save = useCallback((value) => { if (storageKey) { try { localStorage.setItem(storageKey, String(value)); } catch { /* optional */ } } }, [storageKey]);
   const onResizeStart = useCallback((event) => {
-    event.preventDefault();
-    resizing.current = true;
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'col-resize';
+    if (event.button !== 0) return;
+    event.preventDefault(); resizing.current = true;
+    document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize';
   }, []);
-
+  const onResizeKeyDown = useCallback((event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = limit(event.key === 'Home' ? min : event.key === 'End' ? window.innerWidth * maxFraction : widthRef.current + (event.key === 'ArrowLeft' ? 20 : -20));
+    setState({ key: storageKey, width: next }); save(next);
+  }, [limit, maxFraction, min, save, storageKey]);
+  const resetWidth = useCallback(() => { setState({ key: storageKey, width: initial }); save(initial); }, [initial, storageKey, save]);
   useEffect(() => {
-    const handleMouseMove = (event) => {
+    const stop = () => {
       if (!resizing.current) return;
-      const maxWidth = window.innerWidth * maxFraction;
-      setWidth(Math.max(min, Math.min(maxWidth, window.innerWidth - event.clientX)));
+      resizing.current = false; document.body.style.userSelect = ''; document.body.style.cursor = ''; save(widthRef.current);
     };
-    const handleMouseUp = () => {
-      if (!resizing.current) return;
-      resizing.current = false;
-      document.body.style.userSelect = '';
-      document.body.style.cursor = '';
-      if (storageKey) {
-        try { window.localStorage.setItem(storageKey, String(widthRef.current)); } catch { /* best effort */ }
-      }
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [maxFraction, min, storageKey]);
-
-  return { width, onResizeStart };
+    const move = (event) => { if (resizing.current) setState({ key: storageKey, width: limit(window.innerWidth - rightOffset - event.clientX) }); };
+    const resize = () => setViewportWidth(window.innerWidth);
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', stop); window.addEventListener('blur', stop); window.addEventListener('resize', resize);
+    return () => { stop(); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', stop); window.removeEventListener('blur', stop); window.removeEventListener('resize', resize); };
+  }, [limit, rightOffset, save, storageKey]);
+  return { width, onResizeStart, onResizeKeyDown, resetWidth };
 }
