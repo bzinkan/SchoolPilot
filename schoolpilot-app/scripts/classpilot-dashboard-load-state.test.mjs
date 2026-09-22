@@ -3097,7 +3097,8 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Dashboard claims keep partial successes visible and automatic return remains enabled', { timeout: 75_000 }, async context => {
+for (const userRole of ['teacher', 'admin']) {
+test(`Dashboard ${userRole} claims keep partial successes visible and automatic return remains enabled`, { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
@@ -3107,7 +3108,7 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   }));
   const claimRequests = [];
   const harness = await configureDashboard(page, {
-    aggregate: aggregateController(), userRole: 'teacher', availableStudents: available,
+    aggregate: aggregateController(), userRole, availableStudents: available,
     coverageSummary: ownSupervisionSummary([]),
     claimResponse: async request => {
       const body = request.postDataJSON();
@@ -3122,6 +3123,8 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
+  assert.equal(await page.getByTestId('select-admin-observe').count(), userRole === 'admin' ? 1 : 0,
+    'Observe is available only to administrators, while both roles can claim');
   await page.getByTestId('button-claim-all-students').click();
   await assertPickupView(page, 'claimed');
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
@@ -3136,11 +3139,12 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   harness.setAllSessions([teachingSession()]);
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await assertPickupView(page, 'class');
-  await page.getByTestId('badge-active-session').waitFor();
+  await page.getByTestId(userRole === 'admin' ? 'button-admin-end-session' : 'badge-active-session').waitFor();
   await page.clock.fastForward(10_100);
   assert.equal(claimRequests.length, 2, 'Settling a partial claim never retries either mutation automatically');
   assert.deepEqual(harness.pageErrors, []);
 });
+}
 
 test('a delayed own claim cannot switch the Dashboard after the teacher changes schools', { timeout: 75_000 }, async context => {
   const entry = `

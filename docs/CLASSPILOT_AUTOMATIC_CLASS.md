@@ -9,7 +9,9 @@ boundaries or Central Email Copy.
 When enabled, Class displays the teacher's server-confirmed regular class,
 scheduled testing or scheduled-class coverage. Tiles include assigned students who
 are offline. Each new scheduled assignment returns an open Dashboard to Class;
-teachers can browse Claimed, Available or Observe between boundaries. A refresh,
+teachers and administrators can browse Claimed or Available between boundaries;
+administrators can also use Observe. Claim is available to both roles within
+their authorized supervision scope. A refresh,
 partial release or extension of the same assignment does not repeatedly reset that
 choice. Unrelated pages and unfinished scheduling forms are not redirected.
 
