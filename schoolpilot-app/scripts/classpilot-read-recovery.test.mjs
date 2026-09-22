@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classpilotObservationSessionEligible,
+  classpilotSessionSubscriptionEligible,
   classpilotSessionAuthorityKey,
   clearTileReadDenials,
   createCoalescedClasspilotRefresh,
@@ -56,10 +57,21 @@ test('confirmed sign-out retires a completed preview denial before same-binding 
 
 test('scheduled active metadata is not observation authority; missing readiness fails private', () => {
   assert.equal(classpilotObservationSessionEligible(liveSession), true);
+  assert.equal(classpilotSessionSubscriptionEligible(liveSession), true);
   for (const session of [null, {}, { ...liveSession, sessionMode: 'report_only', scheduledState: 'active' },
+    { ...liveSession, sessionMode: 'scheduled_report', scheduledState: 'active' },
     { ...liveSession, endTime: '2026-09-04T13:00Z' }, { ...liveSession, rosterSnapshotCompletedAt: null }]) {
     assert.equal(classpilotObservationSessionEligible(session), false);
+    assert.equal(classpilotSessionSubscriptionEligible(session), false);
   }
+});
+
+test('active supervision keeps event subscriptions separate from screenshot capability', () => {
+  const context = { id: 'context-a', authority: { supervisionContextId: 'context-a' }, status: 'active', capabilities: { screenshots: false } };
+  assert.equal(classpilotSessionSubscriptionEligible(context), true);
+  assert.equal(classpilotObservationSessionEligible(context), false);
+  assert.equal(classpilotObservationSessionEligible({ ...context, capabilities: { screenshots: true } }), true);
+  assert.equal(classpilotSessionSubscriptionEligible({ ...context, status: 'ended' }), false);
 });
 
 test('only a session-scoped missing-session response terminates aggregate reconciliation', () => {

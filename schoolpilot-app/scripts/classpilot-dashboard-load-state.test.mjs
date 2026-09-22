@@ -246,6 +246,7 @@ async function configureDashboard(page, {
   coverageSummary = { activeContextCount: 0, availableStudentCount: 0, claimedStudentCount: 0, schoolId: SCHOOL_ID, viewerId: ADMIN_ID, ownTestingContexts: [] },
   authentication = null,
   acknowledgeSessionSubscriptions = false,
+  sessionSubscriptionResponse = null,
   dashboardActivity = { enabled: false, schoolId: SCHOOL_ID, viewerId: ADMIN_ID },
 } = {}) {
   let dashboardSocket;
@@ -276,7 +277,8 @@ async function configureDashboard(page, {
       const parsed = JSON.parse(message);
       websocketMessages.push(parsed);
       if (acknowledgeSessionSubscriptions && parsed.type === 'subscribe-session') {
-        socket.send(JSON.stringify({ type: 'session-subscription-success', ...(parsed.supervisionContextId
+        const result = sessionSubscriptionResponse?.(parsed) || { type: 'session-subscription-success' };
+        socket.send(JSON.stringify({ ...result, ...(parsed.supervisionContextId
           ? { supervisionContextId: parsed.supervisionContextId, contextAuthorityRevision: parsed.contextAuthorityRevision }
           : { sessionId: parsed.sessionId, teachingSessionId: parsed.sessionId }), requestId: parsed.requestId }));
         return;
@@ -3095,7 +3097,8 @@ test('confirmed Coverage navigation survives failed reads, retries only reads, a
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('Dashboard claims keep partial successes visible and automatic return remains enabled', { timeout: 75_000 }, async context => {
+for (const userRole of ['teacher', 'admin']) {
+test(`Dashboard ${userRole} claims keep partial successes visible and automatic return remains enabled`, { timeout: 75_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   await page.clock.install({ time: TESTING_TIME });
@@ -3105,7 +3108,7 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   }));
   const claimRequests = [];
   const harness = await configureDashboard(page, {
-    aggregate: aggregateController(), userRole: 'teacher', availableStudents: available,
+    aggregate: aggregateController(), userRole, availableStudents: available,
     coverageSummary: ownSupervisionSummary([]),
     claimResponse: async request => {
       const body = request.postDataJSON();
@@ -3120,6 +3123,8 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('button-view-available-students').click();
+  assert.equal(await page.getByTestId('select-admin-observe').count(), userRole === 'admin' ? 1 : 0,
+    'Observe is available only to administrators, while both roles can claim');
   await page.getByTestId('button-claim-all-students').click();
   await assertPickupView(page, 'claimed');
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
@@ -3134,11 +3139,12 @@ test('Dashboard claims keep partial successes visible and automatic return remai
   harness.setAllSessions([teachingSession()]);
   await harness.sendWebSocketMessage({ type: 'coverage-summary-updated', schoolId: SCHOOL_ID });
   await assertPickupView(page, 'class');
-  await page.getByTestId('badge-active-session').waitFor();
+  await page.getByTestId(userRole === 'admin' ? 'button-admin-end-session' : 'badge-active-session').waitFor();
   await page.clock.fastForward(10_100);
   assert.equal(claimRequests.length, 2, 'Settling a partial claim never retries either mutation automatically');
   assert.deepEqual(harness.pageErrors, []);
 });
+}
 
 test('a delayed own claim cannot switch the Dashboard after the teacher changes schools', { timeout: 75_000 }, async context => {
   const entry = `
@@ -5070,4 +5076,88 @@ test('Class tools integrates support, activities and manual routines without cov
   await page.getByRole('button',{name:'Close Class tools',exact:true}).click();
   await page.getByTestId('class-tools-panel').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
+});
+
+test('Observe waits for live supervision and recovers when the same scheduled class becomes live', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const now = new Date();
+  await page.clock.install({ time: now });
+  let observed = { ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID }),
+    sessionMode: 'scheduled_report', scheduledState: 'active', scheduledDate: now.toISOString().slice(0, 10) };
+  const harness = await configureDashboard(page, {
+    activeSession: null, allSessions: [observed], acknowledgeSessionSubscriptions: true,
+    aggregate: aggregateController({ scoped: success([student({ lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString() })]) }),
+    sessionSubscriptionResponse: () => observed.sessionMode === 'live'
+      ? { type: 'session-subscription-success' }
+      : { type: 'session-subscription-error', code: 'SESSION_UNAVAILABLE' },
+    screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:observe-promotion',
+      screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: now.toISOString(), bindingVersion: 'v2:observe-promotion' } }] }),
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+  await page.getByTestId('screenshot-observation-ineligible').waitFor();
+  await harness.authenticateWebSocket();
+  await new Promise(resolve => setTimeout(resolve, 250));
+  await chatEvidence(page, 'observe-awaiting-live');
+  assert.equal(harness.websocketMessages.filter(message => message.type === 'subscribe-session').length, 0,
+    'An active reporting-only occurrence must not request a live subscription and be mislabeled closed');
+  assert.equal(await page.getByTestId('session-subscription-error').count(), 0);
+  assert.equal(harness.observationLeaseRequests.filter(request => request.method === 'PUT').length, 0);
+
+  observed = { ...observed, sessionMode: 'live', rosterSnapshotCompletedAt: now.toISOString() };
+  harness.setAllSessions([observed]);
+  // No websocket event or selection change: the reporting occurrence keeps
+  // its identity when the teacher starts supervising it.
+  await page.clock.fastForward(10_100);
+  await waitUntil(() => harness.websocketMessages.some(message => message.type === 'subscribe-session'
+    && message.sessionId === OBSERVED_SESSION_ID), 'Observe must subscribe after the same occurrence becomes live');
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId('session-subscription-error').count(), 0);
+  assert.equal(await page.getByTestId('screenshot-observation-ineligible').count(), 0);
+  await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
+  await page.getByTestId('expanded-screenshot-dialog').waitFor();
+  await chatEvidence(page, 'observe-live-recovered');
+  assert.deepEqual(harness.commandPosts, [], 'Observing must not silently take classroom control');
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Observe selection stays scoped when a refresh removes the observed class', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install();
+  const own = teachingSession();
+  const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
+  const aggregate = aggregateController({ scoped: success([student()]) });
+  const harness = await configureDashboard(page, {
+    activeSession: own, allSessions: [own, observed], aggregate, acknowledgeSessionSubscriptions: true,
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+  await page.getByTestId('observe-read-only-banner').waitFor();
+  await waitUntil(() => harness.websocketMessages.some(message => message.type === 'subscribe-session'
+    && message.sessionId === OBSERVED_SESSION_ID), 'Observe starts on the selected live class');
+  const previousReads = harness.sessionRequests.filter(pathname => pathname === '/api/sessions/all').length;
+  const requestStart = aggregate.requests.length;
+  harness.setAllSessions([own]);
+  await page.clock.fastForward(10_100);
+  await waitUntil(() => harness.sessionRequests.filter(pathname => pathname === '/api/sessions/all').length > previousReads,
+    'The observer reconciles the active class list');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(await page.getByTestId('observe-read-only-banner').count(), 1,
+    'Removing the observed session must not silently switch into the administrator-owned class');
+  assert.equal(await page.getByTestId('teacher-fab').count(), 0);
+  assert.ok(aggregate.requests.slice(requestStart).every(request => request.teachingSessionId === OBSERVED_SESSION_ID),
+    'An unavailable Observe selection must never become an own-class or school-wide read');
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), OBSERVED_SESSION_ID);
+  harness.setAllSessions([]);
+  const emptyListReads = harness.sessionRequests.filter(pathname => pathname === '/api/sessions/all').length;
+  await page.clock.fastForward(10_100);
+  await waitUntil(() => harness.sessionRequests.filter(pathname => pathname === '/api/sessions/all').length > emptyListReads,
+    'The empty class list is reconciled');
+  await page.getByTestId('select-admin-observe').selectOption('');
+  await page.getByTestId('observe-read-only-banner').waitFor({ state: 'hidden' });
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
 });
