@@ -1,6 +1,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { sql } from "drizzle-orm";
 import { CLASSPILOT_SCHEDULED_CLASSROOM_SQL } from "../src/db/classpilotScheduledClassroomMigration.js";
 import { CLASSPILOT_TOOLS_SQL } from "../src/db/classpilotToolsMigration.js";
@@ -39,6 +40,15 @@ before(async () => {
   authority = await import("../src/services/classpilotActivityAuthority.js");
   await pool.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
   await pool.query(CLASSPILOT_TOOLS_SQL);
+  // The schema-only CI lane has no legacy parent guards yet. Scheduled
+  // classroom SQL installs four of the five FAB guards; install the remaining
+  // poll-response guard from its actual bootstrap SQL so subsequent catalog
+  // probes see a complete FAB contract, without unrelated staff contracts.
+  const bootstrap = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  const responseGuard = bootstrap.match(/await pool\.query\(`\s*(CREATE OR REPLACE FUNCTION classpilot_bind_poll_response_school\(\)[\s\S]*?)`\);/);
+  assert.ok(responseGuard?.[1], "canonical poll-response parent guard must be available");
+  assert.ok(!responseGuard[1].includes("${"), "fixture SQL must not require template interpolation");
+  await pool.query(responseGuard[1]);
   classTools = await import("../src/services/classpilotClassTools.js");
   process.env.CLASSPILOT_CLASS_TOOLS_SCHOOLS_JSON = JSON.stringify({ [ids.school]: 5 });
   await pool.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Scheduled tools',$3,'active','active'),($2,'Other tools',$3,'active','active')", [ids.school, ids.otherSchool, `${ids.school}.example.edu`]);
