@@ -4992,9 +4992,9 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_SCHEDULED_CLASSROOM_SQL);
   await pool.query(CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL);
   await pool.query(CLASSPILOT_CHAT_SEEN_STATE_SQL);
-  await pool.query(CLASSPILOT_TOOLS_SQL);
   await pool.query(CLASSPILOT_CHAT_OVERSIGHT_SQL);
   await pool.query(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL);
+  await pool.query(CLASSPILOT_TOOLS_SQL);
 }
 
 async function startServer(): Promise<void> {
