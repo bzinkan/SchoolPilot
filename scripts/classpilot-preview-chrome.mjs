@@ -66,9 +66,9 @@ realtime.setClasspilotRealtimeStatusCommandForTests(async args => {
   return undefined;
 });
 let school, teacher, admin, student, studentSession, teachingSession, token, baseUrl;
-let browser, server, studentPage, viewerPage, worker;
+let browser, teacherBrowser, server, studentPage, viewerPage, worker;
 let fixtureSocket;
-const watchdog = setTimeout(() => { void browser?.close(); server?.closeAllConnections(); }, 180_000);
+const watchdog = setTimeout(() => { void browser?.close(); void teacherBrowser?.close(); server?.closeAllConnections(); }, 180_000);
 watchdog.unref();
 const profile = await mkdtemp(join(tmpdir(), 'classpilot-preview-chrome-'));
 const uploads = [];
@@ -206,13 +206,19 @@ try {
   recordWorkerConsole(worker);
   studentPage = browser.pages()[0] || await browser.newPage();
   await studentPage.goto(`${baseUrl}/lesson`);
-  viewerPage = await browser.newPage(); await viewerPage.goto(`${baseUrl}/preview-viewer`);
+  // The teacher browser has no student extension: its own sign-in gate and
+  // capture permissions must never apply to the dashboard rendering fixture.
+  teacherBrowser = await chromium.launch({ headless: true, args: [
+    '--no-proxy-server', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost',
+  ] });
+  viewerPage = await teacherBrowser.newPage(); await viewerPage.goto(`${baseUrl}/preview-viewer`);
   await viewerPage.waitForFunction(() => typeof window.renderPreview === 'function');
   await studentPage.bringToFront();
   // Let the extension's real delayed install initialization finish before the
   // one-time synthetic authentication fixture. No runtime is reset thereafter.
   await delay(5_500);
   await primeWorker();
+  await studentPage.reload();
   fixtureSocket = { readyState: 1, send: raw => frames.push(JSON.parse(raw)) };
   sockets.registerWsClient(fixtureSocket);
   sockets.authenticateWsClient(fixtureSocket, { role: 'student', schoolId: school.id, studentId: student.id,
@@ -327,6 +333,7 @@ try {
   await writeFile(join(evidencePath, 'worker.log'), workerLog.join('\n'));
   if (fixtureSocket) sockets.removeWsClient(fixtureSocket);
   await browser?.close();
+  await teacherBrowser?.close();
   if (server) await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
   realtime.setClasspilotRealtimeStatusCommandForTests(undefined); classpilotScreenshotFallback.clear(); resetClasspilotObservationLeasesForTests();
   if (school) await tenant({ isSuper: true }, async () => {

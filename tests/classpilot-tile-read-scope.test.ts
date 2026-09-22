@@ -1167,38 +1167,47 @@ describe("ClassPilot tile-read tenant scope", () => {
         admin, schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '0' });
       assert.equal(observedTile.status, 200);
       assert.equal(observedTile.body.tiles[0].screenshot?.screenshot, screenshot);
+      let revisionMutationError: unknown;
+      let revisionMutationObserved = false;
       try {
         setClasspilotRealtimeStatusCommandForTests(async args => {
           if (args[0] !== 'MGET') return undefined;
-          await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
-            .set({ classroomAuthorityRevision: 1 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+          revisionMutationObserved = true;
+          try {
+            const changed = await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
+              .set({ assignedStaffId: teacher.id }).where(eq(classpilotSupervisionContexts.id, contextId))
+              .returning({ revision: classpilotSupervisionContexts.classroomAuthorityRevision }));
+            assert.deepEqual(changed, [{ revision: 1 }]);
+          } catch (error) { revisionMutationError = error; throw error; }
           return args.slice(1).map(() => null);
         });
         const revokedDuringRead = await postJson('/api/classpilot/tiles/screenshots',
           { studentIds: [studentId], supervisionContextId: contextId }, admin, schoolA.id, undefined,
           { 'X-ClassPilot-Context-Authority-Revision': '0' });
+        assert.equal(revisionMutationObserved, true, 'The read must reach the delayed realtime transport');
+        if (revisionMutationError) throw revisionMutationError;
         assert.equal(revokedDuringRead.status, 409, 'An in-flight cache read cannot return pixels after context revision changes');
         assert.equal(JSON.stringify(revokedDuringRead.body).includes(screenshot), false);
       } finally {
         setClasspilotRealtimeStatusCommandForTests(undefined);
         await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
-          .set({ classroomAuthorityRevision: 0 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+          .set({ assignedStaffId: coTeacher.id }).where(eq(classpilotSupervisionContexts.id, contextId)));
       }
       try {
         setHeartbeatTileCacheCommandForTests(async args => {
           if (args[0] !== 'EVAL') return undefined;
           await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
-            .set({ classroomAuthorityRevision: 1 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+            .set({ assignedStaffId: teacher.id }).where(eq(classpilotSupervisionContexts.id, contextId)));
           return undefined;
         });
         const revokedHistory = await postJson('/api/classpilot/tiles/history',
           { studentIds: [studentId], supervisionContextId: contextId }, admin, schoolA.id, undefined,
-          { 'X-ClassPilot-Context-Authority-Revision': '0' });
+          { 'X-ClassPilot-Context-Authority-Revision': '2' });
         assert.equal(revokedHistory.status, 409, 'An in-flight history read cannot outlive its context revision');
       } finally {
         setHeartbeatTileCacheCommandForTests(undefined);
         await inSchool(schoolA.id, () => db.update(classpilotSupervisionContexts)
-          .set({ classroomAuthorityRevision: 0 }).where(eq(classpilotSupervisionContexts.id, contextId)));
+          .set({ assignedStaffId: coTeacher.id }).where(eq(classpilotSupervisionContexts.id, contextId)));
       }
       assert.equal((await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: contextId },
         admin, schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '1' })).status, 409);
