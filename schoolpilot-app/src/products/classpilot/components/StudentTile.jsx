@@ -902,19 +902,13 @@ function StudentTile({
           // states — the site read-out is stacked inside the box, not below it.
           <div className="flex aspect-video flex-col overflow-hidden rounded-lg border border-border/40 bg-muted/30" data-testid={`screenshot-stale-${student.studentId}`}>
             <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/20 text-center">
-              <div className="px-4">
-                <Monitor className="mx-auto mb-2 h-6 w-6 text-muted-foreground/60" />
-                <p className="text-sm font-semibold text-foreground">Screenshot unavailable or stale</p>
-                <p className="mt-1 text-xs text-muted-foreground">Current website telemetry remains available below.</p>
-                {screenshotHealth ? (
-                  <p
-                    className={`mt-2 text-[11px] font-medium ${screenshotHealth.tone === 'warn' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
-                    data-testid={`screenshot-health-${student.studentId}`}
-                  >
-                    {screenshotHealth.label}
-                  </p>
-                ) : null}
-              </div>
+              <p
+                className={`px-2 py-1 text-[11px] leading-4 font-medium ${screenshotHealth?.tone === 'warn' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}
+                title="Waiting for a current screen capture. Current website activity is shown below."
+                data-testid={`screenshot-health-${student.studentId}`}
+              >
+                {screenshotHealth?.label || 'Waiting for preview'}
+              </p>
             </div>
             <div className="flex flex-shrink-0 items-center gap-2 px-3 py-1.5 bg-muted/60 border-t border-border/30">
               {student.favicon ? (
@@ -937,7 +931,7 @@ function StudentTile({
             </div>
             <div className="flex-shrink-0 border-t border-border/20 bg-muted/40 px-3 py-1.5">
               <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Current site</p>
-              <p className="font-medium text-sm leading-snug line-clamp-2" data-testid={`text-tab-title-${student.studentId}`}>
+              <p className="font-medium text-sm leading-snug truncate" title={student.activeTabTitle || 'No active tab'} data-testid={`text-tab-title-${student.studentId}`}>
                 {student.activeTabTitle || <span className="text-muted-foreground italic">No active tab</span>}
               </p>
             </div>

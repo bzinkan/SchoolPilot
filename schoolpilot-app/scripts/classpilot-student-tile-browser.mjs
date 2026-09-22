@@ -757,6 +757,17 @@ try {
   await page.getByTestId('screenshot-height-current-student').waitFor();
   await page.getByTestId('badge-offtask-height-badged-student').waitFor();
   await page.getByTestId('screenshot-stale-height-stale-student').waitFor();
+  const staleHost = page.getByTestId('height-stale-tile-host');
+  await staleHost.evaluate(element => { element.style.width = '226px'; });
+  const fallbackFits = await page.getByTestId('screenshot-stale-height-stale-student').evaluate(element => {
+    const box = element.getBoundingClientRect();
+    const parts = [...element.children].map(child => child.getBoundingClientRect());
+    const label = element.querySelector('[data-testid^="screenshot-health-"]').getBoundingClientRect();
+    return label.top >= box.top && label.bottom <= parts[1].top
+      && parts.every(part => part.top >= box.top && part.bottom <= box.bottom);
+  });
+  assert.equal(fallbackFits, true, 'Preview status and current-site text must fit without overlap in a narrow tile');
+  await staleHost.evaluate(element => { element.style.width = ''; });
   const tileHeights = await page.evaluate(() => [
     'height-current-student',
     'height-badged-student',

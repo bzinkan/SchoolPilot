@@ -1091,7 +1091,7 @@ assert.match(dashboardSource, /historyByStudent\.get\(student\.studentId\)/);
 assert.match(dashboardSource, /screenshotsByStudent\.get\(student\.studentId\)/);
 assert.match(
   dashboardSource,
-  /const screenshotTileQueryStudents = effectiveActivityId[\s\S]{0,120}studentView === 'claimed' && claimedPreviewActive[\s\S]{0,60}\? students[\s\S]{0,40}: EMPTY_LIST/,
+  /const screenshotTileQueryStudents = studentView === 'claimed'[\s\S]{0,80}claimedPreviewActive \? claimedPickupStudents : EMPTY_LIST[\s\S]{0,100}effectiveActivityId \? students : EMPTY_LIST/,
   'class screenshot cohorts must remain bound to the full frozen aggregate across temporary dashboard views',
 );
 assert.doesNotMatch(

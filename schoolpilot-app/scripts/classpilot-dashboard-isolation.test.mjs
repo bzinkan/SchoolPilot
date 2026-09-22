@@ -364,7 +364,7 @@ test('screenshot events coalesce one-second targeted refreshes without replacing
   assert.match(dashboard, /const SCREENSHOT_EVENT_COALESCE_MS = 1_000;/);
   assert.match(dashboard, /const SCREENSHOT_EVENT_RATE_LIMIT_MS = 1_000;/);
   assert.match(dashboard, /mergeTargetedTileScreenshotResponse/);
-  assert.match(dashboard, /\.\.\.snapshot\.authority/);
+  assert.match(dashboard, /\.\.\.activityAuthority\(request\.body\)/);
   assert.match(
     dashboard,
     /targetedScreenshotFlushInFlightRef\.current = true[\s\S]{0,500}targetedScreenshotFlushInFlightRef\.current = false/,
@@ -746,10 +746,10 @@ test('every claimed group holds its own supervision-context lease, never the cla
 
   // Every claimed group holds its own lease, so one group's denial cannot blank
   // another's tiles, and a student with no context still fails closed.
-  assert.match(dashboard, /claimedPreviewContexts = useMemo\(\(\) => \([\s\S]{0,200}displaySupervisionContexts\.filter/);
+  assert.match(dashboard, /claimedPreviewContextsFromRoster\(displaySupervisionContexts, claimedPickupStudents\)/);
   assert.match(dashboard, /<ClaimedContextLease[\s\S]{0,200}supervisionContextId: context\.id|supervisionContextId: context\.id/);
-  assert.match(dashboard, /claimedStudentObservationStatus = useCallback\(student => \{[\s\S]{0,260}if \(!contextId\) return 'denied';/);
-  assert.match(dashboard, /return claimedLeaseStatuses\[contextId\] \|\| 'pending';/);
+  assert.match(dashboard, /claimedStudentObservationStatus = useCallback\(student => \{[\s\S]{0,300}if \(!context\) return 'denied';/);
+  assert.match(dashboard, /return claimedLeaseStatuses\[`\$\{contextId\}:\$\{context\.contextAuthorityRevision\}`\] \|\| 'pending';/);
   // Each claimed batch carries its own context and revision, never the class one.
   assert.match(dashboard, /supervisionContextId: context\.id,[\s\S]{0,80}contextAuthorityRevision: context\.contextAuthorityRevision/);
   assert.match(dashboard, /screenshotTileReadsEnabled = studentView === 'claimed'/);

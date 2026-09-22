@@ -19,6 +19,15 @@ Claimed contains ad hoc pickups, manual Other sessions and manually started grou
 An explicit ad hoc claim opens that view, but the next scheduled assignment returns
 the Dashboard to Class. Browsing does not itself release or transfer students.
 
+Claimed shows automatic screen previews for both teachers and administrators,
+including an enlarged preview on click. Each claimed group uses its own observation
+lease and the authority revision from the personal claimed roster; navigation
+summary metadata and an unrelated active class cannot authorize these reads.
+Capture notifications refresh only the affected claimed students. Releasing a
+student or losing a group's preview authority removes those images while other
+authorized groups keep their previews. This Dashboard repair uses the existing
+extension capture protocol and does not require a new extension release.
+
 Testing ends through the existing supervision lifecycle. Students follow the
 authoritative applied schedule and each teacher sees their own next assignment.
 End testing is a confirmed early release, not End Class on a hidden regular session.

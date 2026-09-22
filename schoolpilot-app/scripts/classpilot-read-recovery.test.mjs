@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classpilotObservationSessionEligible,
+  claimedPreviewContextsFromRoster,
   classpilotSessionSubscriptionEligible,
   classpilotSessionAuthorityKey,
   clearTileReadDenials,
@@ -20,6 +21,17 @@ const liveSession = { id: 'class-a', sessionMode: 'live', endTime: null, rosterS
 const student = (id, binding = 'binding-a') => ({ studentId: id, realtimeBinding: binding, isLoggedIn: true, classroomState: { revision: 1 } });
 const request = { kind: 'screenshots', body: { studentIds: ['a', 'b'], teachingSessionId: 'class-a' } };
 
+test('claimed preview authority comes from a consistent personal roster, not navigation hints', () => {
+  const contexts = [{ id: 'a', contextAuthorityRevision: '99' }, { id: 'b' }, { id: 'empty' }];
+  const rows = [{ contextId: 'a', contextAuthorityRevision: 0 }, { contextId: 'b', contextAuthorityRevision: '7' }];
+  assert.deepEqual(claimedPreviewContextsFromRoster(contexts, rows).map(row => [row.id, row.contextAuthorityRevision]), [['a', '0'], ['b', '7']]);
+  for (const revision of [undefined, '8', '-1', '1.5', '9007199254740992']) {
+    assert.deepEqual(claimedPreviewContextsFromRoster(contexts, [...rows, { contextId: 'b', contextAuthorityRevision: revision }]).map(row => row.id), ['a']);
+  }
+  assert.deepEqual(claimedPreviewContextsFromRoster([], rows), []);
+  assert.deepEqual(claimedPreviewContextsFromRoster(contexts, []), []);
+});
+
 test('screenshot eligibility excludes explicit privacy states, not missing or stale telemetry', () => {
   for (const row of [{}, student('a'), { ...student('a'), status: 'offline', lastSeenAt: null },
     { ...student('a'), monitoringState: 'signal_lost' }, { loginState: 'unknown' }]) {
@@ -30,6 +42,16 @@ test('screenshot eligibility excludes explicit privacy states, not missing or st
     assert.equal(isStudentScreenshotReadEligible({ ...student('a'), ...fields }), false);
   }
   assert.equal(isStudentScreenshotReadEligible(student('a'), true), false);
+});
+
+test('a changed supervision authority revision retires only its own screenshot denial', () => {
+  const rows = ['a', 'b'].map(id => ({ ...student(id), contextId: id, contextAuthorityRevision: '7' }));
+  const previous = tileReadAuthorityMap('claimed', rows);
+  const denials = new Set();
+  recordTileReadDenial(denials, 'screenshots', previous, ['a', 'b']);
+  const current = tileReadAuthorityMap('claimed', [{ ...rows[0], contextAuthorityRevision: '8' }, rows[1]]);
+  assert.equal(retireChangedTileReadDenials(denials, 'screenshots', previous, current), true);
+  assert.deepEqual([...deniedTileStudentIds(denials, 'screenshots', current)], ['b']);
 });
 
 test('a preview response cannot survive eligibility or context changes, including away and back', () => {
