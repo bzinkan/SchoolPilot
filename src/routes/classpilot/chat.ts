@@ -1,3 +1,5 @@
+import { classToolsPhase } from "../../config/classpilotClassTools.js";
+import { publishClassToolsChanged } from "../../services/classpilotToolsEvents.js";
 import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
@@ -228,6 +230,7 @@ router.post("/student/raise-hand", ...studentAuth, async (req, res, next) => {
       const { context, hand } = await mutateScheduledStudentHand({ ...options, raised: true });
       await publishScheduledClassroomEvent(context, { type: "hand-raised", data: { supervisionContextId: context.id,
         studentId: options.studentId, timestamp: hand!.raisedAt.toISOString() } });
+      if (classToolsPhase(options.schoolId) >= 2) await publishClassToolsChanged({ schoolId: options.schoolId, actorId: options.studentId, authority: { supervisionContextId: context.id } }, [options.studentId]).catch(() => {});
       return res.json({ ok: true, handRaised: true, raisedHands: [{ supervisionContextId: context.id, raisedAt: hand!.raisedAt }] });
     }
     const schoolId = res.locals.schoolId as string;
@@ -255,6 +258,7 @@ router.post("/student/raise-hand", ...studentAuth, async (req, res, next) => {
     };
     broadcastToStaffSessionLocal(schoolId, teachingSession.id, payload);
     await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, payload);
+    if (classToolsPhase(schoolId) >= 2) await publishClassToolsChanged({ schoolId, actorId: studentId, authority: { teachingSessionId: teachingSession.id } }, [studentId]).catch(() => {});
 
     return res.json({
       ok: true,
@@ -274,6 +278,7 @@ router.post("/student/lower-hand", ...studentAuth, async (req, res, next) => {
       const options = scheduledStudentAction(req, res);
       const { context } = await mutateScheduledStudentHand({ ...options, raised: false });
       await publishScheduledClassroomEvent(context, { type: "hand-lowered", data: { supervisionContextId: context.id, studentId: options.studentId } });
+      if (classToolsPhase(options.schoolId) >= 2) await publishClassToolsChanged({ schoolId: options.schoolId, actorId: options.studentId, authority: { supervisionContextId: context.id } }, [options.studentId]).catch(() => {});
       return res.json({ ok: true, handRaised: false, clearedContexts: [{ supervisionContextId: context.id }] });
     }
     const schoolId = res.locals.schoolId as string;
@@ -291,6 +296,7 @@ router.post("/student/lower-hand", ...studentAuth, async (req, res, next) => {
     };
     broadcastToStaffSessionLocal(schoolId, teachingSession.id, payload);
     await publishWS({ kind: "staff-session", schoolId, sessionId: teachingSession.id }, payload);
+    if (classToolsPhase(schoolId) >= 2) await publishClassToolsChanged({ schoolId, actorId: studentId, authority: { teachingSessionId: teachingSession.id } }, [studentId]).catch(() => {});
 
     return res.json({ ok: true, handRaised: false, clearedSessions: [teachingSession.id] });
   } catch (err) {
@@ -917,7 +923,7 @@ router.get("/polls/:pollId/results", ...staffAuth, async (req, res, next) => {
     // Aggregate responses by option (matching standalone format)
     const countMap = new Map<number, number>();
     for (const r of responses) {
-      countMap.set(r.selectedOption, (countMap.get(r.selectedOption) || 0) + 1);
+      if (r.selectedOption !== null) countMap.set(r.selectedOption, (countMap.get(r.selectedOption) || 0) + 1);
     }
     const results = Array.from(countMap.entries()).map(([option, count]) => ({ option, count }));
 
@@ -934,15 +940,15 @@ router.post("/polls/:pollId/respond", requireDeviceAuth, pollResponseLimiter, re
       return res.status(400).json({ error: "Exactly one classroom authority is required" });
     }
     const pollId = param(req, "pollId");
-    const { selectedOption } = req.body;
+    const { selectedOption, textResponse } = req.body;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
 
     await assertClasspilotEntitled(schoolId);
 
-    if (!Number.isInteger(selectedOption)) {
-      return res.status(400).json({ error: "selectedOption must be an integer" });
+    if ((selectedOption !== undefined && !Number.isInteger(selectedOption)) || (textResponse !== undefined && (typeof textResponse !== "string" || !textResponse.trim() || textResponse.length > 500)) || (selectedOption === undefined) === (textResponse === undefined)) {
+      return res.status(400).json({ error: "Provide one choice or a short-text response of 1–500 characters" });
     }
 
     const result = await createPollResponseFirstWrite({
@@ -952,9 +958,12 @@ router.post("/polls/:pollId/respond", requireDeviceAuth, pollResponseLimiter, re
       studentSessionId: res.locals.studentSessionId as string,
       deviceId,
       selectedOption,
+      textResponse,
       supervisionContextId: typeof req.body.supervisionContextId === "string" ? req.body.supervisionContextId : undefined,
       studentControlRevision: req.body.studentControlRevision,
     });
+    if (result.disposition === "created" && textResponse) void scanStudentChatMessage({ schoolId, studentId, deviceId, messageId: result.response.id,
+      content: textResponse }, { mode: () => "off" });
     const { deviceId: _deviceId, ...response } = result.response;
     if (result.disposition === "conflict") {
       return res.status(409).json({

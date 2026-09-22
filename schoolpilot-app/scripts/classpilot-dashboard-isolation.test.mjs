@@ -413,8 +413,8 @@ test('dashboard renews observation only for a visible exact scope and virtualize
   // The tile wall and the coverage panels size on their own width instead.
   assert.match(
     dashboard,
-    /grid grid-cols-\[repeat\(auto-fill,minmax\(224px,1fr\)\)\] gap-6/,
-    'the tile wall must reflow on its own width so a fixed sidebar cannot squeeze tiles below 224px',
+    /grid grid-cols-\[repeat\(auto-fill,minmax\(min\(224px,100%\),1fr\)\)\] gap-6/,
+    'the tile wall must reflow on its own width so a fixed sidebar keeps tiles at 224px or the narrower available width',
   );
   assert.equal(
     (dashboard.match(/grid grid-cols-\[repeat\(auto-fill,minmax\(300px,1fr\)\)\] gap-4 p-4/g) || []).length,
@@ -1024,6 +1024,6 @@ test('sign-out-only selection closes command dialogs and cannot fall back to cla
   );
   assert.match(
     dashboard,
-    /dashboardCapabilities\.canUseTeacherFab && !classStudentTargetsUnavailable && !nonRestrictionSelectionActive/,
+    /pollPending=\{nonRestrictionSelectionActive \|\| subgroupCommandsDisabled/,
   );
 });

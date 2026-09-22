@@ -1,3 +1,5 @@
+import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
+import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
@@ -12828,6 +12830,7 @@ export async function finalizeTeachingSession(
       .where(and(eq(teachingSessions.id, session.id), isNull(teachingSessions.endTime)))
       .returning();
     if (!ended) throw new Error("Teaching session finalization lost its row lock");
+    await finalizeClassTools(transactionDb, options.schoolId, { teachingSessionId: session.id }, endTime);
 
     await tx
       .update(classpilotClassroomStates)
@@ -18189,12 +18192,12 @@ function classpilotFabMutationError(status: number, code: string, message: strin
   return Object.assign(new Error(message), { status, code, expose: true });
 }
 
-async function withAuthorizedStudentFabMutation<T>(options: {
+export async function withAuthorizedStudentFabMutation<T>(options: {
   schoolId: string;
   studentId: string;
   studentSessionId: string;
   deviceId: string;
-  feature: "chat" | "hand-raise" | "hand-lower";
+  feature: "chat" | "hand-raise" | "hand-lower" | "engagement";
 }, mutate: (
   transactionDb: typeof db,
   authority: AuthorizedStudentFabMutation
@@ -18276,13 +18279,13 @@ async function withAuthorizedStudentFabMutation<T>(options: {
         eq(sessionSettings.sessionId, owner.session.id)
       ))
       .limit(1)
-      .for("share");
+      .for(options.feature === "chat" ? "share" : "update");
     // Lowering a hand is always allowed while the binding still belongs to the
     // class. A teacher disabling hand raising must not strand an already-raised
     // hand on the student or dashboard.
     const enabled = options.feature === "chat"
       ? schoolSettings?.studentMessagingEnabled !== false && perSession?.chatEnabled !== false
-      : options.feature === "hand-lower"
+      : options.feature === "hand-lower" || options.feature === "engagement"
         ? true
         : schoolSettings?.handRaisingEnabled !== false && perSession?.raiseHandEnabled !== false;
     if (!enabled) {
@@ -18392,7 +18395,6 @@ export async function raiseAuthorizedClasspilotStudentHand(options: {
         targetWhere: sql`${classpilotActiveHands.clearedAt} IS NULL`,
         set: {
           deviceId: options.deviceId,
-          raisedAt: now,
           expiresAt: options.expiresAt,
           updatedAt: now,
         },
@@ -18411,7 +18413,7 @@ export async function lowerAuthorizedClasspilotStudentHand(options: {
   return withAuthorizedStudentFabMutation({ ...options, feature: "hand-lower" }, async (transactionDb, authority) => {
     const hands = await transactionDb
       .update(classpilotActiveHands)
-      .set({ clearedAt: new Date(), updatedAt: new Date() })
+      .set({ clearedAt: new Date(), status: "withdrawn", updatedAt: new Date(), revision: sql`${classpilotActiveHands.revision}+1` })
       .where(and(
         eq(classpilotActiveHands.schoolId, options.schoolId),
         eq(classpilotActiveHands.teachingSessionId, authority.teachingSession.id),
@@ -18550,7 +18552,7 @@ export async function dismissAuthorizedClasspilotStudentHand(options: {
   return withAuthorizedClasspilotTeacherStudentAction(options, async (transactionDb, authority) => {
     const clearedHands = await transactionDb
       .update(classpilotActiveHands)
-      .set({ clearedAt: new Date(), updatedAt: new Date() })
+      .set({ clearedAt: new Date(), status: "helped", updatedAt: new Date(), revision: sql`${classpilotActiveHands.revision}+1` })
       .where(and(
         eq(classpilotActiveHands.schoolId, options.schoolId),
         eq(classpilotActiveHands.teachingSessionId, options.teachingSessionId),
@@ -19497,7 +19499,8 @@ export async function createPollResponseFirstWrite(options: {
   studentId: string;
   studentSessionId: string;
   deviceId: string;
-  selectedOption: number;
+  selectedOption?: number;
+  textResponse?: string;
   supervisionContextId?: string;
   studentControlRevision?: number;
 }): Promise<CreatePollResponseResult> {
@@ -19521,7 +19524,16 @@ export async function createPollResponseFirstWrite(options: {
     if (!poll || !poll.isActive || (poll.expiresAt && poll.expiresAt <= new Date())) {
       throw Object.assign(new Error("Poll not found or closed"), { status: 404, code: "POLL_NOT_ACTIVE" });
     }
-    if (options.selectedOption < 0 || options.selectedOption >= poll.options.length) {
+    if (poll.responseType === "short_text") {
+      const { readClasspilotRealtimeStatusBatch, classpilotRealtimeFresh } = await import("./classpilotRealtimeStatus.js");
+      const capability = (await readClasspilotRealtimeStatusBatch(options.schoolId, [options])).get(options.studentId);
+      if (capability?.status !== "hit" || !classpilotRealtimeFresh(capability.snapshot) || !capability.snapshot.acceptedCapabilities?.includes("exitTicketsV1")) {
+        throw Object.assign(new Error("Update or reconnect ClassPilot to submit an exit ticket"), { status: 409, code: "CLASS_TOOLS_CLIENT_UNSUPPORTED" });
+      }
+      if (options.selectedOption !== undefined || typeof options.textResponse !== "string" || !options.textResponse.trim() || options.textResponse.length > 500) {
+        throw Object.assign(new Error("Provide one short-text response of 1–500 characters"), { status: 400, code: "POLL_RESPONSE_INVALID" });
+      }
+    } else if (options.textResponse !== undefined || !Number.isInteger(options.selectedOption) || options.selectedOption! < 0 || options.selectedOption! >= poll.options.length) {
       throw Object.assign(new Error("selectedOption is out of range"), { status: 400, code: "POLL_OPTION_OUT_OF_RANGE" });
     }
     if (!poll.startCommandId) {
@@ -19532,11 +19544,13 @@ export async function createPollResponseFirstWrite(options: {
         studentId: classpilotCommandTargets.studentId,
         teachingSessionId: classpilotCommandTargets.teachingSessionId,
         supervisionContextId: classpilotCommandTargets.supervisionContextId,
+        frozenAuthority: classpilotCommandTargets.result,
       })
       .from(classpilotCommandTargets)
+      .innerJoin(classpilotCommands, and(eq(classpilotCommands.id, classpilotCommandTargets.commandId), eq(classpilotCommands.schoolId, options.schoolId)))
       .where(and(
         eq(classpilotCommandTargets.schoolId, options.schoolId),
-        eq(classpilotCommandTargets.commandId, poll.startCommandId),
+        or(eq(classpilotCommandTargets.commandId, poll.startCommandId), sql`${classpilotCommands.commandPayload}->>'replayOfCommandId'=${poll.startCommandId}`),
         eq(classpilotCommandTargets.studentId, options.studentId),
         eq(classpilotCommandTargets.studentSessionId, options.studentSessionId),
         eq(classpilotCommandTargets.deviceId, options.deviceId),
@@ -19589,6 +19603,7 @@ export async function createPollResponseFirstWrite(options: {
     const contextAuthorized = !!poll.supervisionContextId && options.supervisionContextId === poll.supervisionContextId
       && scheduledContextHasClassroomTools(supervision?.context)
       && supervision.context.id === poll.supervisionContextId
+      && String((target.frozenAuthority as Record<string, unknown> | null)?.scheduledContextAuthorityRevision) === String(supervision.context.classroomAuthorityRevision)
       && target.supervisionContextId === poll.supervisionContextId && target.teachingSessionId === null
       && controlState?.supervisionContextId === poll.supervisionContextId && controlState.teachingSessionId === null
       && Number.isSafeInteger(options.studentControlRevision) && options.studentControlRevision === controlState.revision
@@ -19617,7 +19632,7 @@ export async function createPollResponseFirstWrite(options: {
       .limit(1)
       .for("update");
     if (existing) {
-      return existing.selectedOption === options.selectedOption
+      return existing.selectedOption === (options.selectedOption ?? null) && existing.textResponse === (options.textResponse ?? null)
         ? { disposition: "replayed" as const, response: existing }
         : { disposition: "conflict" as const, response: existing };
     }
@@ -19626,8 +19641,14 @@ export async function createPollResponseFirstWrite(options: {
       pollId: options.pollId,
       studentId: options.studentId,
       deviceId: options.deviceId,
-      selectedOption: options.selectedOption,
+      selectedOption: options.selectedOption ?? null,
+      textResponse: options.textResponse ?? null,
     }).returning();
+    if (options.textResponse != null) {
+      const { recordToolsHistory } = await import("./classpilotToolsAuthority.js");
+      await recordToolsHistory(tx as unknown as typeof db, { schoolId: options.schoolId, actorId: options.studentId,
+        authority: poll.sessionId ? { teachingSessionId: poll.sessionId } : { supervisionContextId: poll.supervisionContextId! } }, "exit_ticket_response", poll.id);
+    }
     return { disposition: "created" as const, response: response! };
   });
 }
@@ -19641,7 +19662,7 @@ export type ClasspilotCommandWithTargets = ClasspilotCommand & {
 };
 
 export type ClasspilotCommandPollMutation =
-  | { action: "start"; pollId: string; question: string; options: string[] }
+  | { action: "start"; pollId: string; question: string; options: string[]; purpose?: string; responseType?: string }
   | { action: "close"; pollId: string };
 
 function frozenClasspilotCommandTargetResult(
@@ -19658,7 +19679,7 @@ function frozenClasspilotCommandTargetResult(
   const freezesExactTabAuthority = commandData.commandType === "close-tabs"
     && Array.isArray(commandPayload.tabsToClose);
   const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
-  const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "student-sign-out"].includes(commandData.commandType);
+  const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "lesson-activity", "student-sign-out"].includes(commandData.commandType);
   const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
     && commandPayload.currentPage === true;
   if (
@@ -19742,6 +19763,9 @@ export async function createClasspilotCommandWithTargets(
       contextAuthorityRevision?: string;
     };
     pollMutation?: ClasspilotCommandPollMutation;
+    routineReservation?: import("./classpilotToolsRoutines.js").RoutineReservation;
+    /** Server-derived original audience for response-group follow-ups only. */
+    originalTargetCommandId?: string;
   } = {}
 ): Promise<ClasspilotCommandWithTargets> {
   try {
@@ -19771,6 +19795,16 @@ export async function createClasspilotCommandWithTargets(
       // command commits before revocation and cleanup begins.
       await assertClasspilotEntitled(authority.schoolId, transactionDb, { lock: true });
       const studentIds = [...new Set(targetData.map((target) => target.studentId))];
+      if (options.originalTargetCommandId) {
+        const originalTargets = await tx.select({ studentId: classpilotCommandTargets.studentId })
+          .from(classpilotCommandTargets).innerJoin(classpilotCommands, and(eq(classpilotCommands.id, classpilotCommandTargets.commandId), eq(classpilotCommands.schoolId, authority.schoolId)))
+          .where(and(eq(classpilotCommandTargets.schoolId, authority.schoolId), eq(classpilotCommands.id, options.originalTargetCommandId),
+            hasTeachingAuthority ? eq(classpilotCommands.teachingSessionId, authority.teachingSessionId!) : eq(classpilotCommands.supervisionContextId, authority.supervisionContextId!)));
+        if (!["teacher-message", "open-tab"].includes(commandData.commandType) || !studentIds.length || studentIds.some(id => !originalTargets.some(target => target.studentId === id))) {
+          throw Object.assign(new Error("Follow-up recipients do not match the original activity"), { status: 409, code: "COMMAND_TARGET_ROSTER_STALE" });
+        }
+      }
+      await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
       if (hasTeachingAuthority) {
       const [lockedSession] = await tx
         .select()
@@ -19799,7 +19833,7 @@ export async function createClasspilotCommandWithTargets(
           code: "COMMAND_ACTOR_AUTHORITY_STALE",
         });
       }
-      await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
+
       const roster = await tx
         .select({ studentId: classpilotSessionStudents.studentId })
         .from(classpilotSessionStudents)
@@ -19814,7 +19848,7 @@ export async function createClasspilotCommandWithTargets(
           studentIds.length ? inArray(classpilotSessionStudents.studentId, studentIds) : sql`false`
         ));
       const rosterIds = new Set(roster.map((row) => row.studentId));
-      if (studentIds.length !== rosterIds.size || studentIds.some((studentId) => !rosterIds.has(studentId))) {
+      if (!options.originalTargetCommandId && (studentIds.length !== rosterIds.size || studentIds.some((studentId) => !rosterIds.has(studentId)))) {
         throw Object.assign(new Error("The selected roster changed before the command was committed"), {
           status: 409,
           code: "COMMAND_TARGET_ROSTER_STALE",
@@ -19857,7 +19891,7 @@ export async function createClasspilotCommandWithTargets(
         const owner = ownerByStudent.get(target.studentId);
         const binding = bindingByStudent.get(target.studentId);
         const control = controlByStudent.get(target.studentId);
-        const hasAuthority = !!control
+        const hasAuthority = !!control && rosterIds.has(target.studentId)
           && !coveredStudents.has(target.studentId)
           && (!owner || owner.session.id === authority.teachingSessionId)
           && control?.teachingSessionId === authority.teachingSessionId
@@ -19890,7 +19924,6 @@ export async function createClasspilotCommandWithTargets(
         return result === target.result ? target : { ...target, result };
       });
       } else {
-        await lockClasspilotStudentControlAuthorities(authority.schoolId, studentIds, transactionDb);
         const [context] = await tx
           .select()
           .from(classpilotSupervisionContexts)
@@ -20011,6 +20044,14 @@ export async function createClasspilotCommandWithTargets(
       };
     }
 
+    if (options.routineReservation) {
+      const { prepareRoutineCommand } = await import("./classpilotToolsRoutines.js");
+      commandData = await prepareRoutineCommand(tx as unknown as typeof db, commandData, options.routineReservation, authoritativeTargets);
+    }
+    if (!options.routineReservation?.replayCommandId && options.authority && ["timer", "lesson-activity"].includes(commandData.commandType)) {
+      commandData = await prepareToolsCommand(tx as unknown as typeof db, commandData,
+        classroomContext?.endsAt ?? teachingSession?.scheduledEndAt ?? new Date((teachingSession?.startTime?.getTime() ?? Date.now()) + 12 * 3600_000));
+    }
     let pollExpiresAt: Date | undefined;
     if (options.pollMutation?.action === "start") {
       if ((!teachingSession || !commandData.teachingSessionId) && !classroomContext) {
@@ -20054,6 +20095,12 @@ export async function createClasspilotCommandWithTargets(
           .returning()
       : [];
 
+    if (!options.routineReservation?.replayCommandId) await persistToolsCommand(tx as unknown as typeof db, command);
+    if (options.routineReservation) {
+      const { completeRoutineCommand } = await import("./classpilotToolsRoutines.js");
+      await completeRoutineCommand(tx as unknown as typeof db, command, options.routineReservation);
+    }
+
     if (options.pollMutation) {
       if ((!teachingSession || !commandData.teachingSessionId) && !classroomContext) {
         throw Object.assign(new Error("Poll command requires an active class session"), {
@@ -20071,6 +20118,8 @@ export async function createClasspilotCommandWithTargets(
           startCommandId: command.id,
           question: options.pollMutation.question,
           options: options.pollMutation.options,
+          purpose: options.pollMutation.purpose || "poll",
+          responseType: options.pollMutation.responseType || "choice",
           expiresAt: pollExpiresAt!,
         });
       } else {
@@ -20096,6 +20145,14 @@ export async function createClasspilotCommandWithTargets(
       }
     }
 
+      if (options.pollMutation) {
+        const { classToolsPhase } = await import("../config/classpilotClassTools.js");
+        if (classToolsPhase(command.schoolId) >= 2) {
+          const { recordToolsHistory } = await import("./classpilotToolsAuthority.js");
+          await recordToolsHistory(tx as unknown as typeof db, { schoolId: command.schoolId, actorId: command.teacherId,
+            authority: command.teachingSessionId ? { teachingSessionId: command.teachingSessionId } : { supervisionContextId: command.supervisionContextId! } }, `prompt_${options.pollMutation.action}`, options.pollMutation.pollId, { commandId: command.id });
+        }
+      }
       return { ...command, targets };
     });
   } catch (error: any) {
@@ -20573,7 +20630,7 @@ export async function persistClasspilotCommandTargetAck(
       ? target.result as Record<string, unknown>
       : {};
     const exactTabCloseV2 = frozenResult.exactTabCloseVersion === 2;
-    if (binding.commandSupervisionContextId && ["timer", "poll", "student-sign-out"].includes(binding.commandType)) {
+    if (binding.commandSupervisionContextId && ["timer", "poll", "lesson-activity", "student-sign-out"].includes(binding.commandType)) {
       const revision = frozenResult.scheduledAuthorityRevision;
       if (!Number.isSafeInteger(revision) || options.controlRevision !== revision
         || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId, studentId: options.studentId,

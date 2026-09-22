@@ -253,7 +253,9 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const pollAction = commandType === "poll"
       ? String(req.body.commandPayload?.action || "start").trim()
       : "";
-    const isPollClose = commandType === "poll" && pollAction === "close";
+    const isPollClose = (commandType === "poll" && pollAction === "close")
+      || (commandType === "attention-mode" && req.body.commandPayload?.active === false)
+      || (["timer", "lesson-activity"].includes(commandType) && ["stop", "pause", "resume", "extend", "update", "end"].includes(req.body.commandPayload?.action));
     // Closing a poll always derives its target set from the immutable poll
     // start command. Ignore mutable Dashboard selection fields at this boundary
     // while still using the class resolver for staff/session authorization.

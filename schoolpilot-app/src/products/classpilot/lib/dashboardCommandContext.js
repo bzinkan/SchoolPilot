@@ -12,6 +12,7 @@ const CLASS_COMMANDS = Object.freeze([
   'remove-block-list',
   'attention-mode',
   'timer',
+  'lesson-activity',
   'poll',
   'teacher-message',
   'student-sign-out',

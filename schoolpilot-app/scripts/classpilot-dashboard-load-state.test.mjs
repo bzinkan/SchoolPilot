@@ -3340,10 +3340,9 @@ async function chatEvidence(page, name, facts = {}) {
 }
 
 async function openChatPanel(page) {
-  if (await page.getByTestId('chat-drawer').count()) return;
-  const menu = page.getByTestId('chat-open');
-  if (!await menu.count()) await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
-  await menu.click();
+  if (await page.getByTestId('chat-drawer').isVisible()) return;
+  if (!await page.getByTestId('class-tools-panel').isVisible()) await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+  await page.getByTestId('chat-open').click();
   await page.getByTestId('chat-drawer').waitFor();
 }
 
@@ -3356,6 +3355,7 @@ async function expectChatUnread(page, count) {
 async function selectConversation(page, studentId = STUDENT_ID) {
   const thread = page.getByTestId('chat-thread');
   if (await thread.count() && await thread.getAttribute('data-student-id') === studentId) return;
+
   await page.getByTestId(`chat-conversation-${studentId}`).click();
   await page.getByTestId('chat-thread').waitFor();
 }
@@ -3512,7 +3512,7 @@ test('chat drawer: conversations list unread first, opening one reads it, and th
   const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question', createdAt: '2026-09-18T14:02:00.000Z' });
   await harness.sendWebSocketMessage(studentChatEvent(adaRow));
   await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student', studentEmail: 'ben@example.edu' } });
-  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
   await page.getByTestId('chat-open').getByText('2', { exact: true }).waitFor();
   await openChatPanel(page);
   await expectChatUnread(page, 2);
@@ -3529,29 +3529,33 @@ test('chat drawer: conversations list unread first, opening one reads it, and th
     [`chat-conversation-${SECOND_STUDENT_ID}`, `chat-conversation-${STUDENT_ID}`], 'The unread thread stays on top of the read one');
   await page.keyboard.press('Escape');
   await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
   await page.getByTestId('chat-open').getByText('1', { exact: true }).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('chat drawer: an open thread survives a class-scope remount and replies target the new authority', { timeout: 60_000 }, async context => {
+test('class tools: a real authority change clears drafts and selection before replies in the new classroom', { timeout: 60_000 }, async context => {
   const fixture = await chatBrowserFixture(context);
   const { page, harness } = fixture;
   await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
   await selectConversation(page);
   await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await replyInput(page).fill('Unsent text from the previous classroom');
   const replacement = teachingSession({ id: OBSERVED_SESSION_ID });
   harness.setActiveSession(replacement);
   harness.setAllSessions([replacement]);
   await fixture.refetch('/api/sessions/active');
   await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'The replacement session starts its own history read');
   await chatHistorySettled(page);
-  await page.getByTestId('chat-drawer').waitFor();
+  await page.getByTestId('class-tools-panel').waitFor({ state: 'hidden' });
+  await openChatPanel(page);
+  await page.getByTestId('chat-no-selection').waitFor();
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'The superseded thread is gone from the open drawer');
   const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
   await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
   await selectConversation(page);
   await threadText(page, replacementRow.content).waitFor();
+  assert.equal(await replyInput(page).inputValue(), '', 'No outgoing draft crosses a classroom authority boundary');
   const reply = storedChatMessage({ id: CHAT_REPLY_ID, sessionId: OBSERVED_SESSION_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' });
   fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
   await replyInput(page).fill(CHAT_REPLY_TEXT);
@@ -3804,8 +3808,9 @@ test('chat trust signals: the drawer pause switch writes chatPaused and a testin
   assert.equal(await page.getByTestId('chat-messaging-switch').isDisabled(), false, 'A teacher pause can be resumed');
   await page.keyboard.press('Escape');
   await openToolbarByKeyboard(page);
-  await page.getByTestId('chat-open').getByText('Messages (Paused)', { exact: true }).waitFor();
+  await page.getByTestId('chat-open').getByText('Messages', { exact: true }).waitFor();
   await page.getByTestId('chat-open').click({ force: true });
+  await page.getByTestId('chat-pause-banner').waitFor();
   // A testing block pauses on its own: the server reports the pause without chatPaused.
   stored = { ...stored, chatPaused: false, lifecycleRevision: 4 };
   effective = { ...effective, messagesPaused: true, pauseReason: 'testing', messagingEnabled: false, lifecycleRevision: 4 };
@@ -3827,7 +3832,7 @@ test('chat trust signals: the drawer pause switch writes chatPaused and a testin
 
 async function openToolbarByKeyboard(page) {
   // Toasts stack over the toolbar corner, so drive it from the keyboard.
-  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).focus();
+  await page.getByRole('button', { name: 'Class tools', exact: true }).focus();
   await page.keyboard.press('Enter');
   await page.getByTestId('chat-open').waitFor();
 }
@@ -4840,25 +4845,24 @@ test('scheduled classroom tools retain passive previews without Live View and cl
   assert.equal(await page.getByTestId('video-portal').count(), 0);
   await harness.sendWebSocketMessage({ type: 'live-view-requested', schoolId: SCHOOL_ID, supervisionContextId: OWN_TESTING_CONTEXT_ID,
     studentId: STUDENT_ID, contextAuthorityRevision: '0', negotiationId: 'scheduled-negotiation' });
-  const openTools = async () => page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
-  await openTools();
-  await page.getByRole('button', { name: 'Timer', exact: true }).click();
+  const openTools = async (tab) => { const launcher = page.getByRole('button', { name: 'Class tools', exact: true }); if (await launcher.getAttribute('aria-expanded') !== 'true') await launcher.click(); if (tab) await page.getByRole('tab', { name: tab, exact: true }).click(); };
+  await openTools('Tools');
+  await page.getByRole('button', { name: 'Start timer', exact: true }).click();
   await page.getByTestId('button-start-timer').click();
   await waitUntil(() => commandRequests.some(row => row.commandType === 'timer'), 'Timer uses scheduled authority');
-  await openTools();
-  await page.getByRole('button', { name: 'Poll', exact: true }).click();
+  await openTools('Activities');
+  await page.getByRole('button', { name: 'Create poll', exact: true }).click();
   await page.getByTestId('input-poll-question').fill('Ready for reading?');
   await page.getByTestId('input-poll-option-0').fill('Ready');
   await page.getByTestId('input-poll-option-1').fill('Need help');
   await page.getByTestId('button-create-poll').click();
   await waitUntil(() => commandRequests.some(row => row.commandType === 'poll'), 'Poll uses scheduled authority');
-  await openTools();
-  await page.getByRole('button', { name: 'Attention', exact: true }).click();
+  await openTools('Tools');
+  await page.getByRole('button', { name: 'Eyes up', exact: true }).click();
   await page.getByTestId('button-activate-attention').click();
   await waitUntil(() => commandRequests.some(row => row.commandType === 'attention-mode'), 'Attention uses scheduled authority');
   await page.getByTestId('button-cancel-attention').click();
-  await openTools();
-  await page.getByRole('button', { name: 'Hands', exact: true }).click();
+  await openTools('Help');
   await page.getByTestId('hands-switch').click();
   await waitUntil(() => settingsRequests.length === 1, 'Scheduled hand settings are editable');
   assert.equal(settingsRequests[0].raiseHandEnabled, false);
@@ -4866,7 +4870,7 @@ test('scheduled classroom tools retain passive previews without Live View and cl
   assert.ok(commandHeaders.every(revision => revision === '0'));
   assert.ok(commandRequests.every(row => row.supervisionContextId === OWN_TESTING_CONTEXT_ID && !row.teachingSessionId
     && row.targetScope === 'students' && row.targetStudentIds.length === 1 && row.targetStudentIds[0] === STUDENT_ID));
-  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
   // A form left open cannot submit an outgoing assignment after the boundary.
   await openTools();
   await page.getByTestId('chat-open').click();
@@ -4906,13 +4910,16 @@ test('scheduled classroom restores acknowledged timer and poll after reload and 
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await page.getByText('Extension update required for full testing tools on some student Chromebooks.', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Quick Classroom Tools', exact: true }).click();
-  await page.getByRole('button', { name: 'Stop Timer', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Poll (0)', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop timer', exact: true }).waitFor();
+  await page.getByRole('tab', { name: 'Activities', exact: true }).click();
+  await page.getByRole('button', { name: 'View responses (0)', exact: true }).waitFor();
   assert.ok(stateReads.every(query => query === `supervisionContextId=${OWN_TESTING_CONTEXT_ID}`));
   assert.equal(await page.getByTestId(`button-live-view-${STUDENT_ID}`).count(), 0);
   assert.deepEqual(harness.tileRequests.filter(row => row.pathname.endsWith('/screenshots')), [], 'Unsupported clients never use previous-class previews');
-  await page.getByRole('button', { name: 'Stop Timer', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop timer', exact: true }).click();
   assert.deepEqual(harness.commandPosts, [], 'Unsupported tool actions must not be reported as submitted');
   assert.deepEqual(harness.pageErrors, []);
 });
@@ -4985,4 +4992,82 @@ test('scheduled classroom details fence history to their assignment and retry fa
   assert.deepEqual(harness.commandPosts, []);
   assert.deepEqual(harness.coverageMutationRequests, []);
   assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Class tools integrates support, activities and manual routines without covering the command toolbar', async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page } = fixture;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const writes = [];
+  const toolsState = { phase: 5, roster: [{studentId:STUDENT_ID,firstName:'Alex',lastName:'Student'}],
+    help: [{id:'help-one',studentId:STUDENT_ID,status:'waiting',category:'assignment',explanation:'Please explain problem two.',raisedAt:new Date(Date.now()-180000).toISOString(),revision:1}],
+    questions:[{id:'question-one',studentId:STUDENT_ID,question:'Can we use a calculator?',answer:null,groupLabel:null,revision:1}], progress:[{studentId:STUDENT_ID,status:'stuck',completedItemIds:[],revision:1}], templates:[], picker:null,routine:null,routineOutcomes:[],prompt:null,responses:[],promptTargets:[],
+    activity:{id:'lesson-one',title:'Independent practice',instructions:'Complete problems 1–4 and explain your reasoning.',resources:[],checklist:[],revision:1},
+    activityTargets:[{studentId:STUDENT_ID,studentName:'Alex Student',status:'completed'}],
+    timer:{id:'timer-one',revision:1,deadline:new Date(Date.now()+240000).toISOString(),pausedRemainingMs:null,message:'Independent practice'},timerTargets:[] };
+  await page.route('**/api/classpilot/class-tools/**', async route => {
+    const request=route.request(), pathname=new URL(request.url()).pathname;
+    if(pathname.endsWith('/rollout')) return route.fulfill({json:{phase:5}});
+    if(pathname.endsWith('/state')) return route.fulfill({json:toolsState});
+    if(request.method() !== 'GET') {
+      const body=request.postDataJSON(); writes.push({pathname,body});
+      if(pathname.endsWith('/help/help-one')) toolsState.help[0]={...toolsState.help[0],status:'acknowledged',revision:2};
+      if(pathname.endsWith('/questions/question-one')) toolsState.questions[0]={...toolsState.questions[0],...body.data,revision:2};
+      if(pathname.endsWith('/templates')) toolsState.templates.push({...body.data,id:'template-one',revision:1});
+      if(pathname.endsWith('/follow-up-preview')) return route.fulfill({json:{recipients:[{studentId:STUDENT_ID,name:'Alex Student',available:true}]}});
+      if(pathname.endsWith('/follow-up')) return route.fulfill({json:{command:{targets:[{studentId:STUDENT_ID,studentName:'Alex Student',status:'completed'}]}}});
+      return route.fulfill({json:{ok:true}});
+    }
+    return route.fulfill({json:{events:[],nextCursor:null}});
+  });
+  await fixture.refetch('/api/class-tools/rollout');
+  await page.getByRole('button',{name:'Class tools',exact:true}).click();
+  await page.getByRole('tab',{name:/Help/}).click();
+  await page.getByText('Please explain problem two.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Acknowledge',exact:true}).click();
+  await page.getByRole('button',{name:'Mark helped',exact:true}).waitFor();
+  assert.deepEqual(writes[0].body,{teachingSessionId:OWN_SESSION_ID,data:{expectedRevision:1,action:'acknowledge'}});
+  await page.getByLabel('Group question from Alex Student',{exact:true}).fill('Directions');
+  await page.getByLabel('Answer question from Alex Student',{exact:true}).fill('Yes, show your steps too.');
+  await page.getByRole('button',{name:'Save answer / group',exact:true}).click();
+  await page.getByRole('heading',{name:'Directions · 1',exact:true}).waitFor();
+  await page.getByRole('tab',{name:'Activities',exact:true}).click();
+  await page.getByRole('button',{name:'Stuck 1',exact:true}).click();
+  await page.getByRole('button',{name:'Preview exact recipients',exact:true}).click();
+  await page.getByRole('region',{name:'Follow-up recipients'}).getByText('Alex Student',{exact:true}).waitFor();
+  await page.getByRole('region',{name:'Follow-up recipients'}).getByLabel('Message',{exact:true}).fill('Try the worked example.');
+  await page.getByRole('button',{name:'Send to these 1 students',exact:true}).click();
+  await page.getByRole('region',{name:'Follow-up recipients'}).getByTestId('class-tools-delivery').filter({hasText:'1 reached'}).waitFor();
+  assert.deepEqual(writes.find(write=>write.pathname.endsWith('/follow-up')).body.data,{kind:'work_status',resourceId:'lesson-one',targetStudentIds:[STUDENT_ID],commandType:'teacher-message',commandPayload:{message:'Try the worked example.'}});
+  await page.getByRole('region',{name:'Follow-up recipients'}).getByRole('button',{name:'Close',exact:true}).click();
+  await page.getByRole('button',{name:'Save routine',exact:true}).click();
+  await page.getByLabel('Template name',{exact:true}).fill('Independent work routine');
+  await page.getByRole('button',{name:'Save template',exact:true}).click();
+  await page.getByText('Independent work routine',{exact:true}).waitFor();
+  const saved = writes.find(write=>write.pathname.endsWith('/templates'));
+  assert.deepEqual(saved.body.data.content.steps.map(step=>step.kind),['instructions','timer','exit_ticket']);
+  await page.getByRole('tab',{name:'Tools',exact:true}).click();
+  await page.getByRole('button',{name:'Pause',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Pin Class tools',exact:true}).click();
+  assert.equal(await page.getByTestId('class-tools-panel').getAttribute('data-docked'),'true');
+  const geometry = async () => page.evaluate(() => {
+    const panel=document.querySelector('[data-testid="class-tools-panel"]').getBoundingClientRect();
+    const buttons=[...document.querySelector('[data-class-tools-toolbar]').querySelectorAll('button')].filter(node=>node.getBoundingClientRect().width>0);
+    return {panel:panel.toJSON(),covered:buttons.filter(node=>{const rect=node.getBoundingClientRect();return rect.right>panel.left&&rect.left<panel.right&&rect.bottom>panel.top&&rect.top<panel.bottom;}).map(node=>node.textContent)};
+  });
+  await waitUntil(async()=>!(await geometry()).covered.length,'Pinned toolbar must remain outside panel');
+  await page.getByRole('button',{name:'Unpin Class tools',exact:true}).click();
+  await waitUntil(async()=>!(await geometry()).covered.length,'Floating toolbar must remain outside panel');
+  await page.getByRole('tab',{name:'Activities',exact:true}).click();
+  await page.locator('#class-tools-content-activities').evaluate(node=>{node.scrollTop=0;});
+  await chatEvidence(page,'class-tools-dashboard',{layout:'floating',phase:5});
+  await page.setViewportSize({width:900,height:1000});
+  await page.getByRole('dialog',{name:'Class tools',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Pin Class tools',exact:true}).count(),0);
+  await waitUntil(async () => (await geometry()).panel.height > 250, 'Responsive drawer must have usable height');
+  await page.setViewportSize({width:640,height:900});
+  await waitUntil(async () => (await geometry()).panel.height > 200, 'A zoom-sized viewport must keep the drawer usable');
+  await page.getByRole('button',{name:'Close Class tools',exact:true}).click();
+  await page.getByTestId('class-tools-panel').waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
 });

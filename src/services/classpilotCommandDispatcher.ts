@@ -1,3 +1,6 @@
+import { frozenToolsTargets, frozenAttentionTargets } from "./classpilotToolsCommands.js";
+import { requireClassToolsPhase } from "../config/classpilotClassTools.js";
+import { db } from "../db.js";
 import crypto from "crypto";
 import {
   clearClasspilotClassroomStates,
@@ -199,8 +202,22 @@ export async function normalizeCommandPayload(
     case "remove-flight-path":
     case "remove-block-list":
       return { extensionType: commandType, payload: validated };
-    case "attention-mode":
     case "timer":
+    case "lesson-activity": {
+      const needsOriginal = commandType === "timer" ? validated.action !== "start" : validated.action !== "start";
+      if (commandType === "lesson-activity") requireClassToolsPhase(schoolId, 3);
+      if (commandType === "timer" && !["start", "stop"].includes(String(validated.action))) requireClassToolsPhase(schoolId, 2);
+      const original = needsOriginal ? await frozenToolsTargets(db, { schoolId, actorId: teacherId,
+        authority: teachingSessionId ? { teachingSessionId } : { supervisionContextId: supervisionContextId! } }, commandType, validated) : null;
+      return { extensionType: commandType, payload: { ...validated, ...(original?.resourceId && commandType === "timer" ? {
+        timerId: validated.timerId || original.resourceId, expectedRevision: validated.expectedRevision ?? original.revision } : {}) },
+        ...(original ? { extra: { pollCloseAuthority: original } } : {}) };
+    }
+    case "attention-mode": {
+      if (validated.active !== false) return { extensionType: commandType, payload: validated };
+      const original = await frozenAttentionTargets(db, { schoolId, actorId: teacherId, authority: teachingSessionId ? { teachingSessionId } : { supervisionContextId: supervisionContextId! } });
+      return { extensionType: commandType, payload: validated, extra: { pollCloseAuthority: original } };
+    }
     case "temp-unblock":
     case "limit-tabs":
       return { extensionType: commandType, payload: validated };
@@ -268,11 +285,14 @@ export async function normalizeCommandPayload(
       if (action === "start") {
         const question = String(validated.question);
         const options = validated.options as string[];
+        const purpose = String(validated.purpose || "poll");
+        const responseType = String(validated.responseType || "choice");
+        if (purpose !== "poll" || responseType !== "choice") requireClassToolsPhase(schoolId, 3);
         const pollId = crypto.randomUUID();
         return {
           extensionType: "poll",
-          payload: { action: "start", pollId, question, options },
-          extra: { pollMutation: { action: "start" as const, pollId, question, options } },
+          payload: { action: "start", pollId, question, options, purpose, responseType },
+          extra: { pollMutation: { action: "start" as const, pollId, question, options, purpose, responseType } },
         };
       }
       const pollId = String(validated.pollId || "").trim();
@@ -1080,9 +1100,12 @@ export async function executeClasspilotCommand(options: {
   persistClassroomState?: boolean;
   supervisionActorIsAdmin?: boolean;
   contextAuthorityRevision?: string;
+  routineReservation?: import("./classpilotToolsRoutines.js").RoutineReservation;
+  originalTargetCommandId?: string;
+  replayCommand?: import("../schema/classpilot.js").ClasspilotCommand;
 }) {
   const targetResolutionStartedAt = performance.now();
-  const normalized = await normalizeCommandPayload(
+  let normalized = await normalizeCommandPayload(
     options.commandType,
     options.rawCommandPayload || {},
     options.schoolId,
@@ -1090,6 +1113,9 @@ export async function executeClasspilotCommand(options: {
     options.teachingSessionId || null,
     options.supervisionContextId || null,
   );
+  if (options.replayCommand && options.routineReservation?.replayCommandId === options.replayCommand.id) {
+    normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
+  }
   const commandPayload = { ...normalized.payload };
   // Poll close is bound to the immutable start-command target rows. Dashboard
   // selection is presentation state and must never widen, narrow, or redirect
@@ -1109,6 +1135,21 @@ export async function executeClasspilotCommand(options: {
         targets: exactTabAuthorization.targets,
     })
     : exactTabAuthorization.targets;
+  const requiredToolsCapability = options.commandType === "lesson-activity" ? "lessonActivitiesV1"
+    : options.commandType === "timer" && ["pause", "resume", "extend"].includes(String(commandPayload.action)) ? "timerControlsV1"
+      : options.commandType === "poll" && commandPayload.responseType === "short_text" ? "exitTicketsV1" : null;
+  if (requiredToolsCapability) {
+    const evidence = await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets.filter(target => target.available && target.studentSessionId && target.deviceId)
+      .map(target => ({ studentId: target.studentId, studentSessionId: target.studentSessionId!, deviceId: target.deviceId! })));
+    for (let index = 0; index < effectiveTargets.length; index++) {
+      const target = effectiveTargets[index]!;
+      if (!target.available) continue;
+      const snapshot = evidence.get(target.studentId);
+      if (snapshot?.status !== "hit" || !classpilotRealtimeFresh(snapshot.snapshot) || !snapshot.snapshot.acceptedCapabilities?.includes(requiredToolsCapability)) {
+        effectiveTargets[index] = { ...target, available: false, stateAuthorized: false, unavailableReason: `Unsupported client: ${requiredToolsCapability} is required` };
+      }
+    }
+  }
   const issuedAt = new Date();
   const currentPageRequested = options.commandType === "lock-screen"
     && commandPayload.url === "CURRENT_URL";
@@ -1215,6 +1256,8 @@ export async function executeClasspilotCommand(options: {
         contextAuthorityRevision: options.contextAuthorityRevision,
       } : undefined,
       pollMutation: normalized.extra?.pollMutation,
+      routineReservation: options.routineReservation,
+      originalTargetCommandId: options.originalTargetCommandId,
     }
   );
   const committedCommandPayload = created.commandPayload
@@ -1425,6 +1468,9 @@ export async function executeClasspilotCommand(options: {
     }
   }
   const capabilityObservedIds = new Set([...deferredIds, ...authRelevantIds]);
+  if (requiredToolsCapability) for (const target of committedTargets) {
+    if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);
+  }
   const [ssoPolicy, capabilityRealtime] = await Promise.all([
     ssoPolicyPromise,
     capabilityObservedIds.size > 0
@@ -1588,6 +1634,9 @@ export async function executeClasspilotCommand(options: {
           const deliveryAuthority = await withClasspilotStudentControlDeliveryAuthority(
             baseExactTarget,
             async (transactionDb) => {
+              if (requiredToolsCapability && !capabilitySnapshot?.acceptedCapabilities?.includes(requiredToolsCapability)) {
+                return { kind: "unavailable" as const, reason: `Unsupported client: ${requiredToolsCapability} is required`, authCapabilityMissing: false };
+              }
               if (target.scheduledAuthorityRevision !== undefined && created.supervisionContextId) {
                 try {
                   await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: created.supervisionContextId,
@@ -1955,6 +2004,17 @@ export async function executeClasspilotCommand(options: {
     - (targetOrder.get(right.studentId) ?? Number.MAX_SAFE_INTEGER)
   );
   const summary = commandSummary(command);
+  if (["timer", "lesson-activity"].includes(options.commandType) && (options.teachingSessionId || options.supervisionContextId)) {
+    const scope = { schoolId: options.schoolId, actorId: options.actorId, contextAuthorityRevision: options.contextAuthorityRevision,
+      authority: options.teachingSessionId ? { teachingSessionId: options.teachingSessionId } : { supervisionContextId: options.supervisionContextId! } };
+    // Full current roster also clears an earlier activity for recipients omitted
+    // from its replacement. Every push is fenced again to the current binding.
+    try {
+      const { toolsRoster } = await import("./classpilotToolsAuthority.js");
+      const { publishClassToolsChanged } = await import("./classpilotToolsEvents.js");
+      await publishClassToolsChanged(scope, (await toolsRoster(scope)).map(row => row.studentId));
+    } catch (error) { console.warn("[Class tools] Snapshot push deferred to recovery", error instanceof Error ? error.name : "error"); }
+  }
   // Internal poll mutation/authority metadata includes exact binding rows and
   // must never cross the teacher API boundary. Preserve the established public
   // `extra.poll` response using only the persisted poll resource.

@@ -1,3 +1,4 @@
+import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { chatMessages, classpilotActiveHands, classpilotChatDeliveries, classpilotClassroomStates,
@@ -120,10 +121,10 @@ export async function mutateScheduledStudentHand(options: ScheduledStudentAction
     const [existing] = await database.select().from(classpilotActiveHands).where(and(eq(classpilotActiveHands.schoolId, options.schoolId),
       eq(classpilotActiveHands.supervisionContextId, context.id), eq(classpilotActiveHands.studentId, options.studentId), isNull(classpilotActiveHands.clearedAt))).limit(1);
     if (!options.raised) {
-      if (existing) await database.update(classpilotActiveHands).set({ clearedAt: now, updatedAt: now }).where(eq(classpilotActiveHands.id, existing.id));
+      if (existing) await database.update(classpilotActiveHands).set({ clearedAt: now, updatedAt: now, status: "withdrawn", revision: existing.revision + 1 }).where(eq(classpilotActiveHands.id, existing.id));
       return { context, hand: null };
     }
-    const [hand] = existing ? await database.update(classpilotActiveHands).set({ raisedAt: now, expiresAt: context.endsAt,
+    const [hand] = existing ? await database.update(classpilotActiveHands).set({ expiresAt: context.endsAt,
       deviceId: options.deviceId, updatedAt: now }).where(eq(classpilotActiveHands.id, existing.id)).returning()
       : await database.insert(classpilotActiveHands).values({ schoolId: options.schoolId, teachingSessionId: null,
         supervisionContextId: context.id, studentId: options.studentId, deviceId: options.deviceId, raisedAt: now, expiresAt: context.endsAt }).returning();
@@ -203,7 +204,7 @@ export async function authorizeScheduledTeacherStudentAction(options: {
     const [control] = await tx.select({ revision: classpilotStudentControlStates.revision }).from(classpilotStudentControlStates)
       .where(and(eq(classpilotStudentControlStates.schoolId, options.schoolId), eq(classpilotStudentControlStates.studentId, options.studentId))).limit(1);
     const binding = (await getActiveSessionsForStudents(options.schoolId, [options.studentId], database))[0];
-    if (options.dismissHand) await tx.update(classpilotActiveHands).set({ clearedAt: new Date(), updatedAt: new Date() })
+    if (options.dismissHand) await tx.update(classpilotActiveHands).set({ clearedAt: new Date(), updatedAt: new Date(), status: "helped", revision: sql`${classpilotActiveHands.revision}+1` })
       .where(and(eq(classpilotActiveHands.schoolId, options.schoolId), eq(classpilotActiveHands.supervisionContextId, context.id),
         eq(classpilotActiveHands.studentId, options.studentId), isNull(classpilotActiveHands.clearedAt)));
     return { context, binding, controlRevision: control!.revision };
@@ -300,6 +301,7 @@ export async function releaseScheduledClassroomStudentTools(schoolId: string, co
 
 /** Called inside release/expiry's existing transaction, before returning ownership. */
 export async function finalizeScheduledClassroomTools(schoolId: string, contextId: string, now: Date, database: typeof db) {
+  await finalizeClassTools(database, schoolId, { supervisionContextId: contextId }, now);
   await database.update(polls).set({ isActive: false, closedAt: now, updatedAt: now }).where(and(
     eq(polls.schoolId, schoolId), eq(polls.supervisionContextId, contextId), eq(polls.isActive, true)));
   await database.update(classpilotActiveHands).set({ clearedAt: now, updatedAt: now }).where(and(

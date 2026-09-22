@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -20,6 +20,7 @@ import AuthCallback from './pages/AuthCallback';
 import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
 
 // ClassPilot pages (lazy-loaded)
+const CPClassToolsPresentation = lazy(() => import('./products/classpilot/pages/ClassToolsPresentation'));
 const CPDashboard = lazy(() => import('./products/classpilot/pages/Dashboard'));
 const CPRoster = lazy(() => import('./products/classpilot/pages/Roster'));
 const CPAdmin = lazy(() => import('./products/classpilot/pages/Admin'));
@@ -324,6 +325,12 @@ function AppRoutes() {
   );
 }
 
+function OperationalSurface() {
+  const location = useLocation();
+  if (location.pathname === '/classpilot/presentation') return <Suspense fallback={<Spinner />}><CPClassToolsPresentation /></Suspense>;
+  return <SocketProvider><ImpersonationBanner /><AppRoutes /><Toaster /></SocketProvider>;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -332,12 +339,7 @@ export default function App() {
           <ThemeProvider>
             <AuthProvider>
               <LicenseProvider>
-                <SocketProvider>
-                  <ImpersonationBanner />
-                  <AppRoutes />
-                  <Toaster />
-                  {/* <AIChatButton /> — AI Chat FAB disabled, using backend-only monitoring */}
-                </SocketProvider>
+                <OperationalSurface />
               </LicenseProvider>
             </AuthProvider>
           </ThemeProvider>

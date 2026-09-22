@@ -1827,6 +1827,29 @@ export async function purgeSafetyRawBrowserUrlsForSchool(schoolId: string, cutof
       AND summary IS NOT NULL`, [schoolId, cutoff]);
 }
 
+/** Uses the existing school cutoff and count/delete policy, independently testable. */
+export async function purgeClassToolsRetentionForSchool({ schoolId, cutoff, mode }: { schoolId: string; cutoff: Date; mode: ClasspilotRetentionPurgeSpineMode }) {
+// Class tools follows the same school cutoff. Progress is deleted by
+// its same-school lesson FK; private reusable templates do not expire.
+for (const table of ["classpilot_tool_history", "classpilot_questions", "classpilot_picker_rounds", "classpilot_routine_runs", "classpilot_timers", "classpilot_lesson_activities"]) {
+  await applySafetySpineRetentionStatement(mode, { table, from: table, targetId: "id", where: "school_id=$1 AND created_at<$2" }, [schoolId, cutoff]);
+}
+await applySafetySpineRetentionStatement(mode, { table: "classpilot_active_hands", from: "classpilot_active_hands", targetId: "id", where: "school_id=$1 AND raised_at<$2 AND (cleared_at IS NOT NULL OR expires_at<$2)" }, [schoolId, cutoff]);
+await applySafetySpineRetentionStatement(mode, { table: "poll_responses", from: "poll_responses", targetId: "id", where: "school_id=$1 AND created_at<$2 AND poll_id IN (SELECT id FROM polls WHERE school_id=$1 AND (is_active=false OR expires_at<$2))" }, [schoolId, cutoff]);
+await applySafetySpineRetentionStatement(mode, { table: "polls", from: "polls", targetId: "id", where: "school_id=$1 AND created_at<$2 AND (is_active=false OR expires_at<$2) AND NOT EXISTS(SELECT 1 FROM poll_responses r WHERE r.poll_id=polls.id AND r.school_id=polls.school_id)" }, [schoolId, cutoff]);
+if (mode === "delete") {
+  // Audit identities can remain, but duplicated authored content cannot
+  // outlive the school retention window in old command payloads.
+  await schedulerPool.query(`UPDATE classpilot_commands SET command_payload=jsonb_strip_nulls(jsonb_build_object(
+    'action',command_payload->'action','timerId',command_payload->'timerId','activityId',command_payload->'activityId',
+    'pollId',command_payload->'pollId','revision',command_payload->'revision','retentionExpired',true))
+    WHERE school_id=$1 AND created_at<$2 AND command_type IN ('lesson-activity','timer','poll','attention-mode')
+      AND command_payload->>'retentionExpired' IS DISTINCT FROM 'true'`, [schoolId, cutoff]);
+  await schedulerPool.query(`UPDATE classpilot_classroom_states SET payload='{"retentionExpired":true}'::jsonb
+    WHERE school_id=$1 AND state_type='attention' AND applied_at<$2 AND (cleared_at IS NOT NULL OR expires_at<$2)`, [schoolId, cutoff]);
+}
+}
+
 async function purgeClasspilotSafetySpineRetention() {
   const mode = retentionPurgeSpineMode();
   const totals: ClasspilotSafetySpineRetentionTotals = {
@@ -1858,6 +1881,7 @@ async function purgeClasspilotSafetySpineRetention() {
         await purgeSafetyRawBrowserUrlsForSchool(school.id, cutoff);
         await schedulerPool.query(`DELETE FROM classpilot_school_website_deliveries
           WHERE school_id=$1 AND created_at<$2`, [school.id, new Date(now-30*RETENTION_DAY_MS)]);
+        await purgeClassToolsRetentionForSchool({ schoolId: school.id, cutoff, mode });
         const schoolTotals = await purgeClasspilotSafetySpineRetentionForSchool({
           schoolId: school.id,
           cutoff,

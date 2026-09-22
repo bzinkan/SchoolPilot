@@ -1,3 +1,4 @@
+import { timerCommand, lessonCommand, promptStart, toolId } from "./classpilotToolsValidation.js";
 import { z } from "zod";
 
 const id = z.string().trim().min(1).max(128);
@@ -136,21 +137,12 @@ export function validateClasspilotCommandPayload(
       case "attention-mode":
         return strictObject({ active: z.boolean(), message: z.string().trim().max(500).optional() }).parse(raw);
       case "timer": {
-        const value = strictObject({
-          action: z.enum(["start", "stop"]),
-          seconds: z.number().int().min(1).max(3_600).optional(),
-          durationSeconds: z.number().int().min(1).max(3_600).optional(),
-          message: z.string().trim().max(500).optional(),
-        }).superRefine((timer, ctx) => {
-          if (timer.action === "start" && timer.seconds === undefined && timer.durationSeconds === undefined) {
-            ctx.addIssue({ code: "custom", path: ["seconds"], message: "seconds is required when starting a timer" });
-          }
-        }).parse(raw);
-        const seconds = value.seconds ?? value.durationSeconds;
-        return value.action === "start"
-          ? { action: "start", seconds, ...(value.message ? { message: value.message } : {}) }
-          : { action: "stop" };
+        const value = timerCommand.parse(raw);
+        const { durationSeconds: _legacy, ...payload } = value;
+        return { ...payload, ...(value.seconds !== undefined || value.durationSeconds !== undefined ? { seconds: value.seconds ?? value.durationSeconds } : {}) };
       }
+      case "lesson-activity":
+        return lessonCommand.parse(raw);
       case "temp-unblock": {
         const value = strictObject({
           domain: z.unknown(),
@@ -162,23 +154,8 @@ export function validateClasspilotCommandPayload(
         return strictObject({ maxTabs: z.number().int().min(1).max(100).nullable() }).parse(raw);
       case "student-sign-out":
         return strictObject({}).parse(raw);
-      case "poll": {
-        const base = z.union([
-          strictObject({
-            action: z.literal("start").optional(),
-            question: z.string().trim().min(1).max(500),
-            options: z.array(z.string().trim().min(1).max(200)).min(2).max(5),
-          }),
-          strictObject({ action: z.literal("close"), pollId: id }),
-        ]).parse(raw);
-        if ((base.action ?? "start") === "start") {
-          const options = (base as { options: string[] }).options;
-          if (new Set(options.map((option) => option.toLocaleLowerCase())).size !== options.length) {
-            throw new z.ZodError([{ code: "custom", path: ["options"], message: "Poll options must be unique" }]);
-          }
-        }
-        return base as ValidatedClasspilotCommandPayload;
-      }
+      case "poll":
+        return z.union([promptStart, z.object({ action: z.literal("close"), pollId: toolId }).strict()]).parse(raw);
       case "teacher-message":
         return strictObject({ message }).parse(raw);
       default:

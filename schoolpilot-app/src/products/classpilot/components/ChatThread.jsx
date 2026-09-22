@@ -49,7 +49,7 @@ export function ChatMessageBubble({ item }) {
  * it is open on a visible tab, marks the student's messages read. Only this
  * thread auto-scrolls.
  */
-function ChatThread({ conversation, monitoring = null, readiness = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
+function ChatThread({ visible = true, onOpenStudentDetails, conversation, monitoring = null, readiness = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
   const endRef = useRef(null);
   const { studentId, studentName, items } = conversation;
   const itemCount = items.length;
@@ -61,8 +61,13 @@ function ChatThread({ conversation, monitoring = null, readiness = null, onClear
   }, [studentId, lastItemId]);
 
   useEffect(() => {
-    if (unreadCount > 0 && document.visibilityState === 'visible') onMarkThreadRead(studentId);
-  }, [studentId, unreadCount, lastItemId, onMarkThreadRead]);
+    const markVisible = () => {
+      if (visible && unreadCount > 0 && document.visibilityState === 'visible') onMarkThreadRead(studentId);
+    };
+    markVisible();
+    document.addEventListener('visibilitychange', markVisible);
+    return () => document.removeEventListener('visibilitychange', markVisible);
+  }, [visible, studentId, unreadCount, lastItemId, onMarkThreadRead]);
 
   return (
     <div className="flex flex-col h-full min-h-0" data-testid="chat-thread" data-student-id={studentId}>
@@ -99,6 +104,7 @@ function ChatThread({ conversation, monitoring = null, readiness = null, onClear
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {onOpenStudentDetails && <button type="button" className="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" onClick={(event) => onOpenStudentDetails(studentId, event.currentTarget)}>Details</button>}
           <button
             type="button"
             onClick={() => onClearThread(studentId)}
