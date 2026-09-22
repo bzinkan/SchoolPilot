@@ -11,6 +11,9 @@ import { createClient } from "redis";
 import ts from "typescript";
 import { apiLimiter } from "../src/middleware/rateLimiter.js";
 import { comparePassword } from "../src/util/password.js";
+import {
+  decryptClassPilotPin, encryptClassPilotPin, verifyClassPilotPin, type ClassPilotPinCredential,
+} from "../src/services/classpilotPins.js";
 import { usesEmailIdStudentSignIn } from "../src/util/classpilotStudentSignInMethod.js";
 import {
   createStudentSignInDiagnostics,
@@ -290,6 +293,7 @@ type Student = {
   schoolId: string;
   status: string;
   classpilotPinHash: string | null;
+  classpilotPinEncrypted?: string | null;
   studentIdNumber: string;
 };
 type Scenario = {
@@ -342,6 +346,8 @@ function setupScenario(options: Scenario = {}, diagnostics?: ReturnType<typeof c
   const failureKeys: Array<[string, string]> = [];
   const clearedKeys: Array<[string, string]> = [];
   const compares: Array<[string, string]> = [];
+  const backfills: Array<[string, string, string]> = [];
+  const counters: string[] = [];
   const issuedOptions: unknown[] = [];
   const injectedError = new Error("private lookup fixture must remain an exception");
   const body = {
@@ -417,6 +423,15 @@ function setupScenario(options: Scenario = {}, diagnostics?: ReturnType<typeof c
       calls.push("compare"); compares.push([pin, hash]); failAt("compare");
       return options.pinMatches ? options.pinMatches(pin, hash) : options.correctPin !== false;
     },
+    // The production verifier, with only its bcrypt compare replaced by the
+    // observed stub above. Fixture students carry a hash only, so every
+    // verification takes the bcrypt path and `compares` still counts it.
+    verifyClassPilotPin: (credential: ClassPilotPinCredential, pin: string) =>
+      verifyClassPilotPin(credential, pin, { compare: context.comparePassword }),
+    backfillEncryptedClasspilotPin: async (schoolId: string, studentId: string, ciphertext: string) => {
+      calls.push("backfill"); backfills.push([schoolId, studentId, ciphertext]); return true;
+    },
+    recordRuntimePerformanceCounter: (name: string) => { counters.push(name); },
     recordPinFailure: async (schoolId: string, studentId: string) => {
       calls.push("failure_counter"); failureKeys.push([schoolId, studentId]);
     },
@@ -445,7 +460,7 @@ function setupScenario(options: Scenario = {}, diagnostics?: ReturnType<typeof c
   runInNewContext(executable, context);
   assert.ok(handler, "production route registered a handler");
   return { response, calls, failures, stages, methods, markedErrors, nextErrors, failureKeys,
-    clearedKeys, compares, issuedOptions, injectedError, handler, request };
+    clearedKeys, compares, backfills, counters, issuedOptions, injectedError, handler, request };
 }
 
 async function scenario(options: Scenario = {}) {
@@ -508,6 +523,42 @@ describe("student-login private route diagnostics preserve authentication behavi
       assert.equal(result.calls.includes("student_lookup"), false);
     });
   }
+
+  it("verifies a hash-only student through bcrypt once and backfills the encrypted PIN", async () => {
+    const student = { ...defaultStudent(), classpilotPinHash: await bcrypt.hash("1234", 4), classpilotPinEncrypted: null };
+    const result = await scenario({ student, pinMatches: comparePassword });
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(result.issuedOptions.length, 1);
+    assert.equal(result.compares.length, 1, "legacy row spends exactly one bcrypt compare");
+    assert.equal(result.backfills.length, 1, "legacy row is healed exactly once");
+    assert.deepEqual(result.backfills[0]!.slice(0, 2), ["school-fixture", "student-fixture"]);
+    assert.equal(decryptClassPilotPin(result.backfills[0]![2]), "1234", "backfill carries the verified PIN");
+    assert.deepEqual(result.counters, ["studentSignInPinVerifyBcrypt"]);
+    assert.deepEqual(result.failures, []);
+  });
+
+  it("verifies an encrypted PIN without bcrypt or a backfill write", async () => {
+    const student = { ...defaultStudent(), classpilotPinHash: await bcrypt.hash("1234", 4), classpilotPinEncrypted: encryptClassPilotPin("1234") };
+    const result = await scenario({ student, pinMatches: comparePassword });
+    assert.equal(result.response.statusCode, 200);
+    assert.equal(result.issuedOptions.length, 1);
+    assert.deepEqual(result.compares, [], "an encrypted PIN never reaches bcrypt");
+    assert.deepEqual(result.backfills, []);
+    assert.deepEqual(result.counters, ["studentSignInPinVerifyEncrypted"]);
+  });
+
+  it("rejects a wrong PIN from the encrypted value with the unchanged response and no bcrypt", async () => {
+    // The stale hash would accept 1234; the admin-visible encrypted PIN wins.
+    const student = { ...defaultStudent(), classpilotPinHash: await bcrypt.hash("1234", 4), classpilotPinEncrypted: encryptClassPilotPin("5678") };
+    const result = await scenario({ student, pinMatches: comparePassword });
+    assert.equal(result.response.statusCode, 401);
+    assert.deepEqual(result.response.body, incorrectPinError);
+    assert.deepEqual(result.failures, ["PIN_MISMATCH"]);
+    assert.deepEqual(result.compares, [], "a decrypted mismatch must not spend a bcrypt compare");
+    assert.deepEqual(result.backfills, []);
+    assert.deepEqual(result.counters, []);
+    assert.deepEqual(result.issuedOptions, []);
+  });
 
   it("ignores a pre-existing lockout and preserves continuity on a wrong PIN response", async () => {
     const result = await scenario({ lockout: 47, continuity: "valid", correctPin: false });
