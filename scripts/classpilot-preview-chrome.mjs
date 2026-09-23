@@ -59,6 +59,7 @@ const { resetClasspilotObservationLeasesForTests } = await import('../src/servic
 const { resetClasspilotScreenshotPolicyRefreshForTests } = await import('../src/services/classpilotScreenshotPolicyRefresh.ts');
 const { serializeClasspilotStudentControlState } = await import('../src/services/classpilotClassroomState.ts');
 const { syncClasspilotControlStatesToActiveDevices } = await import('../src/services/classpilotControlStateDelivery.ts');
+const { processScheduledClassAutoStart } = await import('../src/services/classpilotScheduledStart.ts');
 
 const tag = `preview-chrome-${randomUUID()}`;
 const sharedRealtime = new Map();
@@ -71,7 +72,8 @@ realtime.setClasspilotRealtimeStatusCommandForTests(async args => {
   }
   return undefined;
 });
-let school, teacher, admin, student, studentSession, teachingSession, token, baseUrl;
+let school, teacher, admin, coverageOwner, student, studentSession, teachingSession, token, baseUrl;
+let repeatScheduledCoverage;
 let browser, teacherBrowser, server, studentPage, viewerPage, worker;
 let fixtureSocket;
 const watchdog = setTimeout(() => { void browser?.close(); void teacherBrowser?.close(); server?.closeAllConnections(); }, 180_000);
@@ -150,10 +152,64 @@ async function deliverHint(frame) {
     await handleWsMessage(JSON.stringify(frame), wsConnectionGeneration, auth);
   }, frame);
 }
+async function claimScheduledCoverageFromAvailable() {
+  // A scheduled report is deliberately not a live teaching authority. Prepare
+  // it through the scheduler's canonical occurrence helpers, then use exactly
+  // the Available screen's HTTP claim route to establish supervision.
+  await inSchool(() => storage.endTeachingSession(teachingSession.id));
+  const date = new Date().toISOString().slice(0, 10);
+  const group = await inSchool(async () => {
+    const created = await storage.createGroup({ schoolId: school.id, teacherId: teacher.id,
+      name: 'Synthetic scheduled coverage', groupType: 'admin_class', status: 'active',
+      scheduleEnabled: true, blockStartTime: '00:00', blockEndTime: '23:59' });
+    await db.insert(schema.groupStudents).values({ groupId: created.id, studentId: student.id });
+    await storage.createOrReuseScheduledReportSession({ schoolId: school.id, groupId: created.id,
+      teacherId: teacher.id, scheduledDate: date, scheduledTimezone: 'UTC',
+      scheduledStartAt: new Date(Date.now() - 60_000), scheduledEndAt: new Date(Date.now() + 3_600_000) });
+    return created;
+  });
+  const started = await inSchool(() => processScheduledClassAutoStart({ group, scheduledDate: date,
+    scheduledTeacherConnectedOverride: false, connectedTeacherIdsOverride: new Set(), now: new Date() }));
+  assert.equal(started.status, 'coverage_needed', 'the real scheduler must create a claimable coverage occurrence');
+  const available = await staffRequest('/api/coverage/available-students', undefined, 'GET', coverageOwner);
+  assert.ok(available.scheduledCoverageGroups.some(entry => entry.id === started.conflictId
+    && entry.students.some(row => row.studentId === student.id)), 'Available must offer the exact scheduled conflict/student');
+  const claimed = await staffRequest('/api/coverage/claim', { scheduledConflictId: started.conflictId,
+    studentIds: [student.id] }, 'POST', coverageOwner);
+  assert.equal(claimed.context.contextType, 'scheduled_coverage');
+  assert.equal(claimed.context.scheduledConflictId, started.conflictId);
+  assert.equal(claimed.context.purpose, 'coverage');
+  const activity = await staffRequest('/api/classpilot/dashboard-activity', undefined, 'GET', coverageOwner);
+  assert.equal(activity.current?.authority.supervisionContextId, claimed.context.id,
+    'opening Class after the claim must select the returned coverage authority');
+  repeatScheduledCoverage = async () => {
+    const before = await inSchool(() => storage.getClasspilotStudentControlState(school.id, student.id));
+    for (let tick = 0; tick < 3; tick += 1) {
+      const repeat = await inSchool(() => processScheduledClassAutoStart({ group, scheduledDate: date,
+        scheduledTeacherConnectedOverride: false, connectedTeacherIdsOverride: new Set(), now: new Date() }));
+      assert.equal(repeat.status, 'claimed');
+      const after = await inSchool(() => storage.getClasspilotStudentControlState(school.id, student.id));
+      assert.equal(after?.supervisionContextId, claimed.context.id, 'scheduler must preserve the claimed authority');
+      assert.equal(after?.revision, before?.revision, 'unchanged scheduler ticks must not churn the screenshot binding');
+    }
+  };
+  return claimed.context;
+}
 async function tile(authority, actor = admin) {
   const data = await staffRequest('/api/classpilot/tiles/screenshots', { ...authority, studentIds: [student.id] }, 'POST', actor);
   const entry = data.tiles.find(entry => entry.studentId === student.id);
-  return entry?.screenshot ? { ...entry.screenshot, bindingVersion: entry.bindingVersion } : null;
+  // Preserve the HTTP payload exactly: copying the outer stamp onto the pixel
+  // would conceal a server serialization defect rejected by the real dashboard.
+  const screenshot = await viewerPage.evaluate(({ response, studentId }) =>
+    window.previewScreenshot(response, studentId), { response: data, studentId: student.id });
+  if (entry?.screenshot) {
+    assert.match(entry.bindingVersion, authority.supervisionContextId ? /^v3:/ : /^v2:/);
+    assert.equal(entry.screenshot.bindingVersion, entry.bindingVersion,
+      'raw API screenshot must carry its own exact binding stamp; the harness must never manufacture it');
+    assert.ok(screenshot, 'dashboard normalization and indexing must accept the unmodified API screenshot');
+    assert.deepEqual(screenshot, entry.screenshot);
+  }
+  return screenshot;
 }
 async function renderTile(authority, screenshot, expectedColor) {
   const params = new URLSearchParams(authority);
@@ -179,7 +235,8 @@ try {
   await storage.createProductLicense({ schoolId: school.id, product: 'CLASSPILOT', status: 'active' });
   teacher = await storage.createUser({ email: `teacher@${tag}.example.test`, firstName: 'Synthetic', lastName: 'Teacher' });
   admin = await storage.createUser({ email: `admin@${tag}.example.test`, firstName: 'Synthetic', lastName: 'Admin' });
-  for (const [user, role] of [[teacher, 'teacher'], [admin, 'school_admin']]) await storage.createMembership({ userId: user.id, schoolId: school.id, role, status: 'active' });
+  coverageOwner = await storage.createUser({ email: `coverage-owner@${tag}.example.test`, firstName: 'Synthetic', lastName: 'CoverageOwner' });
+  for (const [user, role] of [[teacher, 'teacher'], [admin, 'school_admin'], [coverageOwner, 'school_admin']]) await storage.createMembership({ userId: user.id, schoolId: school.id, role, status: 'active' });
   await inSchool(async () => {
     [student] = await db.insert(schema.students).values({ schoolId: school.id, firstName: 'Synthetic', lastName: 'Preview', email: `student@${tag}.example.test`, status: 'active' }).returning();
     await db.insert(schema.devices).values({ deviceId: `${tag}-device`, deviceName: 'Synthetic Chrome', schoolId: school.id, classId: 'synthetic-class' });
@@ -190,7 +247,7 @@ try {
   });
   token = createStudentToken({ schoolId: school.id, studentId: student.id, deviceId: `${tag}-device`, sessionId: studentSession.id, studentEmail: student.email });
   const frontend = resolve(root, 'schoolpilot-app');
-  const viewer = await build({ stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import StudentTile from './src/products/classpilot/components/StudentTile.jsx';const root=createRoot(document.getElementById('root'));window.renderPreview=props=>root.render(React.createElement(StudentTile,{...props,screenshotObservationStatus:'observed',screenshotCaptureCadence:'active_view',freshnessNowMs:Date.now(),onToggleSelect:()=>{},onCommand:()=>{}}));`, resolveDir: frontend, loader: 'jsx' },
+  const viewer = await build({ stdin: { contents: `import React from 'react';import {createRoot} from 'react-dom/client';import StudentTile from './src/products/classpilot/components/StudentTile.jsx';import {normalizeTileScreenshotBindings,indexTileScreenshots} from './src/products/classpilot/lib/tileBatchPolling.js';window.previewScreenshot=(response,studentId)=>indexTileScreenshots(normalizeTileScreenshotBindings(response)).get(studentId)??null;const root=createRoot(document.getElementById('root'));window.renderPreview=props=>root.render(React.createElement(StudentTile,{...props,screenshotObservationStatus:'observed',screenshotCaptureCadence:'active_view',freshnessNowMs:Date.now(),onToggleSelect:()=>{},onCommand:()=>{}}));`, resolveDir: frontend, loader: 'jsx' },
     bundle: true, write: false, format: 'esm', jsx: 'automatic', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"test"' } });
   const app = createApp();
   const fixtureCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:";
@@ -232,6 +289,7 @@ try {
       'scopedAuthorityChecksV1', 'scheduledClassroomV1', 'screenshotTrackingWindowLeaseV1', 'screenshotActiveObservationCadenceV1',
     ] });
   const scenarios = [{ name: 'admin Observe teaching class', authority: { teachingSessionId: teachingSession.id } },
+    { name: 'Available scheduled coverage Claim opened by admin owner', scheduledClaim: true, owner: coverageOwner },
     { name: 'teacher-held claim observed by admin', contextType: 'direct_pickup' },
     { name: 'active testing block observed by admin', contextType: 'testing', scheduled: true },
     { name: 'missed claim refresh recovered by heartbeat', contextType: 'direct_pickup', dropHint: true }];
@@ -239,7 +297,8 @@ try {
     process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = scenario.contextType === 'direct_pickup' ? 'off' : 'on';
     resetClasspilotObservationLeasesForTests(); resetClasspilotScreenshotPolicyRefreshForTests(); frames.length = 0;
     if (!scenario.authority) {
-      const context = await inSchool(() => storage.createSupervisionContextWithStudents({ context: {
+      const context = scenario.scheduledClaim ? await claimScheduledCoverageFromAvailable()
+        : await inSchool(() => storage.createSupervisionContextWithStudents({ context: {
         schoolId: school.id, name: scenario.name, contextType: scenario.contextType, status: 'active', assignedStaffId: teacher.id,
         createdBy: admin.id, startsAt: new Date(Date.now() - 1000), endsAt: new Date(Date.now() + 3_600_000),
         ...(scenario.scheduled ? { scheduleProfileApplicationId: tag, scheduleProfileDate: new Date().toISOString().slice(0, 10), scheduleProfileBlockId: randomUUID() } : {}),
@@ -264,7 +323,8 @@ try {
     }
     const parent = scenario.authority.supervisionContextId ? `supervision-contexts/${scenario.authority.supervisionContextId}` : `teaching-sessions/${scenario.authority.teachingSessionId}`;
     const started = Date.now();
-    await staffRequest(`/api/classpilot/${parent}/observation-lease`, { viewerInstanceId: `preview-${randomUUID()}`, scope: { kind: 'class' } }, 'PUT');
+    await staffRequest(`/api/classpilot/${parent}/observation-lease`, { viewerInstanceId: `preview-${randomUUID()}`, scope: { kind: 'class' } }, 'PUT',
+      scenario.owner ?? admin);
     const emitted = await waitFor(() => frames.find(frame => frame.type === 'screenshot-policy-refresh'), 'real observation route emits refresh');
     assert.equal(emitted.studentId, student.id); assert.equal(emitted.studentSessionId, studentSession.id);
     assert.equal(emitted.deviceId, undefined);
@@ -275,9 +335,10 @@ try {
     const firstMs = Date.now() - started;
     assert.ok(firstMs <= 15_000, `first healthy capture took ${firstMs}ms`);
     assert.match(first.bindingVersion, scenario.authority.supervisionContextId ? /^v3:/ : /^v2:/);
-    assert.equal((await tile(scenario.authority, teacher))?.screenshot, first.screenshot,
-      'assigned teacher retains the same authorized pixels while an admin observes');
+    assert.equal((await tile(scenario.authority, scenario.owner ?? teacher))?.screenshot, first.screenshot,
+      'assigned owner and observing admin receive the same authorized pixels');
     await renderTile(scenario.authority, first, [7, 89, 133]);
+    if (scenario.scheduledClaim) await repeatScheduledCoverage();
     await studentPage.bringToFront();
     await studentPage.evaluate(name => { document.body.textContent = `${name}: SECOND`; document.body.style.background = '#9d174d'; }, scenario.name);
     const secondStarted = Date.now();
@@ -322,7 +383,7 @@ try {
   evidence.push({ scenario: 'MV3 suspension and navigation wake', firstMs: Date.now() - restartAt,
     screenshotDigest: createHash('sha256').update(afterSuspend.screenshot).digest('hex') });
   await cdp.detach();
-  assert.ok(uploads.filter(upload => upload.status === 200).length >= 9, 'all captures reached the real upload endpoint');
+  assert.ok(uploads.filter(upload => upload.status === 200).length >= scenarios.length * 2 + 1, 'all captures reached the real upload endpoint');
   assert.equal(uploads.some(upload => upload.status >= 400), false, JSON.stringify(uploads));
   console.log('PASS: real observation route hints, existing extension capture/upload, exact-authority reads, and StudentTile pixel decoding.');
   await viewerPage.screenshot({ path: join(evidencePath, 'rendered-preview.png') });
@@ -334,7 +395,7 @@ try {
   clearTimeout(watchdog);
   await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify({ completedScenarios: evidence, uploadOutcomes: uploads,
     extensionRef, extensionVersion, extensionChanges,
-    transport: 'actual server hint bridged to existing extension handler; real HTTP heartbeat/upload/read; native browser capture',
+    transport: 'actual server hint bridged to existing extension handler; real HTTP heartbeat/upload/read; unmodified API payload through dashboard normalization/indexing; native browser capture',
   }, null, 2));
   await writeFile(join(evidencePath, 'worker.log'), workerLog.join('\n'));
   if (fixtureSocket) sockets.removeWsClient(fixtureSocket);
@@ -346,7 +407,8 @@ try {
     // Only the generated school is touched, including partial failed setup.
     for (const table of ['classpilot_monitoring_events', 'heartbeats', 'classpilot_chat_deliveries', 'chat_messages', 'classpilot_active_hands', 'session_settings',
       'classpilot_command_targets', 'classpilot_commands', 'classpilot_classroom_states', 'classpilot_student_control_states',
-      'classpilot_supervision_students', 'classpilot_supervision_contexts', 'classpilot_session_students', 'classpilot_session_staff', 'teaching_sessions']) {
+      'classpilot_supervision_students', 'classpilot_supervision_contexts', 'classpilot_session_students', 'classpilot_session_staff',
+      'classpilot_session_summary_deliveries', 'teaching_sessions', 'classpilot_scheduled_conflicts']) {
       await db.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${school.id}`);
     }
     await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=${school.id})`);

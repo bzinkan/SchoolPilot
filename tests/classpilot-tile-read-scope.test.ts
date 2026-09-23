@@ -1163,10 +1163,15 @@ describe("ClassPilot tile-read tenant scope", () => {
       const exact = await tiles();
       assert.equal(exact.status, 200);
       assert.equal(exact.body.tiles[0].screenshot?.screenshot, screenshot);
+      assert.equal(exact.body.tiles[0].bindingVersion, supervisionBoundScreenshotBindingVersion(binding));
+      assert.equal(exact.body.tiles[0].screenshot?.bindingVersion, exact.body.tiles[0].bindingVersion,
+        'The raw API response must retain the supervision stamp required by the dashboard binding fence');
       const observedTile = await postJson('/api/classpilot/tiles/screenshots', { studentIds: [studentId], supervisionContextId: contextId },
         admin, schoolA.id, undefined, { 'X-ClassPilot-Context-Authority-Revision': '0' });
       assert.equal(observedTile.status, 200);
       assert.equal(observedTile.body.tiles[0].screenshot?.screenshot, screenshot);
+      assert.equal(observedTile.body.tiles[0].screenshot?.bindingVersion, observedTile.body.tiles[0].bindingVersion,
+        'Administrator Observe must receive the same stamped supervision frame as its owner');
       let revisionMutationError: unknown;
       let revisionMutationObserved = false;
       try {
