@@ -974,7 +974,18 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
 
     const persistencePage = await browser.newPage();
     pages.push(persistencePage);
-    const persistenceObservedAt = new Date(Date.now() - 500).toISOString();
+    // This scenario tests same-authority cache reuse, not wall-clock expiry.
+    // Its many UI interactions can outlast the 75-second successful-null
+    // retention window on CI. Keep Date controlled while ordinary browser
+    // timers still run, and advance it explicitly for capture/expiry checks.
+    let persistenceNowMs = Date.now();
+    await persistencePage.clock.setFixedTime(new Date(persistenceNowMs));
+    const advancePersistenceTime = async (milliseconds = 1_000) => {
+      persistenceNowMs += milliseconds;
+      await persistencePage.clock.setFixedTime(new Date(persistenceNowMs));
+      return new Date(persistenceNowMs).toISOString();
+    };
+    const persistenceObservedAt = new Date(persistenceNowMs - 500).toISOString();
     const persistenceBindingVersion = "v2:persistent-owned-class-binding";
     let persistenceScreenshotAvailable = true;
     let persistenceScreenshotSource = TINY_SCREENSHOT_DATA_URL;
@@ -1047,7 +1058,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await persistenceHarness.authenticateWebSocket();
     const targetedRequestStart = persistenceHarness.tileRequests.length;
     persistenceScreenshotSource = UPDATED_SCREENSHOT_DATA_URL;
-    persistenceScreenshotCapturedAt = new Date().toISOString();
+    persistenceScreenshotCapturedAt = await advancePersistenceTime();
     await persistenceHarness.sendWebSocketMessage({
       type: "screenshot-available",
       schoolId: SCHOOL_ID,
@@ -1097,7 +1108,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
 
     persistenceScreenshotSource = VIEWER_SCREENSHOT_DATA_URL;
-    persistenceScreenshotCapturedAt = new Date().toISOString();
+    persistenceScreenshotCapturedAt = await advancePersistenceTime();
     await persistenceHarness.sendWebSocketMessage({
       type: "screenshot-available",
       schoolId: SCHOOL_ID,
@@ -1119,7 +1130,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
 
     await persistencePage.waitForTimeout(5_200);
     persistenceScreenshotSource = "data:image/jpeg;base64,not-a-valid-jpeg";
-    persistenceScreenshotCapturedAt = new Date().toISOString();
+    persistenceScreenshotCapturedAt = await advancePersistenceTime(5_200);
     const corruptReplacementRequestStart = persistenceHarness.tileRequests.length;
     await persistenceHarness.sendWebSocketMessage({
       type: "screenshot-available",
@@ -1148,7 +1159,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       "a corrupt replacement must retain the prior decoded frame's exact capture metadata",
     );
     persistenceScreenshotSource = VIEWER_SCREENSHOT_DATA_URL;
-    persistenceScreenshotCapturedAt = new Date().toISOString();
+    persistenceScreenshotCapturedAt = await advancePersistenceTime();
     await persistenceHarness.sendWebSocketMessage({
       type: "screenshot-available",
       schoolId: SCHOOL_ID,
@@ -1157,7 +1168,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       capturedAt: persistenceScreenshotCapturedAt,
     });
 
-    const confirmedLossAt = new Date(Date.now() - 95_000).toISOString();
+    const confirmedLossAt = new Date(persistenceNowMs - 95_000).toISOString();
     persistenceAggregate.setScopedResponse(success({
       students: [
         student({
@@ -1180,7 +1191,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     );
     assert.equal(await persistencePage.getByTestId("expanded-screenshot-dialog").count(), 1);
 
-    const recoveredAt = new Date().toISOString();
+    const recoveredAt = await advancePersistenceTime();
     persistenceAggregate.setScopedResponse(success({
       students: [
         student({
@@ -1268,6 +1279,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       });
       await persistenceScreenshot.waitFor();
     }
+    // Reuse remains bounded: a successful null must still remove this frame
+    // after its 75-second capture window, even when the class binding matches.
+    await advancePersistenceTime(Date.parse(persistenceScreenshotCapturedAt) + 75_001 - persistenceNowMs);
+    await persistencePage.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await persistenceScreenshot.waitFor({ state: "hidden" });
     assert.deepEqual(persistenceHarness.pageErrors, []);
 
     const detailsRevocationPage = await browser.newPage();

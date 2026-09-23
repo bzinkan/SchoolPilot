@@ -48,6 +48,19 @@ function projection(month, overrides = {}) {
   };
 }
 
+async function waitForCalendarMonth(page, month) {
+  await page.waitForURL((url) => url.searchParams.get("month") === month);
+  const [year, monthNumber] = month.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+  // The URL updates before React commits the next calendar. A generic grid
+  // wait can still match the old month's navigation handlers.
+  await page.locator(`[data-testid="school-calendar-grid"][aria-label="School instructional calendar for ${label}"]`).waitFor();
+}
+
 test("school calendar retains drafts and persists only verified school-timezone dates", { timeout: 90_000 }, async (context) => {
   const vite = await createServer({
     root: APP_ROOT,
@@ -235,8 +248,7 @@ test("school calendar retains drafts and persists only verified school-timezone 
       window.history.replaceState(window.history.state, "", target);
       window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
     }, WORKFLOW_MONTH);
-    await page.waitForURL(/month=2099-09/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, WORKFLOW_MONTH);
     assert.equal(
       await page.evaluate(() => Number.isInteger(window.history.state?.idx)),
       true,
@@ -328,19 +340,17 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await page.waitForURL(/\/classpilot\/admin\?tab=calendar&month=2099-09/);
     await page.getByTestId("button-discard-calendar-navigation").click();
     await page.waitForURL(/\/classpilot$/);
+    await page.getByTestId("button-admin").waitFor();
     await page.evaluate(() => window.history.forward());
-    await page.waitForURL(/month=2099-09/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, WORKFLOW_MONTH);
     assert.equal(await page.getByTestId("calendar-dirty-bar").count(), 0, "confirmed route exit must discard the draft");
 
     // Build adjacent search-param entries, then prove native Back and Forward
     // month POP navigation cannot bypass the same confirmation.
     await page.getByTestId("button-calendar-next-month").click();
-    await page.waitForURL(/month=2099-10/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, NEXT_MONTH);
     await page.getByTestId("button-calendar-previous-month").click();
-    await page.waitForURL(/month=2099-09/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, WORKFLOW_MONTH);
 
     await page.getByTestId("calendar-day-2099-09-10").click();
     await page.evaluate(() => window.history.back());
@@ -354,8 +364,7 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
     await page.waitForURL(/month=2099-09/);
     await page.getByTestId("button-discard-calendar-navigation").click();
-    await page.waitForURL(/month=2099-10/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, NEXT_MONTH);
 
     await page.getByTestId("calendar-day-2099-10-07").click();
     await page.evaluate(() => window.history.forward());
@@ -369,8 +378,7 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
     await page.waitForURL(/month=2099-10/);
     await page.getByTestId("button-discard-calendar-navigation").click();
-    await page.waitForURL(/month=2099-09/);
-    await page.getByTestId("school-calendar-grid").waitFor();
+    await waitForCalendarMonth(page, WORKFLOW_MONTH);
 
     // A multi-entry POP must use the same bounce/replay contract. The target
     // intentionally renders the same month, proving confirmation resets the
