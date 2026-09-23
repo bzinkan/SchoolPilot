@@ -65,6 +65,7 @@ import {
   getCoverageStudentClasses,
   getGroupTeacherIdsForGroups,
   getSettingsForSchool,
+  getSupervisionContextByIdAndSchool,
   getOnlineUnassignedStudents,
   addCentralEmailRecipientForSchool,
   addGroupTeacher,
@@ -3815,10 +3816,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       const denied = await requestJson("PATCH", `/coverage/contexts/${context.id}`, { endsAt: laterEndsAt, note: "Must not mutate" }, adminAuth);
       assert.equal(denied.status, 409, JSON.stringify(denied.body));
       assert.equal(denied.body.code, "SUPERVISION_SCHEDULED_DEADLINE");
-      const retained = await inSchool(school.id, () => db.execute(sql`SELECT ends_at,note FROM classpilot_supervision_contexts WHERE id=${context.id}`));
-      const retainedEndsAt = retained.rows[0]?.ends_at;
-      assert.equal(retainedEndsAt instanceof Date ? retainedEndsAt.getTime() : new Date(String(retainedEndsAt)).getTime(), initialEndsAt.getTime());
-      assert.equal(retained.rows[0]?.note, null);
+      // Use the application's UTC timestamp decoder. A raw pg timestamp without
+      // timezone is interpreted in the test process timezone (ET locally, UTC in CI).
+      const retained = await inSchool(school.id, () => getSupervisionContextByIdAndSchool(school.id, context.id));
+      assert.ok(retained);
+      assert.equal(retained.endsAt.getTime(), initialEndsAt.getTime());
+      assert.equal(retained.note, null);
       const note = await requestJson("PATCH", `/coverage/contexts/${context.id}`, { note: "Supervision note" }, adminAuth);
       assert.equal(note.status, 200, JSON.stringify(note.body));
       assert.equal(note.body.context.note, "Supervision note");
