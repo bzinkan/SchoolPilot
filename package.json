@@ -28,6 +28,7 @@
     "check:test-casts": "node scripts/check-test-cast-ratchet.mjs",
     "test:unit": "node scripts/run-test-lane.mjs unit",
     "test:db-serial": "node scripts/run-test-lane.mjs db",
+    "test:classpilot-preview-chrome": "node --env-file-if-exists=.env --import ./tests/test-environment.mjs --import tsx scripts/classpilot-preview-chrome.mjs",
     "test:rls-serial": "node scripts/run-test-lane.mjs rls",
     "test:infrastructure": "node scripts/run-test-lane.mjs infrastructure",
     "soc2:check": "node scripts/soc2/check-governance-evidence.mjs",

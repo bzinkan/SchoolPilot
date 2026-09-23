@@ -4,13 +4,15 @@ export function classpilotSessionAuthorityKey({ schoolId, viewerId, session }) {
   return JSON.stringify([
     schoolId || '', viewerId || '', session?.id || '',
     session?.authority?.supervisionContextId || '',
-    session?.contextAuthorityRevision ?? '',
+    session?.contextAuthorityRevision ?? session?.authority?.contextAuthorityRevision ?? '',
     session?.sessionMode || '', session?.endTime || '',
     session?.rosterSnapshotCompletedAt || '',
   ]);
 }
 
 export function classpilotSessionSubscriptionEligible(session) {
+  if (session?.accessMode === 'observe') return session.status === 'active'
+    && !session.observationUnavailable && session.capabilities?.observe === true;
   if (session?.authority?.supervisionContextId) return session.status === 'active';
   return Boolean(session?.id && session.sessionMode === 'live'
     && !session.endTime && session.rosterSnapshotCompletedAt);
@@ -41,8 +43,11 @@ export function claimedPreviewContextsFromRoster(contexts, students) {
 }
 
 export function isClasspilotSessionUnavailable(error, sessionId) {
-  if (!sessionId || Number(error?.response?.status) !== 404) return false;
+  if (!sessionId) return false;
+  const status = Number(error?.response?.status);
   const code = error?.response?.data?.code;
+  if (status === 409) return ['CONTEXT_AUTHORITY_REVISION_MISMATCH', 'CLASSROOM_ACTIVITY_STALE', 'SUPERVISION_CONTEXT_STALE', 'CLASSROOM_AUTHORITY_CHANGED'].includes(code);
+  if (status !== 404) return false;
   return !code || code === 'CLASSPILOT_SESSION_UNAVAILABLE' || code === 'CLASSROOM_ACTIVITY_UNAVAILABLE';
 }
 

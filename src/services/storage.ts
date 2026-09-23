@@ -9177,6 +9177,7 @@ export type ClassPilotTileScopeOptions = {
   isSuperAdmin?: boolean;
   teachingSessionId?: string;
   supervisionContextId?: string;
+  contextAuthorityRevision?: string;
 };
 
 type ClassPilotTileReadOptions = ClassPilotTileScopeOptions & {
@@ -9252,12 +9253,11 @@ export function buildClassPilotTileAuthorizationQuery(
   const schoolWide = hasSchoolWideTileRead(options);
   if (options.teachingSessionId && options.supervisionContextId) throw new Error("Exactly one tile activity is required");
 
-  // The staff predicate below already scopes this to the claim holder. The extra
-  // scheduled-origin filter is what excludes an ad hoc claim, so the supervision
-  // preview rollout drops it and nothing else.
+  // Scheduled and ordinary supervision keep independent rollout boundaries.
   const supervisionPreview = classpilotSupervisionPreviewObserved(options.schoolId);
-  const scheduledOriginFilter = supervisionPreview ? sql`` : sql`
-          AND (context.scheduled_conflict_id IS NOT NULL OR (context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL AND context.schedule_profile_block_id IS NOT NULL))`;
+  const scheduledOrigin = sql`(context.scheduled_conflict_id IS NOT NULL OR (context.schedule_profile_application_id IS NOT NULL AND context.schedule_profile_date IS NOT NULL AND context.schedule_profile_block_id IS NOT NULL))`;
+  const scheduledOriginFilter = sql`AND ((${scheduledOrigin} AND ${isScheduledClassroomEnabled(options.schoolId)})
+    OR (NOT ${scheduledOrigin} AND ${supervisionPreview}))`;
   const authorizedStudents = options.supervisionContextId
     ? isScheduledClassroomEnabled(options.schoolId) || supervisionPreview ? sql`
         SELECT supervised.student_id FROM ${classpilotSupervisionStudents} supervised
@@ -9265,6 +9265,7 @@ export function buildClassPilotTileAuthorizationQuery(
         INNER JOIN requested_students requested ON requested.student_id=supervised.student_id
         WHERE supervised.school_id=${options.schoolId} AND supervised.released_at IS NULL
           AND context.id=${options.supervisionContextId} AND context.status='active' AND context.starts_at<=now() AND context.ends_at>now()
+          ${options.contextAuthorityRevision === undefined ? sql`` : sql`AND context.classroom_authority_revision = ${options.contextAuthorityRevision}::integer`}
           AND (context.assigned_staff_id=${options.staffId} OR ${schoolWide})${scheduledOriginFilter}
       ` : sql`SELECT NULL::text AS student_id WHERE false`
     : options.teachingSessionId
@@ -15716,7 +15717,8 @@ export type ActiveClassOwner = {
 export async function getActiveClassOwnersForStudents(
   schoolId: string,
   studentIds: string[],
-  dbInstance: typeof db = db
+  dbInstance: typeof db = db,
+  currentAt?: Date
 ): Promise<ActiveClassOwner[]> {
   const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
   if (uniqueStudentIds.length === 0) return [];
@@ -15743,6 +15745,8 @@ export async function getActiveClassOwnersForStudents(
       and(
         eq(classpilotSessionStudents.schoolId, schoolId),
         eq(groups.schoolId, schoolId),
+        currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+        currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
         inArray(classpilotSessionStudents.studentId, uniqueStudentIds)
       )
     );
@@ -15766,6 +15770,8 @@ export async function getActiveClassOwnersForStudents(
     ))
     .where(and(
       eq(groups.schoolId, schoolId),
+      currentAt ? lte(teachingSessions.startTime, currentAt) : undefined,
+      currentAt ? or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, currentAt)) : undefined,
       inArray(groupStudents.studentId, uniqueStudentIds)
     ));
 
@@ -22774,6 +22780,7 @@ function activeSupervisionCondition(schoolId: string) {
     isNull(classpilotSupervisionStudents.releasedAt),
     eq(classpilotSupervisionContexts.schoolId, schoolId),
     eq(classpilotSupervisionContexts.status, "active"),
+    sql`${classpilotSupervisionContexts.startsAt} <= now()`,
     sql`${classpilotSupervisionContexts.endsAt} > now()`
   );
 }
@@ -23475,6 +23482,7 @@ export type ClasspilotScreenshotAuthorityProjection = {
 export type ClasspilotSupervisionRetentionTarget = {
   supervisionContextId: string;
   assignedStaffId: string;
+  contextAuthorityRevision: string;
   controlRevision: number;
   /** Earliest of the claim deadline and the control-state deadlines. */
   expiresAt: Date;
@@ -23547,6 +23555,7 @@ async function resolveClasspilotSupervisionRetentionTarget(
   return {
     supervisionContextId: options.supervisionContextId,
     assignedStaffId: claim.context.assignedStaffId,
+    contextAuthorityRevision: String(claim.context.classroomAuthorityRevision),
     controlRevision: options.controlRevision,
     expiresAt,
   };
@@ -23927,6 +23936,7 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
 }, callback: (target: {
   assignedStaffId: string;
   supervisionContextId: string;
+  contextAuthorityRevision: string;
   controlRevision: number;
 }) => Promise<T> | T, dbInstance: typeof db = db): Promise<T | undefined> {
   return dbInstance.transaction(async (tx) => {
@@ -23963,6 +23973,7 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
         eq(classpilotSupervisionContexts.id, options.supervisionContextId),
         eq(classpilotSupervisionContexts.schoolId, options.schoolId),
         eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.startsAt} <= now()`,
         sql`${classpilotSupervisionContexts.endsAt} > now()`
       ))
       .limit(1)
@@ -23989,6 +24000,7 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
     return callback({
       assignedStaffId: context.assignedStaffId,
       supervisionContextId: context.id,
+      contextAuthorityRevision: String(context.classroomAuthorityRevision),
       controlRevision: controlState.revision,
     });
   });
@@ -23997,9 +24009,10 @@ export async function withClasspilotSupervisionTelemetryAuthority<T>(options: {
 export async function getActiveSupervisionContextForStaffGroup(
   schoolId: string,
   staffId: string,
-  coverageGroupId: string
+  coverageGroupId: string,
+  dbInstance: typeof db = db
 ): Promise<ClasspilotSupervisionContext | undefined> {
-  const [context] = await db
+  const [context] = await dbInstance
     .select()
     .from(classpilotSupervisionContexts)
     .where(
@@ -24007,7 +24020,13 @@ export async function getActiveSupervisionContextForStaffGroup(
         eq(classpilotSupervisionContexts.schoolId, schoolId),
         eq(classpilotSupervisionContexts.assignedStaffId, staffId),
         eq(classpilotSupervisionContexts.coverageGroupId, coverageGroupId),
+        eq(classpilotSupervisionContexts.contextType, "supervision_group"),
+        isNull(classpilotSupervisionContexts.scheduledConflictId),
+        isNull(classpilotSupervisionContexts.scheduleProfileApplicationId),
+        isNull(classpilotSupervisionContexts.scheduleProfileDate),
+        isNull(classpilotSupervisionContexts.scheduleProfileBlockId),
         eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.startsAt} <= now()`,
         sql`${classpilotSupervisionContexts.endsAt} > now()`
       )
     )
@@ -24018,9 +24037,10 @@ export async function getActiveSupervisionContextForStaffGroup(
 
 export async function getActiveDirectSupervisionContextForStaff(
   schoolId: string,
-  staffId: string
+  staffId: string,
+  dbInstance: typeof db = db
 ): Promise<ClasspilotSupervisionContext | undefined> {
-  const [context] = await db
+  const [context] = await dbInstance
     .select()
     .from(classpilotSupervisionContexts)
     .where(
@@ -24029,13 +24049,112 @@ export async function getActiveDirectSupervisionContextForStaff(
         eq(classpilotSupervisionContexts.assignedStaffId, staffId),
         eq(classpilotSupervisionContexts.contextType, "direct_pickup"),
         isNull(classpilotSupervisionContexts.coverageGroupId),
+        isNull(classpilotSupervisionContexts.scheduledConflictId),
+        isNull(classpilotSupervisionContexts.scheduleProfileApplicationId),
+        isNull(classpilotSupervisionContexts.scheduleProfileDate),
+        isNull(classpilotSupervisionContexts.scheduleProfileBlockId),
         eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.startsAt} <= now()`,
         sql`${classpilotSupervisionContexts.endsAt} > now()`
       )
     )
     .orderBy(desc(classpilotSupervisionContexts.createdAt))
     .limit(1);
   return context;
+}
+
+/** Ordinary pickups and explicit sends cannot borrow a scheduled/testing context. */
+export async function assignAdHocSupervisionStudents(options: {
+  schoolId: string; assignedStaffId: string; actorId: string; studentIds: string[];
+  source: string; endsAt: Date; note?: string; group?: { id: string; name: string };
+  requireAvailable?: boolean; requiredCoverageGroupId?: string;
+  coverageAssignmentReview?: CoverageAssignmentReview;
+}, dbInstance: typeof db = db): Promise<{ context: ClasspilotSupervisionContext; assignments: ClasspilotSupervisionStudent[] }> {
+  const studentIds = [...new Set(options.studentIds.filter(Boolean))].sort();
+  return dbInstance.transaction(async tx => {
+    const database = tx as unknown as typeof db;
+    if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
+    await assertClasspilotEntitled(options.schoolId, database, { lock: true });
+    await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
+    await assertActiveSchoolStaffMembership(options.assignedStaffId, options.schoolId, database);
+    // Discovery occurs under the same lifecycle lock as reuse and assignment.
+    const existing = options.group
+      ? await getActiveSupervisionContextForStaffGroup(options.schoolId, options.assignedStaffId, options.group.id, database)
+      : await getActiveDirectSupervisionContextForStaff(options.schoolId, options.assignedStaffId, database);
+    const existingRows = existing ? await tx.select({ studentId: classpilotSupervisionStudents.studentId })
+      .from(classpilotSupervisionStudents).where(and(eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+        eq(classpilotSupervisionStudents.contextId, existing.id), isNull(classpilotSupervisionStudents.releasedAt))) : [];
+    await lockClasspilotStudentControlAuthorities(options.schoolId,
+      [...new Set([...studentIds, ...existingRows.map(row => row.studentId)])].sort(), database);
+    await lockActiveSchoolStudentsForOperationalWrite(options.schoolId, studentIds, database);
+    const currentStudents = studentIds.length ? await tx.select().from(students).where(and(
+      eq(students.schoolId, options.schoolId), inArray(students.id, studentIds), eq(students.status, "active"))) : [];
+    const reviews = options.coverageAssignmentReview ?? [];
+    const coverageGroupIds = [...new Set([options.group?.id, options.requiredCoverageGroupId,
+      ...reviews.filter(row => row.scopeType === "coverage_group").map(row => row.scopeValue)].filter((id): id is string => !!id))];
+    const coverageMembers = coverageGroupIds.length ? await tx.select({ groupId: classpilotCoverageScopeGroupMembers.coverageGroupId,
+      studentId: classpilotCoverageScopeGroupMembers.studentId }).from(classpilotCoverageScopeGroupMembers)
+      .innerJoin(classpilotCoverageScopeGroups, and(eq(classpilotCoverageScopeGroups.id, classpilotCoverageScopeGroupMembers.coverageGroupId),
+        eq(classpilotCoverageScopeGroups.schoolId, options.schoolId), eq(classpilotCoverageScopeGroups.active, true)))
+      .where(and(eq(classpilotCoverageScopeGroupMembers.schoolId, options.schoolId),
+        inArray(classpilotCoverageScopeGroupMembers.coverageGroupId, coverageGroupIds))) : [];
+    const classIds = reviews.filter(row => row.scopeType === "group" && row.scopeValue).map(row => row.scopeValue!);
+    const classMembers = classIds.length ? await tx.select({ groupId: groupStudents.groupId, studentId: groupStudents.studentId })
+      .from(groupStudents).innerJoin(groups, and(eq(groups.id, groupStudents.groupId), eq(groups.schoolId, options.schoolId)))
+      .where(inArray(groupStudents.groupId, classIds)) : [];
+    const requiredGroup = options.requiredCoverageGroupId || options.group?.id;
+    const hasCoverageMembership = (groupId: string | null, studentId: string) => coverageMembers.some(row => row.groupId === groupId && row.studentId === studentId);
+    if ((requiredGroup && studentIds.some(id => !hasCoverageMembership(requiredGroup, id)))
+      || (options.coverageAssignmentReview !== undefined && currentStudents.some(student => !reviews.some(row => {
+        if (row.scopeType === "school") return true;
+        if (row.scopeType === "grade") return String(student.gradeLevel || "") === row.scopeValue;
+        if (row.scopeType === "students") return String(row.scopeValue || "").split(",").map(id => id.trim()).includes(student.id);
+        if (row.scopeType === "coverage_group") return hasCoverageMembership(row.scopeValue, student.id);
+        return row.scopeType === "group" && classMembers.some(member => member.groupId === row.scopeValue && member.studentId === student.id);
+      })))) {
+      throw new CoverageDeletionError("Supervision membership changed. Refresh before claiming students.", "COVERAGE_PERMISSION_STALE", 409);
+    }
+    if (options.requireAvailable) {
+      // The open-assignment uniqueness constraint also covers rare pre-created
+      // future contexts. Do not silently release such an assignment to claim now.
+      const futureAssignment = studentIds.length ? await tx.select({ id: classpilotSupervisionStudents.id })
+        .from(classpilotSupervisionStudents).innerJoin(classpilotSupervisionContexts, and(
+          eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId),
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.status, "active"),
+          gt(classpilotSupervisionContexts.startsAt, new Date()), gt(classpilotSupervisionContexts.endsAt, new Date())))
+        .where(and(eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          inArray(classpilotSupervisionStudents.studentId, studentIds), isNull(classpilotSupervisionStudents.releasedAt))).limit(1) : [];
+      if (futureAssignment.length) throw new CoverageDeletionError(
+        "A future supervision assignment already reserves one or more students. Refresh before claiming.", "COVERAGE_FUTURE_ASSIGNMENT", 409);
+      const activeSupervision = await getActiveSupervisionForStudents(options.schoolId, studentIds, database);
+      const activeClasses = await getActiveClassOwnersForStudents(options.schoolId, studentIds, database, new Date());
+      const onlineRows = studentIds.length ? await tx.select({ studentId: studentSessions.studentId }).from(studentSessions)
+        .innerJoin(devices, and(eq(devices.deviceId, studentSessions.deviceId), eq(devices.schoolId, options.schoolId)))
+        .where(and(inArray(studentSessions.studentId, studentIds), currentStudentSessionAuthorityPredicate(),
+          gte(studentSessions.lastSeenAt, new Date(Date.now() - 5 * 60_000)))) : [];
+      if (activeSupervision.length || activeClasses.length || studentIds.some(id => !onlineRows.some(row => row.studentId === id))) {
+        throw new CoverageDeletionError("One or more students are no longer available to claim", "COVERAGE_STUDENT_UNAVAILABLE", 409);
+      }
+    }
+    if (existing) {
+      const context = await extendSupervisionContext({ schoolId: options.schoolId, contextId: existing.id,
+        endsAt: existing.endsAt < options.endsAt ? options.endsAt : existing.endsAt,
+        note: options.note || existing.note || null, coverageAssignmentReview: options.coverageAssignmentReview }, database);
+      if (!context) throw new CoverageDeletionError("This supervision has ended. Refresh before trying again.", "COVERAGE_CONTEXT_EXPIRED", 409);
+      const assignments = await assignStudentsToSupervisionContext({ schoolId: options.schoolId, contextId: context.id,
+        studentIds, assignedBy: options.actorId, source: options.source }, database);
+      return { context, assignments };
+    }
+    const context = await createSupervisionContextWithStudents({ context: {
+      schoolId: options.schoolId, contextType: options.group ? "supervision_group" : "direct_pickup",
+      name: options.group?.name || "Claimed students", status: "active", assignedStaffId: options.assignedStaffId,
+      coverageGroupId: options.group?.id || null, createdBy: options.actorId, note: options.note || null, endsAt: options.endsAt,
+    }, studentIds, assignedBy: options.actorId, source: options.source, coverageAssignmentReview: options.coverageAssignmentReview }, database);
+    const assignments = await tx.select().from(classpilotSupervisionStudents).where(and(
+      eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.contextId, context.id),
+      isNull(classpilotSupervisionStudents.releasedAt)));
+    return { context, assignments };
+  });
 }
 
 export async function getActiveSupervisionContextForStaffScheduledConflict(
@@ -24545,11 +24664,11 @@ export async function assignStudentsToSupervisionContext(options: {
   studentIds: string[];
   assignedBy: string;
   source?: string;
-}): Promise<ClasspilotSupervisionStudent[]> {
+}, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
   if (uniqueStudentIds.length === 0) return [];
 
-  return db.transaction(async (tx) => {
+  return dbInstance.transaction(async (tx) => {
     // Transfers and scheduled coverage claims share this lock before student
     // and context locks, including transfers of different students.
     if (!await lockStaffAssignmentLifecycleSchool(tx, options.schoolId)) throw new Error("School not found");
@@ -24694,7 +24813,7 @@ export async function extendSupervisionContext(options: {
   coverageGroupId?: string | null;
   scheduledConflictId?: string | null;
   coverageAssignmentReview?: CoverageAssignmentReview;
-}): Promise<ClasspilotSupervisionContext | undefined> {
+}, dbInstance: typeof db = db): Promise<ClasspilotSupervisionContext | undefined> {
   const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
     updatedAt: new Date(),
   };
@@ -24704,7 +24823,7 @@ export async function extendSupervisionContext(options: {
   if (options.coverageGroupId !== undefined) data.coverageGroupId = options.coverageGroupId;
   if (options.scheduledConflictId !== undefined) data.scheduledConflictId = options.scheduledConflictId;
 
-  return db.transaction(async (tx) => {
+  return dbInstance.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
       tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
@@ -24991,23 +25110,7 @@ export async function getOnlineUnassignedStudents(
   if (onlineRows.length === 0) return [];
   const studentIds = onlineRows.map((row) => row.student.id);
 
-  const activeClassRows = await db
-    .select({ studentId: groupStudents.studentId })
-    .from(groupStudents)
-    .innerJoin(groups, eq(groups.id, groupStudents.groupId))
-    .innerJoin(
-      teachingSessions,
-      and(
-        eq(teachingSessions.groupId, groups.id),
-        isNull(teachingSessions.endTime)
-      )
-    )
-    .where(
-      and(
-        eq(groups.schoolId, schoolId),
-        inArray(groupStudents.studentId, studentIds)
-      )
-    );
+  const activeClassRows = await getActiveClassOwnersForStudents(schoolId, studentIds, db, new Date());
   const inActiveClass = new Set(activeClassRows.map((row) => row.studentId));
   const activeCoverage = await getActiveSupervisionForStudents(schoolId, studentIds);
   const inTemporaryCoverage = new Set(activeCoverage.map((row) => row.studentId));

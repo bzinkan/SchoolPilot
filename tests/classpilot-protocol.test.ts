@@ -32,6 +32,26 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "restrictionPortalFirstV1",
 ] as const;
 
+test("supervision capability follows either enabled classroom origin without bypassing capability controls", () => {
+  const base = { CLASSPILOT_PROTOCOL_V3_ENABLED: "true", CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true", CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "off",
+    CLASSPILOT_SUPERVISION_PREVIEW_MODE: "on" } as NodeJS.ProcessEnv;
+  const scope = { schoolId: "school-1" };
+  assert.equal(isClasspilotCapabilityActive("scheduledClassroomV1", scope, base), true,
+    "ad hoc claims still negotiate supervision screenshots when scheduled blocks are disabled");
+  assert.equal(isClasspilotCapabilityActive("scheduledClassroomV1", scope, { ...base,
+    CLASSPILOT_SUPERVISION_PREVIEW_MODE: "off" }), false);
+  assert.equal(isClasspilotCapabilityActive("scheduledClassroomV1", scope, { ...base,
+    CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: "school-1" }), false);
+  assert.equal(isClasspilotCapabilityActive("scheduledClassroomV1", scope, { ...base,
+    CLASSPILOT_SCHEDULED_CLASSROOM_MODE: "on", CLASSPILOT_SUPERVISION_PREVIEW_MODE: "off" }), true);
+  assert.equal(isClasspilotCapabilityActive("scheduledClassroomV1", scope, { ...base,
+    CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1: "false" }), false);
+  assert.deepEqual(negotiateClasspilotProtocol({ clientProtocolVersion: 3, scope, env: base,
+    advertisedCapabilities: ["scheduledClassroomV1"] }).acceptedCapabilities, [],
+  "supervision support still requires the repaired scoped authority capability");
+});
+
 test("protocol v3 activates only the advertised and server-enabled intersection", () => {
   const negotiated = negotiateClasspilotProtocol({
     clientProtocolVersion: 3,

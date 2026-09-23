@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import type { ClasspilotStudentControlState, Heartbeat } from "../../schema/classpilot.js";
@@ -93,6 +94,7 @@ import { verifyClassPilotPin } from "../../services/classpilotPins.js";
 import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
 import {
   broadcastToStaffSessionLocal,
+  broadcastToStaffContextLocal,
   sendToDeviceLocal,
   sendToStudentBindingLocal,
   sendToStaffUserLocal,
@@ -817,7 +819,21 @@ function tileStaffScope(
     isSuperAdmin: req.authUser!.isSuperAdmin,
     ...(teachingSessionId ? { teachingSessionId } : {}),
     ...(supervisionContextId ? { supervisionContextId } : {}),
+    ...(supervisionContextId && req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
+      ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}),
   };
+}
+
+async function revisionedTileAccess(scope: ReturnType<typeof tileStaffScope>, studentIds: string[], res: Response,
+  accessMode: "live" | "history") {
+  if (scope.supervisionContextId) {
+    const context = await requireScheduledClassroomContext({ schoolId: scope.schoolId, supervisionContextId: scope.supervisionContextId,
+      actorId: scope.staffId, allowObserve: scope.isSuperAdmin || scope.role === "admin" || scope.role === "school_admin",
+      contextAuthorityRevision: scope.contextAuthorityRevision });
+    scope.contextAuthorityRevision = String(context.classroomAuthorityRevision);
+    res.set("X-ClassPilot-Context-Authority-Revision", scope.contextAuthorityRevision);
+  }
+  return getBatchTileAccessForStaff(scope, studentIds, accessMode);
 }
 
 function safeTileHeartbeat(heartbeat: Heartbeat) {
@@ -1090,21 +1106,22 @@ async function publishLockedScreenshotAvailable(binding: ClassBoundScreenshotBin
 }
 
 async function publishLockedSupervisionScreenshotAvailable(
-  binding: SupervisionBoundScreenshotBinding, data: ScreenshotData, assignedStaffId: string
+  binding: SupervisionBoundScreenshotBinding, data: ScreenshotData, assignedStaffId: string, contextAuthorityRevision: string
 ) {
   const orderedKey = `${classpilotRealtimeOrderingKey(binding.schoolId, binding.deviceId)}:${CLASSPILOT_SCREENSHOT_AVAILABLE_ORDERING_NAMESPACE}:supervision:${binding.supervisionContextId}`;
   const revision = String(data.timestamp);
   const message = { ...classpilotScreenshotAvailableEvent({ studentId: binding.studentId,
     capturedAt: data.capturedAt ?? new Date(data.timestamp).toISOString(), timestamp: data.timestamp }),
-    supervisionContextId: binding.supervisionContextId, controlRevision: binding.controlRevision };
+    supervisionContextId: binding.supervisionContextId, contextAuthorityRevision, controlRevision: binding.controlRevision };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 300);
   timeout.unref?.();
   try {
-    const outcome = await publishOrderedWS({ kind: "staff-user", schoolId: binding.schoolId, userId: assignedStaffId },
+    const outcome = await publishOrderedWS({ kind: "staff-context", schoolId: binding.schoolId,
+      supervisionContextId: binding.supervisionContextId, assignedStaffId, contextAuthorityRevision, audience: "owner-and-observers" },
       message, { orderedKey, revision, signal: controller.signal });
     if ((outcome.status === "accepted" || outcome.status === "failed") && recordLocalOrderedDelivery(orderedKey, revision)) {
-      sendToStaffUserLocal(binding.schoolId, assignedStaffId, message);
+      broadcastToStaffContextLocal(binding.schoolId, binding.supervisionContextId, message, assignedStaffId, contextAuthorityRevision, "owner-and-observers");
     }
   } finally { clearTimeout(timeout); }
 }
@@ -1198,17 +1215,22 @@ async function publishRevisionedRealtimeUpdate(
       allowEndedBinding: options.allowEndedBinding,
     }, async (target) => {
       const scopedOrderedKey = `${orderedKey}:supervision:${target.supervisionContextId}`;
+      message = { ...message, supervisionContextId: target.supervisionContextId, contextAuthorityRevision: target.contextAuthorityRevision };
       await publishToAudience({
         target: {
-          kind: "staff-user",
+          kind: "staff-context",
           schoolId: snapshot.schoolId,
-          userId: target.assignedStaffId,
+          supervisionContextId: target.supervisionContextId,
+          assignedStaffId: target.assignedStaffId,
+          contextAuthorityRevision: target.contextAuthorityRevision,
+          audience: "owner-and-observers",
         },
         scopedOrderedKey,
         // Assigned office staff and teachers receive only the exact claimed
         // student's public DTO; raw device IDs remain server-internal.
         deliverLocal: () => {
-          sendToStaffUserLocal(snapshot.schoolId, target.assignedStaffId, message);
+          broadcastToStaffContextLocal(snapshot.schoolId, target.supervisionContextId, message,
+            target.assignedStaffId, target.contextAuthorityRevision, "owner-and-observers");
         },
       });
     })
@@ -5101,7 +5123,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             if (!stored && !required) classpilotScreenshotFallback.setSupervisionBound(supervisionBinding, data);
             const outcome = stored ? "redis" as const : required ? "unavailable" as const : "local_fallback" as const;
             if (outcome !== "unavailable" && current.supervisionRetention?.assignedStaffId) {
-              await publishLockedSupervisionScreenshotAvailable(supervisionBinding, data, current.supervisionRetention.assignedStaffId)
+              await publishLockedSupervisionScreenshotAvailable(supervisionBinding, data, current.supervisionRetention.assignedStaffId,
+                current.supervisionRetention.contextAuthorityRevision)
                 .catch(() => recordHeartbeatHotPathCounter("screenshotAvailableBroadcastFailures"));
             }
             return { outcome, screenshotPolicy, data };
@@ -5399,15 +5422,16 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
-      () => getBatchTileAccessForStaff(scope, parsed.studentIds, "live")
+      () => revisionedTileAccess(scope, parsed.studentIds, res, "live")
     );
     recordHeartbeatHotPathTiming(
       "tileBatchAuthorizationMs",
       Date.now() - authorizationStartedAt
     );
-    // The only database operation is complete. Release before Redis, fallback,
-    // or JSON work so one cohort occupies one admission permit briefly.
-    releaseClassPilotTileAdmission(res);
+    // Ordinary cohorts release admission before cache work. Supervision retains
+    // its bounded permit for the final authority check, but never a DB connection
+    // while waiting for Redis. This keeps both authorization reads admitted.
+    if (!scope.supervisionContextId) releaseClassPilotTileAdmission(res);
 
     const accesses = parsed.studentIds
       .map((studentId) => accessByStudent.get(studentId))
@@ -5535,7 +5559,22 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     );
     const supervisionScreenshotByStudent = new Map(supervisionScreenshotRead.status === "ok"
       ? supervisionBindings.map((binding, index) => [binding.studentId, supervisionScreenshotRead.screenshots[index] ?? null]) : []);
+    // Redis can finish after a release, reassignment, or binding replacement.
+    // Revalidate the bounded supervision cohort immediately before serialization;
+    // neither an old revision nor old pixels may survive that asynchronous gap.
+    const currentAccesses = scope.supervisionContextId
+      ? await runWithTenantContext({ schoolId: scope.schoolId },
+        () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
+      : accessByStudent;
+    releaseClassPilotTileAdmission(res);
     const tiles = accesses.map((access) => {
+      const current = currentAccesses.get(access.studentId);
+      if (!current || current.deviceId !== access.deviceId
+        || current.studentSessionId !== access.studentSessionId
+        || current.supervisionContextId !== access.supervisionContextId
+        || current.controlRevision !== access.controlRevision) {
+        return { studentId: access.studentId, screenshot: null };
+      }
       const supervisionBinding = supervisionBindingByStudent.get(access.studentId);
       if (supervisionBinding) {
         const data = supervisionScreenshotByStudent.get(access.studentId)
@@ -5630,7 +5669,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
     const authorizationStartedAt = Date.now();
     const accessByStudent = await runWithTenantContext(
       { schoolId: scope.schoolId },
-      () => getBatchTileAccessForStaff(scope, parsed.studentIds, "history")
+      () => revisionedTileAccess(scope, parsed.studentIds, res, "history")
     );
     recordHeartbeatHotPathTiming(
       "tileBatchAuthorizationMs",
@@ -5680,12 +5719,23 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
       );
     }
 
-    // Cache misses may execute one batched SQL fallback, so retain the permit
-    // through that query and release it before response shaping/serialization.
+    const currentAccesses = scope.supervisionContextId
+      ? await runWithTenantContext({ schoolId: scope.schoolId },
+        () => revisionedTileAccess(scope, parsed.studentIds, res, "history"))
+      : accessByStudent;
+    // Retain admission through the batched fallback and final supervision check.
     releaseClassPilotTileAdmission(res);
 
     return res.json({
       tiles: accesses.map((access) => {
+        const current = currentAccesses.get(access.studentId);
+        if (!current || current.deviceId !== access.deviceId
+          || current.studentSessionId !== access.studentSessionId
+          || current.supervisionContextId !== access.supervisionContextId
+          || current.controlRevision !== access.controlRevision
+          || current.historySince?.getTime() !== access.historySince?.getTime()) {
+          return { studentId: access.studentId, heartbeats: [] };
+        }
         const cached = cachedByStudent.get(access.studentId);
         const heartbeats = cached?.status === "hit"
           ? cached.heartbeats

@@ -373,7 +373,13 @@ export function deriveScreenshotHealthDisplay(student, {
   // error newer than the last success, and recent enough to still describe the
   // current frame, means capture is failing.
   if (errorRecent) {
-    return { kind: 'failing', label: 'Preview capture failing', tone: 'warn' };
+    const explanation = {
+      no_active_tab: 'No active browser tab', non_http_page: 'Preview unavailable on this browser page',
+      active_tab_changed: 'Browser tab changed - retrying', heartbeat_required: 'Waiting for device authorization',
+      upload_service_unavailable: 'Preview upload unavailable - retrying', rate_limited_backoff: 'Capture busy - retrying',
+      capture_empty: 'Browser returned an empty capture', upload_rejected: 'Preview upload not authorized',
+    }[health.lastError];
+    return { kind: 'failing', label: explanation || 'Preview capture failing', tone: 'warn' };
   }
   if (cadence === 'active_view') {
     return screenshotDisplay?.fresh

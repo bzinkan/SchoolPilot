@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import { correlateClasspilotSessionMessage, correlateClasspilotContextMessage } from "../services/classpilotSessionSubscription.js";
+import { classpilotObserverEvent } from "../services/classpilotObserverEvents.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -16,6 +17,8 @@ export type WSClient = {
   subscribedSessionIds: Set<string>;
   subscribedSupervisionContextIds: Set<string>;
   subscribedSupervisionContextRevisions: Map<string, string>;
+  observedSessionIds: Set<string>;
+  observedSupervisionContextIds: Set<string>;
   sessionSubscriptionEpochs: Map<string, number>;
   sessionSubscriptionIdentityGeneration: number;
   authenticated: boolean;
@@ -108,6 +111,8 @@ export function registerWsClient(ws: WebSocket): WSClient {
     subscribedSessionIds: new Set(),
     subscribedSupervisionContextIds: new Set(),
     subscribedSupervisionContextRevisions: new Map(),
+    observedSessionIds: new Set(),
+    observedSupervisionContextIds: new Set(),
     sessionSubscriptionEpochs: new Map(),
     sessionSubscriptionIdentityGeneration: 0,
     authenticated: false,
@@ -155,6 +160,8 @@ export function authenticateWsClient(
   client.subscribedSessionIds.clear();
   client.subscribedSupervisionContextIds.clear();
   client.subscribedSupervisionContextRevisions.clear();
+  client.observedSessionIds.clear();
+  client.observedSupervisionContextIds.clear();
   client.sessionSubscriptionEpochs.clear();
   client.sessionSubscriptionIdentityGeneration += 1;
 
@@ -176,12 +183,14 @@ export function removeWsClient(ws: WebSocket) {
   wsClients.delete(ws);
 }
 
-export function subscribeWsClientToSession(ws: WebSocket, sessionId: string): boolean {
+export function subscribeWsClientToSession(ws: WebSocket, sessionId: string, observe = false): boolean {
   const client = wsClients.get(ws);
   if (!client || !client.authenticated || !isStaffRole(client.role)) {
     return false;
   }
   client.subscribedSessionIds.add(sessionId);
+  if (observe) client.observedSessionIds.add(sessionId);
+  else client.observedSessionIds.delete(sessionId);
   return true;
 }
 
@@ -191,14 +200,17 @@ export function unsubscribeWsClientFromSession(ws: WebSocket, sessionId: string)
     return false;
   }
   client.subscribedSessionIds.delete(sessionId);
+  client.observedSessionIds.delete(sessionId);
   return true;
 }
 
-export function subscribeWsClientToContext(ws: WebSocket, supervisionContextId: string, contextAuthorityRevision: string): boolean {
+export function subscribeWsClientToContext(ws: WebSocket, supervisionContextId: string, contextAuthorityRevision: string, observe = false): boolean {
   const client = wsClients.get(ws);
   if (!client || !client.authenticated || !isStaffRole(client.role)) return false;
   client.subscribedSupervisionContextIds.add(supervisionContextId);
   client.subscribedSupervisionContextRevisions.set(supervisionContextId, contextAuthorityRevision);
+  if (observe) client.observedSupervisionContextIds.add(supervisionContextId);
+  else client.observedSupervisionContextIds.delete(supervisionContextId);
   return true;
 }
 
@@ -207,20 +219,26 @@ export function unsubscribeWsClientFromContext(ws: WebSocket, supervisionContext
   if (!client || !client.authenticated || !isStaffRole(client.role)) return false;
   client.subscribedSupervisionContextIds.delete(supervisionContextId);
   client.subscribedSupervisionContextRevisions.delete(supervisionContextId);
+  client.observedSupervisionContextIds.delete(supervisionContextId);
   return true;
 }
 
-export function broadcastToStaffContextLocal(schoolId: string, supervisionContextId: string, message: unknown, assignedStaffId: string, contextAuthorityRevision: string): number {
+export function broadcastToStaffContextLocal(schoolId: string, supervisionContextId: string, message: unknown, assignedStaffId: string, contextAuthorityRevision: string, audience?: "owner-and-observers"): number {
   if (!contextAuthorityRevision) return 0;
   let count = 0;
-  const payload = JSON.stringify(correlateClasspilotContextMessage(supervisionContextId, message));
+  const correlated = { ...(correlateClasspilotContextMessage(supervisionContextId, message) as Record<string, unknown>), contextAuthorityRevision };
+  const payload = JSON.stringify(correlated);
+  const observerMessage = classpilotObserverEvent(correlated);
   for (const ws of teacherSocketsBySchool.get(schoolId) ?? []) {
     const client = wsClients.get(ws);
     if (client?.authenticated && isStaffRole(client.role)
       && (client.userId === assignedStaffId || client.role === "school_admin" || client.role === "super_admin")
-      && client.subscribedSupervisionContextRevisions.get(supervisionContextId) === contextAuthorityRevision
-      && client.subscribedSupervisionContextIds.has(supervisionContextId) && ws.readyState === WebSocket.OPEN) {
-      ws.send(payload);
+      && ((audience === "owner-and-observers" && client.userId === assignedStaffId)
+        || (client.subscribedSupervisionContextRevisions.get(supervisionContextId) === contextAuthorityRevision
+          && client.subscribedSupervisionContextIds.has(supervisionContextId))) && ws.readyState === WebSocket.OPEN) {
+      const observer = client.userId !== assignedStaffId || client.observedSupervisionContextIds.has(supervisionContextId);
+      if (observer && !observerMessage) continue;
+      ws.send(observer ? JSON.stringify(observerMessage) : payload);
       count += 1;
     }
   }
@@ -323,6 +341,7 @@ export function broadcastToStaffSessionLocal(
   const messageStr = JSON.stringify(
     correlateClasspilotSessionMessage(sessionId, message)
   );
+  const observerMessage = classpilotObserverEvent(correlateClasspilotSessionMessage(sessionId, message));
   let sentCount = 0;
   sockets.forEach((ws) => {
     const client = wsClients.get(ws);
@@ -333,7 +352,8 @@ export function broadcastToStaffSessionLocal(
       return;
     }
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(messageStr);
+      if (client.observedSessionIds.has(sessionId) && !observerMessage) return;
+      ws.send(client.observedSessionIds.has(sessionId) ? JSON.stringify(observerMessage) : messageStr);
       sentCount++;
     }
   });

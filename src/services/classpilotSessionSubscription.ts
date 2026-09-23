@@ -10,11 +10,12 @@ export type ParsedClasspilotSessionSubscription =
       teachingSessionId?: string;
       supervisionContextId?: string;
       contextAuthorityRevision?: string;
+      accessMode?: "observe";
       requestId?: string;
     }
   | {
       ok: false;
-      code: "REQUEST_ID_INVALID" | "SESSION_ID_REQUIRED" | "CONTEXT_AUTHORITY_REVISION_REQUIRED";
+      code: "REQUEST_ID_INVALID" | "SESSION_ID_REQUIRED" | "CONTEXT_AUTHORITY_REVISION_REQUIRED" | "ACCESS_MODE_INVALID";
       requestId?: string;
     };
 
@@ -73,6 +74,7 @@ export function parseClasspilotSessionSubscription(
     teachingSessionId?: unknown;
     supervisionContextId?: unknown;
     contextAuthorityRevision?: unknown;
+    accessMode?: unknown;
   };
   const action = candidate.type === "subscribe-session"
     ? "subscribe"
@@ -90,6 +92,9 @@ export function parseClasspilotSessionSubscription(
   }
 
   const rawSessionId = candidate.teachingSessionId ?? candidate.sessionId;
+  if (candidate.accessMode !== undefined && candidate.accessMode !== "observe") {
+    return { ok: false, code: "ACCESS_MODE_INVALID", ...(requestId ? { requestId } : {}) };
+  }
   const teachingSessionId = typeof rawSessionId === "string"
     ? rawSessionId.trim()
     : "";
@@ -108,6 +113,7 @@ export function parseClasspilotSessionSubscription(
   return {
     ok: true,
     action,
+    ...(candidate.accessMode === "observe" ? { accessMode: "observe" as const } : {}),
     ...(teachingSessionId ? { teachingSessionId } : { supervisionContextId }),
     ...(supervisionContextId && contextAuthorityRevision !== null ? { contextAuthorityRevision } : {}),
     ...(requestId ? { requestId } : {}),

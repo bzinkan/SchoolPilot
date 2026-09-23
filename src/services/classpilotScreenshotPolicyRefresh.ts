@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { broadcastToStudentsLocal } from "../realtime/ws-broadcast.js";
+import { sendToStudentBindingLocal, type ExactStudentSocketBinding } from "../realtime/ws-broadcast.js";
 import {
   executeRealtimeRedisCommand,
   publishWS,
@@ -63,15 +63,15 @@ async function claimRefreshWindow(options: {
 }
 
 /**
- * Prompt capable extensions in one frozen teaching session to refresh their
- * screenshot policy. The wire frame contains no student, session, or device
- * identifier and grants no authority; clients only use it to request the
- * normal heartbeat policy, and every upload is still independently checked.
+ * Prompt capable extensions in one frozen activity to refresh their screenshot
+ * policy. The hint carries the current student/session binding required by the
+ * extension; it grants no capture authority. Clients request the normal
+ * heartbeat policy, and every upload is still independently checked.
  *
  * One Redis claim coalesces viewer churn across API tasks. After the claim,
  * the only tenant-scoped database work is a single active-session read. The
- * resulting device list is routing metadata in the private Redis envelope,
- * never part of the student-facing signal.
+ * device identifier remains private routing metadata. Exact-binding delivery
+ * prevents a delayed hint from reaching a replacement login on that device.
  */
 export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
   schoolId: string;
@@ -108,63 +108,50 @@ export async function nudgeClasspilotScreenshotPolicyRefresh(options: {
       return 0;
     }
 
-    let targetDeviceIds: string[];
+    let bindings: ExactStudentSocketBinding[];
     try {
       const sessions = await runWithTenantContext(
         { schoolId: options.schoolId },
         () => getActiveSessionsForStudents(options.schoolId, studentIds),
       );
-      targetDeviceIds = [...new Set(
-        sessions.map((session) => session.deviceId).filter(
-          (value): value is string => Boolean(value),
-        ),
-      )];
+      bindings = [...new Map(sessions.filter(session => session.deviceId && studentIds.includes(session.studentId))
+        .map(session => [session.id, { schoolId: options.schoolId, studentId: session.studentId,
+          studentSessionId: session.id, deviceId: session.deviceId! }])).values()];
     } catch (error) {
       recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
       options.onFailure?.(error);
       return 0;
     }
-    if (targetDeviceIds.length === 0) return 0;
-
-    const message = {
-      type: "screenshot-policy-refresh",
-      _msgId: randomUUID(),
-      reason: "observation_changed",
-      ...(options.supervisionContextId ? { supervisionContextId: options.supervisionContextId } : { teachingSessionId: options.teachingSessionId }),
-    } as const;
-    const localDelivered = broadcastToStudentsLocal(
-      options.schoolId,
-      message,
-      undefined,
-      targetDeviceIds,
-    );
-    let remotePublished = false;
-    let publicationError: unknown;
-    try {
-      remotePublished = await publishWS({
-        kind: "students",
-        schoolId: options.schoolId,
-        targetDeviceIds,
-      }, message);
-    } catch (error) {
-      // The next ordinary heartbeat is the durable fallback.
-      publicationError = error;
+    if (bindings.length === 0) return 0;
+    // Bound publication concurrency; a large roster must not open one pending
+    // Redis operation per student. No extra database queries are needed.
+    for (let offset = 0; offset < bindings.length; offset += 8) {
+      await Promise.all(bindings.slice(offset, offset + 8).map(async binding => {
+        const message = {
+          type: "screenshot-policy-refresh", _msgId: randomUUID(), reason: "observation_changed",
+          studentId: binding.studentId, studentSessionId: binding.studentSessionId,
+          ...(options.supervisionContextId ? { supervisionContextId: options.supervisionContextId } : { teachingSessionId: options.teachingSessionId }),
+        } as const;
+        const localDelivered = sendToStudentBindingLocal(binding, message, {
+          requiredCapability: SCREENSHOT_POLICY_REFRESH_CAPABILITY,
+        });
+        let remotePublished = false;
+        let publicationError: unknown;
+        try {
+          remotePublished = await publishWS({ kind: "student-binding", ...binding,
+            requiredCapability: SCREENSHOT_POLICY_REFRESH_CAPABILITY }, message);
+        } catch (error) { publicationError = error; }
+        recordHeartbeatHotPathCounter("screenshotPolicyRefreshSignals");
+        recordHeartbeatHotPathCounter("screenshotPolicyRefreshTargets");
+        if (localDelivered) recordHeartbeatHotPathCounter("screenshotPolicyRefreshLocalDeliveries");
+        if (remotePublished) recordHeartbeatHotPathCounter("screenshotPolicyRefreshPublicationsAccepted");
+        if (!remotePublished && !localDelivered) recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
+        if (!remotePublished && process.env.REDIS_URL) {
+          options.onFailure?.(publicationError ?? new Error("Screenshot policy refresh publication unavailable"));
+        }
+      }));
     }
-
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshSignals");
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshTargets", targetDeviceIds.length);
-    recordHeartbeatHotPathCounter("screenshotPolicyRefreshLocalDeliveries", localDelivered);
-    if (remotePublished) {
-      // Redis acceptance is transport evidence only, never device adoption.
-      recordHeartbeatHotPathCounter("screenshotPolicyRefreshPublicationsAccepted");
-    }
-    if (!remotePublished && localDelivered === 0) {
-      recordHeartbeatHotPathCounter("screenshotPolicyRefreshFailures");
-    }
-    if (!remotePublished && process.env.REDIS_URL) {
-      options.onFailure?.(publicationError ?? new Error("Screenshot policy refresh publication unavailable"));
-    }
-    return targetDeviceIds.length;
+    return bindings.length;
   } finally {
     recordHeartbeatHotPathTiming(
       "screenshotPolicyRefreshMs",

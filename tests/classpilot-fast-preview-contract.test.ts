@@ -26,7 +26,7 @@ test("screenshot refresh coalescing is scoped to the exact sorted target set", (
   }), first, "a disjoint target set must receive an independent refresh claim");
 });
 
-test("observation changes publish one coalesced, authority-free session nudge", async () => {
+test("observation changes publish coalesced exact-binding policy hints", async () => {
   const [refresh, routes, redis, leases] = await Promise.all([
     source("src/services/classpilotScreenshotPolicyRefresh.ts"),
     source("src/routes/classpilot/monitoringEvents.ts"),
@@ -36,16 +36,18 @@ test("observation changes publish one coalesced, authority-free session nudge", 
   assert.match(refresh, /executeRealtimeRedisCommand/);
   assert.match(refresh, /SCREENSHOT_POLICY_REFRESH_COALESCE_MS/);
   assert.match(refresh, /getActiveSessionsForStudents/);
-  assert.match(refresh, /kind: "students"/);
-  assert.match(refresh, /targetDeviceIds/);
+  assert.match(refresh, /kind: "student-binding"/);
+  assert.match(refresh, /sendToStudentBindingLocal/);
+  assert.match(refresh, /requiredCapability: SCREENSHOT_POLICY_REFRESH_CAPABILITY/);
   assert.match(refresh, /type: "screenshot-policy-refresh"/);
   const frame = refresh.slice(
     refresh.indexOf("const message ="),
-    refresh.indexOf("broadcastToStudentsLocal", refresh.indexOf("const message ="))
+    refresh.indexOf("const localDelivered", refresh.indexOf("const message ="))
   );
   assert.doesNotMatch(frame, /deviceId/);
-  assert.doesNotMatch(frame, /studentId|studentSessionId|controlRevision/);
-  assert.doesNotMatch(refresh, /Promise\.all\(cohort\.map|withClasspilotStudentControlDeliveryAuthority/);
+  assert.match(frame, /studentId: binding\.studentId, studentSessionId: binding\.studentSessionId/);
+  assert.doesNotMatch(frame, /controlRevision/);
+  assert.match(refresh, /bindings\.slice\(offset, offset \+ 8\)/);
   assert.match(redis, /"screenshotActiveObservationCadenceV1"/);
   assert.match(routes, /lease\.activated \|\| \(!lease\.created && lease\.changed\)[\s\S]*nudgeClasspilotScreenshotPolicyRefresh/);
   assert.match(routes, /lease\.activated[\s\S]*studentIds: rosterStudentIds/);

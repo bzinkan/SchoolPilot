@@ -1092,6 +1092,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
     const scheduledContext = requestedAuthority?.supervisionContextId
       ? await requireScheduledClassroomContext({ schoolId,
         supervisionContextId: requestedAuthority.supervisionContextId,
+        contextAuthorityRevision: req.get("X-ClassPilot-Context-Authority-Revision"),
         actorId: userId, allowObserve: isAdmin }) : null;
     const activeSession = scheduledContext ? undefined : requestedTeachingSessionId
       ? await getTeachingSessionByIdAndSchool(requestedTeachingSessionId, schoolId)
@@ -1114,9 +1115,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       : undefined;
 
     let dbStudents;
+    const supervisionAssignmentIds = new Map<string, string>();
     if (scheduledContext) {
       // Assignments, not connection state, define a scheduled classroom roster.
       const contextRows = await scheduledClassroomRoster(schoolId, scheduledContext.id);
+      for (const row of contextRows) supervisionAssignmentIds.set(row.student.id, row.assignment.id);
       dbStudents = contextRows.map((row) => row.student);
     } else if (activeGroup) {
       // The class roster is frozen at session start. Current group membership
@@ -1442,6 +1445,40 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       };
     });
 
+    if (scheduledContext) {
+      // Hydrating Redis telemetry can overlap a release, a new browser session,
+      // or a control transfer without changing the context's staff revision.
+      // Re-read the bounded cohort, including offline roster members, before
+      // returning any telemetry collected under the earlier student authority.
+      const [currentRoster, currentSnapshots, currentControls] = await Promise.all([
+        scheduledClassroomRoster(schoolId, scheduledContext.id),
+        getClasspilotDashboardSnapshot(schoolId, studentIds, today),
+        getClasspilotStudentControlStates(schoolId, studentIds),
+      ]);
+      const currentAssignmentIds = new Map(currentRoster.map(row => [row.student.id, row.assignment.id]));
+      const currentSnapshotByStudent = new Map(currentSnapshots.map(row => [row.studentId, row]));
+      const currentControlByStudent = new Map(currentControls.map(row => [row.studentId, row]));
+      await requireScheduledClassroomContext({ schoolId, supervisionContextId: scheduledContext.id, actorId: userId,
+        allowObserve: isAdmin, contextAuthorityRevision: String(scheduledContext.classroomAuthorityRevision) });
+      res.set("X-ClassPilot-Context-Authority-Revision", String(scheduledContext.classroomAuthorityRevision));
+      return res.json(aggregated.filter(student => {
+        const studentId = student.studentId;
+        const previous = snapshotByStudent.get(studentId);
+        const current = currentSnapshotByStudent.get(studentId);
+        const previousControl = controlStateByStudent.get(studentId);
+        const currentControl = currentControlByStudent.get(studentId);
+        return currentAssignmentIds.has(studentId)
+          && currentAssignmentIds.get(studentId) === supervisionAssignmentIds.get(studentId)
+          && !!current && !!previous
+          && current.studentSessionId === previous.studentSessionId
+          && current.sessionDeviceId === previous.sessionDeviceId
+          && current.coverage?.id === previous.coverage?.id
+          && currentControl?.id === previousControl?.id
+          && currentControl?.revision === previousControl?.revision
+          && currentControl?.supervisionContextId === previousControl?.supervisionContextId
+          && currentControl?.teachingSessionId === previousControl?.teachingSessionId;
+      }));
+    }
     return res.json(aggregated);
   } catch (err) {
     next(err);

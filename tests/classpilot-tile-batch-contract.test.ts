@@ -48,8 +48,9 @@ describe("ClassPilot student tile batch contract", () => {
       (routes.match(/setClassPilotNoStore\(res\);/g) ?? []).length >= 2,
       true
     );
-    assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "live"\)/);
-    assert.match(routes, /getBatchTileAccessForStaff\(scope, parsed\.studentIds, "history"\)/);
+    assert.match(routes, /revisionedTileAccess\(scope, parsed\.studentIds, res, "live"\)/);
+    assert.match(routes, /revisionedTileAccess\(scope, parsed\.studentIds, res, "history"\)/);
+    assert.match(routes, /return getBatchTileAccessForStaff\(scope, studentIds, accessMode\)/);
     assert.match(routes, /parseTileTeachingSessionId\(req\.body\)/);
     assert.equal(
       (routes.match(/tileStaffScope\(req, res, sessionScope\.teachingSessionId, sessionScope\.supervisionContextId\)/g) ?? []).length,
@@ -86,8 +87,9 @@ describe("ClassPilot student tile batch contract", () => {
     assert.match(screenshots, /"MGET",[\s\S]*SCREENSHOT_KEY_PREFIX/);
     assert.match(historyCache, /const BATCH_READ_SCRIPT = `[\s\S]*LRANGE/);
     assert.equal(
-      (screenshotRoute.match(/getBatchTileAccessForStaff\(/g) ?? []).length,
-      1
+      (screenshotRoute.match(/revisionedTileAccess\(/g) ?? []).length,
+      2,
+      "Supervision revalidates the bounded cohort after asynchronous cache reads"
     );
     assert.equal(
       (screenshotRoute.match(/getScreenshots\(/g) ?? []).length,
@@ -95,8 +97,9 @@ describe("ClassPilot student tile batch contract", () => {
     );
     assert.doesNotMatch(screenshotRoute, /getScreenshot\(/);
     assert.equal(
-      (historyRoute.match(/getBatchTileAccessForStaff\(/g) ?? []).length,
-      1
+      (historyRoute.match(/revisionedTileAccess\(/g) ?? []).length,
+      2,
+      "Supervision history revalidates its cohort before returning URLs"
     );
     assert.equal(
       (historyRoute.match(/readHeartbeatTileCacheBatch\(/g) ?? []).length,

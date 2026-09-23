@@ -767,7 +767,7 @@ export function setupWebSocket(
         sendToStaffUserLocal(target.schoolId, target.userId, message);
         break;
       case "staff-context": {
-        const delivered = broadcastToStaffContextLocal(target.schoolId, target.supervisionContextId, message, target.assignedStaffId, target.contextAuthorityRevision);
+        const delivered = broadcastToStaffContextLocal(target.schoolId, target.supervisionContextId, message, target.assignedStaffId, target.contextAuthorityRevision, target.audience);
         if (msgType === "student-message") {
           reportStudentChatFanOut({ schoolId: target.schoolId, authority: { kind: "supervision-context", id: target.supervisionContextId },
             messageId: relayedStudentMessageId(message), source: "relay", delivered });
@@ -1686,8 +1686,9 @@ export function setupWebSocket(
           const scope = parsed.supervisionContextId
             ? { supervisionContextId: parsed.supervisionContextId }
             : { teachingSessionId: sessionId, sessionId };
+          let observe = parsed.accessMode === "observe";
           const subscribe = (socket: WebSocket, id: string) => parsed.supervisionContextId
-            ? subscribeWsClientToContext(socket, id, parsed.contextAuthorityRevision!) : subscribeWsClientToSession(socket, id);
+            ? subscribeWsClientToContext(socket, id, parsed.contextAuthorityRevision!, observe) : subscribeWsClientToSession(socket, id, observe);
           const unsubscribe = parsed.supervisionContextId ? unsubscribeWsClientFromContext : unsubscribeWsClientFromSession;
           const subscriptionMutation = beginClasspilotSessionSubscriptionMutation(client, `${parsed.supervisionContextId ? "supervision" : "teaching"}:${sessionId}`);
           const subscriptionMutationIsCurrent = () => {
@@ -1726,9 +1727,10 @@ export function setupWebSocket(
               if (parsed.supervisionContextId) {
                 try {
                   return await db.transaction(async (tx) => {
-                    await requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: sessionId,
+                    const context = await requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: sessionId,
                       actorId: client.userId!, contextAuthorityRevision: parsed.contextAuthorityRevision, lock: true,
                       allowObserve: client.role === "school_admin" || client.role === "super_admin" }, tx as unknown as typeof db);
+                    observe ||= context.assignedStaffId !== client.userId;
                     if (!subscriptionMutationIsCurrent()) return false;
                     contextSubscriptionRegistered = subscribe(ws, sessionId);
                     return contextSubscriptionRegistered;
@@ -1744,13 +1746,16 @@ export function setupWebSocket(
                 || session.endTime
                 || session.sessionMode !== "live"
                 || !session.rosterSnapshotCompletedAt
+                || session.startTime > new Date()
+                || (session.scheduledEndAt && session.scheduledEndAt <= new Date())
               ) return false;
-              if (client.role === "school_admin" || client.role === "super_admin") return true;
-              return isAuthorizedClasspilotSessionStaff(
+              const owner = await isAuthorizedClasspilotSessionStaff(
                 client.schoolId!,
                 sessionId,
                 client.userId!
               );
+              observe ||= !owner;
+              return owner || client.role === "school_admin" || client.role === "super_admin";
             });
           } catch (error) {
             if (!subscriptionMutationIsCurrent()) return;

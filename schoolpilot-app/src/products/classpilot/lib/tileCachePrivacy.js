@@ -7,7 +7,7 @@ import {
 export function tileBatchFailureScope(error) {
   const status = Number(error?.response?.status);
   if (status === 401 || status === 403) return 'global';
-  if (status === 404) return 'cohort';
+  if (status === 404 || status === 409 && error?.response?.data?.code === 'CLASSROOM_AUTHORITY_CHANGED') return 'cohort';
   return 'transient';
 }
 

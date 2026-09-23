@@ -15,9 +15,31 @@ their authorized supervision scope. A refresh,
 partial release or extension of the same assignment does not repeatedly reset that
 choice. Unrelated pages and unfinished scheduling forms are not redirected.
 
-Claimed contains ad hoc pickups, manual Other sessions and manually started groups.
-An explicit ad hoc claim opens that view, but the next scheduled assignment returns
-the Dashboard to Class. Browsing does not itself release or transfer students.
+Claimed contains ad hoc pickups and can also show manually started supervision.
+An ordinary claim opens that view, while an explicitly started manual supervision
+context remains eligible as the current Class workspace. The next scheduled
+assignment returns the Dashboard to Class. Browsing does not itself release or
+transfer students.
+
+Available → Claim creates neutral **Claimed students** supervision for teachers and
+administrators. A saved testing group's membership can authorize a teacher to claim
+that student, but it does not start testing or select that group as the student's
+current activity. The saved membership remains available for future testing.
+Ordinary claims never replace the teacher's current Class assignment. They retain
+their own recipients, control authority, observation leases and release lifecycle.
+Claim revalidates student availability, the exact staff grants and current group
+membership under the assignment locks; competing claims cannot steal an accepted
+assignment.
+
+The server supplies an activity `purpose`: `class`, `testing`, `coverage`,
+`supervision`, or `claim`. Testing requires an active scheduled testing context or
+an explicitly created `state_testing` context. Those contexts expose **End testing**;
+ordinary supervision exposes release controls. Neither a group's name nor the
+presence of a supervision context ID establishes testing. Existing unscheduled
+group contexts receive the neutral claim display name only when every active
+assignment proves an ordinary claim (`staff_claim` or `admin_assign`). Mixed or
+unknown origins retain their original supervision name; historical records are
+not rewritten. Explicit sends and manual testing keep their distinct purposes.
 
 Claimed shows automatic screen previews for both teachers and administrators,
 including an enlarged preview on click. Each claimed group uses its own observation
@@ -49,8 +71,11 @@ selection until the administrator selects another class or chooses Stop observin
 `GET /api/classpilot/dashboard-activity` returns the scoped current activity,
 capabilities, revision, server time, next assignment and next boundary. Activity
 authority is exactly one real `teachingSessionId` or `supervisionContextId`.
-The latter receives full tools only for server-proven scheduled testing/coverage,
-the assigned staff member, current entitlement and the enabled rollout. No
+The latter receives full tools for an assigned active supervision context,
+current entitlement and the enabled rollout. Ordinary claims remain in `activities`
+but are excluded from `current`; each supervision activity includes its authoritative
+`purpose` and `contextType`. New claims never reuse future or scheduled contexts,
+and explicit group sends cannot extend a scheduled testing window. No
 synthetic teaching session is created for testing. Observe remains read-only.
 
 The extension negotiates `scheduledClassroomV1`, dependent on

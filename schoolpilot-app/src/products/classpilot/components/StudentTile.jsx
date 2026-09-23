@@ -115,6 +115,7 @@ function StudentTile({
   freshnessNowMs,
   screenshotObservationStatus = 'legacy',
   screenshotAuthorizationDenied = false,
+  screenshotUnavailableReason = '',
   screenshotRefreshUnavailable = false,
   screenshotUpdating = false,
   screenshotCaptureCadence: negotiatedCaptureCadence = 'background',
@@ -872,7 +873,7 @@ function StudentTile({
             <div className="px-4">
               <EyeOff className="mx-auto mb-2 h-6 w-6 text-slate-500" />
               <p className="text-sm font-semibold text-foreground">Screen preview unavailable</p>
-              <p className="mt-1 text-xs text-muted-foreground">Screen observation is not authorized in this view.</p>
+              <p className="mt-1 text-xs text-muted-foreground">{screenshotUnavailableReason || 'Screen observation is not authorized in this view.'}</p>
             </div>
           </div>
         ) : effectiveScreenshotObservationStatus === 'paused_unobserved' ? (

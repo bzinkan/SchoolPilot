@@ -32,7 +32,7 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
-import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, matchesActivityAuthority } from '../lib/dashboardActivity';
+import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
@@ -71,7 +71,6 @@ import {
 import { createSubgroupMembersQuery } from '../lib/subgroupMembersQuery';
 import {
   applyStudentRealtimeEvents,
-  aggregateSnapshotHasStudent,
   coalesceStudentRealtimeEvents,
   deriveAggregatedStudentsPresentation,
   makeAggregatedStudentsQueryKey,
@@ -578,7 +577,13 @@ export default function Dashboard() {
   }
   const [, _setReplyingToMessage] = useState(null);
   const [, _setReplyText] = useState("");
-  const [adminObservedSessionId, setAdminObservedSessionId] = useState(null);
+  const [adminObservation, setAdminObservation] = useState(null);
+  if (adminObservation && (!isAdmin || adminObservation.scopeKey !== classReaderKey)) setAdminObservation(null);
+  const scopedAdminObservation = isAdmin && adminObservation?.scopeKey === classReaderKey ? adminObservation : null;
+  const adminObservedSessionId = scopedAdminObservation?.activity?.id || null;
+  const setAdminObservedSessionId = useCallback((value) => {
+    if (!value) setAdminObservation(null);
+  }, []);
   const { toast } = useToast();
   const notifiedViolations = useRef(new Set());
   const wsRef = useRef(null);
@@ -832,7 +837,7 @@ export default function Dashboard() {
     setAdminStartGroupId(nextGroupId);
   }, [adminClassroomSelectionKey, adminStartGroupId, adminTeachingGroups, adminTeachingGroupsLoaded, isAdmin]);
 
-  const { data: allActiveSessions = EMPTY_LIST } = useQuery({
+  useQuery({
     queryKey: ['/api/sessions/all'],
     queryFn: () => apiRequest('GET', '/sessions/all'),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
@@ -841,6 +846,17 @@ export default function Dashboard() {
     // this observer can subscribe to it. Reconcile the selected class even
     // with a healthy school websocket so that transition cannot be missed.
     refetchInterval: wsAuthenticated && !adminObservedSessionId ? false : 10000,
+  });
+  const observableActivitiesQueryKey = useMemo(() => ['/api/classpilot/observable-activities', activeSchoolId, currentUser?.id], [activeSchoolId, currentUser?.id]);
+  const { data: observableActivities = EMPTY_LIST, isSuccess: observableActivitiesLoaded, refetch: refreshObservableActivities } = useQuery({
+    queryKey: observableActivitiesQueryKey,
+    queryFn: ({ signal }) => apiRequest('GET', '/classpilot/observable-activities', undefined, {
+      signal, headers: { 'X-School-Id': activeSchoolId },
+    }),
+    select: normalizeObservableActivities,
+    enabled: isAdmin && !!activeSchoolId,
+    refetchInterval: 10000,
+    retry: false,
   });
   const refreshParentSessions = useCallback(() => (
     coalescedRefreshRef.current(`sessions:${classReaderKey}`, async () => {
@@ -937,7 +953,7 @@ export default function Dashboard() {
 
   // Admin observe mode logic
   const observedSession = isAdmin && adminObservedSessionId
-    ? allActiveSessions.find(s => s.id === adminObservedSessionId)
+    ? observableActivities.find(activity => activity.id === adminObservedSessionId && (!activity.endsAt || Date.parse(activity.endsAt) > Date.now()))
     : null;
   const classSelectionKey = `${classReaderKey}:${isAdmin ? adminObservedSessionId || 'own' : 'own'}`;
   const selectedParentSession = isAdmin && adminObservedSessionId ? observedSession : activeSession;
@@ -952,10 +968,10 @@ export default function Dashboard() {
   // Keep the explicitly selected authority when an active-list refresh removes
   // it. Falling through to the administrator's own class would change both the
   // displayed students and the available controls without an explicit choice.
-  const unavailableObservedSelection = useMemo(() => adminObservedSessionId
-    ? { id: adminObservedSessionId } : null, [adminObservedSessionId]);
-  const retainedObservedSession = observedSession
-    || (adminObservedSessionId ? deniedSelection || unavailableObservedSelection : null);
+  const unavailableObservedSelection = useMemo(() => scopedAdminObservation?.activity
+    ? { ...scopedAdminObservation.activity, observationUnavailable: observableActivitiesLoaded } : null, [scopedAdminObservation, observableActivitiesLoaded]);
+  const retainedObservedSession = observedSession || unavailableObservedSelection
+    || (adminObservedSessionId ? deniedSelection : null);
   // A failed scoped read must not silently become an unscoped school read
   // when the parent refresh removes the ended session from its active list.
   const scheduledAssignment = scheduledClassEnabled ? scheduledActivity?.current : null;
@@ -970,7 +986,7 @@ export default function Dashboard() {
   const effectiveAuthority = useMemo(() => effectiveActivity
     ? activityAuthority(effectiveActivity.authority || { teachingSessionId: effectiveActivity.id }) : null,
   [effectiveActivity]);
-  const contextAuthorityRevision = effectiveActivity?.contextAuthorityRevision ?? null;
+  const contextAuthorityRevision = effectiveActivity?.contextAuthorityRevision ?? effectiveActivity?.authority?.contextAuthorityRevision ?? null;
   const effectiveAuthorityKey = JSON.stringify([activityAuthorityKey(effectiveAuthority), contextAuthorityRevision]);
   const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
   const activityScopeRef = useRef(activityScopeKey);
@@ -992,6 +1008,8 @@ export default function Dashboard() {
     }
   }, [activeSchoolId, contextAuthorityRevision, activityScopeKey]);
   const effectiveAuthorityRef = useRef(effectiveAuthority);
+  const contextAuthorityRevisionRef = useRef(contextAuthorityRevision);
+  contextAuthorityRevisionRef.current = contextAuthorityRevision;
   const scheduledSupervisionId = effectiveAuthority?.supervisionContextId || null;
   const ownActiveSession = scheduledClassEnabled
     ? (scheduledAssignment?.authority?.teachingSessionId ? chosenActivity : null) : activeSession;
@@ -1000,13 +1018,15 @@ export default function Dashboard() {
     queryFn: ({ signal }) => requestActivityApi('GET', activityParentPath(effectiveAuthority, 'settings'), undefined, {
       signal, headers: { 'X-School-Id': activeSchoolId },
     }),
-    enabled: Boolean(scheduledSupervisionId),
+    enabled: Boolean(scheduledSupervisionId) && !retainedObservedSession,
     retry: false,
   });
   const sessionReadAuthorityKey = classpilotSessionAuthorityKey({
     schoolId: activeSchoolId, viewerId: currentUser?.id, session: effectiveActivity,
   });
-  const terminalSessionError = sessionReadDenialsRef.current.get(sessionReadAuthorityKey) || null;
+  const unavailableObservedError = useMemo(() => retainedObservedSession?.observationUnavailable
+    ? { response: { status: 404, data: { code: 'CLASSROOM_ACTIVITY_UNAVAILABLE' } } } : null, [retainedObservedSession?.observationUnavailable]);
+  const terminalSessionError = sessionReadDenialsRef.current.get(sessionReadAuthorityKey) || unavailableObservedError;
   classReadContextRef.current = {
     authorityKey: sessionReadAuthorityKey, selectionKey: classSelectionKey,
     readerKey: classReaderKey, session: effectiveActivity, view: studentView,
@@ -1065,7 +1085,7 @@ export default function Dashboard() {
     setShowRerouteDialog(false);
   }, [signOutOnlySelectionActive]);
   useEffect(() => {
-    if (scheduledSupervisionId) {
+    if (scheduledSupervisionId && dashboardCapabilities.canUseTeacherFab) {
       setSessionFabState(normalizeSessionFabState(mergeFabSettingsResponse(scheduledFabSettings), effectiveAuthority));
       return;
     }
@@ -1087,6 +1107,7 @@ export default function Dashboard() {
     }, sessionId));
   }, [
     dashboardCapabilities.canChangeFabSettings,
+    dashboardCapabilities.canUseTeacherFab,
     effectiveActivity?.id,
     settings?.activeSessionId,
     settings?.handRaisingEnabled,
@@ -1262,6 +1283,22 @@ export default function Dashboard() {
         selectionKey: context.selectionKey, session: context.session,
       };
       try {
+        if (context.session.accessMode === 'observe') {
+          const refreshed = await refreshObservableActivities({ cancelRefetch: true, throwOnError: true });
+          const confirmed = refreshed.data?.find(activity => activity.id === context.session.id);
+          if (classReadContextRef.current?.selectionKey !== context.selectionKey || !confirmed) return;
+          setAdminObservation({ scopeKey: classReaderKey, activity: confirmed });
+          if (classpilotSessionAuthorityKey({ schoolId: activeSchoolId, viewerId: currentUser?.id, session: confirmed }) !== context.authorityKey) return;
+          sessionReadDenialsRef.current.delete(context.authorityKey);
+          setReadDenialVersion(version => version + 1);
+          const result = await rawRefetchStudents({ cancelRefetch: true });
+          if (result.isError || classReadContextRef.current?.authorityKey !== context.authorityKey) return;
+          lastDeniedSelectionRef.current = null;
+          checkedReadRetryRef.current?.(context.authorityKey);
+          setTileGlobalAuthorizationDenied(false);
+          setReadRetryEpoch(epoch => epoch + 1);
+          return;
+        }
         if (context.session.authority?.supervisionContextId) {
           const refreshedActivity = await refreshDashboardActivity({ cancelRefetch: true, throwOnError: true });
           const confirmed = refreshedActivity.data?.current;
@@ -1310,7 +1347,7 @@ export default function Dashboard() {
         setReadsRetrying(false);
       }
     });
-  }, [activeSchoolId, currentUser?.id, rawRefetchStudents, refetchStudents, refreshParentSessions, refreshDashboardActivity, scheduledClassEnabled]);
+  }, [activeSchoolId, currentUser?.id, rawRefetchStudents, refetchStudents, refreshParentSessions, refreshDashboardActivity, refreshObservableActivities, classReaderKey, scheduledClassEnabled]);
   const lastSuccessfulReconciliationAtMs = aggregateReconciliation.key === aggregatedStudentsScopeKey
     ? aggregateReconciliation.succeededAtMs
     : null;
@@ -1504,7 +1541,6 @@ export default function Dashboard() {
     : '';
   useLayoutEffect(() => {
     if (!scheduledClassEnabled) return;
-    setAdminObservedSessionId(null);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -1532,7 +1568,7 @@ export default function Dashboard() {
 
   const openOwnSupervision = useCallback((contexts = []) => {
     if (scheduledClassEnabled && contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
-      || ['scheduled_testing', 'scheduled_coverage', 'ad_hoc_supervision'].includes(context.source))) {
+      || ['testing', 'coverage', 'supervision'].includes(activityPurpose(context)) && context.purpose !== 'claim')) {
       setStudentView('class');
       void refreshDashboardActivity({ cancelRefetch: true });
       return;
@@ -1554,7 +1590,7 @@ export default function Dashboard() {
         focusSupervisionNoticeRef.current = false;
       }
     });
-  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision, scheduledClassEnabled, setStudentView, refreshDashboardActivity]);
+  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision, scheduledClassEnabled, setStudentView, refreshDashboardActivity, setAdminObservedSessionId]);
 
   useEffect(() => {
     if (!activeSchoolId || !currentUser?.id || !hasSupervisionDashboardIntent(location.state)) return;
@@ -1599,7 +1635,7 @@ export default function Dashboard() {
   const { data: classroomStateResponse } = useQuery({
     queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
     queryFn: ({ signal }) => requestActivityApi('GET', `/commands/active-state?${activityAuthorityQuery(effectiveAuthority)}`, undefined, { signal }),
-    enabled: !!effectiveActivity?.id,
+    enabled: !!effectiveActivity?.id && !retainedObservedSession,
     refetchInterval: scheduledSupervisionId ? 10000 : wsAuthenticated ? false : 30000,
   });
   const activeClassroomStates = classroomStateResponse?.states ?? EMPTY_LIST;
@@ -1665,7 +1701,7 @@ export default function Dashboard() {
   const { data: initialRaisedHands } = useQuery({
     queryKey: ['/api/teacher/raised-hands', activeSchoolId, currentUser?.id, effectiveAuthorityKey],
     queryFn: ({ signal }) => requestActivityApi('GET', `/teacher/raised-hands?${activityAuthorityQuery(effectiveAuthority, true)}`, undefined, { signal }),
-    enabled: !!effectiveActivity?.id,
+    enabled: !!effectiveActivity?.id && dashboardCapabilities.canUseTeacherFab,
     refetchInterval: wsAuthenticated ? false : 30000,
   });
 
@@ -1764,7 +1800,9 @@ export default function Dashboard() {
       // event from a previously observed class must not mutate that view;
       // only genuinely school-wide/sessionless messages are eligible.
       if (!currentSessionId) return !messageSessionId;
-      if (messageSessionId) return matchesActivityAuthority(message, effectiveAuthorityRef.current);
+      if (messageSessionId) return matchesActivityAuthority(message, effectiveAuthorityRef.current)
+        && (!effectiveAuthorityRef.current?.supervisionContextId
+          || String(message.contextAuthorityRevision ?? message.data?.contextAuthorityRevision) === String(contextAuthorityRevisionRef.current));
       const subscription = sessionSubscriptionStateRef.current;
       return subscription.status === 'active'
         && String(subscription.sessionId) === String(currentSessionId)
@@ -1772,16 +1810,19 @@ export default function Dashboard() {
     };
 
     const coverageRealtimeMessageEligibility = (message) => {
-      if (realtimeMessageSessionId(message)) return false;
       const messageSchoolId = message?.schoolId || message?.data?.schoolId;
       if (
         messageSchoolId
         && String(messageSchoolId) !== String(activeSchoolIdRef.current)
       ) return false;
-      return aggregateSnapshotHasStudent(
-        queryClient.getQueryData(coverageKeysRef.current.claimedStudentsQueryKey),
-        message?.studentId || message?.data?.studentId,
-      );
+      const roster = queryClient.getQueryData(coverageKeysRef.current.claimedStudentsQueryKey);
+      const rows = Array.isArray(roster) ? roster : roster?.students || [];
+      const studentId = message?.studentId || message?.data?.studentId;
+      const student = rows.find(row => row.studentId === studentId);
+      if (!student) return false;
+      if (!realtimeMessageSessionId(message)) return true; // Existing owner-only legacy delivery.
+      return message.supervisionContextId === (student.contextId || student.supervisionContext?.id)
+        && String(message.contextAuthorityRevision) === String(student.contextAuthorityRevision);
     };
 
     const flushRealtimeEvents = () => {
@@ -1796,13 +1837,13 @@ export default function Dashboard() {
         .filter((entry) => (
           entry.socketGeneration === generation
           && String(entry.sessionContextId || '') === String(currentSessionId || '')
-          && entry.classEligible
+          && entry.classEligible && classRealtimeMessageEligibility(entry.message)
         ))
         .map((entry) => entry.message));
       const coverageEvents = coalesceStudentRealtimeEvents(queued
         .filter((entry) => (
           entry.socketGeneration === generation
-          && entry.coverageEligible
+          && entry.coverageEligible && coverageRealtimeMessageEligibility(entry.message)
         ))
         .map((entry) => entry.message));
       const scope = {
@@ -2176,6 +2217,18 @@ export default function Dashboard() {
                 queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
               }
             }
+            if (['coverage-summary-updated', 'dashboard-activity-updated', 'session-ended', 'supervision-context-updated', 'supervision-context-ended'].includes(message.type)) {
+              const eventSchoolId = message.schoolId || message.data?.schoolId;
+              if (!eventSchoolId || String(eventSchoolId) === String(activeSchoolIdRef.current)) {
+                void queryClient.invalidateQueries({ queryKey: ['/api/classpilot/observable-activities', activeSchoolIdRef.current] });
+                if (effectiveAuthorityRef.current?.supervisionContextId && (message.type === 'coverage-summary-updated'
+                  || message.supervisionContextId === effectiveAuthorityRef.current.supervisionContextId)) {
+                  void purgeAllStudentTileCaches(queryClient);
+                  const key = aggregatedStudentsQueryKeyRef.current;
+                  if (key) void queryClient.resetQueries({ queryKey: key, exact: true });
+                }
+              }
+            }
             if (message.type === 'coverage-summary-updated') {
               queryClient.invalidateQueries({ queryKey: ['/api/classpilot/dashboard-activity', activeSchoolIdRef.current] });
               const messageSchoolId = message.schoolId || message.data?.schoolId;
@@ -2449,7 +2502,7 @@ export default function Dashboard() {
         },
       };
       sessionSubscriptionPendingRef.current = pending;
-      socket.send(JSON.stringify({ type: 'subscribe-session', ...activityLegacyBody(effectiveAuthorityRef.current), contextAuthorityRevision, requestId }));
+      socket.send(JSON.stringify({ type: 'subscribe-session', ...activityLegacyBody(effectiveAuthorityRef.current), contextAuthorityRevision, ...(retainedObservedSession ? { accessMode: 'observe' } : {}), requestId }));
       sessionSubscriptionAckTimeoutRef.current = setTimeout(() => {
         if (sessionSubscriptionPendingRef.current !== pending) return;
         scheduleRetry();
@@ -2471,7 +2524,7 @@ export default function Dashboard() {
         }));
       }
     };
-  }, [effectiveActivityId, effectiveAuthorityKey, sessionSubscriptionEligible, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [effectiveActivityId, effectiveAuthorityKey, Boolean(retainedObservedSession), sessionSubscriptionEligible, wsAuthenticated, wsConnected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     transientCommandOutcomesRef.current = new Map();
@@ -2731,7 +2784,8 @@ export default function Dashboard() {
   };
   const handleAdminObservedSessionChange = (event) => {
     const sessionId = event.target.value || null;
-    setAdminObservedSessionId(sessionId);
+    const activity = observableActivities.find(candidate => candidate.id === sessionId);
+    setAdminObservation(activity ? { scopeKey: classReaderKey, activity } : null);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -3034,7 +3088,8 @@ export default function Dashboard() {
       selectionKey: context.selectionKey, session: context.session,
     };
     void refreshParentSessions().catch(() => {});
-  }, [refreshParentSessions]);
+    void refreshObservableActivities({ cancelRefetch: true });
+  }, [refreshParentSessions, refreshObservableActivities]);
   const observationLeaseStatus = useObservationLease({
     enabled: studentView === 'class' && Boolean(effectiveActivity?.id),
     eligible: classpilotObservationSessionEligible(effectiveActivity) && !terminalSessionError,
@@ -3107,7 +3162,7 @@ export default function Dashboard() {
       // server decide whether a row may currently return pixels.
       ? students
       : filteredStudents;
-  const scheduledClientSupported = student => !scheduledSupervisionId || (
+  const scheduledClientSupported = student => !(scheduledSupervisionId || studentView === 'claimed') || (
     studentSupportsScheduledClassroom(student)
   );
   const screenshotTileStudentBindingsKey = JSON.stringify(
@@ -4721,30 +4776,22 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         map.set(scheduled.id, rows);
         return map;
       }, new Map());
-      const byGroup = studentsToClaim.reduce((map, student) => {
-        if (student.matchingScheduledCoverage?.id) return map;
-        const group = student.matchingGroups?.[0];
-        if (!group?.id) return map;
-        const rows = map.get(group.id) || [];
-        rows.push(student);
-        map.set(group.id, rows);
-        return map;
-      }, new Map());
-      const directScopeStudents = studentsToClaim.filter((student) => !student.matchingScheduledCoverage?.id && !(student.matchingGroups || []).length);
-      if (byScheduled.size === 0 && byGroup.size === 0 && directScopeStudents.length === 0) {
-        throw new Error("No supervision permission is available for the selected students.");
-      }
+      // Saved groups confer permission; membership does not choose a testing
+      // assignment. The server authorizes all permitted scopes for a neutral claim.
+      const ordinaryStudents = studentsToClaim.filter(student => !student.matchingScheduledCoverage?.id);
       const requests = Array.from(byScheduled.entries()).map(([scheduledConflictId, rows]) => ({
         scheduledConflictId, studentIds: rows.map(student => student.studentId),
       }));
-      requests.push(...Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) => ({
-        supervisionGroupId, studentIds: rows.map(student => student.studentId),
-      })));
-      if (directScopeStudents.length > 0) {
-        requests.push({
-          studentIds: directScopeStudents.map((student) => student.studentId),
-        });
+      const permissionCohorts = new Map();
+      for (const student of ordinaryStudents) {
+        // Keep independent permission cohorts recoverable on a partial claim,
+        // but never send a saved group as the destination context.
+        const key = JSON.stringify([...(student.matchingGroups || []), ...(student.matchingScopes || [])].map(scope => scope.id).sort());
+        const ids = permissionCohorts.get(key) || [];
+        ids.push(student.studentId); permissionCohorts.set(key, ids);
       }
+      requests.push(...[...permissionCohorts.values()].map(studentIds => ({ studentIds })));
+      if (!requests.length) throw new Error('Select students to claim.');
       const outcomes = await Promise.allSettled(requests.map(payload => apiRequest('POST', '/coverage/claim', payload, {
         headers: { 'X-School-Id': scope.schoolId },
       })));
@@ -5457,12 +5504,45 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
+  const releaseClaimMutation = useMutation({
+    retry: false,
+    mutationFn: async ({ students: rows, scope }) => {
+      if (scope !== supervisionScopeRef.current || studentViewRef.current !== 'claimed') throw new Error('The claimed view changed. Refresh before releasing students.');
+      const requests = new Map();
+      for (const row of rows) {
+        const current = claimedPickupStudents.find(student => student.studentId === row.studentId);
+        if (!current || current.contextId !== row.contextId || String(current.contextAuthorityRevision) !== String(row.contextAuthorityRevision)) {
+          throw new Error('Student supervision changed. Refresh before releasing students.');
+        }
+        const entry = requests.get(row.contextId) || { revision: row.contextAuthorityRevision, studentIds: [] };
+        entry.studentIds.push(row.studentId);
+        requests.set(row.contextId, entry);
+      }
+      if (!requests.size) throw new Error('No claimed students selected.');
+      const results = await Promise.allSettled([...requests].map(([id, entry]) => apiRequest('POST', `/coverage/contexts/${encodeURIComponent(id)}/release`, {
+        studentIds: entry.studentIds, releaseReason: 'returned_to_class',
+      }, { headers: activityRequestHeaders(activeSchoolId, entry.revision) })));
+      const failed = results.filter(result => result.status === 'rejected');
+      if (failed.length) throw new Error(`${results.length - failed.length} supervision groups released; ${failed.length} could not be released. Refresh before retrying.`);
+    },
+    onSuccess: (_data, variables) => { if (variables.scope === supervisionScopeRef.current) { clearSelection(); toast({ title: 'Students released', description: 'Students follow their current scheduled assignments.' }); } },
+    onError: (error, variables) => { if (variables.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not release all students', description: error.response?.data?.error || error.message }); },
+    onSettled: (_data, _error, variables) => {
+      if (variables.scope !== supervisionScopeRef.current) return;
+      void purgeAllStudentTileCaches(queryClient);
+      void queryClient.invalidateQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+      void queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+      void refreshDashboardActivity({ cancelRefetch: true });
+    },
+  });
+
   const endTestingMutation = useMutation({
     retry: false,
     mutationFn: async (target) => {
       if (target.scope !== supervisionScopeRef.current
         || target.contextId !== effectiveAuthorityRef.current?.supervisionContextId) {
-        throw new Error('This testing assignment changed. Close the confirmation and refresh.');
+        throw new Error('This supervision assignment changed. Close the confirmation and refresh.');
       }
       return apiRequest('POST', `/coverage/contexts/${encodeURIComponent(target.contextId)}/release`, {
         studentIds: [], releaseReason: 'returned_to_class',
@@ -5474,10 +5554,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       void refreshDashboardActivity({ cancelRefetch: true });
       void queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
       void queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
-      toast({ title: 'Testing ended', description: 'Students follow their current scheduled assignments.' });
+      toast({ title: `${activityPurposeLabel(target)} ended`, description: 'Students follow their current scheduled assignments.' });
     },
     onError: (error, target) => {
-      if (target.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not end testing', description: error.message });
+      if (target.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not end supervision', description: error.message });
     },
     onSettled: () => { endTestingBusyRef.current = false; },
   });
@@ -5726,7 +5806,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <div className={`h-2 w-2 rounded-full ${connectionDotClasses}`} />
                 {connectionPresentation.label}
               </div>
-              {scheduledSupervisionId ? <Badge variant="outline" className="text-amber-300" data-testid="badge-scheduled-testing">Testing: {effectiveActivity.name}</Badge> : null}
+              {scheduledSupervisionId && studentView === 'class' ? <Badge variant="outline" className="text-amber-300" data-testid="badge-scheduled-testing">{activityPurposeLabel(effectiveActivity)}: {effectiveActivity.name}</Badge> : null}
               {isTeacher && !scheduledSupervisionId && activeSession && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-active-session">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -5827,9 +5907,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 </>
               )}
               {/* Admin Class Selection */}
-              {isAdmin && !scheduledSupervisionId && (
+              {isAdmin && (
                 <>
-                  {activeSession && (
+                  {activeSession && !scheduledSupervisionId && !retainedObservedSession && (
                     <>
                       <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-admin-teaching">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
@@ -5862,7 +5942,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       </button>
                     </>
                   )}
-                  {!activeSession && (
+                  {!activeSession && !scheduledSupervisionId && !retainedObservedSession && (
                     <div className="flex items-center gap-2">
                       <select
                         value={adminStartGroupId}
@@ -5914,22 +5994,18 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     <select
                       value={adminObservedSessionId || ""}
                       onChange={handleAdminObservedSessionChange}
-                      disabled={allActiveSessions.length === 0 && !adminObservedSessionId}
-                      aria-label="Observe active ClassPilot class"
+                      disabled={observableActivities.length === 0 && !adminObservedSessionId}
+                      aria-label="Observe active ClassPilot activity"
                       data-testid="select-admin-observe"
                       className="h-7 max-w-[220px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <option value="">{adminObservedSessionId ? "Stop observing" : allActiveSessions.length === 0 ? "No active classes" : "Observe Class"}</option>
-                      {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Class unavailable</option> : null}
-                      {allActiveSessions.map((session) => {
-                        const sessionGroup = groups.find(g => g.id === session.groupId);
-                        const isOwnSession = session.teacherId === currentUser?.id;
-                        return (
-                          <option key={session.id} value={session.id}>
-                            {sessionGroup?.name || 'Unknown Class'}{isOwnSession ? " (yours)" : ""}{session.sessionMode === 'scheduled_report' ? ' · Awaiting teacher' : ''}
-                          </option>
-                        );
-                      })}
+                      <option value="">{adminObservedSessionId ? "Stop observing" : observableActivities.length === 0 ? "No active activities" : "Observe activity"}</option>
+                      {adminObservedSessionId && !observedSession ? <option value={adminObservedSessionId}>Activity unavailable</option> : null}
+                      {observableActivities.map(activity => (
+                        <option key={activity.id} value={activity.id}>
+                          {activityPurpose(activity) === 'claim' ? 'Claimed students' : `${activityPurposeLabel(activity)}: ${activity.name}`}{activity.owner?.name ? ` - ${activity.owner.name}` : ''}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </>
@@ -5993,12 +6069,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           // bordered box. Keep the section mounted either way so the live region
           // still announces a class change to a screen reader, and drop the
           // chrome when there is nothing to show.
-          const bannerTitleDrawn = dashboardActivityError || scheduledActivity.pending
+          const bannerTitleDrawn = Boolean(scheduledSupervisionId && studentView === 'class' && !retainedObservedSession) || dashboardActivityError || scheduledActivity.pending
             || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'));
           const bannerExtensionWarning = Boolean(scheduledSupervisionId
             && students.some(student => student.isLoggedIn && !scheduledClientSupported(student)));
           const bannerActions = studentView !== 'class' || adminObservedSessionId || dashboardActivityError
-            || (scheduledSupervisionId && studentView === 'class');
+            || (scheduledSupervisionId && studentView === 'class' && !retainedObservedSession);
           const bannerVisible = bannerTitleDrawn || Boolean(scheduledActivity.next && !scheduledAssignment)
             || bannerExtensionWarning || Boolean(bannerActions);
           return (
@@ -6007,27 +6083,27 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               ? "mb-5 rounded-xl border bg-card px-4 py-3 focus-visible:ring-2 focus-visible:ring-ring" : "sr-only"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className={dashboardActivityError || scheduledActivity.pending
-                  || !(scheduledAssignment || (scheduledActivity.next && scheduledActivity.next.status !== 'waiting'))
-                  ? 'font-semibold' : 'sr-only'}>{dashboardActivityError ? 'Class assignment could not refresh'
+                <p className={bannerVisible ? 'font-semibold' : 'sr-only'}>{retainedObservedSession
+                  ? `${activityPurposeLabel(retainedObservedSession)}: ${retainedObservedSession.name || retainedObservedSession.groupName || 'Selected activity'}`
+                  : dashboardActivityError ? 'Class assignment could not refresh'
                   : scheduledActivity.pending ? 'Updating class'
-                    : scheduledAssignment ? `${scheduledAssignment.source === 'scheduled_testing' ? 'Testing' : scheduledAssignment.source === 'ad_hoc_supervision' ? 'Supervising' : 'Class'}: ${scheduledAssignment.name}`
+                    : scheduledAssignment ? `${activityPurposeLabel(scheduledAssignment)}: ${scheduledAssignment.name}`
                       : scheduledActivity.next?.status === 'waiting' ? 'Awaiting live supervision' : 'No class active'}</p>
-                {scheduledActivity.next && !scheduledAssignment ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
+                {scheduledActivity.next && !scheduledAssignment && !retainedObservedSession ? <p className="mt-1 text-sm text-muted-foreground">Next: {scheduledActivity.next.name}{' · '}
                   {new Date(scheduledActivity.next.startsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.schoolTimezone || school?.timezone || 'America/New_York' })}
                   {scheduledActivity.next.status === 'waiting' ? ' · Awaiting live supervision' : ''}</p> : null}
                 {scheduledSupervisionId && students.some(student => student.isLoggedIn && !scheduledClientSupported(student))
-                  ? <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">Extension update required for full testing tools on some student Chromebooks.</p> : null}
+                  ? <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">Extension update required for full classroom tools on some student Chromebooks.</p> : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 {(studentView !== 'class' || adminObservedSessionId) ? <Button variant="outline" onClick={() => {
                   setAdminObservedSessionId(null); setStudentView('class');
                 }}>View current class</Button> : null}
-                {dashboardActivityError ? <Button variant="outline" disabled={dashboardActivityRefreshing}
+                {dashboardActivityError && !retainedObservedSession ? <Button variant="outline" disabled={dashboardActivityRefreshing}
                   onClick={() => void refreshDashboardActivity({ cancelRefetch: true })}>Retry class assignment</Button> : null}
-                {scheduledSupervisionId && studentView === 'class' ? <Button variant="outline" disabled={endTestingMutation.isPending}
+                {scheduledSupervisionId && studentView === 'class' && !retainedObservedSession ? <Button variant="outline" disabled={endTestingMutation.isPending}
                   onClick={() => setEndTestingTarget({ contextId: scheduledSupervisionId, name: effectiveActivity.name,
-                    schoolId: activeSchoolId, scope: classReaderKey, contextAuthorityRevision })}>End testing</Button> : null}
+                    schoolId: activeSchoolId, scope: classReaderKey, contextAuthorityRevision, purpose: activityPurpose(effectiveActivity) })}>{activityEndLabel(effectiveActivity)}</Button> : null}
               </div>
             </div>
           </section>
@@ -6060,7 +6136,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {dashboardCapabilities.observedOtherClass ? (
           <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
-            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed, but selections, device commands, and Teacher FAB tools are disabled for another teacher&apos;s class.</p></div>
+            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed. Student controls and Class tools are disabled while observing; ownership stays with the supervising staff member.</p></div>
           </div>
         ) : null}
 
@@ -6333,6 +6409,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
         ) : null}
 
+        {studentView === 'claimed' && !dashboardCapabilities.observedOtherClass ? (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3" data-testid="claimed-students-controls">
+            <h2 className="text-lg font-semibold">Claimed students</h2>
+            <Button variant="outline" disabled={!claimedPickupStudents.length || claimedStudentsQueryError || releaseClaimMutation.isPending}
+              onClick={() => releaseClaimMutation.mutate({ students: claimedPickupStudents, scope: classReaderKey })}>Release all</Button>
+          </div>
+        ) : null}
         {/* Student Tiles */}
         {studentView === "available" ? (
           <div className="space-y-4">
@@ -6595,7 +6678,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     supervisionStaffName,
                   ].filter(Boolean).join(" - ")}`
                 : student.supervisionState === "claimed"
-                  ? student.supervisionGroup?.name || student.contextName || "Claimed"
+                  ? student.contextDisplayName || (student.purpose === 'claim' || student.supervisionContext?.purpose === 'claim' ? "Claimed students" : student.contextName || "Claimed students")
                   : student.supervisionState === "online_unassigned"
                     ? "Online Unassigned"
                     : null;
@@ -6745,8 +6828,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     screenshotObservationStatus={claimedTileStatus ?? tileScreenshotObservationStatus}
                     screenshotCaptureCadence={screenshotCaptureCadence}
                     screenshotAuthorizationDenied={tileScreenshotRevoked}
+                    screenshotUnavailableReason={!scheduledClientSupported(student)
+                      ? 'Screen previews are not enabled for this Chromebook connection. Reconnect or update ClassPilot.' : ''}
                     actionContextKey={`${activeSchoolId || ''}:${effectiveActivity?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   />}
+                  {studentView === 'claimed' && !dashboardCapabilities.observedOtherClass ? <Button variant="outline" size="sm" className="mt-2 w-full"
+                    disabled={releaseClaimMutation.isPending} onClick={() => releaseClaimMutation.mutate({ students: [student], scope: classReaderKey })}>Release student</Button> : null}
                 </div>
               );
             })}
@@ -7635,13 +7722,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       {/* TeacherFab */}
       <Dialog open={Boolean(endTestingTarget)} onOpenChange={open => { if (!open && !endTestingMutation.isPending) setEndTestingTarget(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>End testing: {endTestingTarget?.name}</DialogTitle>
-            <DialogDescription>Release all students from this testing assignment, including offline students. Their next assignment follows the applied schedule. This does not end a regular class.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{activityEndLabel(endTestingTarget)}: {endTestingTarget?.name}</DialogTitle>
+            <DialogDescription>Release all students from this supervision assignment, including offline students. Their next assignment follows the applied schedule. This does not end a regular class.</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" disabled={endTestingMutation.isPending} onClick={() => setEndTestingTarget(null)}>Cancel</Button>
             <Button disabled={endTestingMutation.isPending} onClick={() => {
               if (!endTestingTarget || endTestingBusyRef.current) return;
               endTestingBusyRef.current = true; endTestingMutation.mutate(endTestingTarget);
-            }}>End testing and release all</Button></DialogFooter>
+            }}>{activityEndLabel(endTestingTarget)} and release all</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       {dashboardCapabilities.canUseTeacherFab && !classStudentTargetsUnavailable && (
