@@ -5906,11 +5906,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           Automatic{activeSessionScheduledEnd ? ` · Ends ${activeSessionScheduledEnd}` : ""}
                         </div>
                       )}
-                      {scheduledAssignment && nextActivityLabel && (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-muted/40 border border-border text-muted-foreground" data-testid="badge-admin-next-activity">
-                          Next: {nextActivityLabel}
-                        </div>
-                      )}
                       {!activeSessionIsScheduled && (
                         <button
                           type="button"
