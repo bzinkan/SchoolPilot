@@ -16,6 +16,7 @@ import {
   getActiveSupervisionForStudents,
   extendSupervisionContext,
   getActiveCoverageAssignmentsForStaff,
+  getActiveDirectSupervisionContextForStaff,
   getActiveCoverageCounts,
   getCoverageScopeGroupByIdAndSchool,
   getCoverageScopeGroupStudentIds,
@@ -67,7 +68,7 @@ import {
   executeClasspilotCommand,
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
-import { localDateInTimeZone, localDateStartUtc } from "../../util/schoolTime.js";
+import { localDateInTimeZone, localDateTimeUtc } from "../../util/schoolTime.js";
 import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
 import {
   classpilotCoverageSummaryRevision,
@@ -90,6 +91,7 @@ import { classpilotCurrentPageSignedOutSkipReason } from "../../services/classpi
 import { classpilotCommandDeliveryPolicy } from "../../services/classpilotCommandDelivery.js";
 import { CoverageDeletionError, deleteCoverageStaffAssignments, deleteCoverageSupervisionGroup, type CoverageAssignmentReview } from "../../services/classpilotCoverageDeletion.js";
 import { browseCoverageGroups, getCoverageGroupDetail, listCoverageCategories, mutateCoverageCategory, saveCoverageDirectoryGroup } from "../../services/classpilotCoverageDirectory.js";
+import { commitSupervisionReview, isAdHocSupervisionDestination, previewSupervision, supervisionSessionOptions } from "../../services/classpilotSupervisionReview.js";
 
 const router = Router();
 
@@ -104,6 +106,7 @@ const auth = [
 // The event contains no counts because staff can have different visible scopes.
 router.use("/coverage", (req, res, next) => {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  if (req.path === "/preview") return next();
   res.once("finish", () => {
     const schoolId = res.locals.schoolId as string | undefined;
     if (schoolId && res.statusCode >= 200 && res.statusCode < 300) {
@@ -1020,10 +1023,44 @@ async function defaultClaimEndsAt(schoolId: string): Promise<Date> {
   if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours > 23 || minutes > 59) return fallback;
   const timeZone = settings?.schoolTimezone || "America/New_York";
   const localDate = localDateInTimeZone(new Date(), timeZone);
-  const dayStart = localDateStartUtc(localDate, timeZone);
-  const claimEnd = new Date(dayStart.getTime() + (hours * 60 + minutes) * 60 * 1000);
-  return claimEnd > new Date() ? claimEnd : fallback;
+  const claimEnd = localDateTimeUtc(localDate, `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`, timeZone);
+  return claimEnd > new Date() ? new Date(Math.min(claimEnd.getTime(), Date.now() + 12 * 60 * 60_000)) : fallback;
 }
+
+async function reviewedSupervisionMutation(req: any, res: any, action: "start" | "send" | "end_time") {
+  const schoolId = res.locals.schoolId as string;
+  const { reviewToken, ...fields } = req.body;
+  const input = { ...fields, ...(action === "end_time" ? { destinationContextId: String(req.params.id) } : {}) };
+  const result = await commitSupervisionReview({ schoolId, actorId: req.authUser.id, input, reviewToken, action });
+  await syncClasspilotControlStatesToActiveDevices(schoolId, result.changedStudentIds);
+  await logAudit({ schoolId, userId: req.authUser.id, userEmail: req.authUser.email, userRole: res.locals.membershipRole,
+    action: `coverage.reviewed.${action}`, entityType: "supervision_context", entityId: result.context.id,
+    changes: { studentIds: result.outcomes.map(row => row.studentId), outcomes: result.outcomes,
+      assignedStaffId: result.context.assignedStaffId, endsAt: result.context.endsAt, purpose: result.context.purpose } });
+  const { changedStudentIds: _changedStudentIds, ...publicResult } = result;
+  return res.status(action === "end_time" ? 200 : 201).json({ schoolId, viewerId: req.authUser.id, ...publicResult });
+}
+
+router.post("/coverage/preview", ...auth, async (req, res, next) => {
+  try {
+    return res.json(await previewSupervision({ schoolId: res.locals.schoolId!, actorId: req.authUser!.id, input: req.body }));
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
+    next(err);
+  }
+});
+
+router.get("/coverage/session-options", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const options = await supervisionSessionOptions({ schoolId, actorId: req.authUser!.id,
+      supervisionGroupId: req.query.supervisionGroupId ? String(req.query.supervisionGroupId) : undefined });
+    return res.json({ ...options, defaultEndsAt: (await defaultClaimEndsAt(schoolId)).toISOString() });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
+    next(err);
+  }
+});
 
 function coverageCommandResponse(result: any) {
   const command = result.command ? publicClasspilotCommand(result.command) : result.command;
@@ -1791,7 +1828,11 @@ router.get("/coverage/available-students", ...auth, requireClasspilotFullMonitor
         assignmentLabels
       )];
     });
-    return res.json({ students, scheduledCoverageGroups });
+    const existingClaim = await getActiveDirectSupervisionContextForStaff(schoolId, req.authUser!.id);
+    const claimEndsAt = existingClaim?.endsAt || await defaultClaimEndsAt(schoolId);
+    return res.json({ students, scheduledCoverageGroups, claim: { contextId: existingClaim?.id || null,
+      assignedStaffId: req.authUser!.id, supervisorName: req.authUser!.displayName || req.authUser!.email,
+      endsAt: claimEndsAt.toISOString() } });
   } catch (err) {
     next(err);
   }
@@ -2068,6 +2109,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
 
 router.post("/coverage/send", ...auth, async (req, res, next) => {
   try {
+    if (req.body.reviewToken !== undefined || req.body.action !== undefined) return await reviewedSupervisionMutation(req, res, "send");
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.body.supervisionGroupId || req.body.coverageGroupId || "").trim();
@@ -2125,7 +2167,7 @@ router.post("/coverage/send", ...auth, async (req, res, next) => {
     });
     return res.status(201).json({ context: result.context, assignments: result.assignments });
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
     next(err);
   }
 });
@@ -2230,6 +2272,7 @@ router.get("/coverage/reroute-targets", ...auth, async (req, res, next) => {
       groups,
       { includeStudents: false }
     );
+    const liveContexts = (await listSupervisionContexts(schoolId, { activeOnly: true, requireComplete: true })).filter(context => isAdHocSupervisionDestination(context));
     const targets = enriched.flatMap((group) =>
       (group.staff || []).map((staff: any) => ({
         id: `${group.id}:${staff.id}`,
@@ -2240,6 +2283,9 @@ router.get("/coverage/reroute-targets", ...auth, async (req, res, next) => {
           id: staff.id,
           displayName: staff.displayName,
         },
+        activeContexts: liveContexts.filter(context => context.coverageGroupId === group.id && context.assignedStaffId === staff.id)
+          .map(context => ({ id: context.id, name: context.name, purpose: supervisionActivityPresentation(context).purpose,
+            endsAt: context.endsAt, revision: String(context.classroomAuthorityRevision) })),
       }))
     );
     return res.json({ targets, contexts: targets });
@@ -2399,6 +2445,7 @@ router.post("/coverage/contexts/:id/commands", ...auth, requireClasspilotFullMon
 
 router.post("/coverage/contexts", ...auth, async (req, res, next) => {
   try {
+    if (req.body.reviewToken !== undefined || req.body.action !== undefined) return await reviewedSupervisionMutation(req, res, "start");
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     let studentIds = normalizeStudentIds(req.body.studentIds);
@@ -2477,7 +2524,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
     });
     return res.status(201).json({ schoolId, viewerId: req.authUser!.id, context: { ...context, activeStudentCount: studentIds.length } });
   } catch (err: any) {
-    if (err?.status) return res.status(err.status).json({ error: err.message });
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
     next(err);
   }
 });
@@ -2541,6 +2588,12 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       return res.status(403).json({ error: "Only admins or assigned coverage staff can release students" });
     }
     const studentIds = normalizeStudentIds(req.body.studentIds);
+    const expectedStudentIds = req.body.expectedStudentIds === undefined ? undefined : normalizeStudentIds(req.body.expectedStudentIds);
+    if (expectedStudentIds !== undefined && (!Array.isArray(req.body.expectedStudentIds) || req.body.expectedStudentIds.length > 5000
+      || req.body.expectedStudentIds.some((id: unknown) => typeof id !== "string" || !id.trim())
+      || expectedStudentIds.length !== req.body.expectedStudentIds.length)) {
+      return res.status(400).json({ error: "expectedStudentIds must contain the exact unique student IDs shown in the release review" });
+    }
     const releaseReason = String(req.body.releaseReason || "").trim();
     if (!releaseReason) {
       return res.status(400).json({ error: "releaseReason is required" });
@@ -2557,8 +2610,12 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       contextId: context.id,
       studentIds,
       releaseReason,
-      ...(scheduledContextHasClassroomTools(context) && req.get("X-ClassPilot-Context-Authority-Revision") !== undefined ? { scheduledClassroomAuthority: { actorId: req.authUser!.id,
-        contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } } : {}),
+      staffReleaseAuthority: { actorId: req.authUser!.id, expectedStudentIds,
+        ...(req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
+          ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}) },
+      ...(scheduledContextHasClassroomTools(context) && req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
+        ? { scheduledClassroomAuthority: { actorId: req.authUser!.id,
+          contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } } : {}),
     });
     await syncClasspilotControlStatesToActiveDevices(
       schoolId,
@@ -2578,13 +2635,15 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       },
     });
     return res.json({ released });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
     next(err);
   }
 });
 
 router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
   try {
+    if (req.body.reviewToken !== undefined || req.body.action !== undefined) return await reviewedSupervisionMutation(req, res, "end_time");
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const context = await getSupervisionContextByIdAndSchool(schoolId, String(req.params.id));
@@ -2595,6 +2654,10 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
     const endsAt = req.body.endsAt ? new Date(req.body.endsAt) : undefined;
     if (endsAt && (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date())) {
       return res.status(400).json({ error: "endsAt must be in the future" });
+    }
+    if (endsAt && endsAt.getTime() !== context.endsAt.getTime()
+      && (context.scheduledConflictId || context.scheduleProfileApplicationId || context.scheduleProfileDate || context.scheduleProfileBlockId)) {
+      return res.status(409).json({ error: "This deadline is controlled by scheduling. Update the scheduled activity instead.", code: "SUPERVISION_SCHEDULED_DEADLINE" });
     }
     const assignedStaffId = isAdmin(req, res) && req.body.assignedStaffId ? String(req.body.assignedStaffId) : undefined;
     if (assignedStaffId) {
@@ -2608,6 +2671,7 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       schoolId,
       contextId: context.id,
       endsAt,
+      requireAdHocEndTime: true,
       note: req.body.note === undefined ? undefined : String(req.body.note || ""),
       assignedStaffId,
     });
@@ -2634,7 +2698,8 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       changes: updateChanges,
     });
     return res.json({ context: updated });
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message, code: err.code });
     next(err);
   }
 });

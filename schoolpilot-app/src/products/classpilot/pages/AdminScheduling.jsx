@@ -1,5 +1,5 @@
 import { createElement, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, Bell, CalendarDays, Clock3, Files, Loader2, Plus, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
@@ -10,6 +10,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
 import ScheduleProfiles from "../components/ScheduleProfiles";
+import { useAuth } from "../../../contexts/AuthContext";
+import { hasMembershipRole } from "../../../shared/utils/schoolRoles";
+import { readTestingSchedulePrefill } from "../lib/testingSchedulePrefill";
 
 const KEY = ["classpilot-school-scheduling"];
 const API = "/classpilot/admin/scheduling";
@@ -151,11 +154,26 @@ function SchedulingEditor({ initial, onDirtyChange, section, disabled }) {
 }
 
 export default function AdminScheduling() {
+  const { activeSchoolId, user } = useAuth();
+  return <SchoolAdminScheduling key={`${activeSchoolId}:${user?.id}`} />;
+}
+
+function SchoolAdminScheduling() {
+  const { activeSchoolId, user, activeMembership } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const testingPrefill = readTestingSchedulePrefill(location.state, { schoolId: activeSchoolId, actorId: user?.id,
+    isAdmin: user?.isSuperAdmin || hasMembershipRole(activeMembership, 'admin', 'school_admin') });
+  const dismissTestingPrefill = () => {
+    const { testingGroupPrefill: _prefill, ...state } = location.state || {};
+    navigate({ pathname: location.pathname, search: location.search, hash: location.hash }, { replace: true, state });
+  };
   const [section, setSection] = useState("profiles");
   const [advancedDirty, setAdvancedDirty] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileWorkspace, setProfileWorkspace] = useState(false);
-  const query = useQuery({ queryKey: KEY, queryFn: () => apiRequest("GET", API) });
+  const query = useQuery({ queryKey: [...KEY, activeSchoolId, user?.id], queryFn: ({ signal }) => apiRequest("GET", API, undefined,
+    { signal, headers: { 'X-School-Id': activeSchoolId } }), enabled: Boolean(activeSchoolId && user?.id) });
   if (query.isLoading) return <p className="flex items-center gap-2" role="status"><Loader2 className="h-4 w-4 animate-spin" />Loading school schedules…</p>;
   if (query.error) return <p role="alert" className="text-destructive">{message(query.error)}</p>;
   return query.data ? <div className="space-y-5">
@@ -172,7 +190,7 @@ export default function AdminScheduling() {
         <div className="hidden space-y-2 px-2 text-sm lg:block"><h3 className="font-medium">Swapping two classes?</h3><p className="text-xs leading-relaxed text-muted-foreground">Schedule Changes handles a one-day exchange of class times and teacher approvals.</p>{advancedDirty || profileBusy ? <p className="text-xs text-muted-foreground">Finish or discard your draft before opening Schedule Changes.</p> : <Link to="/classpilot/admin/classes/schedule-changes" className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-4">Open Schedule Changes<ArrowRight className="h-3 w-3" /></Link>}</div>
       </div>
       <div className="min-w-0">
-        <TabsContent value="profiles" forceMount className={panelClass}><ScheduleProfiles blockedByAdvancedDraft={advancedDirty} onBusyChange={setProfileBusy} onWorkspaceChange={setProfileWorkspace} /></TabsContent>
+        <TabsContent value="profiles" forceMount className={panelClass}><ScheduleProfiles blockedByAdvancedDraft={advancedDirty} onBusyChange={setProfileBusy} onWorkspaceChange={setProfileWorkspace} testingPrefill={testingPrefill} onDismissTestingPrefill={dismissTestingPrefill} /></TabsContent>
         <SchedulingEditor key={query.data.revision} initial={query.data} onDirtyChange={setAdvancedDirty} section={section} disabled={profileBusy} />
       </div>
     </Tabs>

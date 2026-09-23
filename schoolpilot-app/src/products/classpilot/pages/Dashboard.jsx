@@ -12,6 +12,7 @@ import VideoPortal from '../components/VideoPortal';
 import ScreenshotPreviewDialog from '../components/ScreenshotPreviewDialog';
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
+import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
 import ChatWorkspace from '../components/ChatWorkspace';
@@ -32,7 +33,7 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
-import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
+import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
@@ -525,6 +526,20 @@ export default function Dashboard() {
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
+  const [ownActivitySelection, setOwnActivitySelection] = useState(null);
+  const selectedOwnActivityId = ownActivitySelection?.scope === classReaderKey
+    && ownActivitySelection.transitionKey === scheduledTransitionKey ? ownActivitySelection.id : null;
+  const selectedOwnActivity = selectedOwnActivityId ? scheduledActivity?.activities?.find(activity => (
+    activity.id === selectedOwnActivityId && activity.teacherId === currentUser?.id && activity.status === 'active'
+  )) : null;
+  useEffect(() => {
+    if (!selectedOwnActivity?.endsAt) return;
+    const deadline = setTimeout(() => {
+      setOwnActivitySelection(null);
+      void refreshDashboardActivity({ cancelRefetch: true });
+    }, Math.min(2147483647, Math.max(0, Date.parse(selectedOwnActivity.endsAt) - Date.now())));
+    return () => clearTimeout(deadline);
+  }, [selectedOwnActivity?.endsAt, refreshDashboardActivity]);
   const activeSessionQueryKey = useMemo(
     () => ['/api/sessions/active', activeSchoolId, currentUser?.id],
     [activeSchoolId, currentUser?.id],
@@ -541,8 +556,6 @@ export default function Dashboard() {
   const previousAutomaticSupervisionRef = useRef(false);
   const [confirmedOwnStart, setConfirmedOwnStart] = useState(null);
   const [showRerouteDialog, setShowRerouteDialog] = useState(false);
-  const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
-  const [rerouteNote, setRerouteNote] = useState("");
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [sessionFabState, setSessionFabState] = useState(null);
@@ -889,7 +902,6 @@ export default function Dashboard() {
     }),
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id,
   });
-  const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
 
   const { data: availablePickupData = EMPTY_PICKUP_DATA } = useQuery({
     queryKey: ['/api/coverage/available-students', activeSchoolId, currentUser?.id],
@@ -899,6 +911,7 @@ export default function Dashboard() {
     select: (data) => ({
       students: data?.students || [],
       scheduledCoverageGroups: data?.scheduledCoverageGroups || [],
+      claim: data?.claim || null,
     }),
     enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && studentView === 'available',
     refetchInterval: coverageFallbackInterval,
@@ -941,16 +954,6 @@ export default function Dashboard() {
     }
   }, [classReaderKey, supervisionRosterRevision, claimedStudentsQueryKey]);
 
-  const { data: rerouteCoverageTargets = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/coverage/reroute-targets', activeSchoolId, currentUser?.id],
-    queryFn: ({ signal }) => apiRequest('GET', '/coverage/reroute-targets', undefined, {
-      signal, headers: { 'X-School-Id': activeSchoolId },
-    }),
-    select: (data) => data?.targets || data?.contexts || [],
-    enabled: staffCoverageEnabled && !!activeSchoolId && !!currentUser?.id && showRerouteDialog,
-    refetchInterval: false,
-  });
-
   // Admin observe mode logic
   const observedSession = isAdmin && adminObservedSessionId
     ? observableActivities.find(activity => activity.id === adminObservedSessionId && (!activity.endsAt || Date.parse(activity.endsAt) > Date.now()))
@@ -974,7 +977,7 @@ export default function Dashboard() {
     || (adminObservedSessionId ? deniedSelection : null);
   // A failed scoped read must not silently become an unscoped school read
   // when the parent refresh removes the ended session from its active list.
-  const scheduledAssignment = scheduledClassEnabled ? scheduledActivity?.current : null;
+  const scheduledAssignment = scheduledClassEnabled ? selectedOwnActivity || scheduledActivity?.current : null;
   const chosenActivity = useMemo(() => scheduledAssignment ? {
     ...(scheduledAssignment.authority?.teachingSessionId === activeSession?.id ? activeSession : {}),
     ...scheduledAssignment,
@@ -1301,7 +1304,8 @@ export default function Dashboard() {
         }
         if (context.session.authority?.supervisionContextId) {
           const refreshedActivity = await refreshDashboardActivity({ cancelRefetch: true, throwOnError: true });
-          const confirmed = refreshedActivity.data?.current;
+          const confirmed = refreshedActivity.data?.activities?.find(activity => activityAuthorityKey(activity) === activityAuthorityKey(context.session))
+            || refreshedActivity.data?.current;
           if (classReadContextRef.current?.authorityKey !== context.authorityKey
             || !confirmed || activityAuthorityKey(confirmed) !== activityAuthorityKey(context.session)
             || confirmed.status !== 'active') return;
@@ -1566,13 +1570,29 @@ export default function Dashboard() {
     clearStudentDetails();
   }, [classReaderKey, studentView, automaticTestingTargetKey, clearStudentDetails]);
 
-  const openOwnSupervision = useCallback((contexts = []) => {
-    if (scheduledClassEnabled && contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
+  const openOwnSupervision = useCallback(async (contexts = []) => {
+    if (contexts.some(context => context.scheduledConflictId || context.scheduleProfileApplicationId
       || ['testing', 'coverage', 'supervision'].includes(activityPurpose(context)) && context.purpose !== 'claim')) {
-      setStudentView('class');
-      void refreshDashboardActivity({ cancelRefetch: true });
+      try {
+        const refreshed = await refreshDashboardActivity({ cancelRefetch: true, throwOnError: true });
+        if (supervisionScopeRef.current !== classReaderKey) return;
+        if (refreshed.data?.enabled === false) {
+          setAdminObservedSessionId(null);
+          await showOwnSupervision(contexts);
+          return;
+        }
+        const requested = refreshed.data?.activities?.find(activity => contexts.some(context => context.id === activity.id)
+          && activity.teacherId === currentUser?.id && activity.status === 'active' && activityAuthority(activity)?.supervisionContextId);
+        if (!requested) throw new Error('This supervision is no longer available. Refresh the Supervision hub.');
+        setOwnActivitySelection({ scope: classReaderKey, id: requested.id, transitionKey: activityTransitionKey(refreshed.data.current) });
+        setAdminObservedSessionId(null);
+        setStudentView('class');
+      } catch (error) {
+        if (supervisionScopeRef.current === classReaderKey) toast({ variant: 'destructive', title: 'Could not open supervision', description: error.response?.data?.error || error.message });
+      }
       return;
     }
+    setOwnActivitySelection(null);
     if (contexts.length) setConfirmedOwnStart({ scopeKey: classReaderKey, baselineUpdatedAt: claimedStudentsUpdatedAt });
     setAdminObservedSessionId(null);
     setSelectedStudentIds(new Set());
@@ -1590,18 +1610,39 @@ export default function Dashboard() {
         focusSupervisionNoticeRef.current = false;
       }
     });
-  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision, scheduledClassEnabled, setStudentView, refreshDashboardActivity, setAdminObservedSessionId]);
+  }, [claimedStudentsQueryKey, claimedStudentsUpdatedAt, classReaderKey, clearStudentDetails, showOwnSupervision, setStudentView, refreshDashboardActivity, setAdminObservedSessionId, currentUser?.id, toast]);
 
   useEffect(() => {
-    if (!activeSchoolId || !currentUser?.id || !hasSupervisionDashboardIntent(location.state)) return;
+    // Establish the first scheduled boundary before consuming a navigation
+    // choice; initial hydration must not erase an explicit Claimed/Open choice.
+    if (!activeSchoolId || !currentUser?.id || dashboardActivityLoading || !hasSupervisionDashboardIntent(location.state)) return;
     const intent = consumeSupervisionDashboardIntent(location.state, {
-      schoolId: activeSchoolId, viewerId: currentUser.id,
+      schoolId: activeSchoolId, viewerId: currentUser.id, isAdmin,
     });
     navigate(`${location.pathname}${location.search}${location.hash}`, {
       replace: true, state: withoutSupervisionDashboardIntent(location.state),
     });
-    if (intent) openOwnSupervision(intent.contexts);
-  }, [activeSchoolId, currentUser?.id, location, navigate, openOwnSupervision]);
+    if (!intent) return;
+    if (intent.mode === 'observe' && isAdmin && activityAuthority(intent.activity)) {
+      // Keep the requested authority visible even if it has ended. The normal
+      // activity and roster reads reauthorize it and fail closed, never fallback.
+      setAdminObservation({ scopeKey: classReaderKey, activity: intent.activity });
+      setOwnActivitySelection(null);
+      setStudentView('class');
+      setSelectedStudentIds(new Set());
+      setSelectedServerSignOutStudentIds(new Set());
+      setSelectedStudentBindingSnapshots(new Map());
+      setSelectedSubgroupId('');
+      setSearchQuery('');
+      clearStudentDetails();
+      void refreshObservableActivities();
+    } else if (intent.view) {
+      setOwnActivitySelection(null);
+      setAdminObservedSessionId(null);
+      setStudentView(intent.view);
+      if (intent.view === 'claimed') void queryClient.resetQueries({ queryKey: claimedStudentsQueryKey, exact: true });
+    } else if (intent.contexts) openOwnSupervision(intent.contexts);
+  }, [activeSchoolId, currentUser?.id, dashboardActivityLoading, location, navigate, openOwnSupervision, isAdmin, classReaderKey, setStudentView, clearStudentDetails, refreshObservableActivities, setAdminObservedSessionId, claimedStudentsQueryKey]);
 
   useEffect(() => {
     if (automaticallyShowingSupervision && focusSupervisionNoticeRef.current) {
@@ -2776,6 +2817,7 @@ export default function Dashboard() {
     if (view === 'claimed' && studentView !== 'claimed') {
       void queryClient.resetQueries({ queryKey: claimedStudentsQueryKey, exact: true });
     }
+    setOwnActivitySelection(null);
     setStudentView(view);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
@@ -2786,6 +2828,7 @@ export default function Dashboard() {
     const sessionId = event.target.value || null;
     const activity = observableActivities.find(candidate => candidate.id === sessionId);
     setAdminObservation(activity ? { scopeKey: classReaderKey, activity } : null);
+    setOwnActivitySelection(null);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -4846,38 +4889,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
-  const rerouteMutation = useMutation({
-    retry: false,
-    mutationFn: async ({ targetId, studentIds, note, scope }) => {
-      const target = rerouteCoverageTargets.find((entry) => entry.id === targetId);
-      if (!target) throw new Error("Choose where to send these students.");
-      return apiRequest('POST', '/coverage/send', {
-        supervisionGroupId: target.supervisionGroupId,
-        assignedStaffId: target.assignedStaffId,
-        studentIds,
-        note,
-      }, { headers: { 'X-School-Id': scope.schoolId } });
-    },
-    onSuccess: (_result, variables) => {
-      if (supervisionScopeRef.current !== variables.scope.key) return;
-      queryClient.invalidateQueries({ queryKey: summaryQueryKey, exact: true });
-      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/coverage/reroute-targets'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
-      setShowRerouteDialog(false);
-      setSelectedCoverageContextId("");
-      setRerouteNote("");
-      clearSelection();
-      toast({ title: "Students sent", description: "Selected students were assigned to supervision." });
-    },
-    onError: (error, variables) => {
-      if (supervisionScopeRef.current !== variables.scope.key) return;
-      toast({ variant: "destructive", title: "Could not send students", description: error.response?.data?.error || error.message });
-    },
-  });
-
   const returnToClassMutation = useMutation({
     retry: false,
     mutationFn: async ({ studentIds, scope }) => apiRequest('POST', '/coverage/return-to-class', { studentIds }, { headers: { 'X-School-Id': scope.schoolId } }),
@@ -4927,32 +4938,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const handleStartScheduledConflict = (conflictId) => {
     if (dashboardCapabilities.observedOtherClass) return;
     startScheduledConflictMutation.mutate(conflictId);
-  };
-
-  const handleRerouteSelected = () => {
-    if (dashboardCapabilities.observedOtherClass) return;
-    try {
-      assertClassroomCommandSelectionIsolation(
-        'coverage-reroute',
-        selectedServerSignOutStudentIds.size,
-      );
-    } catch (error) {
-      toast({ variant: "destructive", title: "Clear sign-out selection", description: error.message });
-      return;
-    }
-    const studentIds = Array.from(selectedStudentIds);
-    if (studentIds.length === 0) {
-      toast({ variant: "destructive", title: "Select students first" });
-      return;
-    }
-    if (!selectedCoverageContextId) {
-      toast({ variant: "destructive", title: "Choose where to send them" });
-      return;
-    }
-    rerouteMutation.mutate({
-      targetId: selectedCoverageContextId, studentIds, note: rerouteNote.trim(),
-      scope: { key: classReaderKey, schoolId: activeSchoolId },
-    });
   };
 
   const handleReturnToClass = (student) => {
@@ -6126,9 +6111,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             pickupView={studentView}
             showCoverageRail={!dashboardCapabilities.observedOtherClass}
             onPickupViewChange={dashboardCapabilities.observedOtherClass ? undefined : handleStudentViewChange}
-            onOpenCoverage={!dashboardCapabilities.observedOtherClass && canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
-            canReroute={(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive}
-            onReroute={(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
+            onOpenCoverage={!dashboardCapabilities.observedOtherClass ? () => navigate("/classpilot/coverage?tab=live") : undefined}
+            canReroute={(dashboardCapabilities.ownedClassSession || isAdmin && dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive}
+            onReroute={(dashboardCapabilities.ownedClassSession || isAdmin && dashboardCapabilities.scheduledSupervision) && !nonRestrictionSelectionActive ? () => setShowRerouteDialog(true) : undefined}
             canViewHistoricalTelemetry={isAdmin || isTeacher}
           />
         )}
@@ -6411,7 +6396,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
         {studentView === 'claimed' && !dashboardCapabilities.observedOtherClass ? (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3" data-testid="claimed-students-controls">
-            <h2 className="text-lg font-semibold">Claimed students</h2>
+            <div><h2 className="text-lg font-semibold">Claimed students</h2>
+              <p className="text-sm text-muted-foreground">Supervisor: {currentUser?.displayName}</p>
+              {[...new Map(claimedPickupStudents.filter(student => student.contextEndsAt).map(student => [student.contextId, student])).values()].map(student => (
+                <p key={student.contextId} className="text-sm text-muted-foreground">{student.contextName || 'Claimed students'} · ends {new Date(student.contextEndsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.timezone || 'America/New_York' })}</p>
+              ))}
+            </div>
             <Button variant="outline" disabled={!claimedPickupStudents.length || claimedStudentsQueryError || releaseClaimMutation.isPending}
               onClick={() => releaseClaimMutation.mutate({ students: claimedPickupStudents, scope: classReaderKey })}>Release all</Button>
           </div>
@@ -6423,6 +6413,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <div>
                 <h2 className="text-lg font-semibold">Available students</h2>
                 <p className="text-sm text-muted-foreground">Online students from your supervision permissions who are not in an active class.</p>
+                {availablePickupData.claim?.endsAt && <p className="mt-1 text-sm" data-testid="quick-claim-deadline">Claim to {availablePickupData.claim.supervisorName || currentUser?.displayName} · ends {new Date(availablePickupData.claim.endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: school?.timezone || 'America/New_York' })}. Adding students keeps the current deadline.</p>}
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -7186,47 +7177,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showRerouteDialog} onOpenChange={setShowRerouteDialog}>
-        <DialogContent data-testid="dialog-reroute-students">
-          <DialogHeader>
-            <DialogTitle>Send Students</DialogTitle>
-            <DialogDescription>Assign {selectedStudentIds.size} selected student{selectedStudentIds.size === 1 ? "" : "s"} to a Supervision Group and staff member.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Send to</Label>
-              <Select value={selectedCoverageContextId} onValueChange={setSelectedCoverageContextId}>
-                <SelectTrigger data-testid="select-coverage-context"><SelectValue placeholder="Select destination" /></SelectTrigger>
-                <SelectContent>
-                  {rerouteCoverageTargets.length === 0 ? (
-                    <SelectItem value="none" disabled>No Supervision Groups with assigned staff</SelectItem>
-                  ) : rerouteCoverageTargets.map((target) => (
-                    <SelectItem key={target.id} value={target.id}>
-                      {target.name} · {target.assignedStaff?.displayName || "Staff"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Note</Label>
-              <Textarea
-                value={rerouteNote}
-                onChange={(e) => setRerouteNote(e.target.value)}
-                placeholder="State testing, office check-in, support block"
-                data-testid="textarea-reroute-note"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowRerouteDialog(false); setRerouteNote(""); }}>Cancel</Button>
-            <Button onClick={handleRerouteSelected} disabled={rerouteMutation.isPending || !selectedCoverageContextId || selectedCoverageContextId === "none"} data-testid="button-confirm-reroute">
-              <ClipboardCheck className="h-4 w-4 mr-2" />
-              Send
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {showRerouteDialog && !dashboardCapabilities.observedOtherClass && (
+        <SupervisionSessionDialog open action="send" onOpenChange={setShowRerouteDialog}
+          students={selectedStudentRoster.filter(student => selectedStudentIds.has(student.studentId))}
+          onSuccess={(result) => {
+            clearSelection();
+            if (result?.uncertain) toast({ title: 'Supervision refreshed', description: 'Check current student assignments before sending again.' });
+          }} />
+      )}
 
       <Dialog open={showSignOutDialog} onOpenChange={setShowSignOutDialog}>
         <DialogContent data-testid="dialog-sign-out-students">

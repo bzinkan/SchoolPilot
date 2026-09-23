@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,13 @@ const extensionRepo = resolve(process.env.CLASSPILOT_REPO_PATH || resolve(root, 
 const execFileAsync = promisify(execFile);
 const extensionRef = (await execFileAsync('git', ['-C', extensionRepo, 'rev-parse', 'HEAD'])).stdout.trim();
 const extensionChanges = (await execFileAsync('git', ['-C', extensionRepo, 'status', '--porcelain', '--', 'extension'])).stdout.trim();
-assert.equal(extensionRef, 'ccaf2c8d1b0df3aa1f8ea74754e457990a74498a', 'capture contract must run against the pinned 2.9.3 runtime');
+const releasedRuntimes = {
+  '676c715b39007bbddd640f743c652cfd9d32eeeb': '2.9.2',
+  'ccaf2c8d1b0df3aa1f8ea74754e457990a74498a': '2.9.3',
+};
+assert.ok(releasedRuntimes[extensionRef], 'capture contract must run against a pinned released 2.9.2 or 2.9.3 runtime');
+const extensionVersion = JSON.parse(await readFile(join(extensionRepo, 'extension/manifest.json'), 'utf8')).version;
+assert.equal(extensionVersion, releasedRuntimes[extensionRef]);
 assert.equal(extensionChanges, '', 'capture runtime must match its clean pinned source');
 const frontendRequire = createRequire(join(root, 'schoolpilot-app/package.json'));
 const { chromium } = frontendRequire('playwright');
@@ -327,7 +333,7 @@ try {
 } finally {
   clearTimeout(watchdog);
   await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify({ completedScenarios: evidence, uploadOutcomes: uploads,
-    extensionRef, extensionChanges,
+    extensionRef, extensionVersion, extensionChanges,
     transport: 'actual server hint bridged to existing extension handler; real HTTP heartbeat/upload/read; native browser capture',
   }, null, 2));
   await writeFile(join(evidencePath, 'worker.log'), workerLog.join('\n'));

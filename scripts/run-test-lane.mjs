@@ -29,6 +29,7 @@ const DB_SERIAL = new Set([
   "classpilot-fab-sync-pending.integration.test.ts",
   "classpilot-coverage-directory.integration.test.ts",
   "classpilot-coverage-deletion.integration.test.ts",
+  "classpilot-supervision-review.integration.test.ts",
   "classpilot-portal-first-login.integration.test.ts",
   "classpilot-schedule-profile-validation.integration.test.ts",
   "classpilot-schedule-profile-supervision.integration.test.ts",
