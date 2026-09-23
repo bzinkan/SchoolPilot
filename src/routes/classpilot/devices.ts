@@ -866,7 +866,7 @@ function publicScreenshotData(data: ScreenshotData) {
     ...(data.tabTitle !== undefined ? { tabTitle: data.tabTitle } : {}),
     ...(data.tabUrl !== undefined ? { tabUrl: data.tabUrl } : {}),
     ...(data.tabFavicon !== undefined ? { tabFavicon: data.tabFavicon } : {}),
-    ...(data.bindingVersion?.startsWith("v2:")
+    ...((data.bindingVersion?.startsWith("v2:") || data.bindingVersion?.startsWith("v3:"))
       ? { bindingVersion: data.bindingVersion }
       : {}),
   };

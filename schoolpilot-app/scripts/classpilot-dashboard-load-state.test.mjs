@@ -5331,6 +5331,83 @@ test('ordinary claims from an inactive testing group open neutral Claimed and pr
   assert.deepEqual(harness.pageErrors, []);
 });
 
+test('Available scheduled Claim opens owner Coverage and renders only independently stamped V3 wire frames', { timeout: 75_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  const now = new Date('2026-09-15T13:11:30Z');
+  await page.clock.setFixedTime(now);
+  const regular = scheduledClassActivity({ teacherId: ADMIN_ID, endsAt: '2026-09-15T14:00:00Z' });
+  const claimed = scheduledTestingActivity({ source: 'scheduled_coverage', purpose: 'coverage',
+    name: 'Scheduled Supervision: Grade 6 SS', teacherId: ADMIN_ID, studentCount: 2 });
+  const conflictId = 'scheduled-coverage-conflict';
+  const claimContext = { id: claimed.id, name: claimed.name, purpose: 'coverage', contextType: 'supervision_group',
+    assignedStaffId: ADMIN_ID, scheduledConflictId: conflictId, startsAt: claimed.startsAt, endsAt: claimed.endsAt };
+  const roster = [STUDENT_ID, SIGNED_OUT_STUDENT_ID].map((studentId, index) => student({
+    studentId, studentName: `Coverage student ${index + 1}`, extensionVersion: '2.9.2',
+    lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString(), realtimeBinding: `coverage-binding-${index}`,
+    classroomState: { revision: 387, supervisionContextId: claimed.id },
+    acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true, screenshotActiveObservationCadenceV1: true },
+    screenshotHealth: { alarmActive: true, lastErrorAt: 0, lastSuccessAt: now.getTime() },
+    supervisionState: 'temporary_coverage', supervisionContext: { id: claimed.id, type: 'supervision_group', assignedStaffId: ADMIN_ID },
+  }));
+  const available = roster.map(row => ({ ...row, supervisionState: 'available', supervisionContext: null,
+    matchingScheduledCoverage: { id: conflictId, className: 'Grade 6 SS', teacherName: 'Scheduled teacher' } }));
+  const aggregate = aggregateController({ scoped: success([]) });
+  // These are raw API responses. Do not repair a missing screenshot stamp by
+  // copying the outer bindingVersion into it: that hid a production serializer bug.
+  const unstampedWireResponse = { tiles: roster.map(row => ({ studentId: row.studentId,
+    bindingVersion: `v3:coverage-${row.studentId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: now.toISOString(), tabTitle: 'Coverage work',
+    } })) };
+  const stampedWireResponse = { tiles: roster.map(row => ({ studentId: row.studentId,
+    bindingVersion: `v3:coverage-${row.studentId}`, screenshot: {
+      screenshot: TINY_SCREENSHOT_DATA_URL, timestamp: now.toISOString(), tabTitle: 'Coverage work',
+      bindingVersion: `v3:coverage-${row.studentId}`,
+    } })) };
+  let wireResponse = unstampedWireResponse;
+  let harness;
+  harness = await configureDashboard(page, { aggregate, userRole: 'admin', activeSession: teachingSession(),
+    acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(regular, { serverTime: now.toISOString() }),
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+    screenshotTiles: () => wireResponse,
+    claimResponse: request => {
+      assert.deepEqual(request.postDataJSON(), { scheduledConflictId: conflictId, studentIds: roster.map(row => row.studentId) });
+      aggregate.setScopedResponse(success(roster));
+      harness.setDashboardActivity({ ...scheduledActivityResponse(claimed, { serverTime: now.toISOString() }), activities: [claimed, regular] });
+      return { context: claimContext };
+    },
+  });
+  await page.route('**/api/coverage/available-students', route => route.fulfill({ json: { students: [], scheduledCoverageGroups: [{
+    id: conflictId, className: 'Grade 6 SS', label: 'Scheduled Supervision Needed: Grade 6 SS', students: available,
+  }] } }));
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('button-view-available-students').click();
+  await page.getByTestId(`button-claim-scheduled-coverage-${conflictId}`).click();
+  await assertPickupView(page, 'class');
+  await page.getByRole('button', { name: 'End coverage', exact: true }).waitFor();
+  for (const row of roster) {
+    await page.getByTestId(`screenshot-stale-${row.studentId}`).getByText('Preview delayed', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId(`screenshot-${row.studentId}`).count(), 0,
+      'An unstamped raw V3 payload must remain private even though its outer row is authorized');
+  }
+  assert.ok(harness.observationLeaseRequests.some(request => request.method === 'PUT'
+    && request.pathname.includes(claimed.id) && request.contextAuthorityRevision === '0'));
+  const screenshotRequests = () => harness.tileRequests.filter(request => request.pathname.endsWith('/screenshots'));
+  assert.ok(screenshotRequests().length > 0);
+  assert.ok(screenshotRequests().every(request => request.body.supervisionContextId === claimed.id
+    && !request.body.teachingSessionId && request.contextAuthorityRevision === '0'));
+  wireResponse = stampedWireResponse;
+  await harness.authenticateWebSocket();
+  for (const row of roster) await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
+    supervisionContextId: claimed.id, contextAuthorityRevision: '0', studentId: row.studentId });
+  for (const row of roster) {
+    await page.getByTestId(`screenshot-${row.studentId}`).waitFor();
+    assert.equal(await page.getByTestId(`screenshot-${row.studentId}`).getAttribute('src'), TINY_SCREENSHOT_DATA_URL);
+  }
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('administrator Observe renders revision-bound previews for active testing and claimed groups without controls', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();

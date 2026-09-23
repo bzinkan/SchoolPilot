@@ -202,6 +202,15 @@ const supervisionBindingCases = indexTileScreenshots({
       bindingVersion: 'v3:supervision-binding',
       screenshot: { screenshot: 'class-pixel', bindingVersion: 'v2:class-binding' },
     },
+    {
+      studentId: 'missing-screenshot-v3',
+      bindingVersion: 'v3:supervision-binding',
+      screenshot: { screenshot: 'unstamped-supervision-pixel' },
+    },
+    {
+      studentId: 'missing-row-v3',
+      screenshot: { screenshot: 'supervision-pixel', bindingVersion: 'v3:supervision-binding' },
+    },
   ],
 });
 assert.deepEqual(
@@ -218,6 +227,10 @@ assert.equal(
   null,
   'a class-bound pixel must never satisfy a supervision-bound row',
 );
+assert.equal(supervisionBindingCases.get('missing-screenshot-v3'), null,
+  'the transport must preserve the stored v3 stamp; the UI must not invent it from the outer row');
+assert.equal(supervisionBindingCases.get('missing-row-v3'), null,
+  'a v3 screenshot also requires an independently authorized row stamp');
 
 assert.deepEqual(
   removeLegacyScreenshotsFromTileBatchData({
