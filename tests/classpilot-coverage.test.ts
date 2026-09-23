@@ -3831,7 +3831,17 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await requestJson("POST", `/coverage/contexts/${manualContext.id}/release`, { releaseReason: "test_release" }, adminAuth);
   });
 
-  it("fences release-all to the reviewed roster and supervisor while legacy releases recheck current ownership", async () => {
+  it("fences release-all to the reviewed roster and supervisor while legacy releases recheck current ownership", async (t) => {
+    const previousMode = process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
+    const previousExclusions = process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+    process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = "on";
+    delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+    t.after(() => {
+      if (previousMode === undefined) delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
+      else process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = previousMode;
+      if (previousExclusions === undefined) delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+      else process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS = previousExclusions;
+    });
     const pupils = await inSchool(school.id, async () => [
       await createStudent({ schoolId: school.id, firstName: "Release", lastName: "First", status: "active" }),
       await createStudent({ schoolId: school.id, firstName: "Release", lastName: "Later", status: "active" }),
@@ -3860,7 +3870,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const active = await inSchool(school.id, () => db.execute(sql`SELECT student_id FROM classpilot_supervision_students WHERE context_id=${context.id} AND released_at IS NULL`));
     assert.deepEqual(active.rows.map(row => row.student_id).sort(), [...currentIds].sort(), "denied release must not change either assignment");
     const currentHeaders = { ...headers, "X-ClassPilot-Context-Authority-Revision": String(reassigned.body.context.classroomAuthorityRevision) };
-    const released = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { ...reviewed, expectedStudentIds: currentIds }, currentHeaders);
+    const observedAdmin = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { ...reviewed, expectedStudentIds: currentIds }, currentHeaders);
+    assert.equal(observedAdmin.status, 404, JSON.stringify(observedAdmin.body));
+    assert.equal(observedAdmin.body.code, "CLASSROOM_ACTIVITY_UNAVAILABLE", "revision-bound Observe must not gain owner controls");
+    const released = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { ...reviewed, expectedStudentIds: currentIds }, {
+      ...authFor(coverageStaff, school.id), "X-ClassPilot-Context-Authority-Revision": currentHeaders["X-ClassPilot-Context-Authority-Revision"],
+    });
     assert.equal(released.status, 200, JSON.stringify(released.body));
     assert.equal(released.body.released.length, 2);
   });

@@ -2613,6 +2613,9 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
       staffReleaseAuthority: { actorId: req.authUser!.id, expectedStudentIds,
         ...(req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
           ? { contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } : {}) },
+      ...(scheduledContextHasClassroomTools(context) && req.get("X-ClassPilot-Context-Authority-Revision") !== undefined
+        ? { scheduledClassroomAuthority: { actorId: req.authUser!.id,
+          contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")) } } : {}),
     });
     await syncClasspilotControlStatesToActiveDevices(
       schoolId,

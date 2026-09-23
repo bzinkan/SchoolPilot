@@ -353,7 +353,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
       setReleaseReason("returned_to_class");
       toast({ title: "Students released" });
     },
-    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not release coverage", description: error.message }); },
+    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not end supervision", description: error.response?.data?.error || error.message }); },
     onSettled: () => { operationalBusy.current = false; },
   });
 
