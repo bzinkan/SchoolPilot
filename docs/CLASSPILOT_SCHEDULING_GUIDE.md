@@ -14,6 +14,12 @@ Open **Class Management → Scheduling**. Its three sections separate special sc
 
 **Bell profiles** and **schedule profiles** do different jobs. A bell profile is a timetable for named periods; only classes linked to those periods follow it. A schedule profile is a reusable plan that you apply to dates; it can change fixed-time classes, period-based classes and optional testing supervision. Saving a schedule profile alone does not activate anything, and it does not repeat automatically each week.
 
+In **Supervision**, distinguish three things: a **Saved roster** is reusable membership, **Authorized staff** is permission to supervise, and **Live now** is an actual session with participants and an end time. **Enabled/Disabled** describes saved-group availability. Neither saving a group nor authorizing staff starts testing. **Start session** defaults to ordinary Supervision and reviews exact participants, staff, purpose and end time.
+
+**Scheduled** shows actual applied testing blocks and existing scheduled-class coverage records for the selected school-local date; it defaults to today. Teachers see their own or assigned records, while administrators see the school. Saved profiles without applied dates do not appear as scheduled occurrences. Upcoming, active, ended, cancelled, failed and missed states remain distinct. Generic supervision continues to start manually.
+
+Administrators can choose **Schedule testing** on a saved group, then **Open testing draft** in School scheduling. The shortcut is bound to the current school and signed-in administrator and rechecks current group/staff information. It creates an unsaved testing-only draft with no application dates and no inferred times. Review the assigned staff, enter times, save the profile, then preview and apply dates explicitly. An existing profile, bell or calendar draft is never replaced by the shortcut.
+
 ## Set up the everyday schedule
 
 1. In **Bells & rotation**, add your periods, such as Period 1 and Period 2. This enables **Add bell profile**.

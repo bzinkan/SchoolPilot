@@ -24138,7 +24138,9 @@ export async function assignAdHocSupervisionStudents(options: {
     }
     if (existing) {
       const context = await extendSupervisionContext({ schoolId: options.schoolId, contextId: existing.id,
-        endsAt: existing.endsAt < options.endsAt ? options.endsAt : existing.endsAt,
+        // Adding students is not consent to extend everyone else's session.
+        // A separate reviewed end-time action owns changes to this deadline.
+        endsAt: existing.endsAt,
         note: options.note || existing.note || null, coverageAssignmentReview: options.coverageAssignmentReview }, database);
       if (!context) throw new CoverageDeletionError("This supervision has ended. Refresh before trying again.", "COVERAGE_CONTEXT_EXPIRED", 409);
       const assignments = await assignStudentsToSupervisionContext({ schoolId: options.schoolId, contextId: context.id,
@@ -24728,6 +24730,7 @@ export async function releaseSupervisionStudents(options: {
   studentIds?: string[];
   releaseReason?: string;
   scheduledClassroomAuthority?: { actorId: string; contextAuthorityRevision: string };
+  staffReleaseAuthority?: { actorId: string; contextAuthorityRevision?: string; expectedStudentIds?: string[] };
 }, dbInstance: typeof db = db): Promise<ClasspilotSupervisionStudent[]> {
   const conditions: SQL[] = [
     eq(classpilotSupervisionStudents.schoolId, options.schoolId),
@@ -24749,6 +24752,31 @@ export async function releaseSupervisionStudents(options: {
       releasing.map((row) => row.studentId),
       tx as unknown as typeof db
     );
+    if (options.staffReleaseAuthority) {
+      const authority = options.staffReleaseAuthority;
+      const [context] = await tx.select().from(classpilotSupervisionContexts).where(and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.id, options.contextId))).limit(1);
+      if (!context) throw new CoverageDeletionError("Supervision context is unavailable. Refresh before releasing students.", "SUPERVISION_AUTHORITY_CHANGED", 409);
+      if (authority.contextAuthorityRevision !== undefined) assertScheduledClassroomAuthorityRevision(context, authority.contextAuthorityRevision);
+      const [actor] = await tx.select({ isSuperAdmin: users.isSuperAdmin }).from(users).where(eq(users.id, authority.actorId));
+      const memberships = await tx.select({ role: schoolMemberships.role }).from(schoolMemberships).where(and(
+        eq(schoolMemberships.schoolId, options.schoolId), eq(schoolMemberships.userId, authority.actorId), eq(schoolMemberships.status, "active")));
+      const admin = actor?.isSuperAdmin === true || memberships.some(row => ["admin", "school_admin"].includes(row.role));
+      if (!admin && !memberships.some(row => ["teacher", "office_staff"].includes(row.role))) {
+        throw new CoverageDeletionError("Active school staff access is required.", "SUPERVISION_RELEASE_FORBIDDEN", 403);
+      }
+      if (!admin && context.assignedStaffId !== authority.actorId) {
+        throw new CoverageDeletionError("The supervisor changed. Refresh before releasing students.", "SUPERVISION_AUTHORITY_CHANGED", 409);
+      }
+      if (authority.expectedStudentIds !== undefined) {
+        const roster = await tx.select({ studentId: classpilotSupervisionStudents.studentId }).from(classpilotSupervisionStudents).where(and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId), eq(classpilotSupervisionStudents.contextId, options.contextId), isNull(classpilotSupervisionStudents.releasedAt)));
+        const expected = [...new Set(authority.expectedStudentIds)].sort();
+        if (!isDeepStrictEqual(expected, roster.map(row => row.studentId).sort())) {
+          throw new CoverageDeletionError("The supervised students changed. Review the current session before releasing everyone.", "SUPERVISION_ROSTER_CHANGED", 409);
+        }
+      }
+    }
     if (options.scheduledClassroomAuthority) {
       await assertClasspilotEntitled(options.schoolId, tx as unknown as typeof db, { lock: true });
       await requireScheduledClassroomContext({ schoolId: options.schoolId, supervisionContextId: options.contextId,
@@ -24808,6 +24836,7 @@ export async function extendSupervisionContext(options: {
   schoolId: string;
   contextId: string;
   endsAt?: Date;
+  requireAdHocEndTime?: boolean;
   note?: string | null;
   assignedStaffId?: string;
   coverageGroupId?: string | null;
@@ -24832,7 +24861,10 @@ export async function extendSupervisionContext(options: {
     if (!lifecycleLocked) return undefined;
     await assertCoverageAssignmentReview(tx, options.schoolId, options.coverageAssignmentReview);
     const [currentContext] = await tx
-      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId, coverageGroupId: classpilotSupervisionContexts.coverageGroupId })
+      .select({ assignedStaffId: classpilotSupervisionContexts.assignedStaffId, coverageGroupId: classpilotSupervisionContexts.coverageGroupId,
+        endsAt: classpilotSupervisionContexts.endsAt, scheduledConflictId: classpilotSupervisionContexts.scheduledConflictId,
+        scheduleProfileApplicationId: classpilotSupervisionContexts.scheduleProfileApplicationId,
+        scheduleProfileDate: classpilotSupervisionContexts.scheduleProfileDate, scheduleProfileBlockId: classpilotSupervisionContexts.scheduleProfileBlockId })
       .from(classpilotSupervisionContexts)
       .where(and(
         eq(classpilotSupervisionContexts.schoolId, options.schoolId),
@@ -24842,6 +24874,10 @@ export async function extendSupervisionContext(options: {
       ))
       .limit(1);
     if (!currentContext) return undefined;
+    if (options.requireAdHocEndTime && options.endsAt && options.endsAt.getTime() !== currentContext.endsAt.getTime()
+      && (currentContext.scheduledConflictId || currentContext.scheduleProfileApplicationId || currentContext.scheduleProfileDate || currentContext.scheduleProfileBlockId)) {
+      throw new CoverageDeletionError("This deadline is controlled by scheduling. Update the scheduled activity instead.", "SUPERVISION_SCHEDULED_DEADLINE", 409);
+    }
     const groupId = options.coverageGroupId === undefined ? currentContext.coverageGroupId : options.coverageGroupId;
     if (groupId) await assertCoverageScopeGroupExists(tx, options.schoolId, groupId);
     await assertActiveSchoolStaffMembership(

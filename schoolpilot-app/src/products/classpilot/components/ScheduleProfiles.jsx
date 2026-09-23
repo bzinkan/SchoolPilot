@@ -12,6 +12,7 @@ import ScheduleAfterTesting from './ScheduleAfterTesting';
 import ScheduleProfilesOverview from './ScheduleProfilesOverview';
 import { cancellationState, historyRemovalState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
 import { useScheduleProfileDraftReview } from './useScheduleProfileDraftReview';
+import { testingGroupDraft } from '../lib/testingSchedulePrefill';
 
 const API = '/classpilot/admin/schedule-profiles';
 const KEY = ['classpilot-schedule-profiles'];
@@ -43,7 +44,7 @@ const testingStatusReasons = {
   SCHEDULE_PROFILE_FROZEN_ROSTER_UNAVAILABLE: 'A class session has an incomplete saved roster. Resolve that session before assigning its teacher to testing.',
   SCHEDULE_PROFILE_CLASS_WINDOW_UNAVAILABLE: 'A related class has an unresolved schedule. Review its period, calendar mapping or approved schedule change.',
   SCHEDULE_PROFILE_VALIDATION_LIMIT: 'The testing selection is too large to validate. Narrow the selection before scheduling another application.',
-  ACTIVATION_FAILED: 'Testing supervision could not start. Review the schedule and Coverage setup.',
+  ACTIVATION_FAILED: 'Testing supervision could not start. Review the schedule and Supervision setup.',
 };
 function applicationStatus(application, today) {
   if (application.status === 'cancelled') return 'Cancelled';
@@ -122,7 +123,7 @@ export default function ScheduleProfiles(props) {
   return <SchoolScheduleProfiles key={`${activeSchoolId}:${user?.id}`} {...props} />;
 }
 
-function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, onWorkspaceChange }) {
+function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, onWorkspaceChange, testingPrefill, onDismissTestingPrefill }) {
   const client = useQueryClient();
   const { activeSchoolId, user } = useAuth();
   const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: async ({ signal }) => { const overviewRequestStartedAt = performance.now(); const result = await apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }); return { ...result, overviewRequestStartedAt, overviewReceivedAt: performance.now() }; }, refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
@@ -250,7 +251,8 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const refresh = async (scheduleChanged = false) => {
     await Promise.all([client.invalidateQueries({ queryKey: KEY }, { throwOnError: true }), ...(scheduleChanged ? [client.invalidateQueries({ queryKey: ['classpilot-school-scheduling'] }, { throwOnError: true }), client.invalidateQueries({ queryKey: ['classpilot-admin-classes'] }, { throwOnError: true })] : [])]);
   };
-  const open = (mode, profile, duplicate = false) => {
+  const open = (mode, profile, duplicate = false, prefill = null) => {
+    if (prefill && (session || blockedByAdvancedDraft)) return;
     openerRef.current = document.activeElement;
     listScroll.current = window.scrollY;
     return execute(async () => {
@@ -259,13 +261,15 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       if (!mounted.current) return;
       const latestProfile = profile ? catalog.profiles.find(row => row.id === profile.id) : null;
       if (profile && !latestProfile) throw new Error('This profile is no longer available. Refresh the profile list.');
-      const definition = latestProfile ? copy(latestProfile.definition) : blankDefinition();
+      const definition = prefill ? testingGroupDraft(catalog, prefill.groupId) : latestProfile ? copy(latestProfile.definition) : blankDefinition();
       if (duplicate) definition.name = copyName(definition.name, ' (copy)');
       const dates = mode === 'apply' && catalog.schoolLocalToday ? [catalog.schoolLocalToday] : [];
       const previewDate = latestProfile?.previewDate || catalog.schoolLocalToday;
       editGroup.current = null;
-      setSession({ id: crypto.randomUUID(), mode, profile: duplicate ? null : latestProfile, definition, original: JSON.stringify(definition), revision: catalog.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !latestProfile, referenceDate: previewDate, initialPreviewDate: previewDate, plannerFilters: { view: 'school', grade: 'all', classId: 'all', teacher: 'all', search: '', conflictsOnly: false }, collapsedGrades: [], activeTarget: null, focusTarget: { heading: true }, undo: [] });
+      const target = prefill ? { blockId: definition.testingBlocks[0].id } : null;
+      setSession({ id: crypto.randomUUID(), mode, profile: duplicate ? null : latestProfile, definition, original: JSON.stringify(prefill ? blankDefinition() : definition), revision: catalog.revision, dates, initialDates: dates.join(','), customize: false, setup: mode === 'edit' && !latestProfile && !prefill, referenceDate: previewDate, initialPreviewDate: previewDate, plannerFilters: { view: 'school', grade: 'all', classId: 'all', teacher: 'all', search: '', conflictsOnly: false }, collapsedGrades: [], activeTarget: target, focusTarget: target || { heading: true }, undo: [] });
       setNewName(copyName(definition.name, ' (custom)')); setOneDate(''); setRangeStart(''); setRangeEnd(''); setPreview(null); setError(''); setNotice('');
+      if (prefill) onDismissTestingPrefill?.();
     });
   };
   const close = () => {
@@ -581,7 +585,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     {session.mode !== 'apply' && session.profile && <Button disabled={blockedByAdvancedDraft || reusableDirty} onClick={chooseDates}>Choose dates & apply</Button>}
     {session.mode === 'apply' && <><Button variant="outline" disabled={blockedByAdvancedDraft} onClick={review}>{busy ? 'Working…' : 'Preview application'}</Button>{preview && <Button disabled={!preview.previewToken || (preview.blockers || EMPTY).length > 0 || blockedByAdvancedDraft || existingApplicationsPending} onClick={apply}>Apply reviewed dates</Button>}</>}
   </fieldset>;
-  return <div data-testid="schedule-profiles"><Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-60 flex-1 space-y-1.5"><CardTitle ref={listHeading} tabIndex={-1} className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
+  return <div data-testid="schedule-profiles">{testingPrefill && <section aria-label="Schedule testing from supervision" className="mb-4 space-y-3 rounded-lg border bg-primary/5 p-4"><p className="text-sm">Create a testing draft for the selected supervision group. Review its staff, times and dates before applying it.</p>{(session || blockedByAdvancedDraft) && <p role="status" className="text-sm">Finish or close your current draft before opening another. Your work is preserved.</p>}<div className="flex gap-2"><Button disabled={!data || busy || blockedByAdvancedDraft || Boolean(session)} onClick={() => open('edit', undefined, false, testingPrefill)}>Open testing draft</Button><Button variant="ghost" disabled={busy} onClick={onDismissTestingPrefill}>Dismiss shortcut</Button></div></section>}<Card hidden={Boolean(session)} inert={Boolean(session) || undefined}><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-60 flex-1 space-y-1.5"><CardTitle ref={listHeading} tabIndex={-1} className="text-xl">Schedule profiles</CardTitle><CardDescription>Build a plan for an early release, testing day or delay. Apply it to selected dates while keeping regular class rosters in place.</CardDescription></div><Button disabled={!data || busy || blockedByAdvancedDraft} onClick={() => open('edit')}><Plus className="mr-2 h-4 w-4" />Create Schedule Profile</Button></div></CardHeader><CardContent className="space-y-5">
     <details open={!data?.profiles?.length}><summary className="cursor-pointer text-sm font-medium">How profiles work</summary><ol aria-label="Schedule profile workflow" className="grid gap-4 rounded-md bg-muted/40 p-4 text-sm sm:grid-cols-3">
       <li><p className="font-medium">1. Build, review & save</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Edit classes and testing directly in Day planner, then save work in progress.</p></li>
       <li><p className="font-medium">2. Choose dates</p><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Choose dates & apply opens date selection. Customize that use if needed.</p></li>

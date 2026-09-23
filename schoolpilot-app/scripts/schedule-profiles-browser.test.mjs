@@ -11,7 +11,7 @@ const DEFAULT_SCHOOL_HOURS = { enableTrackingHours: true, trackingStartTime: '08
 
 async function createProfileFixture(context) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const entry = `import React from 'react';import {createRoot} from 'react-dom/client';import {MemoryRouter} from 'react-router-dom';import {QueryClientProvider} from '@tanstack/react-query';import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';import {queryClient as client} from '/src/lib/queryClient.js';import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';import '/src/index.css';function ScopeBridge(){const auth=useAuth();window.switchFixtureSchool=auth.switchSchool;return null;}createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement('main',{className:'mx-auto max-w-6xl p-6'},React.createElement(ScopeBridge),React.createElement(Scheduling))))));`;
+  const entry = `import React from 'react';import {createRoot} from 'react-dom/client';import {MemoryRouter,useNavigate} from 'react-router-dom';import {QueryClientProvider} from '@tanstack/react-query';import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';import {queryClient as client} from '/src/lib/queryClient.js';import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';import '/src/index.css';function ScopeBridge(){const auth=useAuth();window.switchFixtureSchool=auth.switchSchool;window.navigateFixture=useNavigate();return null;}createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement('main',{className:'mx-auto max-w-6xl p-6'},React.createElement(ScopeBridge),React.createElement(Scheduling))))));`;
   const vite = await createServer({ root, cacheDir: path.join(root, 'node_modules', `.vite-schedule-profiles-${process.pid}`), logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'schedule-profile-browser-fixture', configureServer(server) { server.middlewares.use(async (req, res, next) => { if (req.url !== '/__schedule-profiles') return next(); res.setHeader('Content-Type', 'text/html'); res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/__profiles-entry.jsx"></script></body></html>')); }); }, resolveId(id) { if (id === '/__profiles-entry.jsx') return '\0schedule-profiles-entry'; }, load(id) { if (id === '\0schedule-profiles-entry') return entry; } }] });
   await vite.listen();
   const browser = await chromium.launch({ headless: true });
@@ -364,6 +364,41 @@ async function addTestingBlock(dialog, index, teacher) {
   await dialog.getByLabel(`Testing block ${index} Supervision group`, { exact: true }).selectOption(`${teacher}-group`);
   await dialog.getByLabel(`Testing block ${index} assigned staff`, { exact: true }).selectOption(teacher);
 }
+
+test('Supervision scheduling shortcut checks identity, preserves an open draft, and never saves or applies automatically', { timeout: 90_000 }, async context => {
+  const { browser, vite, page, saves, applies, errors } = await createDraftReviewFixture(context);
+  const shortcut = scope => page.evaluate(({ schoolId = 'school', actorId = 'admin', groupId = 'zinkan-group' }) => {
+    window.navigateFixture('/classpilot/admin/scheduling', { state: { testingGroupPrefill: {
+      schoolId, actorId, groupId, requestId: crypto.randomUUID(), createdAt: Date.now(),
+    } } });
+  }, scope);
+  try {
+    await shortcut({ schoolId: 'other-school' });
+    assert.equal(await page.getByRole('region', { name: 'Schedule testing from supervision' }).count(), 0);
+    await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
+    const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
+    await workspace.getByLabel('Profile name', { exact: true }).fill('Unfinished teacher plan');
+    await shortcut({});
+    const opener = page.getByRole('button', { name: 'Open testing draft', exact: true });
+    await opener.waitFor();
+    assert.equal(await opener.isDisabled(), true);
+    assert.equal(await workspace.getByLabel('Profile name', { exact: true }).inputValue(), 'Unfinished teacher plan');
+    page.once('dialog', dialog => dialog.accept());
+    await workspace.getByRole('button', { name: 'Back to scheduling', exact: true }).click();
+    await opener.click();
+    await workspace.getByLabel('Profile name', { exact: true }).waitFor();
+    assert.equal(await workspace.getByLabel('Profile name', { exact: true }).inputValue(), 'Mixed MAP group testing');
+    assert.equal(await workspace.getByLabel('Testing block 1 start', { exact: true }).inputValue(), '');
+    assert.equal(await workspace.getByLabel('Testing block 1 end', { exact: true }).inputValue(), '');
+    assert.equal(await workspace.getByLabel('Testing block 1 assigned staff', { exact: true }).inputValue(), 'zinkan');
+    assert.deepEqual(saves, []);
+    assert.deepEqual(applies, []);
+    await page.evaluate(async () => { await window.switchFixtureSchool('other-school'); });
+    await workspace.waitFor({ state: 'hidden' });
+    assert.equal(await page.getByRole('region', { name: 'Schedule testing from supervision' }).count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); await vite.close(); }
+});
 
 test('Class placement swaps full proposed windows atomically, includes both classes, preserves rosters, and Undo restores the draft', { timeout: 120_000 }, async context => {
   const { root, browser, vite, page, catalog, placement, saves, applies, errors } = await createClassPlacementFixture(context);
@@ -1139,7 +1174,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     await page.getByRole('region', { name: 'Schedule profile applications' }).getByText('Applied today', { exact: true }).first().waitFor();
     await showApplicationDetails(page, catalog.applications[0]);
     await page.getByText('The Supervision group roster changed.', { exact: true }).waitFor();
-    const recoveryHint = 'Use Coverage to manage any testing still needed today. Failed or missed windows do not restart automatically.';
+    const recoveryHint = 'Use Supervision to start a reviewed Testing session if testing is still needed today. Failed or missed windows do not restart automatically.';
     await page.getByText(recoveryHint, { exact: true }).waitFor();
     for (const [code, expected] of [
       ['CLASSPILOT_NOT_ENTITLED', "ClassPilot access is unavailable for this school. Check the school's license."],
@@ -1150,7 +1185,7 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
       ['SCHEDULE_PROFILE_FROZEN_ROSTER_UNAVAILABLE', 'A class session has an incomplete saved roster. Resolve that session before assigning its teacher to testing.'],
       ['SCHEDULE_PROFILE_CLASS_WINDOW_UNAVAILABLE', 'A related class has an unresolved schedule. Review its period, calendar mapping or approved schedule change.'],
       ['SCHEDULE_PROFILE_VALIDATION_LIMIT', 'The testing selection is too large to validate. Narrow the selection before scheduling another application.'],
-      ['ACTIVATION_FAILED', 'Testing supervision could not start. Review the schedule and Coverage setup.'],
+      ['ACTIVATION_FAILED', 'Testing supervision could not start. Review the schedule and Supervision setup.'],
     ]) {
       catalog.testingStatuses[0].code = code;
       await page.getByRole('button', { name: 'Refresh status', exact: true }).click();

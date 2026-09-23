@@ -40,6 +40,10 @@ export default function SupervisionGroupDirectory({
   onDelete,
   notice,
   savedGroupId,
+  liveContexts = [],
+  liveStatusKnown = false,
+  onStart,
+  onSchedule,
 }) {
   const { currentUser } = useClassPilotAuth();
   const actorScope = `${currentUser?.id}:${currentUser?.role}:${!!currentUser?.isSuperAdmin}`;
@@ -159,10 +163,10 @@ export default function SupervisionGroupDirectory({
       <Card className="min-w-0">
         <CardHeader className="flex flex-wrap items-start justify-between gap-3 sm:flex-row">
           <div>
-            <CardTitle className="text-base">Supervision Groups</CardTitle>
+            <CardTitle className="text-base">Saved groups</CardTitle>
             <CardDescription>
-              Choose students and assign staff for testing and other school
-              activities.
+              Keep reusable student rosters and authorize staff. Saving a group
+              does not start supervision or testing.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -188,7 +192,7 @@ export default function SupervisionGroupDirectory({
         <CardContent className="space-y-3">
           <Input
             aria-label="Search supervision groups"
-            placeholder="Search groups or assigned staff"
+            placeholder="Search groups or authorized staff"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -245,15 +249,15 @@ export default function SupervisionGroupDirectory({
               </select>
             </label>
             <label className="space-y-1 text-sm">
-              Assigned staff
+              Authorized staff
               <select
                 className={selectClass}
-                aria-label="Filter assigned staff"
+                aria-label="Filter authorized staff"
                 value={filters.staffId}
                 onChange={(event) => change({ staffId: event.target.value })}
               >
                 <option value="">All staff</option>
-                <option value="unassigned">No staff assigned</option>
+                <option value="unassigned">No staff authorized</option>
                 {retainedOption(
                   filters.staffId === "unassigned" ? "" : filters.staffId,
                   facets.staff,
@@ -277,7 +281,7 @@ export default function SupervisionGroupDirectory({
                 onChange={(event) => change({ active: event.target.value })}
               >
                 <option value="all">All statuses</option>
-                <option value="true">Active</option>
+                <option value="true">Enabled</option>
                 <option value="false">Disabled</option>
               </select>
             </label>
@@ -298,7 +302,7 @@ export default function SupervisionGroupDirectory({
                   <div className="min-w-0">
                     <p className="break-words font-medium">{group.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {group.studentCount} student
+                      Saved roster: {group.studentCount} student
                       {group.studentCount === 1 ? "" : "s"} ·{" "}
                       {group.category?.name || "Uncategorized"}
                       {group.gradeCounts?.length
@@ -306,9 +310,14 @@ export default function SupervisionGroupDirectory({
                         : ""}
                     </p>
                     <p className="break-words">
-                      <span className="font-medium">Assigned staff:</span>{" "}
+                      <span className="font-medium">Authorized staff:</span>{" "}
                       {uniqueStaff(group.staff).map(staffName).join(", ") ||
-                        "No staff assigned"}
+                        "No staff authorized"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {!liveStatusKnown ? "Live status unavailable" : liveContexts.some(context => context.coverageGroupId === group.id)
+                        ? `${liveContexts.filter(context => context.coverageGroupId === group.id).length} accessible session${liveContexts.filter(context => context.coverageGroupId === group.id).length === 1 ? "" : "s"} running`
+                        : isAdmin ? "Not running" : "No sessions visible to you"}
                     </p>
                     {group.description && (
                       <details className="text-xs text-muted-foreground">
@@ -321,7 +330,7 @@ export default function SupervisionGroupDirectory({
                   </div>
                   <div className="flex flex-wrap items-center gap-2 self-start">
                     <Badge variant={group.active ? "secondary" : "outline"}>
-                      {group.active ? "Active" : "Disabled"}
+                      {group.active ? "Enabled" : "Disabled"}
                     </Badge>
                     <Button
                       size="sm"
@@ -329,8 +338,10 @@ export default function SupervisionGroupDirectory({
                       disabled={busy || query.isFetching || !current}
                       onClick={() => onEdit(group)}
                     >
-                      Edit
+                      Edit roster
                     </Button>
+                    {onStart && <Button size="sm" disabled={busy || !group.active || query.isFetching || !current} onClick={() => onStart(group)}>Start session</Button>}
+                    {isAdmin && onSchedule && <Button size="sm" variant="outline" disabled={busy || !group.active || query.isFetching || !current} onClick={() => onSchedule(group)}>Schedule testing</Button>}
                     {isAdmin && (
                       <Button
                         size="sm"
@@ -363,7 +374,7 @@ export default function SupervisionGroupDirectory({
                     ? "Supervision groups are unavailable."
                     : filtered
                       ? "No supervision groups match these filters."
-                      : "No active supervision groups. Choose All statuses to include disabled groups, or create a group."}
+                      : "No enabled saved groups. Choose All statuses to include disabled groups, or create a group."}
               </p>
             )}
           </div>

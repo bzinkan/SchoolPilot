@@ -2,46 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const coverageSource = readFileSync(
-  new URL('../src/products/classpilot/pages/Coverage.jsx', import.meta.url),
-  'utf8',
-);
+const source = path => readFileSync(new URL(`../src/products/classpilot/${path}`, import.meta.url), 'utf8');
+const hub = source('pages/Coverage.jsx');
+const dashboard = source('pages/Dashboard.jsx');
+const summary = source('lib/useScheduledTestingView.js');
+const review = source('components/SupervisionSessionDialog.jsx');
 
-test('the Claimed Students card counts students, never supervision contexts', () => {
-  // Regression guard. The card used to render
-  // `contexts.filter((c) => c.status === "active").length`, which is a count of
-  // supervision groups: two students claimed into one group displayed as 1 while
-  // the group card, the targeted badge, the student table and the dashboard tab
-  // strip all correctly said 2.
-  const cardIndex = coverageSource.indexOf('Claimed Students');
-  assert.ok(cardIndex > 0, 'the Claimed Students card must exist');
-  const card = coverageSource.slice(cardIndex, cardIndex + 400);
-
-  assert.doesNotMatch(
-    card,
-    /contexts\s*\.?\s*filter\([\s\S]{0,120}\)\.length/,
-    'the student count must never be derived from the number of supervision contexts',
-  );
-  assert.match(
-    card,
-    /summaryQuery\.data\?\.claimedStudentCount/,
-    'the card must render the distinct-student count the server computes',
-  );
+test('supervision student counts remain distinct from counts of live sessions', () => {
+  // The duplicate console is gone; counts now live on each session and the
+  // dashboard Claimed badge. Two students in one context must still mean two.
+  assert.match(hub, /\{context\.activeStudentCount\} student/,
+    'each session must display its server-supplied student count');
+  assert.match(dashboard, /claimedCount=\{ownSupervisionStudentCount\}/,
+    'the Claimed badge must use the student count, never the context count');
+  assert.match(summary, /ownSupervisionStudentCount[\s\S]{0,180}ownSupervisionContexts\.reduce\(\(total, context\) => total \+ context\.activeStudentCount, 0\)/,
+    'the owner student total must sum authoritative roster counts');
+  assert.match(dashboard, /coverageCount=\{activeCoverageCount\}/,
+    'the separate Supervision badge may count live contexts');
 });
 
-test('coverage and dashboard summaries share an invalidation prefix while automatic ownership is scoped', () => {
-  assert.match(
-    coverageSource,
-    /queryKey:\s*\["\/api\/coverage\/summary", schoolId, currentUser\?\.id\]/,
-    'the summary query must use the shared invalidation prefix and isolate school and viewer',
-  );
-  assert.match(
-    coverageSource,
-    /queryFn:\s*\(\{ signal \}\)\s*=>\s*apiRequest\("GET",\s*"\/coverage\/summary", undefined, \{ signal, headers: \{ "X-School-Id": schoolId \}/,
-    'the summary query must call the coverage summary endpoint',
-  );
-  const dashboardSummary = readFileSync(
-    new URL('../src/products/classpilot/lib/useScheduledTestingView.js', import.meta.url), 'utf8',
-  );
-  assert.match(dashboardSummary, /\['\/api\/coverage\/summary', schoolId, viewerId\]/);
+test('hub and reviewed mutations invalidate the scoped dashboard supervision summary', () => {
+  assert.match(hub, /queryClient\.invalidateQueries\(\{ queryKey: \["\/api\/coverage\/summary"\] \}\)/,
+    'hub mutations must invalidate the lightweight dashboard summary');
+  assert.match(review, /const roots = \[[^\n]*'\/api\/coverage\/summary'/,
+    'reviewed Start/Send/end-time changes must refresh the same summary');
+  assert.match(summary, /\['\/api\/coverage\/summary', schoolId, viewerId\]/,
+    'summary cache identity must isolate school and viewer');
+  assert.match(summary, /apiRequest\('GET', '\/coverage\/summary', undefined, \{[\s\S]{0,100}headers: \{ 'X-School-Id': schoolId \}/,
+    'summary reads must retain their exact school request scope');
+  assert.match(hub, /queryKey: \["\/api\/coverage\/contexts", schoolId, currentUser\?\.id\]/,
+    'the hub live-session query must also isolate school and viewer');
 });

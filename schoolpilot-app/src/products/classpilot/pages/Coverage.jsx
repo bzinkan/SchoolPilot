@@ -1,30 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
+import SupervisionSessionDialog from "../components/SupervisionSessionDialog";
 import SupervisionGroupEditor from "../components/SupervisionGroupEditor";
 import { refreshSupervisionSetup } from "../components/supervisionGroupQueries";
 import SupervisionGroupDirectory from "../components/SupervisionGroupDirectory";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  ClipboardCheck,
-  Eye,
-  History,
-  Link as LinkIcon,
-  Lock,
-  MessageSquare,
-  MonitorPlay,
-  Plus,
-  RefreshCw,
-  Search,
-  Shield,
-  ShieldBan,
-  UserCheck,
-  Users,
-  X,
-  Unlock,
-  Trash2,
-} from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Eye, History, Plus, RefreshCw, Search, UserCheck, Trash2 } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -35,30 +16,11 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { Textarea } from "../../../components/ui/textarea";
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
-import {
-  coverageStudentCommandSelectionEligible,
-  domainRestrictionMessageForStudents,
-  flightPathApplyCapability,
-  partitionCoverageCurrentPageWaypointTargets,
-} from "../lib/dashboardCommandContext";
-import { commandDeliveryFeedback } from "../lib/commandDeliveryTruth";
-import { deriveStudentMonitoringDisplay } from "../lib/studentMonitoringDisplay";
-import CoverageStudentFilters from "../components/CoverageStudentFilters";
-import { emptyCoverageFilters, filterCoverageStudents } from "../lib/coverageStudentFilters";
-import { createSupervisionDashboardIntent } from "../lib/supervisionDashboardNavigation";
-
-const coverageTypes = [
-  ["state_testing", "State Testing"],
-  ["indoor_recess", "Indoor Recess"],
-  ["intervention", "Intervention"],
-  ["office", "Office"],
-  ["assembly", "Assembly"],
-  ["other", "Other"],
-];
+import { createSupervisionDashboardIntent, createObservedActivityDashboardIntent, createDashboardWorkspaceIntent } from "../lib/supervisionDashboardNavigation";
+import { testingScheduleNavigation } from "../lib/testingSchedulePrefill";
 
 const releaseReasons = [
   ["returned_to_class", "Returned to class"],
@@ -67,46 +29,26 @@ const releaseReasons = [
   ["reassigned", "Reassigned"],
 ];
 
-const ALL_FILTER = "all";
-
-function defaultEndTime() {
-  const d = new Date(Date.now() + 60 * 60 * 1000);
-  d.setSeconds(0, 0);
-  return d.toISOString().slice(0, 16);
-}
-
 function displayName(user) {
   return user?.displayName || user?.email || user?.user?.displayName || user?.user?.email || "Staff";
 }
 
-function formatTime(value) {
+function formatTime(value, timeZone) {
   if (!value) return "Unknown";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown";
-  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", ...(timeZone ? { timeZone } : {}) });
 }
 
-function minutesSince(value) {
-  if (!value) return "Just now";
-  const then = new Date(value).getTime();
-  if (!Number.isFinite(then)) return "Just now";
-  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (minutes < 1) return "Just now";
-  if (minutes === 1) return "1 min";
-  return `${minutes} min`;
+function purposeLabel(purpose) {
+  return ({ claim: "Claim", testing: "Testing", coverage: "Coverage", class: "Class", supervision: "Supervision" })[purpose] || "Supervision";
 }
-
-function statusBadgeVariant(status) {
-  if (status === "online") return "default";
-  if (status === "idle") return "secondary";
-  return "outline";
+function endLabel(context) {
+  return ({ claim: "Release all", testing: "End testing", coverage: "End coverage" })[context?.purpose] || "End supervision";
 }
-
-function contextTypeLabel(type) {
-  if (type === "supervision_group") return "Supervision Group";
-  return coverageTypes.find(([id]) => id === type)?.[1] || "Supervision";
+function scheduledStateLabel(state) {
+  return ({ scheduled: "Scheduled", active: "Running", ended: "Ended", cancelled: "Cancelled", unassigned: "Needs a supervisor", failed: "Failed to start", missed: "Missed", releasing: "Ending" })[state] || "Unavailable";
 }
-
 function normalizeScopeValue(value) {
   return String(value || "").trim();
 }
@@ -154,17 +96,14 @@ function matchesTokens(value, query) {
   return tokens.every((token) => haystack.includes(token));
 }
 
-function supervisionAssignmentKey(student) {
-  return student.assignmentId || student.assignedAt || student.studentId;
-}
-
 export default function Coverage() {
-  const { currentUser } = useClassPilotAuth();
-  return <CoverageWorkspace key={`${currentUser?.schoolId}:${currentUser?.id}`} currentUser={currentUser} />;
+  const { currentUser, school } = useClassPilotAuth();
+  return <CoverageWorkspace key={`${currentUser?.schoolId}:${currentUser?.id}`} currentUser={currentUser} timeZone={school?.timezone} />;
 }
 
-function CoverageWorkspace({ currentUser }) {
+function CoverageWorkspace({ currentUser, timeZone }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
   const schoolId = currentUser?.schoolId;
@@ -180,20 +119,11 @@ function CoverageWorkspace({ currentUser }) {
     return () => { committedSetupScope.current = null; };
   }, [setupScope]);
 
-  const [unassignedSelection, setUnassignedSelection] = useState(new Set());
-  const [coverageSelection, setCoverageSelection] = useState({ contextId: "", ids: new Set(), bindings: new Map(), explicit: false });
-  const [activeTab, setActiveTab] = useState("console");
-  const [availableFilters, setAvailableFilters] = useState(emptyCoverageFilters);
-  const [claimedFilters, setClaimedFilters] = useState(emptyCoverageFilters);
-  const [selectedContextId, setSelectedContextId] = useState("");
+  const activeTab = searchParams.get("tab") || "live";
   const [historyContextId, setHistoryContextId] = useState("");
-  const [contextOpen, setContextOpen] = useState(false);
+  const [boundaryTime, setBoundaryTime] = useState(() => Date.now());
+  const [sessionDialog, setSessionDialog] = useState(null);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
-  const [commandDialogState, setCommandDialogState] = useState(null);
-  const [commandUrl, setCommandUrl] = useState("");
-  const [commandMessage, setCommandMessage] = useState("");
-  const [selectedFlightPathId, setSelectedFlightPathId] = useState("");
-  const [selectedBlockListId, setSelectedBlockListId] = useState("");
   const [releaseDialog, setReleaseDialog] = useState(null);
   const [releaseReason, setReleaseReason] = useState("returned_to_class");
   const [studentPickerSearch, setStudentPickerSearch] = useState("");
@@ -201,14 +131,6 @@ function CoverageWorkspace({ currentUser }) {
   const [scopeGroupOpen, setScopeGroupOpen] = useState(false);
   const [scopeGroupId, setScopeGroupId] = useState(null);
   const operationalBusy = useRef(false);
-  const [contextForm, setContextForm] = useState({
-    contextType: "state_testing",
-    name: "State Testing",
-    assignedStaffId: "",
-    coverageGroupId: "",
-    endsAt: defaultEndTime(),
-    note: "",
-  });
   const [assignmentForm, setAssignmentForm] = useState({
     existingIds: [],
     staffId: "",
@@ -221,28 +143,11 @@ function CoverageWorkspace({ currentUser }) {
     studentIds: [],
     active: true,
   });
-  const unassignedQuery = useQuery({
-    queryKey: ["/api/coverage/unassigned", schoolId, currentUser?.id],
-    queryFn: ({ signal }) => apiRequest("GET", "/coverage/unassigned", undefined, { signal, headers: { "X-School-Id": schoolId } }),
-    select: (data) => data?.students || [],
-    refetchInterval: 10000,
-  });
-
   const contextsQuery = useQuery({
     queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/contexts", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.contexts || [],
-    refetchInterval: 10000,
-  });
-
-  // The card below is a count of STUDENTS, so it must not be derived from the
-  // number of supervision contexts: two students claimed into one group are one
-  // context. The server already publishes the distinct-student figure under the
-  // same visibility rule as /coverage/contexts, and the dashboard reads the same
-  // cache entry, so the two surfaces cannot disagree.
-  const summaryQuery = useQuery({
-    queryKey: ["/api/coverage/summary", schoolId, currentUser?.id],
-    queryFn: ({ signal }) => apiRequest("GET", "/coverage/summary", undefined, { signal, headers: { "X-School-Id": schoolId } }),
+    enabled: !!schoolId && !!currentUser?.id,
     refetchInterval: 10000,
   });
 
@@ -252,9 +157,26 @@ function CoverageWorkspace({ currentUser }) {
     enabled: !!currentUser && !!schoolId,
   });
   const canManageSupervisionSetup = isAdmin || !!capabilitiesQuery.data?.canManageSupervisionSetup;
-  const visibleTab = activeTab === "staff-access" && !isAdmin
-    ? (canManageSupervisionSetup ? "settings" : "console")
-    : activeTab === "settings" && !canManageSupervisionSetup ? "console" : activeTab;
+  const requestedTab = ({ contexts: "live", settings: "groups", "staff-access": "access" })[activeTab] || activeTab;
+  const visibleTab = requestedTab === "access" && !isAdmin ? (canManageSupervisionSetup ? "groups" : "live")
+    : requestedTab === "groups" && !canManageSupervisionSetup ? "live"
+    : ["live", "scheduled", "groups", "access"].includes(requestedTab) ? requestedTab : "live";
+  const setActiveTab = tab => setSearchParams(params => { params.set("tab", tab); return params; });
+  useEffect(() => {
+    if (!schoolId || !currentUser?.id) return;
+    if (["console", "claimed", "unassigned", "available"].includes(activeTab)) navigate("/classpilot", { replace: true, state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser?.id, view: ["unassigned", "available"].includes(activeTab) ? "available" : "claimed" }) });
+  }, [activeTab, currentUser?.id, schoolId, navigate]);
+  const observedQuery = useQuery({
+    queryKey: ["/api/classpilot/observable-activities", schoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest("GET", "/classpilot/observable-activities", undefined, { signal, headers: { "X-School-Id": schoolId } }),
+    enabled: !!schoolId && !!isAdmin, refetchInterval: 10000,
+  });
+  const selectedDate = searchParams.get("date") || "";
+  const scheduledQuery = useQuery({
+    queryKey: ["/api/coverage/scheduled", schoolId, currentUser?.id, selectedDate],
+    queryFn: ({ signal }) => apiRequest("GET", "/coverage/scheduled", undefined, { signal, headers: { "X-School-Id": schoolId }, params: selectedDate ? { date: selectedDate } : undefined }),
+    enabled: !!schoolId && visibleTab === "scheduled", refetchInterval: 30000,
+  });
   const canDelegateSetup = isAdmin;
   const canChooseSchoolwide = isAdmin || !!capabilitiesQuery.data?.isSchoolwideSetupManager;
 
@@ -262,14 +184,14 @@ function CoverageWorkspace({ currentUser }) {
     queryKey: [isAdmin ? "/api/admin/users" : "/api/coverage/setup/staff", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", isAdmin ? "/admin/users" : "/coverage/setup/staff", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.users || [],
-    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
+    enabled: canManageSupervisionSetup && assignmentOpen,
   });
 
   const groupsQuery = useQuery({
     queryKey: ["/api/coverage/setup/classes", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/setup/classes", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
-    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
+    enabled: canManageSupervisionSetup && assignmentOpen,
   });
 
   const assignmentsQuery = useQuery({
@@ -283,29 +205,32 @@ function CoverageWorkspace({ currentUser }) {
     queryKey: ["/api/coverage/supervision-groups", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/supervision-groups", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.groups || [],
-    enabled: canManageSupervisionSetup && !!schoolId && (assignmentOpen || contextOpen),
+    enabled: canManageSupervisionSetup && !!schoolId && assignmentOpen,
   });
 
   const adminStudentsQuery = useQuery({
     queryKey: [isAdmin ? "/api/admin/teacher-students" : "/api/coverage/setup/students", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", isAdmin ? "/admin/teacher-students" : "/coverage/setup/students", undefined, { signal, headers: { "X-School-Id": schoolId } }),
     select: (data) => data?.students || [],
-    enabled: canManageSupervisionSetup && (assignmentOpen || contextOpen),
+    enabled: canManageSupervisionSetup && assignmentOpen,
   });
 
-  const flightPathsQuery = useQuery({
-    queryKey: ["/api/flight-paths", schoolId, currentUser?.id],
-    queryFn: ({ signal }) => apiRequest("GET", "/flight-paths", undefined, { signal, headers: { "X-School-Id": schoolId } }),
-    select: (data) => Array.isArray(data) ? data : data?.flightPaths || [],
-  });
-
-  const blockListsQuery = useQuery({
-    queryKey: ["/api/block-lists", schoolId, currentUser?.id],
-    queryFn: ({ signal }) => apiRequest("GET", "/block-lists", undefined, { signal, headers: { "X-School-Id": schoolId } }),
-    select: (data) => Array.isArray(data) ? data : data?.blockLists || [],
-  });
-
-  const contexts = useMemo(() => contextsQuery.data || [], [contextsQuery.data]);
+  const contexts = useMemo(() => (contextsQuery.data || []).filter(context => context.status === "active"
+    && Number(context.activeStudentCount) > 0 && Date.parse(context.startsAt) <= contextsQuery.dataUpdatedAt
+    && Date.parse(context.endsAt) > Math.max(contextsQuery.dataUpdatedAt, boundaryTime)), [contextsQuery.data, contextsQuery.dataUpdatedAt, boundaryTime]);
+  const refreshContexts = contextsQuery.refetch;
+  useEffect(() => {
+    if (!contexts.length) return;
+    const deadline = Math.min(...contexts.map(context => Date.parse(context.endsAt)));
+    const timer = setTimeout(() => {
+      // Known expiry removes the session even when a later network read fails.
+      // A future session still needs a fresh server read before it can appear.
+      setBoundaryTime(Date.now());
+      void refreshContexts();
+    }, Math.min(2_147_483_647, Math.max(0, deadline - Date.now())));
+    return () => clearTimeout(timer);
+  }, [contexts, refreshContexts]);
+  const observableActivities = useMemo(() => new Map((observedQuery.data?.activities || []).map(activity => [activity.id, activity])), [observedQuery.data]);
   const activeScopeGroups = useMemo(
     () => (scopeGroupsQuery.data || []).filter((group) => group.active),
     [scopeGroupsQuery.data]
@@ -371,25 +296,6 @@ function CoverageWorkspace({ currentUser }) {
       return `${student.studentName || ""} ${student.studentEmail || ""} ${student.gradeLevel || ""}`.toLowerCase().includes(q);
     });
   }, [adminStudents, studentPickerSearch]);
-  const manageableContexts = useMemo(
-    () => contexts.filter((context) => context.canManage && context.status === "active"),
-    [contexts]
-  );
-  const activeContextId = manageableContexts.some((context) => context.id === selectedContextId)
-    ? selectedContextId
-    : manageableContexts[0]?.id || "";
-  const selectedContext = manageableContexts.find((context) => context.id === activeContextId) || null;
-  const commandDialog = commandDialogState?.contextId === activeContextId ? commandDialogState.type : null;
-  const setCommandDialog = type => setCommandDialogState(type ? { type, contextId: activeContextId } : null);
-
-  const contextStudentsQuery = useQuery({
-    queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id, selectedContext?.id, "students"],
-    queryFn: ({ signal }) => apiRequest("GET", `/coverage/contexts/${selectedContext.id}/students`, undefined, { signal, headers: { "X-School-Id": schoolId } }),
-    select: (data) => data?.students || [],
-    enabled: !!selectedContext?.id,
-    refetchInterval: 10000,
-  });
-
   const historyQuery = useQuery({
     queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id, historyContextId, "history"],
     queryFn: ({ signal }) => apiRequest("GET", `/coverage/contexts/${historyContextId}/history`, undefined, { signal, headers: { "X-School-Id": schoolId } }),
@@ -397,65 +303,6 @@ function CoverageWorkspace({ currentUser }) {
     enabled: !!historyContextId,
   });
 
-  const unassignedStudents = useMemo(() => filterCoverageStudents(unassignedQuery.data || [], availableFilters), [unassignedQuery.data, availableFilters]);
-  const coverageStudents = useMemo(() => filterCoverageStudents(contextStudentsQuery.data || [], claimedFilters), [contextStudentsQuery.data, claimedFilters]);
-
-  const activeCoverageStudents = useMemo(
-    () => coverageStudents.filter((student) => !student.releasedAt),
-    [coverageStudents]
-  );
-  const selectedUnassignedIds = new Set(unassignedStudents.filter(student => unassignedSelection.has(student.studentId)).map(student => student.studentId));
-  const selectedCoverageIds = new Set(activeCoverageStudents.filter(student => coverageSelection.contextId === activeContextId && coverageSelection.ids.has(student.studentId) && coverageSelection.bindings.get(student.studentId) === supervisionAssignmentKey(student)).map(student => student.studentId));
-  const setSelectedUnassignedIds = value => setUnassignedSelection(typeof value === "function" ? value(selectedUnassignedIds) : value);
-  const setSelectedCoverageIds = value => {
-    const ids = typeof value === "function" ? value(selectedCoverageIds) : value;
-    const bindings = new Map(activeCoverageStudents.filter(student => ids.has(student.studentId)).map(student => [student.studentId, supervisionAssignmentKey(student)]));
-    setCoverageSelection({ contextId: activeContextId, ids, bindings, explicit: ids.size > 0 });
-  };
-  const changeAvailableFilters = filters => { setAvailableFilters(filters); setUnassignedSelection(new Set()); };
-  const changeClaimedFilters = filters => { setClaimedFilters(filters); setSelectedCoverageIds(new Set()); };
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      setCommandDialogState(previous => previous?.contextId && previous.contextId !== activeContextId ? null : previous);
-      if (contextStudentsQuery.isSuccess) setCoverageSelection(previous => {
-        if (previous.contextId !== activeContextId) return { contextId: activeContextId, ids: new Set(), bindings: new Map(), explicit: false };
-        const activeIds = new Set((contextStudentsQuery.data || []).filter(student => !student.releasedAt && previous.bindings.get(student.studentId) === supervisionAssignmentKey(student)).map(student => student.studentId));
-        const ids = new Set([...previous.ids].filter(id => activeIds.has(id)));
-        return ids.size === previous.ids.size ? previous : { ...previous, ids };
-      });
-      if (unassignedQuery.isSuccess) setUnassignedSelection(previous => {
-        const availableIds = new Set((unassignedQuery.data || []).map(student => student.studentId));
-        const ids = new Set([...previous].filter(id => availableIds.has(id)));
-        return ids.size === previous.size ? previous : ids;
-      });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [activeContextId, contextStudentsQuery.data, contextStudentsQuery.isSuccess, unassignedQuery.data, unassignedQuery.isSuccess]);
-  const commandSelectableCoverageStudents = useMemo(
-    () => activeCoverageStudents.filter((student) => coverageStudentCommandSelectionEligible({
-      student,
-      monitoringDisplay: deriveStudentMonitoringDisplay(student),
-      structurallyCommandable: !student.releasedAt,
-    })),
-    [activeCoverageStudents]
-  );
-  const selectedCoverageStudentIds = Array.from(selectedCoverageIds);
-  // A stale or offline explicit selection must never become a context-wide command.
-  const hasExplicitCoverageSelection = coverageSelection.contextId === activeContextId && coverageSelection.explicit;
-  const commandTargetStudents = commandSelectableCoverageStudents.filter(student => !hasExplicitCoverageSelection || selectedCoverageIds.has(student.studentId));
-  const commandTargetCount = commandTargetStudents.length;
-  const commandTargetsSupportScreenOnlyUnlock = commandTargetStudents.length > 0
-    && commandTargetStudents.every((student) => (
-      student.capabilities?.screenOnlyUnlockV1 === true
-      || (
-        student.lateSignInRestrictionSsoV1Enabled === true
-        && student.isLoggedIn !== true
-      )
-    ));
-  const commandTargetDomainRestrictionMessage = domainRestrictionMessageForStudents(
-    commandTargetStudents,
-    (student) => deriveStudentMonitoringDisplay(student).telemetryCurrent,
-  );
   const assignmentScopeCount =
     (assignmentForm.schoolwide ? 1 : 0) +
     assignmentForm.gradeValues.length +
@@ -470,15 +317,14 @@ function CoverageWorkspace({ currentUser }) {
 
   const invalidateCoverage = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/summary"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/coverage/scheduled"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/classpilot/observable-activities"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/unassigned"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/available-students"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/claimed-students"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/contexts"] });
     queryClient.invalidateQueries({ queryKey: ["/api/students-aggregated"] });
-    if (selectedContext?.id) {
-      queryClient.invalidateQueries({ queryKey: ["/api/coverage/contexts", selectedContext.id] });
-    }
     if (historyContextId) {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/contexts", historyContextId, "history"] });
     }
@@ -491,65 +337,24 @@ function CoverageWorkspace({ currentUser }) {
     }
   };
 
-  const createContextMutation = useMutation({
-    retry: false,
-    mutationFn: ({ payload, scope }) => apiRequest("POST", "/coverage/contexts", payload, { headers: { "X-School-Id": scope.schoolId } }),
-    onSuccess: (data, { scope, payload }) => {
-      if (committedSetupScope.current !== scope) return;
-      invalidateCoverage();
-      setSelectedUnassignedIds(new Set());
-      setContextOpen(false);
-      if (data?.context?.id) {
-        setSelectedContextId(data.context.id);
-        setSelectedCoverageIds(new Set());
-      }
-      setActiveTab("console");
-      toast({ title: "Supervision started" });
-      if (data?.context?.assignedStaffId === scope.actorId && Number(data.context.activeStudentCount ?? payload.studentIds.length) > 0) {
-        navigate("/classpilot", { state: createSupervisionDashboardIntent({ schoolId: scope.schoolId, viewerId: scope.actorId, contexts: [data.context] }) });
-      }
-    },
-    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not start coverage", description: error.message }); },
-    onSettled: () => { operationalBusy.current = false; },
-  });
-
   const releaseMutation = useMutation({
     retry: false,
-    mutationFn: ({ contextId, studentIds, reason, mode, scope }) => {
+    mutationFn: ({ contextId, studentIds, reason, mode, scope, contextAuthorityRevision, expectedStudentIds }) => {
       if (mode !== "all" && studentIds.length === 0) throw new Error("Select students before releasing them.");
-      return apiRequest("POST", `/coverage/contexts/${contextId}/release`, { studentIds, releaseReason: reason }, { headers: { "X-School-Id": scope.schoolId } });
+      if (contextAuthorityRevision == null) throw new Error("Refresh this session before ending supervision.");
+      return apiRequest("POST", `/coverage/contexts/${contextId}/release`, { studentIds, releaseReason: reason, expectedStudentIds }, {
+        headers: { "X-School-Id": scope.schoolId, "X-ClassPilot-Context-Authority-Revision": String(contextAuthorityRevision) },
+      });
     },
     onSuccess: (_data, { scope }) => {
       if (committedSetupScope.current !== scope) return;
       invalidateCoverage();
-      setSelectedCoverageIds(new Set());
       setReleaseDialog(null);
       setReleaseReason("returned_to_class");
       toast({ title: "Students released" });
     },
     onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not release coverage", description: error.message }); },
     onSettled: () => { operationalBusy.current = false; },
-  });
-
-  const commandMutation = useMutation({
-    mutationFn: ({ contextId, commandType, commandPayload, targetScope, targetStudentIds, scope }) => apiRequest("POST", `/coverage/contexts/${contextId}/commands`, {
-      targetScope,
-      targetStudentIds,
-      commandType,
-      commandPayload,
-    }, { headers: { "X-School-Id": scope.schoolId } }),
-    onSuccess: (data, variables) => {
-      if (committedSetupScope.current !== variables.scope) return;
-      invalidateCoverage();
-      setCommandDialog(null);
-      setCommandUrl("");
-      setCommandMessage("");
-      toast(commandDeliveryFeedback({
-        ...(data || {}),
-        skippedCurrentPageCount: Number(variables?.skippedCurrentPageCount || 0),
-      }, variables?.commandType));
-    },
-    onError: (error, { scope }) => { if (committedSetupScope.current === scope) toast({ variant: "destructive", title: "Could not send command", description: error.message }); },
   });
 
   const refreshSetupLists = () => refreshSupervisionSetup(queryClient, schoolId);
@@ -684,29 +489,6 @@ function CoverageWorkspace({ currentUser }) {
     deleteSetupMutation.mutate(visibleSetupDeletion);
   };
 
-  const toggleUnassignedStudent = (id) => {
-    setSelectedUnassignedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleCoverageStudent = (id) => {
-    setSelectedCoverageIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const chooseContext = (contextId) => {
-    setSelectedContextId(contextId);
-    setSelectedCoverageIds(new Set());
-  };
-
   const resetAssignmentForm = () => {
     setAssignmentForm({
       existingIds: [],
@@ -787,22 +569,6 @@ function CoverageWorkspace({ currentUser }) {
     });
   };
 
-  const submitContext = () => {
-    if (operationalBusy.current || !schoolId) return;
-    const endsAt = new Date(contextForm.endsAt);
-    if (!Number.isFinite(endsAt.getTime()) || endsAt <= new Date()) {
-      toast({ variant: "destructive", title: "Choose a future end time" });
-      return;
-    }
-    operationalBusy.current = true;
-    createContextMutation.mutate({ scope: setupScope, payload: {
-      ...contextForm,
-      assignedStaffId: contextForm.assignedStaffId || currentUser?.id,
-      studentIds: Array.from(selectedUnassignedIds),
-      endsAt: endsAt.toISOString(),
-    } });
-  };
-
   const buildAssignmentPayloads = () => {
     const permissions = {
       observe: assignmentForm.claim || undefined,
@@ -876,67 +642,41 @@ function CoverageWorkspace({ currentUser }) {
     saveAssignmentMutation.mutate({ staffId: assignmentForm.staffId, payloads, scope: setupScope });
   };
 
-  const sendCoverageCommand = (commandType, commandPayload = {}) => {
-    if (!selectedContext?.id) {
-      toast({ variant: "destructive", title: "Choose claimed students" });
+  const openReleaseDialog = context => {
+    if (operationalBusy.current || context.assignedStaffId !== currentUser?.id) return;
+    const expectedStudentIds = [...new Set((context.students || []).map(student => student.studentId).filter(Boolean))].sort();
+    if (!expectedStudentIds.length || expectedStudentIds.length !== context.activeStudentCount) {
+      toast({ variant: "destructive", title: "Student list unavailable", description: "Refresh this session before ending supervision." });
       return;
     }
-    if (commandTargetCount === 0) {
-      toast({ variant: "destructive", title: "No active students in coverage" });
-      return;
-    }
-    let targetStudentIds = commandTargetStudents.map(student => student.studentId);
-    const targetScope = "students";
-    let skippedCurrentPageCount = 0;
-    if (
-      commandType === "lock-screen"
-      && commandPayload?.url === "CURRENT_URL"
-    ) {
-      const partition = partitionCoverageCurrentPageWaypointTargets(commandTargetStudents);
-      targetStudentIds = partition.targetStudentIds;
-      skippedCurrentPageCount = partition.skippedStudentIds.length;
-      if (targetStudentIds.length === 0) {
-        toast({
-          variant: "destructive",
-          title: "No current pages available",
-          description: `${skippedCurrentPageCount} signed-out student${skippedCurrentPageCount === 1 ? " was" : "s were"} skipped. Choose a specific URL to save a Waypoint before sign-in.`,
-        });
-        return;
-      }
-    }
-    commandMutation.mutate({
-      scope: setupScope,
-      contextId: selectedContext.id,
-      commandType,
-      commandPayload,
-      targetScope,
-      targetStudentIds,
-      skippedCurrentPageCount,
-    });
-  };
-
-  const openReleaseDialog = ({ contextId, studentIds, title, mode = "selected" }) => {
-    if (operationalBusy.current || (mode !== "all" && studentIds.length === 0)) return;
     setReleaseReason("returned_to_class");
-    const bindings = new Map((contextStudentsQuery.data || []).filter(student => studentIds.includes(student.studentId)).map(student => [student.studentId, supervisionAssignmentKey(student)]));
-    setReleaseDialog({ contextId, studentIds: [...studentIds], bindings, title, mode, scope: setupScope });
+    setReleaseDialog({ contextId: context.id, title: `${endLabel(context)}: ${context.name}`, context, expectedStudentIds, scope: setupScope });
   };
-
   const submitRelease = () => {
-    if (operationalBusy.current || !releaseDialog?.contextId || !releaseReason || releaseDialog.scope !== committedSetupScope.current) return;
-    if (releaseDialog.mode !== "all" && releaseDialog.studentIds.length === 0) return;
-    if (releaseDialog.mode !== "all" && releaseDialog.contextId === activeContextId && releaseDialog.studentIds.some(id => !(contextStudentsQuery.data || []).some(student => student.studentId === id && !student.releasedAt && releaseDialog.bindings.get(id) === supervisionAssignmentKey(student)))) {
-      toast({ variant: "destructive", title: "Supervision changed", description: "Close this confirmation and select the currently assigned students again." });
-      return;
+    if (operationalBusy.current || !releaseDialog?.contextId || releaseDialog.scope !== committedSetupScope.current) return;
+    const current = contexts.find(context => context.id === releaseDialog.contextId);
+    const revision = releaseDialog.context.classroomAuthorityRevision ?? releaseDialog.context.contextAuthorityRevision;
+    const currentIds = [...new Set((current?.students || []).map(student => student.studentId).filter(Boolean))].sort();
+    if (!current || revision == null || current.assignedStaffId !== currentUser?.id || String(current.classroomAuthorityRevision ?? current.contextAuthorityRevision) !== String(revision)
+      || JSON.stringify(currentIds) !== JSON.stringify(releaseDialog.expectedStudentIds)) {
+      toast({ variant: "destructive", title: "Supervision changed", description: "Close this confirmation and review the current session again." }); return;
     }
     operationalBusy.current = true;
-    releaseMutation.mutate({
-      scope: releaseDialog.scope,
-      mode: releaseDialog.mode,
-      contextId: releaseDialog.contextId,
-      studentIds: releaseDialog.studentIds,
-      reason: releaseReason,
-    });
+    releaseMutation.mutate({ scope: releaseDialog.scope, mode: "all", contextId: current.id, studentIds: [], reason: releaseReason, contextAuthorityRevision: revision, expectedStudentIds: releaseDialog.expectedStudentIds });
+  };
+  const openDashboard = (context, observe = false) => navigate("/classpilot", {
+    state: observe ? createObservedActivityDashboardIntent({ schoolId, viewerId: currentUser.id, activity: observableActivities.get(context.id) })
+      : createSupervisionDashboardIntent({ schoolId, viewerId: currentUser.id, contexts: [context] }),
+  });
+  const scheduleTesting = group => {
+    const target = testingScheduleNavigation({ schoolId, actorId: currentUser.id, groupId: group.id });
+    if (target) navigate(target.pathname, { state: target.state });
+  };
+  const sessionComplete = result => {
+    const action = sessionDialog?.action;
+    setSessionDialog(null);
+    invalidateCoverage();
+    if (action === "start" && result?.context?.assignedStaffId === currentUser.id) openDashboard(result.context);
   };
 
   return (
@@ -944,12 +684,12 @@ function CoverageWorkspace({ currentUser }) {
       <header className="border-b bg-card">
         <div className="max-w-screen-2xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={() => navigate("/classpilot")}>
+            <Button variant="ghost" size="icon" aria-label="Back to dashboard" onClick={() => navigate("/classpilot")}>
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div className="min-w-0">
               <h1 className="text-xl font-semibold">Supervision</h1>
-              <p className="text-sm text-muted-foreground">Pick up online students and manage flexible supervision groups</p>
+              <p className="text-sm text-muted-foreground">Saved rosters, staff access, and supervision happening now</p>
             </div>
           </div>
           <Button variant="outline" onClick={refreshCoverage}>
@@ -960,305 +700,67 @@ function CoverageWorkspace({ currentUser }) {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-6 py-6">
-        <MonitoringInterruptionsPanel />
-        <div className="grid gap-4 md:grid-cols-3 mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Eye className="h-4 w-4" />Available Students</CardTitle>
-            </CardHeader>
-            <CardContent><p className="text-3xl font-semibold">{unassignedQuery.data?.length || 0}</p></CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><ClipboardCheck className="h-4 w-4" />Claimed Students</CardTitle>
-            </CardHeader>
-            <CardContent><p className="text-3xl font-semibold">{summaryQuery.data?.claimedStudentCount ?? 0}</p></CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Shield className="h-4 w-4" />Assigned Staff</CardTitle>
-            </CardHeader>
-            <CardContent><p className="text-3xl font-semibold">{assignmentsQuery.data?.filter((a) => a.active).length || 0}</p></CardContent>
-          </Card>
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-sm text-muted-foreground">Saved groups keep a roster for later. Students are supervised only during a started session or scheduled activity.</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "available" }) })}>Available students</Button>
+            <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "claimed" }) })}>Claimed students</Button>
+          </div>
         </div>
-
         <Tabs value={visibleTab} onValueChange={setActiveTab}>
           <TabsList className="h-auto max-w-full flex-wrap justify-start gap-1">
-            <TabsTrigger value="console">Claimed</TabsTrigger>
-            <TabsTrigger value="unassigned">Available</TabsTrigger>
-            <TabsTrigger value="contexts">Active Supervision</TabsTrigger>
-            {canManageSupervisionSetup && <TabsTrigger ref={setupHeading} value="settings">Supervision Groups</TabsTrigger>}
-            {isAdmin && <TabsTrigger ref={staffAccessHeading} value="staff-access">Staff access</TabsTrigger>}
+            <TabsTrigger value="live">Live now</TabsTrigger>
+            <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
+            {canManageSupervisionSetup && <TabsTrigger ref={setupHeading} value="groups">Saved groups</TabsTrigger>}
+            {isAdmin && <TabsTrigger ref={staffAccessHeading} value="access">Staff access</TabsTrigger>}
           </TabsList>
 
-          <TabsContent value="console" className="space-y-4 mt-4">
-            {manageableContexts.length === 0 ? (
-              <div className="rounded-md border px-4 py-12 text-center text-sm text-muted-foreground">
-                {contextsQuery.isPending ? "Loading supervision…" : contextsQuery.isError ? "Supervision could not load. Use Refresh to retry." : "No students are claimed by you yet."}
-              </div>
-            ) : (
-              <>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {manageableContexts.map((context) => (
-                    <button
-                      key={context.id}
-                      type="button"
-                      onClick={() => chooseContext(context.id)}
-                      className={`min-w-[220px] rounded-md border px-3 py-2 text-left text-sm transition-colors ${selectedContext?.id === context.id ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-muted/60"}`}
-                    >
-                      <span className="block font-medium truncate">{context.name}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {context.activeStudentCount} active - ends {formatTime(context.endsAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className="rounded-md border bg-card">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
-                    <div>
-                      <h2 className="text-base font-semibold">{selectedContext?.name}</h2>
-                      <p className="text-xs text-muted-foreground">
-                        {contextTypeLabel(selectedContext?.contextType)} - {selectedContext?.assignedStaff?.displayName || "Assigned staff"} - ends {formatTime(selectedContext?.endsAt)}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{commandTargetCount} command targets</Badge>
-                      <Button variant="outline" size="sm" onClick={() => setHistoryContextId(selectedContext.id)}>
-                        <History className="h-4 w-4 mr-2" />
-                        History
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
-                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("open-tab")} disabled={commandTargetCount === 0}>
-                      <MonitorPlay className="h-4 w-4 mr-2" />
-                      Open Tab
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("close-tabs", { closeAll: true })} disabled={commandTargetCount === 0 || commandMutation.isPending}>
-                      <X className="h-4 w-4 mr-2" />
-                      Close Tabs
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("lock-screen", { url: "CURRENT_URL" })} disabled={commandTargetCount === 0 || commandMutation.isPending} title={commandTargetDomainRestrictionMessage}>
-                      <Lock className="h-4 w-4 mr-2" />
-                      Set Waypoint
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => sendCoverageCommand("unlock-screen", { screenOnly: true })}
-                      disabled={commandTargetCount === 0 || commandMutation.isPending || !commandTargetsSupportScreenOnlyUnlock}
-                      title={commandTargetsSupportScreenOnlyUnlock ? "Clear the waypoint (screen only)" : "Extension update required for screen-only unlock"}
-                    >
-                      <Unlock className="h-4 w-4 mr-2" />
-                      {commandTargetsSupportScreenOnlyUnlock ? "Clear Waypoint" : "Extension update required"}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("teacher-message")} disabled={commandTargetCount === 0}>
-                      <MessageSquare className="h-4 w-4 mr-2" />
-                      Message
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("apply-flight-path")} disabled={commandTargetCount === 0} title={commandTargetDomainRestrictionMessage}>
-                      <LinkIcon className="h-4 w-4 mr-2" />
-                      Flight Path
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("remove-flight-path")} disabled={commandTargetCount === 0 || commandMutation.isPending}>
-                      <X className="h-4 w-4 mr-2" />
-                      Remove Flight Path
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setCommandDialog("apply-block-list")} disabled={commandTargetCount === 0}>
-                      <ShieldBan className="h-4 w-4 mr-2" />
-                      Block List
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => sendCoverageCommand("remove-block-list")} disabled={commandTargetCount === 0 || commandMutation.isPending}>
-                      <X className="h-4 w-4 mr-2" />
-                      Remove Block List
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={selectedCoverageStudentIds.length === 0 || releaseMutation.isPending}
-                      onClick={() => openReleaseDialog({
-                        contextId: selectedContext.id,
-                        studentIds: selectedCoverageStudentIds,
-                        title: `Release ${selectedCoverageStudentIds.length} selected student${selectedCoverageStudentIds.length === 1 ? "" : "s"}`,
-                      })}
-                    >
-                      Release selected ({selectedCoverageStudentIds.length})
-                    </Button>
-                  </div>
-
-                  <p
-                    className="border-b px-4 py-2 text-xs text-muted-foreground"
-                    data-testid="coverage-domain-preservation-message"
-                  >
-                    {commandTargetDomainRestrictionMessage}
-                  </p>
-
-                  <div className="space-y-3 px-4 py-3">
-                    <CoverageStudentFilters label="Claimed" students={contextStudentsQuery.data || []} filters={claimedFilters} onChange={changeClaimedFilters} />
-                    <div className="flex flex-wrap items-center gap-3">
-                      <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(activeCoverageStudents.map(student => student.studentId)))} disabled={activeCoverageStudents.length === 0}>
-                        Select all matching students
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={!hasExplicitCoverageSelection}>Clear selection</Button>
-                      <p role="status" className="text-sm text-muted-foreground">{activeCoverageStudents.length} matching · {selectedCoverageIds.size} selected</p>
-                    </div>
-                    {hasExplicitCoverageSelection && selectedCoverageIds.size === 0 && <p role="status" className="text-sm text-muted-foreground">Selected students are no longer assigned here. Clear the selection or choose students again.</p>}
-                    <p className="text-xs text-muted-foreground">Offline students can be released. Chromebook commands apply only to eligible matching students.</p>
-                    {contextStudentsQuery.isPending && <p role="status">Loading supervised students…</p>}
-                    {contextStudentsQuery.isError && <p role="alert">Supervised students could not load. <Button variant="link" onClick={() => contextStudentsQuery.refetch()}>Retry</Button></p>}
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <div className="grid min-w-[860px] grid-cols-[44px_1.1fr_90px_110px_1.4fr_130px_120px] gap-3 px-4 py-3 text-xs font-medium text-muted-foreground bg-muted/50">
-                      <span />
-                      <span>Student</span>
-                      <span>Grade</span>
-                      <span>Status</span>
-                      <span>Active Tab</span>
-                      <span>Claimed</span>
-                      <span />
-                    </div>
-                    {coverageStudents.length === 0 ? (
-                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">{contextStudentsQuery.isPending ? "Loading supervised students…" : contextStudentsQuery.isError ? "Supervised students are unavailable." : "No students match these filters."}</div>
-                    ) : coverageStudents.map((student) => (
-                      <div key={student.studentId} className="grid min-w-[860px] grid-cols-[44px_1.1fr_90px_110px_1.4fr_130px_120px] gap-3 border-t px-4 py-3 text-sm items-center">
-                        <Checkbox aria-label={`Select ${student.studentName}`} checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!!student.releasedAt} />
-                        <div>
-                          <p className="font-medium">{student.studentName}</p>
-                          <p className="text-xs text-muted-foreground">{student.studentEmail}</p>
-                        </div>
-                        <span>{student.gradeLevel || "None"}</span>
-                        <Badge variant={statusBadgeVariant(student.status)}>{student.status}</Badge>
-                        <span className="truncate text-muted-foreground">{student.activeTabTitle || student.activeTabUrl || "No active tab"}</span>
-                        <span className="text-muted-foreground">{minutesSince(student.assignedAt)}</span>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={!!student.releasedAt || releaseMutation.isPending}
-                          onClick={() => openReleaseDialog({
-                            contextId: selectedContext.id,
-                            studentIds: [student.studentId],
-                            title: `Release ${student.studentName}`,
-                          })}
-                        >
-                          Release
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-          </TabsContent>
-
-          <TabsContent value="unassigned" className="space-y-4 mt-4">
-            <CoverageStudentFilters label="Available" students={unassignedQuery.data || []} filters={availableFilters} onChange={changeAvailableFilters} />
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex flex-wrap items-center gap-3">
-                <Button variant="outline" size="sm" onClick={() => setSelectedUnassignedIds(new Set(unassignedStudents.map(student => student.studentId)))} disabled={unassignedStudents.length === 0}>Select all matching students</Button>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedUnassignedIds(new Set())} disabled={selectedUnassignedIds.size === 0}>Clear selection</Button>
-                <p role="status" className="text-sm text-muted-foreground">{unassignedStudents.length} matching · {selectedUnassignedIds.size} selected</p>
-              </div>
-              <Button onClick={() => setContextOpen(true)} disabled={selectedUnassignedIds.size === 0 && !isAdmin}>
-                <Plus className="h-4 w-4 mr-2" />
-                Start Supervision
-              </Button>
+          <TabsContent value="live" className="space-y-4 mt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">{isAdmin ? "Current supervision across the school. Observe keeps the current supervisor in control." : "Your current supervision sessions. Open a session to see its student previews and controls."}</p>
+              <Button onClick={() => setSessionDialog({ action: "start" })}><Plus className="h-4 w-4 mr-2" />Start session</Button>
             </div>
-            {unassignedQuery.isPending && <p role="status">Loading available students…</p>}
-            {unassignedQuery.isError && <p role="alert">Available students could not load. <Button variant="link" onClick={() => unassignedQuery.refetch()}>Retry</Button></p>}
-            <div className="rounded-md border overflow-x-auto">
-              <div className="grid min-w-[700px] grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 text-xs font-medium text-muted-foreground bg-muted/50">
-                <span />
-                <span>Student</span>
-                <span>Grade</span>
-                <span>Status</span>
-                <span>Active Tab</span>
-              </div>
-              {unassignedStudents.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-muted-foreground">{unassignedQuery.isPending ? "Loading available students…" : unassignedQuery.isError ? "Available students are unavailable." : "No online available students match these filters."}</div>
-              ) : unassignedStudents.map((student) => (
-                <div key={student.studentId} className="grid min-w-[700px] grid-cols-[44px_1fr_120px_120px_1.5fr] gap-3 px-4 py-3 border-t items-center text-sm">
-                  <Checkbox aria-label={`Select ${student.studentName}`} checked={selectedUnassignedIds.has(student.studentId)} onCheckedChange={() => toggleUnassignedStudent(student.studentId)} />
-                  <div>
-                    <p className="font-medium">{student.studentName}</p>
-                    <p className="text-xs text-muted-foreground">{student.studentEmail}</p>
+            {contextsQuery.isError && <p role="alert" className="rounded-md border p-3 text-sm text-destructive">Live supervision could not load. Use Refresh to try again.</p>}
+            {observedQuery.isError && <p role="alert" className="text-sm text-destructive">Observe is unavailable. Refresh to load current viewing permissions.</p>}
+            <div className="divide-y rounded-md border">
+              {contexts.length === 0 ? <p role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">{contextsQuery.isPending ? "Loading live supervision…" : contextsQuery.isError ? "Live supervision is unavailable." : "No supervision is running. Claim available students from the dashboard or start a session."}</p> : contexts.map(context => {
+                const owns = context.assignedStaffId === currentUser.id;
+                const canObserve = isAdmin && observableActivities.has(context.id) && !observedQuery.isError;
+                const scheduled = context.scheduleProfileApplicationId || context.scheduleProfileDate || context.scheduleProfileBlockId || context.scheduledConflictId;
+                return <div key={context.id} data-testid={`live-session-${context.id}`} className="flex flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2"><h2 className="break-words font-medium">{context.name}</h2><Badge variant="secondary">{purposeLabel(context.purpose)}</Badge></div>
+                    <p className="text-sm text-muted-foreground">Supervisor: {context.assignedStaff?.displayName || "Staff"}</p>
+                    <p className="text-sm text-muted-foreground">{context.activeStudentCount} student{context.activeStudentCount === 1 ? "" : "s"} · Ends {formatTime(context.endsAt, timeZone)}</p>
                   </div>
-                  <span>{student.gradeLevel || "None"}</span>
-                  <Badge variant={statusBadgeVariant(student.status)}>{student.status}</Badge>
-                  <span className="truncate text-muted-foreground">{student.activeTabTitle || student.activeTabUrl || "No active tab"}</span>
-                </div>
-              ))}
+                  <div className="flex flex-wrap gap-2">
+                    {owns && <Button size="sm" onClick={() => openDashboard(context)}>Open</Button>}
+                    {!owns && canObserve && <Button size="sm" variant="outline" onClick={() => openDashboard(context, true)}><Eye className="mr-2 h-4 w-4" />Observe</Button>}
+                    {owns && <Button size="sm" variant="outline" disabled={releaseMutation.isPending} onClick={() => openReleaseDialog(context)}>{endLabel(context)}</Button>}
+                    {owns && !scheduled && <Button size="sm" variant="outline" onClick={() => setSessionDialog({ action: "end_time", context })}>Change end time</Button>}
+                    {owns && <Button size="sm" variant="ghost" onClick={() => setHistoryContextId(context.id)}><History className="h-4 w-4 mr-2" />History</Button>}
+                  </div>
+                </div>;
+              })}
             </div>
           </TabsContent>
-
-          <TabsContent value="contexts" className="space-y-4 mt-4">
-            <div className="flex justify-end">
-              {isAdmin && (
-                <Button onClick={() => setContextOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Start Supervision
-                </Button>
-              )}
+          <TabsContent value="scheduled" className="space-y-4 mt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">Applied testing and scheduled coverage. Times use {scheduledQuery.data?.timeZone || "the school timezone"}.</p>
+              <label className="flex items-center gap-2 text-sm">Date<Input aria-label="Scheduled date" className="w-auto" type="date" value={selectedDate || scheduledQuery.data?.date || ""} onChange={event => setSearchParams(params => { event.target.value ? params.set("date", event.target.value) : params.delete("date"); return params; })} /></label>
             </div>
-            <div className="grid gap-3">
-              {contexts.length === 0 ? (
-                <div className="rounded-md border px-4 py-10 text-center text-sm text-muted-foreground">No active supervision</div>
-              ) : contexts.map((context) => (
-                <Card key={context.id}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <CardTitle className="text-base">{context.name}</CardTitle>
-                        <CardDescription>
-                          {context.assignedStaff?.displayName || "Assigned staff"} - ends {formatTime(context.endsAt)}
-                        </CardDescription>
-                      </div>
-                      <Badge>{context.activeStudentCount} active</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {context.students?.length ? (
-                      <div className="flex flex-wrap gap-2">
-                        {context.students.map((student) => <Badge variant="secondary" key={student.studentId}>{student.studentName}</Badge>)}
-                      </div>
-                    ) : <p className="text-sm text-muted-foreground">{context.canViewStudents ? "No active students assigned" : "Student list is visible to assigned coverage staff"}</p>}
-                    <div className="flex flex-wrap gap-2">
-                      {context.canManage && (
-                        <>
-                          <Button variant="outline" size="sm" onClick={() => { chooseContext(context.id); setActiveTab("console"); }}>
-                            <Users className="h-4 w-4 mr-2" />
-                            Open Console
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openReleaseDialog({ contextId: context.id, studentIds: [], mode: "all", title: `Release all students from ${context.name}` })}
-                            disabled={context.activeStudentCount === 0}
-                          >
-                            <X className="h-4 w-4 mr-2" />
-                            Release All
-                          </Button>
-                        </>
-                      )}
-                      {context.canManage && (
-                        <Button variant="ghost" size="sm" onClick={() => setHistoryContextId(context.id)}>
-                          <History className="h-4 w-4 mr-2" />
-                          History
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            {scheduledQuery.isError ? <p role="alert" className="rounded-md border p-4 text-sm text-destructive">Scheduled activities could not load. Use Refresh to try again.</p> : <div className="divide-y rounded-md border">
+              {(scheduledQuery.data?.items || []).length === 0 ? <p role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">{scheduledQuery.isPending ? "Loading scheduled activities…" : "No applied testing or scheduled coverage for this date. Saved groups do not create scheduled activities."}</p> : scheduledQuery.data.items.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="space-y-1"><h2 className="font-medium">{item.name}</h2><p className="text-sm text-muted-foreground">{purposeLabel(item.purpose)} · {formatTime(item.startsAt, scheduledQuery.data.timeZone)}–{formatTime(item.endsAt, scheduledQuery.data.timeZone)}</p><p className="text-sm text-muted-foreground">Supervisor: {item.assignedStaff?.name || "Not assigned"}</p></div>
+                <Badge variant="outline">{scheduledStateLabel(item.state)}</Badge>
+              </div>)}
+            </div>}
           </TabsContent>
 
-          {canManageSupervisionSetup && <TabsContent value="settings" forceMount hidden={visibleTab !== "settings"} inert={visibleTab !== "settings" || undefined} className={`space-y-4 mt-4 ${visibleTab !== "settings" ? "hidden" : ""}`}><SupervisionGroupDirectory key={`${schoolId}:${currentUser?.id}:${currentUser?.role}:${isAdmin}`} schoolId={schoolId} active={visibleTab === "settings"} isAdmin={isAdmin} busy={setupWriteBusy} onEdit={openScopeGroupDialog} savedGroupId={setupDeletionNotice?.scope === setupScope ? setupDeletionNotice.savedGroupId : null} notice={setupDeletionNotice?.scope === setupScope && setupDeletionNotice.kind === "group" ? setupDeletionNotice.message : ""} onDelete={(group, event) => openSetupDeletion({ kind: "group", id: group.id, name: group.name, updatedAt: group.updatedAt, studentCount: group.studentCount, staffCount: group.staff?.length || 0 }, event)} /></TabsContent>}
+          {canManageSupervisionSetup && <TabsContent value="groups" forceMount hidden={visibleTab !== "groups"} inert={visibleTab !== "groups" || undefined} className={`space-y-4 mt-4 ${visibleTab !== "groups" ? "hidden" : ""}`}><SupervisionGroupDirectory key={`${schoolId}:${currentUser?.id}:${currentUser?.role}:${isAdmin}`} schoolId={schoolId} active={visibleTab === "groups"} isAdmin={isAdmin} busy={setupWriteBusy} liveContexts={contexts} liveStatusKnown={contextsQuery.isSuccess && !contextsQuery.isError} onStart={group => setSessionDialog({ action: "start", group })} onSchedule={isAdmin ? scheduleTesting : undefined} onEdit={openScopeGroupDialog} savedGroupId={setupDeletionNotice?.scope === setupScope ? setupDeletionNotice.savedGroupId : null} notice={setupDeletionNotice?.scope === setupScope && setupDeletionNotice.kind === "group" ? setupDeletionNotice.message : ""} onDelete={(group, event) => openSetupDeletion({ kind: "group", id: group.id, name: group.name, updatedAt: group.updatedAt, studentCount: group.studentCount, staffCount: group.staff?.length || 0 }, event)} /></TabsContent>}
 
           {isAdmin && (
-            <TabsContent value="staff-access" className="space-y-4 mt-4">
+            <TabsContent value="access" className="space-y-4 mt-4">
               {setupDeletionNotice?.scope === setupScope && setupDeletionNotice.kind === "permissions" && <p role="status" className="rounded-md border bg-muted/30 p-3 text-sm">{setupDeletionNotice.message}</p>}
               {assignmentsQuery.isError && <p role="alert" className="rounded-md border p-3 text-sm text-destructive">Staff access could not load. Use Refresh to retry before removing permissions.</p>}
               {assignmentsQuery.isFetching && !assignmentsQuery.isPending && <p role="status" className="text-sm text-muted-foreground">Refreshing staff access… Permission removal is available when the refresh finishes.</p>}
@@ -1283,7 +785,7 @@ function CoverageWorkspace({ currentUser }) {
                           <p className="break-words font-medium">{permissionPackageName(permissionPackage)}</p>
                           <p className="break-all text-xs text-muted-foreground">{permissionPackage.staff?.email || (permissionPackageName(permissionPackage) === "Unavailable staff member" ? permissionPackage.staffId : `${permissionPackage.assignments.length} permission${permissionPackage.assignments.length === 1 ? "" : "s"}`)}</p>
                         </div>
-                        <Badge className="w-fit self-start" variant={permissionPackage.active ? "default" : "outline"}>{permissionPackage.active ? "Active" : "Disabled"}</Badge>
+                        <Badge className="w-fit self-start" variant={permissionPackage.active ? "default" : "outline"}>{permissionPackage.active ? "Enabled" : "Disabled"}</Badge>
                         <div className="flex min-w-0 flex-wrap gap-2 sm:col-span-2">
                           {permissionPackage.claim && <Badge variant="outline">Claim + Manage</Badge>}
                           {permissionPackage.setup && <Badge variant="outline">Setup</Badge>}
@@ -1357,59 +859,7 @@ function CoverageWorkspace({ currentUser }) {
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog open={contextOpen} onOpenChange={setContextOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Start Supervision</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-2">
-              <Label>Type</Label>
-              <Select value={contextForm.contextType} onValueChange={(value) => setContextForm((f) => ({ ...f, contextType: value, name: coverageTypes.find(([id]) => id === value)?.[1] || f.name }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>{coverageTypes.map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Name</Label>
-              <Input value={contextForm.name} onChange={(e) => setContextForm((f) => ({ ...f, name: e.target.value }))} />
-            </div>
-            {isAdmin && (
-              <div className="grid gap-2">
-                <Label>Assigned Staff</Label>
-                <Select value={contextForm.assignedStaffId || currentUser?.id || ""} onValueChange={(value) => setContextForm((f) => ({ ...f, assignedStaffId: value }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{(staffQuery.data || []).map((staff) => <SelectItem key={staff.userId} value={staff.userId}>{displayName(staff)}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            )}
-            {isAdmin && (
-              <div className="grid gap-2">
-                <Label>Supervision Group</Label>
-                <Select value={contextForm.coverageGroupId || "none"} onValueChange={(value) => setContextForm((f) => ({ ...f, coverageGroupId: value === "none" ? "" : value }))}>
-                  <SelectTrigger><SelectValue placeholder="Optional supervision group" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No supervision group</SelectItem>
-                    {activeScopeGroups.map((group) => (
-                      <SelectItem key={group.id} value={group.id}>{group.name} ({group.studentCount})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="grid gap-2">
-              <Label>End Time</Label>
-              <Input type="datetime-local" value={contextForm.endsAt} onChange={(e) => setContextForm((f) => ({ ...f, endsAt: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>Note</Label>
-              <Textarea value={contextForm.note} onChange={(e) => setContextForm((f) => ({ ...f, note: e.target.value }))} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setContextOpen(false)}>Cancel</Button>
-            <Button onClick={submitContext} disabled={createContextMutation.isPending || !contextForm.name || !contextForm.endsAt}>Start</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {sessionDialog && <SupervisionSessionDialog key={`${schoolId}:${currentUser.id}:${sessionDialog.group?.id || sessionDialog.context?.id || ""}`} open onOpenChange={open => { if (!open) setSessionDialog(null); }} {...sessionDialog} onSuccess={sessionComplete} />}
 
       <Dialog open={isAdmin && assignmentOpen} onOpenChange={setAssignmentOpen}>
         <DialogContent className="max-w-3xl">
@@ -1603,125 +1053,15 @@ function CoverageWorkspace({ currentUser }) {
 
       <SupervisionGroupEditor open={canManageSupervisionSetup && scopeGroupOpen} schoolId={schoolId} groupId={scopeGroupId} onOpenChange={setScopeGroupOpen} onSaved={({ group, refreshWarning }) => setSetupDeletionNotice({ scope: setupScope, kind: "group", savedGroupId: group.id, message: `Supervision group “${group.name}” saved.${refreshWarning ? " Some lists could not refresh. Use Refresh to reload them." : ""}` })} />
 
-      <Dialog open={!!commandDialog} onOpenChange={(open) => !open && setCommandDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {commandDialog === "open-tab" && "Open Tab"}
-              {commandDialog === "teacher-message" && "Message Students"}
-              {commandDialog === "apply-flight-path" && "Apply Flight Path"}
-              {commandDialog === "apply-block-list" && "Apply Block List"}
-            </DialogTitle>
-            <DialogDescription className="space-y-1">
-              <span className="block">
-                Targets {commandTargetCount} student{commandTargetCount === 1 ? "" : "s"} in {selectedContext?.name || "coverage"}.
-              </span>
-              {commandDialog === "apply-flight-path" ? (
-                <span className="block" data-testid="coverage-flight-path-domain-preservation-message">
-                  {commandTargetDomainRestrictionMessage}
-                </span>
-              ) : null}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {commandDialog === "open-tab" && (
-              <div className="grid gap-2">
-                <Label>URL</Label>
-                <Input placeholder="https://example.com" value={commandUrl} onChange={(e) => setCommandUrl(e.target.value)} />
-              </div>
-            )}
-            {commandDialog === "teacher-message" && (
-              <div className="grid gap-2">
-                <Label>Message</Label>
-                <Textarea value={commandMessage} onChange={(e) => setCommandMessage(e.target.value)} />
-              </div>
-            )}
-            {commandDialog === "apply-flight-path" && (
-              <div className="grid gap-2">
-                <Label>Flight Path</Label>
-                <Select value={selectedFlightPathId} onValueChange={setSelectedFlightPathId}>
-                  <SelectTrigger><SelectValue placeholder="Select flight path" /></SelectTrigger>
-                  <SelectContent>
-                    {(flightPathsQuery.data || []).map((flightPath) => (
-                      <SelectItem
-                        key={flightPath.id}
-                        value={flightPath.id}
-                        disabled={!flightPathApplyCapability(flightPath).enabled}
-                      >
-                        {flightPath.flightPathName}
-                        {flightPathApplyCapability(flightPath).enabled ? "" : " (add an allowed domain)"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedFlightPathId
-                  && !flightPathApplyCapability(
-                    (flightPathsQuery.data || []).find((flightPath) => flightPath.id === selectedFlightPathId),
-                  ).enabled
-                  && (
-                    <p className="text-sm text-destructive">
-                      Add at least one allowed domain before applying this Flight Path.
-                    </p>
-                  )}
-              </div>
-            )}
-            {commandDialog === "apply-block-list" && (
-              <div className="grid gap-2">
-                <Label>Block List</Label>
-                <Select value={selectedBlockListId} onValueChange={setSelectedBlockListId}>
-                  <SelectTrigger><SelectValue placeholder="Select block list" /></SelectTrigger>
-                  <SelectContent>
-                    {(blockListsQuery.data || []).map((blockList) => (
-                      <SelectItem key={blockList.id} value={blockList.id}>{blockList.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCommandDialog(null)}>Cancel</Button>
-            {commandDialog === "open-tab" && (
-              <Button onClick={() => sendCoverageCommand("open-tab", { url: commandUrl })} disabled={commandMutation.isPending || !commandUrl.trim()}>
-                <MonitorPlay className="h-4 w-4 mr-2" />
-                Open
-              </Button>
-            )}
-            {commandDialog === "teacher-message" && (
-              <Button onClick={() => sendCoverageCommand("teacher-message", { message: commandMessage })} disabled={commandMutation.isPending || !commandMessage.trim()}>
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Send
-              </Button>
-            )}
-            {commandDialog === "apply-flight-path" && (
-              <Button
-                onClick={() => sendCoverageCommand("apply-flight-path", { flightPathId: selectedFlightPathId })}
-                disabled={
-                  commandMutation.isPending
-                  || !selectedFlightPathId
-                  || !flightPathApplyCapability(
-                    (flightPathsQuery.data || []).find((flightPath) => flightPath.id === selectedFlightPathId),
-                  ).enabled
-                }
-              >
-                Apply
-              </Button>
-            )}
-            {commandDialog === "apply-block-list" && (
-              <Button onClick={() => sendCoverageCommand("apply-block-list", { blockListId: selectedBlockListId })} disabled={commandMutation.isPending || !selectedBlockListId}>
-                Apply
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!releaseDialog} onOpenChange={(open) => !open && setReleaseDialog(null)}>
+      <Dialog open={!!releaseDialog} onOpenChange={(open) => !open && !releaseMutation.isPending && setReleaseDialog(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{releaseDialog?.title || "Release Students"}</DialogTitle>
-            <DialogDescription>Choose why these students are leaving supervision.</DialogDescription>
+            <DialogDescription>This ends live supervision for all {releaseDialog?.context?.activeStudentCount || 0} students in this session. Students return to their current class when eligible, or Available. The saved roster and history remain.</DialogDescription>
           </DialogHeader>
+          <ul aria-label="Students leaving supervision" className="max-h-48 list-disc overflow-y-auto pl-5 text-sm">
+            {(releaseDialog?.context?.students || []).map(student => <li key={student.studentId}>{student.studentName || "Student"}</li>)}
+          </ul>
           <div className="grid gap-2">
             <Label>Release Reason</Label>
             <Select value={releaseReason} onValueChange={setReleaseReason}>
@@ -1732,8 +1072,8 @@ function CoverageWorkspace({ currentUser }) {
             </Select>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setReleaseDialog(null)}>Cancel</Button>
-            <Button onClick={submitRelease} disabled={releaseMutation.isPending || !releaseReason}>Release</Button>
+            <Button variant="outline" disabled={releaseMutation.isPending} onClick={() => setReleaseDialog(null)}>Cancel</Button>
+            <Button onClick={submitRelease} disabled={releaseMutation.isPending || !releaseReason}>{releaseMutation.isPending ? "Ending..." : endLabel(releaseDialog?.context)}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1750,7 +1090,7 @@ function CoverageWorkspace({ currentUser }) {
               <div key={event.id} className="border-t first:border-t-0 px-4 py-3 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium">{event.studentName || event.action}</p>
-                  <span className="text-xs text-muted-foreground">{formatTime(event.createdAt)}</span>
+                  <span className="text-xs text-muted-foreground">{formatTime(event.createdAt, timeZone)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {event.actorEmail || event.actorId || "System"} - {event.type}

@@ -18,6 +18,7 @@ const service = await import("../src/services/classpilotScheduleProfiles.js");
 const scheduling = await import("../src/services/classpilotScheduling.js");
 const regularSchedule = await import("../src/services/classpilotRegularSchedule.js");
 const draftReview = await import("../src/services/classpilotScheduleDraftReview.js");
+const scheduledSupervision = await import("../src/services/classpilotScheduledSupervision.js");
 const { getEffectiveClasspilotScheduleWindow } = await import("../src/services/classpilotScheduleChanges.js");
 const { getClasspilotGroupsReadyAtEffectiveWindow, processScheduledClassAutoStart } = await import("../src/services/classpilotScheduledStart.js");
 const schoolIds: string[] = [], userIds: string[] = [];
@@ -34,7 +35,7 @@ after(async () => {
     // Child deletion and parent deletion must commit together for the deferred
     // exactly-two-legs constraint, just like swap creation below.
     await fixtureTransaction(async (client) => {
-      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
+      for (const table of ["classpilot_student_control_states", "classpilot_supervision_students", "classpilot_supervision_contexts", "classpilot_scheduled_conflicts", "classpilot_coverage_scope_group_members", "classpilot_coverage_assignments", "classpilot_coverage_scope_groups", "classpilot_school_schedules", "classpilot_schedule_change_legs", "classpilot_schedule_changes", "classpilot_schedule_change_pairs", "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "audit_logs"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
       await client.query("DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       await client.query("DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id=ANY($1::text[]))", [schoolIds]);
       for (const table of ["groups", "students", "settings", "school_memberships", "product_licenses"]) await client.query("DELETE FROM " + table + " WHERE school_id=ANY($1::text[])", [schoolIds]);
@@ -258,6 +259,74 @@ async function historyContext(data: Awaited<ReturnType<typeof historyFixture>>, 
   await pool.query("INSERT INTO classpilot_supervision_students(school_id,context_id,student_id,assigned_by,released_at) VALUES($1,$2,$3,$4,$5)", [data.schoolId, id, data.studentId, data.adminId, released ? "2000-01-03T14:45:00Z" : null]);
   return id;
 }
+
+test("scheduled supervision lists applied dated occurrences with own/assigned scope and school-local defaults", async () => {
+  const savedOnly = await fixture();
+  await save(savedOnly, { ...savedOnly.definition, testingBlocks: [{ id: "saved-only", name: "Unapplied testing",
+    coverageGroupId: savedOnly.scopeId, assignedStaffId: savedOnly.specialistId, startTime: "09:00", endTime: "09:45" }] });
+  const read = (schoolId: string, actorId: string, admin: boolean, day?: string, now = new Date("2000-01-04T02:00:00Z")) =>
+    scoped(schoolId, () => scheduledSupervision.getClasspilotScheduledSupervision({ schoolId, actorId, admin, date: day, now }));
+  assert.deepEqual((await read(savedOnly.schoolId, savedOnly.adminId, true)).items, [], "Saved profiles and group membership are not occurrences");
+  const data = await historyFixture({ testing: true });
+  const conflictId = randomUUID();
+  await pool.query("INSERT INTO classpilot_scheduled_conflicts(id,school_id,group_id,teacher_id,scheduled_date,block_start_time,block_end_time) VALUES($1,$2,$3,$4,'2000-01-03','10:00','10:45')",
+    [conflictId, data.schoolId, data.classId, data.teacherId]);
+  const admin = await read(data.schoolId, data.adminId, true);
+  assert.equal(admin.date, "2000-01-03", "Defaults to school-local today, not the UTC date");
+  assert.equal(admin.timeZone, "America/New_York");
+  assert.deepEqual(admin.items.map(row => row.purpose), ["testing", "coverage"]);
+  assert.equal(admin.items[0]?.startsAt, "2000-01-03T14:00:00.000Z");
+  assert.equal(JSON.stringify(admin).includes(data.studentId), false);
+  assert.equal(JSON.stringify(admin).includes(savedOnly.schoolId), false);
+  const proctor = await read(data.schoolId, data.specialistId, false, "2000-01-03", new Date("2000-01-03T13:00:00Z"));
+  assert.equal(proctor.items.length, 1);
+  assert.equal(proctor.items[0]?.purpose, "testing");
+  assert.equal(proctor.items[0]?.state, "scheduled");
+  assert.equal(proctor.items[0]?.supervisionGroupId, data.scopeId);
+  assert.equal(proctor.items[0]?.assignedStaff?.id, data.specialistId);
+  assert.deepEqual((await read(data.schoolId, data.teacherId, false)).items.map(row => row.purpose), ["coverage"]);
+  assert.deepEqual((await read(data.schoolId, data.adminId, false)).items, [], "A non-assigned reader has no school-wide fallback");
+  assert.deepEqual((await read(data.schoolId, data.specialistId, false, "2000-01-04")).items, []);
+  await assert.rejects(read(data.schoolId, data.adminId, true, "2000-02-31"), /real date/);
+});
+
+test("scheduled supervision reflects active, ended and cancelled testing without inventing occurrences", async () => {
+  const data = await historyFixture({ testing: true });
+  const contextId = await historyContext(data, "active", false);
+  const read = (now: string) => scoped(data.schoolId, () => scheduledSupervision.getClasspilotScheduledSupervision({
+    schoolId: data.schoolId, actorId: data.specialistId, admin: false, date: "2000-01-03", now: new Date(now) }));
+  const active = await read("2000-01-03T14:10:00Z");
+  assert.equal(active.items[0]?.state, "active");
+  assert.equal(active.items[0]?.supervisionContextId, contextId);
+  assert.equal((await read("2000-01-03T14:50:00Z")).items[0]?.state, "ended");
+  const current = await scoped(data.schoolId, () => scheduling.getSchoolSchedulingContext(data.schoolId));
+  await pool.query("UPDATE classpilot_school_schedules SET config=$2::jsonb WHERE school_id=$1", [data.schoolId,
+    JSON.stringify({ ...current.config, profileApplications: [{ ...data.application, status: "cancelled" }] })]);
+  assert.equal((await read("2000-01-03T14:10:00Z")).items[0]?.state, "releasing");
+  await pool.query("UPDATE classpilot_supervision_contexts SET status='ended',ended_at='2000-01-03T14:20:00Z' WHERE id=$1", [contextId]);
+  assert.equal((await read("2000-01-03T14:30:00Z")).items[0]?.state, "cancelled");
+});
+
+test("scheduled coverage split between supervisors keeps every context and scopes teachers to their own assignment", async () => {
+  const data = await fixture(), conflictId = randomUUID(), firstContext = randomUUID(), secondContext = randomUUID();
+  await pool.query("INSERT INTO classpilot_scheduled_conflicts(id,school_id,group_id,teacher_id,scheduled_date,block_start_time,block_end_time,status) VALUES($1,$2,$3,$4,'2000-01-03','09:00','09:45','claimed')",
+    [conflictId, data.schoolId, data.classId, data.adminId]);
+  for (const [contextId, staffId, end] of [[firstContext, data.teacherId, '2000-01-03T14:45:00Z'], [secondContext, data.specialistId, '2000-01-03T15:00:00Z']]) {
+    await pool.query("INSERT INTO classpilot_supervision_contexts(id,school_id,context_type,name,status,assigned_staff_id,created_by,starts_at,ends_at,scheduled_conflict_id) VALUES($1,$2,'other','Partial class coverage','active',$3,$4,'2000-01-03T14:00:00Z',$5,$6)",
+      [contextId, data.schoolId, staffId, data.adminId, end, conflictId]);
+  }
+  const read = (actorId: string, admin = false) => scoped(data.schoolId, () => scheduledSupervision.getClasspilotScheduledSupervision({
+    schoolId: data.schoolId, actorId, admin, date: '2000-01-03', now: new Date('2000-01-03T14:10:00Z') }));
+  const first = await read(data.teacherId), second = await read(data.specialistId);
+  assert.deepEqual(first.items.map(row => row.supervisionContextId), [firstContext]);
+  assert.deepEqual(second.items.map(row => row.supervisionContextId), [secondContext]);
+  assert.equal(first.items[0]?.assignedStaff?.id, data.teacherId);
+  assert.equal(first.items[0]?.endsAt, '2000-01-03T14:45:00.000Z');
+  assert.equal(second.items[0]?.endsAt, '2000-01-03T15:00:00.000Z');
+  const admin = await read(data.adminId, true);
+  assert.deepEqual(admin.items.map(row => row.supervisionContextId).sort(), [firstContext, secondContext].sort());
+  assert.equal(new Set(admin.items.map(row => row.id)).size, 2);
+});
 async function historyOutcome(data: Awaited<ReturnType<typeof historyFixture>>, status: string, contextId?: string) {
   const window = data.application.testingWindows[0]!;
   const outcome = { applicationId: data.application.id, date: window.date, blockId: window.blockId, status, code: "FIXTURE", updatedAt: "2000-01-03T15:00:00Z", ...(contextId ? { contextId } : {}) };

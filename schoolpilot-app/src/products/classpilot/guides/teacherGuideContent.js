@@ -178,13 +178,15 @@ export const teacherGuideTopics = [
   {
     id: "coverage-workflow",
     phase: "Monitor",
-    title: "Work an assigned Coverage session",
+    title: "Work a temporary supervision session",
     summary: "Claim only assigned students, use the coverage tool set, and release them when supervision ends.",
     keywords: ["coverage", "claim", "release", "send to", "supervision group", "testing", "activity summary", "email"],
     role: "Staff member with a Coverage assignment",
     route: "/classpilot/coverage",
-    routeLabel: "Open Coverage",
+    routeLabel: "Open Supervision",
     steps: [
+      { title: "Distinguish setup, permission and activity", body: "In Supervision, Live now shows current sessions, Scheduled shows your own or assigned dated testing and coverage, and Saved groups holds reusable rosters you may access. A saved roster and Authorized staff permission do not start supervision. A student in a saved testing group is part of testing only during an actual testing session." },
+      { title: "Review a temporary session", body: "Start session reviews the exact participants, supervising staff, purpose and end time before starting. The default purpose is Supervision. Group names do not choose Testing automatically. Scheduled starts with today in the school’s timezone and includes actual applied testing blocks and existing dated coverage records, not unapplied saved profiles. School administrators schedule testing dates." },
       { title: "Follow your supervision", body: "When scheduled Class mode is enabled, scheduled testing and scheduled-class coverage appear in Class with the same classroom tools supported by the Chromebook extension. Direct pickups, manual Other sessions and manually started supervision groups appear in Claimed. An explicit ad hoc claim opens Claimed; the next scheduled handoff returns to Class. Schools awaiting this rollout retain the existing combined supervision view." },
       { title: "Read the dashboard counts", body: "In scheduled Class mode, Claimed counts your ad hoc students, including offline students; scheduled testing is counted in Class. When the Coverage button is available, its number counts active supervision sessions visible to you. One ad hoc session with 20 students can show Claimed 20 and Coverage 1. Counts refresh while you view Class, and ended assignments stop contributing. An em dash (—) means the count is unavailable; use Retry supervision refresh if an error appears." },
       { title: "Filter Available or Claimed students", body: "Combine Class, Grade, and student search to find the students you need. Class refers to official roster membership, not the class currently meeting. Clear filters restores the list. Filtering does not change rosters, assignments, or permissions. Select all matching students selects the students matching those filters; check the selected count before acting." },

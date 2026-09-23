@@ -16,6 +16,7 @@ import { redisCommand } from "../dist/middleware/rateLimiter.js";
 import {
   addGroupStudentsDetailed,
   assignAdHocSupervisionStudents,
+  assignStudentsToSupervisionContext,
   acknowledgeClasspilotStudentControlState,
   createCoverageAssignment,
   countClasspilotLateSignInStampedStates,
@@ -3792,6 +3793,76 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       requireAvailable: true, coverageAssignmentReview: grants })), { code: "COVERAGE_PERMISSION_STALE" });
     const noGrant = await requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, staffAuth);
     assert.equal(noGrant.status, 403);
+  });
+
+  it("keeps scheduled deadlines under scheduling even for legacy PATCH callers while allowing notes and release", async () => {
+    const initialEndsAt = new Date(Date.now() + 30 * 60_000);
+    const laterEndsAt = new Date(Date.now() + 60 * 60_000).toISOString();
+    const profileContext = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: admin.id, createdBy: admin.id, contextType: "state_testing", name: "Scheduled testing deadline",
+      endsAt: initialEndsAt, scheduleProfileApplicationId: `${TAG}-deadline-profile`, scheduleProfileDate: new Date().toISOString().slice(0, 10),
+      scheduleProfileBlockId: "testing-deadline",
+    }, studentIds: [], assignedBy: admin.id }));
+    const coverageContext = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: admin.id, createdBy: admin.id, contextType: "other", name: "Scheduled coverage deadline",
+      endsAt: initialEndsAt, scheduledConflictId: `${TAG}-deadline-conflict`,
+    }, studentIds: [], assignedBy: admin.id }));
+    const manualContext = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: admin.id, createdBy: admin.id, contextType: "state_testing", name: "Manual testing deadline", endsAt: initialEndsAt,
+    }, studentIds: [], assignedBy: admin.id }));
+    const adminAuth = authFor(admin, school.id);
+    for (const context of [profileContext, coverageContext]) {
+      const denied = await requestJson("PATCH", `/coverage/contexts/${context.id}`, { endsAt: laterEndsAt, note: "Must not mutate" }, adminAuth);
+      assert.equal(denied.status, 409, JSON.stringify(denied.body));
+      assert.equal(denied.body.code, "SUPERVISION_SCHEDULED_DEADLINE");
+      const retained = await inSchool(school.id, () => db.execute(sql`SELECT ends_at,note FROM classpilot_supervision_contexts WHERE id=${context.id}`));
+      const retainedEndsAt = retained.rows[0]?.ends_at;
+      assert.equal(retainedEndsAt instanceof Date ? retainedEndsAt.getTime() : new Date(String(retainedEndsAt)).getTime(), initialEndsAt.getTime());
+      assert.equal(retained.rows[0]?.note, null);
+      const note = await requestJson("PATCH", `/coverage/contexts/${context.id}`, { note: "Supervision note" }, adminAuth);
+      assert.equal(note.status, 200, JSON.stringify(note.body));
+      assert.equal(note.body.context.note, "Supervision note");
+      const released = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { releaseReason: "test_release" }, adminAuth);
+      assert.equal(released.status, 200, JSON.stringify(released.body));
+    }
+    const changed = await requestJson("PATCH", `/coverage/contexts/${manualContext.id}`, { endsAt: laterEndsAt }, adminAuth);
+    assert.equal(changed.status, 200, JSON.stringify(changed.body));
+    assert.equal(changed.body.context.endsAt, laterEndsAt, "explicit manual testing remains ad hoc");
+    await requestJson("POST", `/coverage/contexts/${manualContext.id}/release`, { releaseReason: "test_release" }, adminAuth);
+  });
+
+  it("fences release-all to the reviewed roster and supervisor while legacy releases recheck current ownership", async () => {
+    const pupils = await inSchool(school.id, async () => [
+      await createStudent({ schoolId: school.id, firstName: "Release", lastName: "First", status: "active" }),
+      await createStudent({ schoolId: school.id, firstName: "Release", lastName: "Later", status: "active" }),
+    ]);
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({ context: {
+      schoolId: school.id, assignedStaffId: teacher.id, createdBy: admin.id, contextType: "other", name: "Release review",
+      endsAt: new Date(Date.now() + 60 * 60_000),
+    }, studentIds: [pupils[0]!.id], assignedBy: admin.id }));
+    const reviewed = { studentIds: [], expectedStudentIds: [pupils[0]!.id], releaseReason: "test_release" };
+    const headers = { ...authFor(admin, school.id), "X-ClassPilot-Context-Authority-Revision": String(context.classroomAuthorityRevision) };
+    await inSchool(school.id, () => assignStudentsToSupervisionContext({ schoolId: school.id, contextId: context.id,
+      studentIds: [pupils[1]!.id], assignedBy: admin.id }));
+    const added = await requestJson("POST", `/coverage/contexts/${context.id}/release`, reviewed, headers);
+    assert.equal(added.status, 409, JSON.stringify(added.body));
+    assert.equal(added.body.code, "SUPERVISION_ROSTER_CHANGED");
+    const reassigned = await requestJson("PATCH", `/coverage/contexts/${context.id}`, { assignedStaffId: coverageStaff.id }, authFor(admin, school.id));
+    assert.equal(reassigned.status, 200, JSON.stringify(reassigned.body));
+    const currentIds = pupils.map(student => student.id);
+    const stale = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { ...reviewed, expectedStudentIds: currentIds }, headers);
+    assert.equal(stale.status, 409, JSON.stringify(stale.body));
+    assert.equal(stale.body.code, "CLASSROOM_AUTHORITY_CHANGED");
+    // This is the locked storage path used after a legacy request's earlier
+    // route check; losing ownership in that gap must still block the mutation.
+    await assert.rejects(inSchool(school.id, () => releaseSupervisionStudents({ schoolId: school.id, contextId: context.id,
+      releaseReason: "test_release", staffReleaseAuthority: { actorId: teacher.id } })), { code: "SUPERVISION_AUTHORITY_CHANGED", status: 409 });
+    const active = await inSchool(school.id, () => db.execute(sql`SELECT student_id FROM classpilot_supervision_students WHERE context_id=${context.id} AND released_at IS NULL`));
+    assert.deepEqual(active.rows.map(row => row.student_id).sort(), [...currentIds].sort(), "denied release must not change either assignment");
+    const currentHeaders = { ...headers, "X-ClassPilot-Context-Authority-Revision": String(reassigned.body.context.classroomAuthorityRevision) };
+    const released = await requestJson("POST", `/coverage/contexts/${context.id}/release`, { ...reviewed, expectedStudentIds: currentIds }, currentHeaders);
+    assert.equal(released.status, 200, JSON.stringify(released.body));
+    assert.equal(released.body.released.length, 2);
   });
 
   it("discovers only current nonempty Observe activities with server-proven purposes", async () => {

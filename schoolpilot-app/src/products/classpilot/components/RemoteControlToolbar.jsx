@@ -134,11 +134,11 @@ function RemoteControlToolbar({
                     variant="ghost"
                     onClick={onOpenCoverage}
                     data-testid="button-coverage-tab"
-                    title={coverageCount === null ? 'Active supervision count unavailable' : coverageCount > 0 ? `${coverageCount} active supervision group${coverageCount === 1 ? "" : "s"}` : "Open coverage setup"}
+                    title={coverageCount === null ? 'Active supervision count unavailable' : coverageCount > 0 ? `${coverageCount} active supervision group${coverageCount === 1 ? "" : "s"}` : "Open supervision"}
                     className={coverageActionButtonClass}
                   >
                     <ClipboardCheck className="h-4 w-4 mr-2" />
-                    Coverage
+                    Supervision
                     {(coverageCount === null || coverageCount > 0) && (
                       <span className={coverageCountClass} aria-label={coverageCount === null ? 'Active supervision count unavailable' : undefined}>{coverageCount ?? '—'}</span>
                     )}
@@ -151,7 +151,7 @@ function RemoteControlToolbar({
                     onClick={onReroute}
                     disabled={selectedStudentIds.size === 0 || !canReroute}
                     data-testid="button-reroute-selected"
-                    title={!canReroute ? "Create a Supervision Group with assigned staff before sending students" : "Send selected students to assigned staff"}
+                    title={!canReroute ? "Select students in your active class to send them to authorized staff" : "Review supervision for selected students"}
                     className={coverageActionButtonClass}
                   >
                     <Route className="h-4 w-4 mr-2" />

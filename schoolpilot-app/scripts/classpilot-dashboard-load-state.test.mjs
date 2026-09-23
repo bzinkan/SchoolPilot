@@ -22,6 +22,8 @@ function chatBaselinePlugins() {
 }
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Separate browser suites can run concurrently without Vite renaming each other's optimized dependencies.
+const DASHBOARD_CACHE = path.join(APP_ROOT, "node_modules", `.vite-dashboard-${process.pid}`);
 const SCHOOL_ID = "11111111-1111-4111-8111-111111111111";
 const ADMIN_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_TEACHER_ID = "33333333-3333-4333-8333-333333333333";
@@ -680,6 +682,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   );
 
   const vite = await createServer({
+    cacheDir: DASHBOARD_CACHE,
     root: APP_ROOT,
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0 },
@@ -2224,7 +2227,7 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
 });
 
 test('terminal read denials stop clock and lifecycle replay and recover only after authority or checked retry', { timeout: 120_000 }, async () => {
-  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
   const browser = await chromium.launch({ headless: true });
@@ -2518,7 +2521,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
   const trace = (message) => {
     if (process.env.CLASSPILOT_BROWSER_TRACE === '1') process.stderr.write(`[preview eligibility] ${message}\n`);
   };
-  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
   const browser = await chromium.launch({ headless: true });
@@ -2937,7 +2940,7 @@ test('live preview eligibility follows sign-in without replaying denied or super
 });
 
 test('a pending observation acknowledgement preserves the first exact-bound preview response', { timeout: 45_000 }, async () => {
-  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -4096,7 +4099,7 @@ test('chat recovery: reconnect fetches history newer than an empty request begun
 });
 
 async function assignedTestingBrowser(context, options = {}) {
-  const vite = await createServer({ root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, ...options });
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, ...options });
   await vite.listen();
   let browser;
   context.after(async () => { await browser?.close(); await vite.close(); });
@@ -5430,5 +5433,122 @@ test('Observe authority clears on administrator role loss and does not return af
   assert.equal(await page.getByTestId('select-admin-observe').inputValue(), '');
   assert.equal(await page.getByTestId('observe-read-only-banner').count(), 0);
   assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+
+async function installHubNavigation(page, state) {
+  await page.addInitScript(value => {
+    if (location.pathname === '/classpilot') history.replaceState({ ...history.state, usr: value }, '');
+  }, state);
+}
+
+test('Supervision hub Open waits for authority and selects the requested owner session among two active sessions', { timeout: 90_000 }, async context => {
+  const { createSupervisionDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const activity = (id, name) => scheduledTestingActivity({ id, name, purpose: 'supervision', source: 'ad_hoc_supervision', teacherId: ADMIN_ID,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z', studentCount: 1,
+    authority: { supervisionContextId: id }, contextAuthorityRevision: '7' });
+  const first = activity(OWN_TESTING_CONTEXT_ID, 'First supervision');
+  const requested = activity(OTHER_TESTING_CONTEXT_ID, 'Clicked supervision');
+  await installHubNavigation(page, createSupervisionDashboardIntent({ schoolId: SCHOOL_ID, viewerId: ADMIN_ID,
+    contexts: [{ ...requested, assignedStaffId: ADMIN_ID, contextType: 'other', classroomAuthorityRevision: '7' }] }));
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  context.after(() => release());
+  const activityResponse = { ...scheduledActivityResponse(first, { serverTime: TESTING_TIME.toISOString() }), activities: [first, requested] };
+  const aggregate = aggregateController({ scoped: success([{ ...testingStudent(STUDENT_ID, requested.id), purpose: 'supervision', contextAuthorityRevision: '7', acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true } }]) });
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: null, aggregate, acknowledgeSessionSubscriptions: true,
+    coverageSummary: { ...ownSupervisionSummary([]), ownAdHocContexts: [] },
+    dashboardActivity: async () => { await held; return activityResponse; },
+    screenshotTiles: body => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: `hub:${body.supervisionContextId}`,
+      screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: `hub:${body.supervisionContextId}`, timestamp: TESTING_TIME.toISOString(), tabTitle: 'Owner session capture' } }] }),
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await waitUntil(() => harness.activityRequests.length > 0, 'Opening supervision must request current activity authority');
+  release();
+  try { await page.getByTestId('scheduled-class-banner').getByText(/Clicked supervision/).waitFor(); } catch (error) { assert.fail(`${error.message}: ${JSON.stringify({ errors: harness.pageErrors, activityRequests: harness.activityRequests, rosterRequests: aggregate.requests, text: (await page.locator('body').innerText()).slice(0, 3500) })}`); }
+  await assertPickupView(page, 'class');
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert(aggregate.requests.some(request => request.supervisionContextId === requested.id), 'Roster reads use the clicked session');
+  assert(harness.observationLeaseRequests.some(request => request.method === 'PUT' && request.pathname.includes(requested.id) && request.contextAuthorityRevision === '7'));
+  assert(harness.tileRequests.some(request => request.body.supervisionContextId === requested.id && request.contextAuthorityRevision === '7'));
+  await page.getByRole('button', { name: 'End supervision', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => Boolean(history.state?.usr?.classpilotSupervisionDashboard)), false);
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Supervision hub Claim navigation retains neutral Claimed while a regular class remains current', { timeout: 75_000 }, async context => {
+  const { createSupervisionDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const claim = { id: OWN_TESTING_CONTEXT_ID, name: 'Claimed students', purpose: 'claim', contextType: 'direct_pickup',
+    source: 'ad_hoc_supervision', assignedStaffId: ADMIN_ID, startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z', activeStudentCount: 1, classroomAuthorityRevision: '2' };
+  await installHubNavigation(page, createSupervisionDashboardIntent({ schoolId: SCHOOL_ID, viewerId: ADMIN_ID, contexts: [claim] }));
+  const regular = scheduledClassActivity({ startsAt: claim.startsAt, endsAt: claim.endsAt });
+  const harness = await configureDashboard(page, { userRole: 'teacher', activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+    aggregate: aggregateController({ scoped: success([student({ studentId: MOVED_CLASS_STUDENT_ID, studentName: 'Regular class student' })]) }),
+    dashboardActivity: scheduledActivityResponse(regular, { serverTime: TESTING_TIME.toISOString() }),
+    coverageSummary: { ...ownSupervisionSummary([claim]), ownAdHocContexts: [claim] },
+    claimedStudents: [{ ...testingStudent(STUDENT_ID, claim.id), purpose: 'claim', contextName: claim.name, contextAuthorityRevision: '2' }],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await assertPickupView(page, 'claimed');
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'End testing', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Release student', exact: true }).waitFor();
+  await page.getByTestId('button-view-class-students').click();
+  await page.getByTestId(`card-student-${MOVED_CLASS_STUDENT_ID}`).waitFor();
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Supervision hub Observe reauthorizes the selected supervision and keeps previews read-only', { timeout: 90_000 }, async context => {
+  const { createObservedActivityDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  const observed = { id: OTHER_TESTING_CONTEXT_ID, name: 'Observed support group', purpose: 'supervision', source: 'ad_hoc_supervision',
+    owner: { id: OTHER_TEACHER_ID, name: 'Other Teacher' }, authority: { supervisionContextId: OTHER_TESTING_CONTEXT_ID, contextAuthorityRevision: '9' }, studentCount: 1,
+    startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z', capabilities: { observe: true, screenshots: true, commands: false, fab: false, liveView: false } };
+  // The stale revision is only a navigation hint: current discovery must win.
+  await installHubNavigation(page, createObservedActivityDashboardIntent({ schoolId: SCHOOL_ID, viewerId: ADMIN_ID,
+    activity: { ...observed, authority: { ...observed.authority, contextAuthorityRevision: '8' } } }));
+  const aggregate = aggregateController({ scoped: success([{ ...testingStudent(STUDENT_ID, observed.id, OTHER_TEACHER_ID), contextAuthorityRevision: '9', acceptedCapabilities: { scheduledClassroomV1: true, scopedAuthorityChecksV1: true } }]) });
+  const harness = await configureDashboard(page, { aggregate, activeSession: null, observableActivities: [observed], acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(null, { serverTime: TESTING_TIME.toISOString() }),
+    screenshotTiles: { tiles: [{ studentId: STUDENT_ID, bindingVersion: 'observe-hub', screenshot: { screenshot: TINY_SCREENSHOT_DATA_URL, bindingVersion: 'observe-hub', timestamp: TESTING_TIME.toISOString() } }] },
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId('observe-read-only-banner').waitFor();
+  await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), observed.id);
+  assert(harness.tileRequests.some(request => request.body.supervisionContextId === observed.id && request.contextAuthorityRevision === '9'), 'Current server revision replaces navigation hint');
+  assert(harness.websocketMessages.some(message => message.type === 'subscribe-session' && message.supervisionContextId === observed.id && message.accessMode === 'observe'));
+  await assertObserveEntryPointsUnavailable(page, harness.commandPosts, [STUDENT_ID], harness.coverageMutationRequests);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Supervision hub ignores a different-school navigation hint without acquiring its authority', { timeout: 75_000 }, async context => {
+  const { createObservedActivityDashboardIntent } = await import('../src/products/classpilot/lib/supervisionDashboardNavigation.js');
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: TESTING_TIME });
+  await installHubNavigation(page, createObservedActivityDashboardIntent({ schoolId: SECOND_SCHOOL_ID, viewerId: ADMIN_ID,
+    activity: { id: OTHER_TESTING_CONTEXT_ID, name: 'Wrong-school activity', authority: { supervisionContextId: OTHER_TESTING_CONTEXT_ID, contextAuthorityRevision: '1' } } }));
+  const aggregate = aggregateController({ scoped: success([student()]) });
+  const harness = await configureDashboard(page, { aggregate, activeSession: teachingSession(), acknowledgeSessionSubscriptions: true,
+    dashboardActivity: scheduledActivityResponse(scheduledClassActivity({ startsAt: '2026-09-14T12:00:00Z', endsAt: '2026-09-14T16:00:00Z' }), { serverTime: TESTING_TIME.toISOString() }) });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByTestId('observe-read-only-banner').count(), 0);
+  assert.equal(await page.evaluate(() => Boolean(history.state?.usr?.classpilotSupervisionDashboard)), false);
+  assert.equal(aggregate.requests.some(request => request.supervisionContextId === OTHER_TESTING_CONTEXT_ID), false);
+  assert.equal(harness.observationLeaseRequests.some(request => request.pathname.includes(OTHER_TESTING_CONTEXT_ID)), false);
+  assert.equal(harness.tileRequests.some(request => request.body.supervisionContextId === OTHER_TESTING_CONTEXT_ID), false);
   assert.deepEqual(harness.pageErrors, []);
 });
