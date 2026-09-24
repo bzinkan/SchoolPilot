@@ -156,6 +156,9 @@ export function buildDeploymentEvidence({ rootDir, env = process.env, now = new 
       evidenceArtifacts: {
         backendBuild: "soc2-evidence-backend",
         frontendBuild: "soc2-evidence-frontend",
+        // The ClassPilot and kiosk release-focused gates run as three matrix shards,
+        // each uploading its own packet.
+        frontendReleaseGates: "soc2-evidence-frontend-release-gates-{1,2,3}",
         crossTenantTests: "soc2-evidence-cross-tenant",
         rlsEnabledTests: "soc2-evidence-rls-enabled",
         deploymentEvidence: "soc2-evidence-deployment",
