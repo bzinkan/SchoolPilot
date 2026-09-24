@@ -1,3 +1,5 @@
+import KioskActivityBanner from "../components/KioskActivityBanner";
+import { useKioskBoundary } from "../useKioskBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowLeft, Bath, Heart, Triangle, Clock } from "lucide-react";
 import { isCanonicalPassPilotSource, PASSPILOT_CLASS_MODEL_HEADER } from "../classData";
@@ -77,7 +79,7 @@ export default function KioskSimplePage() {
   const [students, setStudents] = useState([]);
   const [studentsClassId, setStudentsClassId] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [checkoutStudentId, setCheckoutStudentId] = useState(null);
+  const [checkoutSelection, setCheckoutSelection] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [kioskName, setKioskName] = useState(null);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -86,6 +88,8 @@ export default function KioskSimplePage() {
   // server, true = session flow, false = legacy school-global flow (older
   // server without session support).
   const [session, setSession] = useState(null);
+  const [activity, setActivity] = useState(null);
+  const activityRevisionRef = useRef(null);
   const [sessionMode, setSessionMode] = useState(null);
   const [bootstrapError, setBootstrapError] = useState(null);
   // Device-memory resume offer from the bootstrap response: the remembered
@@ -131,15 +135,15 @@ export default function KioskSimplePage() {
   const resetInactivity = useCallback(() => {
     if (inactivityRef.current) clearTimeout(inactivityRef.current);
     inactivityRef.current = setTimeout(() => {
-      setCheckoutStudentId(null);
+      setCheckoutSelection(null);
     }, 10000);
   }, []);
 
   useEffect(() => {
-    if (!checkoutStudentId) return;
+    if (!checkoutSelection) return;
     resetInactivity();
     return () => { if (inactivityRef.current) clearTimeout(inactivityRef.current); };
-  }, [checkoutStudentId, resetInactivity]);
+  }, [checkoutSelection, resetInactivity]);
 
   const kioskClient = useMemo(() => createKioskApiClient({
     schoolId,
@@ -181,6 +185,8 @@ export default function KioskSimplePage() {
     sessionIdRef.current = null;
     resetSnapshotValidation();
     setSession(null);
+    setActivity(null);
+    activityRevisionRef.current = null;
     setResumeOffer(null);
     setSelectedGradeId(null);
     setStudents([]);
@@ -260,7 +266,7 @@ export default function KioskSimplePage() {
 
     const requestedClassId = selectedGradeId;
     let snapshotUnsupported = false;
-    if (requestedClassId && snapshotModeRef.current !== "legacy") {
+    if ((requestedClassId || (sessionMode === true && session?.status === "active")) && snapshotModeRef.current !== "legacy") {
       const validatorKey = kioskSnapshotValidatorKey({
         schoolId,
         sessionMode,
@@ -270,7 +276,7 @@ export default function KioskSimplePage() {
       });
       const validatorEtag = snapshotValidatorsRef.current.get(validatorKey);
       const response = await kioskClient.request(
-        `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(requestedClassId)}`,
+        `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(requestedClassId || "")}`,
         {
           method: "GET",
           signal,
@@ -391,7 +397,7 @@ export default function KioskSimplePage() {
       revision: config?.revision ?? null,
       transportMode: snapshotUnsupported ? "legacy" : undefined,
     };
-  }, [classSource, kioskClient, launchTicket, schoolId, selectedGradeId, sessionMode]);
+  }, [classSource, kioskClient, launchTicket, schoolId, selectedGradeId, session?.status, sessionMode]);
 
   const applyKioskPoll = useCallback((result) => {
     if (result.clearValidatorKey) {
@@ -449,6 +455,9 @@ export default function KioskSimplePage() {
     }
     if (result.kind === "snapshot") {
       const data = result.data;
+      if (data.assignmentRevision !== activityRevisionRef.current) { setCheckoutSelection(null); }
+      activityRevisionRef.current = data.assignmentRevision;
+      setActivity(data.activity ? { ...data.activity, revision: data.assignmentRevision } : null);
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setConfigLoaded(true);
       setConfigError(null);
@@ -458,7 +467,7 @@ export default function KioskSimplePage() {
       if (Array.isArray(data.classes)) setGrades(data.classes);
       const activeClassId = data.session && data.session.status !== "active" ? null : data.classId;
       setSelectedGradeId(activeClassId);
-      setStudents(activeClassId ? data.students : []);
+      setStudents(data.activity || activeClassId ? data.students : []);
       setStudentsClassId(activeClassId);
       return;
     }
@@ -505,6 +514,8 @@ export default function KioskSimplePage() {
   }, [handleSessionExpired, redirectForKioskStyle, resetSnapshotValidation, sessionMode]);
 
   const handleKioskPollError = useCallback((error) => {
+    resetSnapshotValidation();
+    setActivity(previous => previous ? { ...previous, status: "unavailable", message: error.message } : previous);
     if (error?.status === 401) {
       kioskPinStore().removeItem(KIOSK_PIN_KEY);
       setKioskPin("");
@@ -513,7 +524,7 @@ export default function KioskSimplePage() {
     if (sessionMode === null) {
       setBootstrapError(error?.message || "Kiosk is temporarily unavailable.");
     }
-  }, [sessionMode]);
+  }, [sessionMode, resetSnapshotValidation]);
 
   const reportKioskHealth = useCallback(async (event, { signal }) => {
     await kioskClient.request("/api/passpilot/kiosk/client-health", {
@@ -540,6 +551,8 @@ export default function KioskSimplePage() {
     onHealthEvent: reportKioskHealth,
     getRevision: (result) => result.revision,
   });
+
+  useKioskBoundary(activity, refreshKiosk);
 
   // One-tap resume: mint a fresh active session for the remembered teacher.
   // Any failure just clears the offer — the claim code beneath it remains the
@@ -615,7 +628,9 @@ export default function KioskSimplePage() {
   };
 
   const handleCheckout = async (studentId, destination) => {
-    setCheckoutStudentId(null);
+    if (checkoutSelection?.studentId !== studentId || isOffline || (activity && activity.status !== "ready")) return;
+    const assignmentRevision = checkoutSelection.revision;
+    setCheckoutSelection(null);
     setLoading(true);
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/checkout", {
@@ -623,7 +638,8 @@ export default function KioskSimplePage() {
         body: JSON.stringify({
           studentId,
           destination,
-          classId: selectedGradeId,
+          ...(selectedGradeId ? { classId: selectedGradeId } : {}),
+          assignmentRevision,
         }),
       });
       checkPinRejected(res);
@@ -633,6 +649,7 @@ export default function KioskSimplePage() {
         if (res.status === 404 && errBody?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
           handleSessionExpired();
         } else {
+          if (res.status === 409) { setCheckoutSelection(null); refreshKiosk(); }
           showFeedback("error", errBody?.error || "Failed to issue pass");
         }
       } else {
@@ -786,7 +803,7 @@ export default function KioskSimplePage() {
 
   // Claimed but no class yet (self-launched without a class, or the class was
   // archived): wait for the teacher's next Send to Kiosk.
-  if (sessionMode === true && (!selectedGradeId || configError)) {
+  if (sessionMode === true && (!selectedGradeId || configError) && !activity) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
@@ -821,7 +838,7 @@ export default function KioskSimplePage() {
   }
 
   // Grade picker (legacy school-global mode only)
-  if (!selectedGradeId) {
+  if (!selectedGradeId && !activity) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
@@ -847,7 +864,7 @@ export default function KioskSimplePage() {
 
   const visibleStudents = studentsClassId === selectedGradeId ? students : [];
   const studentsOut = visibleStudents.filter(s => s.activePass).sort(sortByName);
-  const studentsAvailable = visibleStudents.filter(s => !s.activePass).sort(sortByName);
+  const studentsAvailable = visibleStudents.filter(s => !s.activePass && !s.returnOnly && (!activity || activity.status === "ready")).sort(sortByName);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
@@ -858,7 +875,7 @@ export default function KioskSimplePage() {
           <div className="w-16" aria-hidden="true" />
         ) : (
           <button
-            onClick={() => { setSelectedGradeId(null); setCheckoutStudentId(null); }}
+            onClick={() => { setSelectedGradeId(null); setCheckoutSelection(null); }}
             className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
           >
             <ArrowLeft className="h-5 w-5" />
@@ -871,6 +888,7 @@ export default function KioskSimplePage() {
         <div className="w-16" />
       </header>
 
+      <KioskActivityBanner activity={activity} />
       {/* Feedback toast */}
       {feedback && (
         <div className={`mx-4 mt-3 px-4 py-3 rounded-lg text-center font-medium ${
@@ -910,7 +928,7 @@ export default function KioskSimplePage() {
                   <button
                     key={student.id}
                     onClick={() => handleCheckin(student.id)}
-                    disabled={loading}
+                    disabled={loading || isOffline || student.canReturn === false}
                     className={`w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors ${overdue
                       ? "bg-amber-900/30 border border-amber-600/60 hover:bg-amber-900/50"
                       : "bg-orange-900/30 border border-orange-700/50 hover:bg-orange-900/50"
@@ -920,6 +938,7 @@ export default function KioskSimplePage() {
                       <span className="text-lg font-medium">
                         {student.lastName}, {student.firstName}
                       </span>
+                      {student.returnOnly ? <span className="ml-3 text-sm text-amber-200">Return only</span> : null}
                       {student.studentIdNumber && (
                         <span className="ml-3 text-sm text-gray-500">ID: {student.studentIdNumber}</span>
                       )}
@@ -936,7 +955,7 @@ export default function KioskSimplePage() {
                           {overdueLabel}
                         </span>
                       ) : null}
-                      <span className="text-xs text-orange-400">Tap to return</span>
+                      <span className="text-xs text-orange-400">{student.canReturn === false ? 'Return at issuing teacher’s kiosk' : 'Tap to return'}</span>
                     </div>
                   </button>
                 );
@@ -954,17 +973,17 @@ export default function KioskSimplePage() {
           </div>
           {studentsAvailable.length === 0 && visibleStudents.length > 0 ? (
             <div className="bg-gray-900/50 border border-gray-800 rounded-lg px-4 py-6 text-center text-gray-500">
-              All students are currently out
+              {activity && activity.status !== 'ready' ? 'New passes are unavailable until a class is selected.' : 'All students are currently out'}
             </div>
           ) : (
             <div className="space-y-2">
               {studentsAvailable.map(student => {
-                const showDestinations = checkoutStudentId === student.id;
+                const showDestinations = checkoutSelection?.studentId === student.id;
                 return (
                   <div key={student.id}>
                     <button
-                      onClick={() => setCheckoutStudentId(showDestinations ? null : student.id)}
-                      disabled={loading}
+                      onClick={() => setCheckoutSelection(showDestinations ? null : { studentId: student.id, revision: activity?.revision ?? activityRevisionRef.current })}
+                      disabled={loading || isOffline}
                       className="w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors bg-green-900/20 border border-green-700/40 hover:bg-green-900/40"
                     >
                       <div>
@@ -986,7 +1005,7 @@ export default function KioskSimplePage() {
                             <button
                               key={d.value}
                               onClick={() => handleCheckout(student.id, d.value)}
-                              disabled={loading}
+                              disabled={loading || isOffline}
                               className="flex items-center gap-2 px-4 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
                             >
                               <Icon className={`h-5 w-5 ${d.color}`} />

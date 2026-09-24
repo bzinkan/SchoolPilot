@@ -1,6 +1,9 @@
 const KIOSK_METRICS_INTERVAL_MS = 60_000;
 
 export type PasspilotKioskCounter =
+  | "assignmentFailures"
+  | "staleCheckoutConflicts"
+  | "returnFailures"
   | "authorizationRequests"
   | "authorizationSqlStatements"
   | "authorizationTokenSuccess"

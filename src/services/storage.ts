@@ -4154,6 +4154,7 @@ export async function getPassHistoryPage(
         and(
           isNull(passes.classpilotGroupId),
           isNull(passes.gradeId),
+          isNull(passes.supervisionContextId),
           inArray(passes.studentId, filters.access.studentIds)
         )!
       );
@@ -5641,6 +5642,7 @@ export async function claimKioskSessionByCode(
         target
       );
     }
+    if (target) await (await import("./passpilotKioskAssignments.js")).setKioskOverride(schoolId, session!, tx as unknown as typeof db);
     return session!;
   });
 }
@@ -5652,6 +5654,7 @@ export async function retargetKioskSessionsForTeacher(
   authorization: KioskSessionAuthorization
 ): Promise<KioskSession[]> {
   return db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, schoolId)) throw new Error("School not found");
     await takePasspilotClassLock(tx, schoolId);
     await lockAndAssertKioskClassSource(tx, schoolId, target.source);
     await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
@@ -5674,6 +5677,7 @@ export async function retargetKioskSessionsForTeacher(
       )
       .returning();
     for (const session of sessions) {
+      await (await import("./passpilotKioskAssignments.js")).setKioskOverride(schoolId, session, tx as unknown as typeof db);
       if (session.deviceId) {
         await upsertKioskDeviceBinding(tx, schoolId, session.deviceId, teacherId, target);
       }
@@ -5689,6 +5693,7 @@ export async function updateKioskSessionClass(
   authorization: KioskSessionAuthorization
 ): Promise<KioskSession | undefined> {
   return db.transaction(async (tx) => {
+    if (!await lockStaffAssignmentLifecycleSchool(tx, schoolId)) throw new Error("School not found");
     await takePasspilotClassLock(tx, schoolId);
     await lockAndAssertKioskClassSource(tx, schoolId, target.source);
     await assertKioskSessionClassTarget(tx, schoolId, target, authorization);
@@ -5713,6 +5718,7 @@ export async function updateKioskSessionClass(
         )
       )
       .returning();
+    if (session) await (await import("./passpilotKioskAssignments.js")).setKioskOverride(schoolId, session, tx as unknown as typeof db);
     if (session?.deviceId && session.teacherId) {
       // Bind to the SESSION's teacher, not the actor — a manager retargeting
       // another teacher's kiosk must not rebind the device to themselves.

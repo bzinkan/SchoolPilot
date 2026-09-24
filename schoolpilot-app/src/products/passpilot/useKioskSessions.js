@@ -98,5 +98,9 @@ export function useKioskSessions({ enabled = true } = {}) {
     claimKiosk,
     retargetKiosks,
     releaseKiosk,
+    resumeAutomatic: async (sessionId) => {
+      await passPilotClassRequest('POST', '/passpilot/kiosk/preferences/resume', sessionId ? { sessionId } : {});
+      await invalidate();
+    },
   };
 }

@@ -93,12 +93,13 @@ export async function normalizePasspilotPass(
     ? (await getGradesBySchool(schoolId)).find((entry) => entry.id === pass.gradeId)
     : null;
   const classId = pass.classpilotGroupId || grade?.classpilotGroupId || pass.gradeId || null;
-  const className = pass.classNameSnapshot || grade?.name || null;
-  const source: PasspilotClassSource = pass.classpilotGroupId
+  const className = pass.activityNameSnapshot || pass.classNameSnapshot || grade?.name || null;
+  const source: PasspilotClassSource = pass.classpilotGroupId || pass.supervisionContextId
     ? "classpilot_groups"
     : "legacy_grades";
   return {
     ...pass,
+    activity: pass.supervisionContextId ? { kind: pass.activityKind, name: pass.activityNameSnapshot } : null,
     classId,
     className,
     class: classId

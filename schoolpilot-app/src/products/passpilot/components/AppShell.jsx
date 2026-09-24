@@ -41,6 +41,7 @@ const navItems = [
   { label: 'Classes', icon: <Users className="h-5 w-5" />, id: 'roster', to: '/passpilot/classes' },
   { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', to: '/passpilot/reports', staffOnly: true },
   { label: 'Set Up', icon: <Settings className="h-5 w-5" />, id: 'setup', to: '/passpilot/setup', adminOnly: true },
+  { label: 'Kiosk schedule', icon: <Monitor className="h-5 w-5" />, id: 'settings', to: '/passpilot/settings', scheduleOnly: true },
 ];
 
 export default function AppShell({ children, currentTab }) {
@@ -119,6 +120,7 @@ export default function AppShell({ children, currentTab }) {
 
   const visibleNav = navItems.filter((item) => (
     (!item.adminOnly || isAdmin)
+      && (!item.scheduleOnly || isTeacher || isAdmin)
     && (!item.managerOnly || isSchoolwideManager)
     && (!item.staffOnly || isTeacher || isSchoolwideManager)
   ));
@@ -195,7 +197,7 @@ export default function AppShell({ children, currentTab }) {
                   {kioskSessions.slice(0, 4).map((session) => (
                     <DropdownMenuItem key={session.id} disabled>
                       <Monitor className="mr-2 h-4 w-4" />
-                      {session.className || 'No class'} &middot; kiosk
+                      {session.activity ? session.activity.current?.name || 'No class scheduled' : session.className || 'No class'} &middot; kiosk
                     </DropdownMenuItem>
                   ))}
                 </>

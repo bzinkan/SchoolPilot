@@ -28,6 +28,7 @@ type Registry = {
     classpilotSupervisionWorkspacePostExpand: RegistryInventory;
     classpilotSupervisionActivityReportsPostExpand: RegistryInventory;
     classpilotClassToolsPostExpand: RegistryInventory;
+    passpilotKioskSchedulePostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -142,7 +143,7 @@ describe("semantic RLS registry", () => {
     assert.equal(new Set(production).size, 90);
     // Preserve observed runtime CSV order; the registry target has its own immutable order.
     assert.deepEqual(new Set(production), new Set(expected));
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotClassToolsPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.passpilotKioskSchedulePostExpand.tables);
     assert.deepEqual(registry.inventories.classpilotSupervisionWorkspacePostExpand.tables, [...expected, "classpilot_coverage_group_categories"]);
     assert.deepEqual(registry.inventories.classpilotSupervisionActivityReportsPostExpand.tables, [
       ...registry.inventories.classpilotSupervisionWorkspacePostExpand.tables,

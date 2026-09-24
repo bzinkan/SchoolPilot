@@ -7,6 +7,7 @@ import RosterTab from '../components/tabs/RosterTab';
 import ReportsTab from '../components/tabs/ReportsTab';
 import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
+import KioskScheduleSettings from '../components/KioskScheduleSettings';
 
 export default function Dashboard() {
   const { isLoading, user, isAdmin, isSchoolwideManager, isTeacher } = usePassPilotAuth();
@@ -37,6 +38,7 @@ export default function Dashboard() {
     reports: 'reports',
     setup: 'setup',
     billing: 'billing',
+    settings: 'settings',
   };
   const currentTab = tabBySegment[routeSegment];
   if (!currentTab) return <Navigate to="/passpilot/my-class" replace />;
@@ -55,6 +57,7 @@ export default function Dashboard() {
       case 'reports': return <ReportsTab user={user} />;
       case 'setup': return <SetupView />;
       case 'billing': return <BillingView />;
+      case 'settings': return isTeacher || isAdmin ? <KioskScheduleSettings /> : <Navigate to="/passpilot/my-class" replace />;
       default: return <PassesTab user={user} />;
     }
   };

@@ -839,7 +839,9 @@ test("cross-product pass widgets advertise canonical capability and do not mask 
     path.join(APP_ROOT, "src/products/passpilot/components/tabs/ReportsTab.jsx"),
     "utf8",
   );
-  assert.match(reports, /csvHeaders = \["Student Name", "Class", "Issued By"/);
+  assert.match(reports, /csvHeaders = \["Student Name", "Class or Activity", "Activity Type", "Issued By"/);
+  assert.match(reports, /pass\.activityNameSnapshot/);
+  assert.match(reports, /pass\.activityKind/);
   assert.match(reports, /"Status", "Duration \(min\)"/);
   assert.match(reports, /getPassStatusLabel\(pass, nowMs\)/);
   assert.match(reports, /getPassActualDurationMs\(pass\)/);

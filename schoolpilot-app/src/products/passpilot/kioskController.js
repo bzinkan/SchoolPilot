@@ -392,6 +392,7 @@ export function createKioskApiClient({
   const baseHeaders = (extra = {}) => ({
     'Content-Type': 'application/json',
     'X-School-Id': schoolId,
+    'X-PassPilot-Kiosk-Activity': 'scheduled-activities-v1',
     ...commonHeaders,
     ...(getSessionId() ? { 'X-Kiosk-Session': getSessionId() } : {}),
     ...(authMode === 'token' && token
@@ -516,6 +517,8 @@ export function normalizeKioskSnapshot(value) {
 
   return {
     revision: payload.revision ?? payload.snapshotRevision ?? record(payload.revisions).snapshot ?? null,
+    activity: payload.activity ?? null,
+    assignmentRevision: payload.assignmentRevision ?? null,
     kioskStyle: payload.kioskStyle ?? config.kioskStyle,
     source,
     classId,
