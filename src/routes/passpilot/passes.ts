@@ -123,8 +123,8 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
     const teacher = pass.teacherId ? teacherMap.get(pass.teacherId) : null;
     const grade = pass.gradeId ? gradeMap.get(pass.gradeId) : null;
     const classId = pass.classpilotGroupId || grade?.classpilotGroupId || pass.gradeId || null;
-    const className = pass.classNameSnapshot || grade?.name || null;
-    const classSource = pass.classpilotGroupId ? "classpilot_groups" : "legacy_grades";
+    const className = pass.activityNameSnapshot || pass.classNameSnapshot || grade?.name || null;
+    const classSource = pass.classpilotGroupId || pass.supervisionContextId ? "classpilot_groups" : "legacy_grades";
 
     const teacherFullName = teacher
       ? [teacher.firstName, teacher.lastName]
@@ -199,6 +199,9 @@ function recordPassTimeline(pass: Pass, action: "issued" | "returned" | "cancell
       issuedAt: pass.issuedAt,
       returnedAt: pass.returnedAt,
       expiresAt: pass.expiresAt,
+      activityKind: pass.activityKind,
+      activityName: pass.activityNameSnapshot,
+      supervisionContextId: pass.supervisionContextId,
     },
   });
 }

@@ -4,6 +4,7 @@ import type { Server as SocketIOServer } from "socket.io";
 import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
+import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
 import { setupSocketIO, stopSocketIoWork, drainSocketIoWork } from "./realtime/socketio.js";
 import { setupWebSocket, stopWebSocketWork, drainWebSocketWork } from "./realtime/websocket.js";
 import { createUpgradedTransportShutdown } from "./realtime/websocketShutdown.js";
@@ -4995,6 +4996,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_CHAT_OVERSIGHT_SQL);
   await pool.query(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL);
   await pool.query(CLASSPILOT_TOOLS_SQL);
+  await pool.query(PASSPILOT_KIOSK_SCHEDULE_SQL);
 }
 
 async function startServer(): Promise<void> {

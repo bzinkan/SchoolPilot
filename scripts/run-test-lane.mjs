@@ -24,6 +24,7 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "passpilot-kiosk-schedule.integration.test.ts",
   "api-pool-readiness.integration.test.ts",
   "classpilot-class-tools.integration.test.ts",
   "classpilot-fab-sync-pending.integration.test.ts",

@@ -11,7 +11,9 @@ import {
   check,
   foreignKey,
   primaryKey,
+  jsonb,
 } from "drizzle-orm/pg-core";
+import { schools, users } from "./core.js";
 import { students } from "./students.js";
 
 // ============================================================================
@@ -140,6 +142,10 @@ export const passes = pgTable(
     gradeId: text("grade_id"),
     classpilotGroupId: text("classpilot_group_id"),
     classNameSnapshot: text("class_name_snapshot"),
+    supervisionContextId: text("supervision_context_id"),
+    activityKind: text("activity_kind").$type<"testing" | "coverage" | null>(),
+    activityNameSnapshot: text("activity_name_snapshot"),
+    issuingKioskSessionId: text("issuing_kiosk_session_id"),
     destination: text("destination").notNull(), // bathroom | nurse | office | counselor | other_classroom | custom
     customDestination: text("custom_destination"),
     // `expired` is retained for historical rows only. Runtime passes remain
@@ -153,6 +159,10 @@ export const passes = pgTable(
     notes: text("notes"),
   },
   (table) => [
+    index("passes_kiosk_teacher_active_idx").on(table.schoolId, table.teacherId).where(sql`${table.status}='active' AND ${table.issuedVia}='kiosk'`),
+    check("passes_activity_shape_check", sql`(${table.supervisionContextId} IS NULL AND ${table.activityKind} IS NULL AND ${table.activityNameSnapshot} IS NULL)
+      OR (${table.supervisionContextId} IS NOT NULL AND ${table.activityKind} IS NOT NULL AND ${table.activityKind} IN ('testing','coverage')
+        AND ${table.activityNameSnapshot} IS NOT NULL AND ${table.gradeId} IS NULL AND ${table.classpilotGroupId} IS NULL)`),
     index("passes_school_id_idx").on(table.schoolId),
     index("passes_student_id_idx").on(table.studentId),
     index("passes_teacher_id_idx").on(table.teacherId),
@@ -212,6 +222,8 @@ export const passpilotKioskSessions = pgTable(
     // which device to remember.
     deviceId: text("device_id"),
     revision: integer("revision").notNull().default(0),
+    overrideStartedAt: timestamp("override_started_at", { withTimezone: true }),
+    overrideExpiresAt: timestamp("override_expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -316,3 +328,17 @@ export const passpilotKioskDevices = pgTable(
 
 export type KioskDeviceBinding = typeof passpilotKioskDevices.$inferSelect;
 export type InsertKioskDeviceBinding = typeof passpilotKioskDevices.$inferInsert;
+
+export const passpilotTeacherKioskSettings = pgTable("passpilot_teacher_kiosk_settings", {
+  schoolId: text("school_id").notNull().references(() => schools.id),
+  teacherId: text("teacher_id").notNull().references(() => users.id),
+  mode: text("mode").notNull().default("manual").$type<import("../services/passpilotKioskSchedule.js").KioskMode>(),
+  schedule: jsonb("schedule").notNull().default(sql`'{"blocks":[],"exceptions":[]}'::jsonb`)
+    .$type<import("../services/passpilotKioskSchedule.js").KioskSchedule>(),
+  revision: integer("revision").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: text("updated_by"),
+}, table => [primaryKey({ columns: [table.schoolId, table.teacherId] }),
+  check("pp_teacher_kiosk_schedule_check", sql`jsonb_typeof(${table.schedule}) = 'object'`),
+  check("pp_teacher_kiosk_mode_check", sql`${table.mode} IN ('manual','passpilot','classpilot')`),
+  check("pp_teacher_kiosk_revision_check", sql`${table.revision} >= 0`)]);

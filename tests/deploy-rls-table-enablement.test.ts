@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -79,6 +79,7 @@ describe("one-release RLS table enablement", () => {
       "classpilot_coverage_group_categories",
       ...CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES,
       ...rlsRegistry.reviewedEnablementRequests.classpilotClassTools,
+      ...rlsRegistry.reviewedEnablementRequests.passpilotKioskSchedule,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

@@ -327,6 +327,12 @@ Student imports are shared setup paths for ClassPilot, PassPilot, and GoPilot. T
 
 ### PassPilot kiosk API
 
+- Automatic kiosk selection is opt-in per school/teacher. Its resolver, activity
+  capability, revision-checked checkout, return continuity and backend-first
+  migration/RLS verification procedure are documented in
+  [PassPilot kiosk scheduling](docs/PASSPILOT_KIOSK_SCHEDULING.md). Preserve activity
+  pass attribution and outstanding returns when disabling automatic selection.
+
 - Public kiosk requests require `X-School-Id` plus either `X-Kiosk-Token` or the compatibility `X-Kiosk-Pin`. `POST /api/passpilot/kiosk/auth` exchanges a valid PIN for a 15-minute token; current school lifecycle, PassPilot license, kiosk enablement, and PIN-hash state are rechecked on every request, so revocation or PIN rotation takes effect immediately.
 - `GET /api/passpilot/kiosk/snapshot?classId=...` is the bounded polling contract. It returns config, the optional teacher-bound kiosk session, roster students, active passes, revisions, and an ETag. The existing `/config`, `/students`, and PIN routes remain available during migration.
 - `POST /api/passpilot/kiosk/client-health` accepts only the bounded `snapshot_failure` / `snapshot_recovery` enum contract after at least three consecutive failures. Event types are rate-limited for five minutes using an opaque Redis key with a bounded local fallback.

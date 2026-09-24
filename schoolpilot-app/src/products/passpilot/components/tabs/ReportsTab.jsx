@@ -214,7 +214,7 @@ function ReportsTab() {
       return;
     }
 
-    const csvHeaders = ["Student Name", "Class", "Issued By", "Pass Type", "Destination", "Checkout Time", "Return Time", "Status", "Duration (min)"];
+    const csvHeaders = ["Student Name", "Class or Activity", "Activity Type", "Issued By", "Pass Type", "Destination", "Checkout Time", "Return Time", "Status", "Duration (min)"];
     const csvRows = passes.map((pass) => {
       const statusLabel = getPassStatusLabel(pass, nowMs);
       const isReturned = statusLabel === 'Returned' && Boolean(pass.returnedAt);
@@ -222,7 +222,8 @@ function ReportsTab() {
 
       return [
         `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || "Unknown",
-        pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown",
+        pass.activityNameSnapshot || pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown",
+        pass.activityKind || "class",
         getPassIssuerLabel(pass),
         pass.destination || 'General',
         pass.customDestination || pass.destination || 'General',

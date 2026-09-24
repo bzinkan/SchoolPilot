@@ -497,6 +497,8 @@ export async function canAccessPass(
   if (isPassPilotManager(role)) return true;
   if (role !== "teacher") return false;
   if (pass.teacherId === user.id) return true;
+  // Activity rosters may span classes. Only the issuer or a manager has pass authority.
+  if (pass.supervisionContextId) return false;
 
   const source = await getPasspilotClassSourceForSchool(schoolId);
   const canonicalClassIds = source === "classpilot_groups"
@@ -650,6 +652,9 @@ export async function filterPassesForRole(
       allowedPassIds.add(pass.id);
       continue;
     }
+    // Temporary activity history belongs to its issuer; permanent class membership
+    // must not grant another teacher access to a testing/coverage pass.
+    if (pass.supervisionContextId) continue;
     if (pass.classpilotGroupId) {
       if (canonicalClassIds.has(pass.classpilotGroupId)) allowedPassIds.add(pass.id);
     } else if (pass.gradeId) {

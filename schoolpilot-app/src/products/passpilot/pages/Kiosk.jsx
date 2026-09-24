@@ -1,3 +1,5 @@
+import KioskActivityBanner from "../components/KioskActivityBanner";
+import { useKioskBoundary } from "../useKioskBoundary";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent } from "../../../components/ui/card";
@@ -64,6 +66,8 @@ export default function KioskPage() {
   // Per-device kiosk session (teacher-bound). sessionMode: null = probing,
   // true = session flow, false = legacy school-global flow (older server).
   const [session, setSession] = useState(null);
+  const [activity, setActivity] = useState(null);
+  const activityRevisionRef = useRef(null);
   const [sessionMode, setSessionMode] = useState(null);
   const [bootstrapError, setBootstrapError] = useState(null);
   // Device-memory resume offer from the bootstrap response (see KioskSimple).
@@ -147,6 +151,8 @@ export default function KioskPage() {
     sessionIdRef.current = null;
     resetSnapshotValidation();
     setSession(null);
+    setActivity(null);
+    activityRevisionRef.current = null;
     setResumeOffer(null);
     setSessionMode(null);
     setState("scan");
@@ -243,7 +249,7 @@ export default function KioskPage() {
 
     const classId = session?.classId || null;
     let snapshotUnsupported = false;
-    if (classId && snapshotModeRef.current !== "legacy") {
+    if ((classId || (sessionMode === true && session?.status === "active")) && snapshotModeRef.current !== "legacy") {
       const validatorKey = kioskSnapshotValidatorKey({
         schoolId,
         sessionMode,
@@ -253,7 +259,7 @@ export default function KioskPage() {
       });
       const validatorEtag = snapshotValidatorsRef.current.get(validatorKey);
       const response = await kioskClient.request(
-        `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(classId)}`,
+        `/api/passpilot/kiosk/snapshot?classId=${encodeURIComponent(classId || "")}`,
         {
           method: "GET",
           signal,
@@ -328,7 +334,7 @@ export default function KioskPage() {
       revision: data?.revision ?? data?.session?.revision ?? null,
       transportMode: snapshotUnsupported ? "legacy" : undefined,
     };
-  }, [kioskClient, launchTicket, schoolId, session?.classId, session?.source, sessionMode]);
+  }, [kioskClient, launchTicket, schoolId, session?.classId, session?.source, session?.status, sessionMode]);
 
   const applyKioskPoll = useCallback((result) => {
     if (result.clearValidatorKey) {
@@ -369,6 +375,9 @@ export default function KioskPage() {
     }
     if (result.kind === "snapshot") {
       const data = result.data;
+      if (data.assignmentRevision !== activityRevisionRef.current) { resetToScan(); }
+      activityRevisionRef.current = data.assignmentRevision;
+      setActivity(data.activity);
       if (redirectForKioskStyle(data.kioskStyle)) return;
       if (data.session) setSession(data.session);
       return;
@@ -386,9 +395,11 @@ export default function KioskPage() {
         kioskName: data.kioskName ?? null,
       });
     }
-  }, [handleSessionExpired, redirectForKioskStyle, resetSnapshotValidation]);
+  }, [handleSessionExpired, redirectForKioskStyle, resetSnapshotValidation, resetToScan]);
 
   const handleKioskPollError = useCallback((error) => {
+    resetSnapshotValidation();
+    setActivity(previous => previous ? { ...previous, status: "unavailable", message: error.message } : previous);
     if (error?.status === 401) {
       clearPin();
       return;
@@ -396,7 +407,7 @@ export default function KioskPage() {
     if (sessionMode === null) {
       setBootstrapError(error?.message || "Kiosk is temporarily unavailable.");
     }
-  }, [clearPin, sessionMode]);
+  }, [clearPin, sessionMode, resetSnapshotValidation]);
 
   const reportKioskHealth = useCallback(async (event, { signal }) => {
     await kioskClient.request("/api/passpilot/kiosk/client-health", {
@@ -423,6 +434,8 @@ export default function KioskPage() {
     onHealthEvent: reportKioskHealth,
     getRevision: (result) => result.revision,
   });
+
+  useKioskBoundary(activity, refreshKiosk);
 
   // One-tap resume for the remembered teacher (see KioskSimple.handleResume).
   const handleResume = useCallback(async () => {
@@ -496,7 +509,8 @@ export default function KioskPage() {
   }, [state]);
 
   const handleLookup = async () => {
-    if (!idInput.trim() || !schoolId) return;
+    if (!idInput.trim() || !schoolId || isOffline) return;
+    const displayedRevision = activityRevisionRef.current;
 
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/lookup", {
@@ -521,8 +535,14 @@ export default function KioskPage() {
         setMessage(data.error || "Student not found");
         return;
       }
+      if (displayedRevision !== activityRevisionRef.current || (data.assignmentRevision && data.assignmentRevision !== activityRevisionRef.current)) {
+        resetToScan();
+        refreshKiosk();
+        return;
+      }
       setStudent({
         ...data.student,
+        assignmentRevision: data.assignmentRevision,
         classId: data.classId || data.student.classId || data.student.classpilotGroupId || null,
       });
       setActivePass(data.activePass);
@@ -534,7 +554,7 @@ export default function KioskPage() {
   };
 
   const handleCheckout = async (destination) => {
-    if (!student || !schoolId) return;
+    if (!student || !schoolId || isOffline || (activity && activity.status !== "ready")) return;
 
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/checkout", {
@@ -543,6 +563,7 @@ export default function KioskPage() {
           studentId: student.id,
           destination,
           ...(student.classId ? { classId: student.classId } : {}),
+          assignmentRevision: student.assignmentRevision,
         }),
       });
 
@@ -553,6 +574,7 @@ export default function KioskPage() {
           handleSessionExpired();
           return;
         }
+        if (res.status === 409) { resetToScan(); refreshKiosk(); }
         handlePinRejection(res, errBody?.error || "Failed to issue pass");
         return;
       }
@@ -708,7 +730,7 @@ export default function KioskPage() {
 
   // Claimed but no class yet (self-launched without a class): scanning would
   // 409 on every badge, so wait for the teacher's Send to Kiosk instead.
-  if (sessionMode === true && session?.status === "active" && !session?.classId) {
+  if (sessionMode === true && session?.status === "active" && !session?.classId && !activity) {
     return (
       <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
         <KioskOfflineBanner isOffline={isOffline} lastSuccessAt={lastSuccessAt} />
@@ -736,6 +758,7 @@ export default function KioskPage() {
         ) : null}
       </h1>
 
+      <KioskActivityBanner activity={activity} />
       {/* Scan screen */}
       {state === "scan" && (
         <Card className="bg-gray-900 border-gray-700 max-w-md w-full">
@@ -768,6 +791,7 @@ export default function KioskPage() {
 
             {activePass ? (
               <div className="space-y-4">
+                {student.returnOnly ? <p className="text-amber-200">Return only — pass from an earlier assignment</p> : null}
                 <Badge variant="default" className="text-lg px-4 py-2">
                   Currently out: {activePass.destination}
                 </Badge>
@@ -799,6 +823,7 @@ export default function KioskPage() {
                       size="lg"
                       variant="outline"
                       className="h-20 text-lg border-gray-600 hover:bg-gray-800 text-white"
+                      disabled={isOffline || (activity && activity.status !== "ready")}
                       onClick={() => handleCheckout(d.value)}
                     >
                       <span className="text-2xl mr-2">{d.emoji}</span>

@@ -299,7 +299,7 @@ function PassesTab() {
                           ) : null}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          Class <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
+                          {pass.activityKind === "testing" ? "Testing" : pass.activityKind === "coverage" ? "Coverage" : "Class"} <span data-testid={`student-grade-${pass.id}`}>{pass.className || pass.classNameSnapshot || pass.student?.grade || "Unknown"}</span> •
                           Out for <span data-testid={`pass-duration-${pass.id}`}>{formatLiveDuration(pass.issuedAt, nowMs)}</span>
                         </p>
                         <p className="text-xs text-muted-foreground">

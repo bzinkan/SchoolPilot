@@ -1,4 +1,10 @@
 import crypto from "node:crypto";
+import db from "../../db.js";
+import { and, eq, inArray } from "drizzle-orm";
+import { passes as passTable } from "../../schema/passpilot.js";
+import kioskPreferencesRouter from "./kioskPreferences.js";
+import { KIOSK_ACTIVITY_CAPABILITY, kioskError } from "../../services/passpilotKioskSchedule.js";
+import { getKioskPreferences, resolveKioskDisplayAssignment, kioskReturnablePasses, createActivityKioskPass, returnTeacherKioskPass } from "../../services/passpilotKioskAssignments.js";
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
@@ -100,6 +106,42 @@ import {
 } from "../../services/classpilotKioskLaunchTicket.js";
 
 const router = Router();
+router.use("/preferences", kioskPreferencesRouter);
+
+function hasActivityCapability(req: { headers: Record<string, unknown> }) {
+  return req.headers["x-passpilot-kiosk-activity"] === KIOSK_ACTIVITY_CAPABILITY;
+}
+
+async function guardKioskActivityCapability(req: { headers: Record<string, unknown> }, schoolId: string, session: KioskSession) {
+  if (hasActivityCapability(req) && await getPasspilotClassSourceForSchool(schoolId) === "classpilot_groups"
+    && req.headers["x-passpilot-class-model"] !== "classpilot-groups-v1") {
+    throw kioskError("Refresh or update this kiosk for ClassPilot classes.", "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED", 426);
+  }
+  if (!hasActivityCapability(req) && session.teacherId && (await getKioskPreferences(schoolId, session.teacherId)).mode !== "manual") {
+    throw kioskError("Refresh or update this kiosk to follow its schedule.", "PASSPILOT_KIOSK_ACTIVITY_UPGRADE_REQUIRED", 426);
+  }
+}
+
+async function activitySnapshot(schoolId: string, session: KioskSession, kioskName: string | null, school: NonNullable<Awaited<ReturnType<typeof getSchoolById>>>) {
+  const assignment = await resolveKioskDisplayAssignment(schoolId, session);
+  const returnable = await kioskReturnablePasses(schoolId, session.teacherId!);
+  const rosterIds = assignment.roster.map(s => s.id);
+  const currentPasses = rosterIds.length ? await db.select().from(passTable).where(and(eq(passTable.schoolId, schoolId),
+    inArray(passTable.studentId, rosterIds), eq(passTable.status, "active"))) : [];
+  const passMap = new Map([...currentPasses, ...returnable.map(r => r.pass)].map(p => [p.studentId, p]));
+  const returnIds = new Set(returnable.map(r => r.student.id));
+  const roster = new Map(assignment.roster.map(student => [student.id, { ...student, returnOnly: false }]));
+  for (const row of returnable) if (!roster.has(row.student.id)) roster.set(row.student.id, { ...row.student, returnOnly: true });
+  const { roster: _roster, ...activity } = assignment;
+  const classId = assignment.current?.classId ?? null;
+  const config = { source: assignment.source, classId, className: assignment.current?.name ?? null, kioskName,
+    kioskEnabled: school.kioskEnabled, kioskRequiresApproval: school.kioskRequiresApproval, defaultPassDuration: school.defaultPassDuration, kioskStyle: school.kioskStyle };
+  return { ...config, config, activity, assignmentRevision: assignment.revision,
+    session: { id: session.id, status: session.status, ...config, revision: session.revision },
+    students: [...roster.values()].map(student => ({ ...student, classId, canReturn: returnIds.has(student.id),
+      activePass: passMap.has(student.id) ? kioskSnapshotPass(passMap.get(student.id)!) : null })),
+    activePasses: [...passMap.values()].map(kioskSnapshotPass) };
+}
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
@@ -273,6 +315,7 @@ async function requireActiveKioskSession(
     respondKioskSessionExpired(res);
     return null;
   }
+  await guardKioskActivityCapability(req, schoolId, session);
   return { session, kioskName: identity.kioskName };
 }
 
@@ -361,7 +404,11 @@ async function kioskSessionDeviceView(schoolId: string, session: KioskSession) {
 // Session payload for the authenticated teacher UI.
 async function kioskSessionTeacherView(schoolId: string, session: KioskSession) {
   const classId = kioskSessionClassId(session);
+  let activity;
+  try { const { roster: _roster, ...state } = await resolveKioskDisplayAssignment(schoolId, session); activity = state; }
+  catch (error) { activity = { status: "unavailable", message: error instanceof Error ? error.message : "Schedule unavailable" }; }
   return {
+    activity,
     id: session.id,
     status: session.status,
     source: session.classSource,
@@ -399,6 +446,9 @@ function kioskSnapshotPass(pass: Pass) {
     expiresAt: pass.expiresAt,
     returnedAt: pass.returnedAt,
     issuedVia: pass.issuedVia,
+    activityKind: pass.activityKind,
+    activityName: pass.activityNameSnapshot,
+    className: pass.classNameSnapshot,
     notes: pass.notes,
   };
 }
@@ -505,9 +555,6 @@ router.get("/snapshot", kioskLimiter, async (req, res, next) => {
     const classId = typeof req.query.classId === "string"
       ? req.query.classId.trim()
       : "";
-    if (!classId) {
-      return res.status(400).json({ error: "classId required" });
-    }
 
     const kioskAuthorization = await validateKiosk(schoolId, req.headers);
     if (!kioskAuthorization.school) {
@@ -524,6 +571,17 @@ router.get("/snapshot", kioskLimiter, async (req, res, next) => {
       );
       if (resolved === null) return;
       const kioskSession: KioskSession | null = resolved?.session ?? null;
+      if (resolved && hasActivityCapability(req)) {
+        const body = await activitySnapshot(schoolId, resolved.session, resolved.kioskName, school);
+        const revision = `snapshot-activity:${crypto.createHash("sha256").update(JSON.stringify({ ...body, activity: { ...body.activity, serverTime: null } })).digest("base64url")}`;
+        const etag = `"${revision}"`;
+        await touchKioskSessionLastSeen(schoolId, resolved.session.id);
+        res.setHeader("Cache-Control", "private, no-cache");
+        res.setHeader("ETag", etag);
+        if (req.get("If-None-Match") === etag) return res.status(304).end();
+        return res.json({ ...body, revision });
+      }
+      if (!classId) return res.status(400).json({ error: "classId required" });
       const source = await getPasspilotKioskClassSource(schoolId, "snapshot");
       if (
         source === "classpilot_groups" &&
@@ -830,6 +888,14 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
     await runWithKioskTenantContext(schoolId, async () => {
     const resolved = await requireActiveKioskSession(req, res, schoolId);
     if (resolved === null) return;
+    if (resolved && hasActivityCapability(req)) {
+      const state = await activitySnapshot(schoolId, resolved.session, resolved.kioskName, kioskAuthorization.school!);
+      const student = state.students.find(s => s.studentIdNumber === parsed.data.studentIdNumber);
+      if (!student) return res.json({ student: null, activePass: null, error: "Student not found" });
+      if (student.activePass && !student.canReturn) return res.status(409).json({ error: "Student already has an active pass", student: null });
+      return res.json({ source: state.source, classId: state.classId, student, activePass: student.activePass,
+        assignmentRevision: state.assignmentRevision, activity: state.activity });
+    }
     let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
     if (resolved) {
       const sessionClassId = kioskSessionClassId(resolved.session);
@@ -907,6 +973,18 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
     const resolved = await requireActiveKioskSession(req, res, schoolId);
     if (resolved === null) return;
     const kioskSession: KioskSession | null = resolved?.session ?? null;
+
+    if (resolved && hasActivityCapability(req)) {
+      try {
+        const pass = await createActivityKioskPass({ schoolId, sessionId: resolved.session.id, studentId: parsed.data.studentId,
+            destination: parsed.data.destination, customDestination: parsed.data.customDestination, expectedRevision: req.body.assignmentRevision,
+            expectedPinHash: kioskAuthorization.school!.kioskPinHash });
+        return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId) });
+      } catch (error) {
+        if (isDatabaseErrorCode(error, "23505")) return res.status(409).json({ error: "Student already has an active pass" });
+        throw error;
+      }
+    }
 
     const student = await getStudentById(parsed.data.studentId);
     if (!student || student.schoolId !== schoolId || student.status !== "active") {
@@ -1064,6 +1142,11 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
     await runWithKioskTenantContext(schoolId, async () => {
     const resolved = await requireActiveKioskSession(req, res, schoolId);
     if (resolved === null) return;
+    if (resolved && hasActivityCapability(req)) {
+        const pass = await returnTeacherKioskPass(schoolId, resolved.session.id, String(studentId), kioskAuthorization.school!.kioskPinHash);
+      if (!pass) return res.status(403).json({ error: "This pass cannot be returned at this teacher's kiosk." });
+      return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    }
     let sessionOverride: { source: "legacy_grades" | "classpilot_groups"; configuredClassId: string } | undefined;
     if (resolved) {
       const sessionClassId = kioskSessionClassId(resolved.session);
@@ -1133,9 +1216,6 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
     }
 
     const classId = (req.query.classId || req.query.gradeId) as string;
-    if (!classId) {
-      return res.status(400).json({ error: "classId required" });
-    }
 
     const kioskAuthorization = await validateKiosk(schoolId, req.headers);
     if (!kioskAuthorization.school) {
@@ -1154,6 +1234,12 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
         );
         if (resolved === null) return;
         const kioskSession: KioskSession | null = resolved?.session ?? null;
+        if (resolved && hasActivityCapability(req)) {
+          const snapshot = await activitySnapshot(schoolId, resolved.session, resolved.kioskName, school);
+          await touchKioskSessionLastSeen(schoolId, resolved.session.id);
+          return res.json(snapshot);
+        }
+        if (!classId) return res.status(400).json({ error: "classId required" });
         const source = await getPasspilotKioskClassSource(schoolId, "students");
         if (
           source === "classpilot_groups" &&
@@ -1259,6 +1345,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
           recordPasspilotKioskQueryStatements("config");
           const session = await getLiveKioskSessionById(schoolId, sessionId);
           if (!session) return respondKioskSessionExpired(res);
+          if (session.status === "active") await guardKioskActivityCapability(req, schoolId, session);
           if (session.status !== "active") {
             return res.json({
               session: await kioskSessionDeviceView(schoolId, session),

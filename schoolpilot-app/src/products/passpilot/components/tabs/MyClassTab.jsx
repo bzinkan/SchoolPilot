@@ -171,7 +171,7 @@ function MyClassTab() {
   const passActionInFlightRef = React.useRef(false);
   const nowMs = usePassNow();
 
-  const { isAdmin, isSchoolwideManager, school, user } = usePassPilotAuth();
+  const { isAdmin, isTeacher, isSchoolwideManager, school, user } = usePassPilotAuth();
   const { canLinkToClassPilot } = useStudentImportHome();
   const userId = user?.id || '';
   const schoolId = school?.id || '';
@@ -185,7 +185,7 @@ function MyClassTab() {
   const sourceResolved = !!schoolId && classInventoryQuery.isSuccess;
   const canonical = sourceResolved && isCanonicalPassPilotSource(classInventoryQuery.data?.source);
 
-  const { kioskSessions, legacyKioskServer, retargetKiosks, releaseKiosk } =
+  const { kioskSessions, legacyKioskServer, retargetKiosks, releaseKiosk, resumeAutomatic } =
     useKioskSessions({ enabled: sourceResolved });
 
   const legacyKioskConfigQuery = useQuery({
@@ -947,6 +947,15 @@ function MyClassTab() {
       </div>
 
       {/* Grade Tabs (left) + Action Buttons (right) */}
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+        {isTeacher || isAdmin ? <Link to="/passpilot/settings" className="text-primary underline">Kiosk schedule</Link> : null}
+        {kioskSessions.some(s => s.activity?.mode && s.activity.mode !== 'manual') ? <>
+          <span className="text-muted-foreground">{kioskSessions.some(s => s.activity?.overridden) ? 'Temporary kiosk override' : 'Kiosks following schedule'}</span>
+          {kioskSessions.some(s => s.activity?.overridden) ? <Button variant="outline" size="sm" onClick={async () => {
+            try { await resumeAutomatic(); } catch (error) { toast({ title: 'Could not resume', description: error.message, variant: 'destructive' }); }
+          }}>Resume automatic</Button> : null}
+        </> : null}
+      </div>
       <div className="mb-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
@@ -1004,7 +1013,7 @@ function MyClassTab() {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant={
-                      kioskSessions.every((s) => s.classId === currentActiveGrade.id)
+                      kioskSessions.every((s) => (s.activity ? s.activity.current?.classId : s.classId) === currentActiveGrade.id)
                         ? "default"
                         : "outline"
                     }
@@ -1013,7 +1022,7 @@ function MyClassTab() {
                     title="Send this class to your kiosks or claim another"
                   >
                     <Monitor className="w-4 h-4" />
-                    {kioskSessions.every((s) => s.classId === currentActiveGrade.id)
+                    {kioskSessions.every((s) => (s.activity ? s.activity.current?.classId : s.classId) === currentActiveGrade.id)
                       ? kioskSessions.length === 1
                         ? "On Kiosk"
                         : `On ${kioskSessions.length} Kiosks`
@@ -1063,7 +1072,18 @@ function MyClassTab() {
                 className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs text-muted-foreground"
               >
                 <Monitor className="w-3.5 h-3.5" />
-                {kioskSession.className || "No class"} · kiosk
+                <span>
+                  {kioskSession.activity ? kioskSession.activity.current?.name || 'No class scheduled' : kioskSession.className || 'No class'} · kiosk
+                  {kioskSession.activity?.current && kioskSession.activity.mode !== 'manual' ? <span className="block">
+                    Until {formatTimeFull(kioskSession.activity.current.endsAt, kioskSession.activity.timezone)}
+                    {kioskSession.activity.overridden ? ' · temporary override' : ' · automatic'}
+                  </span> : null}
+                  {kioskSession.activity?.next ? <span className="block">Next: {kioskSession.activity.next.name} · {formatTimeFull(kioskSession.activity.next.startsAt, kioskSession.activity.timezone)}</span> : null}
+                  {kioskSession.activity?.status === 'unavailable' ? <span className="block text-destructive">Schedule unavailable</span> : null}
+                </span>
+                {kioskSession.activity?.overridden ? <button type="button" className="underline" onClick={async () => {
+                  try { await resumeAutomatic(kioskSession.id); } catch (error) { toast({ title: 'Could not resume', description: error.message, variant: 'destructive' }); }
+                }}>Resume automatic</button> : null}
                 <button
                   type="button"
                   onClick={() => handleReleaseKiosk(kioskSession.id)}
