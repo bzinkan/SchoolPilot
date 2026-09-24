@@ -151,6 +151,7 @@ import {
   isClasspilotLiveViewNegotiationActive,
 } from "../services/classpilotLiveViewNegotiation.js";
 import { isClasspilotLiveViewAuthorityCurrent } from "../services/classpilotLiveViewAuthority.js";
+import { canObserveClasspilotSession } from "../services/classpilotObservationAuthority.js";
 import { classpilotCommandAuthorityEnvelope } from "../services/classpilotCommandAuthority.js";
 import { stopStaleClasspilotLiveViewsForStudents } from "../services/classpilotLiveViewRevocation.js";
 import { parseClasspilotActivityAuthority, requireScheduledClassroomContext } from "../services/classpilotActivityAuthority.js";
@@ -1741,21 +1742,16 @@ export function setupWebSocket(
                 }
               }
               const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
-              if (
-                !session
-                || session.endTime
-                || session.sessionMode !== "live"
-                || !session.rosterSnapshotCompletedAt
-                || session.startTime > new Date()
-                || (session.scheduledEndAt && session.scheduledEndAt <= new Date())
-              ) return false;
-              const owner = await isAuthorizedClasspilotSessionStaff(
+              const administrator = client.role === "school_admin" || client.role === "super_admin";
+              const owner = session?.sessionMode === "live" && await isAuthorizedClasspilotSessionStaff(
                 client.schoolId!,
                 sessionId,
                 client.userId!
               );
-              observe ||= !owner;
-              return owner || client.role === "school_admin" || client.role === "super_admin";
+              // Even an administrator captured as assigned staff is only an
+              // observer while the occurrence remains reporting-only.
+              observe ||= !owner || session?.sessionMode === "scheduled_report";
+              return canObserveClasspilotSession({ session, administrator, assignedStaff: owner });
             });
           } catch (error) {
             if (!subscriptionMutationIsCurrent()) return;

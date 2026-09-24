@@ -5203,18 +5203,32 @@ test(`Claimed ${userRole} tiles authorize, refresh, and enlarge previews from th
 });
 }
 
-test('Observe excludes reporting occurrences and admits the same class when live', { timeout: 60_000 }, async context => {
+for (const observerRole of ['admin', 'school_admin']) {
+test(`${observerRole} Observe previews a current reporting class without teacher login or live promotion`, { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage();
   const now = new Date();
   await page.clock.install({ time: now });
   let observed = { ...teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID }),
-    sessionMode: 'scheduled_report', scheduledState: 'active', scheduledDate: now.toISOString().slice(0, 10) };
+    sessionMode: 'scheduled_report', scheduledState: 'active', scheduledDate: now.toISOString().slice(0, 10),
+    supervisionStatus: 'awaiting_teacher' };
   let observedCapture = 0;
+  const mutations = [];
+  page.on('request', request => {
+    if (request.method() !== 'GET' && /\/api\/sessions(?:\/|$)/.test(new URL(request.url()).pathname)) {
+      mutations.push({ method: request.method(), url: request.url() });
+    }
+  });
   const harness = await configureDashboard(page, {
-    activeSession: null, allSessions: [observed], acknowledgeSessionSubscriptions: true,
+    userRole: observerRole, activeSession: null, allSessions: [observed], acknowledgeSessionSubscriptions: true,
+    // Reporting metadata alone still grants nothing. This is the server's
+    // explicit read-only authorization for the current frozen occurrence.
+    observableActivities: () => [{ ...observed, name: 'Biology', source: 'scheduled_class', purpose: 'class',
+      authority: { teachingSessionId: observed.id }, owner: { id: OTHER_TEACHER_ID, name: 'Assigned teacher' },
+      startsAt: new Date(now.getTime() - 60_000).toISOString(), endsAt: new Date(now.getTime() + 3_600_000).toISOString(),
+      studentCount: 1, capabilities: { observe: true, screenshots: true, commands: false, fab: false, liveView: false } }],
     aggregate: aggregateController({ scoped: success([student({ lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString() })]) }),
-    sessionSubscriptionResponse: () => observed.sessionMode === 'live'
+    sessionSubscriptionResponse: request => request.accessMode === 'observe'
       ? { type: 'session-subscription-success' }
       : { type: 'session-subscription-error', code: 'SESSION_UNAVAILABLE' },
     screenshotTiles: () => ({ tiles: [{ studentId: STUDENT_ID, bindingVersion: 'v2:observe-promotion',
@@ -5223,18 +5237,18 @@ test('Observe excludes reporting occurrences and admits the same class when live
   });
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId('select-admin-observe').waitFor();
-  assert.equal(await page.locator(`[data-testid="select-admin-observe"] option[value="${OBSERVED_SESSION_ID}"]`).count(), 0,
-    'Reporting-only scheduled occurrences are not observable activities');
-  assert.equal(harness.observationLeaseRequests.filter(request => request.method === 'PUT').length, 0);
-  observed = { ...observed, sessionMode: 'live', rosterSnapshotCompletedAt: now.toISOString() };
-  harness.setAllSessions([observed]);
-  // No websocket event or selection change: the reporting occurrence keeps
-  // its identity when the teacher starts supervising it.
-  await page.clock.fastForward(10_100);
   await page.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
   await waitUntil(() => harness.websocketMessages.some(message => message.type === 'subscribe-session'
-    && message.sessionId === OBSERVED_SESSION_ID), 'Observe must subscribe after the same occurrence becomes live');
+    && message.sessionId === OBSERVED_SESSION_ID && message.accessMode === 'observe'), 'Observe subscribes without promoting the reporting occurrence');
   await page.getByTestId(`screenshot-${STUDENT_ID}`).waitFor();
+  assert.equal(observed.sessionMode, 'scheduled_report', 'The teacher has not started live supervision');
+  await page.getByTestId('observe-awaiting-teacher').waitFor();
+  assert.match(await page.getByTestId('observe-awaiting-teacher').innerText(), /teacher has not started live supervision/i);
+  await page.waitForFunction(() => document.querySelector('[data-testid="badge-connection-status"]')?.textContent?.trim() === 'Live updates');
+  assert(harness.observationLeaseRequests.some(request => request.method === 'PUT' && request.pathname.includes(OBSERVED_SESSION_ID)));
+  assert.equal(await page.getByTestId('teacher-fab').count(), 0);
+  assert.equal(await page.getByRole('button', { name: /End testing|Release all|Release student|Teach Class|End Class/ }).count(), 0);
+  await assertCommandEntryPointsUnavailable(page, harness.commandPosts);
   observedCapture = 1;
   await harness.sendWebSocketMessage({ type: 'screenshot-available', schoolId: SCHOOL_ID,
     teachingSessionId: OBSERVED_SESSION_ID, studentId: STUDENT_ID });
@@ -5244,11 +5258,23 @@ test('Observe excludes reporting occurrences and admits the same class when live
   assert.equal(await page.getByTestId('screenshot-observation-ineligible').count(), 0);
   await page.getByTestId(`screenshot-current-${STUDENT_ID}`).click();
   await page.getByTestId('expanded-screenshot-dialog').waitFor();
-  await chatEvidence(page, 'observe-live-recovered');
+  await page.keyboard.press('Escape');
+  assert.equal(observed.sessionMode, 'scheduled_report', 'Two previews render while the teacher remains absent');
+  await chatEvidence(page, `observe-teacher-absent-${observerRole}`);
+  // A subsequent real teacher start does not replace the selected class or
+  // grant classroom controls to the observer.
+  observed = { ...observed, sessionMode: 'live', supervisionStatus: 'live', rosterSnapshotCompletedAt: now.toISOString() };
+  harness.setAllSessions([observed]);
+  await page.clock.fastForward(10_100);
+  await page.getByTestId('observe-awaiting-teacher').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('select-admin-observe').inputValue(), OBSERVED_SESSION_ID);
+  await page.getByTestId('observe-read-only-banner').waitFor();
   assert.deepEqual(harness.commandPosts, [], 'Observing must not silently take classroom control');
+  assert.deepEqual(mutations, [], 'Observe must not start, end or promote a teaching session');
   assert.deepEqual(harness.coverageMutationRequests, []);
   assert.deepEqual(harness.pageErrors, []);
 });
+}
 
 test('Observe selection stays scoped when a refresh removes the observed class', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);

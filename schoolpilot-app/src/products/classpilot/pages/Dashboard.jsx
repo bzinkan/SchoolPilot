@@ -1145,7 +1145,7 @@ export default function Dashboard() {
   const effectiveActivityId = effectiveActivity?.id || null;
   const sessionSubscriptionEligible = classpilotSessionSubscriptionEligible(effectiveActivity);
   const awaitingLiveSupervision = effectiveActivity?.sessionMode === 'scheduled_report'
-    && !effectiveActivity.endTime;
+    && !effectiveActivity.endTime && !retainedObservedSession;
   const isStudentOwnedByAnotherClass = useCallback((student) => (
     !!effectiveActivityId
     && student?.supervisionContext?.type === "class"
@@ -6116,7 +6116,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {dashboardCapabilities.observedOtherClass ? (
           <div className="mb-6 flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100" role="status" data-testid="observe-read-only-banner">
             <Eye className="mt-0.5 h-4 w-4 shrink-0" />
-            <div><p className="font-semibold">Observe mode is read-only</p><p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed. Student controls and Class tools are disabled while observing; ownership stays with the supervising staff member.</p></div>
+            <div>
+              <p className="font-semibold">Observe mode is read-only</p>
+              <p className="mt-1 text-xs opacity-80">Screen previews and activity can be reviewed. Student controls and Class tools are disabled while observing. Observe does not start or take control of the class.</p>
+              {retainedObservedSession?.supervisionStatus === 'awaiting_teacher' ? (
+                <p className="mt-1 text-xs opacity-80" data-testid="observe-awaiting-teacher">The teacher has not started live supervision. You can still review screen previews and activity.</p>
+              ) : null}
+            </div>
           </div>
         ) : null}
 

@@ -1181,6 +1181,7 @@ async function publishRevisionedRealtimeUpdate(
         deviceId: snapshot.deviceId,
         controlRevision: authority.revision,
         allowEndedBinding: options.allowEndedBinding,
+        allowReportingObservation: true,
       }, async (target) => {
         const scopedOrderedKey = `${orderedKey}:session:${target.teachingSessionId}`;
         await publishToAudience({
@@ -5108,7 +5109,9 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
             };
           }
 
-          if (current.authority.kind === "student_session") {
+          if (current.authority.kind === "student_session" && (!current.reportingObservation
+            || capturedAtDate < current.reportingObservation.startsAt
+            || capturedAtDate >= current.reportingObservation.expiresAt)) {
             return { outcome: "discarded" as const, screenshotPolicy };
           }
 
@@ -5132,7 +5135,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, requireClasspi
 
           const classBinding: ClassBoundScreenshotBinding = {
             ...binding,
-            teachingSessionId: current.authority.teachingSessionId,
+            teachingSessionId: current.authority.kind === "student_session"
+              ? current.reportingObservation!.teachingSessionId : current.authority.teachingSessionId,
             controlRevision: current.authority.controlRevision,
           };
           const data = {
@@ -5431,7 +5435,7 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     // Ordinary cohorts release admission before cache work. Supervision retains
     // its bounded permit for the final authority check, but never a DB connection
     // while waiting for Redis. This keeps both authorization reads admitted.
-    if (!scope.supervisionContextId) releaseClassPilotTileAdmission(res);
+    if (!scope.supervisionContextId && ![...accessByStudent.values()].some(access => access.reportingObservation)) releaseClassPilotTileAdmission(res);
 
     const accesses = parsed.studentIds
       .map((studentId) => accessByStudent.get(studentId))
@@ -5490,6 +5494,15 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
         || !classpilotRealtimeFresh(realtime.snapshot)
         || !Array.isArray(realtime.snapshot.acceptedCapabilities)
       ) ? null : realtime.snapshot.acceptedCapabilities;
+      if (access.reportingObservation) {
+        // A legacy image has no occurrence fence. Reporting Observe may only
+        // show an exact V2 frame retained for this occurrence and revision.
+        if (classBinding && (freshCapabilities === null || freshCapabilities.includes("screenshotTrackingWindowLeaseV1"))) {
+          classBindings.push(classBinding);
+          classBindingByStudent.set(access.studentId, classBinding);
+        }
+        continue;
+      }
       if (access.supervisionContextId) {
         // Never read a legacy or previous-class artifact for scheduled supervision.
         if (Number.isSafeInteger(access.controlRevision) && access.controlRevision! >= 0
@@ -5562,15 +5575,17 @@ router.post("/tiles/screenshots", ...tileReadAuth, requireClasspilotFullMonitori
     // Redis can finish after a release, reassignment, or binding replacement.
     // Revalidate the bounded supervision cohort immediately before serialization;
     // neither an old revision nor old pixels may survive that asynchronous gap.
-    const currentAccesses = scope.supervisionContextId
+    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
       ? await runWithTenantContext({ schoolId: scope.schoolId },
         () => revisionedTileAccess(scope, parsed.studentIds, res, "live"))
       : accessByStudent;
     releaseClassPilotTileAdmission(res);
+    if (currentAccesses.size === 0) return res.status(404).json({ error: "No accessible tiles", code: "CLASSPILOT_NO_ACCESSIBLE_TILES" });
     const tiles = accesses.map((access) => {
       const current = currentAccesses.get(access.studentId);
       if (!current || current.deviceId !== access.deviceId
         || current.studentSessionId !== access.studentSessionId
+        || current.teachingSessionId !== access.teachingSessionId
         || current.supervisionContextId !== access.supervisionContextId
         || current.controlRevision !== access.controlRevision) {
         return { studentId: access.studentId, screenshot: null };
@@ -5719,7 +5734,7 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
       );
     }
 
-    const currentAccesses = scope.supervisionContextId
+    const currentAccesses = scope.supervisionContextId || accesses.some(access => access.reportingObservation)
       ? await runWithTenantContext({ schoolId: scope.schoolId },
         () => revisionedTileAccess(scope, parsed.studentIds, res, "history"))
       : accessByStudent;

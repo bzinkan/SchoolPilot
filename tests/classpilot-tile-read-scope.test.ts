@@ -45,8 +45,8 @@ const schedulerPools = await import("../dist/services/schedulerDb.js");
 const { classpilotScreenshotFallback } = await import(
   "../dist/services/classpilotScreenshotFallback.js"
 );
-const { screenshotBindingVersion, supervisionBoundScreenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
-const { setClasspilotRealtimeStatusCommandForTests } = await import("../dist/services/classpilotRealtimeStatus.js");
+const { screenshotBindingVersion, classBoundScreenshotBindingVersion, supervisionBoundScreenshotBindingVersion } = await import("../dist/realtime/ws-redis.js");
+const { setClasspilotRealtimeStatusCommandForTests, writeClasspilotRealtimeStatus } = await import("../dist/services/classpilotRealtimeStatus.js");
 const { setHeartbeatTileCacheCommandForTests } = await import("../dist/services/heartbeatTileCache.js");
 
 const { runWithTenantContext } = tenantContext;
@@ -1291,6 +1291,242 @@ describe("ClassPilot tile-read tenant scope", () => {
           await db.delete(classpilotSupervisionContexts).where(eq(classpilotSupervisionContexts.id, contextId));
         }
         await db.update(studentSessions).set({ isActive: true, endedAt: null }).where(eq(studentSessions.studentId, offlineStudentId));
+      });
+      seedExactScreenshots();
+    }
+  });
+
+  it("lets administrators observe an unattended scheduled occurrence without taking its classroom authority", async () => {
+    // This teacher is never authenticated and never creates a presence lease.
+    // Use the real occurrence constructor so its roster/staff snapshots and
+    // reporting-only state match an unattended scheduler occurrence.
+    const offlineTeacher = await createUser({
+      email: `${tag}-never-connected@${schoolADomain}`,
+      firstName: "Never",
+      lastName: "Connected",
+    });
+    await createMembership({ userId: offlineTeacher.id, schoolId: schoolA.id, role: "teacher", status: "active" });
+    const now = new Date();
+    const scheduledStartAt = new Date(now.getTime() - 60_000);
+    const scheduledEndAt = new Date(now.getTime() + 3_600_000);
+    const fixture = await inSchool(schoolA.id, async () => {
+      const email = `${tag}-unattended-student@${schoolADomain}`;
+      const [student] = await db.insert(students).values({ schoolId: schoolA.id,
+        firstName: "Unattended", lastName: "Student", email, emailLc: email, status: "active" }).returning();
+      assert.ok(student);
+      const deviceId = `${tag}-unattended-device`;
+      await db.insert(devices).values({ deviceId, schoolId: schoolA.id, classId: "synthetic-class" });
+      await db.insert(studentDevices).values({ studentId: student.id, deviceId });
+      const [studentSession] = await db.insert(studentSessions).values({ studentId: student.id,
+        deviceId, authKind: "managed_profile", isActive: true }).returning();
+      assert.ok(studentSession);
+      await db.insert(heartbeats).values({ schoolId: schoolA.id, studentId: student.id, deviceId,
+        activeTabTitle: "Unattended class page", activeTabUrl: "https://example.invalid/unattended", timestamp: now });
+      const [group] = await db.insert(groups).values({ schoolId: schoolA.id, teacherId: offlineTeacher.id,
+        name: `${tag} unattended class`, groupType: "admin_class", status: "active" }).returning();
+      assert.ok(group);
+      await db.insert(groupStudents).values({ groupId: group.id, studentId: student.id });
+      await db.insert(groupTeachers).values({ groupId: group.id, teacherId: coTeacher.id, role: "co-teacher" });
+      const occurrence = await storage.createOrReuseScheduledReportSession({ schoolId: schoolA.id,
+        groupId: group.id, teacherId: offlineTeacher.id, scheduledDate: now.toISOString().slice(0, 10),
+        scheduledTimezone: "UTC", scheduledStartAt, scheduledEndAt });
+      return { studentId: student.id, deviceId, studentSessionId: studentSession.id, occurrence };
+    });
+    const teachingSessionId = fixture.occurrence.id;
+    const controlState = () => inSchool(schoolA.id, () => db.select().from(classpilotStudentControlStates)
+      .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, fixture.studentId))));
+    const originalControl = await controlState();
+    assert.equal(fixture.occurrence.sessionMode, "scheduled_report");
+    assert.ok(originalControl.every(row => row.teachingSessionId === teachingSessionId && row.supervisionContextId === null));
+    assert.equal(await inSchool(schoolA.id, () => storage.getActiveClassOwnerForStudent(schoolA.id, fixture.studentId)), undefined,
+      "A reporting occurrence supplies attribution but never establishes live classroom ownership");
+    const binding = { schoolId: schoolA.id, deviceId: fixture.deviceId, studentId: fixture.studentId,
+      studentSessionId: fixture.studentSessionId, teachingSessionId, controlRevision: originalControl[0]?.revision ?? 0 };
+    const screenshot = "data:image/jpeg;base64,dW5hdHRlbmRlZC1vYnNlcnZl";
+    const timestamp = Date.now();
+    await writeClasspilotRealtimeStatus({ ...binding, heartbeatId: randomUUID(),
+      activeTabUrl: "https://example.invalid/unattended", activeTabTitle: "Unattended class page",
+      acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"] });
+    // This exercises the raw API read boundary. Actual capture/upload is tested
+    // separately by the native-Chrome unattended-class scenario.
+    assert.equal(classpilotScreenshotFallback.setClassBound(binding, { ...binding, screenshot, timestamp,
+      capturedAt: new Date(timestamp).toISOString(), bindingVersion: classBoundScreenshotBindingVersion(binding) }), true);
+    const tiles = (actor = admin, schoolId = schoolA.id) => postJson("/api/classpilot/tiles/screenshots",
+      { studentIds: [fixture.studentId, otherStudentId], teachingSessionId }, actor, schoolId);
+    const aggregate = (actor = admin, schoolId = schoolA.id) =>
+      requestJson(`/api/students-aggregated?teachingSessionId=${teachingSessionId}`, actor, schoolId);
+    const lease = async (actor = admin, schoolId = schoolA.id, method = "PUT") => fetch(
+      `${baseUrl}/api/classpilot/teaching-sessions/${teachingSessionId}/observation-lease`, {
+        method, headers: { ...authHeaders(actor, schoolId), "content-type": "application/json" },
+        body: JSON.stringify({ viewerInstanceId: `unattended-${actor.id}`, scope: { kind: "class" } }),
+      });
+    const updateOccurrence = (values: Partial<typeof teachingSessions.$inferInsert>) =>
+      inSchool(schoolA.id, () => db.update(teachingSessions).set(values).where(eq(teachingSessions.id, teachingSessionId)));
+    const expectUnavailable = async (reason: string) => {
+      assert.equal((await tiles()).status, 404, `${reason}: no pixels`);
+      assert.equal((await aggregate()).status, 404, `${reason}: no roster`);
+      assert.equal((await lease()).status, 404, `${reason}: no observation lease`);
+      const discovery = await requestJson("/api/classpilot/observable-activities", admin);
+      assert.equal(discovery.body.activities.some((activity: { id: string }) => activity.id === teachingSessionId), false,
+        `${reason}: excluded from Observe discovery`);
+    };
+    let contextId = "";
+    try {
+      for (const actor of [admin, schoolAdmin]) {
+        const discovery = await requestJson("/api/classpilot/observable-activities", actor);
+        assert.equal(discovery.status, 200);
+        const activity = discovery.body.activities.find((row: { id: string }) => row.id === teachingSessionId);
+        assert.ok(activity, "An administrator can discover a class whose teacher never logged in");
+        assert.equal(activity.owner.id, offlineTeacher.id);
+        assert.equal(activity.sessionMode, "scheduled_report");
+        assert.equal(activity.supervisionStatus, "awaiting_teacher");
+        assert.equal(activity.capabilities.commands, false);
+        assert.equal(activity.capabilities.fab, false);
+        assert.equal(activity.studentCount, 1);
+        assert.equal((await lease(actor)).status, 200);
+        const roster = await aggregate(actor);
+        assert.equal(roster.status, 200);
+        assert.deepEqual(roster.body.map((row: { studentId: string }) => row.studentId), [fixture.studentId]);
+        assert.doesNotMatch(JSON.stringify(roster.body), /deviceId|device_id/);
+        assert.match(JSON.stringify(roster.body), /Unattended class page/,
+          "An authorized unattended report includes current browser telemetry before ownership changes");
+        const response = await tiles(actor);
+        assert.equal(response.status, 200);
+        assert.equal(response.body.tiles.length, 1, "Explicit report authority never broadens to school-wide students");
+        assert.equal(response.body.tiles[0].screenshot?.screenshot, screenshot);
+        assert.equal(response.body.tiles[0].bindingVersion, classBoundScreenshotBindingVersion(binding));
+        assert.equal(response.body.tiles[0].screenshot?.bindingVersion, response.body.tiles[0].bindingVersion);
+        const command = await postJson("/api/classpilot/commands", { teachingSessionId, targetScope: "students",
+          targetStudentIds: [fixture.studentId], commandType: "open-tab", commandPayload: { url: "https://example.invalid" } }, actor);
+        assert.equal(command.status, 403, "Observation does not authorize classroom commands");
+      }
+      classpilotScreenshotFallback.clear();
+      const legacyBinding = { schoolId: schoolA.id, deviceId: fixture.deviceId, studentId: fixture.studentId,
+        studentSessionId: fixture.studentSessionId };
+      assert.equal(classpilotScreenshotFallback.set(legacyBinding, { ...legacyBinding, screenshot, timestamp,
+        capturedAt: new Date(timestamp).toISOString(), bindingVersion: screenshotBindingVersion(legacyBinding) }), true);
+      await writeClasspilotRealtimeStatus({ ...legacyBinding, heartbeatId: randomUUID(),
+        activeTabUrl: "https://example.invalid/unattended", activeTabTitle: "Unattended class page", acceptedCapabilities: [] });
+      const legacyOnly = await tiles();
+      assert.equal(legacyOnly.status, 200);
+      assert.equal(legacyOnly.body.tiles[0].screenshot, null,
+        "An unattended report cannot fall back to an unscoped legacy frame when its own exact capture is absent");
+      assert.equal(classpilotScreenshotFallback.setClassBound(binding, { ...binding, screenshot, timestamp,
+        capturedAt: new Date(timestamp).toISOString(), bindingVersion: classBoundScreenshotBindingVersion(binding) }), true);
+      await writeClasspilotRealtimeStatus({ ...legacyBinding, heartbeatId: randomUUID(),
+        activeTabUrl: "https://example.invalid/unattended", activeTabTitle: "Unattended class page",
+        acceptedCapabilities: ["screenshotTrackingWindowLeaseV1"] });
+      assert.deepEqual(await controlState(), originalControl, "Observe must not create or change student control ownership");
+      const unchanged = await inSchool(schoolA.id, () => storage.getTeachingSessionById(teachingSessionId));
+      assert.equal(unchanged?.sessionMode, "scheduled_report", "Observe never promotes the teacher to live");
+      assert.equal(unchanged?.teacherId, offlineTeacher.id);
+      for (const actor of [teacher, coTeacher]) {
+        assert.equal((await tiles(actor)).status, 404);
+        assert.equal((await aggregate(actor)).status, 404);
+        assert.equal((await lease(actor)).status, 404);
+      }
+      assert.equal((await tiles(superAdmin, schoolB.id)).status, 403, "The foreign school lacks a ClassPilot license");
+      await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" });
+      try {
+        assert.equal((await tiles(superAdmin, schoolB.id)).status, 404, "Even a super admin must use the occurrence's school");
+        assert.equal((await aggregate(superAdmin, schoolB.id)).status, 404);
+        assert.equal((await lease(superAdmin, schoolB.id)).status, 404);
+      } finally {
+        await inSchool(schoolB.id, () => db.delete(productLicenses).where(eq(productLicenses.schoolId, schoolB.id)));
+      }
+
+      for (const [reason, values] of [
+        ["ended", { endTime: new Date() }],
+        ["future", { startTime: new Date(Date.now() + 60_000), scheduledStartAt: new Date(Date.now() + 60_000) }],
+        ["expired", { scheduledEndAt: new Date(Date.now() - 1_000) }],
+        ["skipped", { scheduledState: "skipped" }],
+        ["unsnapshotted", { rosterSnapshotCompletedAt: null }],
+      ] satisfies Array<[string, Partial<typeof teachingSessions.$inferInsert>]>) {
+        try {
+          await updateOccurrence(values);
+          await expectUnavailable(reason);
+        } finally {
+          await updateOccurrence({ startTime: fixture.occurrence.startTime, scheduledStartAt, scheduledEndAt,
+            endTime: null, scheduledState: "active", rosterSnapshotCompletedAt: fixture.occurrence.rosterSnapshotCompletedAt });
+        }
+      }
+
+      contextId = await inSchool(schoolA.id, async () => {
+        const [context] = await db.insert(classpilotSupervisionContexts).values({ schoolId: schoolA.id,
+          contextType: "office", name: `${tag} new owner`, status: "active", assignedStaffId: officeStaff.id,
+          createdBy: admin.id, startsAt: new Date(Date.now() - 1_000), endsAt: scheduledEndAt }).returning();
+        assert.ok(context);
+        await db.insert(classpilotSupervisionStudents).values({ schoolId: schoolA.id, contextId: context.id,
+          studentId: fixture.studentId, source: "admin_reroute", assignedBy: admin.id });
+        return context.id;
+      });
+      assert.equal((await tiles()).status, 404, "A report cannot reveal a student's frame after another staff member claims them");
+      const claimedRoster = await aggregate();
+      assert.equal(claimedRoster.status, 200);
+      assert.doesNotMatch(JSON.stringify(claimedRoster.body), /Unattended class page|example\.invalid\/unattended/,
+        "Report Observe must not expose browser telemetry after another staff member claims the student");
+      await inSchool(schoolA.id, async () => {
+        await db.delete(classpilotSupervisionStudents).where(eq(classpilotSupervisionStudents.contextId, contextId));
+        await db.delete(classpilotSupervisionContexts).where(eq(classpilotSupervisionContexts.id, contextId));
+        contextId = "";
+        await db.insert(groupStudents).values({ groupId: activeGroupId, studentId: fixture.studentId });
+      });
+      assert.equal((await tiles()).status, 404, "A report cannot reveal a student currently owned by another live class");
+      const reassignedRoster = await aggregate();
+      assert.equal(reassignedRoster.status, 200);
+      assert.doesNotMatch(JSON.stringify(reassignedRoster.body), /Unattended class page|example\.invalid\/unattended/,
+        "Report Observe must not expose browser telemetry owned by another live class");
+      await inSchool(schoolA.id, () => db.delete(groupStudents)
+        .where(and(eq(groupStudents.groupId, activeGroupId), eq(groupStudents.studentId, fixture.studentId))));
+      try {
+        await inSchool(schoolA.id, () => db.update(students).set({ status: "inactive" }).where(eq(students.id, fixture.studentId)));
+        const inactiveRoster = await aggregate();
+        assert.equal(inactiveRoster.status, 200);
+        assert.deepEqual(inactiveRoster.body, [], "An inactive student cannot remain in an observed live roster");
+      } finally {
+        await inSchool(schoolA.id, () => db.update(students).set({ status: "active" }).where(eq(students.id, fixture.studentId)));
+      }
+
+      // Revocation during a delayed cache read must be checked again before any
+      // retained pixels leave the API; a valid initial lookup is insufficient.
+      let expiredDuringRead = false;
+      try {
+        setClasspilotRealtimeStatusCommandForTests(async args => {
+          if (args[0] !== "MGET") return undefined;
+          expiredDuringRead = true;
+          await updateOccurrence({ endTime: new Date() });
+          return args.slice(1).map(() => null);
+        });
+        const response = await tiles();
+        assert.equal(expiredDuringRead, true);
+        assert.equal(response.status, 404, "A cohort fully invalidated during hydration must be unavailable");
+        assert.equal(JSON.stringify(response.body).includes(screenshot), false);
+      } finally {
+        setClasspilotRealtimeStatusCommandForTests(undefined);
+      }
+      await updateOccurrence({ endTime: null });
+      try {
+        setClasspilotRealtimeStatusCommandForTests(async args => {
+          if (args[0] !== "MGET") return undefined;
+          await updateOccurrence({ endTime: new Date() });
+          return args.slice(1).map(() => null);
+        });
+        const response = await aggregate();
+        assert.equal(response.status, 404, "An observation ended during roster hydration must not return monitoring data");
+        assert.doesNotMatch(JSON.stringify(response.body), /Unattended class page|example\.invalid\/unattended/);
+      } finally {
+        setClasspilotRealtimeStatusCommandForTests(undefined);
+      }
+    } finally {
+      setClasspilotRealtimeStatusCommandForTests(undefined);
+      for (const actor of [admin, schoolAdmin]) await lease(actor, schoolA.id, "DELETE");
+      await inSchool(schoolA.id, async () => {
+        if (contextId) {
+          await db.delete(classpilotSupervisionStudents).where(eq(classpilotSupervisionStudents.contextId, contextId));
+          await db.delete(classpilotSupervisionContexts).where(eq(classpilotSupervisionContexts.id, contextId));
+        }
+        await db.delete(groupStudents).where(and(eq(groupStudents.groupId, activeGroupId), eq(groupStudents.studentId, fixture.studentId)));
+        await db.update(teachingSessions).set({ endTime: new Date() }).where(eq(teachingSessions.id, teachingSessionId));
       });
       seedExactScreenshots();
     }

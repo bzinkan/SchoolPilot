@@ -10,6 +10,9 @@ Negotiation requires a protocol-v3 client advertising the capability, `CLASSPILO
 | --- | --- | --- |
 | `afterHoursSafetyOnlyV1` | `CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1` | `after-hours-safety-only-pilot`, `after-hours-safety-only-off` |
 | `schoolWebsiteBlockEnforcementV1` | `CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1` | `school-website-block-pilot`, `school-website-block-off` |
+| `screenshotReadOnlyObservationV1` | `CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1` | `read-only-observation-pilot`, `read-only-observation-off` |
+
+Read-only observation additionally requires the existing tracking-window and active-preview capabilities to cover the pilot school. It changes screenshot cadence only; see [teacher-independent observation](CLASSPILOT_READ_ONLY_OBSERVATION.md) for authorization, older-extension compatibility and rollback.
 
 Each private pilot profile contains `schemaVersion: 7`, its `mode`, and one canonical UUID `pilotSchoolId`. Each off profile contains only the version and mode. These profiles require the completed global repaired-capability runtime, preserve every other capability/school scope and TURN wiring, and write identical API/worker controls through the existing hash-bound Plan/Apply/Rollback workflow. A pre-roadmap task with both the new flag and its rollout entry absent is recognized as off; the next source-preserving plan materializes both controls as explicitly off unless that capability is the selected pilot. A partially missing pair fails closed. There is no schema-v7 global or multiple-school activation profile; further expansion requires a reviewed admission contract. Existing screenshot/cadence profiles cannot silently disable active roadmap pilots: apply their individual off profiles first when a base-profile transition requires it. Overall protocol-off containment still disables all capabilities.
 

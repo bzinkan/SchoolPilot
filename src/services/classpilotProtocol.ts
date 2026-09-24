@@ -13,6 +13,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "screenshotObservationLeaseV1",
   "screenshotTrackingWindowLeaseV1",
   "screenshotActiveObservationCadenceV1",
+  "screenshotReadOnlyObservationV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV1",
@@ -44,6 +45,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   screenshotTrackingWindowLeaseV1: "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1",
   screenshotActiveObservationCadenceV1:
     "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1",
+  screenshotReadOnlyObservationV1: "CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1",
   safetyEvidenceCaptureV1: "CLASSPILOT_CAP_SAFETY_EVIDENCE_CAPTURE_V1",
   liveViewIceServersV1: "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1",
   kioskLaunchTicketV1: "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1",
@@ -78,6 +80,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "screenshotObservationLeaseV1",
   "screenshotTrackingWindowLeaseV1",
   "screenshotActiveObservationCadenceV1",
+  "screenshotReadOnlyObservationV1",
   "safetyEvidenceCaptureV1",
   "liveViewIceServersV1",
   "kioskLaunchTicketV2",
@@ -363,6 +366,9 @@ export function negotiateClasspilotProtocol(options: {
   const restrictionAuthAccepted = repairedScopedAuthorityAccepted
     && advertised.has("restrictionAuthPassThroughV1")
     && serverEnabled.has("restrictionAuthPassThroughV1");
+  const activeCadenceAccepted = trackingWindowLeaseAccepted
+    && advertised.has("screenshotActiveObservationCadenceV1")
+    && serverEnabled.has("screenshotActiveObservationCadenceV1");
   return {
     serverProtocolVersion: CLASSPILOT_SERVER_PROTOCOL_VERSION,
     acceptedCapabilities: CLASSPILOT_PROTOCOL_V3_CAPABILITIES.filter(
@@ -378,6 +384,7 @@ export function negotiateClasspilotProtocol(options: {
           || trackingWindowLeaseAccepted
         )
         && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
+        && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
     ),
   };
 }

@@ -390,6 +390,9 @@ try {
     Assert-Condition ($testRollouts.scopedAuthorityChecksV1.mode -ceq "on" -and @($testRollouts.scopedAuthorityChecksV1.schoolIds).Count -eq 1) "Marker must be scoped to exactly one test school."
     Assert-Condition ($testRollouts.authBoundTelemetryV1.mode -ceq "on" -and $testRollouts.studentChatIdempotencyV1.mode -ceq "off") "Test capabilities must form the exact cumulative prefix."
     Assert-Condition ($testRollouts.kioskLaunchTicketV1.mode -ceq "off") "Test registry must explicitly keep V1 off."
+    Assert-Condition ($testRuntime.Environment.CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1 -ceq "false" -and
+        $testRollouts.screenshotReadOnlyObservationV1.mode -ceq "off") `
+        "Existing runtime profiles must leave read-only observation off until a separately reviewed activation."
 
     $fullTestProfile = [pscustomobject]@{
         schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
@@ -1220,7 +1223,8 @@ try {
 
     $roadmapCases = @(
         @{ Capability = "afterHoursSafetyOnlyV1"; Prefix = "after-hours-safety-only" },
-        @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" }
+        @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" },
+        @{ Capability = "screenshotReadOnlyObservationV1"; Prefix = "read-only-observation" }
     )
     $roadmapSourceRuntime = $restrictionAuthPilotRuntime
     foreach ($roadmapCase in $roadmapCases) {
@@ -1245,6 +1249,14 @@ try {
         $intent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = $testSchoolId
         })
+        if ($capability -ceq "screenshotReadOnlyObservationV1") {
+            # Its parent screenshot features must already cover this school.
+            $roadmapSourceRuntime = Resolve-SourcePreservingRuntimeConfiguration `
+                -RuntimeIntent (ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                    schemaVersion = 5; mode = "fast-preview-pilot"; pilotSchoolId = $testSchoolId
+                })) -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $roadmapSourceRuntime) `
+                -ContainerName "api"
+        }
         $roadmapSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapSourceRuntime
         $roadmapPilot = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $intent `
             -SourceTaskDefinition $roadmapSource -ContainerName "api"
@@ -1256,6 +1268,28 @@ try {
             @($roadmapRollouts.$capability.schoolIds).Count -eq 1 -and
             $roadmapRollouts.$capability.schoolIds[0] -ceq $testSchoolId) `
             "Roadmap pilots must enable both controls for only the selected school."
+        if ($capability -ceq "screenshotReadOnlyObservationV1") {
+            foreach ($dependency in @($script:TrackingWindowCapability, $script:FastPreviewCapability)) {
+                foreach ($badScope in @("off", "other-school")) {
+                    $invalidDependencySource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
+                    $invalidDependencyEnv = $invalidDependencySource.containerDefinitions[0].environment
+                    $dependencyRegistry = @($invalidDependencyEnv | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
+                    $dependencyRollouts = $dependencyRegistry.value | ConvertFrom-Json
+                    if ($badScope -ceq "off") {
+                        @($invalidDependencyEnv | Where-Object name -CEQ $script:CapabilityFlags[$dependency])[0].value = "false"
+                        $dependencyRollouts.$dependency = [pscustomobject]@{ mode = "off" }
+                    } else {
+                        $dependencyRollouts.$dependency = [pscustomobject]@{
+                            mode = "on"; schoolIds = @("22222222-2222-4222-8222-222222222222")
+                        }
+                    }
+                    $dependencyRegistry.value = $dependencyRollouts | ConvertTo-Json -Depth 10 -Compress
+                    Assert-Throws {
+                        Get-RuntimeActivationState -Environment $invalidDependencyEnv -AllowBaseline
+                    } "Read-only observation must reject a $badScope $dependency parent."
+                }
+            }
+        }
         $sourceControls = Get-RuntimeCapabilityControls -Environment $roadmapSource.containerDefinitions[0].environment
         $pilotSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
         $pilotControls = Get-RuntimeCapabilityControls -Environment $pilotSource.containerDefinitions[0].environment
@@ -1314,7 +1348,10 @@ try {
     $legacyRoadmapSource.containerDefinitions[0].environment = $legacyRoadmapEnv
     Assert-Condition ((Get-RuntimeActivationState -Environment $legacyRoadmapEnv -AllowBaseline).Mode -ceq "global-on") `
         "A pre-roadmap registry with both controls absent must remain recognized as default-off."
-    $legacyRoadmapTarget = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $intent `
+    $legacyRoadmapIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 7; mode = "school-website-block-pilot"; pilotSchoolId = $testSchoolId
+    })
+    $legacyRoadmapTarget = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $legacyRoadmapIntent `
         -SourceTaskDefinition $legacyRoadmapSource -ContainerName "api"
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyRoadmapSource -ContainerName "api" `
         -TargetRuntimeConfiguration $legacyRoadmapTarget
@@ -3317,7 +3354,10 @@ try {
 
     foreach ($roadmapCase in $roadmapCases) {
         Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
-        Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+        $roadmapDeploymentSource = if ($roadmapCase.Capability -ceq "screenshotReadOnlyObservationV1") {
+            $fastPreviewGlobalRuntime
+        } else { $globalRuntime }
+        Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $roadmapDeploymentSource
         $prefix = [string]$roadmapCase.Prefix
         $roadmapProfilePath = Join-Path $testRoot "$prefix-profile.json"
         Write-TestJson -Path $roadmapProfilePath -Value ([pscustomobject]@{

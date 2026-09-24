@@ -184,6 +184,30 @@ test("active screenshot cadence requires the negotiated tracking-window lease", 
   ]);
 });
 
+test("read-only screenshot observation requires explicit capability and all three authority/cadence dependencies", () => {
+  const capabilities = ["scopedAuthorityChecksV1", "screenshotTrackingWindowLeaseV1",
+    "screenshotActiveObservationCadenceV1", "screenshotReadOnlyObservationV1"];
+  const env = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: "true",
+    CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1: "true",
+  };
+  const negotiate = (advertisedCapabilities: string[], currentEnv = env) => negotiateClasspilotProtocol({
+    clientProtocolVersion: 3, advertisedCapabilities, env: currentEnv,
+  }).acceptedCapabilities;
+  assert.deepEqual(negotiate(capabilities), capabilities);
+  for (const capability of capabilities) {
+    assert.equal(negotiate(capabilities.filter(value => value !== capability)).includes("screenshotReadOnlyObservationV1"), false);
+  }
+  for (const flag of Object.keys(env)) {
+    assert.equal(negotiate(capabilities, { ...env, [flag]: "false" }).includes("screenshotReadOnlyObservationV1"), false);
+  }
+  assert.equal(negotiate(capabilities, { ...env, CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1: "false" })
+    .includes("screenshotActiveObservationCadenceV1"), true, "rollback retains existing class capture cadence");
+});
+
 test("kiosk launch ticket V1 remains independent of the repaired scoping marker", () => {
   const negotiated = negotiateClasspilotProtocol({
     clientProtocolVersion: 3,
