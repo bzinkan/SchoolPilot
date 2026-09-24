@@ -149,3 +149,85 @@ test('settings edit weekly blocks, days off, administrator teacher selection and
   await page.screenshot({ path: path.join(root, 'artifacts', 'kiosk-schedule', 'settings.png'), fullPage: true });
   assert.deepEqual(errors, []);
 });
+
+async function mockScheduleSettings(page, { source = 'legacy_grades', classPilot = true, role = 'school_admin', entitled = true } = {}) {
+  await page.route('**/api/**', async route => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: {
+      user: { id: 'teacher', email: 'teacher@example.test' }, activeSchoolId: 'school',
+      memberships: [{ id: 'membership', schoolId: 'school', role }], licenses: { passPilot: true, classPilot },
+    } });
+    if (pathname.endsWith('/preferences/teachers')) return route.fulfill({ json: { teachers: [{ id: 'teacher', name: 'Teacher One' }] } });
+    if (pathname.endsWith('/preferences')) return route.fulfill({ json: {
+      preference: { mode: 'manual', revision: 0, schedule: { blocks: [], exceptions: [] } },
+      source, canFollowClasspilot: source === 'classpilot_groups' && entitled,
+      classes: [{ id: 'math', name: 'Mathematics' }], preview: { timezone: 'America/New_York', status: 'idle' },
+    } });
+    return route.fulfill({ status: 404, json: { error: pathname } });
+  });
+}
+
+for (const theme of ['light', 'dark']) test(`schedule settings text has readable contrast in ${theme} mode and explains ClassPilot setup`, async t => {
+  const { page, url, errors } = await fixture(t);
+  await mockScheduleSettings(page);
+  await page.goto(`${url}/__kiosk-schedule`);
+  await page.getByRole('heading', { name: 'Weekly class schedule' }).waitFor();
+  await page.evaluate(isDark => document.documentElement.classList.toggle('dark', isDark), theme === 'dark');
+  const classPilotOption = page.getByLabel('Kiosk mode').locator('option[value="classpilot"]');
+  assert.equal(await classPilotOption.evaluate(option => option.disabled), true);
+  assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).getAttribute('href'), '/passpilot/setup?section=class-source');
+  await page.getByRole('button', { name: 'Add weekly block' }).click();
+  await page.getByRole('button', { name: 'Add dated exception' }).click();
+  const contrast = await page.locator('h1, h2, p, legend, label, select, input[type="time"], input[type="date"], a').evaluateAll(elements => {
+    const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    const rgba = color => {
+      context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
+    const luminance = color => color.slice(0, 3).map(value => {
+      const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    return elements.filter(element => element.getBoundingClientRect().height > 0).map(element => {
+      const foreground = rgba(getComputedStyle(element).color);
+      let ancestor = element, background;
+      while (ancestor) {
+        const candidate = rgba(getComputedStyle(ancestor).backgroundColor);
+        if (candidate[3] === 255) { background = candidate; break; }
+        ancestor = ancestor.parentElement;
+      }
+      const front = luminance(foreground), back = luminance(background || [255, 255, 255, 255]);
+      return { text: (element.textContent || element.type).trim().slice(0, 65), ratio: (Math.max(front, back) + 0.05) / (Math.min(front, back) + 0.05) };
+    });
+  });
+  assert.ok(contrast.length > 20, 'check rendered form labels, inputs, descriptions and previews');
+  assert.deepEqual(contrast.filter(check => check.ratio < 4.5), [], 'every checked text/background pair meets 4.5:1');
+  await mkdir(path.join(root, 'artifacts', 'kiosk-schedule'), { recursive: true });
+  await page.screenshot({ path: path.join(root, 'artifacts', 'kiosk-schedule', `settings-${theme}.png`), fullPage: true });
+  assert.deepEqual(errors, []);
+});
+
+test('ClassPilot scheduling requires linked classes and entitlement; teachers receive administrator guidance', async t => {
+  const { page, url, errors } = await fixture(t);
+  for (const scenario of [
+    { source: 'legacy_grades', role: 'teacher', classPilot: true },
+    { source: 'legacy_grades', role: 'school_admin', classPilot: false },
+    { source: 'classpilot_groups', role: 'teacher', classPilot: true, entitled: false },
+    { source: 'classpilot_groups', role: 'teacher', classPilot: true, entitled: true },
+  ]) {
+    await page.unroute('**/api/**');
+    await mockScheduleSettings(page, scenario);
+    await page.goto(`${url}/__kiosk-schedule`);
+    await page.getByLabel('Kiosk mode').waitFor();
+    const option = page.getByLabel('Kiosk mode').locator('option[value="classpilot"]');
+    assert.equal(await option.evaluate(element => element.disabled), !(scenario.source === 'classpilot_groups' && scenario.entitled));
+    assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).count(), 0);
+    if (scenario.source === 'legacy_grades') {
+      await page.getByText(/An administrator must review the class mappings/).waitFor();
+      if (!scenario.classPilot) await page.getByText(/Active ClassPilot access is also required/).waitFor();
+    } else if (scenario.entitled) {
+      await page.getByLabel('Kiosk mode').selectOption('classpilot');
+      assert.equal(await page.getByLabel('Kiosk mode').inputValue(), 'classpilot');
+    } else await page.getByText('Active ClassPilot access is required to follow its schedule.').waitFor();
+  }
+  assert.deepEqual(errors, []);
+});
