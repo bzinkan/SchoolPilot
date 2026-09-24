@@ -15,6 +15,9 @@ const COUNTER_NAMES = [
   "chatSafetyScanFailed", "chatSafetyAlertsRecorded",
   "fabSyncLocalDeliveryMissed", "fabSyncPendingMarked", "fabSyncPendingMarkFallback",
   "fabSyncPendingServed", "fabSyncPendingTakeUnavailable",
+  // Teacher-initiated student sign-out: requested targets, sessions actually
+  // ended server-side, and the difference (unavailable, refused, or failed).
+  "classpilotStudentSignOutRequested", "classpilotStudentSignOutEnded", "classpilotStudentSignOutNotEnded",
   ...STUDENT_SIGN_IN_COUNTER_NAMES,
 ] as const;
 

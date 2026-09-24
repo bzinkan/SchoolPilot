@@ -46,6 +46,7 @@ import {
   getActiveCoverageAssignmentsForStaff,
   getActiveClassOwnerForStudent,
   getActiveSessionByStudent,
+  getStudentIdsHiddenFromClasspilotLoginRoster,
   getActiveSessionsForStudents,
   getActiveSupervisionForStudent,
   getCoverageScopeGroupStudentIds,
@@ -3181,6 +3182,126 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(endedRow?.ended_at);
 
     await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+  });
+
+  it("signs out an idle claimed student from a supervision context without a reachable device", async (t) => {
+    // 2026-09-23: a teacher claimed a student who was still signed in on a
+    // sleeping Chromebook and clicked Student Sign Out three times. Every attempt
+    // returned 201 with the target marked unavailable ("The extension needs
+    // scheduled classroom support") because the coverage resolver demanded a
+    // fresh realtime snapshot. Sign-out is authoritative on the server session
+    // and must end it with no device signal at all.
+    const previousMode = process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
+    const previousExclusions = process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+    process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = "on";
+    delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+    t.after(() => {
+      if (previousMode === undefined) delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE;
+      else process.env.CLASSPILOT_SUPERVISION_PREVIEW_MODE = previousMode;
+      if (previousExclusions === undefined) delete process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS;
+      else process.env.CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS = previousExclusions;
+    });
+
+    const idleStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Idle",
+      lastName: "Claimed",
+      email: `idle-claimed@${TAG}.example.edu`,
+      emailLc: `idle-claimed@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    }));
+    const idleDevice = `${TAG}-device-idle-claimed`;
+    // The device never reports realtime status: no snapshot, no capabilities,
+    // and a heartbeat far older than the freshness window.
+    const idleSession = await inSchool(school.id, async () => {
+      await createDevice({
+        deviceId: idleDevice,
+        schoolId: school.id,
+        classId: "default",
+        deviceName: "Idle Claimed",
+      });
+      await linkStudentDevice({ studentId: idleStudent.id, deviceId: idleDevice });
+      const active = await setActiveStudentForDevice(idleDevice, idleStudent.id);
+      await db.execute(sql`
+        UPDATE student_sessions
+        SET last_seen_at = ${new Date(Date.now() - 45 * 60 * 1000)}
+        WHERE id = ${active.id}
+      `);
+      return active;
+    });
+    assert.ok(
+      (await inSchool(school.id, () => getStudentIdsHiddenFromClasspilotLoginRoster(school.id))).includes(idleStudent.id),
+      "a signed-in student is hidden from the shared Chromebook picker"
+    );
+
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "other",
+        name: "Idle sign-out claim",
+        status: "active",
+        assignedStaffId: teacher.id,
+        createdBy: teacher.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [idleStudent.id],
+      assignedBy: teacher.id,
+      source: "staff_claim",
+    }));
+
+    const response = await requestJson("POST", "/commands", {
+      supervisionContextId: context.id,
+      targetScope: "students",
+      targetStudentIds: [idleStudent.id],
+      commandType: "student-sign-out",
+      commandPayload: {},
+    }, {
+      ...authFor(teacher, school.id),
+      "X-ClassPilot-Context-Authority-Revision": String(context.classroomAuthorityRevision),
+    });
+
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.deliveryPolicy, "server_authoritative");
+    assert.equal(response.body.summary.requested, 1);
+    assert.equal(response.body.summary.completed, 1, JSON.stringify(response.body.command.targets));
+    assert.equal(response.body.summary.unavailable, 0);
+    assert.equal(response.body.command.targets[0].result.serverAuthoritative, true);
+    assert.equal(response.body.command.targets[0].errorMessage ?? null, null);
+    expectNoDeviceIds(response.body);
+    assert.equal(
+      await inSchool(school.id, () => getActiveSessionByStudent(idleStudent.id)),
+      undefined,
+      "the sleeping device's session is ended server-side"
+    );
+    const endedRow = await inSchool(school.id, async () => {
+      const result = await db.execute(sql`
+        SELECT ended_at FROM student_sessions WHERE id = ${idleSession.id}
+      `);
+      return result.rows[0] as { ended_at: Date | null } | undefined;
+    });
+    assert.ok(endedRow?.ended_at);
+    assert.equal(
+      (await inSchool(school.id, () => getStudentIdsHiddenFromClasspilotLoginRoster(school.id))).includes(idleStudent.id),
+      false,
+      "the student can pick their name on another Chromebook immediately"
+    );
+
+    // A second attempt on the now signed-out student reports the honest reason,
+    // never a device-capability message.
+    const again = await requestJson("POST", "/commands", {
+      supervisionContextId: context.id,
+      targetScope: "students",
+      targetStudentIds: [idleStudent.id],
+      commandType: "student-sign-out",
+      commandPayload: {},
+    }, {
+      ...authFor(teacher, school.id),
+      "X-ClassPilot-Context-Authority-Revision": String(context.classroomAuthorityRevision),
+    });
+    assert.equal(again.status, 201, JSON.stringify(again.body));
+    assert.equal(again.body.summary.unavailable, 1);
+    assert.equal(again.body.command.targets[0].errorMessage, "Student has no active extension session");
   });
 
   it("excludes actively logged-in students from the shared Chromebook login roster", async () => {

@@ -1183,6 +1183,12 @@ export async function resolveCoverageCommandTargets(
   );
 
   const commandType = String(body.commandType || "").trim();
+  // Sign-out is authoritative on the server-side student session: it ends the
+  // student_sessions row and needs neither a reachable device nor an extension
+  // that advertises scheduled-classroom support. A student idle on a sleeping
+  // Chromebook is exactly the case a teacher signs out, and the device learns of
+  // the ended session on its next heartbeat. Same rule as the owned-class path.
+  const serverAuthoritativeSignOut = commandType === "student-sign-out";
   const currentPageWaypoint = commandType === "lock-screen"
     && String(body.commandPayload?.url || "").trim() === "CURRENT_URL";
   const lateSignInAuthoring = isClasspilotCapabilityActive(
@@ -1200,21 +1206,27 @@ export async function resolveCoverageCommandTargets(
       sessionsByStudent.set(session.studentId, session);
     }
   }
-  const realtime = await readClasspilotRealtimeStatusBatch(
-    schoolId,
-    [...sessionsByStudent.values()].map((session) => ({
-      studentId: session.studentId,
-      studentSessionId: session.id,
-      deviceId: session.deviceId,
-    }))
-  );
+  const realtime = serverAuthoritativeSignOut
+    ? new Map<string, never>()
+    : await readClasspilotRealtimeStatusBatch(
+        schoolId,
+        [...sessionsByStudent.values()].map((session) => ({
+          studentId: session.studentId,
+          studentSessionId: session.id,
+          deviceId: session.deviceId,
+        }))
+      );
   const targets: ResolvedClasspilotCommandTarget[] = [];
   for (const row of selectedRows) {
     const session = sessionsByStudent.get(row.studentId);
     const read = realtime.get(row.studentId);
     const snapshot = read?.status === "hit" ? read.snapshot : null;
-    const capable = !options.requireClassroomCapability || snapshot?.acceptedCapabilities?.includes("scheduledClassroomV1") === true;
-    const active = capable && !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
+    const capable = serverAuthoritativeSignOut
+      || !options.requireClassroomCapability
+      || snapshot?.acceptedCapabilities?.includes("scheduledClassroomV1") === true;
+    const active = serverAuthoritativeSignOut
+      ? !!session
+      : capable && !!session && !!snapshot && classpilotRealtimeFresh(snapshot);
     const explicitlySignedOut = !session;
     const deferredAuthorized = explicitlySignedOut && lateSignInAuthoring;
     targets.push({
@@ -1231,8 +1243,11 @@ export async function resolveCoverageCommandTargets(
         || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
         || deferredAuthorized),
       lateSignInEligible: deferredAuthorized,
-      unavailableReason: !capable ? "The extension needs scheduled classroom support" : active
+      unavailableReason: active
         ? undefined
+        : serverAuthoritativeSignOut
+          ? "Student has no active extension session"
+          : !capable ? "The extension needs scheduled classroom support"
         : explicitlySignedOut
           ? currentPageWaypoint
             ? classpilotCurrentPageSignedOutSkipReason({
