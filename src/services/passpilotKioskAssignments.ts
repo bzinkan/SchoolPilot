@@ -30,12 +30,13 @@ export async function getKioskPreferences(schoolId: string, teacherId: string, d
   return row ?? { schoolId, teacherId, mode: "manual" as KioskMode, schedule: emptyKioskSchedule(), revision: 0, updatedAt: null, updatedBy: null };
 }
 export async function kioskTeacher(schoolId: string, teacherId: string, database: Database = db) {
-  const [membership] = await database.select().from(schoolMemberships).where(and(eq(schoolMemberships.schoolId, schoolId),
+  const memberships = await database.select().from(schoolMemberships).where(and(eq(schoolMemberships.schoolId, schoolId),
     eq(schoolMemberships.userId, teacherId), eq(schoolMemberships.status, "active"),
     inArray(schoolMemberships.role, ["teacher", "admin", "school_admin", "office_staff"])))
-    .orderBy(sql`CASE ${schoolMemberships.role} WHEN 'admin' THEN 0 WHEN 'school_admin' THEN 1 WHEN 'teacher' THEN 2 ELSE 3 END`).limit(1);
+    .orderBy(sql`CASE ${schoolMemberships.role} WHEN 'admin' THEN 0 WHEN 'school_admin' THEN 1 WHEN 'teacher' THEN 2 ELSE 3 END`).limit(4);
+  const membership = memberships[0];
   if (!membership) throw kioskError("This teacher no longer has school access.", "PASSPILOT_KIOSK_SESSION_EXPIRED", 404);
-  return membership;
+  return { ...membership, canManagePasses: memberships.some(m => ["admin", "school_admin", "office_staff"].includes(m.role)) };
 }
 export async function kioskClasses(schoolId: string, teacherId: string, source: Source, database: Database = db, manager = false) {
   if (source === "legacy_grades") {
@@ -199,7 +200,7 @@ export async function resolveKioskAssignment(schoolId: string, session: KioskSes
   if (preference.mode === "manual" || overridden) {
     const classId = session.classSource === source ? source === "legacy_grades" ? session.gradeId : session.classpilotGroupId : null;
     const classes = classId ? await kioskClasses(schoolId, session.teacherId, source, database,
-      ["admin", "school_admin", "office_staff"].includes(membership.role)) : [];
+      membership.canManagePasses) : [];
     const target = classes.find(c => c.id === classId);
     if (classId && !target) throw kioskError("This class is no longer available to the kiosk teacher.", "PASSPILOT_KIOSK_CLASS_INACTIVE");
     current = target ? { id: `manual:${target.id}`, kind: "class", name: target.name, classId: target.id, supervisionContextId: null,

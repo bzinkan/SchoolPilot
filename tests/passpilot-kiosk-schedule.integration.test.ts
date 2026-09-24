@@ -249,6 +249,11 @@ test("school isolation and preference roles are enforced by API and database par
 test("a teacher with an additional office role can edit their schedule; office-only staff cannot", async () => {
   const f = await fixture();
   await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'office_staff','active')", [f.schoolId, f.teacherId]);
+  await pool.query("DELETE FROM teacher_grades WHERE teacher_id=$1 AND grade_id=$2", [f.teacherId, f.nextClassId]);
+  const manualSession = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId,
+    { source: f.source, classId: f.nextClassId }, { actorUserId: f.teacherId, manager: true }));
+  assert.equal((await resolve({ ...f, session: manualSession })).current?.classId, f.nextClassId,
+    "an additional office role retains school-wide manual pass authority");
   const headers = { "x-school-id": f.schoolId, "content-type": "application/json", authorization: `Bearer ${signUserToken({ userId: f.teacherId, email: `${f.teacherId}@example.test`, isSuperAdmin: false })}` };
   assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 200);
   assert.equal((await fetch(baseUrl + "/preferences", { method: "PUT", headers, body: JSON.stringify({ mode: "passpilot", schedule: allDay(f), expectedRevision: 0 }) })).status, 200);
