@@ -20,6 +20,54 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Detects which files a pull request touched so jobs with no code path into an
+  # app change can be skipped on PRs. This never applies to a push to main: main is
+  # what scripts/deploy.sh gates on, and every deployed commit keeps the full job
+  # set (a skipped job would also land as "skipped" in the SOC 2 packets for that
+  # commit). Job-level skipping is safe for the deploy gate, which treats a skipped
+  # job as green; a workflow-level `paths:` filter would NOT be, because the gate
+  # refuses to deploy a commit with zero workflow runs.
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rollout_tooling: ${{ steps.filter.outputs.rollout_tooling }}
+    steps:
+      # In pull_request mode the action reads the changed-file list from the API;
+      # no checkout is needed.
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            # Every file the rollout-safety job's steps actually read. The
+            # PowerShell suites dot-source the scripts under scripts/load/ and a
+            # few named scripts; tests/powershell-json-datekind-conformance.test.ps1
+            # recursively scans the whole scripts/load/ tree, which is why the
+            # tree is listed rather than individual files. A new .ps1 test that
+            # reads a fixture outside these globs must be added here, or its PR
+            # will not run the job.
+            rollout_tooling:
+              - '.github/workflows/ci-build.yml'
+              - 'scripts/deploy.sh'
+              - 'scripts/deploy-classpilot-runtime-config.ps1'
+              - 'scripts/terraform-state-backup.ps1'
+              - 'scripts/security/rotate-production-credential.ps1'
+              - 'scripts/load/**'
+              - 'infra/**'
+              - 'docs/AWS_COST_ROLLOUT_OPERATIONS.md'
+              - 'docs/CLASSPILOT_TURN_OPERATIONS.md'
+              - 'docs/SCALE_READINESS.md'
+              - 'tests/**/*.ps1'
+              - 'tests/**/*.psm1'
+              - 'tests/**/*.py'
+              - 'tests/helpers/**'
+              - 'tests/private-load-artifact-acl.test.mjs'
+
   backend:
     name: Backend (TypeScript + Build)
     runs-on: ubuntu-latest
@@ -322,6 +370,15 @@ jobs:
     name: AWS rollout safety (PowerShell + Terraform)
     runs-on: windows-latest
     timeout-minutes: 60
+    needs: [changes]
+    # Runs on every push and workflow_dispatch. On a pull_request it is skipped only
+    # when the path filter ran successfully AND proved that no rollout-tooling input
+    # changed. A failed or missing filter result runs the job: `!= 'false'` treats an
+    # empty output as "run", and `!cancelled()` is needed because a plain `if:`
+    # implies success(), which would skip this job whenever `changes` itself skips
+    # (every push). Its 28 steps take ~30 minutes on windows-latest and have no code
+    # path into an application change, which is the whole reason for the gate.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.rollout_tooling != 'false') }}
 
     steps:
       - uses: actions/checkout@v7
