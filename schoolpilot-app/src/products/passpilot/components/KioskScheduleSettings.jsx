@@ -5,8 +5,10 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { queryClient } from '../../../lib/queryClient';
 import { Button } from '../../../components/ui/button';
 import { passPilotClassRequest } from '../classData';
+import { hasMembershipRole } from '../../../shared/utils/schoolRoles';
 
-const inputClass = 'mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900';
+const inputClass = 'mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
+const sectionClass = 'rounded-xl border bg-card text-card-foreground p-5 space-y-4';
 const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const errorMessage = error => error?.response?.data?.error || error?.message || 'The schedule could not be saved.';
 const newBlock = weekly => ({ id: crypto.randomUUID(), classId: '', startTime: '08:00', endTime: '09:00',
@@ -14,7 +16,7 @@ const newBlock = weekly => ({ id: crypto.randomUUID(), classId: '', startTime: '
 
 function BlockEditor({ block, classes, weekly, onChange, onRemove }) {
   const change = (key, value) => onChange({ ...block, [key]: value });
-  return <fieldset className="rounded-lg border border-slate-200 p-4 space-y-3">
+  return <fieldset className="rounded-lg border border-input p-4 space-y-3">
     <legend className="px-1 text-sm font-medium">Class block</legend>
     <div className="grid gap-3 sm:grid-cols-3">
       <label className="text-sm">Class<select aria-label="Class" className={inputClass} value={block.classId} onChange={e => change('classId', e.target.value)} required>
@@ -37,7 +39,7 @@ function BlockEditor({ block, classes, weekly, onChange, onRemove }) {
   </fieldset>;
 }
 
-function ScheduleForm({ data, teacherId, queryKey }) {
+function ScheduleForm({ data, teacherId, queryKey, canReviewClassSource, hasClassPilot }) {
   const [mode, setMode] = useState(data.preference.mode);
   const [schedule, setSchedule] = useState(data.preference.schedule);
   const [notice, setNotice] = useState('');
@@ -52,33 +54,42 @@ function ScheduleForm({ data, teacherId, queryKey }) {
   const updateException = (index, value) => setSchedule(previous => ({ ...previous, exceptions: previous.exceptions.map((e, i) => i === index ? value : e) }));
   const preview = data.preview;
   return <form onSubmit={event => { event.preventDefault(); save.mutate(); }} className="space-y-6">
-    <section className="rounded-xl border bg-white p-5 space-y-4">
-      <label className="block max-w-md font-medium">Kiosk mode<select aria-label="Kiosk mode" value={mode} onChange={e => setMode(e.target.value)} className={inputClass}>
+    <section className={sectionClass}>
+      <label className="block max-w-md font-medium">Kiosk mode<select aria-label="Kiosk mode" aria-describedby="kiosk-mode-help" value={mode} onChange={e => setMode(e.target.value)} className={inputClass}>
         <option value="manual">Manual — use Send to Kiosk</option>
-        {data.source === 'legacy_grades' ? <option value="passpilot">Follow PassPilot schedule</option>
-          : <option value="classpilot" disabled={data.canFollowClasspilot === false}>Follow ClassPilot schedule</option>}
+        {data.source === 'legacy_grades' ? <option value="passpilot">Follow PassPilot schedule</option> : null}
+        <option value="classpilot" disabled={data.source !== 'classpilot_groups' || data.canFollowClasspilot !== true}>Follow ClassPilot schedule</option>
       </select></label>
-      <p className="text-sm text-slate-600">Applies to this teacher’s kiosks, including future sessions. Send to Kiosk temporarily overrides an automatic schedule until its next transition.</p>
-      <p className="text-sm text-slate-600">Times use the school timezone: <strong>{preview.timezone || 'school local time'}</strong>.</p>
-      {data.source === 'classpilot_groups' && data.canFollowClasspilot === false ? <p className="text-sm text-amber-800">Active ClassPilot access is required to follow its schedule.</p> : null}
+      <div id="kiosk-mode-help" className="space-y-3 text-sm text-muted-foreground">
+        <p>Applies to this teacher’s kiosks, including future sessions. Send to Kiosk temporarily overrides an automatic schedule until its next transition.</p>
+        {data.source === 'legacy_grades' ? <div className="rounded-lg border border-input bg-muted p-4 space-y-2 text-foreground">
+          <h2 className="font-semibold">Connect to the ClassPilot schedule</h2>
+          <p>This school currently uses standalone PassPilot classes. Following ClassPilot requires the school to use ClassPilot classes, rosters, and teacher assignments.</p>
+          {!hasClassPilot ? <p>Active ClassPilot access is also required. Ask a school administrator to review product access and class setup.</p> : null}
+          <p>An administrator must review the class mappings in PassPilot Setup → Class Source, then choose “Switch to ClassPilot classes.” This changes future PassPilot activity for the whole school; existing pass history is preserved.</p>
+          {canReviewClassSource ? <Link className="inline-block font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300" to="/passpilot/setup?section=class-source">Review Class Source setup</Link> : null}
+          <p>After setup, select “Follow ClassPilot schedule” here and save.</p>
+        </div> : data.canFollowClasspilot === false ? <p className="text-amber-800 dark:text-amber-200">Active ClassPilot access is required to follow its schedule.</p> : null}
+      </div>
+      <p className="text-sm text-muted-foreground">Times use the school timezone: <strong>{preview.timezone || 'school local time'}</strong>.</p>
       {data.preference.mode !== 'manual' ? <Button variant="outline" type="button" onClick={() => resume.mutate()} disabled={resume.isPending}>Resume automatic on all kiosks</Button> : null}
     </section>
     {data.source === 'legacy_grades' ? <>
-      <section className="rounded-xl border bg-white p-5 space-y-4">
+      <section className={sectionClass}>
         <h2 className="text-lg font-semibold">Weekly class schedule</h2>
-        <p className="text-sm text-slate-600">Choose assigned classes and their meeting times. Blocks must not overlap.</p>
-        {!data.classes.length ? <p className="text-sm text-amber-800">Assign classes to this teacher before creating a schedule.</p> : null}
+        <p className="text-sm text-muted-foreground">Choose assigned classes and their meeting times. Blocks must not overlap.</p>
+        {!data.classes.length ? <p className="text-sm text-amber-800 dark:text-amber-200">Assign classes to this teacher before creating a schedule.</p> : null}
         {schedule.blocks.map((block, index) => <BlockEditor key={block.id} block={block} weekly classes={data.classes}
           onChange={value => setSchedule(previous => ({ ...previous, blocks: previous.blocks.map((b, i) => i === index ? value : b) }))}
           onRemove={() => setSchedule(previous => ({ ...previous, blocks: previous.blocks.filter((_, i) => i !== index) }))} />)}
         <Button type="button" variant="outline" disabled={!data.classes.length} onClick={() => setSchedule(previous => ({ ...previous, blocks: [...previous.blocks, newBlock(true)] }))}>Add weekly block</Button>
       </section>
-      <section className="rounded-xl border bg-white p-5 space-y-4">
+      <section className={sectionClass}>
         <h2 className="text-lg font-semibold">Dated exceptions</h2>
-        <p className="text-sm text-slate-600">Replace the entire schedule for a date. Leave its blocks empty for a day off. School closures still apply.</p>
-        {schedule.exceptions.map((exception, index) => <div key={index} className="rounded-lg border border-slate-200 p-4 space-y-3">
+        <p className="text-sm text-muted-foreground">Replace the entire schedule for a date. Leave its blocks empty for a day off. School closures still apply.</p>
+        {schedule.exceptions.map((exception, index) => <div key={index} className="rounded-lg border border-input p-4 space-y-3">
           <label className="block max-w-xs text-sm">Exception date<input type="date" className={inputClass} value={exception.date} required onChange={e => updateException(index, { ...exception, date: e.target.value })} /></label>
-          {!exception.blocks.length ? <p className="text-sm text-slate-600">No classes on this date.</p> : null}
+          {!exception.blocks.length ? <p className="text-sm text-muted-foreground">No classes on this date.</p> : null}
           {exception.blocks.map((block, blockIndex) => <BlockEditor key={block.id} block={block} classes={data.classes}
             onChange={value => updateException(index, { ...exception, blocks: exception.blocks.map((b, i) => i === blockIndex ? value : b) })}
             onRemove={() => updateException(index, { ...exception, blocks: exception.blocks.filter((_, i) => i !== blockIndex) })} />)}
@@ -87,26 +98,27 @@ function ScheduleForm({ data, teacherId, queryKey }) {
         </div>)}
         <Button type="button" variant="outline" onClick={() => setSchedule(previous => ({ ...previous, exceptions: [...previous.exceptions, { date: '', blocks: [] }] }))}>Add dated exception</Button>
       </section>
-    </> : <section className="rounded-xl border bg-white p-5 space-y-3">
+    </> : <section className={sectionClass}>
       <h2 className="text-lg font-semibold">ClassPilot schedule</h2>
-      <p className="text-sm text-slate-600">Uses official class times, approved schedule changes, testing, and scheduled coverage. Ordinary classes do not require an open ClassPilot dashboard.</p>
-      <Link className="text-sm text-blue-700 underline" to="/classpilot/my-settings/schedule-changes">View ClassPilot schedule changes</Link>
+      <p className="text-sm text-muted-foreground">Uses official class times, approved schedule changes, testing, and scheduled coverage. Ordinary classes do not require an open ClassPilot dashboard.</p>
+      <Link className="text-sm text-blue-700 underline dark:text-blue-300" to="/classpilot/my-settings/schedule-changes">View ClassPilot schedule changes</Link>
     </section>}
-    <section className="rounded-xl border bg-slate-50 p-5 text-sm" aria-label="Saved schedule preview">
+    <section className="rounded-xl border bg-muted text-foreground p-5 text-sm" aria-label="Saved schedule preview">
       <h2 className="font-semibold mb-2">Saved schedule now</h2>
       <p>{preview.message || (preview.current ? `${preview.current.name} · ${preview.status}` : 'No current assignment')}</p>
       {preview.current ? <p className="mt-1">{new Date(preview.current.startsAt).toLocaleTimeString([], { timeZone: preview.timezone, hour: 'numeric', minute: '2-digit' })}–{new Date(preview.current.endsAt).toLocaleTimeString([], { timeZone: preview.timezone, hour: 'numeric', minute: '2-digit' })}</p> : null}
       {preview.next ? <p className="mt-1">Next: {preview.next.name} · {new Date(preview.next.startsAt).toLocaleString([], { timeZone: preview.timezone })}</p> : null}
     </section>
-    {save.error || resume.error ? <div><p role="alert" className="text-sm text-red-700">{errorMessage(save.error || resume.error)}</p>
+    {save.error || resume.error ? <div><p role="alert" className="text-sm text-red-700 dark:text-red-300">{errorMessage(save.error || resume.error)}</p>
       <Button type="button" variant="outline" className="mt-2" onClick={() => queryClient.invalidateQueries({ queryKey })}>Reload saved schedule</Button></div> : null}
-    {notice ? <p role="status" className="text-sm text-green-700">{notice}</p> : null}
+    {notice ? <p role="status" className="text-sm text-green-700 dark:text-green-300">{notice}</p> : null}
     <Button type="submit" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save kiosk schedule'}</Button>
   </form>;
 }
 
 export default function KioskScheduleSettings() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeMembership, licenses } = useAuth();
+  const canReviewClassSource = hasMembershipRole(activeMembership, 'admin', 'school_admin') && !!licenses?.classPilot;
   const [selectedTeacher, setSelectedTeacher] = useState(null);
   const teacherId = selectedTeacher || user?.id;
   const queryKey = ['passpilot', 'kiosk-preferences', activeSchoolId, teacherId];
@@ -114,12 +126,12 @@ export default function KioskScheduleSettings() {
     queryFn: () => passPilotClassRequest('GET', '/passpilot/kiosk/preferences/teachers') });
   const query = useQuery({ queryKey, enabled: !!teacherId, refetchOnWindowFocus: false,
     queryFn: () => passPilotClassRequest('GET', `/passpilot/kiosk/preferences?teacherId=${encodeURIComponent(teacherId)}`) });
-  return <div className="max-w-4xl mx-auto space-y-6 pb-8">
-    <div><h1 className="text-2xl font-bold text-slate-900">Kiosk schedule</h1><p className="mt-2 text-slate-600">Have the right class ready when students need a pass.</p></div>
+  return <div className="max-w-4xl mx-auto space-y-6 pb-8 text-foreground">
+    <div><h1 className="text-2xl font-bold">Kiosk schedule</h1><p className="mt-2 text-muted-foreground">Have the right class ready when students need a pass.</p></div>
     {teacherQuery.data?.teachers.length > 1 ? <label className="block max-w-md text-sm font-medium">Teacher<select aria-label="Teacher" className={inputClass} value={teacherId} onChange={e => setSelectedTeacher(e.target.value)}>
       {teacherQuery.data.teachers.map(t => <option key={t.id} value={t.id}>{t.name || `${t.firstName || ''} ${t.lastName || ''}`.trim() || 'Staff member'}</option>)}
     </select></label> : null}
     {query.isLoading ? <p role="status">Loading schedule…</p> : query.error ? <p role="alert">{errorMessage(query.error)}</p>
-      : query.data ? <ScheduleForm key={`${activeSchoolId}:${teacherId}:${query.data.preference.revision}`} data={query.data} teacherId={teacherId} queryKey={queryKey} /> : null}
+      : query.data ? <ScheduleForm key={`${activeSchoolId}:${teacherId}:${query.data.preference.revision}`} data={query.data} teacherId={teacherId} queryKey={queryKey} canReviewClassSource={canReviewClassSource} hasClassPilot={!!licenses?.classPilot} /> : null}
   </div>;
 }
