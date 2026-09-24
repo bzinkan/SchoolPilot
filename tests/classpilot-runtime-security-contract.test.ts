@@ -471,8 +471,10 @@ describe("ClassPilot WebSocket signaling containment", () => {
       websocket.indexOf("// --- Staff session subscriptions"),
       websocket.indexOf("// --- Student FAB chat delivery acknowledgements")
     );
-    assert.match(subscription, /return owner \|\| client\.role === "school_admin" \|\| client\.role === "super_admin"/);
-    assert.match(subscription, /observe \|\|= !owner/);
+    assert.match(subscription, /const administrator = client\.role === "school_admin" \|\| client\.role === "super_admin"/);
+    assert.match(subscription, /const owner = session\?\.sessionMode === "live" && await isAuthorizedClasspilotSessionStaff/);
+    assert.match(subscription, /return canObserveClasspilotSession\(\{ session, administrator, assignedStaff: owner \}\)/);
+    assert.match(subscription, /observe \|\|= !owner \|\| session\?\.sessionMode === "scheduled_report"/);
     const resolver = websocket.slice(
       websocket.indexOf("const resolveLiveTarget = async"),
       websocket.indexOf("// --- WebRTC signaling")
@@ -482,6 +484,7 @@ describe("ClassPilot WebSocket signaling containment", () => {
     assert.match(authority, /isAuthorizedClasspilotSessionStaff\(binding.schoolId, binding.teachingSessionId, binding.requesterUserId\)/);
     assert.match(authority, /actorId: binding.requesterUserId/);
     assert.doesNotMatch(authority, /allowObserve: true/);
+    assert.doesNotMatch(authority, /canObserveClasspilotSession|allowReportingObservation/);
     assert.doesNotMatch(resolver, /client\.role === "school_admin"|client\.role === "super_admin"/);
   });
 
