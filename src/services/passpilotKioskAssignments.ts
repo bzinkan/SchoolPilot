@@ -60,7 +60,9 @@ async function classpilotCandidates(schoolId: string, teacherId: string, dates: 
     database.selectDistinct({ group: groups }).from(groups).leftJoin(groupTeachers, eq(groupTeachers.groupId, groups.id))
       .where(and(eq(groups.schoolId, schoolId), eq(groups.status, "active"), eq(groups.groupType, "admin_class"),
         or(eq(groups.teacherId, teacherId), eq(groupTeachers.teacherId, teacherId)))).limit(501),
-    database.select({ session: teachingSessions, authorizedStaff: classpilotSessionStaff.staffId }).from(teachingSessions)
+    database.select({ session: teachingSessions, authorizedStaff: classpilotSessionStaff.staffId, skippedDate: groups.scheduleSkippedDate }).from(teachingSessions)
+      .innerJoin(groups, and(eq(groups.id, teachingSessions.groupId), eq(groups.schoolId, schoolId),
+        eq(groups.groupType, "admin_class"), eq(groups.status, "active")))
       .leftJoin(classpilotSessionStaff, and(eq(classpilotSessionStaff.schoolId, schoolId),
         eq(classpilotSessionStaff.teachingSessionId, teachingSessions.id), eq(classpilotSessionStaff.staffId, teacherId)))
       .where(and(eq(teachingSessions.schoolId, schoolId), inArray(teachingSessions.scheduledDate, dates),
@@ -77,8 +79,9 @@ async function classpilotCandidates(schoolId: string, teacherId: string, dates: 
   const config = readStoredSchoolSchedulingConfig(scheduleRows[0]?.config);
   const candidates: KioskAssignment[] = [];
   const frozen = new Set(recorded.map(({ session: s }) => `${s.scheduledDate}:${s.groupId}`));
-  for (const { session: s, authorizedStaff } of recorded) {
-    if (s.scheduledState === "skipped" || !s.scheduledStartAt || !s.scheduledEndAt
+  for (const { session: s, authorizedStaff, skippedDate } of recorded) {
+    if (s.endTime || s.scheduledState === "skipped" || s.scheduledState === "finalized" || skippedDate === s.scheduledDate
+      || !s.scheduledStartAt || !s.scheduledEndAt
       || (s.rosterSnapshotCompletedAt && !authorizedStaff)
       || calendar[s.scheduledDate!.slice(0, 7)]?.nonInstructionalDates?.includes(s.scheduledDate!)) continue;
     candidates.push({ id: s.id, kind: "class", name: s.classNameSnapshot || "Scheduled class", classId: s.groupId,

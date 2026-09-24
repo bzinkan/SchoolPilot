@@ -286,6 +286,13 @@ test("frozen occurrences retain their captured roster and staff even after the o
   assert.equal((await resolve({ ...f, session: { ...f.session, teacherId: f.otherTeacherId } })).status, "idle", "newly assigned teachers must not acquire a frozen occurrence");
   await pool.query("UPDATE teaching_sessions SET scheduled_state='skipped' WHERE id=$1", [sessionId]);
   assert.equal((await resolve(f)).status, "idle");
+  await pool.query("UPDATE teaching_sessions SET scheduled_state='finalized',end_time='2026-09-24T13:15Z' WHERE id=$1", [sessionId]);
+  assert.equal((await resolve(f)).status, "idle", "an early End Class cannot resurrect a frozen occurrence");
+  await pool.query("UPDATE teaching_sessions SET scheduled_state='active',end_time=NULL WHERE id=$1", [sessionId]);
+  await pool.query("UPDATE groups SET schedule_skipped_date='2026-09-24' WHERE id=$1", [f.classId]);
+  assert.equal((await resolve(f)).status, "idle", "class skip state applies to frozen occurrences too");
+  await pool.query("UPDATE groups SET schedule_skipped_date=NULL,status='archived' WHERE id=$1", [f.classId]);
+  assert.equal((await resolve(f)).status, "idle", "archived classes cannot authorize kiosk checkout");
 });
 
 test("applied schedule profiles move ordinary classes and cancelled testing falls back to that effective schedule", async () => {
