@@ -9304,8 +9304,7 @@ export function buildClassPilotTileAuthorizationQuery(
             ON selected_session.id = roster.teaching_session_id
            AND selected_session.school_id = ${options.schoolId}
            AND (selected_session.session_mode = 'live'
-             OR (${currentReportingObservationSql("selected_session")}
-               AND ${noLiveClassOwnerSql(options.schoolId, sql`roster.student_id`)}))
+             OR (${currentReportingObservationSql("selected_session")}))
            AND selected_session.end_time IS NULL
            AND selected_session.roster_snapshot_completed_at IS NOT NULL
            AND (
@@ -9314,14 +9313,18 @@ export function buildClassPilotTileAuthorizationQuery(
            )
           INNER JOIN requested_students AS requested
             ON requested.student_id = roster.student_id
+          INNER JOIN ${students} AS observed_student
+            ON observed_student.id = roster.student_id
+           AND observed_student.school_id = ${options.schoolId}
           LEFT JOIN active_supervision AS reassigned
             ON reassigned.student_id = roster.student_id
+          LEFT JOIN active_live_owners AS live_owner
+            ON live_owner.student_id = roster.student_id
           WHERE roster.school_id = ${options.schoolId}
             AND roster.teaching_session_id = ${options.teachingSessionId}
             AND reassigned.student_id IS NULL
-            AND (selected_session.session_mode = 'live' OR EXISTS (
-              SELECT 1 FROM ${students} observed_student WHERE observed_student.id=roster.student_id
-                AND observed_student.school_id=${options.schoolId} AND observed_student.status='active'))
+            AND (selected_session.session_mode = 'live'
+              OR (live_owner.student_id IS NULL AND observed_student.status = 'active'))
         `
       : options.role === "teacher"
         ? sql`
@@ -9454,11 +9457,8 @@ export function buildClassPilotTileAuthorizationQuery(
           AND control.supervision_context_id=${options.supervisionContextId} AND control.teaching_session_id IS NULL
           AND control.hard_expires_at>now() AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>now()) LIMIT 1)`
     : accessMode === "live" && options.teachingSessionId
-    ? sql`CASE WHEN ${schoolWide} AND EXISTS (SELECT 1 FROM ${teachingSessions} selected_report
-          WHERE selected_report.school_id=${options.schoolId} AND selected_report.id=${options.teachingSessionId}
-            AND ${currentReportingObservationSql("selected_report")})
-        THEN COALESCE((SELECT revision FROM ${classpilotStudentControlStates} observation_control
-          WHERE observation_control.school_id=${options.schoolId} AND observation_control.student_id=resolved.student_id), 0)
+    ? sql`CASE WHEN selected_report.id IS NOT NULL
+        THEN COALESCE(observation_control.revision, 0)
         ELSE (
         SELECT control.revision
         FROM ${classpilotStudentControlStates} AS control
@@ -9476,6 +9476,47 @@ export function buildClassPilotTileAuthorizationQuery(
     WITH
     requested_students(student_id, ordinal) AS MATERIALIZED (
       ${requestedStudents}
+    ),
+    current_reporting_session AS MATERIALIZED (
+      ${options.teachingSessionId && schoolWide ? sql`
+        SELECT report.id, report.scheduled_start_at
+        FROM ${teachingSessions} AS report
+        WHERE report.school_id = ${options.schoolId}
+          AND report.id = ${options.teachingSessionId}
+          AND ${currentReportingObservationSql("report")}
+      ` : sql`SELECT NULL::text AS id, NULL::timestamp AS scheduled_start_at WHERE false`}
+    ),
+    active_live_owners AS MATERIALIZED (
+      ${options.teachingSessionId && schoolWide ? sql`
+        SELECT live_roster.student_id
+        FROM current_reporting_session AS report
+        INNER JOIN ${teachingSessions} AS live_session
+          ON live_session.school_id = ${options.schoolId}
+         AND live_session.session_mode = 'live'
+         AND live_session.end_time IS NULL
+         AND live_session.start_time <= now()
+         AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND live_session.roster_snapshot_completed_at IS NOT NULL
+        INNER JOIN ${classpilotSessionStudents} AS live_roster
+          ON live_roster.school_id = ${options.schoolId}
+         AND live_roster.teaching_session_id = live_session.id
+        INNER JOIN requested_students AS requested
+          ON requested.student_id = live_roster.student_id
+        UNION
+        SELECT legacy_roster.student_id
+        FROM current_reporting_session AS report
+        INNER JOIN ${teachingSessions} AS live_session
+          ON live_session.school_id = ${options.schoolId}
+         AND live_session.session_mode = 'live'
+         AND live_session.end_time IS NULL
+         AND live_session.start_time <= now()
+         AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND live_session.roster_snapshot_completed_at IS NULL
+        INNER JOIN ${groupStudents} AS legacy_roster
+          ON legacy_roster.group_id = live_session.group_id
+        INNER JOIN requested_students AS requested
+          ON requested.student_id = legacy_roster.student_id
+      ` : sql`SELECT NULL::text AS student_id WHERE false`}
     ),
     active_supervision AS MATERIALIZED (
       SELECT DISTINCT
@@ -9534,15 +9575,11 @@ export function buildClassPilotTileAuthorizationQuery(
       resolved.ordinal,
       resolved.student_session_id,
       ${controlRevision} AS control_revision,
-      ${options.teachingSessionId && schoolWide ? sql`EXISTS (SELECT 1 FROM ${teachingSessions} selected_report
-        WHERE selected_report.school_id=${options.schoolId} AND selected_report.id=${options.teachingSessionId}
-          AND ${currentReportingObservationSql("selected_report")})` : sql`false`} AS reporting_observation,
+      (selected_report.id IS NOT NULL) AS reporting_observation,
       ${options.supervisionContextId ? sql`(SELECT MAX(supervised.assigned_at) FROM ${classpilotSupervisionStudents} supervised
         WHERE supervised.school_id=${options.schoolId} AND supervised.context_id=${options.supervisionContextId}
           AND supervised.student_id=resolved.student_id AND supervised.released_at IS NULL)`
-        : options.teachingSessionId && schoolWide ? sql`(SELECT report.scheduled_start_at FROM ${teachingSessions} report
-          WHERE report.school_id=${options.schoolId} AND report.id=${options.teachingSessionId}
-            AND ${currentReportingObservationSql("report")})` : sql`NULL::timestamp`} AS history_since,
+        : options.teachingSessionId && schoolWide ? sql`selected_report.scheduled_start_at` : sql`NULL::timestamp`} AS history_since,
       device.device_id,
       device.device_name,
       device.school_id,
@@ -9553,6 +9590,11 @@ export function buildClassPilotTileAuthorizationQuery(
       device.last_seen_at,
       device.registered_at
     FROM resolved_students AS resolved
+    LEFT JOIN current_reporting_session AS selected_report ON true
+    LEFT JOIN ${classpilotStudentControlStates} AS observation_control
+      ON selected_report.id IS NOT NULL
+     AND observation_control.school_id = ${options.schoolId}
+     AND observation_control.student_id = resolved.student_id
     INNER JOIN ${students} AS student
       ON student.id = resolved.student_id
      AND student.school_id = ${options.schoolId}
