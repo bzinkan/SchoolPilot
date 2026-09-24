@@ -23,7 +23,6 @@ import {
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
 import { classpilotSupervisionPreviewObserved, classpilotSupervisionPreviewRetentionEnabled } from "../config/classpilotSupervisionPreviewRollout.js";
-import { classpilotObservationStatus } from "./classpilotObservationLease.js";
 import { classpilotReportingObservationSessionIsCurrent } from "./classpilotObservationAuthority.js";
 import { scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, requireScheduledClassroomContext, assertScheduledClassroomAuthorityRevision } from "./classpilotActivityAuthority.js";
 import { finalizeScheduledClassroomTools, persistScheduledClassroomStateRecords, releaseScheduledClassroomStudentTools } from "./classpilotScheduledClassroomTools.js";
@@ -23649,6 +23648,9 @@ async function withReportingObservationRetention(
     scheduledDate: String(row.scheduled_date), endTime: row.end_time ? String(row.end_time) : null,
     scheduledStartAt: startsAt, scheduledEndAt: expiresAt, rosterSnapshotCompletedAt: startsAt,
   })) return projection;
+  // Shared storage is also loaded by other products. Defer the observation
+  // transport until this ClassPilot path actually needs its lease.
+  const { classpilotObservationStatus } = await import("./classpilotObservationLease.js");
   const observed = await classpilotObservationStatus({ schoolId: options.schoolId,
     teachingSessionId: row.id, studentId: options.studentId });
   if (observed.status !== "observed") return projection;
