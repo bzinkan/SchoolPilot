@@ -79,7 +79,7 @@ export default function KioskSimplePage() {
   const [students, setStudents] = useState([]);
   const [studentsClassId, setStudentsClassId] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [checkoutStudentId, setCheckoutStudentId] = useState(null);
+  const [checkoutSelection, setCheckoutSelection] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const [kioskName, setKioskName] = useState(null);
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -135,15 +135,15 @@ export default function KioskSimplePage() {
   const resetInactivity = useCallback(() => {
     if (inactivityRef.current) clearTimeout(inactivityRef.current);
     inactivityRef.current = setTimeout(() => {
-      setCheckoutStudentId(null);
+      setCheckoutSelection(null);
     }, 10000);
   }, []);
 
   useEffect(() => {
-    if (!checkoutStudentId) return;
+    if (!checkoutSelection) return;
     resetInactivity();
     return () => { if (inactivityRef.current) clearTimeout(inactivityRef.current); };
-  }, [checkoutStudentId, resetInactivity]);
+  }, [checkoutSelection, resetInactivity]);
 
   const kioskClient = useMemo(() => createKioskApiClient({
     schoolId,
@@ -455,9 +455,9 @@ export default function KioskSimplePage() {
     }
     if (result.kind === "snapshot") {
       const data = result.data;
-      if (data.assignmentRevision !== activityRevisionRef.current) { setCheckoutStudentId(null); }
+      if (data.assignmentRevision !== activityRevisionRef.current) { setCheckoutSelection(null); }
       activityRevisionRef.current = data.assignmentRevision;
-      setActivity(data.activity);
+      setActivity(data.activity ? { ...data.activity, revision: data.assignmentRevision } : null);
       if (redirectForKioskStyle(data.kioskStyle)) return;
       setConfigLoaded(true);
       setConfigError(null);
@@ -628,8 +628,9 @@ export default function KioskSimplePage() {
   };
 
   const handleCheckout = async (studentId, destination) => {
-    if (isOffline || (activity && activity.status !== "ready")) return;
-    setCheckoutStudentId(null);
+    if (checkoutSelection?.studentId !== studentId || isOffline || (activity && activity.status !== "ready")) return;
+    const assignmentRevision = checkoutSelection.revision;
+    setCheckoutSelection(null);
     setLoading(true);
     try {
       const res = await kioskClient.request("/api/passpilot/kiosk/checkout", {
@@ -638,7 +639,7 @@ export default function KioskSimplePage() {
           studentId,
           destination,
           ...(selectedGradeId ? { classId: selectedGradeId } : {}),
-          assignmentRevision: activityRevisionRef.current,
+          assignmentRevision,
         }),
       });
       checkPinRejected(res);
@@ -648,7 +649,7 @@ export default function KioskSimplePage() {
         if (res.status === 404 && errBody?.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") {
           handleSessionExpired();
         } else {
-          if (res.status === 409) { setCheckoutStudentId(null); refreshKiosk(); }
+          if (res.status === 409) { setCheckoutSelection(null); refreshKiosk(); }
           showFeedback("error", errBody?.error || "Failed to issue pass");
         }
       } else {
@@ -874,7 +875,7 @@ export default function KioskSimplePage() {
           <div className="w-16" aria-hidden="true" />
         ) : (
           <button
-            onClick={() => { setSelectedGradeId(null); setCheckoutStudentId(null); }}
+            onClick={() => { setSelectedGradeId(null); setCheckoutSelection(null); }}
             className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
           >
             <ArrowLeft className="h-5 w-5" />
@@ -977,11 +978,11 @@ export default function KioskSimplePage() {
           ) : (
             <div className="space-y-2">
               {studentsAvailable.map(student => {
-                const showDestinations = checkoutStudentId === student.id;
+                const showDestinations = checkoutSelection?.studentId === student.id;
                 return (
                   <div key={student.id}>
                     <button
-                      onClick={() => setCheckoutStudentId(showDestinations ? null : student.id)}
+                      onClick={() => setCheckoutSelection(showDestinations ? null : { studentId: student.id, revision: activity?.revision ?? activityRevisionRef.current })}
                       disabled={loading || isOffline}
                       className="w-full text-left px-4 py-4 rounded-lg flex items-center justify-between transition-colors bg-green-900/20 border border-green-700/40 hover:bg-green-900/40"
                     >
