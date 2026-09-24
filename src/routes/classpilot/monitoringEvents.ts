@@ -30,12 +30,12 @@ import {
 } from "../../util/classpilotEventCursor.js";
 import {
   CLASSPILOT_OBSERVATION_RENEW_SECONDS,
-  classpilotObservationSessionIsLive,
   releaseClasspilotObservationLeaseWithState,
   renewClasspilotObservationLease,
   renewClasspilotSupervisionObservationLease,
   releaseClasspilotSupervisionObservationLeaseWithState,
 } from "../../services/classpilotObservationLease.js";
+import { canObserveClasspilotSession } from "../../services/classpilotObservationAuthority.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision, scheduledClassroomRoster } from "../../services/classpilotActivityAuthority.js";
 import {
@@ -106,13 +106,13 @@ async function authorizeLiveObservationSession(
     teachingSessionId,
     res.locals.schoolId
   );
-  if (!classpilotObservationSessionIsLive(session)) return false;
-  return isAdmin(req, res)
-    || isAuthorizedClasspilotSessionStaff(
+  const administrator = isAdmin(req, res);
+  return canObserveClasspilotSession({ session, administrator,
+    assignedStaff: !administrator && session?.sessionMode === "live" && await isAuthorizedClasspilotSessionStaff(
       res.locals.schoolId,
       teachingSessionId,
       req.authUser!.id
-    );
+    ) });
 }
 
 async function authorizeContext(req: any, res: any, contextId: string): Promise<boolean> {
@@ -400,6 +400,14 @@ router.put(
       viewerInstanceId,
       scope,
     });
+    // End/expiry may race the shared lease write. A reporting occurrence must
+    // not keep capture demand alive after its frozen bell window closes.
+    if (!(await authorizeLiveObservationSession(req, res, teachingSessionId))) {
+      await releaseClasspilotObservationLeaseWithState({
+        schoolId, teachingSessionId, viewerUserId: req.authUser!.id, viewerInstanceId,
+      });
+      return res.status(404).json({ error: "Not found", code: "OBSERVATION_SESSION_UNAVAILABLE" });
+    }
     if (lease.activated || (!lease.created && lease.changed)) {
       void nudgeClasspilotScreenshotPolicyRefresh({
         schoolId,

@@ -65,6 +65,7 @@ $script:ActivationOrder = @(
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
 $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
 $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
+$script:ReadOnlyObservationCapability = "screenshotReadOnlyObservationV1"
 $script:StudentGatePresenceCapability = "studentAuthGatePresenceV1"
 $script:LateSignInRestrictionSsoCapability = "lateSignInRestrictionSsoV1"
 $script:RestrictionAuthPassThroughCapability = "restrictionAuthPassThroughV1"
@@ -84,10 +85,12 @@ $script:RoadmapProfileCapabilities = @{
     "after-hours-safety-only-off" = "afterHoursSafetyOnlyV1"
     "school-website-block-pilot" = "schoolWebsiteBlockEnforcementV1"
     "school-website-block-off" = "schoolWebsiteBlockEnforcementV1"
+    "read-only-observation-pilot" = "screenshotReadOnlyObservationV1"
+    "read-only-observation-off" = "screenshotReadOnlyObservationV1"
 }
-$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1")
-$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot")
-$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off")
+$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability)
+$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot")
+$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off")
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
     $script:FastPreviewCapability,
@@ -108,6 +111,7 @@ $script:CapabilityFlags = [ordered]@{
     screenshotObservationLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_OBSERVATION_LEASE_V1"
     screenshotTrackingWindowLeaseV1 = "CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1"
     screenshotActiveObservationCadenceV1 = "CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1"
+    screenshotReadOnlyObservationV1 = "CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1"
     studentAuthGatePresenceV1    = "CLASSPILOT_CAP_STUDENT_AUTH_GATE_PRESENCE_V1"
     lateSignInRestrictionSsoV1   = "CLASSPILOT_CAP_LATE_SIGNIN_RESTRICTION_SSO_V1"
     restrictionAuthPassThroughV1 = "CLASSPILOT_CAP_RESTRICTION_AUTH_PASS_THROUGH_V1"
@@ -2469,6 +2473,27 @@ function Get-RuntimeActivationState {
     }
 
     Assert-RoadmapRuntimeControls -Values $values -Rollouts $rollouts
+
+    $readOnlyFlag = [string]$values[$script:CapabilityFlags[$script:ReadOnlyObservationCapability]]
+    $readOnlyRollout = $rollouts.$($script:ReadOnlyObservationCapability)
+    if ($readOnlyFlag -cnotin @("true", "false") -or
+        ($readOnlyFlag -ceq "true") -ne ([string]$readOnlyRollout.mode -ceq "on")) {
+        throw "Read-only observation requires both matching activation controls."
+    }
+    if ($readOnlyFlag -ceq "true") {
+        foreach ($dependency in @("scopedAuthorityChecksV1", $script:TrackingWindowCapability, $script:FastPreviewCapability)) {
+            if ([string]$values[$script:CapabilityFlags[$dependency]] -cne "true" -or
+                [string]$rollouts.$dependency.mode -cne "on") {
+                throw "Read-only observation requires active scoped authority, tracking-window, and fast-preview capabilities."
+            }
+            if ($rollouts.$dependency.PSObject.Properties.Name -contains "schoolIds") {
+                if (-not ($readOnlyRollout.PSObject.Properties.Name -contains "schoolIds") -or
+                    @($readOnlyRollout.schoolIds | Where-Object { $_ -cnotin @($rollouts.$dependency.schoolIds) }).Count -gt 0) {
+                    throw "Read-only observation school scope must remain inside its dependency rollout."
+                }
+            }
+        }
+    }
 
     if ($protocol -ceq "false") {
         foreach ($capability in $script:AllCapabilities) {

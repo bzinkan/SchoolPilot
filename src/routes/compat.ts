@@ -8,6 +8,7 @@ import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import { classPilotStudentDto } from "../util/safeStudent.js";
 import { decryptClassPilotPin } from "../services/classpilotPins.js";
 import { requireClasspilotFullMonitoring } from "../services/classpilotMonitoringPolicy.js";
+import { canObserveClasspilotSession } from "../services/classpilotObservationAuthority.js";
 import {
   getGradesBySchool,
   createGrade,
@@ -1098,12 +1099,12 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       ? await getTeachingSessionByIdAndSchool(requestedTeachingSessionId, schoolId)
       : await getActiveTeachingSessionForSchool(userId, schoolId);
     if (requestedTeachingSessionId) {
-      const authorized = isAdmin || !!activeSession && await isAuthorizedClasspilotSessionStaff(
+      const assignedStaff = !isAdmin && activeSession?.sessionMode === "live" && await isAuthorizedClasspilotSessionStaff(
         schoolId,
         requestedTeachingSessionId,
         userId
       );
-      if (!activeSession || activeSession.endTime || !authorized) {
+      if (!canObserveClasspilotSession({ session: activeSession, administrator: isAdmin, assignedStaff })) {
         return res.status(404).json({
           error: "Active class session not found",
           code: "CLASSPILOT_SESSION_UNAVAILABLE",
@@ -1113,6 +1114,8 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
     const activeGroup = activeSession?.groupId
       ? await getGroupByIdAndSchool(activeSession.groupId, schoolId)
       : undefined;
+    const reportingObservation = isAdmin && !!requestedTeachingSessionId
+      && activeSession?.sessionMode === "scheduled_report";
 
     let dbStudents;
     const supervisionAssignmentIds = new Map<string, string>();
@@ -1206,6 +1209,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
       const delegatedAway = Boolean(
         scheduledContext
           ? activeCoverage?.id !== scheduledContext.id
+          : reportingObservation
+          ? activeCoverage || (activeClass && activeClass.sessionId !== activeSession!.id)
+            || desiredControlState?.teachingSessionId !== activeSession!.id
+            || desiredControlState?.supervisionContextId
           : activeCoverage && activeCoverage.assignedStaffId !== userId && !isAdmin
       );
       const visibleRealtime = delegatedAway ? null : activeRealtime;
@@ -1444,6 +1451,41 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         classroomNoiseSuppressed: !!suppressionReason,
       };
     });
+
+    if (reportingObservation) {
+      // Observe may read a reporting occurrence without acquiring its control.
+      // Hydration must not return an earlier binding after the student is
+      // claimed, moved, signed out, removed, or the frozen occurrence ends.
+      const [currentSession, currentRoster, currentSnapshots, currentControls] = await Promise.all([
+        getTeachingSessionByIdAndSchool(activeSession!.id, schoolId),
+        getClasspilotSessionStudentRoster(schoolId, activeSession!.id),
+        getClasspilotDashboardSnapshot(schoolId, studentIds, today),
+        getClasspilotStudentControlStates(schoolId, studentIds),
+      ]);
+      if (!canObserveClasspilotSession({ session: currentSession, administrator: isAdmin, assignedStaff: false })) {
+        return res.status(404).json({ error: "Active class session not found", code: "CLASSPILOT_SESSION_UNAVAILABLE" });
+      }
+      const currentStudentIds = new Set(currentRoster.map(row => row.studentId));
+      const currentSnapshotByStudent = new Map(currentSnapshots.map(row => [row.studentId, row]));
+      const currentControlByStudent = new Map(currentControls.map(row => [row.studentId, row]));
+      return res.json(aggregated.filter(student => {
+        const studentId = student.studentId;
+        const previous = snapshotByStudent.get(studentId);
+        const current = currentSnapshotByStudent.get(studentId);
+        const previousControl = controlStateByStudent.get(studentId);
+        const currentControl = currentControlByStudent.get(studentId);
+        return currentStudentIds.has(studentId)
+          && !!current && !!previous
+          && current.studentSessionId === previous.studentSessionId
+          && current.sessionDeviceId === previous.sessionDeviceId
+          && current.coverage?.id === previous.coverage?.id
+          && current.activeClass?.sessionId === previous.activeClass?.sessionId
+          && currentControl?.id === previousControl?.id
+          && currentControl?.revision === previousControl?.revision
+          && currentControl?.supervisionContextId === previousControl?.supervisionContextId
+          && currentControl?.teachingSessionId === previousControl?.teachingSessionId;
+      }));
+    }
 
     if (scheduledContext) {
       // Hydrating Redis telemetry can overlap a release, a new browser session,

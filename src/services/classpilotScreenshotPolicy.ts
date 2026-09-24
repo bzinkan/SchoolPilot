@@ -47,7 +47,7 @@ export function classpilotScreenshotAuthorityForDeliveredControl(options: {
   // rewritten onto the older revision the client actually received. Carrying it
   // across would let a frame be retained under a revision the claim no longer
   // matches.
-  const { supervisionRetention: _supersededRetention, ...rest } = projection;
+  const { supervisionRetention: _supersededRetention, reportingObservation: _supersededObservation, ...rest } = projection;
   return {
     ...rest,
     authority: {
@@ -130,18 +130,21 @@ export async function resolveClasspilotScreenshotPolicy(options: {
       intervalSeconds: CLASSPILOT_SCREENSHOT_BACKGROUND_CAPTURE_SECONDS,
       expiresInSeconds: policy.expiresInSeconds,
     };
+    const reportingObservation = policy.authority.kind === "student_session"
+      && options.acceptedCapabilities.includes("screenshotReadOnlyObservationV1")
+      ? options.trackingAuthority?.reportingObservation : undefined;
     if (
       policy.captureAllowed
-      && (policy.authority.kind === "supervision_context" || (policy.authority.kind === "teaching_session"
+      && (reportingObservation || policy.authority.kind === "supervision_context" || (policy.authority.kind === "teaching_session"
       && policy.authority.teachingSessionId === options.teachingSessionId))
     ) {
       try {
         const status = policy.authority.kind === "supervision_context"
           ? await classpilotSupervisionObservationStatus({ schoolId: options.schoolId,
             supervisionContextId: policy.authority.supervisionContextId, studentId: options.studentId, now })
-          : await (options.observationStatus ?? classpilotObservationStatus)({
+          : await (reportingObservation ? classpilotObservationStatus : options.observationStatus ?? classpilotObservationStatus)({
           schoolId: options.schoolId,
-          teachingSessionId: options.teachingSessionId,
+          teachingSessionId: reportingObservation?.teachingSessionId ?? options.teachingSessionId,
           studentId: options.studentId,
           now,
         });
@@ -156,6 +159,8 @@ export async function resolveClasspilotScreenshotPolicy(options: {
               CLASSPILOT_SCREENSHOT_ACTIVE_CADENCE_LEASE_SECONDS,
               policy.expiresInSeconds,
               status.expiresInSeconds,
+              reportingObservation ? Math.max(0, Math.floor((reportingObservation.expiresAt.getTime() - now) / 1000))
+                : CLASSPILOT_SCREENSHOT_ACTIVE_CADENCE_LEASE_SECONDS,
             ),
           };
         } else if (status.status === "unavailable") {

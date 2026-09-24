@@ -57,12 +57,23 @@ If the next assigned teacher is absent, a reporting-only occurrence remains visi
 awaiting supervision; it is not evidence of live classroom control. If no personal
 class follows, the Dashboard shows an idle state rather than an old Homeroom.
 
-Administrator Observe labels reporting-only occurrences **Awaiting teacher**.
-They do not request live subscriptions or screen previews. While a class is selected,
-its metadata refreshes every ten seconds, including with a connected WebSocket.
-When the teacher begins live supervision, Observe subscribes and resumes screen
-previews automatically even when the occurrence keeps the same session ID.
-An ended or unauthorized class still fails closed; observing never acquires control.
+Administrators and IT staff with a school administrator role can Observe a current
+scheduled class even when its teacher is signed out or has not opened ClassPilot.
+The server authorizes its frozen roster for read-only subscriptions and updating
+screen previews without promoting the reporting occurrence to live supervision.
+Observe explains when the teacher has not started live supervision; that status
+does not pause the administrator's previews. Normal school monitoring hours,
+student sign-in, roster and privacy requirements still apply. Future, ended and
+unauthorized occurrences are not available through Observe.
+Released extensions 2.9.2 and 2.9.3 can supply these teacher-absent previews at
+their existing background capture interval of approximately 30 seconds. The
+five-second active cadence for a reporting occurrence requires a separately
+released extension that negotiates `screenshotReadOnlyObservationV1`; the new
+capability defaults off until that release is enabled. Existing live-class and
+supervision preview cadence is unchanged.
+While a class is selected, its metadata refreshes every ten seconds, including with
+a connected WebSocket. If the teacher later begins live supervision, Observe keeps
+the same class selection and remains read-only. Observing never acquires control.
 If the selected class leaves the active list, Observe remains on that unavailable
 selection until the administrator selects another class or chooses Stop observing.
 

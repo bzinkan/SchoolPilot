@@ -22,10 +22,18 @@ const releasedRuntimes = {
   '676c715b39007bbddd640f743c652cfd9d32eeeb': '2.9.2',
   'ccaf2c8d1b0df3aa1f8ea74754e457990a74498a': '2.9.3',
 };
-assert.ok(releasedRuntimes[extensionRef], 'capture contract must run against a pinned released 2.9.2 or 2.9.3 runtime');
+const candidateRuntime = process.env.CLASSPILOT_PREVIEW_CANDIDATE_RUNTIME === 'true';
+const unattendedOnly = process.env.CLASSPILOT_PREVIEW_UNATTENDED_ONLY === 'true';
+assert.ok(candidateRuntime || releasedRuntimes[extensionRef], 'capture contract requires a pinned release or explicit candidate-runtime validation');
 const extensionVersion = JSON.parse(await readFile(join(extensionRepo, 'extension/manifest.json'), 'utf8')).version;
-assert.equal(extensionVersion, releasedRuntimes[extensionRef]);
-assert.equal(extensionChanges, '', 'capture runtime must match its clean pinned source');
+if (!candidateRuntime) {
+  assert.equal(extensionVersion, releasedRuntimes[extensionRef]);
+  assert.equal(extensionChanges, '', 'capture runtime must match its clean pinned source');
+}
+const readOnlyObservation = candidateRuntime && (await readFile(join(extensionRepo, 'extension/service-worker.js'), 'utf8')).includes("'screenshotReadOnlyObservationV1'");
+if (candidateRuntime) assert.equal(readOnlyObservation, true, 'candidate runtime must advertise read-only observation support');
+const negotiatedCapabilities = ['scopedAuthorityChecksV1', 'scheduledClassroomV1', 'screenshotTrackingWindowLeaseV1',
+  'screenshotActiveObservationCadenceV1', ...(readOnlyObservation ? ['screenshotReadOnlyObservationV1'] : [])];
 const frontendRequire = createRequire(join(root, 'schoolpilot-app/package.json'));
 const { chromium } = frontendRequire('playwright');
 const { build } = frontendRequire('esbuild');
@@ -33,12 +41,13 @@ assert.ok(['localhost', '127.0.0.1', '[::1]'].includes(new URL(process.env.DATAB
   'This synthetic fixture may run only against a local test database');
 const evidencePath = resolve(process.env.CLASSPILOT_PREVIEW_EVIDENCE || join(root, 'evidence-artifacts/preview-chrome'));
 await mkdir(evidencePath, { recursive: true });
-await Promise.all(['failure.txt', 'failed-preview.png', 'rendered-preview.png'].map(name => rm(join(evidencePath, name), { force: true })));
+await Promise.all(['failure.txt', 'failure-state.json', 'failed-preview.png', 'rendered-preview.png'].map(name => rm(join(evidencePath, name), { force: true })));
 Object.assign(process.env, { NODE_ENV: 'test', SCHEDULER_ENABLED: 'false', REDIS_URL: '',
   ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', OPENAI_API_KEY: '', SENDGRID_API_KEY: '',
   CLASSPILOT_PROTOCOL_V3_ENABLED: 'true', CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: 'true',
   CLASSPILOT_CAP_SCREENSHOT_TRACKING_WINDOW_LEASE_V1: 'true',
   CLASSPILOT_CAP_SCREENSHOT_ACTIVE_OBSERVATION_CADENCE_V1: 'true',
+  CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1: 'true',
   CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1: 'true', CLASSPILOT_SUPERVISION_PREVIEW_MODE: 'on',
   CLASSPILOT_SCHEDULED_CLASSROOM_MODE: 'on', CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: '',
   CLASSPILOT_SUPERVISION_PREVIEW_EXCLUDED_SCHOOL_IDS: '', CLASSPILOT_SCHEDULED_CLASSROOM_EXCLUDED_SCHOOL_IDS: '' });
@@ -72,18 +81,22 @@ realtime.setClasspilotRealtimeStatusCommandForTests(async args => {
   }
   return undefined;
 });
-let school, teacher, admin, coverageOwner, student, studentSession, teachingSession, token, baseUrl;
+let school, teacher, admin, coverageOwner, student, studentSession, teachingSession, teachingGroup, token, baseUrl;
 let repeatScheduledCoverage;
 let browser, teacherBrowser, server, studentPage, viewerPage, worker;
 let fixtureSocket;
-const watchdog = setTimeout(() => { void browser?.close(); void teacherBrowser?.close(); server?.closeAllConnections(); }, 180_000);
+const watchdog = setTimeout(() => { void browser?.close(); void teacherBrowser?.close(); server?.closeAllConnections(); }, 300_000);
 watchdog.unref();
 const profile = await mkdtemp(join(tmpdir(), 'classpilot-preview-chrome-'));
 const uploads = [];
 const frames = [];
 const evidence = [];
 const workerLog = [];
+const heartbeatPolicies = [];
 const inSchool = fn => tenant({ schoolId: school.id }, fn);
+const controlAuthority = state => state ? { teachingSessionId: state.teachingSessionId,
+  supervisionContextId: state.supervisionContextId, revision: state.revision, desiredState: state.desiredState,
+  scheduledEndAt: state.scheduledEndAt, hardExpiresAt: state.hardExpiresAt } : null;
 async function waitFor(fn, label, timeout = 15_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const value = await fn(); if (value) return value; await delay(250); }
@@ -103,7 +116,7 @@ async function staffRequest(path, body, method = 'POST', actor = admin, revision
 async function primeWorker() {
   const state = await inSchool(() => storage.getClasspilotStudentControlState(school.id, student.id));
   const serialized = serializeClasspilotStudentControlState(state);
-  await worker.evaluate(async ({ baseUrl, schoolId, studentId, sessionId, deviceId, token, state }) => {
+  await worker.evaluate(async ({ baseUrl, schoolId, studentId, sessionId, deviceId, token, state, capabilities }) => {
     await Promise.all([authStateRestorePromise, classroomStateRestorePromise]);
     await studentAuthMutationTail;
     scheduleHeartbeat(null);
@@ -131,19 +144,17 @@ async function primeWorker() {
     schoolSettingsScope = schoolPolicyScopeForAuthContext(auth); schoolSettingsFetchedAt = Date.now();
     await durableLocalKv.set({ [SCHOOL_SETTINGS_CACHE_KEY]: schoolSettings, [SCHOOL_SETTINGS_SCOPE_KEY]: schoolSettingsScope,
       [SCHOOL_SETTINGS_FETCHED_AT_KEY]: schoolSettingsFetchedAt });
-    adoptNegotiatedProtocolState({ serverProtocolVersion: 3, acceptedCapabilities: [
-      'scopedAuthorityChecksV1', 'scheduledClassroomV1', 'screenshotTrackingWindowLeaseV1', 'screenshotActiveObservationCadenceV1',
-    ] }, auth);
+    adoptNegotiatedProtocolState({ serverProtocolVersion: 3, acceptedCapabilities: capabilities }, auth);
     currentClassroomState = RuntimeCore.normalizeClassroomState(state);
     observeStudentControlRevision(state.revision, auth, 'preview browser integration');
     heartbeatBackoffUntilMs = 0; screenshotBackoffUntilMs = 0;
     screenshotCaptureInFlight = false; screenshotImmediateCapturePending = false;
     lastScreenshotPixelsAt = 0; lastScreenshotAttemptAt = 0;
   }, { baseUrl, schoolId: school.id, studentId: student.id, sessionId: studentSession.id,
-    deviceId: `${tag}-device`, token, state: serialized });
+    deviceId: `${tag}-device`, token, state: serialized, capabilities: negotiatedCapabilities });
   await realtime.writeClasspilotRealtimeStatus({ schoolId: school.id, studentId: student.id, studentSessionId: studentSession.id,
     deviceId: `${tag}-device`, heartbeatId: randomUUID(), activeTabUrl: `${baseUrl}/lesson`, activeTabTitle: 'Synthetic lesson',
-    acceptedCapabilities: ['scopedAuthorityChecksV1', 'scheduledClassroomV1', 'screenshotTrackingWindowLeaseV1', 'screenshotActiveObservationCadenceV1'],
+    acceptedCapabilities: negotiatedCapabilities,
     classroomState: serialized });
 }
 async function deliverHint(frame) {
@@ -157,6 +168,10 @@ async function claimScheduledCoverageFromAvailable() {
   // it through the scheduler's canonical occurrence helpers, then use exactly
   // the Available screen's HTTP claim route to establish supervision.
   await inSchool(() => storage.endTeachingSession(teachingSession.id));
+  // The preceding unattended-Observe fixture used a recurring class too.
+  // Retire that test schedule before creating another same-teacher bell block.
+  await inSchool(() => db.update(schema.groups).set({ scheduleEnabled: false })
+    .where(sql`${schema.groups.id}=${teachingGroup.id} AND ${schema.groups.schoolId}=${school.id}`));
   const date = new Date().toISOString().slice(0, 10);
   const group = await inSchool(async () => {
     const created = await storage.createGroup({ schoolId: school.id, teacherId: teacher.id,
@@ -241,9 +256,15 @@ try {
     [student] = await db.insert(schema.students).values({ schoolId: school.id, firstName: 'Synthetic', lastName: 'Preview', email: `student@${tag}.example.test`, status: 'active' }).returning();
     await db.insert(schema.devices).values({ deviceId: `${tag}-device`, deviceName: 'Synthetic Chrome', schoolId: school.id, classId: 'synthetic-class' });
     [studentSession] = await db.insert(schema.studentSessions).values({ studentId: student.id, deviceId: `${tag}-device`, authKind: 'managed_profile', isActive: true }).returning();
-    const group = await storage.createGroup({ schoolId: school.id, teacherId: teacher.id, name: 'Synthetic classroom', groupType: 'admin_class', status: 'active' });
-    await db.insert(schema.groupStudents).values({ groupId: group.id, studentId: student.id });
-    teachingSession = await storage.createTeachingSession({ groupId: group.id, teacherId: teacher.id, sessionMode: 'live' });
+    teachingGroup = await storage.createGroup({ schoolId: school.id, teacherId: teacher.id, name: 'Synthetic classroom',
+      groupType: 'admin_class', status: 'active', scheduleEnabled: true, blockStartTime: '00:00', blockEndTime: '23:59' });
+    await db.insert(schema.groupStudents).values({ groupId: teachingGroup.id, studentId: student.id });
+    teachingSession = await storage.createOrReuseScheduledReportSession({ schoolId: school.id, groupId: teachingGroup.id,
+      teacherId: teacher.id, scheduledDate: new Date().toISOString().slice(0, 10), scheduledTimezone: 'UTC',
+      scheduledStartAt: new Date(Date.now() - 60_000), scheduledEndAt: new Date(Date.now() + 3_600_000) });
+    const unattended = await processScheduledClassAutoStart({ group: teachingGroup, scheduledDate: teachingSession.scheduledDate,
+      scheduledTeacherConnectedOverride: false, connectedTeacherIdsOverride: new Set(), now: new Date() });
+    assert.equal(unattended.status, 'coverage_needed');
   });
   token = createStudentToken({ schoolId: school.id, studentId: student.id, deviceId: `${tag}-device`, sessionId: studentSession.id, studentEmail: student.email });
   const frontend = resolve(root, 'schoolpilot-app');
@@ -264,6 +285,12 @@ try {
   browser = await chromium.launchPersistentContext(profile, { executablePath: chromium.executablePath(), headless: true,
     args: ['--no-proxy-server', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost',
       `--disable-extensions-except=${resolve(extensionRepo, 'extension')}`, `--load-extension=${resolve(extensionRepo, 'extension')}`] });
+  browser.on('response', response => {
+    if (!response.url().includes('/device/heartbeat')) return;
+    void response.json().then(data => heartbeatPolicies.push({ at: Date.now(), status: response.status(),
+      acceptedCapabilities: data.acceptedCapabilities, screenshotPolicy: data.screenshotPolicy,
+      classroomState: data.classroomState })).catch(() => {});
+  });
   worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
   const recordWorkerConsole = current => current.on('console', message => workerLog.push(message.text().replaceAll(token, '[redacted]').slice(0, 1200)));
   recordWorkerConsole(worker);
@@ -285,17 +312,27 @@ try {
   fixtureSocket = { readyState: 1, send: raw => frames.push(JSON.parse(raw)) };
   sockets.registerWsClient(fixtureSocket);
   sockets.authenticateWsClient(fixtureSocket, { role: 'student', schoolId: school.id, studentId: student.id,
-    studentSessionId: studentSession.id, deviceId: `${tag}-device`, acceptedCapabilities: [
-      'scopedAuthorityChecksV1', 'scheduledClassroomV1', 'screenshotTrackingWindowLeaseV1', 'screenshotActiveObservationCadenceV1',
-    ] });
-  const scenarios = [{ name: 'admin Observe teaching class', authority: { teachingSessionId: teachingSession.id } },
+    studentSessionId: studentSession.id, deviceId: `${tag}-device`, acceptedCapabilities: negotiatedCapabilities });
+  const scenarios = [{ name: 'admin Observe class before teacher ever logs in', unattended: true,
+      authority: { teachingSessionId: teachingSession.id } },
+    { name: 'admin Observe teaching class', promoteTeacher: true, authority: { teachingSessionId: teachingSession.id } },
     { name: 'Available scheduled coverage Claim opened by admin owner', scheduledClaim: true, owner: coverageOwner },
     { name: 'teacher-held claim observed by admin', contextType: 'direct_pickup' },
     { name: 'active testing block observed by admin', contextType: 'testing', scheduled: true },
-    { name: 'missed claim refresh recovered by heartbeat', contextType: 'direct_pickup', dropHint: true }];
+    { name: 'missed claim refresh recovered by heartbeat', contextType: 'direct_pickup', dropHint: true }]
+    .filter(scenario => !unattendedOnly || scenario.unattended);
   for (const scenario of scenarios) {
     process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = scenario.contextType === 'direct_pickup' ? 'off' : 'on';
     resetClasspilotObservationLeasesForTests(); resetClasspilotScreenshotPolicyRefreshForTests(); frames.length = 0;
+    const beforeControl = scenario.unattended ? await inSchool(() => storage.getClasspilotStudentControlState(school.id, student.id)) : null;
+    if (scenario.promoteTeacher) {
+      const promoted = await inSchool(() => processScheduledClassAutoStart({ group: teachingGroup,
+        scheduledDate: teachingSession.scheduledDate, scheduledTeacherConnectedOverride: true, now: new Date() }));
+      assert.equal(promoted.status, 'started', 'a teacher connection starts the class only after the unattended Observe scenario');
+      assert.equal(promoted.session.id, teachingSession.id);
+      await syncClasspilotControlStatesToActiveDevices(school.id, [student.id]);
+      for (const frame of frames.splice(0)) await deliverHint(frame);
+    }
     if (!scenario.authority) {
       const context = scenario.scheduledClaim ? await claimScheduledCoverageFromAvailable()
         : await inSchool(() => storage.createSupervisionContextWithStudents({ context: {
@@ -329,22 +366,42 @@ try {
     assert.equal(emitted.studentId, student.id); assert.equal(emitted.studentSessionId, studentSession.id);
     assert.equal(emitted.deviceId, undefined);
     if (!scenario.dropHint) await deliverHint(emitted);
+    const captureTimeout = scenario.unattended && !readOnlyObservation ? 35_000 : 15_000;
     const first = await waitFor(async () => { const screenshot = await tile(scenario.authority);
       return screenshot && Number(screenshot.timestamp) >= started ? screenshot : null;
-    }, `${scenario.name} first actual capture`);
+    }, `${scenario.name} first actual capture`, captureTimeout);
     const firstMs = Date.now() - started;
-    assert.ok(firstMs <= 15_000, `first healthy capture took ${firstMs}ms`);
+    assert.ok(firstMs <= captureTimeout, `first healthy capture took ${firstMs}ms`);
     assert.match(first.bindingVersion, scenario.authority.supervisionContextId ? /^v3:/ : /^v2:/);
-    assert.equal((await tile(scenario.authority, scenario.owner ?? teacher))?.screenshot, first.screenshot,
+    if (!scenario.unattended) assert.equal((await tile(scenario.authority, scenario.owner ?? teacher))?.screenshot, first.screenshot,
       'assigned owner and observing admin receive the same authorized pixels');
+    if (scenario.unattended) {
+      const policy = await worker.evaluate(() => ({ authority: screenshotPolicyState.authority, cadence: screenshotPolicyState.captureCadence }));
+      assert.equal(policy.authority.kind, 'student_session', 'observation never fabricates teaching control on the extension wire');
+      assert.equal(policy.cadence?.mode, readOnlyObservation ? 'active_view' : 'background');
+    }
     await renderTile(scenario.authority, first, [7, 89, 133]);
     if (scenario.scheduledClaim) await repeatScheduledCoverage();
     await studentPage.bringToFront();
     await studentPage.evaluate(name => { document.body.textContent = `${name}: SECOND`; document.body.style.background = '#9d174d'; }, scenario.name);
     const secondStarted = Date.now();
-    const second = await waitFor(async () => { const frame = await tile(scenario.authority); return frame?.screenshot !== first.screenshot ? frame : null; }, `${scenario.name} active cadence capture`);
+    const second = await waitFor(async () => { const frame = await tile(scenario.authority); return frame?.screenshot !== first.screenshot ? frame : null; }, `${scenario.name} active cadence capture`, captureTimeout);
     assert.notEqual(second.screenshot, first.screenshot);
     await renderTile(scenario.authority, second, [157, 23, 77]);
+    if (scenario.unattended) {
+      const report = await inSchool(() => storage.getTeachingSessionById(teachingSession.id));
+      assert.equal(report.sessionMode, 'scheduled_report');
+      assert.equal(report.teacherId, teacher.id);
+      assert.deepEqual(controlAuthority(await inSchool(() => storage.getClasspilotStudentControlState(school.id, student.id))),
+        controlAuthority(beforeControl), 'capture acknowledgements may advance telemetry but never change classroom authority');
+      assert.equal(await inSchool(() => storage.getActiveClassOwnerForStudent(school.id, student.id)), undefined);
+      const command = await fetch(`${baseUrl}/api/classpilot/commands`, { method: 'POST', headers: {
+        'content-type': 'application/json', 'x-school-id': school.id,
+        authorization: `Bearer ${signUserToken({ userId: admin.id, email: admin.email })}`,
+      }, body: JSON.stringify({ teachingSessionId: teachingSession.id, targetScope: 'students', targetStudentIds: [student.id],
+        commandType: 'open-tab', commandPayload: { url: 'https://example.invalid' } }) });
+      assert.equal(command.status, 403, 'Observe never permits administrator commands on the reporting occurrence');
+    }
     const digest = frame => createHash('sha256').update(frame.screenshot).digest('hex');
     evidence.push({ scenario: scenario.name, firstMs, nextMs: Date.now() - secondStarted,
       scheduledRollout: process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE, bindingVersion: first.bindingVersion,
@@ -353,6 +410,7 @@ try {
   }
   // Stop the actual MV3 worker while keeping session storage. Navigation wakes
   // a fresh worker; its ordinary heartbeat must restore capture authorization.
+  if (!unattendedOnly) {
   const lastScenario = scenarios.at(-1);
   const beforeSuspend = await tile(lastScenario.authority);
   await staffRequest(`/api/classpilot/supervision-contexts/${lastScenario.authority.supervisionContextId}/observation-lease`,
@@ -383,21 +441,30 @@ try {
   evidence.push({ scenario: 'MV3 suspension and navigation wake', firstMs: Date.now() - restartAt,
     screenshotDigest: createHash('sha256').update(afterSuspend.screenshot).digest('hex') });
   await cdp.detach();
-  assert.ok(uploads.filter(upload => upload.status === 200).length >= scenarios.length * 2 + 1, 'all captures reached the real upload endpoint');
+  }
+  assert.ok(uploads.filter(upload => upload.status === 200).length >= scenarios.length * 2 + (unattendedOnly ? 0 : 1), 'all captures reached the real upload endpoint');
   assert.equal(uploads.some(upload => upload.status >= 400), false, JSON.stringify(uploads));
   console.log('PASS: real observation route hints, existing extension capture/upload, exact-authority reads, and StudentTile pixel decoding.');
   await viewerPage.screenshot({ path: join(evidencePath, 'rendered-preview.png') });
 } catch (error) {
   await writeFile(join(evidencePath, 'failure.txt'), String(error?.stack || error).replaceAll(token || '[no-token]', '[redacted]'));
+  const state = await worker?.evaluate(() => ({ screenshotPolicyState, currentClassroomState,
+    negotiatedProtocolState, trackingState, screenshotCaptureInFlight,
+    screenshotImmediateCapturePending, lastScreenshotPixelsAt, lastScreenshotAttemptAt,
+    studentControlRevision: currentStudentControlRevision(),
+    activeCadenceAllowed: activeObservationScreenshotCadenceAllowed(captureAuthenticatedContext('failure diagnostics')),
+  })).catch(() => null);
+  if (state) await writeFile(join(evidencePath, 'failure-state.json'), JSON.stringify(state, null, 2));
   await viewerPage?.screenshot({ path: join(evidencePath, 'failed-preview.png'), timeout: 2_000 }).catch(() => {});
   throw error;
 } finally {
   clearTimeout(watchdog);
   await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify({ completedScenarios: evidence, uploadOutcomes: uploads,
-    extensionRef, extensionVersion, extensionChanges,
+    extensionRef, extensionVersion, extensionChanges, candidateRuntime, readOnlyObservation, unattendedOnly,
     transport: 'actual server hint bridged to existing extension handler; real HTTP heartbeat/upload/read; unmodified API payload through dashboard normalization/indexing; native browser capture',
   }, null, 2));
   await writeFile(join(evidencePath, 'worker.log'), workerLog.join('\n'));
+  await writeFile(join(evidencePath, 'heartbeat-policies.json'), JSON.stringify(heartbeatPolicies, null, 2));
   if (fixtureSocket) sockets.removeWsClient(fixtureSocket);
   await browser?.close();
   await teacherBrowser?.close();

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseClasspilotScreenshotAuthority,
+  classpilotScreenshotAuthorityForDeliveredControl,
   resolveClasspilotScreenshotPolicy,
   resolveClasspilotScreenshotTrackingWindowPolicy,
   validateClasspilotScreenshotCapturedAt,
@@ -268,6 +269,49 @@ test("active observation cadence is exact-class bound and fails back to 30 secon
     wrongSession.mode === "tracking_window_lease" ? wrongSession.captureCadence : null,
     { mode: "background", intervalSeconds: 30, expiresInSeconds: 80 }
   );
+});
+
+test("read-only reporting cadence requires negotiated support, a viewer, and the current revision", async () => {
+  const priorRedis = process.env.REDIS_URL;
+  const priorNode = process.env.NODE_ENV;
+  const priorApp = process.env.APP_ENV;
+  try {
+    delete process.env.REDIS_URL;
+    process.env.NODE_ENV = "test";
+    delete process.env.APP_ENV;
+    resetClasspilotObservationLeasesForTests();
+    const now = Date.parse("2026-09-24T14:00:00.000Z");
+    const trackingSettings = { enableTrackingHours: false, trackingStartTime: "08:00", trackingEndTime: "15:00",
+      trackingDays: ["Thursday"], schoolTimezone: "UTC", afterHoursMode: "off" as const };
+    const trackingAuthority = { authority: { kind: "student_session" as const, controlRevision: 7 },
+      authorityStartedAt: new Date(now - 60_000), authorityExpiresAt: null,
+      reportingObservation: { teachingSessionId: "unattended", startsAt: new Date(now - 10_000), expiresAt: new Date(now + 40_000) } };
+    const acceptedCapabilities = ["screenshotTrackingWindowLeaseV1", "screenshotActiveObservationCadenceV1", "screenshotReadOnlyObservationV1"];
+    const options = { schoolId: "observation-school", studentId: "student", teachingSessionId: null,
+      acceptedCapabilities, trackingAuthority, trackingSettings, now };
+    const inactive = await resolveClasspilotScreenshotPolicy(options);
+    assert.equal(inactive.mode === "tracking_window_lease" && inactive.captureCadence?.mode, "background");
+    await renewClasspilotObservationLease({ schoolId: options.schoolId, teachingSessionId: "unattended",
+      viewerUserId: "admin", viewerInstanceId: "tab", scope: { kind: "students", studentIds: ["student"] }, now });
+    const active = await resolveClasspilotScreenshotPolicy(options);
+    assert.equal(active.mode, "tracking_window_lease");
+    assert.deepEqual(active.mode === "tracking_window_lease" && active.authority, { kind: "student_session", controlRevision: 7 });
+    assert.deepEqual(active.mode === "tracking_window_lease" && active.captureCadence,
+      { mode: "active_view", intervalSeconds: 5, expiresInSeconds: 40 });
+    const legacy = await resolveClasspilotScreenshotPolicy({ ...options, acceptedCapabilities: acceptedCapabilities.slice(0, 2) });
+    assert.equal(legacy.mode === "tracking_window_lease" && legacy.captureCadence?.intervalSeconds, 30);
+    const otherStudent = await resolveClasspilotScreenshotPolicy({ ...options, studentId: "other-student" });
+    assert.equal(otherStudent.mode === "tracking_window_lease" && otherStudent.captureCadence?.mode, "background");
+    const superseded = classpilotScreenshotAuthorityForDeliveredControl({ projection: trackingAuthority, deliveredControlRevision: 6 });
+    assert.equal(superseded?.reportingObservation, undefined);
+    const stale = await resolveClasspilotScreenshotPolicy({ ...options, trackingAuthority: superseded });
+    assert.equal(stale.mode === "tracking_window_lease" && stale.captureCadence?.mode, "background");
+  } finally {
+    if (priorRedis === undefined) delete process.env.REDIS_URL; else process.env.REDIS_URL = priorRedis;
+    if (priorNode === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = priorNode;
+    if (priorApp === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = priorApp;
+    resetClasspilotObservationLeasesForTests();
+  }
 });
 
 test("tracking screenshot authority and capturedAt validation are strict", () => {

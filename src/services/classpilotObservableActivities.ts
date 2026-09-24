@@ -5,6 +5,7 @@ import { students } from "../schema/students.js";
 import { classpilotSessionStudents, classpilotSupervisionContexts, classpilotSupervisionStudents, groups, teachingSessions } from "../schema/classpilot.js";
 import { scheduledContextHasClassroomTools, supervisionActivitySource } from "./classpilotActivityAuthority.js";
 import { supervisionActivityPresentation } from "./classpilotSupervisionPurpose.js";
+import { classpilotObservationSessionIsCurrent } from "./classpilotObservationAuthority.js";
 
 const capabilities = { observe: true, tiles: true, screenshots: true, commands: false, fab: false, liveView: false } as const;
 
@@ -16,7 +17,9 @@ export async function getClasspilotObservableActivities(schoolId: string, now = 
   )).orderBy(classpilotSupervisionContexts.startsAt, classpilotSupervisionContexts.id).limit(501);
   const sessions = await database.select({ session: teachingSessions, group: groups }).from(teachingSessions)
     .innerJoin(groups, and(eq(groups.id, teachingSessions.groupId), eq(groups.schoolId, schoolId)))
-    .where(and(eq(teachingSessions.schoolId, schoolId), eq(teachingSessions.sessionMode, "live"),
+    .where(and(eq(teachingSessions.schoolId, schoolId), or(eq(teachingSessions.sessionMode, "live"), and(
+      eq(teachingSessions.sessionMode, "scheduled_report"), eq(teachingSessions.scheduledState, "active"),
+      isNotNull(teachingSessions.scheduledDate), lte(teachingSessions.scheduledStartAt, now), gt(teachingSessions.scheduledEndAt, now))),
       isNull(teachingSessions.endTime), lte(teachingSessions.startTime, now), isNotNull(teachingSessions.rosterSnapshotCompletedAt),
       or(isNull(teachingSessions.scheduledEndAt), gt(teachingSessions.scheduledEndAt, now))))
     .orderBy(teachingSessions.startTime, teachingSessions.id).limit(501);
@@ -55,9 +58,11 @@ export async function getClasspilotObservableActivities(schoolId: string, now = 
     }),
     ...sessions.flatMap(({ session, group }) => {
       const studentCount = sessionCounts.get(session.id) ?? 0;
-      if (!studentCount) return [];
+      if (!studentCount || !classpilotObservationSessionIsCurrent(session, now)) return [];
       return [{ id: session.id, name: session.classNameSnapshot || group.name, purpose: "class" as const,
         source: session.scheduledDate ? "scheduled_class" : "class", status: "active",
+        sessionMode: session.sessionMode,
+        supervisionStatus: session.sessionMode === "scheduled_report" ? "awaiting_teacher" : "live",
         startsAt: (session.scheduledStartAt || session.startTime).toISOString(), endsAt: session.scheduledEndAt?.toISOString() ?? null,
         studentCount, owner: { id: session.teacherId, name: names.get(session.teacherId) ?? "Staff" },
         authority: { teachingSessionId: session.id, supervisionContextId: null, contextAuthorityRevision: null }, capabilities }];

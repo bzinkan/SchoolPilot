@@ -23,6 +23,7 @@ import {
   classpilotSessionReportVersionForNewRow,
 } from "../config/classpilotSessionReportRollout.js";
 import { classpilotSupervisionPreviewObserved, classpilotSupervisionPreviewRetentionEnabled } from "../config/classpilotSupervisionPreviewRollout.js";
+import { classpilotReportingObservationSessionIsCurrent } from "./classpilotObservationAuthority.js";
 import { scheduledContextHasClassroomTools, scheduledClassroomBindingCapable, requireScheduledClassroomContext, assertScheduledClassroomAuthorityRevision } from "./classpilotActivityAuthority.js";
 import { finalizeScheduledClassroomTools, persistScheduledClassroomStateRecords, releaseScheduledClassroomStudentTools } from "./classpilotScheduledClassroomTools.js";
 import { syncSupervisionActivityReports, supervisionActivityReportingEnabled } from "./classpilotSupervisionReportLifecycle.js";
@@ -9208,6 +9209,7 @@ export type ClassPilotStudentTileAccess = {
   supervisionContextId?: string | null;
   historySince?: Date | null;
   controlRevision?: number | null;
+  reportingObservation?: boolean;
 };
 
 type ClassPilotTileAuthorizationRow = ClassPilotStudentTileAccess & {
@@ -9234,6 +9236,31 @@ function requestedTileStudentsSql(
     FROM ${students} AS student
     WHERE student.school_id = ${schoolId}
   `;
+}
+
+// Reporting occurrences confer administrator observation only. They never
+// become class/control owners, and another live owner always takes precedence.
+function currentReportingObservationSql(alias: string): SQL {
+  const session = sql.identifier(alias);
+  return sql`${session}.session_mode = 'scheduled_report'
+    AND ${session}.scheduled_state = 'active' AND ${session}.scheduled_date IS NOT NULL
+    AND ${session}.end_time IS NULL AND ${session}.roster_snapshot_completed_at IS NOT NULL
+    AND ${session}.scheduled_start_at <= now() AND ${session}.scheduled_end_at > now()`;
+}
+
+function noLiveClassOwnerSql(schoolId: string, studentId: SQL): SQL {
+  return sql`NOT EXISTS (
+    SELECT 1 FROM ${teachingSessions} live_session
+    WHERE live_session.school_id = ${schoolId} AND live_session.session_mode = 'live'
+      AND live_session.end_time IS NULL AND live_session.start_time <= now()
+      AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+      AND ((live_session.roster_snapshot_completed_at IS NOT NULL AND EXISTS (
+        SELECT 1 FROM ${classpilotSessionStudents} live_roster WHERE live_roster.school_id=${schoolId}
+          AND live_roster.teaching_session_id=live_session.id AND live_roster.student_id=${studentId}))
+        OR (live_session.roster_snapshot_completed_at IS NULL AND EXISTS (
+          SELECT 1 FROM ${groupStudents} legacy_roster WHERE legacy_roster.group_id=live_session.group_id
+            AND legacy_roster.student_id=${studentId})))
+  )`;
 }
 
 /**
@@ -9276,7 +9303,8 @@ export function buildClassPilotTileAuthorizationQuery(
           INNER JOIN ${teachingSessions} AS selected_session
             ON selected_session.id = roster.teaching_session_id
            AND selected_session.school_id = ${options.schoolId}
-           AND selected_session.session_mode = 'live'
+           AND (selected_session.session_mode = 'live'
+             OR (${currentReportingObservationSql("selected_session")}))
            AND selected_session.end_time IS NULL
            AND selected_session.roster_snapshot_completed_at IS NOT NULL
            AND (
@@ -9285,11 +9313,18 @@ export function buildClassPilotTileAuthorizationQuery(
            )
           INNER JOIN requested_students AS requested
             ON requested.student_id = roster.student_id
+          INNER JOIN ${students} AS observed_student
+            ON observed_student.id = roster.student_id
+           AND observed_student.school_id = ${options.schoolId}
           LEFT JOIN active_supervision AS reassigned
             ON reassigned.student_id = roster.student_id
+          LEFT JOIN active_live_owners AS live_owner
+            ON live_owner.student_id = roster.student_id
           WHERE roster.school_id = ${options.schoolId}
             AND roster.teaching_session_id = ${options.teachingSessionId}
             AND reassigned.student_id IS NULL
+            AND (selected_session.session_mode = 'live'
+              OR (live_owner.student_id IS NULL AND observed_student.status = 'active'))
         `
       : options.role === "teacher"
         ? sql`
@@ -9422,7 +9457,9 @@ export function buildClassPilotTileAuthorizationQuery(
           AND control.supervision_context_id=${options.supervisionContextId} AND control.teaching_session_id IS NULL
           AND control.hard_expires_at>now() AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at>now()) LIMIT 1)`
     : accessMode === "live" && options.teachingSessionId
-    ? sql`(
+    ? sql`CASE WHEN selected_report.id IS NOT NULL
+        THEN COALESCE(observation_control.revision, 0)
+        ELSE (
         SELECT control.revision
         FROM ${classpilotStudentControlStates} AS control
         WHERE control.school_id = ${options.schoolId}
@@ -9432,13 +9469,54 @@ export function buildClassPilotTileAuthorizationQuery(
           AND control.hard_expires_at > now()
           AND (control.scheduled_end_at IS NULL OR control.scheduled_end_at > now())
         LIMIT 1
-      )`
+      ) END`
     : sql`NULL::integer`;
 
   return sql`
     WITH
     requested_students(student_id, ordinal) AS MATERIALIZED (
       ${requestedStudents}
+    ),
+    current_reporting_session AS MATERIALIZED (
+      ${options.teachingSessionId && schoolWide ? sql`
+        SELECT report.id, report.scheduled_start_at
+        FROM ${teachingSessions} AS report
+        WHERE report.school_id = ${options.schoolId}
+          AND report.id = ${options.teachingSessionId}
+          AND ${currentReportingObservationSql("report")}
+      ` : sql`SELECT NULL::text AS id, NULL::timestamp AS scheduled_start_at WHERE false`}
+    ),
+    active_live_owners AS MATERIALIZED (
+      ${options.teachingSessionId && schoolWide ? sql`
+        SELECT live_roster.student_id
+        FROM current_reporting_session AS report
+        INNER JOIN ${teachingSessions} AS live_session
+          ON live_session.school_id = ${options.schoolId}
+         AND live_session.session_mode = 'live'
+         AND live_session.end_time IS NULL
+         AND live_session.start_time <= now()
+         AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND live_session.roster_snapshot_completed_at IS NOT NULL
+        INNER JOIN ${classpilotSessionStudents} AS live_roster
+          ON live_roster.school_id = ${options.schoolId}
+         AND live_roster.teaching_session_id = live_session.id
+        INNER JOIN requested_students AS requested
+          ON requested.student_id = live_roster.student_id
+        UNION
+        SELECT legacy_roster.student_id
+        FROM current_reporting_session AS report
+        INNER JOIN ${teachingSessions} AS live_session
+          ON live_session.school_id = ${options.schoolId}
+         AND live_session.session_mode = 'live'
+         AND live_session.end_time IS NULL
+         AND live_session.start_time <= now()
+         AND (live_session.scheduled_end_at IS NULL OR live_session.scheduled_end_at > now())
+         AND live_session.roster_snapshot_completed_at IS NULL
+        INNER JOIN ${groupStudents} AS legacy_roster
+          ON legacy_roster.group_id = live_session.group_id
+        INNER JOIN requested_students AS requested
+          ON requested.student_id = legacy_roster.student_id
+      ` : sql`SELECT NULL::text AS student_id WHERE false`}
     ),
     active_supervision AS MATERIALIZED (
       SELECT DISTINCT
@@ -9497,9 +9575,11 @@ export function buildClassPilotTileAuthorizationQuery(
       resolved.ordinal,
       resolved.student_session_id,
       ${controlRevision} AS control_revision,
+      (selected_report.id IS NOT NULL) AS reporting_observation,
       ${options.supervisionContextId ? sql`(SELECT MAX(supervised.assigned_at) FROM ${classpilotSupervisionStudents} supervised
         WHERE supervised.school_id=${options.schoolId} AND supervised.context_id=${options.supervisionContextId}
-          AND supervised.student_id=resolved.student_id AND supervised.released_at IS NULL)` : sql`NULL::timestamp`} AS history_since,
+          AND supervised.student_id=resolved.student_id AND supervised.released_at IS NULL)`
+        : options.teachingSessionId && schoolWide ? sql`selected_report.scheduled_start_at` : sql`NULL::timestamp`} AS history_since,
       device.device_id,
       device.device_name,
       device.school_id,
@@ -9510,6 +9590,11 @@ export function buildClassPilotTileAuthorizationQuery(
       device.last_seen_at,
       device.registered_at
     FROM resolved_students AS resolved
+    LEFT JOIN current_reporting_session AS selected_report ON true
+    LEFT JOIN ${classpilotStudentControlStates} AS observation_control
+      ON selected_report.id IS NOT NULL
+     AND observation_control.school_id = ${options.schoolId}
+     AND observation_control.student_id = resolved.student_id
     INNER JOIN ${students} AS student
       ON student.id = resolved.student_id
      AND student.school_id = ${options.schoolId}
@@ -9589,6 +9674,7 @@ async function loadClassPilotTileAuthorizationRows(
         && Number.isSafeInteger(Number(raw.control_revision))
         ? Number(raw.control_revision)
         : null,
+      reportingObservation: raw.reporting_observation === true,
       ordinal: Number(raw.ordinal),
       device,
     });
@@ -9615,6 +9701,7 @@ export async function getBatchTileAccessForStaff(
     supervisionContextId: row.supervisionContextId,
     historySince: row.historySince,
     controlRevision: row.controlRevision,
+    reportingObservation: row.reportingObservation,
   }]));
 }
 
@@ -23477,6 +23564,12 @@ export type ClasspilotScreenshotAuthorityProjection = {
    * claim's own key, and until which instant.
    */
   supervisionRetention?: ClasspilotSupervisionRetentionTarget;
+  /** Read-only observer retention; never a classroom/control assignment. */
+  reportingObservation?: {
+    teachingSessionId: string;
+    startsAt: Date;
+    expiresAt: Date;
+  };
 };
 
 export type ClasspilotSupervisionRetentionTarget = {
@@ -23559,6 +23652,51 @@ async function resolveClasspilotSupervisionRetentionTarget(
     controlRevision: options.controlRevision,
     expiresAt,
   };
+}
+
+async function withReportingObservationRetention(
+  options: { schoolId: string; studentId: string; teachingSessionId?: string | null },
+  projection: ClasspilotScreenshotAuthorityProjection,
+  database: typeof db,
+): Promise<ClasspilotScreenshotAuthorityProjection> {
+  // Only the unowned student-session path may be observed this way. Existing
+  // claims and live classes retain their exclusive exact-binding authority.
+  if (!options.teachingSessionId) return projection;
+  const result = await database.execute(sql`
+    SELECT report.* FROM ${teachingSessions} report
+    INNER JOIN ${classpilotSessionStudents} roster ON roster.teaching_session_id=report.id
+      AND roster.school_id=${options.schoolId} AND roster.student_id=${options.studentId}
+    WHERE report.school_id=${options.schoolId} AND report.id=${options.teachingSessionId}
+      AND ${currentReportingObservationSql("report")}
+      AND ${noLiveClassOwnerSql(options.schoolId, sql`${options.studentId}`)}
+      AND NOT EXISTS (SELECT 1 FROM ${classpilotSupervisionStudents} assigned
+        INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assigned.context_id
+          AND context.school_id=${options.schoolId} AND context.status='active'
+          AND context.starts_at<=now() AND context.ends_at>now()
+        WHERE assigned.school_id=${options.schoolId} AND assigned.student_id=${options.studentId}
+          AND assigned.released_at IS NULL)
+    LIMIT 1 FOR SHARE OF report
+  `);
+  // The server's existing scheduled attribution selects the exact occurrence;
+  // observation never picks another roster or writes a replacement control row.
+  if (result.rows.length !== 1) return projection;
+  const row = result.rows[0] as Record<string, unknown>;
+  const dateValue = (value: unknown) => value instanceof Date ? value : new Date(String(value));
+  const startsAt = new Date(Math.max(dateValue(row.scheduled_start_at).getTime(),
+    dateValue(row.roster_snapshot_completed_at).getTime(), projection.authorityStartedAt.getTime()));
+  const expiresAt = dateValue(row.scheduled_end_at);
+  if (typeof row.id !== "string" || !classpilotReportingObservationSessionIsCurrent({
+    sessionMode: String(row.session_mode), scheduledState: String(row.scheduled_state),
+    scheduledDate: String(row.scheduled_date), endTime: row.end_time ? String(row.end_time) : null,
+    scheduledStartAt: startsAt, scheduledEndAt: expiresAt, rosterSnapshotCompletedAt: startsAt,
+  })) return projection;
+  // Shared storage is also loaded by other products. Defer the observation
+  // transport until this ClassPilot path actually needs its lease.
+  const { classpilotObservationStatus } = await import("./classpilotObservationLease.js");
+  const observed = await classpilotObservationStatus({ schoolId: options.schoolId,
+    teachingSessionId: row.id, studentId: options.studentId });
+  if (observed.status !== "observed") return projection;
+  return { ...projection, reportingObservation: { teachingSessionId: row.id, startsAt, expiresAt } };
 }
 
 export async function getClasspilotScreenshotAuthorityProjection(options: {
@@ -23687,7 +23825,8 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
     || controlState.supervisionContextId !== null
     || !controlState.hardExpiresAt
   ) {
-    return studentAuthority;
+    return withReportingObservationRetention({ ...options,
+      teachingSessionId: !controlState?.supervisionContextId ? controlState?.teachingSessionId : null }, studentAuthority, dbInstance);
   }
 
   const [candidate] = await dbInstance
@@ -23732,7 +23871,8 @@ export async function getClasspilotScreenshotAuthorityProjection(options: {
     ))
     .limit(1)
     .for("share");
-  if (!candidate) return studentAuthority;
+  if (!candidate) return withReportingObservationRetention({ ...options,
+    teachingSessionId: controlState.teachingSessionId }, studentAuthority, dbInstance);
 
   // Drizzle transactions share one pg client. Keep these checks sequential so
   // the authority projection remains compatible with pg@9's single-query rule.
@@ -23855,6 +23995,7 @@ export async function withClasspilotTeachingTelemetryAuthority<T>(options: {
   controlRevision: number;
   allowEndedBinding?: boolean;
   actorId?: string;
+  allowReportingObservation?: boolean;
 }, callback: (target: {
   teachingSessionId: string;
   controlRevision: number;
@@ -23907,7 +24048,14 @@ export async function withClasspilotTeachingTelemetryAuthority<T>(options: {
       options.studentId,
       transactionDb
     );
-    if (owner?.session.id !== options.teachingSessionId) return undefined;
+    if (owner?.session.id !== options.teachingSessionId) {
+      if (owner || !options.allowReportingObservation || options.actorId) return undefined;
+      const observation = await withReportingObservationRetention(options, {
+        authority: { kind: "student_session", controlRevision: controlState.revision },
+        authorityStartedAt: new Date(0), authorityExpiresAt: null,
+      }, transactionDb);
+      if (observation.reportingObservation?.teachingSessionId !== options.teachingSessionId) return undefined;
+    }
     return callback({
       teachingSessionId: options.teachingSessionId,
       controlRevision: controlState.revision,

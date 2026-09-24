@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { classpilotScreenshotAuthorityForDeliveredControl } from "../src/services/classpilotScreenshotPolicy.js";
+import type { ClasspilotScreenshotAuthorityProjection } from "../src/services/storage.js";
 
 import {
   assertClasspilotSupervisionPreviewEnv,
@@ -248,18 +250,25 @@ describe("supervision retention target stays server-side", () => {
   });
 
   it("is dropped when the projection is rewritten onto a delivered revision", () => {
-    const policy = read("src/services/classpilotScreenshotPolicy.ts");
-    const fn = policy.slice(
-      policy.indexOf("export function classpilotScreenshotAuthorityForDeliveredControl"),
-      policy.indexOf("export function parseClasspilotScreenshotAuthority")
-    );
-    assert.ok(fn.length > 0);
-    assert.match(
-      fn,
-      /const \{ supervisionRetention: _supersededRetention, \.\.\.rest \} = projection/,
-      "a retention target keyed to the current revision must not ride onto an older delivered one"
-    );
-    assert.doesNotMatch(fn, /\.\.\.projection,/);
+    const startedAt = new Date("2026-09-24T12:00:00Z");
+    const expiresAt = new Date("2026-09-24T13:00:00Z");
+    const targets: Array<Partial<ClasspilotScreenshotAuthorityProjection>> = [
+      { supervisionRetention: { supervisionContextId: "context-1", assignedStaffId: "staff-1",
+        contextAuthorityRevision: "context-revision", controlRevision: 7, expiresAt } },
+      { reportingObservation: { teachingSessionId: "report-1", startsAt: startedAt, expiresAt } },
+    ];
+    for (const target of targets) {
+      const projection: ClasspilotScreenshotAuthorityProjection = {
+        authority: { kind: "student_session", controlRevision: 7 },
+        authorityStartedAt: startedAt, authorityExpiresAt: expiresAt, ...target,
+      };
+      assert.equal(classpilotScreenshotAuthorityForDeliveredControl({ projection, deliveredControlRevision: 7 }), projection);
+      const older = classpilotScreenshotAuthorityForDeliveredControl({ projection, deliveredControlRevision: 6 });
+      assert.deepEqual(older, { authority: { kind: "student_session", controlRevision: 6 },
+        authorityStartedAt: startedAt, authorityExpiresAt: expiresAt },
+      "a retention target keyed to the current revision must not ride onto an older delivered one");
+      assert.ok(projection.supervisionRetention || projection.reportingObservation, "the original projection stays intact");
+    }
   });
 
   it("resolves only under a live claim and refuses an expired one", () => {
