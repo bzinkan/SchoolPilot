@@ -118,11 +118,12 @@ export async function getPasspilotClasses(
 ): Promise<{ source: PasspilotClassSource; classes: NormalizedPasspilotClass[] }> {
   const source = (await getSettingsForSchool(schoolId))?.passpilotClassSource ?? "legacy_grades";
   const historyScope = options.scope === "history";
+  const references = historyScope
+    ? await getPasspilotClassHistoryReferences(schoolId, options.manager ? undefined : options.userId)
+    : null;
+  let standaloneClasses: NormalizedPasspilotClass[] = [];
   if (source === "legacy_grades") {
     const assignedGrades = options.manager ? [] : await getTeacherGrades(options.userId);
-    const references = historyScope
-      ? await getPasspilotClassHistoryReferences(schoolId, options.manager ? undefined : options.userId)
-      : null;
     const allGrades = await getGradesBySchool(schoolId);
     const allowedGradeIds = options.manager
       ? null
@@ -167,12 +168,10 @@ export async function getPasspilotClasses(
         filterKey: { type: "gradeId", value: grade.id },
       } satisfies NormalizedPasspilotClass;
     });
-    return { source, classes };
+    if (!historyScope) return { source, classes };
+    standaloneClasses = classes;
   }
 
-  const references = historyScope
-    ? await getPasspilotClassHistoryReferences(schoolId, options.manager ? undefined : options.userId)
-    : null;
   const allClasses = await getAdminClassSummariesBySchool(schoolId, {
     status: historyScope ? "all" : "active",
   });
@@ -218,7 +217,7 @@ export async function getPasspilotClasses(
         id: group.id,
         classId: group.id,
         legacyGradeId: null,
-        source,
+        source: "classpilot_groups",
         name: group.name,
         description: group.description,
         periodLabel: group.periodLabel,
@@ -239,7 +238,7 @@ export async function getPasspilotClasses(
     })
   );
 
-  if (historyScope) {
+  if (historyScope && source === "classpilot_groups") {
     const allLegacyGrades = await getGradesBySchool(schoolId);
     const assignedLegacyIds = options.manager
       ? null
@@ -291,7 +290,7 @@ export async function getPasspilotClasses(
     }
   }
 
-  return { source, classes };
+  return { source, classes: [...standaloneClasses, ...classes] };
 }
 
 export async function getPasspilotClassRoster(

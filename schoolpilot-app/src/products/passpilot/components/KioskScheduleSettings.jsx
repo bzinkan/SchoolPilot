@@ -5,7 +5,6 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { queryClient } from '../../../lib/queryClient';
 import { Button } from '../../../components/ui/button';
 import { passPilotClassRequest } from '../classData';
-import { hasMembershipRole } from '../../../shared/utils/schoolRoles';
 
 const inputClass = 'mt-1 block w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
 const sectionClass = 'rounded-xl border bg-card text-card-foreground p-5 space-y-4';
@@ -39,7 +38,7 @@ function BlockEditor({ block, classes, weekly, onChange, onRemove }) {
   </fieldset>;
 }
 
-function ScheduleForm({ data, teacherId, queryKey, canReviewClassSource, hasClassPilot }) {
+function ScheduleForm({ data, teacherId, teacherName, queryKey }) {
   const [mode, setMode] = useState(data.preference.mode);
   const [schedule, setSchedule] = useState(data.preference.schedule);
   const [notice, setNotice] = useState('');
@@ -55,26 +54,23 @@ function ScheduleForm({ data, teacherId, queryKey, canReviewClassSource, hasClas
   const preview = data.preview;
   return <form onSubmit={event => { event.preventDefault(); save.mutate(); }} className="space-y-6">
     <section className={sectionClass}>
+      <div><h2 className="text-lg font-semibold">{teacherName}’s kiosks</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{data.activeKioskCount ?? 0} active {data.activeKioskCount === 1 ? 'kiosk' : 'kiosks'}. This preference also applies when this teacher claims or resumes a kiosk.</p>
+      </div>
       <label className="block max-w-md font-medium">Kiosk mode<select aria-label="Kiosk mode" aria-describedby="kiosk-mode-help" value={mode} onChange={e => setMode(e.target.value)} className={inputClass}>
         <option value="manual">Manual — use Send to Kiosk</option>
         {data.source === 'legacy_grades' ? <option value="passpilot">Follow PassPilot schedule</option> : null}
-        <option value="classpilot" disabled={data.source !== 'classpilot_groups' || data.canFollowClasspilot !== true}>Follow ClassPilot schedule</option>
+        <option value="classpilot" disabled={data.canFollowClasspilot !== true}>Follow ClassPilot schedule</option>
       </select></label>
       <div id="kiosk-mode-help" className="space-y-3 text-sm text-muted-foreground">
         <p>Applies to this teacher’s kiosks, including future sessions. Send to Kiosk temporarily overrides an automatic schedule until its next transition.</p>
-        {data.source === 'legacy_grades' ? <div className="rounded-lg border border-input bg-muted p-4 space-y-2 text-foreground">
-          <h2 className="font-semibold">Connect to the ClassPilot schedule</h2>
-          <p>This school currently uses standalone PassPilot classes. Following ClassPilot requires the school to use ClassPilot classes, rosters, and teacher assignments.</p>
-          {!hasClassPilot ? <p>Active ClassPilot access is also required. Ask a school administrator to review product access and class setup.</p> : null}
-          <p>An administrator must review the class mappings in PassPilot Setup → Class Source, then choose “Switch to ClassPilot classes.” This changes future PassPilot activity for the whole school; existing pass history is preserved.</p>
-          {canReviewClassSource ? <Link className="inline-block font-medium text-blue-700 underline underline-offset-2 dark:text-blue-300" to="/passpilot/setup?section=class-source">Review Class Source setup</Link> : null}
-          <p>After setup, select “Follow ClassPilot schedule” here and save.</p>
-        </div> : data.canFollowClasspilot === false ? <p className="text-amber-800 dark:text-amber-200">Active ClassPilot access is required to follow its schedule.</p> : null}
+        <p>Select “Follow ClassPilot schedule” and save to automatically load this teacher’s current class. The kiosk stays with the teacher as classes change throughout the day.</p>
+        {data.canFollowClasspilot === false ? <p className="text-amber-800 dark:text-amber-200">Active ClassPilot access is required to follow its schedule. Ask a school administrator to review product access.</p> : null}
       </div>
       <p className="text-sm text-muted-foreground">Times use the school timezone: <strong>{preview.timezone || 'school local time'}</strong>.</p>
       {data.preference.mode !== 'manual' ? <Button variant="outline" type="button" onClick={() => resume.mutate()} disabled={resume.isPending}>Resume automatic on all kiosks</Button> : null}
     </section>
-    {data.source === 'legacy_grades' ? <>
+    {mode === 'passpilot' && data.source === 'legacy_grades' ? <>
       <section className={sectionClass}>
         <h2 className="text-lg font-semibold">Weekly class schedule</h2>
         <p className="text-sm text-muted-foreground">Choose assigned classes and their meeting times. Blocks must not overlap.</p>
@@ -98,11 +94,17 @@ function ScheduleForm({ data, teacherId, queryKey, canReviewClassSource, hasClas
         </div>)}
         <Button type="button" variant="outline" onClick={() => setSchedule(previous => ({ ...previous, exceptions: [...previous.exceptions, { date: '', blocks: [] }] }))}>Add dated exception</Button>
       </section>
-    </> : <section className={sectionClass}>
+    </> : null}
+    {mode === 'classpilot' ? <section className={sectionClass}>
       <h2 className="text-lg font-semibold">ClassPilot schedule</h2>
-      <p className="text-sm text-muted-foreground">Uses official class times, approved schedule changes, testing, and scheduled coverage. Ordinary classes do not require an open ClassPilot dashboard.</p>
+      <p className="text-sm text-muted-foreground">Follows {teacherName}’s teaching assignments, including co-taught classes, approved schedule changes, testing, and scheduled coverage. Ordinary classes do not require an open ClassPilot dashboard.</p>
+      <h3 className="font-medium">Assigned ClassPilot classes</h3>
+      {data.classpilotClasses?.length ? <ul className="list-disc pl-5 space-y-1 text-sm">
+        {data.classpilotClasses.map(c => <li key={c.id}>{c.name}</li>)}
+      </ul> : <p className="text-sm text-muted-foreground">No regular ClassPilot classes are assigned to this teacher. Add teaching assignments and meeting times in ClassPilot. Assigned testing and coverage can still appear here.</p>}
+      {data.preference.mode !== 'classpilot' ? <p className="text-sm font-medium">Save to activate this teacher’s schedule and see the current and next assignment below.</p> : null}
       <Link className="text-sm text-blue-700 underline dark:text-blue-300" to="/classpilot/my-settings/schedule-changes">View ClassPilot schedule changes</Link>
-    </section>}
+    </section> : null}
     <section className="rounded-xl border bg-muted text-foreground p-5 text-sm" aria-label="Saved schedule preview">
       <h2 className="font-semibold mb-2">Saved schedule now</h2>
       <p>{preview.message || (preview.current ? `${preview.current.name} · ${preview.status}` : 'No current assignment')}</p>
@@ -117,21 +119,25 @@ function ScheduleForm({ data, teacherId, queryKey, canReviewClassSource, hasClas
 }
 
 export default function KioskScheduleSettings() {
-  const { user, activeSchoolId, activeMembership, licenses } = useAuth();
-  const canReviewClassSource = hasMembershipRole(activeMembership, 'admin', 'school_admin') && !!licenses?.classPilot;
+  const { user, activeSchoolId } = useAuth();
   const [selectedTeacher, setSelectedTeacher] = useState(null);
-  const teacherId = selectedTeacher || user?.id;
-  const queryKey = ['passpilot', 'kiosk-preferences', activeSchoolId, teacherId];
   const teacherQuery = useQuery({ queryKey: ['passpilot', 'schedule-teachers', activeSchoolId],
     queryFn: () => passPilotClassRequest('GET', '/passpilot/kiosk/preferences/teachers') });
+  const teachers = teacherQuery.data?.teachers ?? [];
+  const preferredId = selectedTeacher?.schoolId === activeSchoolId ? selectedTeacher.id : user?.id;
+  const teacher = teachers.find(t => t.id === preferredId) || teachers[0];
+  const teacherId = teacher?.id;
+  const nameOf = t => t.name || `${t.firstName || ''} ${t.lastName || ''}`.trim() || 'Staff member';
+  const queryKey = ['passpilot', 'kiosk-preferences', activeSchoolId, teacherId];
   const query = useQuery({ queryKey, enabled: !!teacherId, refetchOnWindowFocus: false,
     queryFn: () => passPilotClassRequest('GET', `/passpilot/kiosk/preferences?teacherId=${encodeURIComponent(teacherId)}`) });
   return <div className="max-w-4xl mx-auto space-y-6 pb-8 text-foreground">
-    <div><h1 className="text-2xl font-bold">Kiosk schedule</h1><p className="mt-2 text-muted-foreground">Have the right class ready when students need a pass.</p></div>
-    {teacherQuery.data?.teachers.length > 1 ? <label className="block max-w-md text-sm font-medium">Teacher<select aria-label="Teacher" className={inputClass} value={teacherId} onChange={e => setSelectedTeacher(e.target.value)}>
-      {teacherQuery.data.teachers.map(t => <option key={t.id} value={t.id}>{t.name || `${t.firstName || ''} ${t.lastName || ''}`.trim() || 'Staff member'}</option>)}
+    <div><h1 className="text-2xl font-bold">Kiosk schedule</h1><p className="mt-2 text-muted-foreground">Choose a teacher and follow their timetable so the right class is ready for passes.</p></div>
+    {teachers.length > 1 ? <label className="block max-w-md text-sm font-medium">Teacher<select aria-label="Teacher" className={inputClass} value={teacherId} onChange={e => setSelectedTeacher({ schoolId: activeSchoolId, id: e.target.value })}>
+      {teachers.map(t => <option key={t.id} value={t.id}>{nameOf(t)}</option>)}
     </select></label> : null}
-    {query.isLoading ? <p role="status">Loading schedule…</p> : query.error ? <p role="alert">{errorMessage(query.error)}</p>
-      : query.data ? <ScheduleForm key={`${activeSchoolId}:${teacherId}:${query.data.preference.revision}`} data={query.data} teacherId={teacherId} queryKey={queryKey} canReviewClassSource={canReviewClassSource} hasClassPilot={!!licenses?.classPilot} /> : null}
+    {teacherQuery.isLoading || query.isLoading ? <p role="status">Loading schedule…</p> : teacherQuery.error || query.error ? <p role="alert">{errorMessage(teacherQuery.error || query.error)}</p>
+      : query.data && teacher ? <ScheduleForm key={`${activeSchoolId}:${teacherId}:${query.data.preference.revision}`} data={query.data} teacherId={teacherId} teacherName={nameOf(teacher)} queryKey={queryKey} />
+        : <p>No teachers are available for kiosk scheduling.</p>}
   </div>;
 }

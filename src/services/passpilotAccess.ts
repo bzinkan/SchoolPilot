@@ -501,7 +501,7 @@ export async function canAccessPass(
   if (pass.supervisionContextId) return false;
 
   const source = await getPasspilotClassSourceForSchool(schoolId);
-  const canonicalClassIds = source === "classpilot_groups"
+  const canonicalClassIds = source === "classpilot_groups" || pass.classpilotGroupId
     ? await getTeacherCanonicalClassIds(user.id, schoolId)
     : new Set<string>();
   if (pass.classpilotGroupId) return canonicalClassIds.has(pass.classpilotGroupId);
@@ -551,10 +551,9 @@ export async function getPassHistoryQueryAccessScope(
 
   const source = await getPasspilotClassSourceForSchool(schoolId);
   const assignedTeacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
-  const canonicalClassIds = source === "classpilot_groups"
-    ? await getTeacherCanonicalHistoryClassIds(user.id, schoolId)
-    : new Set<string>();
-  const mappedGrades = canonicalClassIds.size > 0
+  // Class-attributed kiosk history remains readable in standalone PassPilot schools.
+  const canonicalClassIds = await getTeacherCanonicalHistoryClassIds(user.id, schoolId);
+  const mappedGrades = source === "classpilot_groups" && canonicalClassIds.size > 0
     ? await db
         .select({ id: grades.id })
         .from(grades)
@@ -585,7 +584,7 @@ export async function getPassHistoryQueryAccessScope(
     ...mappedGrades.map((grade) => grade.id),
   ]);
 
-  const canonicalStudentRows = canonicalClassIds.size > 0
+  const canonicalStudentRows = source === "classpilot_groups" && canonicalClassIds.size > 0
     ? await db
         .select({ studentId: groupStudents.studentId })
         .from(groupStudents)
@@ -623,18 +622,19 @@ export async function filterPassesForRole(
   schoolId: string,
   role: PassPilotRole | null
 ): Promise<Pass[]> {
+  rawPasses = rawPasses.filter(pass => pass.schoolId === schoolId);
   if (isPassPilotManager(role)) return rawPasses;
   if (role !== "teacher") return [];
   const teacherGradeIds = await getTeacherGradeIds(user.id, schoolId);
   const source = await getPasspilotClassSourceForSchool(schoolId);
-  const canonicalClassIds = source === "classpilot_groups"
+  const canonicalClassIds = source === "classpilot_groups" || rawPasses.some(pass => !!pass.classpilotGroupId)
     ? await getTeacherCanonicalClassIds(user.id, schoolId)
     : new Set<string>();
 
   const legacyGradeIds = Array.from(
     new Set(rawPasses.map((pass) => pass.gradeId).filter(Boolean) as string[])
   );
-  const mappedGradeRows = legacyGradeIds.length > 0
+  const mappedGradeRows = source === "classpilot_groups" && legacyGradeIds.length > 0
     ? await db
         .select({ id: grades.id, classpilotGroupId: grades.classpilotGroupId })
         .from(grades)
@@ -682,7 +682,7 @@ export async function filterPassesForRole(
         );
       const allowedStudentIds = new Set(membershipRows.map((row) => row.studentId));
       for (const pass of rawPasses) {
-        if (!pass.gradeId && !pass.classpilotGroupId && allowedStudentIds.has(pass.studentId)) {
+        if (!pass.gradeId && !pass.classpilotGroupId && !pass.supervisionContextId && allowedStudentIds.has(pass.studentId)) {
           allowedPassIds.add(pass.id);
         }
       }
@@ -695,7 +695,7 @@ export async function filterPassesForRole(
     );
 
     for (const pass of rawPasses) {
-      if (!pass.gradeId && allowedStudentIds.has(pass.studentId)) {
+      if (!pass.gradeId && !pass.classpilotGroupId && !pass.supervisionContextId && allowedStudentIds.has(pass.studentId)) {
         allowedPassIds.add(pass.id);
       }
     }

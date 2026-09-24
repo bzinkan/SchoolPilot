@@ -12,8 +12,11 @@ teacher's selected class tab.
   optional effective dates, and dated replacements (including empty days off).
   Administrator closures always win. Times use the school timezone. Overlapping
   and overnight blocks are rejected; adjacent and repeated meetings are supported.
-- Follow ClassPilot requires an existing `classpilot_groups` configuration and
-  active ClassPilot entitlement. It never migrates classes or creates mappings.
+- Follow ClassPilot requires active ClassPilot entitlement and explicit teacher
+  opt-in. Administrators select the teacher; teachers manage their own preference.
+  The kiosk follows that teacher's primary/co-teacher assignments as students
+  change classes. It works with either school-wide PassPilot class source and
+  never migrates grades, creates mappings, or changes manual class tabs.
   Ordinary classes use the scheduling helpers, calendar, approved swaps, applied
   profiles, frozen occurrences/rosters and skips. An open dashboard, teaching
   session or connected Chromebook is unnecessary.
@@ -25,7 +28,9 @@ teacher's selected class tab.
 - Send to Kiosk creates an individual/bulk temporary override. Its deadline is
   the next effective schedule transition or school-local midnight. Later schedule
   edits can shorten it. Resume automatic clears the override immediately; only
-  an explicit setting change selects Manual permanently.
+  an explicit setting change selects Manual permanently. These manual targets
+  use the school's PassPilot class source, so a legacy grade can temporarily
+  override a teacher's ClassPilot schedule before returning to that timetable.
 - Polling resolves today plus a bounded seven-day preview, never the Dashboard's
   multi-day projection. A null next assignment means none in that preview.
   Five-second polling plus boundary/focus/reconnect refreshes keep the display
@@ -40,6 +45,8 @@ students, server time, boundary and assignment revision. Checkouts echo
 PassPilot configuration, calendar and student authority locks. A conflict requires
 a fresh student selection; the browser never retries against a new assignment.
 Older clients retain manual behavior and receive HTTP 426 for automatic mode.
+The class-model capability is required for ClassPilot automatic mode even when
+the school continues using legacy PassPilot grades.
 
 Kiosk-issued outstanding passes can be returned at any active kiosk owned by the
 issuing teacher in the same school. Reassigning the kiosk revokes the previous
@@ -51,6 +58,12 @@ Testing/coverage passes retain their supervision context, immutable activity nam
 activity kind and issuing kiosk origin. They have no fabricated class ID. History,
 exports and timeline events preserve that attribution; regular-teacher roster
 membership does not grant access to another teacher's activity passes.
+Regular ClassPilot kiosk passes retain the official class ID and name while
+standalone passes retain their grade ID. Reports can include both sources;
+ClassPilot membership alone does not grant access to legacy student history.
+Teacher opt-in and kiosk checkout never set a legacy school's canonical-write
+cutover marker. No additional migration is needed for teacher-based scheduling
+on top of the original kiosk-scheduling schema.
 
 ## Release procedure (requires a separate deployment request)
 

@@ -113,11 +113,12 @@ function hasActivityCapability(req: { headers: Record<string, unknown> }) {
 }
 
 async function guardKioskActivityCapability(req: { headers: Record<string, unknown> }, schoolId: string, session: KioskSession) {
-  if (hasActivityCapability(req) && await getPasspilotClassSourceForSchool(schoolId) === "classpilot_groups"
+  const mode = session.teacherId ? (await getKioskPreferences(schoolId, session.teacherId)).mode : "manual";
+  if (hasActivityCapability(req) && (mode === "classpilot" || await getPasspilotClassSourceForSchool(schoolId) === "classpilot_groups")
     && req.headers["x-passpilot-class-model"] !== "classpilot-groups-v1") {
     throw kioskError("Refresh or update this kiosk for ClassPilot classes.", "PASSPILOT_CLASS_MODEL_UPGRADE_REQUIRED", 426);
   }
-  if (!hasActivityCapability(req) && session.teacherId && (await getKioskPreferences(schoolId, session.teacherId)).mode !== "manual") {
+  if (!hasActivityCapability(req) && mode !== "manual") {
     throw kioskError("Refresh or update this kiosk to follow its schedule.", "PASSPILOT_KIOSK_ACTIVITY_UPGRADE_REQUIRED", 426);
   }
 }
