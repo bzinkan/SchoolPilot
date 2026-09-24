@@ -566,10 +566,6 @@ jobs:
         working-directory: schoolpilot-app
         run: npx playwright install --with-deps chromium
 
-      - name: Run ClassPilot and kiosk release-focused frontend gates
-        working-directory: schoolpilot-app
-        run: npm run test:release-focused
-
       - name: Test ClassPilot one-day schedule-change workflows
         working-directory: schoolpilot-app
         run: npm run test:classpilot-schedule-changes
@@ -658,13 +654,75 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and product contracts, lint, production-preview and GoPilot staff browser workflows, standard/GoPilot/PassPilot builds, GoPilot and PassPilot Android sync/debug build/security inspection, canonical PassPilot class smoke, and post-build Router validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
+          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and product contracts, lint, production-preview and GoPilot staff browser workflows (the ClassPilot and kiosk release-focused gates run in the separate frontend-release-gates shard jobs), standard/GoPilot/PassPilot builds, GoPilot and PassPilot Android sync/debug build/security inspection, canonical PassPilot class smoke, and post-build Router validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
 
       - name: Upload SOC 2 evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: soc2-evidence-frontend
+          path: soc2-evidence/
+          if-no-files-found: error
+
+  # The 30 release-focused ClassPilot and kiosk gates used to run serially inside
+  # the frontend job (~11-12 min). They need no build output - none of them reads
+  # dist/ - so they run here as three parallel shards. Shard boundaries are
+  # deliberate: shard 1 and 2 hold the suites that use a pid-suffixed Vite cacheDir
+  # and port 0; every suite that spawns `vite --strictPort` on a fixed port or uses
+  # the default node_modules/.vite cacheDir is in shard 3, serial, exactly as it was.
+  # Two shards must therefore never share a runner. The root `npm ci` is required:
+  # shard 2's schedule-profiles suite imports tsx from the root node_modules and
+  # tsImports root src/services/*.ts.
+  frontend-release-gates:
+    name: Frontend release-focused gates (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            schoolpilot-app/package-lock.json
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Install frontend deps
+        working-directory: schoolpilot-app
+        run: npm ci
+
+      - name: Install Chromium for release-focused browser gates
+        working-directory: schoolpilot-app
+        run: npx playwright install --with-deps chromium
+
+      - name: Run ClassPilot and kiosk release-focused frontend gates (shard ${{ matrix.shard }})
+        working-directory: schoolpilot-app
+        run: npm run test:release-focused:shard-${{ matrix.shard }}
+
+      - name: Collect SOC 2 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >
+          node scripts/soc2/collect-ci-evidence.mjs
+          --job "Frontend release-focused gates shard ${{ matrix.shard }}"
+          --controls "SP-SEC-004"
+          --summary "Shard ${{ matrix.shard }} of the ClassPilot and kiosk release-focused frontend contract and Chromium browser gates ran for this commit; the job status records whether every suite in the shard passed."
+
+      - name: Upload SOC 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: soc2-evidence-frontend-release-gates-${{ matrix.shard }}
           path: soc2-evidence/
           if-no-files-found: error
 
@@ -677,6 +735,7 @@ jobs:
       - cross-tenant-tests
       - rls-enabled-cross-tenant-tests
       - frontend
+      - frontend-release-gates
     if: always()
 
     steps:
@@ -709,6 +768,7 @@ jobs:
       - cross-tenant-tests
       - rls-enabled-cross-tenant-tests
       - frontend
+      - frontend-release-gates
     if: always()
 
     steps:
@@ -740,6 +800,7 @@ jobs:
       - cross-tenant-tests
       - rls-enabled-cross-tenant-tests
       - frontend
+      - frontend-release-gates
     if: always()
 
     steps:
@@ -769,6 +830,7 @@ jobs:
     needs:
       - backend
       - frontend
+      - frontend-release-gates
     if: always()
 
     steps:
@@ -826,6 +888,7 @@ jobs:
     needs:
       - backend
       - frontend
+      - frontend-release-gates
     if: always()
 
     steps:
@@ -858,6 +921,7 @@ jobs:
       - cross-tenant-tests
       - rls-enabled-cross-tenant-tests
       - frontend
+      - frontend-release-gates
       - soc2-incident-evidence
       - soc2-tenant-isolation-evidence
       - soc2-ai-privacy-evidence
