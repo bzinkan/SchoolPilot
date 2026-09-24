@@ -6,7 +6,8 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requirePassPilotRole, getRequestPassPilotRole, getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { getRequestPassPilotRole, getPasspilotClassSourceForSchool } from "../../services/passpilotAccess.js";
 import { getKioskPreferences, saveKioskPreferences, kioskTeacher, kioskClasses, resolveKioskAssignment, lockKioskSchool, assertKioskScheduleEditor } from "../../services/passpilotKioskAssignments.js";
 import { kioskModeSchema, kioskScheduleSchema, kioskError } from "../../services/passpilotKioskSchedule.js";
 import { schoolMemberships, users } from "../../schema/core.js";
@@ -16,7 +17,7 @@ import { resolveClasspilotEntitlement } from "../../services/classpilotEntitleme
 
 const router = Router();
 router.use(authenticate, requireSchoolContext, requireActiveSchool, requireProductLicense("PASSPILOT"),
-  requirePassPilotRole("teacher", "admin", "school_admin"));
+  requireRole("teacher", "admin", "school_admin"));
 const updateSchema = z.object({ mode: kioskModeSchema, schedule: kioskScheduleSchema, expectedRevision: z.number().int().min(0) }).strict();
 
 router.get("/teachers", async (req, res, next) => {

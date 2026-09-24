@@ -246,6 +246,35 @@ test("school isolation and preference roles are enforced by API and database par
   assert.equal((await scoped(f.schoolId, () => db.select().from(passpilotKioskSessions).where(eq(passpilotKioskSessions.id, f.session.id)))).length, 1);
 });
 
+test("a teacher with an additional office role can edit their schedule; office-only staff cannot", async () => {
+  const f = await fixture();
+  await pool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'office_staff','active')", [f.schoolId, f.teacherId]);
+  const headers = { "x-school-id": f.schoolId, "content-type": "application/json", authorization: `Bearer ${signUserToken({ userId: f.teacherId, email: `${f.teacherId}@example.test`, isSuperAdmin: false })}` };
+  assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 200);
+  assert.equal((await fetch(baseUrl + "/preferences", { method: "PUT", headers, body: JSON.stringify({ mode: "passpilot", schedule: allDay(f), expectedRevision: 0 }) })).status, 200);
+  await pool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2 AND role='teacher'", [f.schoolId, f.teacherId]);
+  assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 403);
+});
+
+test("a checkout waiting for a supervision release or roster edit cannot issue from its displayed revision", async () => {
+  const f = await fixture("classpilot_groups"); await save(f); const t = await testingContext(f, true); await t.activate();
+  const old = await resolve(f, new Date());
+  const blocker = await pool.connect();
+  try {
+    await blocker.query("BEGIN"); await blocker.query("SELECT id FROM schools WHERE id=$1 FOR UPDATE", [f.schoolId]);
+    const pending = checkout(f, old.revision);
+    await blocker.query("UPDATE classpilot_supervision_students SET released_at=now() WHERE context_id=$1 AND student_id=$2", [t.contextId, f.studentId]);
+    await blocker.query("COMMIT");
+    await assert.rejects(pending, /assignment changed/);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM passes WHERE school_id=$1", [f.schoolId])).rows[0].count, 0);
+  } finally { blocker.release(); }
+  const regular = await fixture(); await save(regular); const displayed = await resolve(regular, new Date());
+  await pool.query("DELETE FROM passpilot_grade_students WHERE school_id=$1 AND student_id=$2", [regular.schoolId, regular.studentId]);
+  await assert.rejects(checkout(regular, displayed.revision), /assignment changed/);
+  await pool.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='PASSPILOT'", [regular.schoolId]);
+  await assert.rejects(save(regular, 1), /no longer active/);
+});
+
 test("frozen occurrences retain their captured roster and staff even after the official roster changes", async () => {
   const f = await fixture("classpilot_groups"); await save(f); const sessionId = randomUUID();
   await pool.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,scheduled_date,scheduled_timezone,scheduled_start_at,scheduled_end_at,scheduled_state,roster_snapshot_completed_at,class_name_snapshot) VALUES($1,$2,$3,$4,'2026-09-24','UTC','2026-09-24T13:00Z','2026-09-24T14:00Z','active',now(),'Frozen Math')", [sessionId, f.schoolId, f.classId, f.teacherId]);
