@@ -62,6 +62,7 @@ import {
   type ClasspilotCommandDeliveryPolicy,
 } from "./classpilotCommandDelivery.js";
 import { publishClasspilotStudentSessionEnded } from "./classpilotStudentSessionLifecycle.js";
+import { recordRuntimePerformanceCounter } from "./runtimePerformanceMetrics.js";
 import type {
   ClasspilotClassroomState,
   ClasspilotStudentControlState,
@@ -768,11 +769,15 @@ async function endStudentSessionsForSignOut(options: {
   actorId: string;
   commandId: string;
   targets: ResolvedClasspilotCommandTarget[];
+  requestedCount?: number;
 }) {
   const seenSessionIds = new Set<string>();
   const completedStudentIds = new Set<string>();
   let cleanupFailures = 0;
   let publicationFailures = 0;
+  let authorityRefusals = 0;
+  const requestedCount = options.requestedCount ?? options.targets.length;
+  recordRuntimePerformanceCounter("classpilotStudentSignOutRequested", requestedCount);
 
   for (const target of options.targets) {
     if (!target.deviceId || !target.studentSessionId) continue;
@@ -793,7 +798,10 @@ async function endStudentSessionsForSignOut(options: {
       cleanupFailures += 1;
       continue;
     }
-    if (!endedSession) continue;
+    if (!endedSession) {
+      authorityRefusals += 1;
+      continue;
+    }
     completedStudentIds.add(target.studentId);
     try {
       await publishClasspilotStudentSessionEnded({
@@ -811,8 +819,17 @@ async function endStudentSessionsForSignOut(options: {
     options.commandId,
     [...completedStudentIds]
   );
-  if (cleanupFailures > 0 || publicationFailures > 0) {
+  recordRuntimePerformanceCounter("classpilotStudentSignOutEnded", completedStudentIds.size);
+  const notEnded = Math.max(0, requestedCount - completedStudentIds.size);
+  recordRuntimePerformanceCounter("classpilotStudentSignOutNotEnded", notEnded);
+  if (cleanupFailures > 0 || publicationFailures > 0 || notEnded > 0) {
+    // Counts only: a teacher's sign-out that ended nothing must be visible in
+    // the logs without naming the student, session or device.
     console.warn("[ClassPilot Command] Student sign-out follow-up was incomplete", {
+      requestedCount,
+      endedCount: completedStudentIds.size,
+      unavailableBeforeDispatchCount: requestedCount - options.targets.length,
+      authorityRefusalCount: authorityRefusals,
       cleanupFailureCount: cleanupFailures,
       publicationFailureCount: publicationFailures,
     });
@@ -1968,13 +1985,17 @@ export async function executeClasspilotCommand(options: {
     );
   }
   if (options.commandType === "student-sign-out" && (options.teachingSessionId || options.supervisionContextId)) {
+    // Every committed target that still holds an exact session binding is
+    // ended, whether or not a device frame could be built or delivered. The
+    // session end is the sign-out; delivery only tells a live device sooner.
     await endStudentSessionsForSignOut({
       schoolId: options.schoolId,
       teachingSessionId: options.teachingSessionId || undefined,
       supervisionContextId: options.supervisionContextId || undefined,
       actorId: options.actorId,
       commandId: created.id,
-      targets: sentTargets,
+      targets: committedTargets.filter((target) => target.available && target.studentSessionId && target.deviceId),
+      requestedCount: committedTargets.length,
     });
   }
   if (
