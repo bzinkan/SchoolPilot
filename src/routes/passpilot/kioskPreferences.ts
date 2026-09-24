@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
@@ -27,7 +27,8 @@ router.get("/teachers", async (req, res, next) => {
     const teachers = await db.selectDistinct({ id: users.id, name: users.displayName, firstName: users.firstName, lastName: users.lastName })
       .from(schoolMemberships).innerJoin(users, eq(users.id, schoolMemberships.userId))
       .where(and(eq(schoolMemberships.schoolId, res.locals.schoolId!), eq(schoolMemberships.status, "active"),
-        inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]), admin ? undefined : eq(users.id, req.authUser!.id)));
+        inArray(schoolMemberships.role, ["teacher", "admin", "school_admin"]), admin ? undefined : eq(users.id, req.authUser!.id)))
+      .orderBy(asc(users.lastName), asc(users.firstName), asc(users.displayName), asc(users.id));
     res.json({ teachers });
   } catch (error) { next(error); }
 });
@@ -59,8 +60,12 @@ router.get("/", async (_req, res, next) => {
     } catch (error) {
       preview = { status: "unavailable", message: error instanceof Error ? error.message : "Schedule unavailable" };
     }
-    const canFollowClasspilot = source === "classpilot_groups" && (await resolveClasspilotEntitlement(schoolId)).entitled;
-    res.json({ preference, source, classes, preview, canFollowClasspilot });
+    const canFollowClasspilot = (await resolveClasspilotEntitlement(schoolId)).entitled;
+    const classpilotClasses = canFollowClasspilot ? await kioskClasses(schoolId, teacherId, "classpilot_groups") : [];
+    const [count] = await db.select({ count: sql<number>`count(*)::int` }).from(passpilotKioskSessions)
+      .where(and(eq(passpilotKioskSessions.schoolId, schoolId), eq(passpilotKioskSessions.teacherId, teacherId),
+        eq(passpilotKioskSessions.status, "active"), sql`${passpilotKioskSessions.lastSeenAt} > now() - interval '20 hours'`));
+    res.json({ preference, source, classes, preview, canFollowClasspilot, classpilotClasses, activeKioskCount: count?.count ?? 0 });
   } catch (error) { next(error); }
 });
 router.put("/", async (req, res, next) => {

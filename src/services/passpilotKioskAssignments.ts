@@ -166,13 +166,15 @@ export async function resolveKioskAssignment(schoolId: string, session: KioskSes
   ]);
   const school = schoolRows[0], schoolSettings = settingsRows[0];
   if (!school || !schoolSettings) throw kioskError("School schedule settings are unavailable.", "PASSPILOT_KIOSK_SCHEDULE_UNAVAILABLE", 503);
-  const source = schoolSettings.passpilotClassSource;
+  const schoolSource = schoolSettings.passpilotClassSource;
+  // A teacher's automatic timetable is independent of the school's manual class model.
+  let source: Source = preference.mode === "classpilot" ? "classpilot_groups" : schoolSource;
   const timezone = school.schoolTimezone || "America/New_York";
   const today = localDateInTimeZone(now, timezone), midnight = localDateTimeUtc(addLocalDays(today, 1), "00:00", timezone);
   let candidates: KioskAssignment[] = [];
   if (preference.mode !== "manual") {
     if (process.env.PASSPILOT_AUTOMATIC_KIOSK_ENABLED === "false") throw kioskError("Automatic kiosks are temporarily unavailable. Choose Manual in kiosk settings.", "PASSPILOT_KIOSK_SCHEDULE_UNAVAILABLE", 503);
-    if ((preference.mode === "passpilot") !== (source === "legacy_grades")) throw kioskError("The schedule source changed. Update kiosk settings.", "PASSPILOT_CLASS_SOURCE_CHANGED");
+    if (preference.mode === "passpilot" && schoolSource !== "legacy_grades") throw kioskError("The schedule source changed. Update kiosk settings.", "PASSPILOT_CLASS_SOURCE_CHANGED");
     if (preference.mode === "passpilot") {
       const schedule = kioskScheduleSchema.parse(preference.schedule);
       const classes = await kioskClasses(schoolId, session.teacherId, source, database);
@@ -198,6 +200,7 @@ export async function resolveKioskAssignment(schoolId: string, session: KioskSes
   const overridden = preference.mode !== "manual" && !!overrideExpiresAt && overrideExpiresAt > now;
   let current = automatic.current, status = automatic.status;
   if (preference.mode === "manual" || overridden) {
+    source = schoolSource;
     const classId = session.classSource === source ? source === "legacy_grades" ? session.gradeId : session.classpilotGroupId : null;
     const classes = classId ? await kioskClasses(schoolId, session.teacherId, source, database,
       membership.canManagePasses) : [];
@@ -209,7 +212,7 @@ export async function resolveKioskAssignment(schoolId: string, session: KioskSes
     status = current ? "ready" : "idle";
   }
   const roster = await assignmentRoster(schoolId, session.teacherId, source, current, database, now);
-  const revision = `kiosk-activity-v1:${createHash("sha256").update(JSON.stringify([source, preference.mode, preference.revision,
+  const revision = `kiosk-activity-v1:${createHash("sha256").update(JSON.stringify([schoolSource, source, preference.mode, preference.revision,
     session.id, session.teacherId, session.revision, current, status, overridden, roster.map(s => s.id)])).digest("base64url")}`;
   return { mode: preference.mode, source, current, status, next: automatic.next, overridden,
     overrideExpiresAt: overridden ? overrideExpiresAt!.toISOString() : null,
@@ -227,7 +230,7 @@ export async function resolveKioskDisplayAssignment(schoolId: string, session: K
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "PASSPILOT_KIOSK_SESSION_EXPIRED") throw error;
     recordPasspilotKioskCounter("assignmentFailures");
-    return { mode: preference.mode, source: schoolSettings?.passpilotClassSource ?? "legacy_grades", current: null,
+    return { mode: preference.mode, source: preference.mode === "classpilot" ? "classpilot_groups" : schoolSettings?.passpilotClassSource ?? "legacy_grades", current: null,
       status: "unavailable" as const, next: null, overridden: false, overrideExpiresAt: null, nextBoundaryAt: null,
       serverTime: new Date().toISOString(), timezone: "UTC", revision: `unavailable:${session.id}:${preference.revision}`,
       roster: [], message: "The current schedule could not be verified. New passes are unavailable. Outstanding passes can still be returned." };
@@ -259,14 +262,13 @@ export async function saveKioskPreferences(options: { schoolId: string; teacherI
     const [setting] = await tx.select().from(settings).where(eq(settings.schoolId, options.schoolId)).limit(1);
     if (!setting) throw kioskError("School settings unavailable.");
     if (options.mode === "classpilot") {
-      if (setting.passpilotClassSource !== "classpilot_groups") throw kioskError("Link PassPilot to ClassPilot classes before enabling this schedule.");
       await assertClasspilotEntitled(options.schoolId, database, { lock: true });
     }
     if (options.mode === "passpilot" && setting.passpilotClassSource !== "legacy_grades") throw kioskError("This school's schedules are managed in ClassPilot.");
     const previous = await getKioskPreferences(options.schoolId, options.teacherId, database);
     const scheduleChanged = JSON.stringify(schedule) !== JSON.stringify(previous.schedule);
     if ((options.mode === "passpilot" || scheduleChanged) && (schedule.blocks.length || schedule.exceptions.some(e => e.blocks.length))) {
-      const classes = new Set((await kioskClasses(options.schoolId, options.teacherId, setting.passpilotClassSource, database)).map(c => c.id));
+      const classes = new Set((await kioskClasses(options.schoolId, options.teacherId, "legacy_grades", database)).map(c => c.id));
       if ([...schedule.blocks, ...schedule.exceptions.flatMap(e => e.blocks)].some(b => !classes.has(b.classId))) throw kioskError("Schedule only this teacher's assigned classes.", "PASSPILOT_CLASS_ACCESS_DENIED", 403);
     }
     if (previous.revision !== options.expectedRevision) throw kioskError("The schedule changed. Reload before saving.", "PASSPILOT_KIOSK_PREFERENCES_CHANGED");
@@ -326,7 +328,8 @@ async function recordKioskPassTimeline(database: Database, pass: Pass, action: "
     eventType: "pass", sourceType: "passpilot", sourceId: pass.id, title: `Hall pass ${action}: ${pass.destination}`,
     summary: pass.activityNameSnapshot || pass.customDestination, actorUserId: pass.teacherId,
     metadata: { status: pass.status, destination: pass.destination, issuedVia: "kiosk", activityKind: pass.activityKind,
-      activityName: pass.activityNameSnapshot, supervisionContextId: pass.supervisionContextId, issuingKioskSessionId: pass.issuingKioskSessionId } });
+      activityName: pass.activityNameSnapshot, classId: pass.classpilotGroupId || pass.gradeId,
+      className: pass.classNameSnapshot, supervisionContextId: pass.supervisionContextId, issuingKioskSessionId: pass.issuingKioskSessionId } });
 }
 
 export async function createActivityKioskPass(options: { schoolId: string; sessionId: string; studentId: string; expectedRevision: unknown;
@@ -363,7 +366,9 @@ export async function createActivityKioskPass(options: { schoolId: string; sessi
       activityNameSnapshot: current.kind === "class" ? null : current.name,
       issuingKioskSessionId: session.id, destination: options.destination, customDestination: options.destination === "custom" ? options.customDestination : null,
       status: "active", issuedVia: "kiosk", duration, expiresAt: new Date(Date.now() + duration * 60_000) }).returning();
-    if (assignment.source === "classpilot_groups") await tx.update(settings).set({ passpilotCanonicalWritesAt: sql`COALESCE(${settings.passpilotCanonicalWritesAt}, now())` }).where(eq(settings.schoolId, options.schoolId));
+    if (assignment.source === "classpilot_groups" && schoolSettings?.passpilotClassSource === "classpilot_groups") {
+      await tx.update(settings).set({ passpilotCanonicalWritesAt: sql`COALESCE(${settings.passpilotCanonicalWritesAt}, now())` }).where(eq(settings.schoolId, options.schoolId));
+    }
     await tx.update(passpilotKioskSessions).set({ lastSeenAt: new Date() }).where(eq(passpilotKioskSessions.id, session.id));
     await recordKioskPassTimeline(database, pass!, "issued");
     return pass!;

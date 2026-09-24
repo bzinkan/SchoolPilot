@@ -6,7 +6,8 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { eq } from "drizzle-orm";
 import { users } from "../src/schema/core.js";
-import { canAccessPass, filterPassesForRole } from "../src/services/passpilotAccess.js";
+import { canAccessPass, filterPassesForRole, getPassHistoryQueryAccessScope } from "../src/services/passpilotAccess.js";
+import { getPasspilotClasses, normalizePasspilotPass } from "../src/services/passpilotClasses.js";
 import db, { pool, sessionPool } from "../src/db.js";
 import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "../src/db/passpilotKioskScheduleMigration.js";
@@ -85,6 +86,101 @@ async function checkout(f: Fixture, revision: string, studentId = f.studentId) {
   return scoped(f.schoolId, () => service.createActivityKioskPass({ schoolId: f.schoolId, sessionId: f.session.id, studentId, expectedRevision: revision, expectedPinHash: pinHash, destination: "bathroom" }));
 }
 const kioskHeaders = (f: Fixture) => ({ "x-school-id": f.schoolId, "x-kiosk-session": f.session.id, "x-kiosk-pin": "4321", "x-passpilot-class-model": "classpilot-groups-v1", "x-passpilot-kiosk-activity": "scheduled-activities-v1", "content-type": "application/json" });
+
+async function teacherTimetable(actual = false) {
+  const f = await fixture();
+  const names = ["6th grade math", "5th grade math", "5th grade science", "6th grade science"];
+  const classIds: string[] = [];
+  for (const [index, name] of names.entries()) {
+    const id = randomUUID(); classIds.push(id);
+    await pool.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,$3,$4,'admin_class','active',$5,$6,$7,$8::jsonb)",
+      [id, f.schoolId, f.teacherId, name, !actual || index === 0, actual ? "00:00" : `${13 + index}:00`, actual ? "23:59" : `${14 + index}:00`, JSON.stringify({ ...defaultClassScheduleRule(), weekdays: [0, 1, 2, 3, 4, 5, 6] })]);
+    await pool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [id, index === 0 || index === 3 ? f.studentId : f.nextStudentId]);
+  }
+  // Another teacher teaches the same children in the same period. That class is not this kiosk's assignment.
+  await pool.query("INSERT INTO groups(school_id,teacher_id,name,group_type,status,schedule_enabled,block_start_time,block_end_time,schedule_rule) VALUES($1,$2,'Other teacher ELA','admin_class','active',true,'13:00','14:00',$3::jsonb)", [f.schoolId, f.otherTeacherId, JSON.stringify(defaultClassScheduleRule())]);
+  return { ...f, classIds, names };
+}
+
+test("standalone schools opt each teacher into their own ClassPilot timetable without migrating grades", async () => {
+  const f = await teacherTimetable();
+  await save(f);
+  const adminHeaders = { "x-school-id": f.schoolId, "content-type": "application/json", authorization: `Bearer ${signUserToken({ userId: f.adminId, email: `${f.adminId}@example.test`, isSuperAdmin: false })}` };
+  const saved = await fetch(baseUrl + `/preferences?teacherId=${f.teacherId}`, { method: "PUT", headers: adminHeaders,
+    body: JSON.stringify({ mode: "classpilot", schedule: allDay(f), expectedRevision: 1 }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual((await scoped(f.schoolId, () => service.getKioskPreferences(f.schoolId, f.teacherId))).schedule, allDay(f), "switching sources preserves the saved standalone timetable");
+  for (let index = 0; index < 4; index++) {
+    const assignment = await resolve(f, new Date(`2026-09-24T${13 + index}:00:00Z`));
+    assert.equal(assignment.source, "classpilot_groups");
+    assert.equal(assignment.current?.name, f.names[index]);
+    assert.equal(assignment.current?.classId, f.classIds[index]);
+    assert.deepEqual(assignment.roster.map(s => s.id), [index === 0 || index === 3 ? f.studentId : f.nextStudentId]);
+  }
+  const second = await scoped(f.schoolId, () => createSelfClaimedKioskSession(f.schoolId, null, { actorUserId: f.teacherId, manager: false }));
+  assert.equal((await resolve({ ...f, session: second })).current?.classId, f.classIds[0]);
+  assert.equal((await resolve(f, new Date("2026-09-24T17:00:00Z"))).status, "idle");
+  assert.equal((await scoped(f.schoolId, () => service.getKioskPreferences(f.schoolId, f.otherTeacherId))).mode, "manual");
+  const headers = { "x-school-id": f.schoolId, authorization: `Bearer ${signUserToken({ userId: f.teacherId, email: `${f.teacherId}@example.test`, isSuperAdmin: false })}` };
+  const teachersResponse = await fetch(baseUrl + "/preferences/teachers", { headers });
+  assert.equal(teachersResponse.status, 200);
+  const teachers = await teachersResponse.json() as { teachers: { id: string }[] };
+  assert.deepEqual(teachers.teachers.map(t => t.id), [f.teacherId]);
+  const response = await fetch(baseUrl + "/preferences", { headers });
+  assert.equal(response.status, 200);
+  const data = await response.json() as { canFollowClasspilot: boolean; source: string; classpilotClasses: { id: string }[]; activeKioskCount: number };
+  assert.equal(data.canFollowClasspilot, true);
+  assert.equal(data.source, "legacy_grades");
+  assert.equal(data.activeKioskCount, 2);
+  assert.deepEqual(data.classpilotClasses.map(c => c.id).sort(), [...f.classIds].sort());
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM teaching_sessions WHERE school_id=$1", [f.schoolId])).rows[0].count, 0);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM grades WHERE school_id=$1 AND classpilot_group_id IS NULL", [f.schoolId])).rows[0].count, 2);
+});
+
+test("teacher ClassPilot kiosk passes coexist with legacy overrides, report accurately, and return across sources", async () => {
+  const f = await teacherTimetable(true);
+  await save(f, 0, "classpilot");
+  const headers = kioskHeaders(f);
+  assert.equal((await fetch(baseUrl + "/snapshot", { headers: { ...headers, "x-passpilot-class-model": "" } })).status, 426);
+  assert.equal((await fetch(baseUrl + "/snapshot", { headers: { ...headers, "x-passpilot-kiosk-activity": "" } })).status, 426);
+  const snapshot = await fetch(baseUrl + "/snapshot", { headers }); assert.equal(snapshot.status, 200);
+  const displayed = await snapshot.json() as { source: string; assignmentRevision: string };
+  assert.equal(displayed.source, "classpilot_groups");
+  const issued = await checkout(f, displayed.assignmentRevision);
+  assert.equal(issued.classpilotGroupId, f.classIds[0]); assert.equal(issued.gradeId, null);
+  assert.equal(issued.classNameSnapshot, f.names[0]);
+  const settings = (await pool.query("SELECT passpilot_class_source,passpilot_canonical_writes_at FROM settings WHERE school_id=$1", [f.schoolId])).rows[0];
+  assert.equal(settings.passpilot_class_source, "legacy_grades"); assert.equal(settings.passpilot_canonical_writes_at, null);
+  assert.equal((await scoped(f.schoolId, () => normalizePasspilotPass(issued, f.schoolId))).className, f.names[0]);
+  const activeClasses = await scoped(f.schoolId, () => getPasspilotClasses(f.schoolId, { userId: f.teacherId, manager: false }));
+  assert.deepEqual(activeClasses.classes.map(c => c.id).sort(), [f.classId, f.nextClassId].sort(), "manual class tabs remain standalone");
+  const historyClasses = await scoped(f.schoolId, () => getPasspilotClasses(f.schoolId, { userId: f.teacherId, manager: false, scope: "history" }));
+  assert.equal(historyClasses.classes.find(c => c.id === f.classIds[0])?.source, "classpilot_groups");
+  const [other] = await db.select().from(users).where(eq(users.id, f.otherTeacherId));
+  assert.equal(await scoped(f.schoolId, () => canAccessPass(other!, f.schoolId, issued, "teacher")), false);
+  await pool.query("INSERT INTO group_teachers(group_id,teacher_id) VALUES($1,$2)", [f.classIds[0], f.otherTeacherId]);
+  assert.equal(await scoped(f.schoolId, () => canAccessPass(other!, f.schoolId, issued, "teacher")), true);
+  const scope = await scoped(f.schoolId, () => getPassHistoryQueryAccessScope(other!, f.schoolId, "teacher"));
+  assert.deepEqual(scope?.studentIds, [], "ClassPilot membership does not grant legacy student history");
+  const history = await scoped(f.schoolId, () => getPassHistoryPage(f.schoolId, { access: scope! }));
+  assert.deepEqual(history.passes.map(p => p.id), [issued.id]);
+
+  const targeted = await scoped(f.schoolId, () => retargetKioskSessionsForTeacher(f.schoolId, f.teacherId, { source: "legacy_grades", classId: f.nextClassId }, { actorUserId: f.teacherId, manager: false }));
+  const override = await resolve({ ...f, session: targeted[0]! }, new Date());
+  assert.equal(override.mode, "classpilot"); assert.equal(override.source, "legacy_grades"); assert.equal(override.overridden, true);
+  assert.equal(override.current?.classId, f.nextClassId); assert.deepEqual(override.roster.map(s => s.id), [f.nextStudentId]);
+  await assert.rejects(checkout(f, displayed.assignmentRevision), /assignment changed/);
+  const legacyPass = await checkout(f, override.revision, f.nextStudentId);
+  assert.equal(legacyPass.gradeId, f.nextClassId); assert.equal(legacyPass.classpilotGroupId, null);
+  const changed = await fetch(baseUrl + "/snapshot", { headers });
+  const body = await changed.json() as { students: { id: string; returnOnly: boolean; canReturn: boolean }[] };
+  assert.ok(body.students.some(s => s.id === f.studentId && s.returnOnly && s.canReturn));
+  assert.equal((await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)))?.id, issued.id);
+  const resumed = await resolve({ ...f, session: { ...targeted[0]!, overrideExpiresAt: new Date(0) } }, new Date());
+  assert.equal(resumed.source, "classpilot_groups"); assert.equal(resumed.current?.classId, f.classIds[0]);
+  await save(f, 1, "manual");
+  assert.equal((await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.nextStudentId, pinHash)))?.id, legacyPass.id);
+});
 
 test("opt-in defaults, persistence, isolated teachers, revision conflicts, and resumed/new kiosks", async () => {
   const f = await fixture();
@@ -200,8 +296,8 @@ test("scheduled testing waits for activation, uses mixed offline roster, follows
   assert.equal((await resolve(f)).current?.classId, f.classId); assert.equal((await resolve(f)).roster.length, 1);
 });
 
-test("testing passes retain activity snapshots without fabricated class IDs, cannot leak through student-based history, and can return during schedule failure", async () => {
-  const f = await fixture("classpilot_groups"); await save(f); const t = await testingContext(f, true); await t.activate();
+for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${source}: testing passes retain activity snapshots, restrict history, and return during schedule failure`, async () => {
+  const f = await fixture(source); await save(f, 0, "classpilot"); const t = await testingContext(f, true); await t.activate();
   const assignment = await resolve(f, new Date()); const pass = await checkout(f, assignment.revision);
   assert.equal(pass.gradeId, null); assert.equal(pass.classpilotGroupId, null); assert.equal(pass.activityNameSnapshot, "MAP testing"); assert.equal(pass.issuingKioskSessionId, f.session.id);
   const history = await scoped(f.schoolId, () => getPassHistoryPage(f.schoolId, { access: { issuerTeacherId: f.otherTeacherId, studentIds: [f.studentId], classIds: [], gradeIds: [] } }));
@@ -214,6 +310,9 @@ test("testing passes retain activity snapshots without fabricated class IDs, can
   const [otherTeacher] = await db.select().from(users).where(eq(users.id, f.otherTeacherId));
   assert.equal(await scoped(f.schoolId, () => canAccessPass(otherTeacher!, f.schoolId, pass, "teacher")), false);
   assert.deepEqual(await scoped(f.schoolId, () => filterPassesForRole([pass], otherTeacher!, f.schoolId, "teacher")), []);
+  const unattributed = { ...pass, id: randomUUID(), supervisionContextId: null, activityKind: null, activityNameSnapshot: null };
+  assert.deepEqual((await scoped(f.schoolId, () => filterPassesForRole([pass, unattributed], otherTeacher!, f.schoolId, "teacher"))).map(p => p.id), [unattributed.id],
+    "a legacy student fallback must never re-add an unrelated testing pass");
   await pool.query("UPDATE product_licenses SET status='inactive' WHERE school_id=$1 AND product='CLASSPILOT'", [f.schoolId]);
   assert.equal((await scoped(f.schoolId, () => service.resolveKioskDisplayAssignment(f.schoolId, f.session))).status, "unavailable");
   assert.equal((await scoped(f.schoolId, () => service.returnTeacherKioskPass(f.schoolId, f.session.id, f.studentId, pinHash)))?.id, pass.id);

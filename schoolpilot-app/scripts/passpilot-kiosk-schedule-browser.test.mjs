@@ -38,24 +38,24 @@ async function fixture(t) {
 for (const layout of ['simple', 'badge']) test(`${layout} kiosk changes activities, clears selections, supports return-only students and fails closed`, async t => {
   const { page, url, errors } = await fixture(t);
   await page.addInitScript(() => localStorage.setItem('pp_kiosk_pin', '4321'));
-  let revision = 1, status = 'ready', classId = 'math', assignmentName = 'Mathematics', failSnapshot = false;
+  let revision = 1, status = 'ready', classId = 'math', assignmentName = 'Mathematics', failSnapshot = false, source = 'classpilot_groups', overridden = false;
   let checkoutCount = 0, returns = 0, staleCheckout = false;
   const student = { id: 'student', firstName: 'Ada', lastName: 'Student', studentIdNumber: '1234', canReturn: true };
   const returning = { id: 'returning', firstName: 'Grace', lastName: 'Returning', studentIdNumber: '5678', returnOnly: true, canReturn: true,
     activePass: { id: 'pass', destination: 'bathroom', issuedAt: new Date().toISOString(), duration: 5, status: 'active' } };
   const activity = () => ({ mode: 'classpilot', status, timezone: 'UTC', serverTime: new Date().toISOString(),
-    nextBoundaryAt: new Date(Date.now() + 60_000).toISOString(), overridden: false,
+    nextBoundaryAt: new Date(Date.now() + 60_000).toISOString(), overridden, overrideExpiresAt: new Date(Date.now() + 60_000).toISOString(),
     current: status === 'ready' ? { id: classId || 'testing', classId, kind: classId ? 'class' : 'testing', name: assignmentName, endsAt: new Date(Date.now() + 60_000).toISOString() } : null });
   await page.route('**/api/**', async route => {
     const req = route.request(), pathname = new URL(req.url()).pathname;
     if (pathname === '/api/auth/me') return route.fulfill({ status: 401, json: { error: 'Not signed in' } });
     if (pathname.endsWith('/kiosk/auth')) return route.fulfill({ json: { token: 'fixture-token', expiresInSeconds: 900 } });
-    if (pathname.endsWith('/kiosk/session')) return route.fulfill({ json: { kioskStyle: layout, session: { id: 'session', status: 'active', classId: null, source: 'classpilot_groups', kioskName: 'Teacher kiosk' } } });
+    if (pathname.endsWith('/kiosk/session')) return route.fulfill({ json: { kioskStyle: layout, session: { id: 'session', status: 'active', classId: null, source: 'legacy_grades', kioskName: 'Teacher kiosk' } } });
     if (pathname.endsWith('/kiosk/snapshot')) {
       assert.equal(req.headers()['x-passpilot-kiosk-activity'], 'scheduled-activities-v1');
       if (failSnapshot) return route.fulfill({ status: 503, json: { error: 'Temporary schedule outage' } });
       return route.fulfill({ headers: { ETag: `"snapshot-${revision}"` }, json: {
-        kioskStyle: layout, source: 'classpilot_groups', classId, className: assignmentName, kioskName: 'Teacher kiosk',
+        kioskStyle: layout, source, classId, className: assignmentName, kioskName: 'Teacher kiosk',
         session: { id: 'session', status: 'active' }, activity: activity(), revision, assignmentRevision: `assignment-${revision}`,
         students: status === 'ready' ? [student, returning] : [returning],
       } });
@@ -79,6 +79,12 @@ for (const layout of ['simple', 'badge']) test(`${layout} kiosk changes activiti
     else { await page.getByPlaceholder('Student ID').fill(number); await page.getByRole('button', { name: /Look Up/ }).click(); }
   };
   await choose(); await page.getByRole('button', { name: /Bathroom$|^General\/Restroom$/ }).waitFor();
+  revision++; source = 'legacy_grades'; overridden = true; classId = 'grade5'; assignmentName = '5th grade';
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.getByText(/Temporary override.*5th grade/).waitFor();
+  assert.equal(await page.getByRole('button', { name: /Bathroom$|^General\/Restroom$/ }).count(), 0);
+  await choose(); await page.getByRole('button', { name: /Bathroom$|^General\/Restroom$/ }).waitFor();
+  source = 'classpilot_groups'; overridden = false;
   revision++; classId = null; assignmentName = 'MAP testing';
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await page.getByText(/Following schedule.*MAP testing/).waitFor();
@@ -160,7 +166,8 @@ async function mockScheduleSettings(page, { source = 'legacy_grades', classPilot
     if (pathname.endsWith('/preferences/teachers')) return route.fulfill({ json: { teachers: [{ id: 'teacher', name: 'Teacher One' }] } });
     if (pathname.endsWith('/preferences')) return route.fulfill({ json: {
       preference: { mode: 'manual', revision: 0, schedule: { blocks: [], exceptions: [] } },
-      source, canFollowClasspilot: source === 'classpilot_groups' && entitled,
+      source, canFollowClasspilot: classPilot && entitled,
+      classpilotClasses: [{ id: 'math', name: '6th grade math' }], activeKioskCount: 1,
       classes: [{ id: 'math', name: 'Mathematics' }], preview: { timezone: 'America/New_York', status: 'idle' },
     } });
     return route.fulfill({ status: 404, json: { error: pathname } });
@@ -171,11 +178,11 @@ for (const theme of ['light', 'dark']) test(`schedule settings text has readable
   const { page, url, errors } = await fixture(t);
   await mockScheduleSettings(page);
   await page.goto(`${url}/__kiosk-schedule`);
-  await page.getByRole('heading', { name: 'Weekly class schedule' }).waitFor();
+  await page.getByLabel('Kiosk mode').selectOption('passpilot');
   await page.evaluate(isDark => document.documentElement.classList.toggle('dark', isDark), theme === 'dark');
   const classPilotOption = page.getByLabel('Kiosk mode').locator('option[value="classpilot"]');
-  assert.equal(await classPilotOption.evaluate(option => option.disabled), true);
-  assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).getAttribute('href'), '/passpilot/setup?section=class-source');
+  assert.equal(await classPilotOption.evaluate(option => option.disabled), false);
+  assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).count(), 0);
   await page.getByRole('button', { name: 'Add weekly block' }).click();
   await page.getByRole('button', { name: 'Add dated exception' }).click();
   const contrast = await page.locator('h1, h2, p, legend, label, select, input[type="time"], input[type="date"], a').evaluateAll(elements => {
@@ -206,7 +213,7 @@ for (const theme of ['light', 'dark']) test(`schedule settings text has readable
   assert.deepEqual(errors, []);
 });
 
-test('ClassPilot scheduling requires linked classes and entitlement; teachers receive administrator guidance', async t => {
+test('ClassPilot scheduling depends on product access, independently of the school class source', async t => {
   const { page, url, errors } = await fixture(t);
   for (const scenario of [
     { source: 'legacy_grades', role: 'teacher', classPilot: true },
@@ -219,15 +226,60 @@ test('ClassPilot scheduling requires linked classes and entitlement; teachers re
     await page.goto(`${url}/__kiosk-schedule`);
     await page.getByLabel('Kiosk mode').waitFor();
     const option = page.getByLabel('Kiosk mode').locator('option[value="classpilot"]');
-    assert.equal(await option.evaluate(element => element.disabled), !(scenario.source === 'classpilot_groups' && scenario.entitled));
+    const eligible = scenario.classPilot && scenario.entitled !== false;
+    assert.equal(await option.evaluate(element => element.disabled), !eligible);
     assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).count(), 0);
-    if (scenario.source === 'legacy_grades') {
-      await page.getByText(/An administrator must review the class mappings/).waitFor();
-      if (!scenario.classPilot) await page.getByText(/Active ClassPilot access is also required/).waitFor();
-    } else if (scenario.entitled) {
+    if (eligible) {
       await page.getByLabel('Kiosk mode').selectOption('classpilot');
       assert.equal(await page.getByLabel('Kiosk mode').inputValue(), 'classpilot');
-    } else await page.getByText('Active ClassPilot access is required to follow its schedule.').waitFor();
+      await page.getByRole('listitem').filter({ hasText: '6th grade math' }).waitFor();
+      assert.equal(await page.getByRole('heading', { name: 'Weekly class schedule' }).count(), 0);
+    } else await page.getByText(/Active ClassPilot access is required to follow its schedule/).waitFor();
   }
+  assert.deepEqual(errors, []);
+});
+
+test('administrator selects a teacher and saves their ClassPilot schedule without class migration', async t => {
+  const { page, url, errors } = await fixture(t);
+  const names = ['6th grade math', '5th grade math', '5th grade science', '6th grade science'];
+  const preferences = new Map(); const writes = [];
+  await page.route('**/api/**', async route => {
+    const req = route.request(), parsed = new URL(req.url()), pathname = parsed.pathname;
+    if (pathname.endsWith('/auth/me')) return route.fulfill({ json: { user: { id: 'admin', email: 'admin@example.test' }, activeSchoolId: 'school', memberships: [{ id: 'membership', schoolId: 'school', role: 'school_admin' }], licenses: { passPilot: true, classPilot: true } } });
+    if (pathname.endsWith('/csrf')) return route.fulfill({ json: { csrfToken: 'fixture' } });
+    if (pathname.endsWith('/preferences/teachers')) return route.fulfill({ json: { teachers: [{ id: 'admin', name: 'Administrator' }, { id: 'brian', name: 'Brian Zinkan' }] } });
+    if (pathname.endsWith('/preferences')) {
+      const teacherId = parsed.searchParams.get('teacherId');
+      if (req.method() === 'PUT') {
+        const body = req.postDataJSON(); writes.push({ teacherId, ...body });
+        preferences.set(teacherId, { ...body, revision: 1 });
+        return route.fulfill({ json: { preference: preferences.get(teacherId) } });
+      }
+      const preference = preferences.get(teacherId) || { mode: 'manual', revision: 0, schedule: { blocks: [], exceptions: [] } };
+      return route.fulfill({ json: { preference, source: 'legacy_grades', canFollowClasspilot: true,
+        classes: [{ id: '5th', name: '5th' }], activeKioskCount: teacherId === 'brian' ? 1 : 0,
+        classpilotClasses: teacherId === 'brian' ? names.map((name, index) => ({ id: `class${index}`, name })) : [],
+        preview: { timezone: 'America/New_York', status: 'ready', current: preference.mode === 'classpilot' ? { name: names[0], startsAt: '2026-09-24T13:00:00Z', endsAt: '2026-09-24T14:00:00Z' } : null,
+          next: preference.mode === 'classpilot' ? { name: names[1], startsAt: '2026-09-24T14:00:00Z' } : null } } });
+    }
+    assert.fail(`Unexpected endpoint: ${pathname}`);
+  });
+  await page.goto(`${url}/__kiosk-schedule`);
+  await page.getByLabel('Teacher', { exact: true }).selectOption('brian');
+  await page.getByRole('heading', { name: 'Brian Zinkan’s kiosks' }).waitFor();
+  await page.getByLabel('Kiosk mode').selectOption('classpilot');
+  assert.deepEqual(await page.getByRole('listitem').allTextContents(), names);
+  assert.equal(await page.getByRole('link', { name: 'Review Class Source setup' }).count(), 0);
+  await page.getByRole('button', { name: 'Save kiosk schedule' }).click();
+  await page.getByLabel('Saved schedule preview').getByText(/6th grade math/).waitFor();
+  await page.getByLabel('Saved schedule preview').getByText(/Next: 5th grade math/).waitFor();
+  assert.deepEqual(writes, [{ teacherId: 'brian', mode: 'classpilot', expectedRevision: 0, schedule: { blocks: [], exceptions: [] } }]);
+  await page.reload();
+  await page.getByLabel('Teacher', { exact: true }).selectOption('brian');
+  await page.getByRole('button', { name: 'Resume automatic on all kiosks' }).waitFor();
+  assert.equal(await page.getByLabel('Kiosk mode').inputValue(), 'classpilot');
+  await mkdir(path.join(root, 'artifacts', 'kiosk-schedule'), { recursive: true });
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  await page.screenshot({ path: path.join(root, 'artifacts', 'kiosk-schedule', 'teacher-classpilot.png'), fullPage: true });
   assert.deepEqual(errors, []);
 });
