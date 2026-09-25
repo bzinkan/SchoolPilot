@@ -1326,20 +1326,29 @@ test("disabled-school queues cannot starve enabled imports and fresh deletions p
     limit: 200,
     now: new Date(Date.now() + 10 * 60_000),
   });
-  const freshId = randomUUID(),
+  // Use the same clock for fixture eligibility and cleanup. PostgreSQL now()
+  // retains microseconds that a same-millisecond JavaScript Date truncates.
+  const cleanupNow = new Date(),
+    freshId = randomUUID(),
     key = `mydesk/${enabled.schoolId}/${enabled.teacherId}/imports/${run.id}/${freshId}`;
   await fixturePool.query(
-    "INSERT INTO mydesk_import_assets(id,school_id,author_id,import_id,kind,client_request_id,request_fingerprint,storage_key,status,next_cleanup_at) SELECT gen_random_uuid(),$1,$2,$3,'source',gen_random_uuid(),repeat('a',64),'mydesk/old-'||gen_random_uuid(),'deleted',now()-interval '2 days' FROM generate_series(1,60)",
-    [enabled.schoolId, enabled.teacherId, run.id],
+    "INSERT INTO mydesk_import_assets(id,school_id,author_id,import_id,kind,client_request_id,request_fingerprint,storage_key,status,next_cleanup_at) SELECT gen_random_uuid(),$1,$2,$3,'source',gen_random_uuid(),repeat('a',64),'mydesk/old-'||gen_random_uuid(),'deleted',$4::timestamptz-interval '2 days' FROM generate_series(1,60)",
+    [enabled.schoolId, enabled.teacherId, run.id, cleanupNow],
   );
   await fixturePool.query(
-    "INSERT INTO mydesk_import_assets(id,school_id,author_id,import_id,kind,client_request_id,request_fingerprint,storage_key,status,next_cleanup_at) VALUES($1,$2,$3,$4,'source',gen_random_uuid(),repeat('a',64),$5,'delete_pending',now())",
-    [freshId, enabled.schoolId, enabled.teacherId, run.id, key],
+    "INSERT INTO mydesk_import_assets(id,school_id,author_id,import_id,kind,client_request_id,request_fingerprint,storage_key,status,next_cleanup_at) VALUES($1,$2,$3,$4,'source',gen_random_uuid(),repeat('a',64),$5,'delete_pending',$6)",
+    [freshId, enabled.schoolId, enabled.teacherId, run.id, key, cleanupNow],
   );
   objects.set(key, Buffer.from("synthetic"));
-  await cleanupMyDeskImports({ database: fixtureDb, limit: 1 });
+  const deletionCountBefore = deletedKeys.length;
+  const cleanup = await cleanupMyDeskImports({
+    database: fixtureDb,
+    limit: 1,
+    now: cleanupNow,
+  });
+  assert.equal(cleanup.deleted, 1);
   assert.equal(objects.has(key), false);
-  assert.ok(deletedKeys.includes(key));
+  assert.deepEqual(deletedKeys.slice(deletionCountBefore), [key]);
 });
 
 test("manual recovery after failed detection and failed extraction preserves teacher text without another AI call", async () => {
