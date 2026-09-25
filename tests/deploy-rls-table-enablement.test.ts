@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -59,6 +59,53 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits all three import tables together after notebook admission without changing existing gates", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.mydeskImports;
+    assert.deepEqual(tables, ["mydesk_import_assets", "mydesk_import_items", "mydesk_imports"]);
+    const existing = ["students", "mydesk_attachments", "mydesk_notes", "mydesk_seating_charts"];
+    const api = taskDefinition("api", existing), worker = taskDefinition("scheduler-worker", existing);
+    const bundle = tables.join(",");
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle });
+    addReviewedRlsTable(api, { containerName: "api", table: bundle });
+    addReviewedRlsTable(worker, { containerName: "scheduler-worker", table: bundle });
+    verifyEnabledRlsCandidates({ taskDefinitions: [{ taskDefinition: api, containerName: "api" },
+      { taskDefinition: worker, containerName: "scheduler-worker" }], table: bundle, expectedPreviousTables: existing });
+    for (const invalid of [...tables, tables.slice(0, 2).join(","), [...tables].reverse().join(",")]) {
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api", existing), { containerName: "api", table: invalid }), /exact reviewed/);
+    }
+    assert.equal(environmentValue(api, "UNCHANGED"), "preserved");
+    assert.ok(tables.every(table => !productionTfvars.includes(table)), "No production baseline adoption before verification");
+  });
+  it("admits seating separately while preserving the existing notebook and production baseline", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.mydeskSeating;
+    assert.deepEqual(tables, ["mydesk_seating_charts"]);
+    const existing = ["students", "mydesk_attachments", "mydesk_notes"];
+    const api = taskDefinition("api", existing), worker = taskDefinition("scheduler-worker", existing);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: tables[0]! });
+    addReviewedRlsTable(api, { containerName: "api", table: tables[0]! });
+    addReviewedRlsTable(worker, { containerName: "scheduler-worker", table: tables[0]! });
+    verifyEnabledRlsCandidates({ taskDefinitions: [{ taskDefinition: api, containerName: "api" },
+      { taskDefinition: worker, containerName: "scheduler-worker" }], table: tables[0]!, expectedPreviousTables: existing });
+    assert.equal(productionTfvars.includes("mydesk_seating_charts"), false);
+  });
+  it("admits both My Desk tables together and rejects partial or reordered requests", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.mydesk;
+    assert.deepEqual(tables, ["mydesk_attachments", "mydesk_notes"]);
+    const api = taskDefinition("api"), worker = taskDefinition("scheduler-worker");
+    const bundle = tables.join(",");
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle });
+    addReviewedRlsTable(api, { containerName: "api", table: bundle });
+    addReviewedRlsTable(worker, { containerName: "scheduler-worker", table: bundle });
+    verifyEnabledRlsCandidates({ taskDefinitions: [
+      { taskDefinition: api, containerName: "api" },
+      { taskDefinition: worker, containerName: "scheduler-worker" },
+    ], table: bundle, expectedPreviousTables: ["students", "teaching_sessions"] });
+    for (const invalid of [tables[0]!, tables[1]!, [...tables].reverse().join(",")]) {
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api"), { containerName: "api", table: invalid }), /exact reviewed/);
+    }
+    assert.equal(productionTfvars.includes("mydesk_notes"), false, "Production baseline changes only after verified admission");
+  });
+
   it("adds only the reviewed table after matching live API/worker admission", () => {
     assert.deepEqual(REVIEWED_RLS_TABLE_ENABLEMENTS, [
       "classpilot_session_summary_deliveries",
@@ -80,6 +127,9 @@ describe("one-release RLS table enablement", () => {
       ...CLASSPILOT_SUPERVISION_ACTIVITY_REPORT_RLS_TABLES,
       ...rlsRegistry.reviewedEnablementRequests.classpilotClassTools,
       ...rlsRegistry.reviewedEnablementRequests.passpilotKioskSchedule,
+      ...rlsRegistry.reviewedEnablementRequests.mydesk,
+      ...rlsRegistry.reviewedEnablementRequests.mydeskSeating,
+      ...rlsRegistry.reviewedEnablementRequests.mydeskImports,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

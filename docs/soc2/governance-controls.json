@@ -241,7 +241,7 @@
       "status": "Implementing",
       "frequency": "Continuous",
       "nextReviewDue": "2026-07-31",
-      "automationImpact": "AI authorization and logging evidence only; no assistant enablement change.",
+      "automationImpact": "Evidence generation does not enable AI. Separately gated teacher-started My Desk imports add selected page-image processing, private review and cleanup; provider-account retention and extraction quality require human review before activation.",
       "evidence": [
         {
           "name": "AI/privacy evidence packet",

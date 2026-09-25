@@ -94,6 +94,9 @@ import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLife
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { discoverScheduleBoundarySchools, runDueClasspilotScheduleBoundaries, SCHEDULE_BOUNDARY_POLL_MS } from "./classpilotScheduleBoundaries.js";
 import { isScheduleBoundaryWorkerEnabled } from "../config/classpilotScheduledClassroom.js";
+import { cleanupMyDesk } from "./mydeskCleanup.js";
+import { cleanupMyDeskImports } from "./mydeskImportCleanup.js";
+import { runMyDeskImportJobs } from "./mydeskImportWorker.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -253,6 +256,9 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   }
   intervalId = setInterval(() => {
     tickCount++;
+    scheduleLockedJob("cleanupMyDesk", async () => { await cleanupMyDesk(); });
+    scheduleLockedJob("cleanupMyDeskImports", async () => { try { await cleanupMyDeskImports(); } catch { console.error(JSON.stringify({event:"mydesk_import_cleanup_failed"})); } });
+    scheduleLockedJob("runMyDeskImportJobs", async () => { try { await runMyDeskImportJobs(); } catch { console.error(JSON.stringify({event:"mydesk_import_worker_failed"})); } });
     scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);

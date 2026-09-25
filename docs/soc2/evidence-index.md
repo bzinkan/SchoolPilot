@@ -27,7 +27,7 @@ exports, or generated evidence packets to this repository.
 | Monitoring review | SP-AVL-002 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/monitoring/` |
 | Encryption configuration | SP-CONF-001 | Manual record | `SchoolPilot-SOC2-Evidence/encryption/` |
 | AI/privacy evidence packet | SP-CONF-002 | Automated | GitHub Actions artifact `soc2-evidence-ai-privacy` and ignored `soc2-evidence/ai-privacy/` |
-| AI data-flow review | SP-CONF-002 | Private draft plus human approved | `SchoolPilot-SOC2-Evidence/ai/reviews/` |
+| AI data-flow, provider-account retention, and paperwork extraction-quality review | SP-CONF-002 | Private draft plus human approved | `SchoolPilot-SOC2-Evidence/ai/reviews/` |
 
 Generated local packets should use `soc2-evidence/`, which is ignored by Git.
 Shadow deployment packets are written to `soc2-evidence/deployments/` and must
@@ -39,6 +39,10 @@ must not include production DB exports, grants, policies, or customer data.
 AI/privacy evidence packets are written to `soc2-evidence/ai-privacy/` and
 must not include prompt bodies, API keys, raw logs, transcripts, customer
 records, or student records.
+Paperwork import tests establish behavior and recovery, not model accuracy.
+Keep model output reports and human correction-effort reviews outside this
+repository; record only non-content evidence pointers. Source cleanup does not
+prove deletion by the configured provider account.
 Privileged access evidence packets are written to
 `soc2-evidence/privileged-access/` and must not include password hashes, session
 contents, raw user exports, secrets, customer records, or student records.

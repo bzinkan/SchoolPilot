@@ -1,3 +1,4 @@
+import './products/classpilot/lib/privateWorkspaceNavigation';
 import { lazy, Suspense, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -34,6 +35,9 @@ const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/Em
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
+const CPMyDesk = lazy(() => import('./products/classpilot/pages/MyDesk'));
+const CPSeating = lazy(() => import('./products/classpilot/pages/Seating'));
+const CPImports = lazy(() => import('./products/classpilot/pages/Imports'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
 const CPTeacherGuide = lazy(() => import('./products/classpilot/pages/TeacherGuide'));
@@ -284,6 +288,11 @@ function AppRoutes() {
             {canManageClassPilotSchool && <Route path="/classpilot/settings" element={<CPSettings />} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk" element={<CPMyDesk />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating" element={<CPSeating />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating/:chartId" element={<CPSeating />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports" element={<CPImports />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports/:importId" element={<CPImports />} />}
             <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
           </>

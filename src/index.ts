@@ -5,6 +5,9 @@ import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
+import { MYDESK_SQL } from "./db/mydeskMigration.js";
+import { MYDESK_SEATING_SQL } from "./db/mydeskSeatingMigration.js";
+import { MYDESK_IMPORTS_SQL } from "./db/mydeskImportsMigration.js";
 import { setupSocketIO, stopSocketIoWork, drainSocketIoWork } from "./realtime/socketio.js";
 import { setupWebSocket, stopWebSocketWork, drainWebSocketWork } from "./realtime/websocket.js";
 import { createUpgradedTransportShutdown } from "./realtime/websocketShutdown.js";
@@ -4997,6 +5000,9 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL);
   await pool.query(CLASSPILOT_TOOLS_SQL);
   await pool.query(PASSPILOT_KIOSK_SCHEDULE_SQL);
+  await pool.query(MYDESK_SQL);
+  await pool.query(MYDESK_SEATING_SQL);
+  await pool.query(MYDESK_IMPORTS_SQL);
 }
 
 async function startServer(): Promise<void> {

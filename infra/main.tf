@@ -342,7 +342,15 @@ module "ecs" {
 
   # Runtime topology for the API. Rotated application credentials are externally
   # managed SecureStrings referenced by deterministic ARN inside the ECS module.
-  redis_url = module.redis.redis_url
+  redis_url                            = module.redis.redis_url
+  mydesk_attachments_bucket_name       = aws_s3_bucket.mydesk_attachments.id
+  mydesk_attachments_bucket_arn        = aws_s3_bucket.mydesk_attachments.arn
+  mydesk_enabled_school_ids            = var.mydesk_enabled_school_ids
+  mydesk_seating_enabled_school_ids    = var.mydesk_seating_enabled_school_ids
+  mydesk_ai_import_enabled_school_ids  = var.mydesk_ai_import_enabled_school_ids
+  mydesk_ai_import_model               = var.mydesk_ai_import_model
+  mydesk_ai_import_teacher_daily_pages = var.mydesk_ai_import_teacher_daily_pages
+  mydesk_ai_import_school_daily_pages  = var.mydesk_ai_import_school_daily_pages
 
   # Auto-derive URLs from domain, with manual override
   public_base_url = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.public_base_url

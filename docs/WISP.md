@@ -54,7 +54,7 @@ All third-party service providers handling PII are reviewed annually and must si
 | **SendGrid** | Transactional email | Recipient addresses and configured message content, which can include student identity, activity/safety summaries, page title/domain, or MailPilot sender/subject/snippet fields |
 | **Stripe** | Payment processing | School billing info (PCI-DSS Level 1) |
 | **Google Gemini API** | AI-assisted URL/title classification | ClassPilot URL strings and page titles, which can themselves contain identifying or user-entered values |
-| **Anthropic Claude** | AI-assisted email/assistant workflows | Enabled MailPilot content and authorized staff-assistant inputs are described in the public subprocessor notice |
+| **Anthropic Claude** | AI-assisted email/assistant workflows and separately enabled teacher-started paperwork imports | Enabled MailPilot content, authorized staff-assistant inputs, and explicitly uploaded paperwork page images (which can contain names and conduct details) are described in the public subprocessor notice; existing notebooks/rosters are not sent by the import workflow |
 | **Google OAuth / Workspace API** | Authentication, roster sync | Email, name, classroom rosters (verified for restricted scopes) |
 | **Sentry** | Application error monitoring when enabled | Allowlisted diagnostics with user, arbitrary context, tags/extras, tokens, names, emails, and full sensitive URLs removed before transmission |
 
@@ -130,6 +130,9 @@ Any employee, contractor, or external party who suspects a security incident mus
 | Heartbeats / activity logs | Per school setting, default 30 days | Automated hourly purge check, near 30 minutes past the hour |
 | Daily usage aggregates | Per school activity setting, default 30 days | Automated hourly purge check with activity history |
 | Account data | Retained during active contract | Access is disabled at termination; permanent-destruction scope and timing follow the executed agreement and verified operator evidence |
+| My Desk private notebooks (when enabled) | Author-owned notes, normalized photos, and uploaded PDFs remain until deletion or the agreed school-account destruction process; abandoned saves/staged files expire after 24 hours | Durable object-deletion retries; verify database and S3 cleanup independently. See MYDESK_PRIVATE_NOTEBOOK.md; rollout/operating evidence is required before claiming this control is live |
+| My Desk private seating charts (when separately enabled) | Author-owned class/roster snapshots and desk layouts remain until deletion or agreed school-account destruction | Deletion scrubs chart content and retains an operational request tombstone; include rows and backups in verified permanent destruction. See MYDESK_PRIVATE_SEATING.md; no production-control claim before rollout evidence |
+| My Desk AI paperwork imports (when separately enabled and teacher-started) | Uploads expire after 24 hours; review expires seven days after upload completion. Completion/cancellation/expiry scrubs drafts and queues source/temporary objects for deletion; approved notes/crops follow normal notebook retention | Durable cleanup retains minimal retry/quota/promotion records. Local deletion does not establish provider deletion; review actual account retention before activation. See MYDESK_AI_IMPORT.md; implementation tests are not operating or extraction-accuracy evidence |
 | Audit logs | Policy target: 2 years | Permanent destruction requires a verified operator process; no automated audit-log purge is currently represented as complete |
 
 On contract termination, service access is disabled. Data return and the scope

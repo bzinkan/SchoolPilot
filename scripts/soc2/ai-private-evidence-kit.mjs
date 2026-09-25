@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const APP_IMPACT = "No user-facing behavior changed";
+const APP_IMPACT = "Evidence generation does not change runtime settings; separately gated My Desk paperwork imports add teacher-started AI processing when authorized and enabled.";
 const DRAFT_STATUS = "draft_pending_founder_input";
 const READY_STATUS = "ready_for_approval";
 const EVIDENCE_ID = "SOC2-002-AI-DATA-FLOW-REVIEW";
@@ -68,9 +68,16 @@ function buildAiReviewRecord({ generatedAt }) {
           serviceUse: "TODO: URL classification, optional AI assistant, MailPilot email safety classification as applicable",
           dpaOrContractPointer: "TODO: private vendor/DPA evidence path or not_applicable",
           trainingUseReviewed: "TODO: yes | no | not_applicable",
+          accountRetentionAndDeletionReviewed: "TODO: contract/account retention, access, abuse monitoring, and deletion settings; do not assume zero retention",
         },
       ],
       enabledFeaturesReviewed: [
+        {
+          featureId: "mydesk_ai_paperwork_import",
+          productionStatus: "TODO: default-off school gate; verify actual runtime separately",
+          dataCategories: ["explicitly uploaded page images may include student names and conduct details; no full roster or existing notebook contents"],
+          approvalConclusion: "TODO: provider/account review and human synthetic extraction-quality review before enablement",
+        },
         {
           featureId: "classpilot_url_classification",
           productionStatus: "TODO",
@@ -94,6 +101,7 @@ function buildAiReviewRecord({ generatedAt }) {
         urlStringsAndPageTitles: "TODO",
         staffPromptsAndToolResults: "TODO",
         gmailMessageTextWhenMailPilotEnabled: "TODO",
+        teacherUploadedPaperworkPages: "TODO: review exact model-bound images, temporary-source lifecycle, approved-crop retention, and provider retention separately",
         excludedOrProhibitedData: "TODO",
       },
       minimizationControlsReviewed: [
@@ -101,6 +109,7 @@ function buildAiReviewRecord({ generatedAt }) {
         "TODO: role/license tool filtering review",
         "TODO: school/user conversation scoping review",
         "TODO: prompt/tool result minimization review",
+        "TODO: paperwork import is tool-free, author-scoped, and reviewed before saving; source deletion does not prove provider erasure",
       ],
       roleAndLicenseScopingReviewed: "TODO",
       auditLoggingReviewed: "TODO",
@@ -120,6 +129,7 @@ function buildAiReviewRecord({ generatedAt }) {
       "Confirm each AI feature's production enablement state and data categories.",
       "Confirm sensitive data is minimized before model-bound processing.",
       "Confirm AI chat tools are role/license scoped and mutating actions require user confirmation.",
+      "For My Desk import, review explicit-upload gating, selected-class server-side matching, prompt-injection/output validation, exact per-form approval, durable source cleanup, and human synthetic accuracy/correction-effort evidence.",
       "Confirm audit logging evidence exists for AI chat tool requests, denials, executions, and cancellations.",
       "Confirm vendor/DPA evidence exists privately or record the gap.",
       "Record residual risks and whether any public copy needs a later approved update.",

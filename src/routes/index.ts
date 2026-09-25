@@ -1,4 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
+import myDeskRoutes from "./mydesk.js";
 import authRoutes from "./auth.js";
 import schoolRoutes from "./schools.js";
 import studentRoutes from "./students.js";
@@ -451,6 +452,7 @@ router.use("/mailpilot", mailpilotSetupRoutes);
 router.use("/mailpilot", mailpilotAlertsRoutes);
 
 // Compatibility routes for missing features
+router.use("/mydesk", myDeskRoutes);
 router.use("/compat", compatRoutes);
 
 // Compatibility aliases (grades, teachers, admin features)

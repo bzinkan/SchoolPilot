@@ -159,15 +159,15 @@ export default function Subprocessors() {
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification when enabled by a school; optional AI assistant when enabled for authorized school staff</td>
-                    <td className="px-4 py-3 text-slate-700">For MailPilot, student Gmail message text may be processed for safety classification when the school has enabled email monitoring. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
+                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; separately enabled, teacher-started My Desk paperwork import</td>
+                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail message text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. My Desk paperwork import processes explicitly uploaded page images, which may include student names and conduct details, to prepare private drafts for teacher review; it does not send school rosters or existing notebook entries.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
               Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
-              API for limited MailPilot and assistant workflows. MailPilot email safety classification may
+              API for limited MailPilot, assistant, and teacher-started paperwork-import workflows. MailPilot email safety classification may
               process student Gmail message text only when a school has separately enabled MailPilot.
               The optional AI assistant is disabled by default, limited by school role and product license,
               and designed to avoid model-bound sensitive fields such as attendance reasons and individual
@@ -180,6 +180,11 @@ export default function Subprocessors() {
                 Privacy Center
               </a>{" "}
               explain Anthropic's training-use limits for customer API inputs and outputs. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
+            </p>
+            <p className="text-slate-600 text-sm mt-2">
+              My Desk AI imports require separate school enablement and an explicit author upload.
+              Provider account retention and access terms are reviewed before activation. Deleting
+              Schoolpilot's temporary source files does not itself delete provider-retained data.
             </p>
           </section>
 
