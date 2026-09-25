@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const APP_IMPACT = "No user-facing behavior changed";
+const APP_IMPACT = "Evidence generation does not change runtime settings; separately gated My Desk paperwork imports add teacher-started AI processing when authorized and enabled.";
 const EVIDENCE_ID = "SOC2-002-AI-PRIVACY-EVIDENCE";
 const PENDING_STATUS = "pending_human_approval";
 const REVIEW_REQUIRED = "review_required";
@@ -16,6 +16,9 @@ const SOURCE_HASH_FILES = [
   { key: "chatTools", label: "AI chat tools", path: "src/services/chatTools.ts" },
   { key: "chatToolExecutor", label: "AI chat tool executor", path: "src/services/chatToolExecutor.ts" },
   { key: "aiClassification", label: "AI classification service", path: "src/services/aiClassification.ts" },
+  { key: "mydeskImportProcessing", label: "Private paperwork extraction source hash only", path: "src/services/mydeskImportProcessing.ts" },
+  { key: "mydeskImports", label: "Private paperwork ownership and approval service", path: "src/services/mydeskImports.ts" },
+  { key: "mydeskImportRunbook", label: "Private paperwork data-flow and rollout contract", path: "docs/MYDESK_AI_IMPORT.md" },
   { key: "systemPrompt", label: "AI system prompt source hash only", path: "src/prompts/systemPrompt.ts" },
   { key: "aiChatToolTests", label: "AI chat privacy and authorization tests", path: "tests/ai-chat-tools.test.ts" },
   { key: "aiClassificationTests", label: "AI classification tests", path: "tests/ai-classification.test.ts" },
@@ -104,8 +107,17 @@ function buildAiFeatureInventory(rootDir) {
   const chatService = readText(rootDir, "src/services/chatService.ts");
   const chatTools = readText(rootDir, "src/services/chatTools.ts");
   const aiClassification = readText(rootDir, "src/services/aiClassification.ts");
+  const importProcessing = readText(rootDir, "src/services/mydeskImportProcessing.ts");
 
   return [
+    {
+      featureId: "mydesk_ai_paperwork_import",
+      status: sourceContains(rootDir, "src/services/mydeskImportsValidation.ts", /MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS/) ? "separate_school_gate_disabled_by_default" : "review_required",
+      provider: importProcessing.includes("@anthropic-ai/sdk") ? "Anthropic Claude" : "review_required",
+      modelSource: "src/services/mydeskImportProcessing.ts",
+      controls: ["teacher_started_source_upload", "private_author_school_scope", "server_side_roster_matching", "reviewed_atomic_batch_approval", "durable_temporary_source_cleanup", "provider_retention_and_quality_review_required"],
+      modelBoundDataSummary: "Explicitly uploaded paperwork page images, which may contain names and conduct details; no school roster, existing notebook entries, or seating charts. No live enablement or extraction-accuracy claim from source evidence.",
+    },
     {
       featureId: "ai_chat_assistant",
       status: chatService.includes("AI_CHAT_ENABLED") ? "disabled_by_default_runtime_flag" : "review_required",
@@ -149,6 +161,13 @@ function buildAiFeatureInventory(rootDir) {
 function buildDataFlows() {
   return [
     {
+      flowId: "mydesk_ai_paperwork_import", provider: "Anthropic",
+      inputCategories: ["teacher_uploaded_page_images", "fixed_extraction_instructions"],
+      outputCategories: ["untrusted_source_regions", "untrusted_extracted_names", "private_note_drafts"],
+      minimizationControls: ["separate default-off school gate", "explicit author upload", "no roster or existing notebook submission", "no tools or provider Files API", "bounded pages and output", "human review before atomic save", "temporary source cleanup does not prove provider erasure"],
+      privateReviewRequired: true,
+    },
+    {
       flowId: "classpilot_url_classification",
       provider: "Google Gemini",
       inputCategories: ["url_string", "page_title"],
@@ -189,6 +208,10 @@ function buildAuthAndAuditSafeguards(rootDir) {
 
 function buildTestPointers(rootDir) {
   return [
+    ...["tests/mydesk-import-processing.test.ts", "tests/mydesk-imports-schema.integration.test.ts", "scripts/evaluate-mydesk-import.mjs"].map(testPath => ({
+      label: "My Desk import behavioral/synthetic evaluation evidence; model accuracy requires separate review", path: testPath,
+      present: fs.existsSync(path.join(rootDir, testPath)),
+    })),
     {
       label: "AI chat tool privacy and authorization tests",
       path: "tests/ai-chat-tools.test.ts",
@@ -317,6 +340,9 @@ export function buildAiPrivacyEvidence({
         valueIncluded: false,
         purpose: "Provider credential for Anthropic-backed AI features.",
       },
+      ...["MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS", "MYDESK_AI_IMPORT_MODEL", "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"].map(name => ({
+        name, valueIncluded: false, purpose: "Private paperwork import gate/model/budget configuration; values and source content omitted.",
+      })),
     ],
     sourceHashes: buildSourceHashes(resolvedRoot),
     aiFeatures: buildAiFeatureInventory(resolvedRoot),
@@ -362,7 +388,7 @@ export function validateAiPrivacyEvidence(packet) {
   }
 
   if (packet.appImpact !== APP_IMPACT) {
-    errors.push("AI/privacy evidence appImpact must remain no-user-facing-change.");
+    errors.push("AI/privacy evidence appImpact must distinguish evidence generation from gated runtime features.");
   }
   if (packet.humanReview?.status !== PENDING_STATUS) {
     errors.push("AI data-flow review must remain pending human approval.");

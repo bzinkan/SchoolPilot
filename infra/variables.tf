@@ -23,6 +23,62 @@ variable "aws_region" {
 }
 
 # --- Networking ---
+variable "mydesk_enabled_school_ids" {
+  description = "Reviewed My Desk pilot school UUIDs; empty keeps the feature disabled. Live ECS activation uses live task definitions, not Terraform bootstrap templates."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.mydesk_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_enabled_school_ids))
+    error_message = "My Desk pilot schools must be an empty string or comma-separated UUIDs."
+  }
+}
+
+variable "mydesk_seating_enabled_school_ids" {
+  description = "Reviewed private seating-chart pilot school UUIDs; base My Desk admission must also be enabled. Empty disables seating."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.mydesk_seating_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_seating_enabled_school_ids))
+    error_message = "Seating pilot schools must be an empty string or comma-separated UUIDs."
+  }
+}
+
+variable "mydesk_ai_import_enabled_school_ids" {
+  description = "Reviewed AI paperwork import school UUIDs; empty disables imports. Base My Desk admission and provider data-flow review are also required."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.mydesk_ai_import_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_ai_import_enabled_school_ids))
+    error_message = "AI import pilot schools must be an empty string or comma-separated UUIDs."
+  }
+}
+variable "mydesk_ai_import_model" {
+  description = "Reviewed Anthropic model for tool-free private paperwork extraction"
+  type        = string
+  default     = "claude-sonnet-5"
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.mydesk_ai_import_model))
+    error_message = "AI import model must be a nonempty bounded model identifier."
+  }
+}
+variable "mydesk_ai_import_teacher_daily_pages" {
+  description = "Daily page budget per author within a school for private AI paperwork imports"
+  type        = number
+  default     = 100
+  validation {
+    condition     = var.mydesk_ai_import_teacher_daily_pages >= 1 && var.mydesk_ai_import_teacher_daily_pages <= 10000 && floor(var.mydesk_ai_import_teacher_daily_pages) == var.mydesk_ai_import_teacher_daily_pages
+    error_message = "The teacher import page budget must be an integer from 1 through 10000."
+  }
+}
+variable "mydesk_ai_import_school_daily_pages" {
+  description = "Daily page budget per school for private AI paperwork imports"
+  type        = number
+  default     = 500
+  validation {
+    condition     = var.mydesk_ai_import_school_daily_pages >= 1 && var.mydesk_ai_import_school_daily_pages <= 100000 && floor(var.mydesk_ai_import_school_daily_pages) == var.mydesk_ai_import_school_daily_pages
+    error_message = "The school import page budget must be an integer from 1 through 100000."
+  }
+}
 
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"

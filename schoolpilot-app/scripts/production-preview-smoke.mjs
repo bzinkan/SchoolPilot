@@ -387,6 +387,7 @@ export function responseBodyFor(
   }
 
   const classpilotResponses = {
+    '/api/mydesk/capabilities': { enabled: false },
     '/api/classpilot/dashboard-activity': {
       enabled: false,
       schoolId: testCase.persona.schoolId,

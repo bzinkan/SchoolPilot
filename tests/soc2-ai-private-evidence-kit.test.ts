@@ -42,10 +42,13 @@ describe("SOC2-002 private AI evidence kit", () => {
     assert.equal(record.remediationItem, "SOC2-002");
     assert.equal(record.evidenceType, "ai_data_flow_review");
     assert.equal(record.status, "draft_pending_founder_input");
-    assert.equal(record.appImpact, "No user-facing behavior changed");
+    assert.match(record.appImpact, /Evidence generation does not change runtime settings/);
+    assert.match(record.appImpact, /My Desk paperwork imports add teacher-started AI processing/);
     assert.equal(record.founderCompletion.readyForApproval, false);
     assert.ok(record.requiredFields.providersReviewed);
     assert.ok(record.requiredFields.publicClaimsReviewed);
+    assert.ok(record.requiredFields.enabledFeaturesReviewed.some((feature: { featureId: string }) => feature.featureId === "mydesk_ai_paperwork_import"));
+    assert.ok(record.requiredFields.providersReviewed[0].accountRetentionAndDeletionReviewed);
     assert.ok(Array.isArray(record.checklist));
   });
 

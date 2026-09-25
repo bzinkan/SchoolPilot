@@ -135,6 +135,26 @@ export default function AITransparency() {
           </section>
 
           <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Private My Desk Paperwork Import</h2>
+            <p className="text-slate-700 leading-relaxed">
+              When a school separately enables this feature, a teacher or school administrator can
+              deliberately upload paperwork for Anthropic-assisted extraction into their own private
+              My Desk drafts. Uploaded page images may contain student names and conduct details.
+              School rosters, existing notes, and seating charts are not submitted. Student matching
+              happens inside Schoolpilot, and uncertain matches require the author's selection.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              AI can misread names, dates, handwriting, or form boundaries. The author compares drafts
+              with source images, corrects them, and explicitly approves every included entry before
+              saving. This creates private notes, not formal discipline records or parent messages.
+              Temporary source files and drafts are removed through the import cleanup process;
+              approved notes and attachments follow notebook retention. Local removal does not
+              establish deletion of provider-retained data. Provider/account terms and extraction
+              quality must be reviewed before school activation.
+            </p>
+          </section>
+
+          <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Questions</h2>
             <p className="text-slate-700 leading-relaxed">
               If you have questions about our use of AI or data practices, please contact us at{" "}

@@ -53,7 +53,7 @@ export function isClasspilotSchoolActive(
  */
 export async function resolveClasspilotEntitlement(
   schoolId: string,
-  dbInstance: typeof db = db,
+  dbInstance: Pick<typeof db, "select"> = db,
   options: ResolveClasspilotEntitlementOptions = {}
 ): Promise<ClasspilotEntitlement> {
   if (options.afterSchoolLockBeforeLicense && !options.lock) {
@@ -108,7 +108,7 @@ export async function resolveClasspilotEntitlement(
 
 export async function assertClasspilotEntitled(
   schoolId: string,
-  dbInstance: typeof db = db,
+  dbInstance: Pick<typeof db, "select"> = db,
   options: ResolveClasspilotEntitlementOptions = {}
 ): Promise<void> {
   const entitlement = await resolveClasspilotEntitlement(schoolId, dbInstance, options);

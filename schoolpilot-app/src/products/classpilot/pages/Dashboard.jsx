@@ -38,6 +38,8 @@ import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
+import { useMyDeskAccess } from '../hooks/useMyDesk';
+import { myDeskSidebarVisible } from '../lib/myDeskModel';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import {
@@ -437,6 +439,7 @@ export default function Dashboard() {
   const activeSchoolId = school?.id || currentUser?.schoolId || null;
   const classReaderKey = JSON.stringify([activeSchoolId, currentUser?.id || '']);
   const { hasPassPilot, hasGoPilot } = useLicenses();
+  const myDeskAccess = useMyDeskAccess();
   const { absentIds } = useAbsentStudents();
   const teacherClassroomSelectionKey = classroomSelectionStorageKey("teacher", currentUser?.id, school?.id);
   const adminClassroomSelectionKey = classroomSelectionStorageKey("admin", currentUser?.id, school?.id);
@@ -452,7 +455,7 @@ export default function Dashboard() {
     setSidebarOpen(next);
     try { localStorage.setItem('classpilot-sidebar-open', String(next)); } catch { /* ignore */ }
   };
-  const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
+  const showSidebar = myDeskSidebarVisible({ hasPassPilot, hasGoPilot, canUseMyDesk: myDeskAccess.enabled }) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [expandedScreenshot, setExpandedScreenshot] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
@@ -5999,6 +6002,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
               <ThemeToggle />
+              {myDeskAccess.enabled && <Button variant="outline" size="sm" className="lg:hidden" onClick={() => navigate('/classpilot/my-desk')}>My Desk</Button>}
               {isTeacher && !scheduledSupervisionId && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
                   <User className="h-[18px] w-[18px]" />
@@ -6039,7 +6043,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       ) : null}
 
       {/* Sidebar + Main Content */}
-      <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
+      <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} canUseMyDesk={myDeskAccess.enabled} />
       <main className={showSidebar ? 'lg:ml-80' : ''}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
         {scheduledClassEnabled ? (() => {
@@ -6878,6 +6882,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           flightPaths={flightPaths}
           onClose={closeStudentDetails}
           activeClassName={effectiveActivity ? groups.find(g => g.id === effectiveActivity.groupId)?.name : null}
+          activeGroupId={studentView === 'class' ? effectiveActivity?.groupId : null}
+          myDeskAccess={myDeskAccess}
           teachingSessionId={effectiveAuthority?.teachingSessionId} supervisionContextId={scheduledSupervisionId}
           canViewHistoricalUsage={isAdmin}
           canViewChatTranscript={dashboardCapabilities.canUseTeacherFab || isAdmin}

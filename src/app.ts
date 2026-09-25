@@ -8,6 +8,7 @@ import connectPgSimple from "connect-pg-simple";
 import cookieParser from "cookie-parser";
 import { sessionPool, apiPoolReadiness } from "./db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { myDeskUpstreamErrorBoundary } from "./middleware/mydeskUpstreamErrorBoundary.js";
 import { requestId } from "./middleware/requestId.js";
 import { studentSignInDiagnostics } from "./services/classpilotStudentSignInDiagnostics.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
@@ -290,6 +291,8 @@ export function createApp() {
 
   // Routes
   app.use("/api", routes);
+  // The global body parser/session middleware can fail before the private router handles the request.
+  app.use("/api/mydesk", myDeskUpstreamErrorBoundary);
 
   // JSON 404 for unknown API routes — otherwise Express emits an HTML
   // "Cannot GET" page, which CloudFront used to mask as 200 + SPA shell.

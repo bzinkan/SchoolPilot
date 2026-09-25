@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { useQueryClient } from '@tanstack/react-query';
 import api, { setApiToken } from '../shared/utils/api';
 import { saveToken, loadToken, clearToken } from '../native/storage';
+import { clearMyDeskQueries } from '../products/classpilot/lib/myDeskModel';
 
 const AuthContext = createContext(null);
 
@@ -36,6 +37,7 @@ export function AuthProvider({ children }) {
   const [licenses, setLicenses] = useState({});
   const [schoolSelectionRequired, setSchoolSelectionRequired] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [privateNotebookAuthReady, setPrivateNotebookAuthReady] = useState(false);
   const [activeSchoolId, setActiveSchoolId] = useState(
     () => localStorage.getItem('sp_activeSchoolId') || null
   );
@@ -45,13 +47,15 @@ export function AuthProvider({ children }) {
   const [secureStorageError, setSecureStorageError] = useState(null);
   const tokenRef = useRef(null);
   const authRequestIdRef = useRef(0);
+  const privateNotebookIdentityRef = useRef(null);
 
   const publishToken = useCallback((nextToken) => {
     const normalizedToken = nextToken || null;
+    if (tokenRef.current !== normalizedToken) { clearMyDeskQueries(queryClient); setPrivateNotebookAuthReady(false); }
     tokenRef.current = normalizedToken;
     setApiToken(normalizedToken);
     setToken(normalizedToken);
-  }, []);
+  }, [queryClient]);
 
   const acceptToken = useCallback(async (nextToken) => {
     try {
@@ -76,6 +80,7 @@ export function AuthProvider({ children }) {
 
   const selectActiveSchool = useCallback((schoolId) => {
     const normalizedSchoolId = schoolId || null;
+    if (activeSchoolIdRef.current !== normalizedSchoolId) { clearMyDeskQueries(queryClient); setPrivateNotebookAuthReady(false); }
     activeSchoolIdRef.current = normalizedSchoolId;
     setActiveSchoolId(normalizedSchoolId);
     if (normalizedSchoolId) {
@@ -83,7 +88,7 @@ export function AuthProvider({ children }) {
     } else {
       localStorage.removeItem('sp_activeSchoolId');
     }
-  }, []);
+  }, [queryClient]);
 
   const fetchUser = useCallback(async ({ throwOnError = false } = {}) => {
     const requestId = ++authRequestIdRef.current;
@@ -99,8 +104,9 @@ export function AuthProvider({ children }) {
         }
       }
 
+      const requestedToken = tokenRef.current;
       const res = await api.get('/auth/me');
-      if (!isLatestRequest()) return null;
+      if (!isLatestRequest() || tokenRef.current !== requestedToken) return null;
       const nextMemberships = res.data.memberships || [];
 
       // Publish the JWT synchronously before exposing authenticated UI. Child
@@ -110,6 +116,7 @@ export function AuthProvider({ children }) {
       } else if (res.data.user?.impersonating) {
         await acceptToken(null);
       }
+      if (!isLatestRequest()) return null;
 
       const selectedSchoolId = activeSchoolIdRef.current;
       const selectedSchoolIsValid =
@@ -137,6 +144,10 @@ export function AuthProvider({ children }) {
 
       // Repair the selected tenant before exposing the authenticated user.
       // Product routes mount immediately when `user` becomes available.
+      const privateNotebookIdentity = JSON.stringify([res.data.user?.id, activeSchoolIdRef.current, Boolean(res.data.user?.impersonating)]);
+      if (privateNotebookIdentityRef.current !== privateNotebookIdentity) clearMyDeskQueries(queryClient);
+      privateNotebookIdentityRef.current = privateNotebookIdentity;
+      setPrivateNotebookAuthReady(true);
       setUser(res.data.user);
       setMemberships(nextMemberships);
       setLicenses(res.data.licenses || {});
@@ -147,6 +158,9 @@ export function AuthProvider({ children }) {
       // Authentication state must be cleared even when the native secure store
       // cannot confirm token removal. The visible storage error then keeps the
       // staff sign-in surface fail-closed instead of leaving stale UI mounted.
+      clearMyDeskQueries(queryClient);
+      privateNotebookIdentityRef.current = null;
+      setPrivateNotebookAuthReady(false);
       setUser(null);
       setMemberships([]);
       setLicenses({});
@@ -170,7 +184,7 @@ export function AuthProvider({ children }) {
     } finally {
       if (isLatestRequest()) setLoading(false);
     }
-  }, [acceptToken, publishToken, selectActiveSchool]);
+  }, [acceptToken, publishToken, selectActiveSchool, queryClient]);
 
   useEffect(() => {
     fetchUser();
@@ -206,6 +220,10 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     authRequestIdRef.current += 1;
+    clearMyDeskQueries(queryClient);
+    privateNotebookIdentityRef.current = null;
+    setPrivateNotebookAuthReady(false);
+    setLoading(true);
     try {
       await api.post('/auth/logout');
     } catch {
@@ -216,15 +234,19 @@ export function AuthProvider({ children }) {
     setLicenses({});
     setSchoolSelectionRequired(false);
     selectActiveSchool(null);
-    await acceptToken(null);
+    try { await acceptToken(null); } finally { setLoading(false); }
   };
 
   const stopImpersonating = async () => {
     authRequestIdRef.current += 1;
-    await acceptToken(null);
-    const res = await api.post('/super-admin/stop-impersonate');
-    await fetchUser();
-    return res.data;
+    clearMyDeskQueries(queryClient);
+    setLoading(true);
+    try {
+      await acceptToken(null);
+      const res = await api.post('/super-admin/stop-impersonate');
+      await fetchUser();
+      return res.data;
+    } finally { setLoading(false); }
   };
 
   const switchSchool = async (schoolId) => {
@@ -249,6 +271,7 @@ export function AuthProvider({ children }) {
         memberships,
         licenses,
         loading,
+        privateNotebookAuthReady,
         login,
         logout,
         stopImpersonating,

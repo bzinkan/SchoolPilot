@@ -47,6 +47,16 @@ locals {
     { name = "CLASSPILOT_TURN_HOSTS", value = var.classpilot_turn_hosts },
     { name = "CLASSPILOT_STUN_URLS", value = join(",", [for host in split(",", var.classpilot_turn_hosts) : "stun:${host}:3478"]) },
   ] : []
+  # Cleanup retains bucket configuration even when the pilot gate is switched off.
+  mydesk_environment = var.mydesk_attachments_bucket_name != "" ? [
+    { name = "MYDESK_ATTACHMENTS_BUCKET", value = var.mydesk_attachments_bucket_name },
+    { name = "MYDESK_ENABLED_SCHOOL_IDS", value = var.mydesk_enabled_school_ids },
+    { name = "MYDESK_SEATING_ENABLED_SCHOOL_IDS", value = var.mydesk_seating_enabled_school_ids },
+    { name = "MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS", value = var.mydesk_ai_import_enabled_school_ids },
+    { name = "MYDESK_AI_IMPORT_MODEL", value = var.mydesk_ai_import_model },
+    { name = "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", value = tostring(var.mydesk_ai_import_teacher_daily_pages) },
+    { name = "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES", value = tostring(var.mydesk_ai_import_school_daily_pages) },
+  ] : []
   optional_common_secrets = concat(
     var.anthropic_api_key_parameter_arn != "" ? [
       { name = "ANTHROPIC_API_KEY", valueFrom = var.anthropic_api_key_parameter_arn },
@@ -169,6 +179,29 @@ resource "aws_iam_role" "ecs_task" {
 }
 
 # --- Task Definition ---
+resource "aws_iam_role_policy" "mydesk_attachments" {
+  count = var.mydesk_attachments_bucket_arn != "" ? 1 : 0
+  name  = "${local.name}-mydesk-attachments"
+  role  = aws_iam_role.ecs_task.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "NotebookObjects"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+        Resource = "${var.mydesk_attachments_bucket_arn}/mydesk/*"
+      },
+      {
+        Sid       = "ReconcileNotebookObjects"
+        Effect    = "Allow"
+        Action    = ["s3:ListBucket"]
+        Resource  = var.mydesk_attachments_bucket_arn
+        Condition = { StringLike = { "s3:prefix" = ["mydesk/", "mydesk/*"] } }
+      },
+    ]
+  })
+}
 
 resource "aws_ecs_task_definition" "api" {
   family                   = "${local.name}-api"
@@ -192,7 +225,7 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    environment = concat(local.common_environment, local.classpilot_turn_environment, [
+    environment = concat(local.common_environment, local.classpilot_turn_environment, local.mydesk_environment, [
       { name = "PORT", value = tostring(var.container_port) },
       { name = "SCHEDULER_ENABLED", value = "false" },
     ])
@@ -281,7 +314,7 @@ resource "aws_ecs_task_definition" "worker" {
     image   = "${var.ecr_repository_url}:latest"
     command = ["node", "dist/worker.js"]
 
-    environment = concat(local.common_environment, local.classpilot_turn_environment, [
+    environment = concat(local.common_environment, local.classpilot_turn_environment, local.mydesk_environment, [
       { name = "SCHEDULER_ENABLED", value = "true" },
     ])
 

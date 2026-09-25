@@ -23,3 +23,6 @@ export * from "./classpilotMonitoringInterruptions.js";
 export * from "./classpilotSupervisionReports.js";
 
 export * from "./classpilotTools.js";
+export * from "./mydesk.js";
+export * from "./mydeskSeating.js";
+export * from "./mydeskImports.js";

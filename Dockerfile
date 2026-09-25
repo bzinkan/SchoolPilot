@@ -30,6 +30,10 @@ WORKDIR /app
 # until the upstream tag is rebuilt. Trivy fails the build loudly otherwise.
 RUN apk upgrade --no-cache
 
+# Private paperwork imports validate and render PDFs without a shell; prlimit
+# bounds Poppler memory/CPU/output. Provider keys are stripped from subprocess environments.
+RUN apk add --no-cache poppler-utils util-linux-misc font-liberation
+
 # Bundle the AWS RDS global root CA chain for TLS verify-full (SOC 2 / SC-7).
 # Refreshed automatically on each image build. See:
 # https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html

@@ -110,6 +110,32 @@ npm run db:studio        # Open Drizzle Studio GUI
 
 ## Architecture Details
 
+### My Desk private notebook
+
+My Desk is an explicit-school ClassPilot web pilot. Notes/photos are author-only;
+school administrators have their own notebooks and cannot read another author's.
+Never publish notebook content to timelines, evidence packets, or logs. The only
+AI exception is an author's explicitly started, separately enabled paperwork
+import: selected source pages may be processed, never existing notes or rosters.
+See `docs/MYDESK_AI_IMPORT.md` for the provider, review, retention, and deployment
+boundary. Its exact reviewed admission is
+`--enable-rls-table mydesk_import_assets,mydesk_import_items,mydesk_imports` after
+verified M1 admission. The base and import gates are required; seating is separate.
+The
+two-table lifecycle, immutable filing snapshots, server-normalized photos,
+authenticated content delivery, durable cleanup, infrastructure plan boundaries,
+and rollout/rollback contract are in `docs/MYDESK_PRIVATE_NOTEBOOK.md`.
+Use the exact one-shot bundle `--enable-rls-table mydesk_attachments,mydesk_notes`
+only for reviewed admission. Keep the current production Terraform RLS baseline
+unchanged until live verification, then adopt its observed allowlist separately.
+Disabling the pilot must leave bucket configuration and worker cleanup running.
+Do not use `db:push` to replace the ledger's column-specific composite-FK
+`ON DELETE SET NULL (group_id)` / `(student_id)` actions.
+Private seating charts add a separate, default-off school gate and the one-table
+admission `--enable-rls-table mydesk_seating_charts` only after M1 admission is live
+and verified. Both My Desk and seating gates are required. Follow
+`docs/MYDESK_PRIVATE_SEATING.md` for its migration, retention, and rollout contract.
+
 ### Authentication (Dual System)
 The `authenticate` middleware (`src/middleware/authenticate.ts`) checks two auth methods:
 1. **Session cookies** — `express-session` backed by PostgreSQL. Used by web app (ClassPilot, PassPilot).
@@ -364,7 +390,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_TURN_REST_SECRET`, and optional `CLASSPILOT_STUN_URLS` provide the dark `liveViewIceServersV1` runtime. Client outcome telemetry is accepted only for a still-active exact-bound negotiation and emits identifier-free metrics; deployment and alarm details live in `docs/CLASSPILOT_TURN_OPERATIONS.md`.
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
 - `GEMINI_API_KEY` — Gemini Flash-Lite API for ClassPilot URL/title classification
-- `ANTHROPIC_API_KEY` — Anthropic Claude API for MailPilot email classification + optional chat assistant
+- `ANTHROPIC_API_KEY` — Anthropic Claude API for MailPilot email classification, optional chat assistant, and separately enabled teacher-started My Desk paperwork imports
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
@@ -577,7 +603,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 `src/services/sentry.ts`. **No-op unless `SENTRY_DSN` is set.** Sentry is a third-party subprocessor — do NOT set the DSN in production until (1) Sentry's DPA is signed and (2) Sentry is on the public subprocessors list. Even when enabled, `beforeSend` scrubs PII (emails, JWT/API tokens) and drops request bodies/cookies/headers/user identifiers so student data does not leave the system. The durable `error_logs` table captures everything regardless of whether Sentry is on.
 
 ### AI Content Classification (ClassPilot)
-Gemini Flash-Lite classifies novel student browsing URLs/titles on each heartbeat. Uses `GEMINI_API_KEY`; Anthropic remains limited to MailPilot email review and the optional staff assistant.
+Gemini Flash-Lite classifies novel student browsing URLs/titles on each heartbeat. Uses `GEMINI_API_KEY`; Anthropic handles MailPilot email review, the optional staff assistant, and separately enabled teacher-started My Desk paperwork imports under `docs/MYDESK_AI_IMPORT.md`.
 
 - **Service**: `src/services/aiClassification.ts` — `classifyUrl()` with 30-min domain caching for reviewed rules and separately hashed exact URL/title caching and in-flight deduplication for model results. Preserve queries, fragments, title, school-domain context, model and ruleset version; never reuse a model safety decision across a hostname.
 - **Categories**: `educational`, `non-educational`, `unknown`

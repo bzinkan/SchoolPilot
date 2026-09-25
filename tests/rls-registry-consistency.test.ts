@@ -29,6 +29,9 @@ type Registry = {
     classpilotSupervisionActivityReportsPostExpand: RegistryInventory;
     classpilotClassToolsPostExpand: RegistryInventory;
     passpilotKioskSchedulePostExpand: RegistryInventory;
+    mydeskPostExpand: RegistryInventory;
+    mydeskSeatingPostExpand: RegistryInventory;
+    mydeskImportsPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -143,7 +146,19 @@ describe("semantic RLS registry", () => {
     assert.equal(new Set(production).size, 90);
     // Preserve observed runtime CSV order; the registry target has its own immutable order.
     assert.deepEqual(new Set(production), new Set(expected));
-    assert.deepEqual(ciAllowlist(), registry.inventories.passpilotKioskSchedulePostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.mydeskImportsPostExpand.tables);
+    assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
+      ...registry.inventories.mydeskSeatingPostExpand.tables,
+      ...registry.reviewedEnablementRequests.mydeskImports!,
+    ]);
+    assert.deepEqual(registry.inventories.mydeskSeatingPostExpand.tables, [
+      ...registry.inventories.mydeskPostExpand.tables,
+      ...registry.reviewedEnablementRequests.mydeskSeating!,
+    ]);
+    assert.deepEqual(registry.inventories.mydeskPostExpand.tables, [
+      ...registry.inventories.passpilotKioskSchedulePostExpand.tables,
+      ...registry.reviewedEnablementRequests.mydesk!,
+    ]);
     assert.deepEqual(registry.inventories.classpilotSupervisionWorkspacePostExpand.tables, [...expected, "classpilot_coverage_group_categories"]);
     assert.deepEqual(registry.inventories.classpilotSupervisionActivityReportsPostExpand.tables, [
       ...registry.inventories.classpilotSupervisionWorkspacePostExpand.tables,

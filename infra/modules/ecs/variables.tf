@@ -101,3 +101,39 @@ variable "classpilot_turn_secret_access_arn" {
   type        = string
   default     = ""
 }
+
+variable "mydesk_attachments_bucket_name" {
+  type    = string
+  default = ""
+}
+variable "mydesk_attachments_bucket_arn" {
+  type    = string
+  default = ""
+}
+variable "mydesk_enabled_school_ids" {
+  description = "Comma-separated approved pilot school UUIDs; empty disables the feature but leaves cleanup bucket configuration intact"
+  type        = string
+  default     = ""
+}
+variable "mydesk_seating_enabled_school_ids" {
+  description = "Comma-separated reviewed seating-chart pilot school UUIDs; base My Desk admission is also required"
+  type        = string
+  default     = ""
+}
+variable "mydesk_ai_import_enabled_school_ids" {
+  description = "Reviewed teacher-started AI paperwork import school UUIDs; base My Desk admission is also required"
+  type        = string
+  default     = ""
+}
+variable "mydesk_ai_import_model" {
+  type    = string
+  default = "claude-sonnet-5"
+}
+variable "mydesk_ai_import_teacher_daily_pages" {
+  type    = number
+  default = 100
+}
+variable "mydesk_ai_import_school_daily_pages" {
+  type    = number
+  default = 500
+}
