@@ -68,6 +68,12 @@ export const importCreate = z
     expectedSourceCount: z.number().int().min(1).max(IMPORT_MAX_SOURCES),
   })
   .strict();
+export const importFromAttachment = z.object({
+  clientRequestId: uuid,
+  noteId: myDeskId,
+  attachmentId: myDeskId,
+  selectedGroupIds: groups,
+}).strict();
 export const importUpdate = importMutation
   .extend({
     selectedGroupIds: groups.optional(),

@@ -18,6 +18,7 @@ import {
   withActor,
   currentClasses,
   loadMyDeskClassRoster,
+  loadMyDeskPreferences,
   myDeskError,
   type MyDeskActor,
   type MyDeskDatabase,
@@ -34,6 +35,7 @@ import {
 } from "./mydeskImportProcessing.js";
 import {
   importCreate,
+  importFromAttachment,
   importUpdate,
   importMutation,
   importItemCreate,
@@ -267,6 +269,7 @@ export async function createMyDeskImport(
         clientRequestId: input.clientRequestId,
         requestFingerprint: hash,
         selectedGroupIds: input.selectedGroupIds,
+        preferencesSnapshot: await loadMyDeskPreferences(current, database),
         expectedSourceCount: input.expectedSourceCount,
         expiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
         uploadExpiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
@@ -276,6 +279,104 @@ export async function createMyDeskImport(
     return { import: await importDto(database, actor, run!), created: true };
   });
 }
+/** Always lock the import before its private source note, then the source attachment. */
+async function savedImportSource(database: MyDeskDatabase, actor: MyDeskActor, noteId: string, attachmentId: string) {
+  const [note] = await database.select().from(mydeskNotes).where(and(
+    eq(mydeskNotes.schoolId, actor.schoolId), eq(mydeskNotes.authorId, actor.authorId),
+    eq(mydeskNotes.id, noteId), eq(mydeskNotes.status, "active"),
+  )).for("update");
+  if (!note) throw importError("SOURCE_NOT_FOUND", "Saved attachment is no longer available", 404);
+  const [attachment] = await database.select().from(mydeskAttachments).where(and(
+    eq(mydeskAttachments.schoolId, actor.schoolId), eq(mydeskAttachments.authorId, actor.authorId),
+    eq(mydeskAttachments.noteId, noteId), eq(mydeskAttachments.id, attachmentId),
+    eq(mydeskAttachments.status, "ready"), sql`${mydeskAttachments.committedAt} IS NOT NULL`,
+  )).for("update");
+  if (!attachment?.sha256 || !attachment.contentType || !attachment.byteSize)
+    throw importError("SOURCE_NOT_FOUND", "Saved attachment is no longer available", 404);
+  return attachment;
+}
+
+/** Reserve an independent copy before any storage I/O. A completed copy survives source deletion. */
+export async function createMyDeskImportFromAttachment(
+  actor: MyDeskActor, input: z.infer<typeof importFromAttachment>,
+  options: { store?: MyDeskObjectStore; prepare?: typeof prepareImportSource } = {},
+) {
+  const reserved = await withImportActor(actor, async (database, current) => {
+    const fingerprint = importHash({ operation: "from-attachment", ...input });
+    await database.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mydesk-import:${actor.schoolId}:${actor.authorId}:${input.clientRequestId}`},0))`);
+    const [existing] = await database.select().from(runs).where(and(importOwn(actor), eq(runs.clientRequestId, input.clientRequestId))).for("update");
+    if (existing && existing.requestFingerprint !== fingerprint)
+      throw importError("REQUEST_CONFLICT", "This request identifier was already used for different content");
+    let run = existing;
+    if (run) {
+      const [copy] = await database.select().from(assets).where(and(importAssetOwn(actor, run.id), eq(assets.kind, "source"))).for("update");
+      if (importTerminal(run.status) || run.status !== "uploading" || copy?.status === "ready")
+        return { receipt: await importDto(database, actor, run), created: false };
+      assertImportOpen(run, ["uploading"]);
+      if (copy?.leaseUntil && copy.leaseUntil.getTime() > Date.now())
+        throw importError("UPLOAD_BUSY", "This attachment is still being copied. Retry shortly");
+    } else {
+      [run] = await database.insert(runs).values({
+        schoolId: actor.schoolId, authorId: actor.authorId, clientRequestId: input.clientRequestId,
+        requestFingerprint: fingerprint, selectedGroupIds: input.selectedGroupIds,
+        preferencesSnapshot: await loadMyDeskPreferences(current, database),
+        sourceNoteId: input.noteId, sourceAttachmentId: input.attachmentId,
+        expectedSourceCount: 1, expiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
+        uploadExpiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
+      }).returning();
+    }
+    let source;
+    try { source = await savedImportSource(database, current, input.noteId, input.attachmentId); }
+    catch (error) {
+      if (!existing || (error as {code?: string}).code !== "MYDESK_IMPORT_SOURCE_NOT_FOUND") throw error;
+      await scrubMyDeskImport(database, current, run!.id);
+      const [closed] = await database.update(runs).set({status: "cancelled", selectedGroupIds: [], pageDecisions: [],
+        revision: run!.revision + 1, deletedAt: new Date(), updatedAt: new Date(), lastErrorCode: "SOURCE_COPY_FAILED"})
+        .where(importOwn(actor, run!.id)).returning();
+      return {receipt: await importDto(database, current, closed!), created: false};
+    }
+    if (!existing) await assertGroups(database, current, input.selectedGroupIds);
+    const assetId = importUuid(`saved-attachment:${run!.id}`);
+    const reservation = { clientRequestId: assetId, filename: source.originalFilename,
+      contentType: source.contentType!, size: source.byteSize!, sha256: source.sha256! };
+    const [old] = await database.select().from(assets).where(importAssetOwn(actor, run!.id, assetId));
+    if (old && old.requestFingerprint !== importHash(reservation))
+      throw importError("SOURCE_CHANGED", "The saved attachment changed. Start a new import");
+    if (!old) await database.insert(assets).values({
+      id: assetId, schoolId: actor.schoolId, authorId: actor.authorId, importId: run!.id,
+      kind: "source", clientRequestId: assetId, requestFingerprint: importHash(reservation),
+      storageKey: `mydesk/${actor.schoolId}/${actor.authorId}/imports/${run!.id}/${assetId}`,
+      originalFilename: reservation.filename, contentType: reservation.contentType,
+      inputSha256: reservation.sha256, byteSize: reservation.size,
+    });
+    if (!existing) await importAudit(database, current, run!.id, "copy_reserved", { sources: 1 });
+    return { id: run!.id, assetId, source, created: !existing };
+  });
+  if ("receipt" in reserved) return { import: reserved.receipt!, created: reserved.created };
+  try {
+    const bytes = await (options.store ?? myDeskObjectStore).get(reserved.source.storageKey);
+    await uploadMyDeskImportAsset(actor, reserved.id, reserved.assetId, bytes, reserved.source.contentType!, options);
+    return { import: await getMyDeskImport(actor, reserved.id), created: reserved.created };
+  } catch (error) {
+    // Invalid sources cannot become ready. The import remains addressable by its stable request ID,
+    // while terminal cleanup is independent of the author's subsequent membership or feature mode.
+    const status = Number((error as { status?: number }).status);
+    const code = String((error as { code?: string }).code ?? "");
+    if ((status >= 400 && status < 500 && status !== 429 && !["MYDESK_IMPORT_UPLOAD_BUSY", "MYDESK_IMPORT_UPLOAD_EXPIRED"].includes(code))) {
+      const { runWithTenantContext } = await import("../middleware/tenantContext.js");
+      const { default: db } = await import("../db.js");
+      await runWithTenantContext({ schoolId: actor.schoolId }, () => db.transaction(async database => {
+        const run = await lockImport(database, actor, reserved.id);
+        if (run.status !== "uploading") return;
+        await scrubMyDeskImport(database, actor, run.id);
+        await database.update(runs).set({ status: "cancelled", selectedGroupIds: [], pageDecisions: [],
+          revision: run.revision + 1, deletedAt: new Date(), updatedAt: new Date(), lastErrorCode: "SOURCE_COPY_FAILED" }).where(importOwn(actor, run.id));
+      })).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 export async function getMyDeskImport(actor: MyDeskActor, id: string) {
   return withImportActor(actor, async (database) =>
     importDto(database, actor, await lockImport(database, actor, id)),
@@ -641,6 +742,11 @@ export async function uploadMyDeskImportAsset(
         .for("update");
       if (!live || live.status !== "uploading" || live.leaseId !== leaseId)
         throw importError("UPLOAD_CANCELLED", "This upload was cancelled");
+      if (run.sourceNoteId && run.sourceAttachmentId) {
+        const source = await savedImportSource(database, actor, run.sourceNoteId, run.sourceAttachmentId);
+        if (source.sha256 !== live.inputSha256)
+          throw importError("SOURCE_CHANGED", "The saved attachment changed. Start a new import");
+      }
       const other = await database
         .select({ pages: assets.pageCount })
         .from(assets)
@@ -1370,6 +1476,8 @@ export async function scrubMyDeskImport(
   actor: MyDeskActor,
   id: string,
 ) {
+  await database.update(runs).set({ preferencesSnapshot: { revision: 0, preferredClasses: {} },
+    sourceNoteId: null, sourceAttachmentId: null }).where(importOwn(actor, id));
   await database
     .update(items)
     .set({

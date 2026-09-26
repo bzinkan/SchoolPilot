@@ -137,10 +137,11 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Private My Desk Paperwork Import</h2>
             <p className="text-slate-700 leading-relaxed">
-              When a school separately enables this feature, a teacher or school administrator can
-              deliberately upload paperwork for Anthropic-assisted extraction into their own private
-              My Desk drafts. Uploaded page images may contain student names and conduct details.
-              School rosters, existing notes, and seating charts are not submitted. Student matching
+              When this separately controlled feature is available, a teacher or school administrator can
+              deliberately upload paperwork or select a saved photo/PDF attachment for Anthropic-assisted
+              extraction into their own private My Desk drafts. Selected page images may contain student
+              names and conduct details. Note text, unselected files, school rosters and seating charts
+              are not submitted, and existing notes are never scanned automatically. Student matching
               happens inside Schoolpilot, and uncertain matches require the author's selection.
             </p>
             <p className="text-slate-700 leading-relaxed mt-4">
@@ -150,7 +151,9 @@ export default function AITransparency() {
               Temporary source files and drafts are removed through the import cleanup process;
               approved notes and attachments follow notebook retention. Local removal does not
               establish deletion of provider-retained data. Provider/account terms and extraction
-              quality must be reviewed before school activation.
+              quality must be reviewed before activation. A teacher may separately choose to submit a
+              saved private note and selected evidence to school discipline records; AI processing and
+              private note approval never perform that submission.
             </p>
           </section>
 

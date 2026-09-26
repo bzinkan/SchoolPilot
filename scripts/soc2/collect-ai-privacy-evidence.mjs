@@ -116,7 +116,7 @@ function buildAiFeatureInventory(rootDir) {
       provider: importProcessing.includes("@anthropic-ai/sdk") ? "Anthropic Claude" : "review_required",
       modelSource: "src/services/mydeskImportProcessing.ts",
       controls: ["teacher_started_source_upload", "private_author_school_scope", "server_side_roster_matching", "reviewed_atomic_batch_approval", "durable_temporary_source_cleanup", "provider_retention_and_quality_review_required"],
-      modelBoundDataSummary: "Explicitly uploaded paperwork page images, which may contain names and conduct details; no school roster, existing notebook entries, or seating charts. No live enablement or extraction-accuracy claim from source evidence.",
+      modelBoundDataSummary: "Explicitly uploaded paperwork images or an author-selected saved photo/PDF attachment, which may contain names and conduct details; no note text, unselected files, school roster or seating charts, and no automatic notebook scanning. No live enablement or extraction-accuracy claim from source evidence.",
     },
     {
       featureId: "ai_chat_assistant",
@@ -164,7 +164,7 @@ function buildDataFlows() {
       flowId: "mydesk_ai_paperwork_import", provider: "Anthropic",
       inputCategories: ["teacher_uploaded_page_images", "fixed_extraction_instructions"],
       outputCategories: ["untrusted_source_regions", "untrusted_extracted_names", "private_note_drafts"],
-      minimizationControls: ["separate default-off school gate", "explicit author upload", "no roster or existing notebook submission", "no tools or provider Files API", "bounded pages and output", "human review before atomic save", "temporary source cleanup does not prove provider erasure"],
+      minimizationControls: ["separate default-off operational mode", "explicit author upload or saved-attachment selection", "no roster or note text submission; no automatic notebook scanning", "no tools or provider Files API", "bounded pages and output", "human review before atomic save", "temporary source cleanup does not prove provider erasure"],
       privateReviewRequired: true,
     },
     {

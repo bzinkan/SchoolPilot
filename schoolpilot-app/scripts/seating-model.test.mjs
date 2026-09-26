@@ -2,9 +2,48 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { addDesk, assignStudent, createLayout, emptyLayoutCopy, moveDesk, reconcileRoster, removeDesk, rosterChanges, shuffleSeats, toggleSeatLock, unassignedStudents, unassignStudent, validateLayout } from '../src/products/classpilot/lib/seatingModel.js';
+import { measuredRoom, convertLegacyRoom, measurementToMm, formatMeasurement, arrangeMeasured, addRoomFeature, splitRoomWall, removeRoomCorner, changeRoomItem } from '../src/products/classpilot/lib/seatingMeasuredModel.js';
 
 const roster = [{ id: 'a', name: 'Alex' }, { id: 'b', name: 'Bea' }, { id: 'c', name: 'Cam' }];
 const room = count => createLayout('rows', count, randomUUID);
+
+test('measured conversion preserves touching group edges, IDs, students and locks across imperial dimensions', () => {
+  const legacy = createLayout('groups', 100); legacy.seats[0].studentId = 'a'; legacy.seats[0].locked = true;
+  for (const width of ['17\' 3.5"', '30\' 0"', '49.83', '63\' 11.75"']) {
+    const converted = convertLegacyRoom(legacy, measurementToMm(width, 'imperial'));
+    assert.equal(validateLayout(converted), null);
+    assert.deepEqual(converted.seats.map(s => [s.id, s.studentId, s.locked]), legacy.seats.map(s => [s.id, s.studentId, s.locked]));
+    assert.equal(converted.seats[0].x + converted.seats[0].width, converted.seats[1].x);
+  }
+  assert.equal(measurementToMm('3.048', 'metric'), 3048);
+  for (const n of [0, 1, 127, 305, 1777, 50000]) assert.equal(measurementToMm(formatMeasurement(n, 'imperial'), 'imperial'), n);
+  assert.throws(() => measurementToMm('not a length', 'metric'));
+});
+
+test('measured shuffle, assignment, roster reconciliation and layout copy preserve every fixture', () => {
+  let layout = arrangeMeasured(addRoomFeature(measuredRoom(10000, 8000), 'teacherDesk'), 'rows', 3);
+  layout = toggleSeatLock(assignStudent(layout, layout.seats[0].id, 'a'), layout.seats[0].id);
+  for (const next of [shuffleSeats(layout, roster), reconcileRoster(layout, roster, roster.slice(1)).layout, emptyLayoutCopy(layout), removeDesk(layout, layout.seats[2].id), addDesk(layout)]) {
+    assert.deepEqual(next.room, layout.room); assert.deepEqual(next.features, layout.features); assert.equal(next.version, 2); assert.equal(validateLayout(next), null);
+  }
+  assert.throws(() => arrangeMeasured(layout, 'groups', 3), /Unlock/);
+});
+
+test('obstacle-aware arrangement fits complete groups or leaves the original room unchanged', () => {
+  const layout = addRoomFeature(measuredRoom(5000, 4000), 'cabinet'), before = structuredClone(layout);
+  for (const preset of ['rows', 'pairs', 'groups']) { const next = arrangeMeasured(layout, preset, 12); assert.equal(next.seats.length, 12); assert.deepEqual(next.features, layout.features); assert.equal(validateLayout(next), null); }
+  assert.throws(() => arrangeMeasured(layout, 'groups', 100), /cannot fit all/);
+  assert.deepEqual(layout, before);
+});
+
+test('splitting/removing corners preserves valid wall anchors and blocks opening loss', () => {
+  const layout = addRoomFeature(measuredRoom(10000, 8000), 'door');
+  const split = splitRoomWall(layout, layout.room.frontWallId);
+  assert.equal(split.room.vertices.length, 5); assert.equal(validateLayout(split), null);
+  assert.throws(() => removeRoomCorner(split, split.room.vertices[1].id), /openings/);
+  const angled = changeRoomItem(split, 'vertices', split.room.vertices[1].id, { x: 5000, y: 500 });
+  assert.equal(validateLayout(angled), null); assert.equal(angled.features[0].wallId, layout.features[0].wallId);
+});
 test('all presets fit rosters from zero to 100 without collisions', () => {
   for (const preset of ['rows', 'pairs', 'groups']) for (let count = 0; count <= 100; count++) {
     const layout = createLayout(preset, count, randomUUID);

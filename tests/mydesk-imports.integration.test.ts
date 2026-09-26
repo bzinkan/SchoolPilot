@@ -10,6 +10,7 @@ import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "../src/db/mydeskSeatingMigration.js";
 import { MYDESK_IMPORTS_SQL } from "../src/db/mydeskImportsMigration.js";
+import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "../src/schema/index.js";
 import sharp from "sharp";
@@ -118,6 +119,7 @@ before(async () => {
   await fixturePool.query(MYDESK_SQL);
   await fixturePool.query(MYDESK_SEATING_SQL);
   await fixturePool.query(MYDESK_IMPORTS_SQL);
+  await fixturePool.query(MYDESK_WORKSPACE_SQL);
   photo = await sharp({
     create: { width: 800, height: 1000, channels: 3, background: "white" },
   })
@@ -141,7 +143,7 @@ before(async () => {
       /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/,
     );
     await fixturePool.query(
-      `GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets TO "${process.env.RLS_TEST_ROLE}"`,
+      `GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_preferences TO "${process.env.RLS_TEST_ROLE}"`,
     );
     const role = await pool.query<{
       current_user: string;
@@ -226,6 +228,7 @@ after(async () => {
       "mydesk_import_items",
       "mydesk_import_assets",
       "mydesk_imports",
+      "mydesk_preferences",
       "mydesk_seating_charts",
       "mydesk_attachments",
       "mydesk_notes",
@@ -515,6 +518,127 @@ async function accountPages(f: Fixture, run: ImportRun) {
   assert.equal(r.status, 200, r.text);
   return runEnvelope.parse(r.data).import;
 }
+
+async function savedSource(f: Fixture, bytes = photo, contentType = "image/jpeg") {
+  const id = randomUUID(), attachmentId = randomUUID(), storageKey = `mydesk/${f.schoolId}/${f.teacherId}/${id}/${attachmentId}`;
+  const sha256 = myDeskSha256(bytes);
+  await fixtureDb.insert(schema.mydeskNotes).values({ id, schoolId: f.schoolId, authorId: f.teacherId,
+    clientRequestId: randomUUID(), requestFingerprint: sha256, status: "active", targetKind: "general", entryDate: "2026-09-26" });
+  await fixtureDb.insert(schema.mydeskAttachments).values({ id: attachmentId, schoolId: f.schoolId, authorId: f.teacherId,
+    noteId: id, clientRequestId: randomUUID(), requestFingerprint: sha256, storageKey, originalFilename: "private-packet",
+    status: "ready", committedAt: new Date(), contentType, byteSize: bytes.length, inputSha256: sha256, sha256 });
+  objects.set(storageKey, bytes);
+  return { noteId: id, attachmentId, storageKey };
+}
+
+test("saved-attachment extraction owns an independent retry-safe copy and never grants another author access", async () => {
+  const f = await fixture(), source = await savedSource(f);
+  const input = { clientRequestId: randomUUID(), noteId: source.noteId, attachmentId: source.attachmentId, selectedGroupIds: [f.groupId] };
+  for (const identity of [f.colleagueId, f.adminId, f.superId]) {
+    const denied = await request(f, "/imports/from-attachment", "POST", input, identity);
+    assert.equal(denied.status, 404, denied.text);
+  }
+  const copied = await request(f, "/imports/from-attachment", "POST", input);
+  assert.equal(copied.status, 201, copied.text);
+  const run = runEnvelope.parse(copied.data).import;
+  assert.equal(run.assets.length, 1); assert.equal(run.assets[0]!.status, "ready");
+  const keys = await fixturePool.query<{storage_key: string}>("SELECT storage_key FROM mydesk_import_assets WHERE import_id=$1", [run.id]);
+  const copyKey = keys.rows[0]!.storage_key;
+  assert.notEqual(copyKey, source.storageKey); assert.ok(objects.has(copyKey)); assert.ok(objects.has(source.storageKey));
+  await fixturePool.query("UPDATE mydesk_notes SET status='deleted' WHERE id=$1", [source.noteId]);
+  await fixturePool.query("UPDATE mydesk_attachments SET status='delete_pending' WHERE id=$1", [source.attachmentId]);
+  objects.delete(source.storageKey);
+  const replay = await request(f, "/imports/from-attachment", "POST", input);
+  assert.equal(replay.status, 200, replay.text); assert.equal(runEnvelope.parse(replay.data).import.id, run.id);
+  assert.equal((await request(f, `/imports/${run.id}/assets/${run.assets[0]!.id}/content`)).status, 200);
+  const cancel = await request(f, `/imports/${run.id}`, "DELETE", { requestId: randomUUID(), revision: run.revision });
+  assert.equal(cancel.status, 200, cancel.text);
+  await cleanupMyDeskImports({ database: fixtureDb, limit: 200 });
+  assert.ok(!objects.has(copyKey));
+  const tombstone = await fixturePool.query("SELECT source_note_id,source_attachment_id,preferences_snapshot FROM mydesk_imports WHERE id=$1", [run.id]);
+  assert.deepEqual(tombstone.rows[0], { source_note_id: null, source_attachment_id: null, preferences_snapshot: { revision: 0, preferredClasses: {} } });
+  assert.equal((await request(f, "/imports/from-attachment", "POST", input)).status, 200, "terminal request remains replayable");
+});
+
+test("saved-source deletion during copy cannot promote bytes and leaves durable terminal cleanup", async () => {
+  const f = await fixture(), source = await savedSource(f);
+  const input = { clientRequestId: randomUUID(), noteId: source.noteId, attachmentId: source.attachmentId, selectedGroupIds: [f.groupId] };
+  const put = mock.method(myDeskObjectStore, "put", async (key: string, bytes: Buffer) => {
+    objects.set(key, bytes);
+    await fixturePool.query("UPDATE mydesk_notes SET status='deleted' WHERE id=$1", [source.noteId]);
+  });
+  try {
+    const result = await request(f, "/imports/from-attachment", "POST", input);
+    assert.equal(result.status, 404, result.text);
+    const receipt = await request(f, "/imports/from-attachment", "POST", input);
+    assert.equal(receipt.status, 200, receipt.text);
+    const run = runEnvelope.parse(receipt.data).import;
+    assert.equal(run.status, "cancelled"); assert.equal(run.assets.length, 0);
+    const pending = await fixturePool.query<{storage_key:string,status:string}>("SELECT storage_key,status FROM mydesk_import_assets WHERE import_id=$1", [run.id]);
+    assert.equal(pending.rows[0]!.status, "delete_pending");
+    await cleanupMyDeskImports({ database: fixtureDb, now: new Date(Date.now() + 7 * 60_000), limit: 200 });
+    assert.ok(!objects.has(pending.rows[0]!.storage_key));
+    assert.ok(objects.has(source.storageKey), "import cleanup must never delete source evidence");
+  } finally { put.mock.restore(); }
+});
+
+test("invalid saved sources close recoverably and do not require recopying to cancel", async () => {
+  const f = await fixture(), source = await savedSource(f, Buffer.from("unreadable packet"), "application/pdf");
+  const input = { clientRequestId: randomUUID(), noteId: source.noteId, attachmentId: source.attachmentId, selectedGroupIds: [f.groupId] };
+  const bad = await request(f, "/imports/from-attachment", "POST", input);
+  assert.equal(bad.status, 422, bad.text);
+  const replay = await request(f, "/imports/from-attachment", "POST", input);
+  assert.equal(replay.status, 200, replay.text); assert.equal(runEnvelope.parse(replay.data).import.status, "cancelled");
+  assert.ok(objects.has(source.storageKey));
+});
+
+test("an interrupted source read can resume or cancel after the original is removed", async () => {
+  const f = await fixture(), source = await savedSource(f);
+  const input = {clientRequestId:randomUUID(),noteId:source.noteId,attachmentId:source.attachmentId,selectedGroupIds:[f.groupId]};
+  const get = mock.method(myDeskObjectStore,"get",async () => {throw new Error("storage temporarily unavailable");});
+  try { assert.equal((await request(f,"/imports/from-attachment","POST",input)).status,503); }
+  finally {get.mock.restore();}
+  await fixturePool.query("UPDATE mydesk_notes SET status='deleted' WHERE id=$1",[source.noteId]);
+  const replay=await request(f,"/imports/from-attachment","POST",input);
+  assert.equal(replay.status,200,replay.text); assert.equal(runEnvelope.parse(replay.data).import.status,"cancelled");
+  assert.ok(objects.has(source.storageKey));
+});
+
+test("unexpired legacy imports keep their original prompt version while resuming worker stages", async () => {
+  const f=await fixture(); let run=await createRun(f);
+  ({run}=await uploadSource(f,run)); await start(f,run);
+  await fixturePool.query("UPDATE mydesk_imports SET prompt_version='mydesk-forms-20260925-v1' WHERE id=$1",[run.id]);
+  await work(); run=await getRun(f,run.id); assert.equal(run.status,"review");
+  const item=run.items[0]!;
+  run=await changeItem(f,run,item.id,{regions:[{...item.regions[0]!,rotation:180}]});
+  await work(processor({extractImportForm:async()=>{throw new Error("geometry edits must not reread teacher fields");}}));
+  run=await getRun(f,run.id); assert.equal(run.status,"review"); assert.equal(run.items[0]!.regions[0]!.rotation,180);
+  const stored=await fixturePool.query("SELECT prompt_version FROM mydesk_imports WHERE id=$1",[run.id]);
+  assert.equal(stored.rows[0].prompt_version,"mydesk-forms-20260925-v1");
+});
+
+test("matching deduplicates stable students and uses the frozen grade filing preference only among selected classes", async () => {
+  const f = await fixture(), second = randomUUID();
+  await fixturePool.query("UPDATE groups SET grade_level='6' WHERE id=$1", [f.groupId]);
+  await fixtureTransaction(async (client) => {
+    await client.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status,grade_level) VALUES($1,$2,$3,'Math','teacher_created','active','6')", [second, f.schoolId, f.teacherId]);
+    await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [second, f.teacherId]);
+    await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [second, f.studentId]);
+  });
+  assert.equal((await request(f, "/preferences", "PATCH", {revision: 0, preferredClasses: {"6":f.groupId}})).status, 200);
+  let run = await createRun(f, [f.groupId, second]);
+  assert.equal((await request(f, "/preferences", "PATCH", {revision: 1, preferredClasses: {"6":second}})).status, 200);
+  ({run} = await uploadSource(f, run)); await start(f, run);
+  await work(processor({detectImportForms: async () => [{x:0,y:0,width:1,height:1,rotation:180}]}));
+  run = await getRun(f, run.id);
+  assert.equal(run.items[0]!.studentId, f.studentId); assert.equal(run.items[0]!.groupId, f.groupId);
+  assert.equal(run.items[0]!.regions[0]!.rotation, 180); assert.equal(run.items[0]!.reviewed, false);
+  const duplicate = randomUUID();
+  await fixturePool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'First','Student','active')", [duplicate,f.schoolId]);
+  await fixturePool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [second,duplicate]);
+  const ambiguous = await readyRun(f, processor(), [f.groupId, second]);
+  assert.equal(ambiguous.items[0]!.studentId, null); assert.equal(ambiguous.items[0]!.groupId, null);
+});
 
 test("imports enforce HTTP owner, tenant, verified membership, impersonation and feature boundaries", async () => {
   const f = await fixture(),

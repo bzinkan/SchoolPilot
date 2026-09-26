@@ -1,5 +1,7 @@
 import { createPortal } from 'react-dom';
 import { ROOM_WIDTH, ROOM_HEIGHT, DESK_WIDTH, DESK_HEIGHT } from '../lib/seatingModel';
+import { RoomContents } from './SeatingRoomDrawing';
+import { measuredBounds } from '../lib/seatingMeasuredModel';
 
 function nameLayout(name, context) {
   for (let fontSize = 16; fontSize >= 1; fontSize--) {
@@ -21,6 +23,10 @@ export default function SeatingPrint({ chart, paper }) {
   const names = new Map(chart.roster.map(student => [student.id, student.name]));
   const context = document.createElement('canvas').getContext('2d');
   const seats = chart.layout.seats;
+  if (chart.layout.version === 2) {
+    const bounds = measuredBounds(chart.layout, true);
+    return createPortal(<section className="seating-print" aria-label="Saved chart printout"><style>{`@page { size: ${paper === 'a4' ? 'A4' : 'letter'} landscape; margin: 10mm; }`}</style><header><h1>{chart.name}</h1><p>{chart.className}</p><p>Measured classroom · {chart.layout.displayUnit === 'metric' ? 'metres' : 'feet and inches'} · fitted to page</p></header><svg viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`} preserveAspectRatio="xMidYMin meet" role="img" aria-label={`${chart.name}, ${chart.className}, complete room`} style={{ height: paper === 'a4' ? '156mm' : '150mm' }}><RoomContents layout={chart.layout} roster={chart.roster} /></svg></section>, document.body);
+  }
   const left = seats.length ? Math.min(...seats.map(seat => seat.x)) - 8 : 0;
   const top = seats.length ? Math.min(...seats.map(seat => seat.y)) - 8 : 0;
   const width = seats.length ? Math.max(...seats.map(seat => seat.x + DESK_WIDTH)) - left + 8 : ROOM_WIDTH;

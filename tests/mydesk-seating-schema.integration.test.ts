@@ -5,6 +5,7 @@ import pg from "pg";
 import { getTableColumns } from "drizzle-orm";
 import { mydeskSeatingCharts } from "../src/schema/mydeskSeating.js";
 import { MYDESK_SEATING_SQL, mydeskSeatingMigration } from "../src/db/mydeskSeatingMigration.js";
+import { MYDESK_SEATING_MEASURED_SQL, mydeskSeatingMeasuredMigration } from "../src/db/mydeskSeatingMeasuredMigration.js";
 
 const suffix = `${process.pid}_${randomUUID().replaceAll("-", "")}`;
 const schema = `seating_fixture_${suffix}`, role = `seating_probe_${suffix}`;
@@ -18,6 +19,7 @@ before(async () => {
     CREATE TABLE school_memberships(school_id TEXT NOT NULL,user_id VARCHAR NOT NULL);
     CREATE TABLE groups(id VARCHAR PRIMARY KEY,school_id TEXT NOT NULL,UNIQUE(school_id,id));`);
   await client.query(MYDESK_SEATING_SQL);
+  await client.query(MYDESK_SEATING_MEASURED_SQL);
   await client.query(`CREATE ROLE ${role} NOSUPERUSER NOBYPASSRLS;
     GRANT USAGE ON SCHEMA ${schema} TO ${role}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${role}`);
 });
@@ -39,6 +41,23 @@ async function chart(f: Fixture, request = randomUUID(), author = f.author, curr
     group_id,filing_group_id,group_name,name,roster_revision,is_current) VALUES($1,$2,$3,$4,$5,$5,'Science snapshot','Front rows',$4,$6) RETURNING id`,
   [f.school, author, request, hash, f.group, current])).rows[0]!.id;
 }
+
+test("additive measured-layout migration preserves legacy documents, privacy and immutable request receipts", async () => {
+  const f = await fixture(), id = await chart(f);
+  const before = (await client.query("SELECT * FROM mydesk_seating_charts WHERE id=$1", [id])).rows[0];
+  await client.query(MYDESK_SEATING_MEASURED_SQL);
+  assert.deepEqual((await client.query("SELECT * FROM mydesk_seating_charts WHERE id=$1", [id])).rows[0], before);
+  assert.equal(mydeskSeatingMeasuredMigration.checksum, createHash("sha256").update(MYDESK_SEATING_MEASURED_SQL).digest("hex"));
+  const vertices = [[0, 0], [10000, 0], [9000, 8000], [0, 8000]].map(([x, y]) => ({ id: randomUUID(), wallId: randomUUID(), x, y }));
+  const layout = { version: 2, units: "mm", displayUnit: "imperial", room: { vertices, frontWallId: vertices[0]!.wallId }, seats: [], features: [] };
+  await client.query("UPDATE mydesk_seating_charts SET layout=$2::jsonb WHERE id=$1", [id, JSON.stringify(layout)]);
+  await client.query(MYDESK_SEATING_MEASURED_SQL);
+  assert.deepEqual((await client.query("SELECT layout FROM mydesk_seating_charts WHERE id=$1", [id])).rows[0].layout, layout);
+  for (const invalid of [{ ...layout, room: {} }, { ...layout, units: "pixels" }, { ...layout, features: Array(101).fill({}) }, { ...layout, version: 3 }])
+    await assert.rejects(client.query("UPDATE mydesk_seating_charts SET layout=$2::jsonb WHERE id=$1", [id, JSON.stringify(invalid)]), { code: "23514" });
+  const rls = (await client.query("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='mydesk_seating_charts'::regclass")).rows[0];
+  assert.deepEqual(rls, { relrowsecurity: true, relforcerowsecurity: true });
+});
 
 test("seating migration replays and repairs bootstrap FKs without losing typed columns or defaults", async () => {
   await client.query(`ALTER TABLE mydesk_seating_charts DROP CONSTRAINT mydesk_seating_charts_group_fk;

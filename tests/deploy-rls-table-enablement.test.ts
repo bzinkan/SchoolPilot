@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -60,6 +60,23 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits the five workspace/discipline tables while preserving the verified 109-table baseline", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.mydeskWorkspaceAndDiscipline;
+    assert.deepEqual(tables, ["mydesk_preferences", "school_discipline_records", "school_discipline_versions", "school_discipline_attachments", "school_discipline_access"]);
+    const bundle = tables.join(","), previous = rlsRegistry.inventories.mydeskImportsPostExpand.tables;
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: structuredClone(api), containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) {
+      addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table: bundle });
+      assert.equal(environmentValue(candidate.taskDefinition, "RLS_ENABLED_TABLES"), [...previous, ...tables].join(","));
+      assert.equal(environmentValue(candidate.taskDefinition, "UNCHANGED"), "preserved");
+    }
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table: bundle, expectedPreviousTables: previous });
+    for (const invalid of [tables.slice(0, 4).join(","), [...tables].reverse().join(","), `${bundle},mydesk_preferences`])
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: invalid }), /reviewed/);
+    assert.throws(() => verifyLiveRlsEnablementSources({ apiTaskDefinition: taskDefinition("api", [...previous, tables[0]!]), workerTaskDefinition: taskDefinition("scheduler-worker", previous), table: bundle }), /already enabled|match/);
+  });
   it("reconciles all six My Desk tables in one forward admission without weakening partial-state guards", () => {
     const tables = rlsRegistry.reviewedEnablementRequests.mydeskReconciliation;
     assert.deepEqual(tables, ["mydesk_attachments", "mydesk_notes", "mydesk_seating_charts",
@@ -159,6 +176,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.mydesk,
       ...rlsRegistry.reviewedEnablementRequests.mydeskSeating,
       ...rlsRegistry.reviewedEnablementRequests.mydeskImports,
+      ...rlsRegistry.reviewedEnablementRequests.mydeskWorkspaceAndDiscipline,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

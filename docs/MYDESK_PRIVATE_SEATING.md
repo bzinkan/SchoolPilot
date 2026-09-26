@@ -21,12 +21,37 @@ and snapshots retain historical context. Past-class charts remain privately
 readable and deletable. Editing requires access to the current class; copying a
 layout to a current class clears student assignments and desk locks.
 
-The version-1 layout permits at most 100 desks on a 1200 by 900 coordinate board,
+The retained version-1 layout permits at most 100 desks on a 1200 by 900 coordinate board,
 with 100 by 60 desks snapped to a 10-unit grid. Application validation rejects
 overlap, duplicate desk/student IDs, and positions outside the board. Roster
 snapshots contain at most 1,000 students. Server-derived roster revisions detect
 stale names or assignments; clients must refresh before saving a changed roster.
 Student records supply names and IDs, never device identities.
+Version 2 adds a measured room with integer millimetre geometry and imperial or
+metric display. A single closed polygon supports 3–24 vertices, angled walls,
+and one selected front wall. At most 100 desks and 100 fixtures may fit within
+a 50-metre bounding area. Fixtures include a teacher desk, cabinets, lockers and
+interior walls; doors/windows attach to stable wall IDs with width and offset.
+Desk/furniture dimensions and rotation are explicit. Shared API/browser geometry
+rejects self-intersecting/degenerate outlines, out-of-room or overlapping solid
+footprints, and invalid wall openings, including concave-room edge crossings.
+Door-swing intersections are visible advisory warnings and do not prevent saving;
+this is classroom planning, not a building-code or accessibility certification.
+
+Existing v1 documents remain readable and unchanged. Conversion requires a
+teacher-entered actual room width, previews one uniform scale for the old 4:3
+canvas and desks, and preserves seat IDs, assignments and locks. Conversion is
+only a draft until explicit Save; Undo/Cancel remain available. New and converted
+measured layouts retain the existing author ownership, class/roster revision
+checks, atomic save, current-chart rules and historical-only restrictions.
+Use the additive `mydesk-measured-seating-20260926` migration; never rewrite the
+checksummed original seating migration or silently convert stored JSON.
+
+Numeric controls and select-and-place editing supplement pointer dragging.
+Room fixtures are included in the saved printable layout; controls, lock markers,
+unassigned students and private-note contents are excluded. Letter/A4 printing
+fits the drawing to a page and is not guaranteed to preserve real-world scale.
+
 Derived names are bounded to 500 characters, student IDs to 128, and serialized
 roster snapshots to 1,000,000 bytes before saving. The database also enforces a
 1-MiB JSON ceiling; oversized source records require correction before saving.
@@ -100,5 +125,6 @@ Verification used synthetic local schools and students, not production data.
 Real Android verification was not performed in this historical check: no device was connected.
 It is part of the operator's live production walkthrough.
 No production migration, AWS provisioning, deployment, or flag activation was
-performed. The separately reviewed M1 predecessor release and the admission
-sequence above remain required.
+performed in that historical check. It does not cover the later measured-room
+expansion. Its additive migration, regression checks and new live device/printing
+walkthrough are required before release; no predecessor downgrade is required.

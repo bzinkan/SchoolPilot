@@ -4,6 +4,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
+import { mydeskWorkspaceMigration, MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
+import { mydeskSeatingMeasuredMigration, MYDESK_SEATING_MEASURED_SQL } from "../src/db/mydeskSeatingMeasuredMigration.js";
+import { schoolDisciplineMigration, SCHOOL_DISCIPLINE_SQL } from "../src/db/schoolDisciplineMigration.js";
 import {
   CLASSPILOT_27_EXPAND_SQL,
   CLASSPILOT_STALE_LEGACY_STUDENT_SESSION_CLEANUP_SQL,
@@ -44,6 +47,18 @@ function fakePool() {
   };
   return { pool: pool as any, rows, applied };
 }
+
+test("workspace and school discipline expansions follow original My Desk migrations with separate checksums", () => {
+  const expected = [[mydeskWorkspaceMigration, MYDESK_WORKSPACE_SQL], [mydeskSeatingMeasuredMigration, MYDESK_SEATING_MEASURED_SQL], [schoolDisciplineMigration, SCHOOL_DISCIPLINE_SQL]] as const;
+  const importsIndex = schoolPilot27Migrations.findIndex(migration => migration.id === "mydesk-ai-imports-20260925");
+  assert.ok(importsIndex >= 0, "Original My Desk import ledger entry must remain present");
+  assert.deepEqual(schoolPilot27Migrations.slice(importsIndex + 1, importsIndex + 4).map(migration => migration.id), expected.map(([migration]) => migration.id));
+  for (const [migration, sql] of expected) {
+    assert.equal(migration.mode, "transactional");
+    assert.equal(migration.checksum, createHash("sha256").update(sql).digest("hex"));
+    assert.equal(schoolPilot27Migrations.filter(candidate => candidate.id === migration.id).length, 1);
+  }
+});
 
 test("production migration tasks bind the ledger to the exact deployed SHA", () => {
   const deploy = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
