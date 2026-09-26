@@ -125,6 +125,7 @@ const DB_SERIAL = new Set([
   "student-email-domain.test.ts",
   "student-email-policy.test.ts",
   "student-removal-lifecycle.test.ts",
+  "super-admin-school-counts.integration.test.ts",
   "staff-assignment-lifecycle.test.ts",
   "staff-assignment-integrity-readiness.test.ts",
   "staff-credential-realtime-contract.test.ts",
