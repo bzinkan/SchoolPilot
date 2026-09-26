@@ -172,9 +172,9 @@ async function executeScenario(options: MeasurementOptions, directory: string, s
             const input: ImportRegionImage = { bytes: source, rotation: 0,
               region: continuation ? { x: 0.05, y: 0.05, width: 0.9, height: 0.2 } : { x: 0, y: (form % 3) / 3, width: 1, height: 1 / 3 } };
             // Extraction-input preparation and final attachment preparation both crop in the real worker.
-            await timed("extractionCropPreparation", () => cropImportRegion(input)); checkpoint(signal); regions.push(input);
+            await timed("extractionCropPreparation", () => cropImportRegion(input, { signal })); checkpoint(signal); regions.push(input);
           }
-          const attachment = await timed("attachmentPreparation", () => buildImportAttachment(regions));
+          const attachment = await timed("attachmentPreparation", () => buildImportAttachment(regions, { signal }));
           checkpoint(signal);
           if (continuation && attachment.contentType !== "application/pdf") throw new Error("MYDESK_MEASUREMENT_CONTINUATION");
           counts.forms++; counts.attachmentBytes += attachment.bytes.length;
@@ -315,6 +315,8 @@ export async function measureMyDeskProcessing(options: MeasurementOptions) {
     limitations: ["synthetic_pages_and_padding_are_not_worst_case_documents", "fixture_generation_and_supervisor_memory_are_included",
       "cgroup_peak_includes_other_processes_and_earlier_activity", "image_digest_is_operator_supplied_not_verified",
       "no_provider_database_storage_network_or_scheduler_load", "no_api_latency_or_extraction_quality_measurement",
+      "provider_image_downsampling_and_base64_payload_retention_are_unmeasured",
+      "twenty_page_single_pdf_and_one_thousand_page_ordinary_pdf_are_unmeasured",
       "combined_role_is_colocated_not_serving_topology", "sampled_memory_can_miss_short_peaks", "operation_elapsed_times_include_queue_wait_and_overlap"],
   };
 }

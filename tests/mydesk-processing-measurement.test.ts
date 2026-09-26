@@ -49,6 +49,8 @@ test("isolated smoke exercises both jobs, ordinary uploads and continuation PDFs
   assert.equal(report.processingHeadroomBelow70Percent,
     report.memory.observedCgroupPeakFraction === null ? null : report.memory.observedCgroupPeakFraction < 0.70);
   assert.ok(report.limitations.includes("no_provider_database_storage_network_or_scheduler_load"));
+  assert.ok(report.limitations.includes("provider_image_downsampling_and_base64_payload_retention_are_unmeasured"));
+  assert.ok(report.limitations.includes("twenty_page_single_pdf_and_one_thousand_page_ordinary_pdf_are_unmeasured"));
   const output = JSON.stringify(report);
   for (const disallowed of [tmpdir(), "SYNTHETIC CAPACITY FORM", "schoolpilot_dev", "storageKey", "DATABASE_URL", "ANTHROPIC_API_KEY"]) {
     assert.ok(!output.includes(disallowed));
