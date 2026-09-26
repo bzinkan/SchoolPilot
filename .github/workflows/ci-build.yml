@@ -55,6 +55,8 @@ jobs:
               - '.github/workflows/ci-build.yml'
               - 'scripts/deploy.sh'
               - 'scripts/deploy-classpilot-runtime-config.ps1'
+              - 'scripts/deploy-mydesk-runtime-config.ps1'
+              - 'scripts/run-mydesk-readiness.ps1'
               - 'scripts/terraform-state-backup.ps1'
               - 'scripts/security/rotate-production-credential.ps1'
               - 'scripts/load/**'
@@ -461,6 +463,10 @@ jobs:
       - name: ClassPilot same-digest runtime-config deployment tests
         shell: pwsh
         run: pwsh -NoProfile -File tests/classpilot-runtime-config-deploy.test.ps1
+
+      - name: My Desk runtime-config deployment tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/mydesk-runtime-config-deploy.test.ps1
 
       - name: Terraform formatting
         run: terraform fmt -check -recursive infra

@@ -23,33 +23,31 @@ variable "aws_region" {
 }
 
 # --- Networking ---
-variable "mydesk_enabled_school_ids" {
-  description = "Reviewed My Desk pilot school UUIDs; empty keeps the feature disabled. Live ECS activation uses live task definitions, not Terraform bootstrap templates."
+variable "mydesk_mode" {
+  description = "Internal global notebook control; every eligible ClassPilot school receives access when on"
   type        = string
-  default     = ""
+  default     = "off"
   validation {
-    condition     = var.mydesk_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_enabled_school_ids))
-    error_message = "My Desk pilot schools must be an empty string or comma-separated UUIDs."
+    condition     = contains(["off", "on"], var.mydesk_mode)
+    error_message = "mydesk_mode must be exactly off or on."
   }
 }
-
-variable "mydesk_seating_enabled_school_ids" {
-  description = "Reviewed private seating-chart pilot school UUIDs; base My Desk admission must also be enabled. Empty disables seating."
+variable "mydesk_seating_mode" {
+  description = "Internal global seating control; requires the base notebook mode"
   type        = string
-  default     = ""
+  default     = "off"
   validation {
-    condition     = var.mydesk_seating_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_seating_enabled_school_ids))
-    error_message = "Seating pilot schools must be an empty string or comma-separated UUIDs."
+    condition     = contains(["off", "on"], var.mydesk_seating_mode) && (var.mydesk_seating_mode == "off" || var.mydesk_mode == "on")
+    error_message = "mydesk_seating_mode must be off or on; on requires mydesk_mode=on."
   }
 }
-
-variable "mydesk_ai_import_enabled_school_ids" {
-  description = "Reviewed AI paperwork import school UUIDs; empty disables imports. Base My Desk admission and provider data-flow review are also required."
+variable "mydesk_ai_import_mode" {
+  description = "Internal global teacher-started import control; enable after provider review and evaluation"
   type        = string
-  default     = ""
+  default     = "off"
   validation {
-    condition     = var.mydesk_ai_import_enabled_school_ids == "" || can(regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(,[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})*$", var.mydesk_ai_import_enabled_school_ids))
-    error_message = "AI import pilot schools must be an empty string or comma-separated UUIDs."
+    condition     = contains(["off", "on"], var.mydesk_ai_import_mode) && (var.mydesk_ai_import_mode == "off" || var.mydesk_mode == "on")
+    error_message = "mydesk_ai_import_mode must be off or on; on requires mydesk_mode=on."
   }
 }
 variable "mydesk_ai_import_model" {

@@ -329,10 +329,10 @@ export async function runVersionedMigrations(): Promise<void> {
 import {
   RLS_GLOBAL_TABLES,
   isSafeIdentifier,
-  isReviewedRlsEnforcementRequest,
   parseRlsEnabledTables,
   policySqlFor,
 } from "./db/rlsPolicies.js";
+import { assertRequiredRlsEnforcement } from "./db/rlsEnforcement.js";
 export async function runStartupMigrations(): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw Object.assign(
@@ -3763,65 +3763,13 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] RLS policy migration skipped:", safeErrorMetadata(err));
   }
 
-  // A reviewed deploy can request fail-closed catalog assertions for one new
-  // tenant table or the exact GoPilot child-table bundle. This runs outside
-  // the best-effort policy block above so swallowed DDL errors cannot let the
-  // migration task report success. The deploy flag is intentionally one-shot;
-  // normal startup never sets it.
-  const requiredRlsTables = (process.env.REQUIRE_RLS_TABLE_ENFORCEMENT ?? "")
-    .split(",")
-    .map((table) => table.trim())
-    .filter(Boolean);
-  if (requiredRlsTables.length > 0) {
-    if (
-      new Set(requiredRlsTables).size !== requiredRlsTables.length ||
-      !isReviewedRlsEnforcementRequest(requiredRlsTables)
-    ) {
-      throw new Error(`Unsupported required RLS enforcement table list: ${requiredRlsTables.join(",")}`);
-    }
-    if (process.env.RLS_GUC_ENABLED !== "true") {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
-    }
-    const enabledRlsTables = parseRlsEnabledTables();
-    if (requiredRlsTables.some((table) => !enabledRlsTables.has(table))) {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
-    }
-    const { rows: rlsCatalogRows } = await pool.query<{
-      relname: string;
-      relrowsecurity: boolean;
-      relforcerowsecurity: boolean;
-      has_tenant_isolation_policy: boolean;
-    }>(
-      `
-        SELECT
-          relation.relname,
-          relation.relrowsecurity,
-          relation.relforcerowsecurity,
-          EXISTS (
-            SELECT 1
-            FROM pg_policy policy
-            WHERE policy.polrelid = relation.oid
-              AND policy.polname = 'tenant_isolation'
-          ) AS has_tenant_isolation_policy
-        FROM pg_class relation
-        INNER JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind = 'r'
-          AND relation.relname = ANY($1::text[])
-      `,
-      [requiredRlsTables],
-    );
-    if (
-      rlsCatalogRows.length !== requiredRlsTables.length ||
-      requiredRlsTables.some((table) => {
-        const catalog = rlsCatalogRows.find((row) => row.relname === table);
-        return !catalog?.relrowsecurity || !catalog.relforcerowsecurity || !catalog.has_tenant_isolation_policy;
-      })
-    ) {
-      throw new Error(`Required RLS enforcement failed for ${requiredRlsTables.join(",")}`);
-    }
-    console.log(`[migration] Required RLS enforcement verified for ${requiredRlsTables.join(", ")}`);
-  }
+  // Keep this outside the best-effort convergence block. Production uses the
+  // same postcondition in runMigrationsAndExit after its checksum-ledger run.
+  // This function rejects production above; disposable CI bootstrap needs the
+  // administrator before grants create the restricted application test role.
+  await assertRequiredRlsEnforcement(pool, process.env, {
+    allowNonProductionBootstrapRole: true,
+  });
 
   // Drop legacy substitute_assignments table
   try {
@@ -5074,6 +5022,9 @@ async function runMigrationsAndExit(): Promise<void> {
   // mutation in this path is checksum-ledgered and any unexpected SQL state
   // rejects the one-off task before it can report success.
   await runVersionedMigrations();
+  // Verify even when every ledger entry was already complete. Deploy admission
+  // must reject catalog drift before any API or worker service is updated.
+  await assertRequiredRlsEnforcement(pool);
   errorMonitor.dispose();
   await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   console.log("[migration] versioned migrations complete");

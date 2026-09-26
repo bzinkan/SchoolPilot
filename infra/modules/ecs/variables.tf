@@ -102,6 +102,11 @@ variable "classpilot_turn_secret_access_arn" {
   default     = ""
 }
 
+variable "mydesk_storage_enabled" {
+  description = "Plan-known storage admission; do not derive resource count from a new bucket's computed ARN"
+  type        = bool
+  default     = false
+}
 variable "mydesk_attachments_bucket_name" {
   type    = string
   default = ""
@@ -110,20 +115,32 @@ variable "mydesk_attachments_bucket_arn" {
   type    = string
   default = ""
 }
-variable "mydesk_enabled_school_ids" {
-  description = "Comma-separated approved pilot school UUIDs; empty disables the feature but leaves cleanup bucket configuration intact"
+variable "mydesk_mode" {
+  description = "Internal global notebook control; every eligible ClassPilot school receives access when on"
   type        = string
-  default     = ""
+  default     = "off"
+  validation {
+    condition     = contains(["off", "on"], var.mydesk_mode)
+    error_message = "mydesk_mode must be exactly off or on."
+  }
 }
-variable "mydesk_seating_enabled_school_ids" {
-  description = "Comma-separated reviewed seating-chart pilot school UUIDs; base My Desk admission is also required"
+variable "mydesk_seating_mode" {
+  description = "Internal global seating control; requires the base notebook mode"
   type        = string
-  default     = ""
+  default     = "off"
+  validation {
+    condition     = contains(["off", "on"], var.mydesk_seating_mode) && (var.mydesk_seating_mode == "off" || var.mydesk_mode == "on")
+    error_message = "mydesk_seating_mode must be off or on; on requires mydesk_mode=on."
+  }
 }
-variable "mydesk_ai_import_enabled_school_ids" {
-  description = "Reviewed teacher-started AI paperwork import school UUIDs; base My Desk admission is also required"
+variable "mydesk_ai_import_mode" {
+  description = "Internal global teacher-started import control; enable after provider review and evaluation"
   type        = string
-  default     = ""
+  default     = "off"
+  validation {
+    condition     = contains(["off", "on"], var.mydesk_ai_import_mode) && (var.mydesk_ai_import_mode == "off" || var.mydesk_mode == "on")
+    error_message = "mydesk_ai_import_mode must be off or on; on requires mydesk_mode=on."
+  }
 }
 variable "mydesk_ai_import_model" {
   type    = string

@@ -112,7 +112,7 @@ function buildAiFeatureInventory(rootDir) {
   return [
     {
       featureId: "mydesk_ai_paperwork_import",
-      status: sourceContains(rootDir, "src/services/mydeskImportsValidation.ts", /MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS/) ? "separate_school_gate_disabled_by_default" : "review_required",
+      status: sourceContains(rootDir, "src/config/mydeskModes.ts", /MYDESK_AI_IMPORT_MODE/) ? "separate_global_mode_disabled_by_default" : "review_required",
       provider: importProcessing.includes("@anthropic-ai/sdk") ? "Anthropic Claude" : "review_required",
       modelSource: "src/services/mydeskImportProcessing.ts",
       controls: ["teacher_started_source_upload", "private_author_school_scope", "server_side_roster_matching", "reviewed_atomic_batch_approval", "durable_temporary_source_cleanup", "provider_retention_and_quality_review_required"],
@@ -340,7 +340,7 @@ export function buildAiPrivacyEvidence({
         valueIncluded: false,
         purpose: "Provider credential for Anthropic-backed AI features.",
       },
-      ...["MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS", "MYDESK_AI_IMPORT_MODEL", "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"].map(name => ({
+      ...["MYDESK_AI_IMPORT_MODE", "MYDESK_AI_IMPORT_MODEL", "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"].map(name => ({
         name, valueIncluded: false, purpose: "Private paperwork import gate/model/budget configuration; values and source content omitted.",
       })),
     ],

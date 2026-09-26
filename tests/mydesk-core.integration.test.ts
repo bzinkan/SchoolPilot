@@ -82,7 +82,7 @@ async function fixture() {
     await client.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'First','Student','active')", [f.studentId, f.schoolId]);
     await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.groupId, f.studentId]);
   });
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_MODE = "on";
   return f;
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;

@@ -100,6 +100,10 @@ let photo: Buffer;
 
 let server: Server, baseUrl: string;
 before(async () => {
+  process.env.MYDESK_MODE = "on";
+  process.env.MYDESK_SEATING_MODE = "on";
+  process.env.MYDESK_AI_IMPORT_MODE = "on";
+
   assert.ok(
     ["localhost", "127.0.0.1", "::1"].includes(
       new URL(process.env.DATABASE_URL || "").hostname,
@@ -337,9 +341,6 @@ async function fixture() {
       [f.groupId, f.studentId],
     );
   });
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = schoolIds.join(",");
-  process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = schoolIds.join(",");
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.join(",");
   return f;
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -598,7 +599,7 @@ test("imports enforce HTTP owner, tenant, verified membership, impersonation and
     ).status,
     403,
   );
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = "";
+  process.env.MYDESK_AI_IMPORT_MODE = "off";
   assert.equal(
     z
       .object({ aiImportEnabled: z.boolean() })
@@ -606,7 +607,7 @@ test("imports enforce HTTP owner, tenant, verified membership, impersonation and
     false,
   );
   assert.equal((await request(f, `/imports/${run.id}`)).status, 404);
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_AI_IMPORT_MODE = "on";
   assert.equal(
     (
       await request(f, "/imports", "POST", {
@@ -1187,6 +1188,26 @@ test("cancellation during provider work prevents later stages and cleanup remove
   assert.ok(![...objects.keys()].some((key) => key.includes(run.id)));
 });
 
+test("entitlement revoked during provider work prevents publishing results or later AI calls", async () => {
+  const f = await fixture();
+  let run = await createRun(f);
+  ({ run } = await uploadSource(f, run));
+  run = await start(f, run);
+  let extractions = 0;
+  await work(processor({
+    detectImportForms: async () => {
+      await fixturePool.query("UPDATE product_licenses SET status='suspended' WHERE school_id=$1 AND product='CLASSPILOT'", [f.schoolId]);
+      return [{ x: 0, y: 0, width: 1, height: 1 }];
+    },
+    extractImportForm: async () => { extractions++; return extraction(); },
+  }));
+  assert.equal(extractions, 0);
+  assert.equal((await request(f, `/imports/${run.id}`)).status, 403);
+  const stored = await fixturePool.query<{ status: string; count: number }>(
+    "SELECT status,(SELECT count(*)::int FROM mydesk_import_items WHERE import_id=$1) AS count FROM mydesk_imports WHERE id=$1", [run.id]);
+  assert.deepEqual(stored.rows[0], { status: "failed", count: 0 });
+});
+
 test("global processing claims allow two jobs across runners and source expiry hides content before cleanup", async () => {
   const f = await fixture();
   const queued: ImportRun[] = [];
@@ -1292,16 +1313,48 @@ test("import list cursor preserves timestamp precision and is bound to its autho
   );
 });
 
-test("disabled-school queues cannot starve enabled imports and fresh deletions precede daily tombstones", async () => {
+test("a newly entitled school can create notes and process imports without runtime configuration changes", async () => {
+  const configuration = [process.env.MYDESK_MODE, process.env.MYDESK_SEATING_MODE, process.env.MYDESK_AI_IMPORT_MODE];
+  const f = await fixture();
+  assert.deepEqual([process.env.MYDESK_MODE, process.env.MYDESK_SEATING_MODE, process.env.MYDESK_AI_IMPORT_MODE], configuration);
+  const capabilities = z.object({ enabled: z.boolean(), seatingEnabled: z.boolean(), aiImportEnabled: z.boolean() })
+    .parse((await request(f, "/capabilities")).data);
+  assert.deepEqual(capabilities, { enabled: true, seatingEnabled: true, aiImportEnabled: true });
+  const note = await request(f, "/notes", "POST", { clientRequestId: randomUUID(), body: "Private new-school note" });
+  assert.equal(note.status, 201, note.text);
+  const noteId = z.object({ note: z.object({ id: z.string() }) }).parse(note.data).note.id;
+  assert.equal((await request(f, `/notes/${noteId}`, "GET", undefined, f.adminId)).status, 404);
+  let run = await createRun(f);
+  ({ run } = await uploadSource(f, run));
+  run = await start(f, run);
+  await work();
+  assert.equal((await getRun(f, run.id)).status, "review");
+  await fixturePool.query("UPDATE product_licenses SET expires_at=now()-interval '1 minute' WHERE school_id=$1 AND product='CLASSPILOT'", [f.schoolId]);
+  assert.equal((await request(f, `/notes/${noteId}`)).status, 403);
+  assert.equal((await request(f, `/imports/${run.id}`)).status, 403);
+});
+
+test("ineligible school and membership backlogs cannot starve new schools; fresh deletions precede tombstones", async () => {
   const disabled = await fixture(),
     enabled = await fixture();
   await fixturePool.query(
     "INSERT INTO mydesk_imports(school_id,author_id,client_request_id,request_fingerprint,expected_source_count,status,expires_at,upload_expires_at,created_at) SELECT $1,$2,gen_random_uuid(),repeat('a',64),1,'queued',now()+interval '1 day',now()+interval '1 day',now()-interval '1 hour' FROM generate_series(1,60)",
     [disabled.schoolId, disabled.teacherId],
   );
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds
-    .filter((id) => id !== disabled.schoolId)
-    .join(",");
+  await fixturePool.query("UPDATE product_licenses SET status='expired' WHERE school_id=$1 AND product='CLASSPILOT'", [disabled.schoolId]);
+  // Also exceed the discovery page with nonqualifying staff at an entitled school.
+  await fixturePool.query(
+    "INSERT INTO mydesk_imports(school_id,author_id,client_request_id,request_fingerprint,expected_source_count,status,expires_at,upload_expires_at,created_at) SELECT $1,$2,gen_random_uuid(),repeat('a',64),1,'queued',now()+interval '1 day',now()+interval '1 day',now()-interval '1 hour' FROM generate_series(1,60)",
+    [enabled.schoolId, enabled.officeId],
+  );
+  await fixtureTransaction(async client => {
+    await client.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [enabled.groupId, enabled.colleagueId]);
+    await client.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [enabled.schoolId, enabled.colleagueId]);
+    await client.query(
+      "INSERT INTO mydesk_imports(school_id,author_id,client_request_id,request_fingerprint,expected_source_count,status,expires_at,upload_expires_at,created_at) SELECT $1,$2,gen_random_uuid(),repeat('a',64),1,'queued',now()+interval '1 day',now()+interval '1 day',now()-interval '1 hour' FROM generate_series(1,60)",
+      [enabled.schoolId, enabled.colleagueId],
+    );
+  });
   let run = await createRun(enabled);
   ({ run } = await uploadSource(enabled, run));
   run = await start(enabled, run);
@@ -1320,7 +1373,7 @@ test("disabled-school queues cannot starve enabled imports and fresh deletions p
     "UPDATE mydesk_imports SET status='cancelled' WHERE school_id=$1",
     [disabled.schoolId],
   );
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  await fixturePool.query("UPDATE mydesk_imports SET status='cancelled' WHERE author_id=ANY($1::text[])", [[enabled.officeId, enabled.colleagueId]]);
   await cleanupMyDeskImports({
     database: fixtureDb,
     limit: 200,
@@ -1423,7 +1476,7 @@ test("capabilities publish the same configured import limits enforced by quota a
   const f = await fixture();
   const originalTeacher = process.env.MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES;
   const originalSchool = process.env.MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES;
-  const originalGate = process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS;
+  const originalGate = process.env.MYDESK_AI_IMPORT_MODE;
   try {
     delete process.env.MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES;
     delete process.env.MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES;
@@ -1499,7 +1552,7 @@ test("capabilities publish the same configured import limits enforced by quota a
       ).status,
       503,
     );
-    process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = "";
+    process.env.MYDESK_AI_IMPORT_MODE = "off";
     const disabled = await request(f, "/capabilities");
     assert.equal(disabled.status, 200, disabled.text);
     unavailableSchema.parse(disabled.data);
@@ -1533,7 +1586,7 @@ test("capabilities publish the same configured import limits enforced by quota a
       delete process.env.MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES;
     else process.env.MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES = originalSchool;
     if (originalGate === undefined)
-      delete process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS;
-    else process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = originalGate;
+      delete process.env.MYDESK_AI_IMPORT_MODE;
+    else process.env.MYDESK_AI_IMPORT_MODE = originalGate;
   }
 });

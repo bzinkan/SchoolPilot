@@ -35,7 +35,7 @@ const upload = (noteId: string, id: string, objectStore = store) => inSchool(() 
 
 before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname), "Requires a local fixture");
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = ids.school;
+  process.env.MYDESK_MODE = "on";
   ({ default: database, pool } = await import("../src/db.js"));
   ({ runWithTenantContext: tenant } = await import("../src/middleware/tenantContext.js"));
   notes = await import("../src/services/mydesk.js"); files = await import("../src/services/mydeskAttachments.js");
@@ -171,9 +171,9 @@ test("abandoned pending saves expire; failed deletion stays queued and retries w
   const [expired] = await inSchool(() => database.select().from(mydeskNotes).where(eq(mydeskNotes.id, note.id)));
   assert.equal(queued!.status, "delete_pending"); assert.ok(queued!.cleanupAttempts > 0); assert.ok(queued!.nextCleanupAt);
   assert.equal(expired!.status, "deleted"); assert.equal(expired!.body, "");
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = "";
+  process.env.MYDESK_MODE = "off";
   try { await tenant({ isSuper: true }, () => cleanup({ database, store, now: new Date(now.getTime() + 25 * 60 * 60_000) })); }
-  finally { process.env.MYDESK_ENABLED_SCHOOL_IDS = ids.school; }
+  finally { process.env.MYDESK_MODE = "on"; }
   const [removed] = await inSchool(() => database.select().from(mydeskAttachments).where(eq(mydeskAttachments.id, attachment.id)));
   assert.equal(removed!.status, "deleted"); assert.equal(objects.has(removed!.storageKey), false);
 });

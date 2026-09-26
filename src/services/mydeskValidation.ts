@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readMyDeskModes } from "../config/mydeskModes.js";
 
 export const MYDESK_CATEGORIES = [
   { key: "note", label: "Note" }, { key: "detention", label: "Detention" },
@@ -45,18 +46,10 @@ export type MyDeskPatch = z.infer<typeof patchFields>;
 export type MyDeskNotesQuery = z.infer<typeof myDeskNotesQuery>;
 
 export function myDeskEnabledForSchool(schoolId: string): boolean {
-  return enabledSchool(schoolId, process.env.MYDESK_ENABLED_SCHOOL_IDS);
+  return Boolean(schoolId) && readMyDeskModes().mode === "on";
 }
 export function myDeskSeatingEnabledForSchool(schoolId: string): boolean {
-  return myDeskEnabledForSchool(schoolId) && enabledSchool(schoolId, process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS);
-}
-function enabledSchool(schoolId: string, configured: string | undefined): boolean {
-  const raw = (configured || "").trim();
-  if (!raw) return false;
-  if (raw === "*") return process.env.NODE_ENV !== "production" && process.env.APP_ENV !== "production";
-  const ids = raw.split(",").map(value => value.trim());
-  if (ids.some(value => !/^[a-zA-Z0-9_-]{1,128}$/.test(value))) return false;
-  return ids.includes(schoolId);
+  return Boolean(schoolId) && readMyDeskModes().seatingMode === "on";
 }
 
 export function myDeskCsvCell(value: unknown): string {

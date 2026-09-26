@@ -133,79 +133,51 @@ results, without a provider call:
 node --import tsx scripts/evaluate-mydesk-import.mjs --output <external-directory>
 ```
 
-Use a unique output directory outside the repository. The separate `--run-provider`
-option is an explicit live evaluation, allowed only after the configured account
-and provider review; it sends generated synthetic fixtures, never real student
-packets. Its local report records detection overlap and field matches, plus model
-output text. A human still assesses unsupported statements and correction effort.
+Use a unique output directory outside the repository. The fixed fixture set has
+34 pages, 64 form regions and 62 logical forms, including two continuations,
+rotations, blank pages, ambiguous names/dates and malicious document instructions.
+Handwriting-style fonts are only a difficult-case proxy; evaluate actual synthetic
+handwritten camera samples separately. Source hashes and model/prompt versions
+are frozen in the manifest.
+
+After the configured account and provider review, use `--resume --run-provider`
+with that same output directory for live evaluation. It sends synthetic fixtures,
+never real student packets. Completed calls are checkpointed and not repeated;
+an uncertain interrupted call requires explicit `--retry-uncertain`. A live run
+holds an exclusive directory lock. Remove a stale lock only after establishing
+that no evaluator is still running. Its private report records typed-form
+detection precision/recall and key-field accuracy separately from difficult cases,
+plus model output text. A human must review every crop and summary for critical
+errors, then record correction time compared with manual entry.
 Do not call an offline fixture-generation pass a successful model evaluation, and
 do not commit generated reports or private approval evidence.
 
 ## Configuration and reviewed rollout
 
-- `MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS`: explicit approved school UUIDs; empty
-  means off. `MYDESK_ENABLED_SCHOOL_IDS` must also admit the school. Seating uses
-  its separate gate and is not an import prerequisite.
-- `MYDESK_AI_IMPORT_MODEL`: reviewed extraction model, default `claude-sonnet-5`.
-  Changing it requires output/quality tests and a recorded model-version review.
-- `MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES` / `MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES`:
-  positive integer page budgets, default `100` / `500`.
-- Existing `ANTHROPIC_API_KEY`, `MYDESK_ATTACHMENTS_BUCKET`, and `mydesk/*` IAM
-  permissions are reused. No new bucket or provider secret is introduced. API and
-  worker receive configuration; retain bucket/IAM and cleanup on rollback.
+- `MYDESK_MODE` and `MYDESK_AI_IMPORT_MODE` must both be `on`. Each defaults off;
+  once enabled the feature applies to all eligible current and future schools.
+  Retired school allowlists are rejected. Seating remains independent.
+- `MYDESK_AI_IMPORT_MODEL` defaults to `claude-sonnet-5`; changing it requires
+  extraction evaluation and recorded model-version review.
+- `MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES` and `MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES`
+  default to 100 and 500. The five-file, 10 MiB/file, 20-page, 50-form bounds remain.
+- Both API and worker retain `MYDESK_ATTACHMENTS_BUCKET` and scoped IAM, and use
+  the existing `ANTHROPIC_API_KEY` secret reference. Cleanup runs with modes off.
 
-The additive ledger migration is `mydesk-ai-imports-20260925`; the exact reviewed
-admission bundle is `mydesk_import_assets,mydesk_import_items,mydesk_imports`.
-Register all three in the schema, CI inventory, and RLS registry. The complete
-post-import registry has 109 tables; this is not a production-adoption claim.
-Keep the existing notebook/seating migration checksums and production/generic
-Terraform RLS baselines unchanged until separately verified adoption.
+Follow [MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md) for the six-table forward admission,
+production readiness evidence, private runtime configuration and staged activation.
+The combined manifest is already the release starting point; do not remove later
+migrations or construct a notebook-only predecessor. Preserve all three original
+checksums and adopt the observed RLS baseline only after live verification.
 
-First release and verify a separately reviewed M1-only predecessor artifact, as
-described in the notebook and seating runbooks. The current combined manifest
-installs notebook, seating, and import tables regardless of empty feature flags.
-It cannot stand in for a predecessor release. If seating admission is planned
-before imports, use a reviewed notebook-plus-seating artifact that excludes the
-import migration; then deploy the combined import artifact after both admissions
-are verified. If seating has not been admitted, prepare a reviewed import artifact
-excluding the seating migration and its runtime dependency closure. Do not perform
-an unreviewed combined admission or hand-edit built images. A feature gate is not
-a migration gate.
+API and worker sizing must be measured from live definitions. One shared native
+processing permit per process bounds both Poppler and all My Desk Sharp transforms;
+two durable import jobs can overlap I/O. Validate task-level headroom and ordinary
+scheduler/API behavior using isolated production tasks before loading the serving
+worker. Per-child memory limits do not establish total-task safety.
 
-Before enabling an import pilot, measure resource headroom using synthetic packets
-at the accepted file/page limits in the actual Linux release image and intended
-task sizes. The checked-in production sizing is currently 512 MiB for the worker
-and 1,024 MiB for the API, while the job service permits two imports globally and
-the API admits two simultaneous source uploads per process. A subprocess's
-512 MiB address-space limit does not reserve memory or bound total task usage:
-Node, decoded images, retained page buffers, other jobs, and concurrent subprocesses
-share the task's memory budget. Record task-level peak memory, CPU, completion
-times, and retained headroom under concurrent uploads and processing; verify no
-OOM kills or loss of cleanup/retry progress. Confirm the live task definitions
-separately from these repository values. Passing unit tests or a subprocess limit
-alone does not satisfy this capacity gate. Any required sizing or concurrency
-change needs separate review before activation; this feature changes neither
-production memory nor concurrency defaults.
-
-After the required predecessor admissions, provider/privacy review, schema/API/
-worker/UI tests, resource-capacity review, builds, and `npm run soc2:check` pass,
-an explicitly authorized deployment uses:
-
-```bash
-./scripts/deploy.sh production --backend --activate-emergency --enable-rls-table mydesk_import_assets,mydesk_import_items,mydesk_imports
-```
-
-Verify the ledger, enabled/forced tenant RLS on all three tables, matching live
-API/worker allowlists, worker health, and bucket access before enabling the import
-school gate. Preserve live task-definition fields; Terraform definitions are
-bootstrap templates, not serving definitions. Any real plan/apply still requires
-CLAUDE.md's backups, saved-plan review, and operator go/no-go. This feature adds
-only environment/config changes to those templates.
-
-Start with a bounded synthetic/authorized pilot, check source cleanup separately
-from successful note creation, and retain non-content operational evidence. On
-rollback disable the import gate first, preserve admitted RLS/schema and committed
-notes, and retain a cleanup-capable worker. Do not erase promotion markers or queue
-state. Review data compatibility before selecting an older image. No merge, push,
-deployment, AWS apply, production migration, or activation is authorized merely by
-this document.
+The provider/account retention review and actual extraction/capacity results are
+required before AI activation. After activation, teachers perform Android and
+real-paperwork testing in production and approve every resulting note. Rollback
+turns off the import mode while preserving committed notes, promoted attachments,
+RLS and durable cleanup. No source-content evidence belongs in tracked files.

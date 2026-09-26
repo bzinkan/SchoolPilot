@@ -55,7 +55,7 @@ run "notebook_bucket_is_private_encrypted_and_tls_only" {
   }
 }
 
-run "disabled_pilot_retains_bucket_and_narrow_worker_cleanup_permissions" {
+run "disabled_features_retains_bucket_and_narrow_worker_cleanup_permissions" {
   command = plan
   module {
     source = "./modules/ecs"
@@ -81,22 +81,23 @@ run "disabled_pilot_retains_bucket_and_narrow_worker_cleanup_permissions" {
     scheduler_db_pool_max          = 5
     rls_enabled_tables             = "students"
     redis_url                      = "rediss://test.invalid:6379"
+    mydesk_storage_enabled         = true
     mydesk_attachments_bucket_name = "schoolpilot-test-mydesk-attachments"
     mydesk_attachments_bucket_arn  = "arn:aws:s3:::schoolpilot-test-mydesk-attachments"
-    mydesk_enabled_school_ids      = ""
+    mydesk_mode                    = "off"
   }
   assert {
     condition = alltrue([
       for definition in [aws_ecs_task_definition.api, aws_ecs_task_definition.worker] :
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_ATTACHMENTS_BUCKET"]) == "schoolpilot-test-mydesk-attachments" &&
-      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_ENABLED_SCHOOL_IDS"]) == "" &&
-      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_SEATING_ENABLED_SCHOOL_IDS"]) == "" &&
-      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS"]) == "" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_MODE"]) == "off" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_SEATING_MODE"]) == "off" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODEL"]) == "claude-sonnet-5" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES"]) == "100" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"]) == "500"
     ])
-    error_message = "Disabling the pilot must retain object storage configuration in both API and cleanup worker."
+    error_message = "Disabling My Desk must retain object storage configuration in both API and cleanup worker."
   }
   assert {
     condition = (
@@ -107,4 +108,66 @@ run "disabled_pilot_retains_bucket_and_narrow_worker_cleanup_permissions" {
     )
     error_message = "The shared task role must only read/write/delete notebook objects and list the notebook prefix."
   }
+}
+
+run "global_features_reach_both_services_without_school_lists" {
+  command = plan
+  module {
+    source = "./modules/ecs"
+  }
+  variables {
+    project                        = "schoolpilot"
+    environment                    = "test"
+    aws_region                     = "us-east-1"
+    aws_account_id                 = "000000000000"
+    vpc_id                         = "vpc-00000000000000000"
+    task_subnet_ids                = ["subnet-00000000000000000"]
+    alb_target_group_arn           = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000"
+    ecr_repository_url             = "000000000000.dkr.ecr.us-east-1.amazonaws.com/test"
+    container_port                 = 4000
+    ecs_security_group_id          = "sg-00000000000000000"
+    desired_count                  = 1
+    cpu                            = 256
+    memory                         = 512
+    worker_desired_count           = 1
+    worker_cpu                     = 256
+    worker_memory                  = 512
+    db_pool_max                    = 16
+    scheduler_db_pool_max          = 5
+    rls_enabled_tables             = "students"
+    redis_url                      = "rediss://test.invalid:6379"
+    mydesk_storage_enabled         = true
+    mydesk_attachments_bucket_name = "schoolpilot-test-mydesk-attachments"
+    mydesk_attachments_bucket_arn  = "arn:aws:s3:::schoolpilot-test-mydesk-attachments"
+    mydesk_mode                    = "on"
+    mydesk_seating_mode            = "on"
+    mydesk_ai_import_mode          = "on"
+  }
+  assert {
+    condition = alltrue([
+      for definition in [aws_ecs_task_definition.api, aws_ecs_task_definition.worker] :
+      alltrue([for name in ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE"] :
+        one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == name]) == "on"
+      ]) && length([for entry in jsondecode(definition.container_definitions)[0].environment : entry.name if can(regex("^MYDESK_.*ENABLED_SCHOOL_IDS$", entry.name))]) == 0
+    ])
+    error_message = "All eligible schools must receive the same feature modes in API and worker with no school allowlists."
+  }
+}
+run "seating_cannot_enable_without_notebook" {
+  command = plan
+  variables {
+    environment         = "test"
+    mydesk_mode         = "off"
+    mydesk_seating_mode = "on"
+  }
+  expect_failures = [var.mydesk_seating_mode]
+}
+run "imports_reject_invalid_mode" {
+  command = plan
+  variables {
+    environment           = "test"
+    mydesk_mode           = "on"
+    mydesk_ai_import_mode = "true"
+  }
+  expect_failures = [var.mydesk_ai_import_mode]
 }

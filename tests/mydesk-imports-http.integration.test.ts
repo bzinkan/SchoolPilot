@@ -88,7 +88,7 @@ async function fixture() {
     await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.groupId, f.studentId]);
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = schoolIds.join(","); process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_MODE = "on"; process.env.MYDESK_AI_IMPORT_MODE = "on";
   return f;
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -172,9 +172,9 @@ test("HTTP impersonation, revoked membership and disabled rollout cannot read re
   const impersonation = await fetch(`${baseUrl}/fixture/impersonate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ targetId: f.teacherId, originalId: f.adminId }) });
   const cookie = impersonation.headers.get("set-cookie")?.split(";")[0]; assert.ok(cookie);
   const denied = await fetch(`${baseUrl}/api/mydesk/imports/${run.id}`, { headers: { "x-school-id": f.schoolId, cookie } }); assert.equal(denied.status, 403);
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.filter(id => id !== f.schoolId).join(",");
+  process.env.MYDESK_AI_IMPORT_MODE = "off";
   assert.equal((await api(f, `/imports/${run.id}`)).response.status, 404);
-  process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_AI_IMPORT_MODE = "on";
   const client = await fixturePool.connect();
   try {
     await client.query("BEGIN"); await client.query("SET LOCAL app.is_super='on'");

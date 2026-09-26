@@ -8,12 +8,42 @@ import {
   MyDeskImportProcessingError, prepareImportSource, renderImportSource, type ImportAiTransport,
 } from "../src/services/mydeskImportProcessing.js";
 import { MyDeskFileError } from "../src/services/mydeskFiles.js";
+import { privateNativeProcessing } from "../src/services/privateNativeProcessing.js";
 
 const photo = (width = 160, height = 100, color = "white") => sharp({ create: { width, height, channels: 3, background: color } }).jpeg().toBuffer();
 const full = { x: 0, y: 0, width: 1, height: 1 };
 const extraction = { subjectNames: ["Jordan Example"], entryDate: "2026-09-25", category: "detention", title: "Detention form",
   body: "The form reports a classroom disruption. A detention was assigned.", warnings: [] };
 const response = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }], stop_reason: "end_turn" });
+
+test("all import image paths use the shared bounded permit and release it before provider calls", async () => {
+  const bytes = await photo();
+  const controller = new AbortController();
+  const release = await privateNativeProcessing.acquire();
+  let providerCalls = 0;
+  const retryable = (error: unknown) => error instanceof MyDeskImportProcessingError && error.retryable && error.status === 503 &&
+    error.code === "MYDESK_IMPORT_IMAGE_UNAVAILABLE" && !String(error.stack).includes("PRIVATE");
+  const queued = [
+    assert.rejects(prepareImportSource(bytes, "image/jpeg", { signal: controller.signal }), retryable),
+    assert.rejects(renderImportSource(bytes, "image/jpeg", { signal: controller.signal }), retryable),
+    assert.rejects(cropImportRegion({ bytes, region: full, rotation: 0 }, { signal: controller.signal }), retryable),
+    assert.rejects(buildImportAttachment([{ bytes, region: full, rotation: 0 }], { signal: controller.signal }), retryable),
+  ];
+  try {
+    const ai = createImportAiProcessor(async () => { providerCalls++; return response(extraction); });
+    await assert.rejects(ai.extractImportForm([bytes]), retryable);
+    assert.equal(providerCalls, 0, "capacity rejection must occur before any paid provider call");
+    controller.abort(new Error("PRIVATE queued image content")); await Promise.all(queued);
+  } finally { controller.abort(); release(); }
+  const ai = createImportAiProcessor(async () => {
+    // A provider request must not occupy native capacity during its network wait.
+    assert.equal(await privateNativeProcessing.run(async () => "available"), "available");
+    providerCalls++; return response(extraction);
+  });
+  assert.deepEqual(await ai.extractImportForm([bytes]), extraction);
+  assert.equal(providerCalls, 1);
+  assert.ok((await cropImportRegion({ bytes, region: full, rotation: 90 })).length > 0, "crop then normalization must not deadlock");
+});
 
 test("import preserves splitting resolution, corrects EXIF orientation and strips private metadata", async () => {
   const input = await sharp({ create: { width: 3000, height: 2000, channels: 3, background: "white" } })
@@ -48,8 +78,17 @@ test("import PDF validation preserves original bytes but rejects empty, oversize
   const tooMany = await PDFDocument.create(); for (let i = 0; i < 21; i++) tooMany.addPage();
   await assert.rejects(prepareImportSource(Buffer.from(await tooMany.save()), "application/pdf"),
     (error: unknown) => error instanceof MyDeskImportProcessingError && error.code === "MYDESK_IMPORT_PAGE_LIMIT");
+  tooMany.removePage(20);
+  assert.equal((await prepareImportSource(Buffer.from(await tooMany.save()), "application/pdf")).pageCount, 20);
   await assert.rejects(prepareImportSource(Buffer.from("%PDF-1.7\nPRIVATE DATA\n%%EOF"), "application/pdf"),
     (error: unknown) => error instanceof MyDeskImportProcessingError && !error.message.includes("PRIVATE"));
+});
+
+test("cancelled import PDF processing stays retryable and never discloses cancellation reasons", async () => {
+  const document = await PDFDocument.create(); document.addPage();
+  const controller = new AbortController(); controller.abort(new Error("PRIVATE source details"));
+  await assert.rejects(prepareImportSource(Buffer.from(await document.save()), "application/pdf", { signal: controller.signal }),
+    (error: unknown) => error instanceof MyDeskImportProcessingError && error.retryable && error.status === 503 && !String(error.stack).includes("PRIVATE"));
 });
 
 test("PDF validation rejects encryption even when the document opens without a password", async () => {

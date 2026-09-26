@@ -36,7 +36,7 @@ export const requireMyDeskAuthor: RequestHandler = (req, res, next) => {
 };
 export const requireMyDeskEnabled: RequestHandler = (req, res, next) => {
   if (!myDeskEnabledForSchool(myDeskActor(req, res).schoolId)) {
-    res.status(404).json({ error: "My Desk is not enabled for this school", code: "MYDESK_NOT_ENABLED" }); return;
+    res.status(404).json({ error: "My Desk is temporarily unavailable", code: "MYDESK_NOT_ENABLED" }); return;
   }
   next();
 };

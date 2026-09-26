@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -59,6 +59,38 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("reconciles all six My Desk tables in one forward admission without weakening partial-state guards", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.mydeskReconciliation;
+    assert.deepEqual(tables, ["mydesk_attachments", "mydesk_notes", "mydesk_seating_charts",
+      "mydesk_import_assets", "mydesk_import_items", "mydesk_imports"]);
+    const bundle = tables.join(",");
+    const previous = ["students", "teaching_sessions"];
+    const api = taskDefinition("api", previous);
+    const worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle });
+    const candidates = [
+      { taskDefinition: api, containerName: "api" },
+      { taskDefinition: structuredClone(api), containerName: "api" },
+      { taskDefinition: worker, containerName: "scheduler-worker" },
+    ];
+    for (const candidate of candidates) {
+      addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table: bundle });
+      assert.equal(environmentValue(candidate.taskDefinition, "RLS_ENABLED_TABLES"), [...previous, ...tables].join(","));
+      assert.equal(environmentValue(candidate.taskDefinition, "UNCHANGED"), "preserved");
+    }
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table: bundle, expectedPreviousTables: previous });
+    for (const invalid of [tables.slice(0, 5).join(","), [...tables].reverse().join(","), `${bundle},mydesk_notes`]) {
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api"), { containerName: "api", table: invalid }), /reviewed/);
+    }
+    for (const present of [tables.slice(0, 1), tables]) {
+      assert.throws(() => verifyLiveRlsEnablementSources({
+        apiTaskDefinition: taskDefinition("api", [...previous, ...present]),
+        workerTaskDefinition: taskDefinition("scheduler-worker", [...previous, ...present]), table: bundle,
+      }), /already enabled/);
+    }
+    assert.ok(tables.every((table) => !productionTfvars.includes(table)), "Reconciliation must not pre-adopt a production baseline");
+  });
+
   it("admits all three import tables together after notebook admission without changing existing gates", () => {
     const tables = rlsRegistry.reviewedEnablementRequests.mydeskImports;
     assert.deepEqual(tables, ["mydesk_import_assets", "mydesk_import_items", "mydesk_imports"]);
@@ -475,22 +507,23 @@ describe("one-release RLS table enablement", () => {
   });
 
   it("makes the migration task prove the table, FORCE RLS, and tenant policy", () => {
-    const assertionStart = migrationSource.indexOf(
-      "const requiredRlsTables = (process.env.REQUIRE_RLS_TABLE_ENFORCEMENT"
-    );
-    const assertionEnd = migrationSource.indexOf(
-      "// Drop legacy substitute_assignments table",
-      assertionStart
-    );
-    assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
-    const assertion = migrationSource.slice(assertionStart, assertionEnd);
-    assert.match(assertion, /isReviewedRlsEnforcementRequest\(requiredRlsTables\)/);
-    assert.match(assertion, /RLS_GUC_ENABLED !== "true"/);
-    assert.match(assertion, /enabledRlsTables\.has\(table\)/);
+    const assertion = readFileSync(new URL("../src/db/rlsEnforcement.ts", import.meta.url), "utf8");
+    assert.match(assertion, /isReviewedRlsEnforcementRequest\(tables\)/);
+    assert.match(assertion, /environment\.RLS_GUC_ENABLED !== "true"/);
+    assert.match(assertion, /enabled\.has\(table\)/);
     assert.match(assertion, /relation\.relrowsecurity/);
     assert.match(assertion, /relation\.relforcerowsecurity/);
-    assert.match(assertion, /policy\.polname = 'tenant_isolation'/);
-    assert.match(assertion, /throw new Error/);
+    assert.match(assertion, /policy\?\.name === "tenant_isolation"/);
+    assert.match(assertion, /policy\.checkExpression === CATALOG_TENANT_PREDICATE/);
+    assert.match(assertion, /entry\.policies\.length === 1/);
+    const oneOff = migrationSource.slice(migrationSource.indexOf("async function runMigrationsAndExit"),
+      migrationSource.indexOf("async function runLegacyMigrationsAndExit"));
+    assert.match(oneOff, /await runVersionedMigrations\(\);[\s\S]*await assertRequiredRlsEnforcement\(pool\);[\s\S]*process\.exit\(0\)/);
+    assert.doesNotMatch(oneOff, /catch|runStartupMigrations/);
+    assert.doesNotMatch(oneOff, /allowNonProductionBootstrapRole/);
+    const legacy = migrationSource.slice(migrationSource.indexOf("export async function runStartupMigrations"),
+      migrationSource.indexOf("async function runMigrationsAndExit"));
+    assert.match(legacy, /NODE_ENV === "production"[\s\S]*LEGACY_STARTUP_MIGRATIONS_FORBIDDEN[\s\S]*allowNonProductionBootstrapRole: true/);
   });
 
   it("documents the reviewed bundle, adopted production baseline, and kill-switch preservation", () => {

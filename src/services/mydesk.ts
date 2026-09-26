@@ -29,7 +29,7 @@ const attachmentWhere = (actor: MyDeskActor, noteId: string): SQL => and(
 
 /** School and membership locks precede the note lock on every write. */
 export async function assertMyDeskActor(actor: MyDeskActor, database: MyDeskDatabase = db): Promise<MyDeskActor> {
-  if (!myDeskEnabledForSchool(actor.schoolId)) throw myDeskError(404, "MYDESK_NOT_ENABLED", "My Desk is not enabled for this school");
+  if (!myDeskEnabledForSchool(actor.schoolId)) throw myDeskError(404, "MYDESK_NOT_ENABLED", "My Desk is temporarily unavailable");
   await assertClasspilotEntitled(actor.schoolId, database, { lock: true });
   const [user] = await database.select({ id: users.id }).from(users).where(eq(users.id, actor.authorId)).limit(1).for("share");
   if (!user) throw myDeskError(403, "MYDESK_PRIVATE_ACCESS_REQUIRED", "Your own active staff identity is required");

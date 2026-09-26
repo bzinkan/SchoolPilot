@@ -1,9 +1,9 @@
 # My Desk private notebook
 
-Implementation and rollout contract for the ClassPilot web pilot. This document
+Implementation and rollout contract for the included ClassPilot teacher workspace. This document
 describes the proposed release; it is not evidence of production deployment,
 storage provisioning, retention operation, or a privacy/legal approval.
-The later seating-chart gate, schema, privacy, and separate admission sequence are
+The seating-chart mode, schema, and privacy contract are
 documented in [MYDESK_PRIVATE_SEATING.md](MYDESK_PRIVATE_SEATING.md).
 The narrow teacher-started AI paperwork-import exception is documented in
 [MYDESK_AI_IMPORT.md](MYDESK_AI_IMPORT.md); it has a separate default-off gate.
@@ -12,7 +12,7 @@ The narrow teacher-started AI paperwork-import exception is documented in
 
 Teachers and school administrators keep their own general, class, and student
 notes, including photo-only entries. Every API/content request must resolve the
-active school and current membership, enforce the pilot gate and ClassPilot
+active school and current membership, enforce the operational mode and ClassPilot
 entitlement, and require `author_id` to match the authenticated account. An
 administrator role never grants access to another author's notebook. Tenant RLS
 is a school-isolation backstop, not the author-authorization implementation.
@@ -68,7 +68,7 @@ must leave a durable retry record. Deleted attachment tombstones retain their
 storage key and a daily cleanup deadline; the worker repeats DELETE indefinitely
 until a separately verified permanent-erasure process retires the tombstone.
 A late upload completion also requeues its exact attachment through an internal
-ownership-scoped cleanup transaction, even after membership or pilot access is
+ownership-scoped cleanup transaction, even after membership or feature access is
 revoked. The daily backstop covers a process dying before that repair. An initial
 successful DELETE is not proof that no in-flight writer remains.
 
@@ -83,16 +83,14 @@ successful DELETE is not proof that no in-flight writer remains.
 | Pending reservations and failed cleanup | PostgreSQL worker queue | 24-hour abandonment cutoff; bounded retry with retained keys |
 | Operation audit records | Existing audit storage | IDs/actions/counts only; existing audit policy applies |
 
-The server strips photo metadata and rejects normalization failures. The browser
-sends the selected file; server normalization is the metadata-removal boundary.
-Exact supported photo formats and phone picker behavior require fixture/device tests;
-do not silently retain an unsupported original. Ordinary note photos are not
-submitted to AI. The separate teacher-started paperwork workflow processes only
-its selected source pages under MYDESK_AI_IMPORT.md. No photos go to public
-malware-analysis services, analytics, or application logs.
-PDF parsing runs in an isolated worker thread with a 15-second deadline, a
-128-MiB old-generation heap limit, and discarded parser stdout/stderr. Validation
-does not rewrite the accepted PDF bytes or remove embedded document metadata.
+Ordinary PDF inputs use the same bounded native inspection helper as imports.
+Linux prlimit bounds address space/CPU/output, and the helper bounds wall time,
+subprocess output and waiting work. One native operation may run at once, with at
+most four waiting requests; My Desk image transforms share this permit with PDF
+work. Accepted ordinary PDF bytes remain unchanged;
+encrypted, unreadable, corrupt and excessive files are rejected. Ordinary
+attachments allow up to 1,000 pages; AI imports allow 20 pages total.
+
 
 Content GETs authorize the exact attachment/note/school/author relationship and
 return bytes with `Cache-Control: private, no-store` and `X-Content-Type-Options:
@@ -110,7 +108,7 @@ The app also intercepts upstream My Desk parser/session failures before the gene
 error monitor; malformed JSON can otherwise embed private text in a parser error.
 Those failures receive fixed responses and operational codes without raw error data.
 
-This is separate from screen-preview/timeline retention. Disabling the pilot or
+This is separate from screen-preview/timeline retention. Disabling My Desk or
 revoking membership blocks notebook access but does not silently destroy records.
 Permanent destruction on contract termination follows the executed agreement and
 verified operator process in WISP section 9. Include notebook DB records, retained
@@ -131,70 +129,26 @@ have no blanket S3 expiration. The task-role policy grants only Get/Put/Delete
 under `mydesk/*` and prefix-limited ListBucket for reconciliation. API and worker
 currently share this task role; no account-wide S3 or ACL permission is granted.
 
-- `MYDESK_ENABLED_SCHOOL_IDS`: explicit comma-separated pilot school UUIDs;
-  empty means disabled, never all schools.
+- `MYDESK_MODE`: exact `off`/`on`, default `off`; once on, all eligible current
+  and future ClassPilot schools receive My Desk automatically. Retired school
+  allowlists are rejected. No school-admin setting or individual opt-in exists.
 - `MYDESK_ATTACHMENTS_BUCKET`: configured for both API and worker, including
-  while the pilot gate is off, so deletion retries continue.
+  while the operational mode is off, so deletion retries continue.
 Tests inject an in-memory object-store implementation; there is no runtime switch
 that permits production to silently fall back to volatile storage.
 
 Terraform's ECS definitions are bootstrap templates, not the live serving API and
 worker definitions. New My Desk bucket configuration changes both templates;
 copying these templates onto the services would discard unrelated runtime values.
-Never do that to activate the pilot.
+Never do that to activate My Desk.
 
 ## Reviewed rollout
 
-1. Merge only after backend/frontend checks and the focused schema, API,
-   attachment, cleanup and UI tests pass. Run `npm run soc2:check` for these docs.
-   Offline infrastructure checks: `terraform -chdir=infra init -backend=false
-   -lockfile=readonly -input=false`, `terraform -chdir=infra validate -no-tests`,
-   and the mocked `tests/mydesk.tftest.hcl` test. Windows filter paths use `\`.
-2. Before any real plan/apply, follow CLAUDE.md and AWS_COST_ROLLOUT_OPERATIONS.md:
-   unique external saved plan, verified DPAPI and OneDrive AES-GCM state backups
-   before plan/before apply/after apply, and explicit operator go/no-go. Expected
-   additions are exactly the six named `aws_s3_* .mydesk_attachments` resources
-   and `module.ecs.aws_iam_role_policy.mydesk_attachments[0]`. Bootstrap API/worker
-   template replacements caused only by the reviewed My Desk environment entries
-   require review. Service changes, unrelated replacements, destruction, secret
-   value changes, and RLS-baseline changes are outside this rollout. Abort on any
-   unexplained drift; never approve a plan solely from resource counts.
-3. Verify private bucket controls and the shared task-role policy. Keep the pilot
-   allowlist empty. Preserve live task-definition fields and configure the same
-   bucket on API and worker through the separately reviewed runtime update.
-4. Deploy backend with the exact one-release bundle:
-
-   Use an M1-only reviewed backend artifact for this first admission. The later
-   combined seating/import manifest also installs and enforces their RLS; do not use
-   that artifact as though those migrations were deferred by feature
-   flag. Follow the explicit predecessor-release sequence in the seating runbook.
-
-   ```bash
-   ./scripts/deploy.sh production --backend --activate-emergency --enable-rls-table mydesk_attachments,mydesk_notes
-   ```
-
-   Require matching live API/worker admission sources and successful migration
-   `mydesk-private-notebook-20260925`. Verify both tables have enabled/forced RLS
-   and `tenant_isolation`, and the registered/live definitions retain the new
-   allowlist. Omit the flag on later deploys; a deliberate removal requires
-   re-admission. Keep generic/production Terraform allowlist values unchanged
-   until actual rollout verification; then land a separate production-baseline
-   adoption PR before any later Terraform apply.
-5. Deploy frontend after backend is healthy. Admit only the reviewed pilot school
-   through live task definitions, then verify author-only reads with two teachers
-   and an administrator, a photo-only save and retry, phone capture, Past classes,
-   and deletion followed by worker-confirmed object removal. Retain non-content
-   operator evidence privately; do not place notes, names, filenames, keys, or
-   photo bytes in release evidence committed to this repository.
-
-Rollback first disables new My Desk access via the pilot gate while retaining
-bucket/IAM configuration and a cleanup-capable worker. A frontend rollback may
-hide the entry point; it does not stop cleanup. Capture exact live API/worker
-digests/families before release and follow all existing feature data-compatibility
-gates before selecting older images. Prefer a feature-aware repaired image once
-notebook data exists; additive schema alone does not prove downgrade safety.
-Never remove admitted RLS entries, drop tables/buckets, or lose queued deletions
-as a rollback step.
-
-No AWS apply, runtime activation, production migration, or deployment is authorized
-merely by committing this runbook or Terraform configuration.
+Follow [MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md) for combined six-table admission,
+private storage, production verification, automatic access and rollback. The
+storage apply retains the existing requirement for explicit operator go/no-go on
+the exact saved plan, with verified DPAPI and AES-GCM state backups. The
+combined PR #510 manifest is the starting point; do not package an older
+notebook-only predecessor or alter checksummed migrations. Teacher desktop and
+physical Android acceptance takes place in live production after activation.
+Retain the private bucket, IAM, RLS and cleanup worker when modes are disabled.

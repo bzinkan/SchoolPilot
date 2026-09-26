@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql, type SQLWrapper } from "drizzle-orm";
 import db from "../db.js";
 import { productLicenses, schools } from "../schema/core.js";
 
@@ -44,6 +44,24 @@ export function isClasspilotSchoolActive(
     school.planStatus !== "canceled" &&
     (!school.activeUntil || school.activeUntil > now)
   );
+}
+
+/** Unlocked background discovery only. Claimed operations must recheck and lock entitlement. */
+export function classpilotEntitledSchoolPredicate(schoolId: SQLWrapper) {
+  return sql`EXISTS (
+    SELECT 1 FROM ${schools}
+    WHERE ${schools.id}=${schoolId}
+      AND ${schools.status}='active' AND ${schools.isActive}=true
+      AND ${schools.disabledAt} IS NULL AND ${schools.deletedAt} IS NULL
+      AND ${schools.planStatus}<>'canceled'
+      AND (${schools.activeUntil} IS NULL OR ${schools.activeUntil}>clock_timestamp())
+      AND EXISTS (
+        SELECT 1 FROM ${productLicenses}
+        WHERE ${productLicenses.schoolId}=${schools.id}
+          AND ${productLicenses.product}='CLASSPILOT' AND ${productLicenses.status}='active'
+          AND (${productLicenses.expiresAt} IS NULL OR ${productLicenses.expiresAt}>clock_timestamp())
+      )
+  )`;
 }
 
 /**

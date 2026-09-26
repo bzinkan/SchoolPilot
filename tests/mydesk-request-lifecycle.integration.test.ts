@@ -63,7 +63,7 @@ before(async () => {
   await fixturePool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Private','Author')", [ids.author, `${ids.author}@example.test`]);
   await fixturePool.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [ids.school, ids.author]);
   await fixturePool.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [ids.school]);
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = ids.school;
+  process.env.MYDESK_MODE = "on";
   photo = await sharp({ create: { width: 12, height: 16, channels: 3, background: "#4488ff" } }).png().toBuffer();
   myDeskObjectStore.put = async (key, bytes) => { putGate?.entered.resolve(); if (putGate) await putGate.released.promise; objects.set(key, bytes); };
   myDeskObjectStore.get = async key => { getGate?.entered.resolve(); if (getGate) await getGate.released.promise; const bytes = objects.get(key); assert.ok(bytes); return bytes; };
