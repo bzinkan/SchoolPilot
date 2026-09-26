@@ -157,13 +157,15 @@ describe("semantic RLS registry", () => {
   });
 
   it("adopts the verified production inventory without changing the generic rollout baseline", () => {
-    const expected = registry.inventories.classpilotRoadmapPostExpand.tables;
+    const expected = registry.inventories.mydeskImportsPostExpand.tables;
     assert.deepEqual(terraformDefaultAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
     const production = productionAllowlist();
-    assert.equal(production.length, 90);
-    assert.equal(new Set(production).size, 90);
+    assert.equal(production.length, 109);
+    assert.equal(new Set(production).size, 109);
     // Preserve observed runtime CSV order; the registry target has its own immutable order.
     assert.deepEqual(new Set(production), new Set(expected));
+    assert.equal(sha256(production), "3fc773aafdbed1c6d8f0b2c1ad6d2d2b4cd683e037a20e58c926d941ca68c021",
+      "Production CSV must retain the exact 2026-09-26 post-admission observation order");
     assert.deepEqual(ciAllowlist(), registry.inventories.mydeskImportsPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
@@ -177,7 +179,9 @@ describe("semantic RLS registry", () => {
       ...registry.inventories.passpilotKioskSchedulePostExpand.tables,
       ...registry.reviewedEnablementRequests.mydesk!,
     ]);
-    assert.deepEqual(registry.inventories.classpilotSupervisionWorkspacePostExpand.tables, [...expected, "classpilot_coverage_group_categories"]);
+    assert.deepEqual(registry.inventories.classpilotSupervisionWorkspacePostExpand.tables, [
+      ...registry.inventories.classpilotRoadmapPostExpand.tables, "classpilot_coverage_group_categories",
+    ]);
     assert.deepEqual(registry.inventories.classpilotSupervisionActivityReportsPostExpand.tables, [
       ...registry.inventories.classpilotSupervisionWorkspacePostExpand.tables,
       "classpilot_supervision_report_segments", "classpilot_supervision_student_reports", "classpilot_supervision_summary_deliveries",

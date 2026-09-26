@@ -27,6 +27,21 @@ mock_provider "aws" {
   override_during = plan
 }
 
+run "observed_mydesk_rls_baseline_is_registry_valid" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.mydeskImportsPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 109 &&
+      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+    )
+    error_message = "The admitted 109-table My Desk baseline must be accepted without changing historical inventories or the generic default."
+  }
+}
+
 run "notebook_bucket_is_private_encrypted_and_tls_only" {
   command = plan
   variables {
