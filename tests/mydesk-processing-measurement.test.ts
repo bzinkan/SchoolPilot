@@ -36,7 +36,7 @@ test("isolated smoke exercises both jobs, ordinary uploads and continuation PDFs
   assert.equal(report.status, "completed", JSON.stringify(report));
   assert.equal(report.failureCode, null);
   assert.equal(report.failedOperation, null);
-  assert.deepEqual(report.counts, { packets: 2, sources: 4, inputBytes: report.counts.inputBytes, sourcePages: 4,
+  assert.deepEqual(report.counts, { packets: 2, sources: 4, inputBytes: report.counts.inputBytes, sourcePages: 4, maxSourcePages: 1,
     renderedPages: 4, forms: 6, continuationRegions: 4, attachmentBytes: report.counts.attachmentBytes,
     ordinaryUploads: 4, ordinaryPdfBytesPreserved: true, upperBoundMetadataChecks: 5, oversizeMetadataRejected: true });
   assert.ok(report.counts.inputBytes > 0 && report.counts.attachmentBytes > 0);

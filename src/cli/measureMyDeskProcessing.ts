@@ -20,7 +20,7 @@ const configuration = z.object({
 export type MeasurementOptions = z.infer<typeof configuration>;
 const countsSchema = z.object({
   packets: z.number().int().nonnegative(), sources: z.number().int().nonnegative(),
-  inputBytes: z.number().int().nonnegative(), sourcePages: z.number().int().nonnegative(),
+  inputBytes: z.number().int().nonnegative(), sourcePages: z.number().int().nonnegative(), maxSourcePages: z.number().int().nonnegative(),
   renderedPages: z.number().int().nonnegative(), forms: z.number().int().nonnegative(),
   continuationRegions: z.number().int().nonnegative(), attachmentBytes: z.number().int().nonnegative(),
   ordinaryUploads: z.number().int().nonnegative(), ordinaryPdfBytesPreserved: z.boolean(),
@@ -53,7 +53,7 @@ export function parseMyDeskMeasurementArgs(args: string[]): MeasurementOptions {
 }
 
 function emptyCounts(): z.infer<typeof countsSchema> {
-  return { packets: 0, sources: 0, inputBytes: 0, sourcePages: 0, renderedPages: 0, forms: 0,
+  return { packets: 0, sources: 0, inputBytes: 0, sourcePages: 0, maxSourcePages: 0, renderedPages: 0, forms: 0,
     continuationRegions: 0, attachmentBytes: 0, ordinaryUploads: 0, ordinaryPdfBytesPreserved: true,
     upperBoundMetadataChecks: 0, oversizeMetadataRejected: false };
 }
@@ -114,7 +114,7 @@ async function executeScenario(options: MeasurementOptions, directory: string, s
   let fixtureMs = 0, processingStarted = started;
   try {
     const isMax = options.scenario === "max";
-    const templates = await Promise.all([syntheticPdf(1), syntheticPdf(isMax ? 4 : 1), syntheticPdf(isMax ? 5 : 1)]);
+    const templates = await Promise.all([syntheticPdf(1), syntheticPdf(isMax ? 16 : 1)]);
     checkpoint(signal);
     const photo = await sharp({ create: { width: isMax ? 6000 : 640, height: isMax ? 4000 : 480, channels: 3, background: "#eeeeee" } })
       .jpeg({ quality: 94 }).timeout({ seconds: 15 }).toBuffer();
@@ -137,16 +137,19 @@ async function executeScenario(options: MeasurementOptions, directory: string, s
     }
     async function packet(index: number) {
       const path = join(directory, `packet-${index}`); await mkdir(path);
-      const sourceCounts = isMax ? [5, 5, 5, 4, 1] : [1, 1];
+      // Concentrate pages in one source to exercise retained render output, while
+      // also reaching the five-file, 20-page and 50 MiB packet limits together.
+      const sourceCounts = isMax ? [16, 1, 1, 1, 1] : [1, 1];
       let pageIndex = 0;
       for (let sourceIndex = 0; sourceIndex < sourceCounts.length; sourceIndex++) {
         checkpoint(signal);
         const isPhoto = sourceIndex === sourceCounts.length - 1;
-        let bytes = isPhoto ? photo : templates[sourceCounts[sourceIndex] === 5 ? 2 : 1]!;
+        let bytes = isPhoto ? photo : templates[sourceCounts[sourceIndex] === 16 ? 1 : 0]!;
         if (isMax) bytes = isPhoto ? Buffer.concat([photo, Buffer.alloc(MYDESK_MAX_FILE_BYTES - photo.length)]) : padSyntheticPdf(bytes, MYDESK_MAX_FILE_BYTES);
         counts.sources++; counts.inputBytes += bytes.length;
         const prepared = await timed("sourcePreparation", () => prepareImportSource(bytes, isPhoto ? "image/jpeg" : "application/pdf", { signal }));
         counts.sourcePages += prepared.pageCount;
+        counts.maxSourcePages = Math.max(counts.maxSourcePages, prepared.pageCount);
         checkpoint(signal);
         if (options.role === "api") continue;
         const pages = await timed("rendering", () => renderImportSource(prepared.bytes, prepared.contentType, { signal }));
