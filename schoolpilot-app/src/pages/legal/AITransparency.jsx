@@ -135,7 +135,7 @@ export default function AITransparency() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Private My Desk Paperwork Import</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Teacher-Started Paperwork and Contact Imports</h2>
             <p className="text-slate-700 leading-relaxed">
               When this separately controlled feature is available, a teacher or school administrator can
               deliberately upload paperwork or select a saved photo/PDF attachment for Anthropic-assisted
@@ -147,13 +147,26 @@ export default function AITransparency() {
             <p className="text-slate-700 leading-relaxed mt-4">
               AI can misread names, dates, handwriting, or form boundaries. The author compares drafts
               with source images, corrects them, and explicitly approves every included entry before
-              saving. This creates private notes, not formal discipline records or parent messages.
+              saving. The selected destination is clear: private notes stay author-only, while a
+              reviewed Discipline logs import creates shared school incidents after explicit confirmation.
+              AI extraction never publishes automatically or sends parent messages.
               Temporary source files and drafts are removed through the import cleanup process;
               approved notes and attachments follow notebook retention. Local removal does not
               establish deletion of provider-retained data. Provider/account terms and extraction
-              quality must be reviewed before activation. A teacher may separately choose to submit a
-              saved private note and selected evidence to school discipline records; AI processing and
-              private note approval never perform that submission.
+              quality must be reviewed before activation. A saved private note and selected evidence
+              may also be explicitly copied to school discipline records; private note approval alone
+              never shares it. School discipline evidence follows its separate school-record retention.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              A separately controlled contact-import workflow accepts PDF, photos, DOCX, XLSX and CSV.
+              Staff select pages, sheets or text sections before sending their images or extracted text
+              to Anthropic. These may include student names, adult relationships, phone numbers and
+              email addresses. Current school profiles and rosters are not sent. Staff resolve uncertain
+              student/adult matches and contact fields, then explicitly review and save shared profiles.
+              Approved values and version history remain school-owned; original contact files, previews
+              and unapproved suggestions are temporary and queued for deletion after completion,
+              cancellation or expiry. Contact extraction requires its own provider, quality and capacity
+              checks before activation. It does not change parent accounts or pickup permissions.
             </p>
           </section>
 

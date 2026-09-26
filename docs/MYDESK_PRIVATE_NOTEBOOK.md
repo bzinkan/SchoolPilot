@@ -10,7 +10,7 @@ The narrow teacher-started AI paperwork-import exception is documented in
 
 ## Scope and ownership
 
-Teachers and school administrators keep their own general, class, and student
+Teachers and school administrators keep their own general, grade, class, and student
 notes, including photo-only entries. Every API/content request must resolve the
 active school and current membership, enforce the operational mode and ClassPilot
 entitlement, and require `author_id` to match the authenticated account. An
@@ -48,14 +48,22 @@ under **Other classes**. Presentation never narrows `currentClassWhere` or roste
 authorization. Existing class IDs, school-year/term labels and filing snapshots
 remain separate even when displayed beneath the same grade.
 
-The teacher chooses one **Default filing class** per grade, stored in
-`mydesk_preferences` with exact school/author ownership and a revision. Validate
-that the preference is a current authorized class of that grade; stale/deleted
-preferences require a new choice, never an arbitrary first class. An explicit
-class context such as a seating-chart shortcut wins over a default. The selected
-student must belong to the chosen current filing class. Preferences do not refile
-existing notes, change rosters, or establish student access.
+The Grades/Classes view preference lives in `mydesk_preferences` under exact
+school/author ownership and revision. Grade notes have a real target without a
+class. Student notes may omit class when current personal student/grade access is
+valid; explicit class context remains exact. Derive grade and school-year filing
+snapshots from server metadata and configured school-year boundaries, not labels
+or today's roster when reading history. Display-unit/navigation changes do not
+refile notes. Legacy per-grade class defaults remain compatible but are not a
+requirement for new grade filing.
 
+Existing notes with unknown grade keep null snapshots and appear in Grade not
+recorded. No automatic current-roster backfill occurs. The same target echoed by
+an editor preserves snapshots even after roster changes; only explicit refiling
+revalidates current access. Version-2 grade writers send `workspaceVersion: 2` on
+edit/completion. Incompatible older clients receive `MYDESK_REFRESH_REQUIRED`
+before changing grade/student-grade content. Private history moved beneath Notes;
+old student-history URLs redirect there, never into shared discipline records.
 The student directory deduplicates authorized current rosters by stable student
 ID and includes students with zero notes. Each student's private log includes
 all of this author's notes for that historical student ID across classes and

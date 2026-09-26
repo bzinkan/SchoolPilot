@@ -19,6 +19,7 @@ import Landing from './pages/Landing';
 import LandingV2 from './pages/LandingV2';
 import AuthCallback from './pages/AuthCallback';
 import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
+import SharedRecordAccessBoundary from './products/classpilot/components/SharedRecordAccessBoundary';
 
 // ClassPilot pages (lazy-loaded)
 const CPClassToolsPresentation = lazy(() => import('./products/classpilot/pages/ClassToolsPresentation'));
@@ -39,6 +40,12 @@ const CPMyDesk = lazy(() => import('./products/classpilot/pages/MyDesk'));
 const CPSeating = lazy(() => import('./products/classpilot/pages/Seating'));
 const CPImports = lazy(() => import('./products/classpilot/pages/Imports'));
 const CPStudentLogs = lazy(() => import('./products/classpilot/pages/StudentLogs'));
+const CPStudentInformation = lazy(() => import('./products/classpilot/pages/StudentInformation'));
+
+function PrivateHistoryRedirect() {
+  const location = useLocation();
+  return <Navigate replace to={location.pathname.replace('/my-desk/students', '/my-desk/notes/students') + location.search} />;
+}
 const CPDisciplineRecords = lazy(() => import('./products/classpilot/pages/DisciplineRecords'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
@@ -287,14 +294,20 @@ function AppRoutes() {
             <Route path="/classpilot/admin/email-monitoring" element={<CPEmailMonitoring />} />
             <Route path="/classpilot/admin/email-monitoring/setup" element={<CPEmailMonitoringSetup />} />
             <Route path="/classpilot/students" element={<CPStudents />} />
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/students/:studentId/profile" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings" element={<CPSettings />} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk" element={<CPMyDesk />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students" element={<CPStudentLogs />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<CPStudentLogs />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records" element={<CPDisciplineRecords />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records/:recordId" element={<CPDisciplineRecords />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students" element={<PrivateHistoryRedirect />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<PrivateHistoryRedirect />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students" element={<CPStudentLogs />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students/:studentId" element={<CPStudentLogs />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/imports/:importId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/:studentId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records" element={<SharedRecordAccessBoundary><CPDisciplineRecords /></SharedRecordAccessBoundary>} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records/:recordId" element={<SharedRecordAccessBoundary><CPDisciplineRecords /></SharedRecordAccessBoundary>} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating" element={<CPSeating />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating/:chartId" element={<CPSeating />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports" element={<CPImports />} />}

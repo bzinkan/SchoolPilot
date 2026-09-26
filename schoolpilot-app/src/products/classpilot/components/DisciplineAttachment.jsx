@@ -3,10 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '../../../components/ui/button';
 import { disciplineApi, disciplineKeys } from '../lib/discipline';
 
-export default function DisciplineAttachment({ access, recordId, versionId, attachment }) {
+export default function DisciplineAttachment({ access, recordId, versionId, attachment, draft = false }) {
   const { schoolId, viewerId } = access;
-  const content = useQuery({ queryKey: disciplineKeys.attachment(schoolId, viewerId, recordId, versionId, attachment.id),
-    queryFn: ({ signal }) => disciplineApi(schoolId, signal).content(recordId, versionId, attachment.id),
+  const content = useQuery({ queryKey: disciplineKeys.attachment(schoolId, viewerId, recordId, draft ? 'draft' : versionId, attachment.id),
+    queryFn: ({ signal }) => draft ? disciplineApi(schoolId, signal).draftContent(recordId, attachment.id) : disciplineApi(schoolId, signal).content(recordId, versionId, attachment.id),
     retry: false, staleTime: 0, gcTime: 0, refetchOnMount: 'always' });
   const [object, setObject] = useState(null);
   useEffect(() => {

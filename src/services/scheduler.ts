@@ -1,3 +1,4 @@
+import { runStudentInformationJobs, cleanupStudentInformationImports } from "./studentInformationWorker.js";
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
 import {
@@ -261,6 +262,8 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("cleanupSchoolDiscipline", async () => { try { await cleanupSchoolDiscipline(); } catch { console.error(JSON.stringify({event:"school_discipline_cleanup_failed"})); } });
     scheduleLockedJob("cleanupMyDeskImports", async () => { try { await cleanupMyDeskImports(); } catch { console.error(JSON.stringify({event:"mydesk_import_cleanup_failed"})); } });
     scheduleLockedJob("runMyDeskImportJobs", async () => { try { await runMyDeskImportJobs(); } catch { console.error(JSON.stringify({event:"mydesk_import_worker_failed"})); } });
+    scheduleLockedJob("runStudentInformationJobs", async () => { try { await runStudentInformationJobs(); } catch { console.error(JSON.stringify({event:"student_information_worker_failed"})); } });
+    scheduleLockedJob("cleanupStudentInformationImports", async () => { try { await cleanupStudentInformationImports(); } catch { console.error(JSON.stringify({event:"student_information_cleanup_failed"})); } });
     scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);

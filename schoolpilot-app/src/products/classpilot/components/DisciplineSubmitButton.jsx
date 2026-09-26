@@ -10,7 +10,7 @@ import { myDeskError, myDeskKeys } from '../lib/myDeskModel';
 import MyDeskAttachment from './MyDeskAttachment';
 import '../discipline.css';
 
-export default function DisciplineSubmitButton({ access, noteIds, label = 'Submit to school log', onSubmitted }) {
+export default function DisciplineSubmitButton({ access, noteIds, label = 'Add to discipline log', onSubmitted }) {
   const capabilities = useDisciplineCapabilities(access);
   const [sessionId, setSessionId] = useState(null);
   if (!capabilities.usable || !capabilities.data.canSubmit || !noteIds?.length) return null;
@@ -75,7 +75,7 @@ export function SubmissionReview({ access, noteIds, onClose, onSubmitted }) {
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
   return <Dialog open onOpenChange={open => { if (!open) close(); }}><DialogContent className="discipline-submit-dialog" onInteractOutside={event => { if (busy) event.preventDefault(); }} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
-    <DialogHeader><DialogTitle>Review school log submission</DialogTitle><DialogDescription>Visible to designated school administrators. Only the entries and forms selected below will be submitted. Your other notes remain private.</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>Review school log submission</DialogTitle><DialogDescription>Visible to school administrators and teachers currently assigned to this student. Only the entries and forms selected below will be submitted. Your other notes remain private.</DialogDescription></DialogHeader>
     {tooMany ? <section role="alert"><p>Choose up to 50 notes per school submission review. None of these {ids.length} notes were submitted.</p><Button variant="outline" onClick={onClose}>Close review</Button></section> : query.isPending ? <p role="status">Loading the exact saved entries…</p> : query.isError ? <p role="alert">{myDeskError(query.error)} <Button onClick={() => query.refetch()}>Retry preview</Button></p> : <>
       <div className="discipline-submission-list">{notes.map(note => <article key={note.id} className="discipline-submission-entry">
         <label className="discipline-check"><input type="checkbox" checked={selected(note)} disabled={!valid(note) || busy || started} onChange={event => change(note, { included: event.target.checked })} /><strong>{note.studentName || 'Student required'}</strong></label>

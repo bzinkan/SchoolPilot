@@ -47,6 +47,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     const match = pathname.match(/\/imports\/([^/]+)(.*)$/); if (!match) return json({});
     if (state.viewer !== 'teacher-a') return json({ error: 'Import not found', code: 'MYDESK_IMPORT_NOT_FOUND' }, 404);
     const action = match[2];
+    if (action.endsWith('/duplicates') && method === 'POST') return json({ candidates: [], candidatesFingerprint: 'b'.repeat(64) });
     if (action.endsWith('/content') && method === 'GET') return route.fulfill({ contentType: 'image/png', body: sourceBytes });
     if (action.endsWith('/content') && method === 'PUT') { state.batch.revision++; return json({ asset: { id: 'source-a', status: 'ready' } }); }
     if (action === '/assets') { assert.match(body.sha256, /^[a-f0-9]{64}$/); state.batch.revision++; return json({ asset: { id: 'source-a' } }); }
@@ -57,7 +58,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     assert.equal(body.revision, state.batch.revision);
     state.batch.revision++;
     if (action === '/process') { state.batch = fixture({ revision: state.batch.revision }); if (state.failProcess) { state.failProcess = false; receipts.set(body.requestId, true); return json({ error: 'Process response interrupted' }, 503); } }
-    else if (action === '/commit') { assert.deepEqual(body.itemIds, state.batch.items.filter(item => !item.excluded).map(item => item.id)); assert.ok(state.batch.items.every(item => item.excluded || item.reviewed)); assert.equal(state.batch.pageDecisions.length, state.batch.assets.filter(asset => asset.kind === 'page').length); state.batch.status = 'completed'; state.batch.commitReceipt = { notes: body.itemIds.map((itemId, index) => ({ itemId, noteId: `note-${index}` })) }; }
+    else if (action === '/commit') { assert.deepEqual(body.itemIds, state.batch.items.filter(item => !item.excluded).map(item => item.id)); assert.ok(state.batch.items.every(item => item.excluded || item.reviewed)); assert.equal(state.batch.pageDecisions.length, state.batch.assets.filter(asset => asset.kind === 'page').length); state.batch.status = 'completed'; state.batch.commitReceipt = state.batch.destination === 'discipline' ? { notes: [], records: body.itemIds.map((itemId, index) => ({ itemId, recordId: `record-${index}` })) } : { notes: body.itemIds.map((itemId, index) => ({ itemId, noteId: `note-${index}` })) }; }
     else if (method === 'DELETE') { state.batch.status = 'cancelled'; }
     else if (action.startsWith('/items/')) {
       const parts = action.split('/'), current = state.batch.items.find(item => item.id === parts[2]); assert.equal(body.itemRevision, current.revision); current.revision++;
@@ -88,6 +89,40 @@ test('review each form with an exact subject and explicit date, then atomically 
   state.failCommit = true; await page.getByRole('button', { name: 'Save all 2 notes' }).click(); await page.getByRole('button', { name: 'Retry last action' }).click(); await page.getByRole('heading', { name: 'Your notes are saved.' }).waitFor();
   const commits = requests.filter(request => request.path.endsWith('/commit')); assert.equal(commits.length, 2); assert.deepEqual(commits[0].body, commits[1].body);
   await page.getByRole('button', { name: 'Open saved note 1' }).click(); await page.waitForURL('**/my-desk?note=note-0'); assert.deepEqual(errors, []); await page.close();
+});
+
+test('discipline review requires explicit incident counts and duplicate choice before direct school publication', async () => {
+  const { page, state, requests, errors } = await setup({ batch: fixture({ destination: 'discipline', items: [item('form-a', 0)] }) });
+  await page.getByRole('button', { name: 'All forms on this page are accounted for' }).click(); await forms(page);
+  await chooseSubject(page); await page.getByRole('img', { name: 'Form 1, part 1', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Form category', { exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Reviewed → Next' }).click();
+  await page.getByRole('alert').filter({ hasText: 'referral or detention' }).waitFor();
+  await page.getByLabel('Referral recorded', { exact: true }).check();
+  await page.getByLabel('Detention assigned', { exact: true }).check();
+  await page.getByLabel('Scheduled detention dates').fill('2026-09-25');
+  await page.getByLabel('Scheduled detention dates').press('End');
+  await page.getByLabel('Scheduled detention dates').press('Enter');
+  assert.equal(await page.getByLabel('Scheduled detention dates').inputValue(), '2026-09-25\n');
+  await page.getByLabel('Scheduled detention dates').pressSequentially('2026-09-26');
+  await page.getByText('No similar published incident was found.').waitFor();
+  await page.getByRole('button', { name: 'Reviewed → Next' }).click();
+  await page.getByRole('alert').filter({ hasText: 'possible duplicates' }).waitFor();
+  await page.getByLabel('Save this form as').selectOption('separate');
+  await page.getByRole('button', { name: 'Reviewed → Next' }).click();
+  await page.getByRole('heading', { name: 'Save 1 disciplinary records together' }).waitFor();
+  await page.getByText(/Visible to school administrators and teachers currently assigned/).waitFor();
+  state.failCommit = true;
+  await page.getByRole('button', { name: 'Save all 1 disciplinary records' }).click();
+  await page.getByRole('button', { name: 'Retry last action' }).click();
+  await page.getByRole('heading', { name: 'Your disciplinary records are saved.' }).waitFor();
+  assert.deepEqual(state.batch.items[0].disciplineFields, { referral: true, detentionAssignment: { dates: ['2026-09-25', '2026-09-26'], details: '' } });
+  assert.equal(state.batch.commitReceipt.notes.length, 0);
+  const commits = requests.filter(request => request.path.endsWith('/commit'));
+  assert.equal(commits.length, 2); assert.deepEqual(commits[0].body, commits[1].body);
+  assert.equal(requests.some(request => request.path.endsWith('/notes') && request.method === 'POST'), false);
+  await page.getByRole('button', { name: 'Open disciplinary record 1' }).click(); await page.waitForURL('**/discipline-records/record-0');
+  assert.deepEqual(errors, []); await page.close();
 });
 
 test('crop controls clamp bounds, undo, rotate, and atomically join a detected continuation without changing teacher text', async () => {

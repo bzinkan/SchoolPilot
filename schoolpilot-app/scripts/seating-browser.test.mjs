@@ -107,19 +107,22 @@ async function setup({ charts = [], url = '', viewport, currentRoster = roster, 
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, method = request.method();
     const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) ? request.postDataJSON() : null;
-    requests.push({ path: pathname, method, body }); const json = (value, status = 200) => route.fulfill({ status, json: value });
+    requests.push({ path: pathname, search: new URL(request.url()).search, method, body }); const json = (value, status = 200) => route.fulfill({ status, json: value });
     if (pathname.endsWith('/auth/csrf')) return json({ csrfToken: 'test' });
     if (pathname.endsWith('/auth/me')) return json({ user: { id: state.viewer, firstName: 'Teacher', email: 'teacher@example.school' }, activeSchoolId: 'school-a', memberships: [{ schoolId: 'school-a', schoolName: 'School', schoolTimezone: 'America/New_York', role: 'teacher', roles: ['teacher'] }], licenses: { classPilot: true } });
     assert.equal(request.headers()['x-school-id'], 'school-a');
     if (pathname.endsWith('/capabilities')) return state.failCapability ? json({ error: 'Temporary capability outage' }, 503) : json({ enabled: true, seatingEnabled: state.enabled, schoolDate: '2026-09-25' });
-    if (pathname.endsWith('/classes')) return json({ current: [{ id: 'class-a', name: 'Science 5' }, { id: 'class-b', name: 'Science 6' }], past: [{ id: 'past-class', name: 'Last year' }] });
+    if (pathname.endsWith('/classes')) return json({ preferences: { revision: state.preferenceRevision || 0, preferredClasses: {}, viewBy: state.viewBy || 'grades' }, grades: [{ gradeLevel: '5', label: 'Grade 5' }, { gradeLevel: '6', label: 'Grade 6' }], current: [{ id: 'class-a', name: 'Science 5', personal: true, gradeLevel: '5' }, { id: 'class-b', name: 'Science 6', personal: true, gradeLevel: '6' }], past: [{ id: 'past-class', name: 'Last year' }] });
+    if (pathname.endsWith('/preferences')) { state.viewBy = body.viewBy; state.preferenceRevision = (state.preferenceRevision || 0) + 1; return json({ revision: state.preferenceRevision, preferredClasses: {}, viewBy: state.viewBy }); }
+    if (/\/students\/[^/]+\/context$/.test(pathname)) { const studentId = pathname.split('/').at(-2); return json({ student: { ...state.roster.find(student => student.id === studentId), gradeLevel: '5', classes: [{ id: 'class-a', name: 'Science 5', gradeLevel: '5' }] } }); }
     if (pathname.endsWith('/students')) return json({ students: state.roster, rosterRevision: state.rosterRevision });
     if (pathname.endsWith('/categories')) return json({ categories: [{ key: 'note', label: 'Note' }] });
     if (pathname.endsWith('/notes') && method === 'POST') { const note = { ...body, id: 'note-a', revision: 1, status: 'pending', attachments: [] }; state.notes.push(note); return json({ note }); }
     if (pathname.endsWith('/notes/note-a/complete')) { Object.assign(state.notes[0], body, { revision: 2, status: 'active' }); return json({ note: state.notes[0] }); }
     if (pathname.endsWith('/seating-charts') && method === 'GET') {
       const params = new URL(request.url()).searchParams;
-      const charts = state.charts.filter(chart => !chart.deleted && chart.authorId === state.viewer && (params.get('scope') === 'past' ? !chart.canEdit : chart.canEdit)).map(({ layout: _layout, roster: _roster, rosterRevision: _rosterRevision, ...summary }) => summary);
+      const charts = state.charts.filter(chart => !chart.deleted && chart.authorId === state.viewer && (params.get('scope') === 'past' ? !chart.canEdit : chart.canEdit)
+        && (!params.get('classId') || chart.filingGroupId === params.get('classId')) && (!params.get('gradeLevel') || chart.classId === (params.get('gradeLevel') === '5' ? 'class-a' : 'class-b'))).map(({ layout: _layout, roster: _roster, rosterRevision: _rosterRevision, ...summary }) => summary);
       return json({ charts, nextCursor: null });
     }
     if (pathname.endsWith('/seating-charts') && method === 'POST') {
@@ -146,10 +149,23 @@ async function setup({ charts = [], url = '', viewport, currentRoster = roster, 
     return json({ error: `Unexpected ${method} ${pathname}` }, 404);
   });
   await page.goto(`${base}/classpilot/my-desk/seating${url}`);
-  try { await page.getByRole('heading', { name: enabled ? url ? charts.find(chart => `/${chart.id}` === url)?.name : 'Seating charts' : 'Seating charts are unavailable', exact: true }).waitFor({ timeout: 15000 }); }
+  try { await page.getByRole('heading', { name: enabled ? url.startsWith('/') ? charts.find(chart => `/${chart.id}` === url)?.name : 'Seating charts' : 'Seating charts are unavailable', exact: true }).waitFor({ timeout: 15000 }); }
   catch (failure) { throw new Error(`${failure.message}\n${errors.join('\n')}\n${await page.locator('body').innerText()}`); }
   return { page, state, requests, errors };
 }
+
+test('seating library honors shared grade/class navigation and clears unknown historical grades', async () => {
+  const t = await setup({ charts: [fixture(), fixture({ id:'chart-b', classId:'class-b', filingGroupId:'class-b', className:'Science 6', name:'Sixth seats' })], url:'?gradeLevel=5' });
+  try {
+    assert.equal(await t.page.getByLabel('Grade filter').inputValue(),'5');
+    await t.page.getByRole('heading',{name:'Morning seats',exact:true}).waitFor(); assert.equal(await t.page.getByRole('heading',{name:'Sixth seats',exact:true}).count(),0);
+    assert.ok(t.requests.some(row=>row.path.endsWith('/seating-charts')&&new URLSearchParams(row.search).get('gradeLevel')==='5'));
+    await t.page.getByRole('button',{name:'Classes',exact:true}).click(); await t.page.getByLabel('Class filter').selectOption('class-b');
+    await t.page.getByRole('heading',{name:'Sixth seats',exact:true}).waitFor(); assert.equal(new URL(t.page.url()).searchParams.get('classId'),'class-b');
+    await t.page.getByRole('button',{name:'Past classes',exact:true}).click(); await t.page.getByText('Past charts have no saved grade metadata; use their original class.').waitFor();
+    assert.equal(new URL(t.page.url()).searchParams.has('gradeLevel'),false); assert.equal(new URL(t.page.url()).searchParams.has('classId'),false); assert.deepEqual(t.errors,[]);
+  } finally { await t.page.close(); }
+});
 
 test('create, tap placement, swap, lock, shuffle, undo and note keep edits private until explicit save', { timeout: 60_000 }, async () => {
   const t = await setup();
@@ -164,7 +180,7 @@ test('create, tap placement, swap, lock, shuffle, undo and note keep edits priva
     await t.page.getByRole('button', { name: 'Seat 1, Blair Patel', exact: true }).click(); await t.page.getByRole('button', { name: 'Lock seat', exact: true }).click(); await t.page.getByRole('button', { name: 'Shuffle', exact: true }).click();
     await t.page.getByRole('button', { name: 'Seat 1, Blair Patel, locked', exact: true }).waitFor(); await t.page.getByRole('button', { name: 'Undo', exact: true }).click();
     assert.equal(t.requests.filter(item => item.method === 'PATCH').length, 0); assert.equal(await t.page.getByRole('button', { name: 'Print', exact: true }).isDisabled(), true);
-    await t.page.getByRole('button', { name: 'Add private note', exact: true }).click(); await t.page.getByRole('dialog').waitFor(); assert.equal(await t.page.getByLabel('Class', { exact: true }).inputValue(), 'class-a'); assert.equal(await t.page.getByLabel('Student', { exact: true }).inputValue(), 'student-b'); await t.page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Add private note', exact: true }).click(); await t.page.getByRole('dialog').waitFor(); await t.page.locator('select[aria-label="Class"] option[value="class-a"]').waitFor({state:'attached'}); assert.equal(await t.page.getByLabel('Class', { exact: true }).inputValue(), 'class-a'); assert.equal(await t.page.getByLabel('Student', { exact: true }).inputValue(), 'student-b'); await t.page.getByRole('button', { name: 'Cancel', exact: true }).click();
     t.state.failUpdate = true; await t.page.getByRole('button', { name: 'Save chart', exact: true }).click(); await t.page.getByText('Save response interrupted').waitFor(); await t.page.getByRole('button', { name: 'Retry save', exact: true }).click(); await t.page.getByRole('button', { name: 'Save chart', exact: true }).waitFor();
     const writes = t.requests.filter(item => item.method === 'PATCH'); assert.equal(writes.length, 2); assert.deepEqual(writes[0].body, writes[1].body); assert.equal(t.state.charts[0].layout.seats[0].studentId, 'student-b'); assert(t.state.charts[0].layout.seats[0].locked);
     await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-desktop.png') }); assert.deepEqual(t.errors, []);

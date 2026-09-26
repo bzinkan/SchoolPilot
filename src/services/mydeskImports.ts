@@ -1,3 +1,4 @@
+import { informationQuotaTotals } from "./studentInformationImports.js";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -11,14 +12,18 @@ import {
   type ImportRegion,
 } from "../schema/mydeskImports.js";
 import { mydeskNotes, mydeskAttachments } from "../schema/mydesk.js";
+import { schoolDisciplineRecords, schoolDisciplineVersions } from "../schema/schoolDiscipline.js";
 import { schools } from "../schema/core.js";
 import { auditLogs } from "../schema/shared.js";
+import { assertSharedStudentActor, assertSharedStudentAccess, sharedStudentIdWhere } from "./sharedStudentRecords.js";
+import { duplicateCandidates, publishImportedDiscipline, listAuthorisedRetainedEvidence, type DisciplinePreparedAsset } from "./schoolDisciplineWorkspace.js";
+import { groups as schoolClasses, groupTeachers } from "../schema/classpilot.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
 import {
   withActor,
   currentClasses,
   loadMyDeskClassRoster,
-  loadMyDeskPreferences,
+  resolveTarget,
   myDeskError,
   type MyDeskActor,
   type MyDeskDatabase,
@@ -43,6 +48,7 @@ import {
   importItemJoin,
   importCommit,
   importReservation,
+  importDisciplineFields,
   myDeskImportsEnabledForSchool,
   myDeskImportLimits,
   IMPORT_MAX_SOURCES,
@@ -107,6 +113,7 @@ async function importAudit(
 export async function withImportActor<T>(
   actor: MyDeskActor,
   fn: (database: MyDeskDatabase, current: MyDeskActor) => Promise<T>,
+  lifecycle = false,
 ) {
   return withActor(actor, async (database, current) => {
     if (!myDeskImportsEnabledForSchool(actor.schoolId))
@@ -116,7 +123,7 @@ export async function withImportActor<T>(
         404,
       );
     return fn(database, current);
-  });
+  }, false, lifecycle);
 }
 export async function lockImport(
   database: MyDeskDatabase,
@@ -172,6 +179,9 @@ const safeItem = (i: MyDeskImportItem) => ({
   extractionStatus: i.extractionStatus,
   approvedAssetId: i.approvedAssetId,
   noteId: i.noteId,
+  disciplineFields: i.disciplineFields,
+  duplicateDecision: i.duplicateDecision,
+  disciplineRecordId: i.disciplineRecordId,
 });
 export async function importDto(
   database: MyDeskDatabase,
@@ -202,6 +212,7 @@ export async function importDto(
         .orderBy(items.ordinal, items.id);
   return {
     id: run.id,
+    destination: run.destination,
     status: expired ? "expired" : run.status,
     revision: run.revision,
     selectedGroupIds: terminal ? [] : run.selectedGroupIds,
@@ -215,23 +226,43 @@ export async function importDto(
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     commitReceipt: run.commitReceipt
-      ? { notes: run.commitReceipt.notes }
+      ? await authorizedImportReceipt(database, actor, run)
       : null,
     assets: a.map(safeAsset),
     items: i.map(safeItem),
   };
 }
-async function assertGroups(
-  database: MyDeskDatabase,
-  actor: MyDeskActor,
-  ids: string[],
-) {
+async function assertGroups(database: MyDeskDatabase, actor: MyDeskActor, ids: string[], destination: "notes" | "discipline" = "notes") {
   const allowed = await currentClasses(actor, database);
-  if (ids.some((id) => !allowed.some((g) => g.id === id)))
-    throw importError(
-      "CLASS_UNAVAILABLE",
-      "Choose current classes you can access",
-    );
+  if (ids.some(id => !allowed.some(g => g.id === id))) throw importError("CLASS_UNAVAILABLE", "Choose current classes you can access");
+  if (destination === "discipline") {
+    const identity = await assertSharedStudentActor(actor, database);
+    const eligible = await database.select({ id: schoolClasses.id }).from(schoolClasses).where(and(
+      eq(schoolClasses.schoolId, actor.schoolId), eq(schoolClasses.status, "active"), eq(schoolClasses.groupType, "admin_class"),
+      inArray(schoolClasses.id, ids), identity.manager ? undefined : sql`(${schoolClasses.teacherId}=${actor.authorId} OR EXISTS (SELECT 1 FROM ${groupTeachers} WHERE ${groupTeachers.groupId}=${schoolClasses.id} AND ${groupTeachers.teacherId}=${actor.authorId} AND ${groupTeachers.role} IN ('primary','co-teacher')))`));
+    if (eligible.length !== ids.length) throw importError("CLASS_UNAVAILABLE", "Choose classes you currently teach");
+  }
+}
+async function authorizedImportReceipt(database: MyDeskDatabase, actor: MyDeskActor, run: MyDeskImport) {
+  if (!run.commitReceipt) return null;
+  if (run.destination !== "discipline") return { notes: run.commitReceipt.notes };
+  const identity = await assertSharedStudentActor(actor, database);
+  const records = [];
+  for (const record of run.commitReceipt.records || []) {
+    try {
+      // A later wrong-student correction can change current record access. A
+      // retry receipt must respect both the reviewed and current subjects.
+      if (!identity.manager) await assertSharedStudentAccess(database, identity, record.studentId);
+      const [readable] = await database.select({ id: schoolDisciplineRecords.id }).from(schoolDisciplineRecords)
+        .innerJoin(schoolDisciplineVersions, and(eq(schoolDisciplineVersions.schoolId, schoolDisciplineRecords.schoolId), eq(schoolDisciplineVersions.id, schoolDisciplineRecords.currentVersionId)))
+        .where(and(eq(schoolDisciplineRecords.schoolId, actor.schoolId), eq(schoolDisciplineRecords.id, record.recordId),
+          inArray(schoolDisciplineRecords.status, ["submitted", "withdrawn"]), eq(schoolDisciplineVersions.state, "published"),
+          identity.manager ? undefined : sharedStudentIdWhere(identity, sql`${schoolDisciplineVersions.snapshot}->>'studentId'`))).limit(1);
+      if (readable) records.push({ itemId: record.itemId, recordId: record.recordId });
+    }
+    catch (error) { if ((error as { status?: number }).status !== 404) throw error; }
+  }
+  return { notes: [], records };
 }
 export async function createMyDeskImport(
   actor: MyDeskActor,
@@ -260,7 +291,7 @@ export async function createMyDeskImport(
         created: false,
       };
     }
-    await assertGroups(database, current, input.selectedGroupIds);
+    await assertGroups(database, current, input.selectedGroupIds, input.destination);
     const [run] = await database
       .insert(runs)
       .values({
@@ -268,8 +299,9 @@ export async function createMyDeskImport(
         authorId: actor.authorId,
         clientRequestId: input.clientRequestId,
         requestFingerprint: hash,
+        destination: input.destination ?? "notes",
         selectedGroupIds: input.selectedGroupIds,
-        preferencesSnapshot: await loadMyDeskPreferences(current, database),
+        preferencesSnapshot: { revision: 0, preferredClasses: {} },
         expectedSourceCount: input.expectedSourceCount,
         expiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
         uploadExpiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
@@ -318,8 +350,8 @@ export async function createMyDeskImportFromAttachment(
     } else {
       [run] = await database.insert(runs).values({
         schoolId: actor.schoolId, authorId: actor.authorId, clientRequestId: input.clientRequestId,
-        requestFingerprint: fingerprint, selectedGroupIds: input.selectedGroupIds,
-        preferencesSnapshot: await loadMyDeskPreferences(current, database),
+        requestFingerprint: fingerprint, destination: input.destination ?? "notes", selectedGroupIds: input.selectedGroupIds,
+        preferencesSnapshot: { revision: 0, preferredClasses: {} },
         sourceNoteId: input.noteId, sourceAttachmentId: input.attachmentId,
         expectedSourceCount: 1, expiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
         uploadExpiresAt: new Date(Date.now() + IMPORT_UPLOAD_MS),
@@ -335,7 +367,7 @@ export async function createMyDeskImportFromAttachment(
         .where(importOwn(actor, run!.id)).returning();
       return {receipt: await importDto(database, current, closed!), created: false};
     }
-    if (!existing) await assertGroups(database, current, input.selectedGroupIds);
+    if (!existing) await assertGroups(database, current, input.selectedGroupIds, input.destination);
     const assetId = importUuid(`saved-attachment:${run!.id}`);
     const reservation = { clientRequestId: assetId, filename: source.originalFilename,
       contentType: source.contentType!, size: source.byteSize!, sha256: source.sha256! };
@@ -520,7 +552,7 @@ export async function updateMyDeskImport(
     async (database, current, run) => {
       assertImportOpen(run, ["uploading", "review", "failed"]);
       const selected = input.selectedGroupIds ?? run.selectedGroupIds;
-      await assertGroups(database, current, selected);
+      await assertGroups(database, current, selected, run.destination);
       if (input.pageDecisions) {
         const pages = await database
           .select({ id: assets.id })
@@ -910,9 +942,10 @@ async function chargeQuota(
     })
     .from(runs)
     .where(eq(runs.schoolId, actor.schoolId));
+  const informationUsage = await informationQuotaTotals(database, actor, date);
   if (
-    (totals?.author ?? 0) + pages > limits.teacherDailyPages ||
-    (totals?.school ?? 0) + pages > limits.schoolDailyPages
+    (totals?.author ?? 0) + informationUsage.author + pages > limits.teacherDailyPages ||
+    (totals?.school ?? 0) + informationUsage.school + pages > limits.schoolDailyPages
   )
     throw importError(
       "DAILY_LIMIT",
@@ -939,7 +972,7 @@ export async function processMyDeskImport(
     "process",
     async (database, current, run) => {
       assertImportOpen(run, ["uploading", "failed"]);
-      await assertGroups(database, current, run.selectedGroupIds);
+      await assertGroups(database, current, run.selectedGroupIds, run.destination);
       const sources = await database
         .select()
         .from(assets)
@@ -1047,6 +1080,8 @@ const reviewHash = (item: MyDeskImportItem, asset: MyDeskImportAsset) =>
     item.title,
     item.body,
     item.entryDate,
+    item.disciplineFields,
+    item.duplicateDecision,
     asset.id,
     asset.sha256,
   ]);
@@ -1070,6 +1105,18 @@ async function verifyReview(
       "REVIEW_REQUIRED",
       "Choose the student, class and date, and wait for the form preview before confirming review",
     );
+  if (run.destination === "discipline") {
+    const identity = await assertSharedStudentActor(actor, database);
+    await assertGroups(database, actor, run.selectedGroupIds, "discipline");
+    await assertSharedStudentAccess(database, identity, item.studentId, { lock: true });
+    if (!item.body.trim() || !importDisciplineFields.safeParse(item.disciplineFields).success || (!item.disciplineFields?.referral && !item.disciplineFields?.detentionAssignment))
+      throw importError("REVIEW_REQUIRED", "Confirm referral/detention information and the factual summary");
+    const [evidence] = await database.select({ sha256: assets.sha256 }).from(assets).where(importAssetOwn(actor, run.id, item.approvedAssetId));
+    const duplicates = await duplicateCandidates(database, identity, item.studentId, item.entryDate, { evidenceHashes: evidence?.sha256 ? [evidence.sha256] : [] });
+    const candidatesFingerprint = importHash(duplicates);
+    if (!item.duplicateDecision || item.duplicateDecision.candidatesFingerprint !== candidatesFingerprint)
+      throw importError("DUPLICATE_REVIEW_REQUIRED", "Review possible duplicates before confirming this form");
+  }
   const roster = await loadMyDeskClassRoster(actor, item.groupId, database, {
     lock: true,
   });
@@ -1098,6 +1145,20 @@ async function verifyReview(
       "Wait for the approved form preview to finish",
     );
   return { asset, roster, hash: reviewHash(item, asset) };
+}
+export async function getMyDeskImportDuplicates(actor: MyDeskActor, id: string, itemId: string, input: { studentId: string; entryDate: string }) {
+  return withImportActor(actor, async (database, current) => {
+    const run = await lockImport(database, actor, id);
+    assertImportOpen(run, ["review", "failed"]);
+    if (run.destination !== "discipline") throw importError("NOT_FOUND", "Form not found", 404);
+    const [item] = await database.select().from(items).where(importItemOwn(actor, id, itemId));
+    if (!item) throw importError("NOT_FOUND", "Form not found", 404);
+    const identity = await assertSharedStudentActor(current, database);
+    await assertSharedStudentAccess(database, identity, input.studentId);
+    const [evidence] = item.approvedAssetId ? await database.select({ sha256: assets.sha256 }).from(assets).where(importAssetOwn(actor, id, item.approvedAssetId)) : [];
+    const candidates = await duplicateCandidates(database, identity, input.studentId, input.entryDate, { evidenceHashes: evidence?.sha256 ? [evidence.sha256] : [] });
+    return { candidates, candidatesFingerprint: importHash(candidates) };
+  });
 }
 export async function createMyDeskImportItem(
   actor: MyDeskActor,
@@ -1257,6 +1318,8 @@ export async function updateMyDeskImportItem(
       await database
         .update(items)
         .set({
+          disciplineFields: updated.disciplineFields,
+          duplicateDecision: updated.duplicateDecision,
           regions: updated.regions,
           groupId: updated.groupId,
           studentId: updated.studentId,
@@ -1482,6 +1545,7 @@ export async function scrubMyDeskImport(
     .update(items)
     .set({
       regions: [],
+      disciplineFields: null, duplicateDecision: null,
       subjectNames: [],
       groupId: null,
       studentId: null,
@@ -1552,11 +1616,77 @@ export async function cancelMyDeskImport(
     },
   );
 }
+/** Copy retained evidence without holding a database connection. Reservations remain
+ * durable on interruption; a fresh lease always gets a fresh immutable key. */
+async function prepareRetainedDisciplineEvidence(actor: MyDeskActor, id: string, input: z.infer<typeof importCommit>, store: MyDeskObjectStore) {
+  const selected = await withImportActor(actor, async database => {
+    const run = await lockImport(database, actor, id);
+    if (run.destination !== "discipline" || run.commitReceipt) return [];
+    assertImportOpen(run, ["review"]);
+    if (run.revision !== input.revision) throw importError("REVISION_CONFLICT", "This import changed. Reload before saving");
+    return database.select().from(items).where(and(importItemOwn(actor, id), inArray(items.id, input.itemIds))).orderBy(items.id);
+  });
+  const result = new Map<string, DisciplinePreparedAsset[]>();
+  for (const item of selected) {
+    const decision = item.duplicateDecision;
+    if (decision?.action !== "add_evidence" || !decision.recordId || !decision.revision) continue;
+    const originals = await withImportActor(actor, async (database, current) => {
+      await lockImport(database, actor, id);
+      return listAuthorisedRetainedEvidence(database, await assertSharedStudentActor(current, database), decision.recordId!, decision.revision!);
+    }, true);
+    if (originals.length >= 5) throw importError("ATTACHMENT_LIMIT", "This incident already has five forms");
+    const copies: DisciplinePreparedAsset[] = [];
+    for (const source of originals) {
+      const fingerprint = importHash(["retained-discipline", id, item.id, decision.recordId, decision.revision, source.id, source.sha256]);
+      const reserved = await withImportActor(actor, async (database, current) => {
+        const run = await lockImport(database, actor, id); assertImportOpen(run, ["review"]);
+        if (run.revision !== input.revision) throw importError("REVISION_CONFLICT", "This import changed during evidence preparation");
+        await listAuthorisedRetainedEvidence(database, await assertSharedStudentActor(current, database), decision.recordId!, decision.revision!);
+        const previous = await database.select().from(assets).where(and(importAssetOwn(actor, id), eq(assets.requestFingerprint, fingerprint))).for("update");
+        const ready = previous.find(value => value.status === "ready");
+        if (ready) return { asset: ready, write: false };
+        if (previous.some(value => value.status === "uploading" && value.leaseUntil && value.leaseUntil.getTime() > Date.now()))
+          throw importError("UPLOAD_BUSY", "Evidence is being prepared. Retry shortly");
+        for (const old of previous.filter(value => value.status === "uploading")) await database.update(assets).set({ status: "delete_pending", nextCleanupAt: new Date() }).where(importAssetOwn(actor, id, old.id));
+        const assetId = randomUUID(), leaseId = randomUUID();
+        const [asset] = await database.insert(assets).values({ id: assetId, schoolId: actor.schoolId, authorId: actor.authorId, importId: id,
+          kind: "approved", parentAssetId: item.approvedAssetId, clientRequestId: randomUUID(), requestFingerprint: fingerprint,
+          storageKey: `mydesk/${actor.schoolId}/${actor.authorId}/imports/${id}/${assetId}`, status: "uploading", leaseId,
+          leaseUntil: new Date(Date.now() + IMPORT_LEASE_MS), contentType: source.contentType, sha256: source.sha256, byteSize: source.byteSize }).returning();
+        return { asset: asset!, write: true };
+      }, true);
+      if (reserved.write) {
+        try {
+          const bytes = await store.get(source.storageKey);
+          if (bytes.length !== source.byteSize || myDeskSha256(bytes) !== source.sha256) throw importError("EVIDENCE_CHANGED", "Existing evidence could not be verified");
+          await store.put(reserved.asset.storageKey, bytes, source.contentType);
+          await withImportActor(actor, async (database, current) => {
+            const run = await lockImport(database, actor, id); assertImportOpen(run, ["review"]);
+            if (run.revision !== input.revision) throw importError("REVISION_CONFLICT", "This import changed during preparation");
+            await listAuthorisedRetainedEvidence(database, await assertSharedStudentActor(current, database), decision.recordId!, decision.revision!);
+            const [updated] = await database.update(assets).set({ status: "ready", leaseId: null, leaseUntil: null, updatedAt: new Date() })
+              .where(and(importAssetOwn(actor, id, reserved.asset.id), eq(assets.status, "uploading"), eq(assets.leaseId, reserved.asset.leaseId!), sql`${assets.leaseUntil}>now()`)).returning();
+            if (!updated) throw importError("EVIDENCE_CHANGED", "Evidence preparation expired. Retry");
+          }, true);
+        } catch {
+          // A cancellation/expiry/worker cleanup retains the reservation and key.
+          // No provider or storage exception with content escapes to callers.
+          throw importError("EVIDENCE_PREPARATION_FAILED", "Evidence could not be prepared. Your review is saved; retry shortly", 503);
+        }
+      }
+      copies.push({ id: reserved.asset.id, storageKey: reserved.asset.storageKey, contentType: source.contentType, sha256: source.sha256, byteSize: source.byteSize, sourceAttachmentId: source.id });
+    }
+    result.set(item.id, copies);
+  }
+  return result;
+}
 export async function commitMyDeskImport(
   actor: MyDeskActor,
   id: string,
   input: z.infer<typeof importCommit>,
+  options: { store?: MyDeskObjectStore } = {},
 ) {
+  const retainedEvidence = await prepareRetainedDisciplineEvidence(actor, id, input, options.store ?? myDeskObjectStore);
   return withImportActor(actor, async (database, current) => {
     const run = await lockImport(database, actor, id),
       hash = importHash(input);
@@ -1571,7 +1701,7 @@ export async function commitMyDeskImport(
         );
       return {
         import: await importDto(database, actor, run),
-        receipt: { notes: run.commitReceipt.notes },
+        receipt: await authorizedImportReceipt(database, actor, run),
       };
     }
     if (run.revision !== input.revision)
@@ -1635,21 +1765,44 @@ export async function commitMyDeskImport(
         await loadMyDeskClassRoster(current, groupId, database, { lock: true }),
       );
     const notes: Array<{ itemId: string; noteId: string }> = [],
-      now = new Date();
+      records: Array<{ itemId: string; recordId: string; studentId: string }> = [], now = new Date();
+    const sharedIdentity = run.destination === "discipline" ? await assertSharedStudentActor(current, database) : null;
+    // Lock subjects and duplicate targets in one order before publishing any item.
+    if (sharedIdentity) {
+      for (const studentId of [...new Set(included.map(item => item.studentId).filter((value): value is string => !!value))].sort())
+        await assertSharedStudentAccess(database, sharedIdentity, studentId, { lock: true });
+      for (const decision of included.map(item => item.duplicateDecision).filter(value => value?.action === "add_evidence").sort((a,b) => a!.recordId!.localeCompare(b!.recordId!)))
+        await listAuthorisedRetainedEvidence(database, sharedIdentity, decision!.recordId!, decision!.revision!);
+    }
+    const verifiedForms = new Map<string, Awaited<ReturnType<typeof verifyReview>>>();
     for (const item of included) {
-      const { asset, hash: expected } = await verifyReview(
-        database,
-        current,
-        run,
-        item,
-      );
-      if (item.reviewFingerprint !== expected)
-        throw importError(
-          "REVIEW_REQUIRED",
-          "A form changed after review. Confirm it again",
-        );
-      const roster = rosters.get(item.groupId!)!,
-        student = roster.students.find((s) => s.id === item.studentId)!;
+      const checked = await verifyReview(database, current, run, item);
+      if (item.reviewFingerprint !== checked.hash) throw importError("REVIEW_REQUIRED", "A form changed after review. Confirm it again");
+      verifiedForms.set(item.id, checked);
+    }
+    // One correction target per batch avoids invalidating its retained evidence mid-commit.
+    const correctionTargets = included.filter(item => item.duplicateDecision?.action === "add_evidence").map(item => item.duplicateDecision!.recordId);
+    if (new Set(correctionTargets).size !== correctionTargets.length) throw importError("DUPLICATE_TARGET", "Join forms for the same existing incident before saving this batch");
+    for (const item of included) {
+      const { asset, hash: expected } = verifiedForms.get(item.id)!;
+      if (sharedIdentity) {
+        const retained = retainedEvidence.get(item.id) || [];
+        for (const prepared of retained) {
+          const [stored] = await database.select().from(assets).where(and(importAssetOwn(actor, id, prepared.id), eq(assets.status, "ready"))).for("update");
+          if (!stored || stored.leaseId || stored.sha256 !== prepared.sha256 || stored.storageKey !== prepared.storageKey) throw importError("EVIDENCE_CHANGED", "Prepared evidence changed. Retry saving");
+        }
+        const candidates = await duplicateCandidates(database, sharedIdentity, item.studentId!, item.entryDate!, { evidenceHashes: [asset.sha256!] });
+        const publication = await publishImportedDiscipline(database, sharedIdentity, { runId: id, itemId: item.id,
+          studentId: item.studentId!, groupId: item.groupId, entryDate: item.entryDate!, title: item.title, body: item.body,
+          incident: item.disciplineFields!, asset: { id: asset.id, storageKey: asset.storageKey, contentType: asset.contentType!, sha256: asset.sha256!, byteSize: asset.byteSize! },
+          retainedAssets: retained, duplicateDecision: { ...item.duplicateDecision!, candidateIds: candidates.map(candidate => candidate.id), candidateRevisions: candidates.map(candidate => ({ id: candidate.id, revision: candidate.revision })) } });
+        for (const promotion of publication.promotedAttachmentIds) await database.update(assets).set({ status: "promoted", attachmentId: promotion.attachmentId,
+          leaseId: null, leaseUntil: null, nextCleanupAt: null, updatedAt: now }).where(and(importAssetOwn(actor, id, promotion.assetId), eq(assets.status, "ready")));
+        await database.update(items).set({ disciplineRecordId: publication.recordId, updatedAt: now }).where(importItemOwn(actor, id, item.id));
+        records.push({ itemId: item.id, recordId: publication.recordId, studentId: item.studentId! });
+        continue;
+      }
+      const filing = await resolveTarget(current, { targetKind: "student", groupId: item.groupId, studentId: item.studentId }, database);
       const noteId = randomUUID(),
         attachmentId = randomUUID();
       await database.insert(mydeskNotes).values({
@@ -1658,13 +1811,7 @@ export async function commitMyDeskImport(
         authorId: actor.authorId,
         clientRequestId: importUuid(`import-note:${id}:${item.id}`),
         requestFingerprint: importHash([id, item.id, expected]),
-        targetKind: "student",
-        groupId: item.groupId,
-        filingGroupId: item.groupId,
-        groupName: roster.class.name,
-        studentId: item.studentId,
-        filingStudentId: item.studentId,
-        studentName: student.name,
+        ...filing,
         category: item.category,
         title: item.title,
         body: item.body,
@@ -1716,7 +1863,7 @@ export async function commitMyDeskImport(
       .set({
         status: "completed",
         revision: run.revision + 1,
-        commitReceipt: { requestId: input.requestId, fingerprint: hash, notes },
+        commitReceipt: { requestId: input.requestId, fingerprint: hash, notes, ...(records.length ? { records } : {}) },
         selectedGroupIds: [],
         pageDecisions: [],
         leaseId: null,
@@ -1727,11 +1874,11 @@ export async function commitMyDeskImport(
       .where(importOwn(actor, id))
       .returning();
     await importAudit(database, actor, id, "commit", {
-      noteCount: notes.length,
+      noteCount: notes.length, recordCount: records.length,
     });
     return {
       import: await importDto(database, actor, finished!),
-      receipt: { notes },
+      receipt: await authorizedImportReceipt(database, actor, finished!),
     };
-  });
+  }, true);
 }

@@ -349,6 +349,7 @@ module "ecs" {
   mydesk_mode                          = var.mydesk_mode
   mydesk_seating_mode                  = var.mydesk_seating_mode
   mydesk_ai_import_mode                = var.mydesk_ai_import_mode
+  student_information_ai_import_mode   = var.student_information_ai_import_mode
   mydesk_ai_import_model               = var.mydesk_ai_import_model
   mydesk_ai_import_teacher_daily_pages = var.mydesk_ai_import_teacher_daily_pages
   mydesk_ai_import_school_daily_pages  = var.mydesk_ai_import_school_daily_pages

@@ -108,6 +108,7 @@ run "disabled_features_retains_bucket_and_narrow_worker_cleanup_permissions" {
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_SEATING_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODE"]) == "off" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "STUDENT_INFORMATION_AI_IMPORT_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODEL"]) == "claude-sonnet-5" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES"]) == "100" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"]) == "500"
@@ -131,37 +132,38 @@ run "global_features_reach_both_services_without_school_lists" {
     source = "./modules/ecs"
   }
   variables {
-    project                        = "schoolpilot"
-    environment                    = "test"
-    aws_region                     = "us-east-1"
-    aws_account_id                 = "000000000000"
-    vpc_id                         = "vpc-00000000000000000"
-    task_subnet_ids                = ["subnet-00000000000000000"]
-    alb_target_group_arn           = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000"
-    ecr_repository_url             = "000000000000.dkr.ecr.us-east-1.amazonaws.com/test"
-    container_port                 = 4000
-    ecs_security_group_id          = "sg-00000000000000000"
-    desired_count                  = 1
-    cpu                            = 256
-    memory                         = 512
-    worker_desired_count           = 1
-    worker_cpu                     = 256
-    worker_memory                  = 512
-    db_pool_max                    = 16
-    scheduler_db_pool_max          = 5
-    rls_enabled_tables             = "students"
-    redis_url                      = "rediss://test.invalid:6379"
-    mydesk_storage_enabled         = true
-    mydesk_attachments_bucket_name = "schoolpilot-test-mydesk-attachments"
-    mydesk_attachments_bucket_arn  = "arn:aws:s3:::schoolpilot-test-mydesk-attachments"
-    mydesk_mode                    = "on"
-    mydesk_seating_mode            = "on"
-    mydesk_ai_import_mode          = "on"
+    project                            = "schoolpilot"
+    environment                        = "test"
+    aws_region                         = "us-east-1"
+    aws_account_id                     = "000000000000"
+    vpc_id                             = "vpc-00000000000000000"
+    task_subnet_ids                    = ["subnet-00000000000000000"]
+    alb_target_group_arn               = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/0000000000000000"
+    ecr_repository_url                 = "000000000000.dkr.ecr.us-east-1.amazonaws.com/test"
+    container_port                     = 4000
+    ecs_security_group_id              = "sg-00000000000000000"
+    desired_count                      = 1
+    cpu                                = 256
+    memory                             = 512
+    worker_desired_count               = 1
+    worker_cpu                         = 256
+    worker_memory                      = 512
+    db_pool_max                        = 16
+    scheduler_db_pool_max              = 5
+    rls_enabled_tables                 = "students"
+    redis_url                          = "rediss://test.invalid:6379"
+    mydesk_storage_enabled             = true
+    mydesk_attachments_bucket_name     = "schoolpilot-test-mydesk-attachments"
+    mydesk_attachments_bucket_arn      = "arn:aws:s3:::schoolpilot-test-mydesk-attachments"
+    mydesk_mode                        = "on"
+    mydesk_seating_mode                = "on"
+    mydesk_ai_import_mode              = "on"
+    student_information_ai_import_mode = "on"
   }
   assert {
     condition = alltrue([
       for definition in [aws_ecs_task_definition.api, aws_ecs_task_definition.worker] :
-      alltrue([for name in ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE"] :
+      alltrue([for name in ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE", "STUDENT_INFORMATION_AI_IMPORT_MODE"] :
         one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == name]) == "on"
       ]) && length([for entry in jsondecode(definition.container_definitions)[0].environment : entry.name if can(regex("^MYDESK_.*ENABLED_SCHOOL_IDS$", entry.name))]) == 0
     ])
@@ -185,4 +187,22 @@ run "imports_reject_invalid_mode" {
     mydesk_ai_import_mode = "true"
   }
   expect_failures = [var.mydesk_ai_import_mode]
+}
+run "contact_imports_require_base_mode" {
+  command = plan
+  variables {
+    environment                        = "test"
+    mydesk_mode                        = "off"
+    student_information_ai_import_mode = "on"
+  }
+  expect_failures = [var.student_information_ai_import_mode]
+}
+run "contact_imports_do_not_require_discipline_imports" {
+  command = plan
+  variables {
+    environment                        = "test"
+    mydesk_mode                        = "on"
+    mydesk_ai_import_mode              = "off"
+    student_information_ai_import_mode = "on"
+  }
 }

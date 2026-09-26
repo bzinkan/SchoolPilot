@@ -15,7 +15,8 @@ export const myDeskDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value =
   return !value.startsWith("0000-") && Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value;
 }, "Use a real calendar date");
 const fields = {
-  targetKind: z.enum(["general", "class", "student"]),
+  targetKind: z.enum(["general", "grade", "class", "student"]),
+  gradeLevel: z.string().trim().min(1).max(40).nullable().optional(),
   groupId: myDeskId.nullable().optional(), studentId: myDeskId.nullable().optional(),
   category: myDeskCategory, title: z.string().trim().max(160),
   body: z.string().trim().max(5000), entryDate: myDeskDate, pinned: z.boolean(),
@@ -26,26 +27,31 @@ export const createMyDeskNoteInput = z.object({
   entryDate: fields.entryDate.optional(), pinned: fields.pinned.default(false),
 }).strict();
 const patchFields = z.object(fields).partial();
-export const updateMyDeskNoteInput = patchFields.extend({ revision: myDeskRevision }).strict()
-  .refine(input => Object.keys(input).some(key => key !== "revision"), "Provide a change");
+export const updateMyDeskNoteInput = patchFields.extend({ revision: myDeskRevision, workspaceVersion: z.literal(2).optional() }).strict()
+  .refine(input => Object.keys(input).some(key => key !== "revision" && key !== "workspaceVersion"), "Provide a change");
 export const completeMyDeskNoteInput = patchFields.extend({
-  revision: myDeskRevision, attachmentIds: z.array(myDeskId).max(5).optional(),
+  revision: myDeskRevision, workspaceVersion: z.literal(2).optional(), attachmentIds: z.array(myDeskId).max(5).optional(),
 }).strict().refine(input => !input.attachmentIds || new Set(input.attachmentIds).size === input.attachmentIds.length, "Attachment IDs must be unique");
 export const deleteMyDeskNoteInput = z.object({ revision: myDeskRevision }).strict();
 export const myDeskPreferencesInput = z.object({ revision: z.number().int().min(0),
+  viewBy: z.enum(["grades", "classes"]).optional(),
   preferredClasses: z.record(z.string().trim().min(1).max(40), myDeskId)
     .refine(value => Object.keys(value).length <= 32, "Choose at most 32 grade defaults"),
 }).strict();
 export const myDeskStudentsQuery = z.object({ q: z.string().trim().max(200).default(""),
+  gradeLevel: z.string().trim().min(1).max(40).optional(), classId: myDeskId.optional(),
+  personal: z.boolean().default(true),
   cursor: z.string().max(2048).optional(), limit: z.coerce.number().int().min(1).max(100).default(50),
 }).strict();
 export const myDeskNotesQuery = z.object({
-  scope: z.enum(["all", "general", "past", "class"]).default("all"),
+  scope: z.enum(["all", "general", "past", "grade", "class", "legacy"]).default("all"),
+  gradeLevel: z.string().trim().min(1).max(40).optional(), schoolYear: z.string().trim().min(1).max(100).optional(),
   classId: myDeskId.optional(), studentId: myDeskId.optional(), category: myDeskCategory.optional(),
   from: myDeskDate.optional(), to: myDeskDate.optional(), q: z.string().trim().max(200).optional(),
   cursor: z.string().max(2048).optional(), limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict().superRefine((input, context) => {
   if (input.scope === "class" && !input.classId) context.addIssue({ code: "custom", path: ["classId"], message: "Choose a class" });
+  if (input.scope === "grade" && !input.gradeLevel) context.addIssue({ code: "custom", path: ["gradeLevel"], message: "Choose a grade" });
   if (input.from && input.to && input.from > input.to) context.addIssue({ code: "custom", path: ["to"], message: "End date precedes start date" });
 });
 export type MyDeskCreateInput = z.infer<typeof createMyDeskNoteInput>;

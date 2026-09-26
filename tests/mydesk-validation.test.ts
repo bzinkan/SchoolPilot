@@ -23,9 +23,11 @@ test("notebook CSV neutralizes formula cells including whitespace prefixes", () 
   assert.equal(myDeskCsvCell('A, "quoted" note'), '"A, ""quoted"" note"');
 });
 test("global modes default off and preflight rejects legacy, malformed, and contradictory configuration", () => {
-  assert.deepEqual(parseMyDeskModes({}), { mode: "off", seatingMode: "off", aiImportMode: "off" });
+  assert.deepEqual(parseMyDeskModes({}), { mode: "off", seatingMode: "off", aiImportMode: "off", studentInformationAiImportMode: "off" });
   assert.deepEqual(parseMyDeskModes({ MYDESK_MODE: "on", MYDESK_SEATING_MODE: "on", MYDESK_AI_IMPORT_MODE: "on" }),
-    { mode: "on", seatingMode: "on", aiImportMode: "on" });
+    { mode: "on", seatingMode: "on", aiImportMode: "on", studentInformationAiImportMode: "off" });
+  assert.deepEqual(parseMyDeskModes({ MYDESK_MODE: "on", STUDENT_INFORMATION_AI_IMPORT_MODE: "on" }),
+    { mode: "on", seatingMode: "off", aiImportMode: "off", studentInformationAiImportMode: "on" });
   for (const key of MYDESK_LEGACY_KEYS) for (const value of ["", "school-five", "*"]) {
     const env = { MYDESK_MODE: "on", [key]: value };
     assert.throws(() => parseMyDeskModes(env), { code: "MYDESK_CONFIGURATION" });
@@ -34,9 +36,9 @@ test("global modes default off and preflight rejects legacy, malformed, and cont
   for (const key of MYDESK_MODE_KEYS) for (const value of ["", "true", "false", "ON", " on", "off ", "*", "school-five"]) {
     assert.throws(() => parseMyDeskModes({ MYDESK_MODE: "on", [key]: value }), { code: "MYDESK_CONFIGURATION" });
   }
-  for (const key of ["MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE"]) {
+  for (const key of ["MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE", "STUDENT_INFORMATION_AI_IMPORT_MODE"]) {
     assert.throws(() => parseMyDeskModes({ [key]: "on" }), { code: "MYDESK_CONFIGURATION" });
-    assert.deepEqual(readMyDeskModes({ MYDESK_MODE: "off", [key]: "on" }), { mode: "off", seatingMode: "off", aiImportMode: "off" });
+    assert.deepEqual(readMyDeskModes({ MYDESK_MODE: "off", [key]: "on" }), { mode: "off", seatingMode: "off", aiImportMode: "off", studentInformationAiImportMode: "off" });
   }
 });
 test("enabled modes cover existing and newly entitled schools without any school configuration", () => {

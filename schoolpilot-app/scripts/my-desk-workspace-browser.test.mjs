@@ -18,7 +18,7 @@ after(async()=>{await browser?.close();await vite?.close();});
 
 async function setup(mode) {
   const page=await browser.newPage({viewport:{width:430,height:932}}); const requests=[],errors=[];
-  const state={revision:0,defaults:{},copies:[],failCopy:true,stale:false,historyStatus:200};
+  const state={revision:0,defaults:{},viewBy:'grades',copies:[],failCopy:true,stale:false,historyStatus:200};
   page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>{window.__viewer='teacher-a';localStorage.setItem('sp_activeSchoolId','school-a');});
   const classes=[{id:'class-a',name:'Science',gradeLevel:'5',personal:true},{id:'class-b',name:'Reading',gradeLevel:'5',personal:true},{id:'other',name:'Other authorized',gradeLevel:'6',personal:false}];
@@ -27,11 +27,13 @@ async function setup(mode) {
     requests.push({path:url.pathname,search:url.search,method,body}); const json=(value,status=200)=>route.fulfill({json:value,status});
     if(url.pathname.endsWith('/csrf'))return json({csrfToken:'synthetic'});
     if(url.pathname.endsWith('/capabilities'))return json({canSubmit:false,canReview:false});
-    if(url.pathname.endsWith('/classes'))return json({current:classes,past:[],preferences:{revision:state.revision,preferredClasses:state.defaults},personalByGrade:[{gradeLevel:'5',classes:state.stale?classes.slice(0,1):classes.slice(0,2),preferredClassId:state.stale&&state.defaults['5']!=='class-a'?null:state.defaults['5']||null,preferenceStale:state.stale&&state.defaults['5']!=='class-a'}],otherCurrent:[classes[2]]});
-    if(url.pathname.endsWith('/preferences')){assert.equal(method,'PATCH');assert.equal(body.revision,state.revision);state.revision++;state.defaults=body.preferredClasses;return json({revision:state.revision,preferredClasses:state.defaults});}
+    if(url.pathname.endsWith('/classes'))return json({current:classes,past:[],grades:[{gradeLevel:'5',label:'Grade 5'}],preferences:{revision:state.revision,preferredClasses:state.defaults,viewBy:state.viewBy},personalByGrade:[{gradeLevel:'5',classes:state.stale?classes.slice(0,1):classes.slice(0,2),preferredClassId:state.stale&&state.defaults['5']!=='class-a'?null:state.defaults['5']||null,preferenceStale:state.stale&&state.defaults['5']!=='class-a'}],otherCurrent:[classes[2]]});
+    if(url.pathname.endsWith('/preferences')){assert.equal(method,'PATCH');assert.equal(body.revision,state.revision);state.revision++;state.defaults=body.preferredClasses;state.viewBy=body.viewBy||state.viewBy;return json({revision:state.revision,preferredClasses:state.defaults,viewBy:state.viewBy});}
     if(url.pathname.endsWith('/categories'))return json({categories:[{key:'note',label:'Note'},{key:'positive',label:'Positive'}]});
+    if(url.pathname.endsWith('/notes')&&method==='POST')return json({note:{...body,id:'new-note',revision:1,status:'pending',attachments:[]}});
+    if(url.pathname.endsWith('/notes/new-note/complete'))return json({note:{...body,id:'new-note',revision:2,status:'active',attachments:[]}});
     if(url.pathname.endsWith('/notes/search'))return json({notes:[],nextCursor:null});
-    if(url.pathname.endsWith('/students/search'))return json({students:[{id:'student-a',name:'Zero Notes',noteCount:0,classes:classes.slice(0,2)}],nextCursor:null});
+    if(url.pathname.endsWith('/students/search'))return json({students:[{id:'student-a',name:'Zero Notes',gradeLevel:'5',noteCount:0,classes:classes.slice(0,2)}],nextCursor:null});
     if(url.pathname.endsWith('/history')){if(state.historyStatus!==200)return json({error:'Access revoked'},state.historyStatus);const viewer=await page.evaluate(()=>window.__viewer);return json({student:{id:'student-a',name:viewer==='teacher-a'?'Historical Person':'New owner student',current:false},notes:viewer==='teacher-a'?[{id:'old',targetKind:'student',status:'active',groupName:'Grade five last year',studentName:'Saved student label',title:'My historical note',body:'Private saved observation',category:'positive',entryDate:'2025-09-20',pinned:false,revision:1,attachments:[]}]:[],nextCursor:null});}
     if(url.pathname.endsWith('/export'))return route.fulfill({contentType:'text/csv',body:'title\nprivate history'});
     if(url.pathname.endsWith('/imports/from-attachment')){state.copies.push(body);if(state.failCopy){state.failCopy=false;return json({error:'Temporary synthetic interruption'},503);}return json({import:{id:'copy-a',revision:2,status:'uploading'}});}
@@ -42,15 +44,47 @@ async function setup(mode) {
   await page.goto(`${base}/__workspace?mode=${mode}`);return{page,requests,errors,state};
 }
 
-test('personal grade groups persist one default while other authorized classes stay collapsed and AI unavailability is explicit',async()=>{
-  const {page,requests,errors,state}=await setup('notebook');
-  try{await page.getByLabel('Default class for grade 5').selectOption('class-b');await page.waitForFunction(()=>document.querySelector('select[aria-label="Default class for grade 5"]')?.value==='class-b');
-    await page.getByText('Other authorized classes (1)').waitFor();assert.equal(await page.getByRole('button',{name:'Other authorized',exact:true}).isVisible(),false);
-    assert.equal(await page.getByRole('button',{name:'AI import unavailable'}).isDisabled(),true);
-    await page.getByText('Other authorized classes (1)').click();assert.equal(await page.getByRole('button',{name:'Other authorized',exact:true}).isVisible(),true);
-    assert.deepEqual(requests.find(row=>row.path.endsWith('/preferences')).body,{revision:0,preferredClasses:{'5':'class-b'}});state.stale=true;await page.evaluate(()=>window.refreshWorkspace());await page.getByRole('option',{name:'Choose a replacement'}).waitFor({state:'attached'});await page.getByLabel('Default class for grade 5').selectOption('class-a');await page.waitForTimeout(150);assert.deepEqual(requests.filter(row=>row.path.endsWith('/preferences')).at(-1).body,{revision:1,preferredClasses:{'5':'class-a'}});assert.deepEqual(errors,[]);
+test('grade and class views persist the personal preference and retain exact filing context',async()=>{
+  const {page,requests,errors}=await setup('notebook');
+  try {
+    const gradeSearch = page.waitForResponse(response => response.url().endsWith('/notes/search') && response.request().postDataJSON()?.gradeLevel === '5');
+    await page.getByLabel('Grade filter').selectOption('5');
+    await gradeSearch;
+    await page.waitForFunction(()=>document.querySelector('.mydesk-notes h2')?.textContent==='Grade 5');
+    assert.ok(requests.some(row=>row.path.endsWith('/notes/search')&&row.body.scope==='grade'&&row.body.gradeLevel==='5'&&!row.body.classId));
+    await page.getByRole('button',{name:'New note',exact:true}).click();
+    assert.equal(await page.getByLabel('File under',{exact:true}).inputValue(),'grade');
+    assert.equal(await page.getByLabel('Grade',{exact:true}).inputValue(),'5');
+    assert.equal(await page.getByLabel('Class',{exact:true}).count(),0);
+    await page.getByLabel('Title optional',{exact:true}).fill('Grade-only reminder');
+    await page.getByRole('button',{name:'Save note',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
+    const create=requests.find(row=>row.path.endsWith('/notes')&&row.method==='POST').body;
+    assert.equal(create.targetKind,'grade');assert.equal(create.gradeLevel,'5');assert.equal(create.groupId,null);assert.equal(create.studentId,null);
+    await page.getByRole('button',{name:'Classes',exact:true}).click();
+    const classSearch = page.waitForResponse(response => response.url().endsWith('/notes/search') && response.request().postDataJSON()?.classId === 'class-b');
+    await page.getByLabel('Class filter').selectOption('class-b');
+    await classSearch;
+    assert.deepEqual(requests.find(row=>row.path.endsWith('/preferences')).body,{revision:0,preferredClasses:{},viewBy:'classes'});
+    await page.waitForFunction(()=>document.querySelector('.mydesk-notes h2')?.textContent==='Reading');
+    assert.ok(requests.some(row=>row.path.endsWith('/notes/search')&&row.body.classId==='class-b'&&!row.body.gradeLevel));
+    assert.equal(await page.getByRole('button',{name:'AI import unavailable'}).isDisabled(),true);assert.deepEqual(errors,[]);
   }finally{await page.close();}
 });
+
+test('student notes can save in a grade without an arbitrary class',async()=>{
+ const {page,requests,errors}=await setup('notebook');
+ try {
+  await page.getByRole('button',{name:'New note',exact:true}).click();
+  await page.getByLabel('File under',{exact:true}).selectOption('student');
+  await page.getByLabel('Grade',{exact:true}).selectOption('5');
+  await page.getByLabel('Student',{exact:true}).selectOption('student-a');
+  await page.getByLabel('Title optional',{exact:true}).fill('Private student reminder');
+  await page.getByRole('button',{name:'Save note',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
+  const create=requests.find(row=>row.path.endsWith('/notes')&&row.method==='POST').body;
+  assert.equal(create.targetKind,'student');assert.equal(create.groupId,null);assert.equal(create.studentId,'student-a');assert.equal(create.gradeLevel,'5');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
 test('zero-note student directory is searchable through private request bodies',async()=>{
   const {page,requests,errors}=await setup('directory');try{await page.getByRole('heading',{name:'Zero Notes'}).waitFor();await page.getByText('0 private notes across all years').waitFor();await page.getByLabel('Find a student').fill('private search');await page.waitForTimeout(350);
     assert.ok(requests.some(row=>row.path.endsWith('/students/search')&&row.body.q==='private search'&&row.search===''));assert.deepEqual(errors,[]);

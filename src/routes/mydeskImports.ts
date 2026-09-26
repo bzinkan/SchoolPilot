@@ -24,6 +24,7 @@ import {
   rereadMyDeskImportItem,
   commitMyDeskImport,
   cancelMyDeskImport,
+  getMyDeskImportDuplicates,
 } from "../services/mydeskImports.js";
 import {
   importCreate,
@@ -45,6 +46,10 @@ const myDeskEndpoint =
     void handler(req, res).catch(next);
   };
 const id = z.string().uuid();
+mydeskImportsRouter.post("/imports/:id/items/:itemId/duplicates", myDeskEndpoint(async (req, res) => {
+  const input = z.object({ studentId: z.string().min(1).max(128), entryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict().parse(req.body);
+  return res.json(await getMyDeskImportDuplicates(myDeskActor(req, res), id.parse(req.params.id), id.parse(req.params.itemId), input));
+}));
 let uploads = 0;
 const boundUploads: RequestHandler = (_req, res, next) => {
   if (uploads >= 2) {

@@ -71,6 +71,7 @@ export const seatingDuplicateInput = z.object({
 export const seatingMutationInput = z.object({ requestId: z.string().uuid(), revision: myDeskRevision }).strict();
 export const seatingListQuery = z.object({
   scope: z.enum(["current", "past"]).default("current"), classId: myDeskId.optional(),
+  gradeLevel: z.string().trim().min(1).max(40).optional(),
   cursor: z.string().min(1).max(2048).optional(), limit: z.coerce.number().int().min(1).max(100).default(30),
 }).strict();
 export type SeatingLayout = z.infer<typeof seatingLayout>;

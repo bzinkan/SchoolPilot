@@ -17,8 +17,8 @@ test('private notebook cache separates schools, authors and attachment bytes', (
 test('notebook filters use the strict API names without empty query values', () => {
   const params = new URLSearchParams(buildMyDeskQuery({ scope: 'class', classId: 'class-1', category: 'detention', studentId: '', q: '  remember  ', unknown: 'discard' }));
   assert.deepEqual(Object.fromEntries(params), { scope: 'class', classId: 'class-1', category: 'detention', q: 'remember' });
-  assert.deepEqual(targetInput('general', 'old-class', 'old-student'), { targetKind: 'general' });
-  assert.deepEqual(targetInput('student', 'class', 'student'), { targetKind: 'student', groupId: 'class', studentId: 'student' });
+  assert.deepEqual(targetInput('general', 'old-class', 'old-student'), { targetKind: 'general', groupId: null, studentId: null, gradeLevel: null });
+  assert.deepEqual(targetInput('student', 'class', 'student'), { targetKind: 'student', groupId: 'class', studentId: 'student', gradeLevel: null });
 });
 
 test('attachment validation and school-local dates match notebook constraints', () => {
@@ -39,4 +39,11 @@ test('student defaults use exact grade metadata and enrollment; explicit class w
   assert.equal(preferredStudentClass([{ id: 'only', gradeLevel: '6' }], preferences), 'only');
   assert.notDeepEqual(myDeskKeys.history('school', 'alice', 'student', {}), myDeskKeys.history('school', 'bob', 'student', {}));
   assert.notDeepEqual(myDeskKeys.directory('a', 'alice', ''), myDeskKeys.directory('b', 'alice', ''));
+});
+
+test('grade filing clears stale class context and separates caches', () => {
+  assert.deepEqual(targetInput('grade', 'old-class', 'old-student', '5'), { targetKind: 'grade', groupId: null, studentId: null, gradeLevel: '5' });
+  assert.deepEqual(targetInput('student', '', 'student', '5'), { targetKind: 'student', groupId: null, studentId: 'student', gradeLevel: '5' });
+  assert.notDeepEqual(myDeskKeys.notes('school', 'author', { scope: 'grade', gradeLevel: '5' }), myDeskKeys.notes('school', 'author', { scope: 'grade', gradeLevel: '6' }));
+  assert.notDeepEqual(myDeskKeys.directory('school', 'author', '', { gradeLevel: '5' }), myDeskKeys.directory('school', 'author', '', { gradeLevel: '6' }));
 });

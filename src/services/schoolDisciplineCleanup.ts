@@ -19,7 +19,7 @@ export async function cleanupSchoolDiscipline(options: { database?: typeof sched
       await tx.update(versions).set({ state: "abandoned", snapshot: {} as DisciplineSnapshot, reason: null, sourceNoteId: null, sourceNoteRevision: null,
         sourceFingerprint: null, leaseId: null, leaseUntil: null }).where(and(eq(versions.schoolId, candidate.schoolId), eq(versions.id, candidate.id)));
       await tx.update(attachments).set({ status: "delete_pending", nextCleanupAt: now, sourceStorageKey: null, sourceAttachmentId: null })
-        .where(and(eq(attachments.schoolId, candidate.schoolId), eq(attachments.versionId, candidate.id), inArray(attachments.status, ["pending", "ready"])));
+        .where(and(eq(attachments.schoolId, candidate.schoolId), eq(attachments.versionId, candidate.id), inArray(attachments.status, ["pending", "uploading", "ready"])));
       if (record.status === "pending") await tx.update(records).set({ status: "abandoned", submittedByName: "", updatedAt: now }).where(and(eq(records.schoolId, candidate.schoolId), eq(records.id, candidate.recordId)));
       abandoned++;
     });
@@ -32,7 +32,9 @@ export async function cleanupSchoolDiscipline(options: { database?: typeof sched
     // promoted object. Tombstones remain scheduled to catch remote late writes.
     const claimed = await database.transaction(async tx => {
       const [version] = await tx.select().from(versions).where(and(eq(versions.schoolId, candidate.schoolId), eq(versions.id, candidate.versionId))).for("update");
-      if (!version || version.state === "published") return false;
+      if (!version) return false;
+      // Explicitly omitted draft files can belong to a now-published version.
+      // Only durable delete states are eligible; committed evidence is never claimed.
       const [row] = await tx.update(attachments).set({ nextCleanupAt: new Date(now.getTime() + 5 * 60_000) }).where(and(
         eq(attachments.schoolId, candidate.schoolId), eq(attachments.id, candidate.id), inArray(attachments.status, ["delete_pending", "deleted"]),
         or(isNull(attachments.nextCleanupAt), lte(attachments.nextCleanupAt, now)))).returning();

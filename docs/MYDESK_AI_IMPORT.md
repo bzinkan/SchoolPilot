@@ -27,10 +27,12 @@ silently select replacement bytes; durable reservations cover interrupted writes
 Import completion/cancellation cleans only the copied import source, not the
 original saved attachment. Retries reuse the stable import receipt.
 
-The output is a set of editable private-note drafts. It does not create formal
-discipline records, student timeline events, shared evidence packets, parent
-communications, or administrator reports. Teacher approval saves ordinary
-author-owned My Desk notes. No model may approve or publish a draft.
+The import destination is fixed at creation. Private-note imports produce editable
+author-only drafts. Discipline imports produce reviewed school incidents directly,
+without first creating private notes. The final confirmation states school visibility.
+Existing private-source extraction remains an explicit copy; it does not share the
+source notebook. No model may approve/publish, write timeline events, notify staff
+or parents, or submit an external disciplinary report.
 
 ## Import, extraction, and review
 
@@ -75,7 +77,7 @@ for each student's note. Preserve source-region provenance separately from the
 teacher-edited draft while the import remains under review; display both so the
 teacher can compare them. Extracted/generated text is not an original source.
 
-Batch approval saves all included reviewed notes and approved attachments in one
+Batch approval saves all included reviewed notes or school incidents with approved attachments in one
 database transaction. A stale review or unauthorized target rejects the batch;
 the teacher resolves it before retrying. Request fingerprints, revision checks,
 and an operational commit receipt prevent a lost response from creating another
@@ -124,7 +126,7 @@ cleanup continues independently of those access gates.
 | Uploaded source packet and rendered pages | Existing private My Desk S3 prefix; exact school/author access | Delete through durable cleanup after completion, cancellation, or expiry |
 | Selected page images and fixed extraction prompt | Configured Anthropic API account | Provider/account terms apply; verify before enablement |
 | Extracted names, regions, drafts, review selections | Author-scoped PostgreSQL import tables | Scrub after completion, cancellation, or expiry |
-| Approved crops and saved notes | Normal My Desk notes/attachments | Normal author deletion and agreed destruction process |
+| Approved crops and saved notes | Normal My Desk notes/attachments or deliberately saved school incidents | Destination-specific notebook or independent school-record retention |
 | Retry/commit receipts, daily quota counts, model/prompt versions, promotion/deletion markers | Operational PostgreSQL records | Retain minimum IDs, hashes, counts, states, versions, and timestamps needed for retries/cleanup/provenance |
 
 Uploads expire after 24 hours if not completed. Review expires seven days after
@@ -212,3 +214,25 @@ required before AI activation. After activation, teachers perform Android and
 real-paperwork testing in production and approve every resulting note. Rollback
 turns off the import mode while preserving committed notes, promoted attachments,
 RLS and durable cleanup. No source-content evidence belongs in tracked files.
+
+## Redesign destination and contact boundary
+
+`mydesk-import-destination-20260928` adds immutable private-notes/discipline
+destination and stable item-to-record receipts. School-record commits use the
+current-role/current-student predicate for every entry, including teacher-authored
+records; admin roles grant school-wide access without legacy grants. Duplicate
+resolution can exclude, preserve a separate incident or add evidence to an
+incident the reviewer may correct. Referral and detention flags count independently;
+one detention assignment counts once. Reviewed evidence ownership transfers in
+the same atomic transaction, and cleanup cannot delete promoted objects.
+
+New private notes obtain server-derived grade/year filing snapshots; existing
+private data is never backfilled from current rosters or retrospectively shared.
+See [SCHOOL_DISCIPLINE_RECORDS.md](SCHOOL_DISCIPLINE_RECORDS.md).
+
+Contact extraction is a separate pipeline/gate/evaluation for selected document
+images or extracted text. It retains reviewed profile values/history but deletes
+its source files and temporary review content. Its provider/quality/capacity evidence
+cannot be replaced by discipline evaluation; see
+[STUDENT_INFORMATION.md](STUDENT_INFORMATION.md). Both workflows share daily
+admission budgets and bounded native processing. Keep both off until reviewed.

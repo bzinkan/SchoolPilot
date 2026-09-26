@@ -11,51 +11,49 @@ PR #510 contains all three immutable migrations. Feature modes do not defer DDL.
 Do not downgrade that combined artifact or edit its checksummed migrations.
 Operational evidence, not this document, establishes actual production status.
 
-## Workspace expansion after the verified base release
+## Workspace redesign release
 
-The September 26 verified live Terraform baseline remains exactly 109 tables.
-The personal grade folders/student history, selected-attachment AI import,
-measured seating and explicit school-discipline work is a new release. It does
-not authorize pushing, merging, deployment, AI enablement or production writes.
-Keep all original checksummed migrations and historical inventories unchanged.
+The verified Terraform baseline remains the recorded 109-table CSV/order/hash.
+Keep that observation and the historical 114-table workspace target immutable.
+Inspect actual serving admission before release; a registry target is not proof
+of deployment. The redesign target is 119 tables.
 
-The additive manifest includes `mydesk-workspace-expansion-20260926`,
-`mydesk-measured-seating-20260926`, and `school-discipline-records-20260927`.
-Workspace preferences and four discipline tables expand the reviewed target to
-114 tables. The measured seating migration changes a bounded JSON compatibility
-constraint without converting saved v1 layouts. The workspace migration adds
-frozen preference/source metadata to imports without changing original checksums.
+Additive migrations are `mydesk-grade-filing-20260927`,
+`school-discipline-redesign-20260928`, `mydesk-import-destination-20260928`, and
+`student-information-redesign-20260928`. They add true grade snapshots/view
+preferences, current-role school access, direct discipline import receipts and
+contact profiles/imports. Seating remains unchanged.
 
-Before an authorized release, run backend/frontend checks, ordinary and real
-restricted-role RLS tests, migration/schema and admission contracts, router and
-dashboard regressions, and SOC2 checks. Relevant behavior includes personal admin
-defaults without reduced permissions, zero-note student directories, historical
-labels, source-copy races, orientation/crop correction, measured room geometry,
-immutable school records, selected evidence, grants/revocation, retries, and
-identity switching. Verify the existing serving baseline and migration ledger.
+Deploy independently reviewable navigation/private-note, discipline and contact
+increments with compatible backend/migrations before frontend. Run backend,
+frontend, authorization, ordinary/restricted RLS, migration/router/dashboard and
+SOC 2 checks. Verify current-role revocation, private historical notes, grade
+filing, independent evidence, atomic batches, contacts, retries and identity changes.
 
-After explicit release authorization, deploy backend/worker and admit this exact
-registered five-table bundle through the existing reviewed deploy process:
+For a serving system that already admitted workspace/discipline tables, the new
+reviewed bundle is exactly:
 
 ```text
-mydesk_preferences,school_discipline_records,school_discipline_versions,school_discipline_attachments,school_discipline_access
+student_contact_profiles,student_contact_profile_versions,student_information_imports,student_information_import_items,student_information_import_assets
 ```
 
-Verify all five canonical forced policies plus existing RLS protections, then
-deploy the matching frontend. Do not rerun the already-admitted six-table flag or
-use a task template to replace serving configuration. Keep the verified109
-Terraform CSV/order/hash unchanged until a separate observed114 adoption review.
-School-wide discipline reader grants begin empty. They are managed deliberately
-by active school administrators, not by a product enablement setting.
+If earlier workspace admission is still pending, apply that registered bundle
+first. Never rerun an admitted bundle or concatenate unreviewed bundles. Verify
+all five new forced tenant policies and existing protections before frontend.
+Repair ledger/catalog mismatch additively. Adopt the verified 119-table allowlist into Terraform only
+after separate review; never replace serving tasks with bootstrap templates.
 
-Keep AI imports off: orientation prompt `mydesk-forms-20260926-v2` and the selected
-attachment flow require updated provider/data-flow, synthetic quality and
-capacity review. Existing readiness evidence for a different prompt is not valid.
-Use synthetic source notes and test identities for destructive/recovery checks;
-verify real Android interaction and Letter/A4 output during the authorized live
-walkthrough. Rollback preserves new tables, private ownership, school evidence,
-forced RLS, bucket permissions and cleanup. Coordinate compatible API/frontend
-versions; an older client must not rewrite a saved v2 chart as v1.
+Active school administrators automatically access shared discipline/contact
+records; legacy grants have no authority. Teacher access follows current official
+student assignments, including for their own school submissions. Private notes,
+charts, import drafts and original packets remain author-only. Existing private
+material is never retrospectively shared. Communicate the changed shared-record
+boundary and verify authorized synthetic identities before broad live use.
+
+Keep both AI modes off until their independent provider/quality/capacity reviews.
+Manual work is available without AI. Rollback preserves data, RLS, school evidence,
+contact history, private ownership, bucket permissions and cleanup. An older
+client must not drop new note filing fields or overwrite measured seating content.
 
 ## Configuration and interfaces
 
@@ -64,6 +62,7 @@ versions; an older client must not rewrite a saved v2 chart as v1.
 | `MYDESK_MODE` | `off` | Personal notes for every eligible ClassPilot school |
 | `MYDESK_SEATING_MODE` | `off` | Personal seating charts; requires base mode |
 | `MYDESK_AI_IMPORT_MODE` | `off` | Teacher-started paperwork imports; requires base mode |
+| `STUDENT_INFORMATION_AI_IMPORT_MODE` | `off` | Independent contact extraction; requires base mode, not discipline AI |
 
 Values must be exactly `on` or `off`. The three old `*_ENABLED_SCHOOL_IDS`
 variables are retired, including empty declarations. Invalid or conflicting
@@ -79,7 +78,7 @@ mobile entry read those capabilities and work without a teaching session. New
 schools need active ClassPilot access and qualifying staff memberships only.
 Seating and AI do not depend on each other. No onboarding/settings API is added.
 
-## Forward preparation and admission
+## Original base preparation reference (do not repeat admitted steps)
 
 1. Capture exact serving API/worker image digests, task-definition ARNs, desired
    counts and RLS allowlists without printing unrelated environment or secrets.
@@ -134,6 +133,7 @@ Store this non-secret configuration in a private external file:
   "mode": "on",
   "seatingMode": "on",
   "aiImportMode": "off",
+  "studentInformationAiImportMode": "off",
   "bucket": "schoolpilot-production-mydesk-attachments",
   "model": "claude-sonnet-5",
   "teacherDailyPages": 100,
@@ -168,7 +168,7 @@ reviewed, not inferred from a general policy or local object deletion. Use direc
 requests without Files API archives or prompt caching. Never scan existing notes
 or send note text or class rosters. Only teacher-selected source images, including
 an explicitly selected saved attachment, are sent, and nothing is
-published until teacher review and atomic Save.
+published until teacher review and atomic Save. Discipline imports save school records directly after shared-visibility confirmation; private-note imports remain author-only.
 
 Run the synthetic evaluator documented in [MYDESK_AI_IMPORT.md](MYDESK_AI_IMPORT.md)
 with a fixed model/prompt, at least 30 pages and 60 forms. Require typed-form
@@ -208,6 +208,18 @@ zero critical failures, human correction timings and review/recovery completion.
 All required results must reflect actual checks; do not fill missing checks with
 `true`. The same evidence is hashed and rechecked at apply. Physical Android and
 real-paperwork acceptance occurs after guarded activation in production.
+
+Contact extraction requires separate `-StudentInformationReadinessPath` evidence.
+Its strict schema binds the same serving image/model/worker dimensions plus
+`INFORMATION_PROMPT_VERSION`, contact-specific provider review, quality/capacity
+report hashes, at least 100 profiles across all five formats, at least 99% exact
+phone/email accuracy on typed/tabular fields, separate difficult-case reporting,
+zero critical failures, correction timing and review/recovery checks. See
+[STUDENT_INFORMATION.md](STUDENT_INFORMATION.md). An omitted contact mode in an old
+config means off only while the live mode is off; when already enabled the tool
+requires an explicit value to avoid an accidental disable. Both services receive
+matching modes. Each evidence file is hash-checked again at apply; enabling both
+AI paths requires both evidence files. Rollback preserves contact cleanup storage.
 
 ## Acceptance, monitoring and rollback
 

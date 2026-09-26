@@ -8,7 +8,7 @@ import { mkdir } from 'node:fs/promises';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let vite, browser, base;
-const entry = `import React,{StrictMode,useState} from 'react';import{createRoot}from'react-dom/client';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{MyDeskNotebook}from'/src/products/classpilot/pages/MyDesk.jsx';import'/src/index.css';const h=React.createElement;function Harness(){const[who,setWho]=useState({schoolId:'school-a',viewerId:'teacher-a'});return h(React.Fragment,null,h('button',{onClick:()=>setWho({schoolId:'school-a',viewerId:'teacher-b'})},'Switch author'),h('button',{onClick:()=>setWho({schoolId:'school-b',viewerId:'teacher-a'})},'Switch school'),h('div',{className:'mydesk-page'},h(MyDeskNotebook,{key:who.schoolId+who.viewerId,...who,today:'2026-09-25',timeZone:'America/New_York'})));}createRoot(document.getElementById('root')).render(h(StrictMode,null,h(QueryClientProvider,{client:queryClient},h(Harness))));`;
+const entry = `import React,{StrictMode,useState} from 'react';import{createRoot}from'react-dom/client';import{MemoryRouter}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{MyDeskNotebook}from'/src/products/classpilot/pages/MyDesk.jsx';import'/src/index.css';const h=React.createElement;function Harness(){const[who,setWho]=useState({schoolId:'school-a',viewerId:'teacher-a'});return h(React.Fragment,null,h('button',{onClick:()=>setWho({schoolId:'school-a',viewerId:'teacher-b'})},'Switch author'),h('button',{onClick:()=>setWho({schoolId:'school-b',viewerId:'teacher-a'})},'Switch school'),h('div',{className:'mydesk-page'},h(MyDeskNotebook,{key:who.schoolId+who.viewerId,...who,today:'2026-09-25',timeZone:'America/New_York'})));}createRoot(document.getElementById('root')).render(h(StrictMode,null,h(QueryClientProvider,{client:queryClient},h(MemoryRouter,null,h(Harness)))));`;
 const authEntry = `import React,{StrictMode}from'react';import{createRoot}from'react-dom/client';import{BrowserRouter}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{AuthProvider,useAuth}from'/src/contexts/AuthContext.jsx';import{LicenseProvider}from'/src/contexts/LicenseContext.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import MyDesk from'/src/products/classpilot/pages/MyDesk.jsx';import{myDeskApi}from'/src/products/classpilot/lib/myDesk.js';import'/src/index.css';const h=React.createElement;window.captureNotebookClient=()=>{const api=myDeskApi('school-a');return()=>api.get('/categories');};window.notebookCache=()=>queryClient.getQueriesData({queryKey:['mydesk-private']});window.refreshNotebookAccess=()=>queryClient.invalidateQueries({queryKey:['mydesk-private','school-a','teacher-a','capabilities']});function Harness(){const auth=useAuth();return h(React.Fragment,null,h('button',{onClick:()=>auth.refetchUser()},'Refresh account'),h('button',{onClick:async()=>{await auth.acceptToken('replacement-test-token');await auth.refetchUser();}},'Replace credential'),h('button',{onClick:()=>auth.logout()},'Sign out'),h('button',{onClick:()=>auth.switchSchool('school-b')},'Change school'),h(MyDesk));}createRoot(document.getElementById('root')).render(h(StrictMode,null,h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(AuthProvider,null,h(LicenseProvider,null,h(Harness))))))));`;
 
 before(async () => {
@@ -39,14 +39,15 @@ async function setup({ initial = [], failCreate = false, failUpload = false, del
     assert.equal(request.headers()['x-school-id']?.startsWith('school-'), true);
     if (url.pathname.endsWith('/capabilities')) return state.denyCapability ? json({ error: 'Membership revoked' }, 403) : json({ enabled: state.enabled, schoolDate: '2026-09-25' });
     if (url.pathname.endsWith('/categories')) return json({ categories: [{ key: 'note', label: 'Note' }, { key: 'detention', label: 'Detention' }] });
-    if (url.pathname.endsWith('/classes')) return json({ current: [{ id: 'class-a', name: 'Science 5' }], past: [{ id: 'past-class', name: 'Last year' }] });
+    if (url.pathname.endsWith('/classes')) return json({ preferences:{revision:0,viewBy:'classes',preferredClasses:{}},grades:[{gradeLevel:'5',label:'Grade 5'}],current: [{ id: 'class-a', name: 'Science 5',gradeLevel:'5',personal:true }], past: [{ id: 'past-class', name: 'Last year' }] });
+    if (url.pathname.endsWith('/students/search')) return json({students:[{id:'student-a',name:'Avery Lee',gradeLevel:'5'}],nextCursor:null});
     if (url.pathname.endsWith('/classes/class-a/students')) return json({ students: [{ id: 'student-a', firstName: 'Avery', lastName: 'Lee', name: 'Avery Lee' }] });
     if (url.pathname.endsWith('/note-students')) return json({ students: [{ id: 'student-a', name: 'Avery Lee' }, { id: 'past-student', name: 'Former classmate' }] });
     if (url.pathname.endsWith('/export')) { assert.equal(method, 'POST'); assert.equal(url.search, ''); return route.fulfill({ contentType: 'text/csv', body: 'title,body\nPrivate export,Only mine' }); }
     if (url.pathname.endsWith('/notes/search') && method === 'POST') {
       assert.equal(url.search, '');
       const search = new URLSearchParams(request.postDataJSON());
-      for (const key of search.keys()) assert(['scope','classId','studentId','category','from','to','q','cursor','limit'].includes(key));
+      for (const key of search.keys()) assert(['scope','classId','gradeLevel','schoolYear','studentId','category','from','to','q','cursor','limit'].includes(key));
       let rows = state.notes.filter(note => note.status === 'active' && note.schoolId === request.headers()['x-school-id'] && note.authorId === state.viewer);
       if (search.get('category')) rows = rows.filter(note => note.category === search.get('category'));
       if (search.get('q')) rows = rows.filter(note => `${note.title} ${note.body}`.includes(search.get('q')));
@@ -139,7 +140,7 @@ test('notes can be filed, filtered, pinned, edited, exported and explicitly dele
     await t.page.getByLabel('Student', { exact: true }).selectOption('student-a'); await t.page.getByLabel('Category', { exact: true }).last().selectOption('detention');
     await t.page.getByLabel('Title optional', { exact: true }).fill('Follow up with Avery'); await t.page.getByRole('button', { name: 'Save changes' }).click();
     await t.page.getByRole('dialog').waitFor({ state: 'hidden' }); assert.equal(t.state.notes[0].studentId, 'student-a');
-    await t.page.getByRole('button', { name: 'Science 5', exact: true }).click(); await t.page.getByLabel('Category', { exact: true }).selectOption('detention');
+    await t.page.getByLabel('Class filter', { exact: true }).selectOption('class-a'); await t.page.getByLabel('Category', { exact: true }).selectOption('detention');
     await t.page.getByRole('article', { name: 'Follow up with Avery' }).waitFor(); assert(t.requests.some(item => item.query.category === 'detention' && item.query.classId === 'class-a'));
     await t.page.getByLabel('Search notes', { exact: true }).fill('Follow up');
     const download = t.page.waitForEvent('download'); await t.page.getByRole('button', { name: 'Export CSV' }).click(); assert.equal((await download).suggestedFilename(), 'My-Desk-notes.csv');
@@ -206,10 +207,10 @@ test('class and past-class student filters retain filed notes after a roster cha
     fixtureNote({ id: 'former-past', title: 'Last year reminder', targetKind: 'student', groupId: 'past-class', filingGroupId: 'past-class', studentId: null, filingStudentId: 'past-student', studentName: 'Former classmate' }),
   ] });
   try {
-    await t.page.getByRole('button', { name: 'Science 5', exact: true }).click();
+    await t.page.getByLabel('Class filter', { exact: true }).selectOption('class-a');
     await t.page.getByLabel('Student', { exact: true }).selectOption('past-student');
     await t.page.getByRole('article', { name: 'A former classmate' }).waitFor();
-    await t.page.getByRole('button', { name: 'Past classes', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Past grades and classes', exact: true }).click();
     await t.page.getByLabel('Past class', { exact: true }).selectOption('past-class');
     await t.page.getByLabel('Student', { exact: true }).selectOption('past-student');
     await t.page.getByRole('article', { name: 'Last year reminder' }).waitFor();

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
+import { once } from "node:events";
+import { WebSocket, WebSocketServer } from "ws";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it, mock } from "node:test";
 import { sql } from "drizzle-orm";
@@ -7,6 +9,7 @@ import { sql } from "drizzle-orm";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import { signUserToken } from "../dist/services/jwt.js";
+import { registerWsClient, authenticateWsClient, removeWsClient } from "../dist/realtime/ws-broadcast.js";
 import {
   addGroupStudentsDetailed,
   assignTeacherStudent,
@@ -47,6 +50,7 @@ import {
   setActiveStudentForDevice,
   startStudentSessionWithReplacements,
   transitionDismissalSessionStatus,
+  updateStudent,
 } from "../dist/services/storage.js";
 
 const TAG = `student_lifecycle_${Date.now().toString(36)}_${process.pid}`;
@@ -229,6 +233,37 @@ after(async () => {
 });
 
 describe("ClassPilot student roster removal lifecycle", () => {
+  it("refreshes both affected school staff scopes after a student school update commits", async () => {
+    const student = await createLifecycleStudent("SchoolRefresh");
+    const wsServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(wsServer, "listening");
+    const address = wsServer.address(); assert.ok(address && typeof address !== "string");
+    const sockets: Array<{ client: WebSocket; server: WebSocket; messages: unknown[] }> = [];
+    try {
+      for (const schoolId of [schoolAId, schoolBId, `${TAG}_unrelated`]) {
+        const accepted = once(wsServer, "connection"), client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+        await once(client, "open");
+        const [connection] = await accepted; assert.ok(connection instanceof WebSocket);
+        registerWsClient(connection); authenticateWsClient(connection, { schoolId, userId: teacher.id, role: "teacher" });
+        const messages: unknown[] = [];
+        client.on("message", bytes => messages.push(JSON.parse(bytes.toString())));
+        sockets.push({ client, server: connection, messages });
+      }
+      const delivered = sockets.slice(0, 2).map(socket => once(socket.client, "message"));
+      const updated = await inSchool(schoolAId, () => updateStudent(student.id, { schoolId: schoolBId }));
+      await Promise.all(delivered);
+      assert.equal(updated?.id, student.id); assert.equal(updated?.schoolId, schoolBId);
+      assert.deepEqual(sockets.map(socket => socket.messages), [
+        [{ type: "shared-record-access-changed", schoolId: schoolAId }],
+        [{ type: "shared-record-access-changed", schoolId: schoolBId }], [],
+      ]);
+      const saved = await inSchool(schoolBId, () => getStudentById(student.id));
+      assert.equal(saved?.schoolId, schoolBId);
+    } finally {
+      for (const socket of sockets) { removeWsClient(socket.server); socket.client.terminate(); socket.server.terminate(); }
+      await new Promise<void>(resolve => wsServer.close(() => resolve()));
+    }
+  });
   it("deactivates without deleting retained relationships, ends sessions, and audits exactly once", async () => {
     const student = await createLifecycleStudent("Retained");
     const group = await inSchool(schoolAId, () => createGroup({

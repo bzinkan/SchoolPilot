@@ -6,6 +6,7 @@ import { groups } from "../schema/classpilot.js";
 import { logAudit } from "./audit.js";
 import { currentClasses, loadMyDeskClassRoster, myDeskError, withActor, type MyDeskActor, type MyDeskDatabase } from "./mydesk.js";
 import { myDeskSeatingEnabledForSchool } from "./mydeskValidation.js";
+import { normalizeMyDeskGrade } from "./mydeskGrade.js";
 import { copySeatingGeometry } from "../shared/mydeskSeatingGeometry.js";
 import { seatingCreateInput, seatingUpdateInput, seatingDuplicateInput, seatingMutationInput, seatingListQuery,
   type SeatingLayout, type SeatingRosterEntry } from "./mydeskSeatingValidation.js";
@@ -214,7 +215,10 @@ const cursorShape = z.object({ id: z.string().min(1).max(128), updatedAt: z.stri
 export async function listMyDeskSeatingCharts(actor: MyDeskActor, query: ListQuery) {
   return withSeating(actor, async (database, verified) => {
     const current = await currentClasses(verified, database), currentIds = current.map(group => group.id);
-    const scope = fingerprint([actor.schoolId, actor.authorId, query.scope, query.classId || null]);
+    if (query.scope === "past" && query.gradeLevel) throw myDeskError(400, "MYDESK_SEATING_HISTORICAL_GRADE_UNKNOWN", "Past charts do not have saved grade metadata. Choose their original class");
+    const gradeIds = query.gradeLevel ? current.filter(group => normalizeMyDeskGrade(group.gradeLevel) === normalizeMyDeskGrade(query.gradeLevel)).map(group => group.id) : null;
+    const scope = fingerprint([actor.schoolId, actor.authorId, query.scope, query.classId || null, query.gradeLevel || null,
+      ...(gradeIds ? [[...gradeIds].sort()] : [])]);
     let cursor: z.infer<typeof cursorShape> | undefined;
     if (query.cursor) {
       try { cursor = cursorShape.parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"))); }
@@ -230,6 +234,7 @@ export async function listMyDeskSeatingCharts(actor: MyDeskActor, query: ListQue
       query.scope === "current" ? currentIds.length ? inArray(mydeskSeatingCharts.filingGroupId, currentIds) : sql`false`
         : currentIds.length ? notInArray(mydeskSeatingCharts.filingGroupId, currentIds) : undefined,
       query.classId ? eq(mydeskSeatingCharts.filingGroupId, query.classId) : undefined,
+      gradeIds ? gradeIds.length ? inArray(mydeskSeatingCharts.filingGroupId, gradeIds) : sql`false` : undefined,
       cursor ? sql`(${mydeskSeatingCharts.updatedAt},${mydeskSeatingCharts.id}) < (${cursor.updatedAt}::timestamptz,${cursor.id})` : undefined,
     )).orderBy(desc(mydeskSeatingCharts.updatedAt), desc(mydeskSeatingCharts.id)).limit(query.limit + 1);
     const page = rows.slice(0, query.limit), last = page.at(-1);

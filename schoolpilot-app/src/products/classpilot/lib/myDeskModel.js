@@ -9,7 +9,7 @@ export const myDeskKeys = {
   root: (schoolId, viewerId) => [MY_DESK_ROOT, schoolId || 'no-school', viewerId || 'no-viewer'],
   capabilities: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'capabilities'],
   classes: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'classes'],
-  directory: (schoolId, viewerId, q) => [...myDeskKeys.root(schoolId, viewerId), 'directory', q],
+  directory: (schoolId, viewerId, q, filters = {}) => [...myDeskKeys.root(schoolId, viewerId), 'directory', q, JSON.stringify(filters)],
   history: (schoolId, viewerId, studentId, filters) => [...myDeskKeys.root(schoolId, viewerId), 'history', studentId, buildMyDeskQuery(filters)],
   categories: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'categories'],
   students: (schoolId, viewerId, groupId) => [...myDeskKeys.root(schoolId, viewerId), 'students', groupId],
@@ -25,7 +25,7 @@ export const myDeskKeys = {
 
 export function buildMyDeskQuery(filters = {}) {
   const params = new URLSearchParams();
-  for (const key of ['scope', 'classId', 'studentId', 'category', 'from', 'to', 'q', 'cursor', 'limit']) {
+  for (const key of ['scope', 'classId', 'gradeLevel', 'schoolYear', 'studentId', 'category', 'from', 'to', 'q', 'cursor', 'limit']) {
     if (filters[key] !== undefined && filters[key] !== null && String(filters[key]).trim()) params.set(key, String(filters[key]).trim());
   }
   return params.toString();
@@ -41,11 +41,20 @@ export function validateMyDeskAttachment(file) {
 export function myDeskTarget(note) {
   if (note?.targetKind === 'student') return note.studentName || 'Former student';
   if (note?.targetKind === 'class') return note.groupName || 'Past class';
+  if (note?.targetKind === 'grade') return `Grade ${note.filingGradeLevel || note.gradeLevel}`;
   return 'General';
 }
 
-export function targetInput(targetKind, groupId, studentId) {
-  return { targetKind, ...(targetKind !== 'general' && groupId ? { groupId } : {}), ...(targetKind === 'student' && studentId ? { studentId } : {}) };
+export function targetInput(targetKind, groupId, studentId, gradeLevel) {
+  return { targetKind, groupId: ['class', 'student'].includes(targetKind) && groupId ? groupId : null,
+    studentId: targetKind === 'student' && studentId ? studentId : null,
+    gradeLevel: ['grade', 'student', 'class'].includes(targetKind) && gradeLevel ? gradeLevel : null };
+}
+
+export function myDeskSavedPayloadMatches(note, payload) {
+  return Object.entries(payload).every(([key, value]) => key === 'gradeLevel'
+    ? value == null ? note.targetKind !== 'grade' : note.filingGradeLevel === value || note.gradeLevel === value
+    : (note[key] ?? null) === value);
 }
 
 export function preferredStudentClass(classes, preferences, explicitClassId) {

@@ -1,3 +1,4 @@
+import { studentInformationImports } from "../schema/studentInformation.js";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 import {
@@ -476,6 +477,7 @@ export async function processClaimedMyDeskImport(
                 }
               }
               if (new Set(matches.map(candidate => candidate.studentId)).size === 1) {
+                match.studentId = matches[0]!.studentId;
                 if (matches.length === 1) Object.assign(match, matches[0]);
                 else {
                   const personalClasses = await currentClasses(current, database);
@@ -615,7 +617,9 @@ export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
       .where(
         and(eq(runs.status, "processing"), sql`${runs.leaseUntil}>${now}`),
       );
-    let slots = Math.max(0, 2 - active.length);
+    const contactJobs = await tx.select({ id: studentInformationImports.id }).from(studentInformationImports)
+      .where(and(eq(studentInformationImports.status, "processing"), sql`${studentInformationImports.leaseUntil}>${now}`));
+    let slots = Math.max(0, 2 - active.length - contactJobs.length);
     if (!slots) return [];
     const due = await tx
       .select()

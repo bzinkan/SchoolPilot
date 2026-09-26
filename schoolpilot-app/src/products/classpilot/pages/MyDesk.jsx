@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, LockKeyhole, NotebookPen, Plus, Search, Download, Pin, Paperclip, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -12,7 +12,7 @@ import { myDeskError, isMyDeskNoteMissing, myDeskKeys, myDeskTarget } from '../l
 import NoteComposerDialog from '../components/NoteComposerDialog';
 import MyDeskAttachment from '../components/MyDeskAttachment';
 import MyDeskTabs from '../components/MyDeskTabs';
-import MyDeskClassIndex from '../components/MyDeskClassIndex';
+import MyDeskScopePicker from '../components/MyDeskScopePicker';
 import DisciplineSubmitButton from '../components/DisciplineSubmitButton';
 import '../myDesk.css';
 
@@ -27,7 +27,13 @@ export default function MyDesk() {
 }
 
 export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, initialNoteId, access }) {
-  const [filters, setFilters] = useState({ scope: 'all', classId: '', studentId: '', category: '', from: '', to: '', q: '' });
+  const [scopeParams, setScopeParams] = useSearchParams();
+  const urlClass = scopeParams.get('classId') || '', urlGrade = urlClass ? '' : scopeParams.get('gradeLevel') || '';
+  const [filterState, setFilterState] = useState({ scope: urlClass ? 'class' : urlGrade ? 'grade' : 'all', gradeLevel: urlGrade, schoolYear: '', classId: urlClass, studentId: '', category: '', from: '', to: '', q: '' });
+  const withUrlScope = previous => previous.gradeLevel === urlGrade && previous.classId === urlClass ? previous
+    : { ...previous, scope: urlClass ? 'class' : urlGrade ? 'grade' : 'all', classId: urlClass, gradeLevel: urlGrade, studentId: '', schoolYear: '' };
+  const filters = withUrlScope(filterState);
+  const setFilters = update => setFilterState(previous => update(withUrlScope(previous)));
   const [composer, setComposer] = useState(null);
   const [deleteNote, setDeleteNote] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -62,9 +68,15 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
   const current = classes.data?.current || [];
   const past = classes.data?.past || [];
   const categoryList = categories.data?.categories || [];
-  const scopeLabel = filters.scope === 'general' ? 'General notes' : filters.scope === 'past' ? 'Past classes' : filters.scope === 'class' ? [...current, ...past].find(item => item.id === filters.classId)?.name || 'Class notes' : 'All notes';
-  const chooseScope = (scope, classId = '') => setFilters(previous => ({ ...previous, scope, classId, studentId: '' }));
-  const openComposer = note => setComposer({ sessionId: crypto.randomUUID(), note: note || undefined, groupId: !note && filters.scope === 'class' && current.some(item => item.id === filters.classId) ? filters.classId : undefined });
+  const scopeLabel = filters.scope === 'general' ? 'General notes' : filters.scope === 'past' ? 'Past grades and classes' : filters.scope === 'legacy' ? 'Notes without a saved grade' : filters.scope === 'grade' ? `Grade ${filters.gradeLevel}` : filters.scope === 'class' ? [...current, ...past].find(item => item.id === filters.classId)?.name || 'Class notes' : 'All notes';
+  const chooseScope = (scope, classId = '', gradeLevel = '', schoolYear = '') => {
+    setFilters(previous => ({ ...previous, scope, classId, gradeLevel, schoolYear, studentId: '' }));
+    setScopeParams(previous => { const next = new URLSearchParams(previous); next.delete('classId'); next.delete('gradeLevel');
+      if (classId) next.set('classId', classId); else if (gradeLevel) next.set('gradeLevel', gradeLevel); return next; }, { replace: true });
+  };
+  const openComposer = note => setComposer({ sessionId: crypto.randomUUID(), note: note || undefined,
+    gradeLevel: !note && filters.scope === 'grade' && classes.data?.grades?.some(grade => grade.gradeLevel === filters.gradeLevel) ? filters.gradeLevel : undefined,
+    groupId: !note && filters.scope === 'class' && current.some(item => item.id === filters.classId) ? filters.classId : undefined });
 
   const mutate = async (note, action) => {
     if (operations.current.has(note.id)) return;
@@ -108,15 +120,19 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
       <nav className="mydesk-index" aria-label="Notebook sections">
         <button aria-current={filters.scope === 'all' ? 'page' : undefined} onClick={() => chooseScope('all')}><BookOpen className="size-4" />All notes</button>
         <button aria-current={filters.scope === 'general' ? 'page' : undefined} onClick={() => chooseScope('general')}>General</button>
-        <MyDeskClassIndex classes={classes} schoolId={schoolId} viewerId={viewerId} selectedId={filters.classId} onSelect={id => chooseScope('class', id)} />
-        <button className="mydesk-past-link" aria-current={filters.scope === 'past' ? 'page' : undefined} onClick={() => chooseScope('past')}>Past classes</button>
-        {filters.scope === 'past' && <p className="text-xs text-muted-foreground px-3">Your notes stay here after a class or roster changes.</p>}
+        <MyDeskScopePicker classes={classes} schoolId={schoolId} viewerId={viewerId} includeOtherClasses value={filters}
+          onChange={value => chooseScope(value.classId ? 'class' : value.gradeLevel ? 'grade' : 'all', value.classId, value.gradeLevel)} />
+        <Link className="mydesk-private-history-link" to="/classpilot/my-desk/notes/students">Private notes by student</Link>
+        <button className="mydesk-past-link" aria-current={filters.scope === 'past' ? 'page' : undefined} onClick={() => chooseScope('past')}>Past grades and classes</button>
+        {!!classes.data?.legacyNoteCount && <button aria-current={filters.scope === 'legacy' ? 'page' : undefined} onClick={() => chooseScope('legacy')}>Grade not recorded ({classes.data.legacyNoteCount})</button>}
+        {filters.scope === 'past' && <p className="text-xs text-muted-foreground px-3">Your notes keep their original filing after a class, grade or roster changes.</p>}
       </nav>
       <section className="mydesk-notes" aria-label={scopeLabel}>
         <div className="mydesk-section-heading"><h2>{scopeLabel}</h2><Button variant="ghost" disabled={exporting} onClick={exportNotes}><Download className="size-4" />{exporting ? 'Exporting…' : 'Export CSV'}</Button></div>
         <div className="mydesk-filters"><label className="mydesk-search"><span className="sr-only">Search notes</span><Search className="size-4" aria-hidden="true" /><Input maxLength={200} placeholder="Search your notes" value={filters.q} onChange={event => setFilters(previous => ({ ...previous, q: event.target.value }))} /></label>
           <label>Category<select aria-label="Category" value={filters.category} onChange={event => setFilters(previous => ({ ...previous, category: event.target.value }))}><option value="">All categories</option>{categoryList.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
           {filters.scope === 'past' && <label>Past class<select aria-label="Past class" value={filters.classId} onChange={event => chooseScope('past', event.target.value)}><option value="">All past classes</option>{past.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+          {filters.scope === 'past' && !!classes.data?.pastGrades?.length && <label>Past grade<select aria-label="Past grade" value={JSON.stringify([filters.gradeLevel, filters.schoolYear])} onChange={event => { const [grade, year] = JSON.parse(event.target.value); chooseScope('past', '', grade, year); }}><option value={JSON.stringify(['', ''])}>All past grades</option>{classes.data.pastGrades.map(item => <option key={`${item.gradeLevel}:${item.schoolYear || ''}`} value={JSON.stringify([item.gradeLevel, item.schoolYear || ''])}>Grade {item.gradeLevel}{item.schoolYear ? ` · ${item.schoolYear}` : ''}</option>)}</select></label>}
           {filters.classId && <label>Student<select aria-label="Student" value={filters.studentId} onChange={event => setFilters(previous => ({ ...previous, studentId: event.target.value }))}><option value="">All students</option>{(students.data?.students || []).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
           <label>From<Input type="date" value={filters.from} onChange={event => setFilters(previous => ({ ...previous, from: event.target.value }))} /></label><label>To<Input type="date" value={filters.to} onChange={event => setFilters(previous => ({ ...previous, to: event.target.value }))} /></label>
         </div>
@@ -135,7 +151,7 @@ export function NoteCard({ note, access, onImport, schoolId, viewerId, categorie
   const [expanded, setExpanded] = useState(false);
   const attachments = (note.attachments || []).filter(item => item.status === 'ready');
   return <article className={`mydesk-note ${note.pinned ? 'mydesk-note-pinned' : ''}`} aria-label={note.title || `Note for ${myDeskTarget(note)}`}>
-    <header className="mydesk-note-meta"><div><span className="mydesk-target">{note.targetKind === 'student' && note.filingStudentId ? <a href={`/classpilot/my-desk/students/${encodeURIComponent(note.filingStudentId)}`}>{myDeskTarget(note)}</a> : myDeskTarget(note)}</span>{note.targetKind === 'student' && note.groupName && <span>{note.groupName}</span>}<span>{categories.find(item => item.key === note.category)?.label || note.category}</span></div><time dateTime={note.entryDate}>{note.entryDate}</time></header>
+    <header className="mydesk-note-meta"><div><span className="mydesk-target">{note.targetKind === 'student' && note.filingStudentId ? <Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(note.filingStudentId)}`}>{myDeskTarget(note)}</Link> : myDeskTarget(note)}</span>{note.targetKind === 'student' && <span>{note.groupName || (note.filingGradeLevel ? `Grade ${note.filingGradeLevel}` : 'Grade not recorded')}</span>}<span>{categories.find(item => item.key === note.category)?.label || note.category}</span></div><time dateTime={note.entryDate}>{note.entryDate}</time></header>
     {(note.title || note.displayTitle) && <h3>{note.title || note.displayTitle}</h3>}{note.body && <p className="mydesk-note-body">{note.body}</p>}
     {note.revision > 2 && note.updatedAt && <p className="mt-3 text-xs text-muted-foreground">Updated <time dateTime={note.updatedAt}>{new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(note.updatedAt))}</time></p>}
     <footer className="mydesk-note-actions"><Button size="sm" variant="ghost" disabled={busy} aria-pressed={note.pinned} onClick={onPin}><Pin className="size-4" />{note.pinned ? 'Unpin' : 'Pin'}</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}><Pencil className="size-4" />Edit / refile</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onDelete}><Trash2 className="size-4" />Delete</Button>{attachments.length > 0 && <Button size="sm" variant="ghost" aria-expanded={expanded} aria-controls={`note-files-${note.id}`} onClick={() => setExpanded(value => !value)}><Paperclip className="size-4" />{expanded ? 'Hide' : 'View'} attachments ({attachments.length})</Button>}{access && note.targetKind === 'student' && note.status === 'active' && <DisciplineSubmitButton access={access} noteIds={[note.id]} />}</footer>

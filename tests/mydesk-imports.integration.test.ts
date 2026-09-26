@@ -11,6 +11,11 @@ import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "../src/db/mydeskSeatingMigration.js";
 import { MYDESK_IMPORTS_SQL } from "../src/db/mydeskImportsMigration.js";
 import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
+import { MYDESK_GRADE_FILING_SQL } from "../src/db/mydeskGradeFilingMigration.js";
+import { SCHOOL_DISCIPLINE_SQL } from "../src/db/schoolDisciplineMigration.js";
+import { SCHOOL_DISCIPLINE_REDESIGN_SQL } from "../src/db/schoolDisciplineRedesignMigration.js";
+import { MYDESK_IMPORT_DESTINATION_SQL } from "../src/db/mydeskImportDestinationMigration.js";
+import { STUDENT_INFORMATION_REDESIGN_SQL } from "../src/db/studentInformationRedesignMigration.js";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "../src/schema/index.js";
 import sharp from "sharp";
@@ -73,10 +78,13 @@ const itemSchema = z.object({
   extractionStatus: z.string(),
   approvedAssetId: z.string().nullable(),
   noteId: z.string().nullable(),
+  disciplineFields: z.object({ referral: z.boolean(), detentionAssignment: z.object({ dates: z.array(z.string()) }).passthrough().nullable() }).nullable(),
+  disciplineRecordId: z.string().nullable(),
 });
 const runSchema = z.object({
   id: z.string(),
   status: z.string(),
+  destination: z.enum(["notes", "discipline"]),
   revision: z.number(),
   selectedGroupIds: z.array(z.string()),
   pageDecisions: z.array(
@@ -92,6 +100,7 @@ const runSchema = z.object({
   commitReceipt: z
     .object({
       notes: z.array(z.object({ itemId: z.string(), noteId: z.string() })),
+      records: z.array(z.object({ itemId: z.string(), recordId: z.string() })).optional(),
     })
     .nullable(),
 });
@@ -120,6 +129,8 @@ before(async () => {
   await fixturePool.query(MYDESK_SEATING_SQL);
   await fixturePool.query(MYDESK_IMPORTS_SQL);
   await fixturePool.query(MYDESK_WORKSPACE_SQL);
+  for (const migration of [SCHOOL_DISCIPLINE_SQL, MYDESK_GRADE_FILING_SQL, SCHOOL_DISCIPLINE_REDESIGN_SQL,
+    MYDESK_IMPORT_DESTINATION_SQL, STUDENT_INFORMATION_REDESIGN_SQL]) await fixturePool.query(migration);
   photo = await sharp({
     create: { width: 800, height: 1000, channels: 3, background: "white" },
   })
@@ -225,6 +236,9 @@ after(async () => {
       [schoolIds],
     );
     for (const table of [
+      "school_discipline_attachments",
+      "school_discipline_versions",
+      "school_discipline_records",
       "mydesk_import_items",
       "mydesk_import_assets",
       "mydesk_imports",
@@ -384,11 +398,13 @@ async function createRun(
   f: Fixture,
   selectedGroupIds = [f.groupId],
   expectedSourceCount = 1,
+  destination?: "notes" | "discipline",
 ) {
   const r = await request(f, "/imports", "POST", {
     clientRequestId: randomUUID(),
     selectedGroupIds,
     expectedSourceCount,
+    ...(destination ? { destination } : {}),
   });
   assert.equal(r.status, 201, r.text);
   return runEnvelope.parse(r.data).import;
@@ -459,8 +475,9 @@ async function readyRun(
   f: Fixture,
   p = processor(),
   selectedGroupIds = [f.groupId],
+  destination?: "notes" | "discipline",
 ) {
-  let run = await createRun(f, selectedGroupIds);
+  let run = await createRun(f, selectedGroupIds, 1, destination);
   ({ run } = await uploadSource(f, run));
   run = await start(f, run);
   await work(p);
@@ -518,6 +535,134 @@ async function accountPages(f: Fixture, run: ImportRun) {
   assert.equal(r.status, 200, r.text);
   return runEnvelope.parse(r.data).import;
 }
+
+async function disciplineFixture() {
+  const f = await fixture();
+  await fixturePool.query("UPDATE groups SET group_type='admin_class',grade_level='5' WHERE id=$1", [f.groupId]);
+  await fixturePool.query("UPDATE students SET grade_level='5' WHERE id=$1", [f.studentId]);
+  return f;
+}
+async function disciplineReview(f: Fixture, run: ImportRun, itemId: string,
+  choice: { action: "separate" | "add_evidence"; recordId?: string; revision?: number; reason?: string } = { action: "separate" }) {
+  const candidates = await request(f, `/imports/${run.id}/items/${itemId}/duplicates`, "POST", { studentId: f.studentId, entryDate: "2026-09-20" });
+  assert.equal(candidates.status, 200, candidates.text);
+  const { candidatesFingerprint } = z.object({ candidatesFingerprint: z.string() }).parse(candidates.data);
+  run = await changeItem(f, run, itemId, { disciplineFields: { referral: true, detentionAssignment: { dates: ["2026-09-22", "2026-09-23"] } },
+    duplicateDecision: { ...choice, candidatesFingerprint } });
+  return approve(f, run, itemId);
+}
+async function disciplineCommit(f: Fixture, run: ImportRun) {
+  const input = { requestId: randomUUID(), revision: run.revision, itemIds: run.items.filter(item => !item.excluded).map(item => item.id) };
+  const response = await request(f, `/imports/${run.id}/commit`, "POST", input);
+  assert.equal(response.status, 200, response.text);
+  const receipt = z.object({ receipt: z.object({ notes: z.array(z.unknown()), records: z.array(z.object({ itemId: z.string(), recordId: z.string() })) }) }).parse(response.data).receipt;
+  return { response, input, receipt };
+}
+test("discipline destination is immutable and personal groups cannot expand shared access", async () => {
+  const f = await fixture();
+  const denied = await request(f, "/imports", "POST", { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, destination: "discipline" });
+  assert.equal(denied.status, 409, denied.text);
+  const run = await createRun(f);
+  assert.equal(run.destination, "notes");
+  await assert.rejects(fixturePool.query("UPDATE mydesk_imports SET destination='discipline' WHERE id=$1", [run.id]), /destination/i);
+});
+
+test("discipline import class choices require primary or co-teacher assignments", async () => {
+  const f = await disciplineFixture();
+  const client = await fixturePool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
+    await client.query("UPDATE group_teachers SET role='primary' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.colleagueId]);
+    await client.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [f.groupId, f.colleagueId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
+  const input = { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, destination: "discipline" };
+  const denied = await request(f, "/imports", "POST", input);
+  assert.equal(denied.status, 409, denied.text);
+  await fixturePool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [f.groupId, f.teacherId]);
+  const allowed = await request(f, "/imports", "POST", { ...input, clientRequestId: randomUUID() });
+  assert.equal(allowed.status, 201, allowed.text);
+});
+test("reviewed discipline forms publish directly as independent incidents with one detention assignment each, without private notes", async () => {
+  const f = await disciplineFixture();
+  let run = await readyRun(f, processor({ detectImportForms: async () => [
+    { x: 0, y: 0, width: 1, height: 0.5 }, { x: 0, y: 0.5, width: 1, height: 0.5 },
+  ] }), [f.groupId], "discipline");
+  for (const item of run.items) run = await disciplineReview(f, run, item.id);
+  run = await accountPages(f, run);
+  const { receipt, input } = await disciplineCommit(f, run);
+  assert.equal(receipt.notes.length, 0); assert.equal(receipt.records.length, 2);
+  const retry = await request(f, `/imports/${run.id}/commit`, "POST", input);
+  assert.equal(retry.status, 200, retry.text);
+  assert.deepEqual(z.object({ receipt: z.unknown() }).parse(retry.data).receipt, receipt);
+  assert.equal((await fixturePool.query("SELECT count(*)::int n FROM mydesk_notes WHERE school_id=$1", [f.schoolId])).rows[0].n, 0);
+  const stored = await fixturePool.query("SELECT v.snapshot FROM school_discipline_records r JOIN school_discipline_versions v ON v.id=r.current_version_id WHERE r.school_id=$1", [f.schoolId]);
+  assert.equal(stored.rowCount, 2);
+  for (const row of stored.rows) {
+    assert.equal(row.snapshot.referralRecorded, true); assert.equal(row.snapshot.detentionAssigned, true);
+    assert.deepEqual(row.snapshot.detentionDates, ["2026-09-22", "2026-09-23"]);
+  }
+  await cleanupMyDeskImports({ database: fixtureDb });
+  const committed = await fixturePool.query("SELECT storage_key FROM school_discipline_attachments WHERE school_id=$1 AND status='committed'", [f.schoolId]);
+  assert.equal(committed.rowCount, 2); for (const row of committed.rows) assert.ok(objects.has(row.storage_key));
+  await fixturePool.query("DELETE FROM group_students WHERE group_id=$1 AND student_id=$2", [f.groupId, f.studentId]);
+  const afterAccessLoss = await request(f, `/imports/${run.id}/commit`, "POST", input);
+  assert.equal(afterAccessLoss.status, 200, afterAccessLoss.text);
+  assert.deepEqual(z.object({ receipt: z.object({ records: z.array(z.unknown()) }) }).parse(afterAccessLoss.data).receipt.records, []);
+});
+test("import receipts hide a record after a wrong-student correction removes current teacher access", async () => {
+  const f = await disciplineFixture();
+  let run = await readyRun(f, processor(), [f.groupId], "discipline");
+  run = await accountPages(f, await disciplineReview(f, run, run.items[0]!.id));
+  const { receipt, input } = await disciplineCommit(f, run);
+  const otherStudent = randomUUID();
+  await fixturePool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Other','Subject','active')", [otherStudent, f.schoolId]);
+  const { correctDisciplineRecord } = await import("../src/services/schoolDiscipline.js");
+  await correctDisciplineRecord({ schoolId: f.schoolId, authorId: f.adminId }, receipt.records[0]!.recordId, {
+    clientRequestId: randomUUID(), revision: 1, reason: "Correct the subject after checking the original form.",
+    studentId: otherStudent, groupId: null, entryDate: "2026-09-20", category: "referral", title: "Corrected subject",
+    body: "The checked form concerns the corrected student.", referralRecorded: true, detentionAssigned: false, detentionDates: [], attachmentIds: [],
+  }, myDeskObjectStore);
+  const retry = await request(f, `/imports/${run.id}/commit`, "POST", input);
+  assert.equal(retry.status, 200, retry.text);
+  assert.deepEqual(z.object({ receipt: z.object({ records: z.array(z.unknown()) }) }).parse(retry.data).receipt.records, []);
+  assert.deepEqual((await getRun(f, run.id)).commitReceipt?.records, []);
+});
+
+test("adding a separate slip as evidence preserves incident counts, copies retained evidence and survives import cleanup", async () => {
+  const f = await disciplineFixture();
+  let first = await readyRun(f, processor(), [f.groupId], "discipline");
+  first = await disciplineReview(f, first, first.items[0]!.id); first = await accountPages(f, first);
+  const original = await disciplineCommit(f, first), recordId = original.receipt.records[0]!.recordId;
+  let second = await readyRun(f, processor(), [f.groupId], "discipline");
+  second = await disciplineReview(f, second, second.items[0]!.id, { action: "add_evidence", recordId, revision: 1, reason: "The second slip documents the same reviewed incident." });
+  second = await accountPages(f, second);
+  const result = await disciplineCommit(f, second);
+  assert.equal(result.receipt.records[0]!.recordId, recordId);
+  const record = (await fixturePool.query("SELECT revision,current_version_id FROM school_discipline_records WHERE id=$1", [recordId])).rows[0];
+  assert.equal(record.revision, 2);
+  assert.equal((await fixturePool.query("SELECT count(*)::int n FROM school_discipline_records WHERE school_id=$1 AND status='submitted'", [f.schoolId])).rows[0].n, 1);
+  const files = await fixturePool.query("SELECT storage_key FROM school_discipline_attachments WHERE version_id=$1 AND status='committed'", [record.current_version_id]);
+  assert.equal(files.rowCount, 2);
+  await cleanupMyDeskImports({ database: fixtureDb });
+  for (const file of files.rows) assert.ok(objects.has(file.storage_key));
+});
+test("newly published duplicate candidates invalidate reviewed discipline imports and preserve drafts atomically", async () => {
+  const f = await disciplineFixture();
+  let first = await readyRun(f, processor(), [f.groupId], "discipline");
+  let stale = await readyRun(f, processor(), [f.groupId], "discipline");
+  first = await accountPages(f, await disciplineReview(f, first, first.items[0]!.id));
+  stale = await accountPages(f, await disciplineReview(f, stale, stale.items[0]!.id));
+  await disciplineCommit(f, first);
+  const rejected = await request(f, `/imports/${stale.id}/commit`, "POST", { requestId: randomUUID(), revision: stale.revision, itemIds: stale.items.map(item => item.id) });
+  assert.equal(rejected.status, 409, rejected.text); assert.match(rejected.text, /DUPLICATE_REVIEW_REQUIRED/);
+  assert.equal((await getRun(f, stale.id)).status, "review");
+  assert.equal((await fixturePool.query("SELECT count(*)::int n FROM school_discipline_records WHERE school_id=$1 AND status='submitted'", [f.schoolId])).rows[0].n, 1);
+});
 
 async function savedSource(f: Fixture, bytes = photo, contentType = "image/jpeg") {
   const id = randomUUID(), attachmentId = randomUUID(), storageKey = `mydesk/${f.schoolId}/${f.teacherId}/${id}/${attachmentId}`;
@@ -617,7 +762,7 @@ test("unexpired legacy imports keep their original prompt version while resuming
   assert.equal(stored.rows[0].prompt_version,"mydesk-forms-20260925-v1");
 });
 
-test("matching deduplicates stable students and uses the frozen grade filing preference only among selected classes", async () => {
+test("matching deduplicates stable students, preserves legacy frozen choices, and never applies retired defaults to new imports", async () => {
   const f = await fixture(), second = randomUUID();
   await fixturePool.query("UPDATE groups SET grade_level='6' WHERE id=$1", [f.groupId]);
   await fixtureTransaction(async (client) => {
@@ -627,12 +772,15 @@ test("matching deduplicates stable students and uses the frozen grade filing pre
   });
   assert.equal((await request(f, "/preferences", "PATCH", {revision: 0, preferredClasses: {"6":f.groupId}})).status, 200);
   let run = await createRun(f, [f.groupId, second]);
+  await fixturePool.query("UPDATE mydesk_imports SET preferences_snapshot=$2::jsonb WHERE id=$1", [run.id, JSON.stringify({revision: 1, preferredClasses: {"6":f.groupId}})]);
   assert.equal((await request(f, "/preferences", "PATCH", {revision: 1, preferredClasses: {"6":second}})).status, 200);
   ({run} = await uploadSource(f, run)); await start(f, run);
   await work(processor({detectImportForms: async () => [{x:0,y:0,width:1,height:1,rotation:180}]}));
   run = await getRun(f, run.id);
   assert.equal(run.items[0]!.studentId, f.studentId); assert.equal(run.items[0]!.groupId, f.groupId);
   assert.equal(run.items[0]!.regions[0]!.rotation, 180); assert.equal(run.items[0]!.reviewed, false);
+  const noDefault = await readyRun(f, processor(), [f.groupId, second]);
+  assert.equal(noDefault.items[0]!.studentId, f.studentId); assert.equal(noDefault.items[0]!.groupId, null);
   const duplicate = randomUUID();
   await fixturePool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'First','Student','active')", [duplicate,f.schoolId]);
   await fixturePool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [second,duplicate]);

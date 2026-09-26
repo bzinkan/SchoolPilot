@@ -4,14 +4,14 @@ param(
     [ValidateSet('Plan', 'Apply', 'Rollback')][string]$Action = 'Plan',
     [string]$ConfigPath, [string]$OutDir, [string]$ManifestPath, [string]$ManifestHash,
     [string]$ApiArn, [string]$WorkerArn, [string]$ImageDigest, [string]$AppSha,
-    [string]$AiReadinessPath, [switch]$Execute
+    [string]$AiReadinessPath, [string]$StudentInformationReadinessPath, [switch]$Execute
 )
 
 # Reuse the reviewed AWS transport, private files, task cloning, operation fence,
 # autoscaling hold, health checks and exact convergence machinery. This entrypoint
 # does not invoke the extension-capability workflow or change its configuration.
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
-$script:RuntimeEnvironmentNames = @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE',
+$script:RuntimeEnvironmentNames = @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE', 'STUDENT_INFORMATION_AI_IMPORT_MODE',
     'MYDESK_ATTACHMENTS_BUCKET', 'MYDESK_AI_IMPORT_MODEL', 'MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES',
     'MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
@@ -19,18 +19,23 @@ $script:AllowedSecretNames = @()
 $script:MyDeskLegacyNames = @('MYDESK_ENABLED_SCHOOL_IDS', 'MYDESK_SEATING_ENABLED_SCHOOL_IDS', 'MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS')
 $script:MyDeskTables = @('mydesk_attachments', 'mydesk_notes', 'mydesk_seating_charts',
     'mydesk_import_assets', 'mydesk_import_items', 'mydesk_imports')
+$script:StudentInformationTables = @('student_contact_profiles', 'student_contact_profile_versions',
+    'student_information_imports', 'student_information_import_items', 'student_information_import_assets')
+$script:MyDeskModeNames = @('mode', 'seatingMode', 'aiImportMode', 'studentInformationAiImportMode')
 $script:EvidenceRootMarkerName = '.schoolpilot-mydesk-runtime-evidence-v1'
 $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-mydesk-runtime-evidence-v1`n")
 
 function ConvertTo-MyDeskRuntime {
     param([Parameter(Mandatory)]$Config)
     $names = @('mode', 'seatingMode', 'aiImportMode', 'bucket', 'model', 'teacherDailyPages', 'schoolDailyPages')
-    Assert-ExactProperties -Value $Config -Allowed $names -Trail 'My Desk configuration'
-    if (@($Config.PSObject.Properties.Name).Count -ne $names.Count) { throw 'My Desk configuration is incomplete.' }
+    Assert-ExactProperties -Value $Config -Allowed ($names + @('studentInformationAiImportMode')) -Trail 'My Desk configuration'
+    if (@($names | Where-Object { $null -eq $Config.PSObject.Properties[$_] }).Count) { throw 'My Desk configuration is incomplete.' }
+    $contactMode = if ($null -ne $Config.PSObject.Properties['studentInformationAiImportMode']) { $Config.studentInformationAiImportMode } else { 'off' }
+    if ($contactMode -isnot [string] -or $contactMode -cnotin @('off', 'on')) { throw 'Student information mode must be exactly off or on.' }
     foreach ($name in @('mode', 'seatingMode', 'aiImportMode')) {
         if ($Config.$name -isnot [string] -or $Config.$name -cnotin @('off', 'on')) { throw 'My Desk modes must be exactly off or on.' }
     }
-    if ($Config.mode -ceq 'off' -and ($Config.seatingMode -ceq 'on' -or $Config.aiImportMode -ceq 'on')) {
+    if ($Config.mode -ceq 'off' -and ($Config.seatingMode -ceq 'on' -or $Config.aiImportMode -ceq 'on' -or $contactMode -ceq 'on')) {
         throw 'Seating and imports require the base My Desk mode.'
     }
     if ($Config.bucket -cne 'schoolpilot-production-mydesk-attachments') { throw 'Use the reviewed private production My Desk bucket.' }
@@ -42,6 +47,7 @@ function ConvertTo-MyDeskRuntime {
     }
     return [pscustomobject]@{ Mode = $Config.mode; Turn = $null; Environment = [ordered]@{
         MYDESK_MODE = $Config.mode; MYDESK_SEATING_MODE = $Config.seatingMode; MYDESK_AI_IMPORT_MODE = $Config.aiImportMode
+        STUDENT_INFORMATION_AI_IMPORT_MODE = $contactMode
         MYDESK_ATTACHMENTS_BUCKET = $Config.bucket; MYDESK_AI_IMPORT_MODEL = $Config.model
         MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES = [string]$Config.teacherDailyPages
         MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES = [string]$Config.schoolDailyPages
@@ -68,11 +74,11 @@ function Get-MyDeskEnvironment {
         if ($secret.name -cin @($script:AllowedEnvironmentNames + $script:MyDeskLegacyNames)) { throw 'My Desk configuration uses an unexpected secret channel.' }
     }
     $modes = @{}
-    foreach ($key in @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE')) {
+    foreach ($key in @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE', 'STUDENT_INFORMATION_AI_IMPORT_MODE')) {
         $modes[$key] = if ($environment.ContainsKey($key)) { $environment[$key] } else { 'off' }
         if ($modes[$key] -cnotin @('off', 'on')) { throw 'Invalid source My Desk mode.' }
     }
-    if ($modes.MYDESK_MODE -ceq 'off' -and ($modes.MYDESK_SEATING_MODE -ceq 'on' -or $modes.MYDESK_AI_IMPORT_MODE -ceq 'on')) {
+    if ($modes.MYDESK_MODE -ceq 'off' -and ($modes.MYDESK_SEATING_MODE -ceq 'on' -or $modes.MYDESK_AI_IMPORT_MODE -ceq 'on' -or $modes.STUDENT_INFORMATION_AI_IMPORT_MODE -ceq 'on')) {
         throw 'Source child mode requires the base My Desk mode.'
     }
     return ,$environment
@@ -230,22 +236,77 @@ function Assert-MyDeskAiReadiness {
     return [pscustomobject]@{ path = $path; sha256 = $evidenceSnapshot.Sha256 }
 }
 
+function Assert-StudentInformationAiReadiness {
+    param($Config, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot)
+    if ($Config.studentInformationAiImportMode -ceq 'off') { return $null }
+    if (-not $EvidencePath) { throw 'Contact AI activation requires its independent provider, quality and capacity evidence.' }
+    foreach ($environment in $Snapshot.Environments) {
+        if (@($script:StudentInformationTables | Where-Object { $_ -cnotin $environment['RLS_ENABLED_TABLES'].Split(',') }).Count) {
+            throw 'Admit all five student-information tables before contact AI activation.'
+        }
+    }
+    $path = Assert-PrivateInputPath -Path $EvidencePath -RepositoryRoot $RepositoryRoot
+    $evidenceSnapshot = Read-StrictJsonSnapshot -Path $path; $e = $evidenceSnapshot.Value
+    $fields = @('schemaVersion', 'reviewedAt', 'reviewReference', 'imageDigest', 'model', 'promptVersion',
+        'providerContactReviewApproved', 'qualityReportSha256', 'capacityReportSha256', 'profileCount', 'sourceFormats',
+        'typedPhoneEmailAccuracy', 'difficultCasesReported', 'criticalFailures', 'correctionTimingRecorded',
+        'workerCpu', 'workerMemory', 'peakMemoryFraction', 'apiP95Ratio', 'noServiceDisruption', 'reviewAndRecoveryPassed')
+    Assert-ExactProperties -Value $e -Allowed $fields -Trail 'Contact AI readiness'
+    if (@($e.PSObject.Properties.Name).Count -ne $fields.Count -or $e.schemaVersion -ne 1) { throw 'Incomplete contact AI readiness evidence.' }
+    [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'Contact AI readiness' -Now ([DateTimeOffset]::UtcNow))
+    $validation = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'src/services/studentInformationValidation.ts'))
+    $prompt = [regex]::Match($validation, 'INFORMATION_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
+    if (-not $prompt -or $e.promptVersion -cne $prompt -or $e.imageDigest -cne $Digest -or $e.model -cne $Config.model -or
+        $e.reviewReference -isnot [string] -or $e.reviewReference -notmatch '^[a-zA-Z0-9_./:-]{1,160}$' -or
+        $e.qualityReportSha256 -cnotmatch '^[0-9a-f]{64}$' -or $e.capacityReportSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Contact AI evidence does not bind this release and provider review.' }
+    foreach ($field in @('providerContactReviewApproved', 'difficultCasesReported', 'correctionTimingRecorded', 'noServiceDisruption', 'reviewAndRecoveryPassed')) {
+        if ($e.$field -isnot [bool] -or -not $e.$field) { throw 'Contact AI readiness contains an incomplete required check.' }
+    }
+    if ($e.sourceFormats -isnot [array] -or @($e.sourceFormats).Count -ne 5 -or
+        @($e.sourceFormats | Sort-Object -Unique).Count -ne 5 -or
+        @(@('pdf','photo','docx','xlsx','csv') | Where-Object { $_ -cnotin $e.sourceFormats }).Count) { throw 'Contact evaluation must cover all five source formats.' }
+    foreach ($field in @('typedPhoneEmailAccuracy','peakMemoryFraction','apiP95Ratio')) {
+        if ($e.$field -isnot [ValueType] -or $e.$field -is [bool] -or -not [double]::IsFinite([double]$e.$field)) { throw 'Contact AI measurements must be finite JSON numbers.' }
+    }
+    if (-not (Test-IsJsonInteger $e.profileCount) -or $e.profileCount -lt 100 -or
+        -not (Test-IsJsonInteger $e.criticalFailures) -or $e.criticalFailures -ne 0 -or
+        $e.typedPhoneEmailAccuracy -lt 0.99 -or $e.typedPhoneEmailAccuracy -gt 1 -or
+        $e.peakMemoryFraction -le 0 -or $e.peakMemoryFraction -ge 0.70 -or $e.apiP95Ratio -le 0 -or $e.apiP95Ratio -gt 1.20 -or
+        [string]$e.workerCpu -cne [string]$Snapshot.WorkerTask.taskDefinition.cpu -or
+        [string]$e.workerMemory -cne [string]$Snapshot.WorkerTask.taskDefinition.memory) { throw 'Contact AI quality or capacity gate has not passed for the serving worker.' }
+    foreach ($task in @($Snapshot.ApiTask, $Snapshot.WorkerTask)) {
+        $container = @($task.taskDefinition.containerDefinitions | Where-Object name -CIn @('api', 'scheduler-worker'))[0]
+        if (@($container.secrets | Where-Object name -CEQ 'ANTHROPIC_API_KEY').Count -ne 1 -or
+            @($container.environment | Where-Object name -CEQ 'ANTHROPIC_API_KEY').Count) { throw 'Contact AI requires the secret-reference channel on both services.' }
+    }
+    return [pscustomobject]@{ path = $path; sha256 = $evidenceSnapshot.Sha256 }
+}
+
 function New-MyDeskPlan {
-    param($Config, [string]$Directory, [string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha, [string]$EvidencePath)
+    param($Config, [string]$Directory, [string]$ExpectedApiArn, [string]$ExpectedWorkerArn, [string]$Digest, [string]$ReleaseSha, [string]$EvidencePath, [string]$ContactEvidencePath)
     $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $toolSha = Assert-RepositoryIdentity -RepositoryRoot $repo
     $runtime = ConvertTo-MyDeskRuntime $Config
     $snapshot = Get-MyDeskSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha
+    # Old configuration files remain usable only when they cannot silently turn
+    # off a live contact release. Every new plan freezes the explicit fourth mode.
+    $Config = $Config | ConvertTo-Json | ConvertFrom-Json
+    if ($null -eq $Config.PSObject.Properties['studentInformationAiImportMode']) {
+        if ($snapshot.Environments[0].ContainsKey('STUDENT_INFORMATION_AI_IMPORT_MODE') -and
+            $snapshot.Environments[0]['STUDENT_INFORMATION_AI_IMPORT_MODE'] -ceq 'on') { throw 'Specify studentInformationAiImportMode explicitly when contact imports are already enabled.' }
+        $Config | Add-Member studentInformationAiImportMode 'off'
+    }
     Assert-MyDeskStorage $Config.bucket
     Assert-MyDeskStorageRoles $snapshot $Config.bucket
     $aiEvidence = Assert-MyDeskAiReadiness $Config $snapshot $EvidencePath $Digest $repo
+    $contactEvidence = Assert-StudentInformationAiReadiness $Config $snapshot $ContactEvidencePath $Digest $repo
     $scaling = Get-ScalingSnapshot
     if ($scaling.DynamicIn -or $scaling.DynamicOut -or $scaling.Scheduled) { throw 'Another operation holds autoscaling.' }
     Assert-ScheduledScalingContract
     $directory = Assert-PrivateExternalRoot -Root $Directory -RepositoryRoot $repo
     $runId = [Guid]::NewGuid().ToString('N')
     $priorModes = [ordered]@{}
-    foreach ($entry in @(@('mode','MYDESK_MODE'), @('seatingMode','MYDESK_SEATING_MODE'), @('aiImportMode','MYDESK_AI_IMPORT_MODE'))) {
+    foreach ($entry in @(@('mode','MYDESK_MODE'), @('seatingMode','MYDESK_SEATING_MODE'), @('aiImportMode','MYDESK_AI_IMPORT_MODE'), @('studentInformationAiImportMode','STUDENT_INFORMATION_AI_IMPORT_MODE'))) {
         $value = if ($snapshot.Environments[0].ContainsKey($entry[1])) { $snapshot.Environments[0][$entry[1]] } else { 'off' }
         if ($value -cnotin @('off','on')) { throw 'Invalid prior My Desk mode.' }
         $priorModes[$entry[0]] = $value
@@ -256,7 +317,7 @@ function New-MyDeskPlan {
         workerFingerprint = Get-TaskFingerprint $snapshot.WorkerTask.taskDefinition 'scheduler-worker'
         managedFingerprint = Get-ManagedRuntimeFingerprint $snapshot.ApiTask.taskDefinition 'api'
         apiTags = Get-TaskTagsFingerprint @($snapshot.ApiTask.tags); workerTags = Get-TaskTagsFingerprint @($snapshot.WorkerTask.tags)
-        apiDesired = [int]$snapshot.Services.Api.desiredCount; config = $Config; priorModes = $priorModes; aiEvidence = $aiEvidence
+        apiDesired = [int]$snapshot.Services.Api.desiredCount; config = $Config; priorModes = $priorModes; aiEvidence = $aiEvidence; contactEvidence = $contactEvidence
         deploymentHash = Get-CanonicalJsonSha256 @($snapshot.Services.Api.deploymentConfiguration, $snapshot.Services.Worker.deploymentConfiguration)
         scaling = $scaling
     }
@@ -274,6 +335,9 @@ function Read-MyDeskPlan {
     $plan = $snapshot.Value
     [void](Assert-RepositoryIdentity -RepositoryRoot $repo -ExpectedSha $plan.toolSha)
     [void](ConvertTo-MyDeskRuntime $plan.config)
+    if ($null -eq $plan.config.PSObject.Properties['studentInformationAiImportMode']) { $plan.config | Add-Member studentInformationAiImportMode 'off' }
+    if ($null -eq $plan.priorModes.PSObject.Properties['studentInformationAiImportMode']) { $plan.priorModes | Add-Member studentInformationAiImportMode 'off' }
+    if ($null -eq $plan.PSObject.Properties['contactEvidence']) { $plan | Add-Member contactEvidence $null }
     if ($plan.runId -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid plan identifier.' }
     return $plan
 }
@@ -291,6 +355,9 @@ function Invoke-MyDeskApply {
     $evidence = if ($null -ne $Plan.aiEvidence) { [string]$Plan.aiEvidence.path } else { $null }
     $checkedEvidence = Assert-MyDeskAiReadiness $Plan.config $snapshot $evidence $Plan.imageDigest $repo
     if ($null -ne $Plan.aiEvidence -and $checkedEvidence.sha256 -cne $Plan.aiEvidence.sha256) { throw 'AI readiness evidence changed.' }
+    $contactEvidence = if ($null -ne $Plan.contactEvidence) { [string]$Plan.contactEvidence.path } else { $null }
+    $checkedContact = Assert-StudentInformationAiReadiness $Plan.config $snapshot $contactEvidence $Plan.imageDigest $repo
+    if ($null -ne $Plan.contactEvidence -and $checkedContact.sha256 -cne $Plan.contactEvidence.sha256) { throw 'Contact AI readiness evidence changed.' }
     foreach ($check in @(
         @((Get-TaskFingerprint $snapshot.ApiTask.taskDefinition 'api'), $Plan.apiFingerprint),
         @((Get-TaskFingerprint $snapshot.WorkerTask.taskDefinition 'scheduler-worker'), $Plan.workerFingerprint),
@@ -363,7 +430,7 @@ function Invoke-MyDeskApply {
                     $observed.Api.desiredCount -ne $Plan.apiDesired -or $observed.Worker.desiredCount -ne 1) { throw 'Recovery source drifted.' }
                 [void](Assert-ScalingHoldExact)
                 $recoveryConfig = $Plan.config | ConvertTo-Json | ConvertFrom-Json
-                foreach ($name in @('mode', 'seatingMode', 'aiImportMode')) { $recoveryConfig.$name = $Plan.priorModes.$name }
+                foreach ($name in $script:MyDeskModeNames) { $recoveryConfig.$name = $Plan.priorModes.$name }
                 # An off-plan can change model/budgets without activation
                 # evidence. Never restore prior AI=on under those new values.
                 # Restore the frozen source configuration; only keep the newly
@@ -415,7 +482,7 @@ function Invoke-MyDeskMain {
         $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         [void](Assert-PrivateInputPath -Path $ConfigPath -RepositoryRoot $repo)
         $config = (Read-StrictJsonSnapshot -Path $ConfigPath).Value
-        $created = New-MyDeskPlan $config $OutDir $ApiArn $WorkerArn $ImageDigest $AppSha $AiReadinessPath
+        $created = New-MyDeskPlan $config $OutDir $ApiArn $WorkerArn $ImageDigest $AppSha $AiReadinessPath $StudentInformationReadinessPath
         Write-Host "My Desk plan: $($created.path) sha256=$($created.sha256)"
         return
     }
@@ -429,13 +496,13 @@ function Invoke-MyDeskMain {
         $current = Get-MyDeskSnapshot $receipt.apiArn $receipt.workerArn $plan.imageDigest $plan.appSha
         Assert-RuntimeTaskConfiguration $current.ApiTask.taskDefinition (ConvertTo-MyDeskRuntime $plan.config) 'api'
         $rollbackConfig = $plan.config | ConvertTo-Json | ConvertFrom-Json
-        foreach ($name in @('mode', 'seatingMode', 'aiImportMode')) {
+        foreach ($name in $script:MyDeskModeNames) {
             if ($plan.priorModes.$name -ceq 'on' -and $rollbackConfig.$name -ceq 'off') { throw 'Rollback cannot activate a previously disabled feature; create a reviewed new plan.' }
             $rollbackConfig.$name = $plan.priorModes.$name
         }
         # Configuration-only rollback retains the current bucket/model/limits,
         # image, admission, IAM, and every unrelated field on the current pair.
-        $created = New-MyDeskPlan $rollbackConfig $directory $receipt.apiArn $receipt.workerArn $plan.imageDigest $plan.appSha $AiReadinessPath
+        $created = New-MyDeskPlan $rollbackConfig $directory $receipt.apiArn $receipt.workerArn $plan.imageDigest $plan.appSha $AiReadinessPath $StudentInformationReadinessPath
         $plan = $created.plan; $ManifestHash = $created.sha256
     }
     $result = Invoke-MyDeskApply $plan $ManifestHash $directory

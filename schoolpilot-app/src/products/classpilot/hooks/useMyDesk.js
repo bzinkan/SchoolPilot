@@ -53,17 +53,8 @@ export function useMyDeskNoteStudents(schoolId, viewerId, groupId) {
     enabled: Boolean(schoolId && viewerId && groupId), retry: false, staleTime: 30_000 });
 }
 
-export function useMyDeskStudentClasses(schoolId, viewerId, studentId, currentClasses) {
-  const ids = currentClasses.map(item => item.id);
-  return useQuery({ queryKey: [...myDeskKeys.root(schoolId, viewerId), 'student-classes', studentId || '', ...ids],
-    queryFn: async ({ signal }) => {
-      const api = myDeskApi(schoolId, signal);
-      const matches = [];
-      for (let offset = 0; offset < currentClasses.length; offset += 5) {
-        const batch = currentClasses.slice(offset, offset + 5);
-        const rosters = await Promise.all(batch.map(item => api.get(`/classes/${encodeURIComponent(item.id)}/students`)));
-        batch.forEach((item, index) => { if (rosters[index].students?.some(row => row.id === studentId)) matches.push(item); });
-      }
-      return matches;
-    }, enabled: Boolean(schoolId && viewerId && studentId && ids.length), retry: false, staleTime: 30_000 });
+export function useMyDeskStudentContext(schoolId, viewerId, studentId) {
+  return useQuery({ queryKey: [...myDeskKeys.root(schoolId, viewerId), 'student-context', studentId || ''],
+    queryFn: ({ signal }) => myDeskApi(schoolId, signal).get(`/students/${encodeURIComponent(studentId)}/context`),
+    enabled: Boolean(schoolId && viewerId && studentId), retry: false, staleTime: 30_000 });
 }

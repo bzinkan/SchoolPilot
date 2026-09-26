@@ -5,7 +5,9 @@ import type { MyDeskPreferencesSnapshot } from "./mydeskPreferences.js";
 
 export type ImportRegion = { assetId: string; x: number; y: number; width: number; height: number; rotation: 0 | 90 | 180 | 270 };
 export type ImportReceipt = { id: string; fingerprint: string; kind: string; revision: number };
-export type ImportCommitReceipt = { requestId: string; fingerprint: string; notes: Array<{ itemId: string; noteId: string }> };
+export type ImportDisciplineFields = { referral: boolean; detentionAssignment: { dates: string[]; details?: string } | null };
+export type ImportDuplicateDecision = { action: "separate" | "add_evidence"; recordId?: string; revision?: number; reason?: string; candidatesFingerprint?: string };
+export type ImportCommitReceipt = { requestId: string; fingerprint: string; notes: Array<{ itemId: string; noteId: string }>; records?: Array<{ itemId: string; recordId: string; studentId: string }> };
 export type ImportQuotaUsage = { date: string; pages: number };
 export type ImportStatus = "uploading" | "queued" | "processing" | "review" | "failed" | "completed" | "cancelled" | "expired";
 export type ImportAssetStatus = "pending" | "uploading" | "ready" | "promoted" | "delete_pending" | "deleted";
@@ -14,6 +16,7 @@ const times = () => ({ createdAt: timestamp("created_at", { withTimezone: true }
 export const mydeskImports = pgTable("mydesk_imports", {
   ...owner(), ...times(), clientRequestId: uuid("client_request_id").notNull(), requestFingerprint: text("request_fingerprint").notNull(),
   status: text("status").$type<ImportStatus>().notNull().default("uploading"), revision: integer("revision").notNull().default(1),
+  destination: text("destination").$type<"notes" | "discipline">().notNull().default("notes"),
   expectedSourceCount: integer("expected_source_count").notNull(),
   selectedGroupIds: jsonb("selected_group_ids").$type<string[]>().notNull().default([]),
   preferencesSnapshot: jsonb("preferences_snapshot").$type<MyDeskPreferencesSnapshot>().notNull().default({ revision: 0, preferredClasses: {} }),
@@ -40,6 +43,7 @@ export const mydeskImports = pgTable("mydesk_imports", {
 export const mydeskImportItems = pgTable("mydesk_import_items", {
   ...owner(), ...times(), importId: varchar("import_id").notNull(), clientRequestId: uuid("client_request_id").notNull(), ordinal: integer("ordinal").notNull(), revision: integer("revision").notNull().default(1),
   regions: jsonb("regions").$type<ImportRegion[]>().notNull().default([]), subjectNames: jsonb("subject_names").$type<string[]>().notNull().default([]),
+  disciplineFields: jsonb("discipline_fields").$type<ImportDisciplineFields>(), duplicateDecision: jsonb("duplicate_decision").$type<ImportDuplicateDecision>(), disciplineRecordId: varchar("discipline_record_id"),
   groupId: varchar("group_id"), studentId: varchar("student_id"), rosterRevision: text("roster_revision"), category: text("category").notNull().default("note"), title: text("title").notNull().default(""), body: text("body").notNull().default(""), entryDate: date("entry_date",{mode:"string"}),
   warnings: jsonb("warnings").$type<string[]>().notNull().default([]), reviewed: boolean("reviewed").notNull().default(false), excluded: boolean("excluded").notNull().default(false), reviewFingerprint: text("review_fingerprint"),
   approvedAssetId: varchar("approved_asset_id"), extractionStatus: text("extraction_status").$type<"pending"|"ready"|"failed">().notNull().default("pending"), extractRequested: boolean("extract_requested").notNull().default(true), noteId: varchar("note_id"),

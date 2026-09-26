@@ -8,7 +8,7 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { resolveClasspilotEntitlement } from "../services/classpilotEntitlement.js";
 import { myDeskActor, rejectMyDeskPrivilegedAccess, requireMyDeskAuthor, requireMyDeskEnabled } from "../middleware/requireMyDesk.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
-import { completeMyDeskNote, createMyDeskNote, deleteMyDeskNote, exportMyDeskNotes, getMyDeskNote, listMyDeskClasses, listMyDeskClassStudents, listMyDeskClassNoteStudents, listMyDeskNotes, myDeskError, updateMyDeskNote, getMyDeskPreferences, updateMyDeskPreferences, listMyDeskStudents, listMyDeskStudentHistory } from "../services/mydesk.js";
+import { completeMyDeskNote, createMyDeskNote, deleteMyDeskNote, exportMyDeskNotes, getMyDeskNote, listMyDeskClasses, listMyDeskClassStudents, listMyDeskClassNoteStudents, listMyDeskNotes, myDeskError, updateMyDeskNote, getMyDeskPreferences, updateMyDeskPreferences, listMyDeskStudents, listMyDeskStudentHistory, getMyDeskStudentContext } from "../services/mydesk.js";
 import { completeMyDeskNoteInput, createMyDeskNoteInput, deleteMyDeskNoteInput, MYDESK_CATEGORIES, myDeskEnabledForSchool, myDeskSeatingEnabledForSchool, myDeskId, myDeskNotesQuery, updateMyDeskNoteInput, myDeskPreferencesInput, myDeskStudentsQuery } from "../services/mydeskValidation.js";
 import { mydeskAttachmentsRouter } from "./mydeskAttachments.js";
 import { mydeskSeatingRouter } from "./mydeskSeating.js";
@@ -57,6 +57,7 @@ router.get("/classes/:id/note-students", myDeskEndpoint(async (req, res) => res.
 router.get("/preferences", myDeskEndpoint(async (req, res) => res.json(await getMyDeskPreferences(myDeskActor(req, res)))));
 router.patch("/preferences", myDeskEndpoint(async (req, res) => res.json(await updateMyDeskPreferences(myDeskActor(req, res), myDeskPreferencesInput.parse(req.body)))));
 router.post("/students/search", myDeskEndpoint(async (req, res) => res.json(await listMyDeskStudents(myDeskActor(req, res), myDeskStudentsQuery.parse(req.body)))));
+router.get("/students/:id/context", myDeskEndpoint(async (req, res) => res.json(await getMyDeskStudentContext(myDeskActor(req, res), myDeskId.parse(req.params.id)))));
 router.post("/students/:id/history", myDeskEndpoint(async (req, res) => res.json(await listMyDeskStudentHistory(myDeskActor(req, res), myDeskId.parse(req.params.id), noteFilters(req)))));
 router.post("/students/:id/export", myDeskEndpoint(async (req, res) => {
   const result = await exportMyDeskNotes(myDeskActor(req, res), noteFilters(req), myDeskId.parse(req.params.id));
@@ -85,12 +86,12 @@ router.post("/notes", myDeskEndpoint(async (req, res) => {
 }));
 router.get("/notes/:id", myDeskEndpoint(async (req, res) => res.json({ note: await getMyDeskNote(myDeskActor(req, res), myDeskId.parse(req.params.id)) })));
 router.patch("/notes/:id", myDeskEndpoint(async (req, res) => {
-  const { revision, ...patch } = updateMyDeskNoteInput.parse(req.body);
-  return res.json({ note: await updateMyDeskNote(myDeskActor(req, res), myDeskId.parse(req.params.id), revision, patch) });
+  const { revision, workspaceVersion, ...patch } = updateMyDeskNoteInput.parse(req.body);
+  return res.json({ note: await updateMyDeskNote(myDeskActor(req, res), myDeskId.parse(req.params.id), revision, patch, workspaceVersion) });
 }));
 router.post("/notes/:id/complete", myDeskEndpoint(async (req, res) => {
-  const { revision, attachmentIds, ...patch } = completeMyDeskNoteInput.parse(req.body);
-  return res.json({ note: await completeMyDeskNote(myDeskActor(req, res), myDeskId.parse(req.params.id), revision, patch, attachmentIds) });
+  const { revision, workspaceVersion, attachmentIds, ...patch } = completeMyDeskNoteInput.parse(req.body);
+  return res.json({ note: await completeMyDeskNote(myDeskActor(req, res), myDeskId.parse(req.params.id), revision, patch, attachmentIds, workspaceVersion) });
 }));
 router.delete("/notes/:id", myDeskEndpoint(async (req, res) => {
   const { revision } = deleteMyDeskNoteInput.parse(req.body);

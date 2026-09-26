@@ -294,6 +294,7 @@ export function createApp() {
   // The global body parser/session middleware can fail before the private router handles the request.
   app.use("/api/mydesk", myDeskUpstreamErrorBoundary);
   app.use("/api/classpilot/discipline-records", myDeskUpstreamErrorBoundary);
+  app.use("/api/classpilot/student-information", myDeskUpstreamErrorBoundary);
 
   // JSON 404 for unknown API routes — otherwise Express emits an HTML
   // "Cannot GET" page, which CloudFront used to mask as 200 + SPA shell.
