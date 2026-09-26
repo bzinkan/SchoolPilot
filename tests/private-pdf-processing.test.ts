@@ -5,6 +5,7 @@ import { access, readFile } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import sharp from "sharp";
+import { PDFDocument } from "pdf-lib";
 import { createPrivatePdfProcessor, PrivatePdfError } from "../src/services/privatePdfProcessing.js";
 import { createPrivateNativeProcessing, privateNativeProcessing, PrivateNativeProcessingError } from "../src/services/privateNativeProcessing.js";
 import { MyDeskFileError, normalizeMyDeskFile } from "../src/services/mydeskFiles.js";
@@ -77,6 +78,30 @@ test("inspection rejects missing, duplicate, encrypted and out-of-bound page met
   }
   await assert.rejects(processor.inspect(Buffer.from("PRIVATE invalid input"), { maxPages: 20 }), errorCode("invalid_pdf"));
   assert.equal(fixture.calls.length, cases.length);
+});
+
+test("inspection rejects diagnostic stderr even when Poppler exits zero and recovers a valid page count", async () => {
+  const fixture = harness(); const processor = createPrivatePdfProcessor({ spawnChild: fixture.spawnChild });
+  for (const diagnostic of ["Syntax Warning: PRIVATE repaired cross-reference\n", "Internal Error: PRIVATE broken offset\n"]) {
+    const index = fixture.calls.length;
+    const operation = processor.inspect(source, { maxPages: 20 });
+    const rejected = assert.rejects(operation, errorCode("invalid_pdf"));
+    const call = await fixture.started(index);
+    call.child.stderr?.emit("data", Buffer.from(diagnostic)); fixture.finish(call); await rejected;
+    await assert.rejects(access(call.args.at(-1)!));
+  }
+  const valid = processor.inspect(source, { maxPages: 20 });
+  fixture.finish(await fixture.started(2)); assert.deepEqual(await valid, { pageCount: 2 });
+});
+
+test("real Poppler diagnostic repair of out-of-file cross-reference offsets is rejected", async () => {
+  const document = await PDFDocument.create(); document.addPage([200, 100]);
+  const original = Buffer.from(await document.save({ useObjectStreams: false }));
+  const corrupted = Buffer.from(original.toString("latin1").replace(/\d{10} \d{5} n /g, "9999999999 00000 n "), "latin1");
+  assert.notDeepEqual(corrupted, original);
+  const processor = createPrivatePdfProcessor();
+  await assert.rejects(processor.inspect(corrupted, { maxPages: 20 }), errorCode("invalid_pdf"));
+  assert.deepEqual(await processor.inspect(original, { maxPages: 20 }), { pageCount: 1 });
 });
 
 test("inspection and rendering share one FIFO permit, with four queued calls and rejection beyond that bound", async () => {

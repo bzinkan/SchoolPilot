@@ -57,6 +57,7 @@ export function createPrivatePdfProcessor(options: {
       } catch { reject(new PrivatePdfError("pdf_unavailable")); return; }
       let failure: PdfErrorCode | undefined;
       let outputBytes = 0;
+      let hasDiagnostics = false;
       const output: Buffer[] = [];
       const stop = (code: PdfErrorCode) => { failure ??= code; child.kill("SIGKILL"); };
       const abort = () => stop("pdf_aborted");
@@ -64,6 +65,7 @@ export function createPrivatePdfProcessor(options: {
       signal?.addEventListener("abort", abort, { once: true });
       const consume = (chunk: Buffer, retain: boolean) => {
         outputBytes += chunk.length;
+        if (!retain && chunk.length > 0) hasDiagnostics = true;
         if (outputBytes > MAX_OUTPUT_BYTES) { stop("invalid_pdf"); return; }
         if (retain && !failure) output.push(chunk);
       };
@@ -73,7 +75,10 @@ export function createPrivatePdfProcessor(options: {
       // An abort/error event is insufficient: release the permit and delete temporary files only after close.
       child.once("close", code => {
         clearTimeout(timer); signal?.removeEventListener("abort", abort);
-        if (failure || code !== 0) reject(new PrivatePdfError(failure ?? (code === 126 || code === 127 ? "pdf_unavailable" : "invalid_pdf")));
+        // Poppler can repair damaged cross-references and still exit zero.
+        // Inspection diagnostics therefore reject the source; never retain or
+        // disclose their text, which can include private document fragments.
+        if (failure || code !== 0 || (tool === "pdfinfo" && hasDiagnostics)) reject(new PrivatePdfError(failure ?? (code === 126 || code === 127 ? "pdf_unavailable" : "invalid_pdf")));
         else resolve(Buffer.concat(output).toString("utf8"));
       });
       if (signal?.aborted) abort();
