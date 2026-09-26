@@ -1,5 +1,11 @@
 # Private notebook photos are normalized. The API writes private files
 # and streams authorized reads; there is no public/CloudFront or presigned access.
+locals {
+  # The explicit bucket name is known before creation. Keep the complete IAM/TLS
+  # policies reviewable in the first saved plan instead of computed after apply.
+  mydesk_bucket_arn = "arn:aws:s3:::${aws_s3_bucket.mydesk_attachments.bucket}"
+}
+
 resource "aws_s3_bucket" "mydesk_attachments" {
   bucket        = "${local.name}-mydesk-attachments"
   force_destroy = false
@@ -53,7 +59,7 @@ resource "aws_s3_bucket_policy" "mydesk_attachments" {
       Effect    = "Deny"
       Principal = "*"
       Action    = "s3:*"
-      Resource  = [aws_s3_bucket.mydesk_attachments.arn, "${aws_s3_bucket.mydesk_attachments.arn}/*"]
+      Resource  = [local.mydesk_bucket_arn, "${local.mydesk_bucket_arn}/*"]
       Condition = { Bool = { "aws:SecureTransport" = "false" } }
     }]
   })

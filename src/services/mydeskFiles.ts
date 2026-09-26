@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { Worker } from "node:worker_threads";
 import sharp from "sharp";
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { inspectPrivatePdf, PrivatePdfError } from "./privatePdfProcessing.js";
+import { privateNativeProcessing, PrivateNativeProcessingError } from "./privateNativeProcessing.js";
 
 export const MYDESK_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const MYDESK_MAX_ATTACHMENTS = 5;
@@ -15,34 +16,6 @@ export class MyDeskFileError extends Error {
 }
 export const myDeskSha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-async function validatePdf(bytes: Buffer): Promise<void> {
-  // A malformed PDF must not monopolize the API event loop, expand an unbounded heap,
-  // or write parser warnings containing document values to application logs.
-  const worker = new Worker(`
-    const { parentPort, workerData } = require('node:worker_threads');
-    const { PDFDocument } = require('pdf-lib');
-    (async () => {
-      try {
-        const document = await PDFDocument.load(workerData, { ignoreEncryption: false, throwOnInvalidObject: true, updateMetadata: false });
-        const pages = document.getPageCount();
-        parentPort.postMessage(pages > 0 && pages <= 1000);
-      } catch { parentPort.postMessage(false); }
-    })();
-  `, { eval: true, execArgv: [], workerData: bytes, stdout: true, stderr: true,
-    resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 } });
-  worker.stdout.resume(); worker.stderr.resume();
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const invalid = () => reject(new Error("invalid_pdf"));
-      timer = setTimeout(invalid, 15_000);
-      worker.once("message", valid => valid === true ? resolve() : invalid());
-      worker.once("error", invalid);
-      worker.once("exit", invalid);
-    });
-  } finally { clearTimeout(timer); await worker.terminate(); }
-}
-
 export function validateMyDeskFileMetadata(contentType: string, size: number): asserts contentType is MyDeskFileType {
   if (!MYDESK_FILE_TYPES.includes(contentType as MyDeskFileType)) {
     throw new MyDeskFileError(415, "unsupported_file_type", "Choose a JPEG, PNG, WebP image or PDF. Convert HEIC/HEIF photos to JPEG first.");
@@ -53,31 +26,35 @@ export function validateMyDeskFileMetadata(contentType: string, size: number): a
 }
 
 /** Decode actual bytes, not a filename or browser MIME assertion. Never retain an undecodable original. */
-export async function normalizeMyDeskFile(bytes: Buffer, contentType: string): Promise<{ bytes: Buffer; contentType: MyDeskFileType; sha256: string }> {
+export async function normalizeMyDeskFile(bytes: Buffer, contentType: string, options: { signal?: AbortSignal } = {}): Promise<{ bytes: Buffer; contentType: MyDeskFileType; sha256: string }> {
   validateMyDeskFileMetadata(contentType, bytes.length);
   if (contentType === "application/pdf") {
-    if (!bytes.subarray(0, 8).toString("ascii").match(/^%PDF-1\.[0-9]|^%PDF-2\.0/) ||
-      !bytes.subarray(Math.max(0, bytes.length - 2048)).toString("latin1").includes("%%EOF")) {
-      throw new MyDeskFileError(422, "invalid_pdf", "This file is not a valid PDF.");
-    }
     try {
-      await validatePdf(bytes);
-    } catch {
+      await inspectPrivatePdf(bytes, { maxPages: 1000, signal: options.signal });
+    } catch (error) {
+      if (error instanceof PrivatePdfError && error.retryable) {
+        throw new MyDeskFileError(503, "pdf_processing_unavailable", "PDF processing is temporarily unavailable. Please retry your upload.");
+      }
       throw new MyDeskFileError(422, "invalid_pdf", "The PDF could not be read. Choose a valid, unencrypted PDF with at most 1,000 pages.");
     }
     // Preserve the original PDF bytes, including document signatures.
     return { bytes, contentType, sha256: myDeskSha256(bytes) };
   }
   try {
-    const input = sharp(bytes, { limitInputPixels: 24_000_000, failOn: "warning", animated: false });
-    const metadata = await input.metadata();
-    const expected = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp" }[contentType];
-    if (metadata.format !== expected || !metadata.width || !metadata.height || (metadata.pages ?? 1) !== 1) throw new Error("format_mismatch");
-    const normalized = await input.rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
-      .flatten({ background: "#ffffff" }).jpeg({ quality: 85, mozjpeg: true }).timeout({ seconds: 15 }).toBuffer();
+    const normalized = await privateNativeProcessing.run(async () => {
+      const input = sharp(bytes, { limitInputPixels: 24_000_000, failOn: "warning", animated: false });
+      const metadata = await input.metadata();
+      const expected = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp" }[contentType];
+      if (metadata.format !== expected || !metadata.width || !metadata.height || (metadata.pages ?? 1) !== 1) throw new Error("format_mismatch");
+      return input.rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+        .flatten({ background: "#ffffff" }).jpeg({ quality: 85, mozjpeg: true }).timeout({ seconds: 15 }).toBuffer();
+    }, options);
     // sharp strips EXIF/XMP/IPTC/ICC by default; do not call withMetadata or keepMetadata.
     return { bytes: normalized, contentType: "image/jpeg", sha256: myDeskSha256(normalized) };
-  } catch {
+  } catch (error) {
+    if (error instanceof PrivateNativeProcessingError) {
+      throw new MyDeskFileError(503, "image_processing_unavailable", "Image processing is temporarily unavailable. Please retry your upload.");
+    }
     throw new MyDeskFileError(422, "invalid_image", "This image could not be read. Choose a single JPEG, PNG or WebP image no larger than 24 megapixels.");
   }
 }

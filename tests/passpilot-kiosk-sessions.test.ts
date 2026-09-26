@@ -338,7 +338,9 @@ describe("PassPilot per-device kiosk sessions", { concurrency: false }, () => {
     const rlsRegistry = readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8");
     assert.match(schema, /passpilotKioskSessions = pgTable\(/);
     assert.match(startup, /CREATE TABLE IF NOT EXISTS passpilot_kiosk_sessions/);
-    assert.match(startup, /isReviewedRlsEnforcementRequest/);
+    const enforcement = readFileSync(new URL("../src/db/rlsEnforcement.ts", import.meta.url), "utf8");
+    assert.match(enforcement, /isReviewedRlsEnforcementRequest\(tables\)/);
+    assert.match(startup, /async function runMigrationsAndExit[\s\S]*await runVersionedMigrations\(\);[\s\S]*await assertRequiredRlsEnforcement\(pool\)/);
     assert.match(rlsRegistry, /"passpilotKioskSessions"[\s\S]*?"passpilot_kiosk_sessions"/);
     const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
     assert.match(deployScript, /enforce-deploy-rls-allowlist\.mjs" validate-request/);

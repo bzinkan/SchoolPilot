@@ -34,6 +34,7 @@ to pass school-hours just to get one).
 - [ ] School shows the correct **domain**.
 - [ ] The right **product licenses** are attached.
 - [ ] The **admin** received the welcome email and can log in.
+- [ ] For ClassPilot schools, an active teacher/admin membership can open its own **My Desk** once the global release is available, including without a teaching session. No school toggle, enrollment or school-ID configuration is needed. Check primary/co-teacher class assignments if a class is missing. Each staff member starts with a separate private workspace; administrators and support impersonation cannot open someone else's content. See [My Desk help](MYDESK_TEACHER_GUIDE.md).
 
 ---
 

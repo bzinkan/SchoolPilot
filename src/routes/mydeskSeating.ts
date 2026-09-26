@@ -11,7 +11,7 @@ const endpoint = (handler: (req: Request, res: Response) => Promise<unknown>) =>
 };
 mydeskSeatingRouter.use("/seating-charts", (req, res, next) => {
   if (!myDeskSeatingEnabledForSchool(myDeskActor(req, res).schoolId)) {
-    res.status(404).json({ error: "Seating charts are not enabled for this school", code: "MYDESK_SEATING_NOT_ENABLED" }); return;
+    res.status(404).json({ error: "Seating charts are temporarily unavailable", code: "MYDESK_SEATING_NOT_ENABLED" }); return;
   }
   next();
 });

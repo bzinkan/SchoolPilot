@@ -112,29 +112,31 @@ npm run db:studio        # Open Drizzle Studio GUI
 
 ### My Desk private notebook
 
-My Desk is an explicit-school ClassPilot web pilot. Notes/photos are author-only;
-school administrators have their own notebooks and cannot read another author's.
-Never publish notebook content to timelines, evidence packets, or logs. The only
-AI exception is an author's explicitly started, separately enabled paperwork
-import: selected source pages may be processed, never existing notes or rosters.
-See `docs/MYDESK_AI_IMPORT.md` for the provider, review, retention, and deployment
-boundary. Its exact reviewed admission is
-`--enable-rls-table mydesk_import_assets,mydesk_import_items,mydesk_imports` after
-verified M1 admission. The base and import gates are required; seating is separate.
-The
-two-table lifecycle, immutable filing snapshots, server-normalized photos,
-authenticated content delivery, durable cleanup, infrastructure plan boundaries,
-and rollout/rollback contract are in `docs/MYDESK_PRIVATE_NOTEBOOK.md`.
-Use the exact one-shot bundle `--enable-rls-table mydesk_attachments,mydesk_notes`
-only for reviewed admission. Keep the current production Terraform RLS baseline
-unchanged until live verification, then adopt its observed allowlist separately.
-Disabling the pilot must leave bucket configuration and worker cleanup running.
-Do not use `db:push` to replace the ledger's column-specific composite-FK
-`ON DELETE SET NULL (group_id)` / `(student_id)` actions.
-Private seating charts add a separate, default-off school gate and the one-table
-admission `--enable-rls-table mydesk_seating_charts` only after M1 admission is live
-and verified. Both My Desk and seating gates are required. Follow
-`docs/MYDESK_PRIVATE_SEATING.md` for its migration, retention, and rollout contract.
+My Desk is included with ClassPilot for all active qualifying teacher/admin
+memberships, including schools added after activation. Notes, attachments, charts
+and imports remain author-only; administrators have their own notebooks and
+cannot access another author's. Support impersonation is denied. No school-admin
+toggle, school-ID configuration or individual enrollment exists.
+
+`MYDESK_MODE`, `MYDESK_SEATING_MODE`, and `MYDESK_AI_IMPORT_MODE` accept exactly
+`off`/`on`, default off; seating and AI require the base mode. Retired school
+allowlists are rejected. Cleanup remains active when modes or membership are off.
+The only AI exception is teacher-started paperwork import of selected source
+images; never scan existing notes or send class rosters to the provider. Preserve
+manual review, atomic Save, private byte serving and content-free operational logs.
+
+Follow `docs/MYDESK_PRODUCTION_RELEASE.md` for combined six-table forward admission,
+production RLS verification (including already-applied migrations), private storage,
+runtime plan/apply/rollback, automatic availability and live teacher acceptance.
+PR #510 already combines the immutable migrations; do not downgrade to an M1-only
+artifact or rewrite historical checksums. Runtime templates are not serving task
+definitions. Keep production Terraform RLS at the verified baseline until separate
+observed adoption. Preserve bucket/IAM, cleanup and RLS on rollback.
+
+Notebook/seating/import data flows and retention remain documented in
+`docs/MYDESK_PRIVATE_NOTEBOOK.md`, `docs/MYDESK_PRIVATE_SEATING.md`, and
+`docs/MYDESK_AI_IMPORT.md`. Do not replace the ledger's column-specific composite-FK
+`ON DELETE SET NULL (group_id)` / `(student_id)` actions using `db:push`.
 
 ### Authentication (Dual System)
 The `authenticate` middleware (`src/middleware/authenticate.ts`) checks two auth methods:

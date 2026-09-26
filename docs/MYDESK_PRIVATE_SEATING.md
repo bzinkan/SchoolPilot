@@ -63,73 +63,17 @@ destruction. Apply the executed agreement and WISP section 9.
 
 ## Rollout and rollback
 
-1. Complete and verify the separate M1 notebook deployment and admission first:
-   both `mydesk_attachments` and `mydesk_notes` must already be in the matching
-   live API and worker RLS allowlists. This seating release does not combine or
-   substitute for M1's reviewed admission. Keep both pilot flags empty until the
-   required migrations and access checks have passed.
-   The current combined backend manifest installs both notebook and seating
-   migrations. It is not an M1-only artifact: using it for step 1 would create
-   and enforce seating RLS before its separate allowlist admission. Package and
-   review an M1-only predecessor release, verify it live, then release this
-   combined artifact with seating admission. Do not infer that an empty feature
-   flag defers a schema migration or that the deploy helper verifies all catalog
-   tables; explicitly inspect the table policies after each release.
-   If a reviewed immutable build from before seating changes exists, verify its
-   source revision and manifest before using it. This working branch contains
-   combined, uncommitted work and does not supply such a release. Otherwise
-   prepare a separate M1 commit/PR: review the notebook-only dependency closure,
-   including route/schema exports, migration manifest, bootstrap, RLS inventory,
-   environment flags, and frontend capabilities. Its manifest must include the
-   unchanged `mydesk-private-notebook-20260925` migration and exclude seating;
-   its admission inventory must contain the notebook pair without seating.
-   Run M1 schema/API/storage/RLS and build checks on that exact commit, review the
-   diff, and build/tag an immutable artifact from it. Do not hand-copy selected
-   runtime files or edit a built image to manufacture the predecessor. Deploy and
-   verify that artifact before building/releasing the reviewed seating commit.
-   Once AI import code is included, the combined manifest also creates its three
-   tables. A seating-only admission needs a reviewed predecessor artifact without
-   that import migration. Follow [MYDESK_AI_IMPORT.md](MYDESK_AI_IMPORT.md) for the
-   later three-table admission; neither feature gate defers DDL.
-2. Run the schema behavior, restricted-role API, validator, frontend, and
-   registry/admission tests, backend/frontend checks, and `npm run soc2:check`.
-   The additive ledger migration is `mydesk-private-seating-20260925`; do not
-   change the earlier notebook migration. Drizzle cannot express column-only
-   `ON DELETE SET NULL (group_id)`: run the canonical migration after nonproduction
-   `db:push` and verify it repairs that FK.
-3. Preserve live task-definition fields and capture rollback digests/families.
-   Use the exact reviewed one-release admission after confirming step 1:
+Seating is an included ClassPilot capability governed by `MYDESK_MODE=on` and
+`MYDESK_SEATING_MODE=on`. Both default off until operational preparation completes;
+after activation every eligible current or future school receives it without
+an admin toggle or school-ID configuration. Author privacy remains unchanged.
 
-   ```bash
-   ./scripts/deploy.sh production --backend --activate-emergency --enable-rls-table mydesk_seating_charts
-   ```
-
-   Verify the migration ledger, enabled/forced RLS and tenant policy on the new
-   table, matching API/worker allowlists, and healthy services. Omit the admission
-   flag on later deploys. Keep the generic and production Terraform RLS baseline
-   unchanged until verified live adoption; record any baseline update in a
-   separate reviewed change. The registry's complete post-seating inventory is
-   106 tables; this is not a claim that production has adopted that inventory.
-4. The only seating infrastructure setting is
-   `MYDESK_SEATING_ENABLED_SCHOOL_IDS`, default empty. It is added to both existing
-   API/worker bootstrap templates when the notebook bucket is configured. Seating
-   adds no bucket, IAM permission, service, or scheduler. Terraform templates are
-   not the live task definitions; do not replace serving definitions with them.
-   Any real Terraform operation still requires CLAUDE.md's separate saved-plan,
-   backup, and operator go/no-go procedure. Mocked/offline checks are not an apply.
-5. Deploy frontend after backend verification. Admit a reviewed school to both
-   `MYDESK_ENABLED_SCHOOL_IDS` and `MYDESK_SEATING_ENABLED_SCHOOL_IDS` in the live
-   runtime configuration. Verify two teachers and an administrator cannot read
-   one another's charts; save/retry/conflict handling, roster-change rejection,
-   current-chart switching, past-class reading/copying, deletion, and printing.
-   Retain only non-content operator evidence privately.
-
-Rollback first empties the seating allowlist; the base notebook may remain
-enabled. Retain admitted RLS entries, schema, chart data, notebook bucket/IAM,
-and the attachment cleanup worker. Prefer a feature-aware repaired image once
-charts exist; selecting an older image requires the repository's existing
-data-compatibility gates. No AWS apply, deployment, production migration, or
-runtime activation is authorized by this document.
+Follow [MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md) for the forward combined admission.
+Preserve `mydesk-private-seating-20260925` and the earlier notebook checksum.
+Do not downgrade to an M1-only artifact. Seating adds no attachment storage.
+Disable only its mode to hide seating while notes remain available; preserve
+charts, schema, RLS, bucket/IAM and cleanup. Perform the phone/desktop walkthrough
+and Letter/A4 printing in production with synthetic records for destructive cases.
 
 ## Local verification — September 25, 2026
 
@@ -153,7 +97,8 @@ Verification used synthetic local schools and students, not production data.
   names remain inside desks and controls, locks, and private notes are excluded.
   Desktop and phone-size browser workflows passed.
 
-Real Android verification remains a pilot prerequisite: no device was connected.
+Real Android verification was not performed in this historical check: no device was connected.
+It is part of the operator's live production walkthrough.
 No production migration, AWS provisioning, deployment, or flag activation was
 performed. The separately reviewed M1 predecessor release and the admission
 sequence above remain required.

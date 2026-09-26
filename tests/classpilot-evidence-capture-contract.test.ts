@@ -148,6 +148,8 @@ describe("ClassPilot exact safety capture persistence contract", () => {
       registry,
       /"classpilotEvidenceCapture"[\s\S]*?"classpilot_evidence_capture_requests"/,
     );
-    assert.match(startup, /isReviewedRlsEnforcementRequest\(requiredRlsTables\)/);
+    const enforcement = readFileSync(new URL("../src/db/rlsEnforcement.ts", import.meta.url), "utf8");
+    assert.match(enforcement, /isReviewedRlsEnforcementRequest\(tables\)/);
+    assert.match(startup, /async function runMigrationsAndExit[\s\S]*await runVersionedMigrations\(\);[\s\S]*await assertRequiredRlsEnforcement\(pool\)/);
   });
 });

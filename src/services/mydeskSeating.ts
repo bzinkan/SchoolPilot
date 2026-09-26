@@ -25,7 +25,7 @@ const own = (actor: MyDeskActor, id?: string): SQL => and(eq(mydeskSeatingCharts
 
 function withSeating<T>(actor: MyDeskActor, operation: (database: MyDeskDatabase, verified: MyDeskActor) => Promise<T>) {
   return withActor(actor, async (database, verified) => {
-    if (!myDeskSeatingEnabledForSchool(actor.schoolId)) throw myDeskError(404, "MYDESK_SEATING_NOT_ENABLED", "Seating charts are not enabled for this school");
+    if (!myDeskSeatingEnabledForSchool(actor.schoolId)) throw myDeskError(404, "MYDESK_SEATING_NOT_ENABLED", "Seating charts are temporarily unavailable");
     return operation(database, verified);
   });
 }

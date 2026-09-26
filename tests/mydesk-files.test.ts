@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { PDFDocument } from "pdf-lib";
 import { MYDESK_MAX_FILE_BYTES, MyDeskFileError, normalizeMyDeskFile, validateMyDeskFileMetadata } from "../src/services/mydeskFiles.js";
@@ -38,4 +39,25 @@ test("My Desk validates PDFs separately and preserves their exact bytes", async 
   const result = await normalizeMyDeskFile(bytes, "application/pdf");
   assert.deepEqual(result.bytes, bytes); assert.equal(result.contentType, "application/pdf");
   await assert.rejects(normalizeMyDeskFile(Buffer.from("%PDF-1.7\nnot a document\n%%EOF"), "application/pdf"), (error: unknown) => error instanceof MyDeskFileError && error.code === "invalid_pdf");
+});
+
+test("ordinary PDF attachments preserve the 1,000-page limit independently of the 20-page import limit", async () => {
+  const pdf = await PDFDocument.create();
+  for (let i = 0; i < 1000; i++) pdf.addPage([100, 100]);
+  pdf.setTitle("PRIVATE ORIGINAL TITLE");
+  const bytes = Buffer.from(await pdf.save());
+  assert.deepEqual((await normalizeMyDeskFile(bytes, "application/pdf")).bytes, bytes);
+  pdf.addPage([100, 100]);
+  await assert.rejects(normalizeMyDeskFile(Buffer.from(await pdf.save()), "application/pdf"),
+    (error: unknown) => error instanceof MyDeskFileError && error.code === "invalid_pdf" && error.status === 422);
+  const encrypted = await readFile(new URL("./fixtures/mydesk-import-encrypted-empty-password.pdf.base64", import.meta.url), "utf8");
+  await assert.rejects(normalizeMyDeskFile(Buffer.from(encrypted.trim(), "base64"), "application/pdf"),
+    (error: unknown) => error instanceof MyDeskFileError && error.code === "invalid_pdf");
+});
+
+test("cancelled PDF validation returns a sanitized retryable error", async () => {
+  const pdf = await PDFDocument.create(); pdf.addPage([100, 100]);
+  const controller = new AbortController(); controller.abort(new Error("PRIVATE cancellation reason"));
+  await assert.rejects(normalizeMyDeskFile(Buffer.from(await pdf.save()), "application/pdf", { signal: controller.signal }),
+    (error: unknown) => error instanceof MyDeskFileError && error.status === 503 && !String(error.stack).includes("PRIVATE"));
 });

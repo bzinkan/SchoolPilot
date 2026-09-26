@@ -110,7 +110,7 @@ export async function withImportActor<T>(
     if (!myDeskImportsEnabledForSchool(actor.schoolId))
       throw importError(
         "NOT_ENABLED",
-        "Paperwork import is not enabled for this school",
+        "Paperwork import is temporarily unavailable",
         404,
       );
     return fn(database, current);

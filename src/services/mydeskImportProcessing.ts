@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +8,8 @@ import sharp from "sharp";
 import { z } from "zod";
 import { MYDESK_MAX_FILE_BYTES, MyDeskFileError, normalizeMyDeskFile, validateMyDeskFileMetadata } from "./mydeskFiles.js";
 import { myDeskCategory, myDeskDate } from "./mydeskValidation.js";
+import { inspectPrivatePdf, PrivatePdfError, renderPrivatePdfPage } from "./privatePdfProcessing.js";
+import { privateNativeProcessing, PrivateNativeProcessingError } from "./privateNativeProcessing.js";
 
 export const MYDESK_IMPORT_PROMPT_VERSION = "mydesk-forms-20260925-v1";
 export const MYDESK_IMPORT_PROVIDER_TIMEOUT_MS = 90_000;
@@ -27,6 +28,18 @@ const processingError = (code: string, message: string, retryable = false, statu
   new MyDeskImportProcessingError(code, message, retryable, status);
 export function myDeskImportModel() { return process.env.MYDESK_AI_IMPORT_MODEL?.trim() || "claude-sonnet-5"; }
 
+const imageUnavailable = () => processingError("MYDESK_IMPORT_IMAGE_UNAVAILABLE",
+  "Image processing is temporarily unavailable. Retry this import.", true, 503);
+
+async function imageMetadata(bytes: Buffer, signal?: AbortSignal) {
+  try {
+    return await privateNativeProcessing.run(() => sharp(bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning", animated: false }).metadata(), { signal });
+  } catch (error) {
+    if (error instanceof PrivateNativeProcessingError) throw imageUnavailable();
+    throw processingError("MYDESK_IMPORT_INVALID_IMAGE", "This image could not be read.");
+  }
+}
+
 export const importRegionSchema = z.object({
   x: z.number().finite().min(0).max(1), y: z.number().finite().min(0).max(1),
   width: z.number().finite().positive().max(1), height: z.number().finite().positive().max(1),
@@ -43,89 +56,60 @@ export const importExtractionSchema = z.object({
 }).strict();
 export type ImportExtraction = z.infer<typeof importExtractionSchema>;
 
-async function pdfPageCount(bytes: Buffer): Promise<number> {
-  // Do not parse untrusted compressed PDF streams in a Node worker: heap limits do not bound ArrayBuffers.
-  const directory = await mkdtemp(join(tmpdir(), "mydesk-validate-"));
-  const invalid = () => processingError("MYDESK_IMPORT_INVALID_PDF", "Choose a readable, unencrypted PDF.");
+async function pdfPageCount(bytes: Buffer, signal?: AbortSignal): Promise<number> {
   try {
-    const input = join(directory, "source.pdf"); await writeFile(input, bytes, { mode: 0o600 });
-    const output = await runImportPoppler("pdfinfo", [input], directory, 15_000, invalid);
-    // pdfinfo also emits private metadata. Consume only these exact fields; never log its output.
-    const pages = [...output.matchAll(/^Pages:[ \t]+([0-9]+)[ \t]*\r?$/gm)];
-    const encryption = [...output.matchAll(/^Encrypted:[ \t]+(yes|no)(?:[ \t].*)?\r?$/gm)];
-    if (pages.length !== 1 || encryption.length !== 1 || encryption[0]![1] !== "no") throw invalid();
-    const count = Number(pages[0]![1]);
-    if (!Number.isSafeInteger(count) || count < 1) throw invalid();
-    if (count > MYDESK_IMPORT_MAX_PAGES) {
+    return (await inspectPrivatePdf(bytes, { maxPages: MYDESK_IMPORT_MAX_PAGES, signal })).pageCount;
+  } catch (error) {
+    if (error instanceof PrivatePdfError && error.code === "pdf_page_limit") {
       throw processingError("MYDESK_IMPORT_PAGE_LIMIT", "An import can contain at most 20 pages. Split this PDF into smaller packets.");
     }
-    return count;
-  } catch (error) {
-    if (error instanceof MyDeskImportProcessingError) throw error;
-    throw invalid();
-  } finally { await rm(directory, { recursive: true, force: true }); }
+    if (error instanceof PrivatePdfError && error.retryable) {
+      throw processingError("MYDESK_IMPORT_PDF_UNAVAILABLE", "PDF processing is temporarily unavailable. Retry this import.", true, 503);
+    }
+    throw processingError("MYDESK_IMPORT_INVALID_PDF", "Choose a readable, unencrypted PDF.");
+  }
 }
 
 /** Import sources retain enough resolution to split a sheet before normalizing each final form. */
-export async function prepareImportSource(bytes: Buffer, contentType: string): Promise<{ bytes: Buffer; contentType: string; pageCount: number }> {
+export async function prepareImportSource(bytes: Buffer, contentType: string, options: { signal?: AbortSignal } = {}): Promise<{ bytes: Buffer; contentType: string; pageCount: number }> {
   validateMyDeskFileMetadata(contentType, bytes.length);
   if (contentType === "application/pdf") {
-    if (!/^%PDF-[12]\.\d/.test(bytes.subarray(0, 8).toString("ascii")) ||
-      !bytes.subarray(Math.max(0, bytes.length - 2048)).includes(Buffer.from("%%EOF"))) {
-      throw processingError("MYDESK_IMPORT_INVALID_PDF", "Choose a readable, unencrypted PDF.");
-    }
-    return { bytes, contentType, pageCount: await pdfPageCount(bytes) };
+    return { bytes, contentType, pageCount: await pdfPageCount(bytes, options.signal) };
   }
   try {
-    const input = sharp(bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning", animated: false });
-    const metadata = await input.metadata();
-    const expected = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp" }[contentType];
-    if (!metadata.width || !metadata.height || metadata.format !== expected || (metadata.pages ?? 1) !== 1) throw new Error();
-    const scale = Math.min(1, MAX_RENDER_EDGE / Math.max(metadata.width, metadata.height),
-      Math.sqrt(MAX_RENDER_PIXELS / (metadata.width * metadata.height)));
-    // A square resize box preserves EXIF-rotated aspect ratios, while scale bounds both decoded dimensions.
-    const edge = Math.floor(Math.max(metadata.width, metadata.height) * scale);
-    const normalized = await input.rotate().resize({ width: edge, height: edge, fit: "inside", withoutEnlargement: true })
-      .flatten({ background: "#ffffff" }).jpeg({ quality: 94 }).timeout({ seconds: 15 }).toBuffer();
+    const normalized = await privateNativeProcessing.run(async () => {
+      const input = sharp(bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning", animated: false });
+      const metadata = await input.metadata();
+      const expected = { "image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp" }[contentType];
+      if (!metadata.width || !metadata.height || metadata.format !== expected || (metadata.pages ?? 1) !== 1) throw new Error();
+      const scale = Math.min(1, MAX_RENDER_EDGE / Math.max(metadata.width, metadata.height),
+        Math.sqrt(MAX_RENDER_PIXELS / (metadata.width * metadata.height)));
+      // A square resize box preserves EXIF-rotated aspect ratios, while scale bounds both decoded dimensions.
+      const edge = Math.floor(Math.max(metadata.width, metadata.height) * scale);
+      return input.rotate().resize({ width: edge, height: edge, fit: "inside", withoutEnlargement: true })
+        .flatten({ background: "#ffffff" }).jpeg({ quality: 94 }).timeout({ seconds: 15 }).toBuffer();
+    }, options);
     if (normalized.length > MYDESK_MAX_FILE_BYTES) throw new Error();
     return { bytes: normalized, contentType: "image/jpeg", pageCount: 1 };
-  } catch {
+  } catch (error) {
+    if (error instanceof PrivateNativeProcessingError) throw imageUnavailable();
     throw processingError("MYDESK_IMPORT_INVALID_IMAGE", "Choose a readable JPEG, PNG, or WebP photo up to 24 megapixels.");
   }
 }
 
-/** Fixed executable/arguments, synthetic paths, a stripped environment, no shell, and bounded process resources. */
-async function runImportPoppler(tool: "pdfinfo" | "pdftoppm", argumentsList: string[], directory: string,
-  timeoutMs: number, failure: () => MyDeskImportProcessingError): Promise<string> {
-  const executable = process.platform === "win32" ? `${tool}.exe` : `/usr/bin/${tool}`;
-  const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, LANG: "C", LC_ALL: "C", TMPDIR: directory, TEMP: directory, TMP: directory };
-  if (process.platform === "win32") {
-    environment.SystemRoot = process.env.SystemRoot; environment.WINDIR = process.env.WINDIR;
+async function renderPdfPage(source: string, prefix: string, page: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  try {
+    await renderPrivatePdfPage({ source, outputPrefix: prefix, page, maxEdge: MAX_RENDER_EDGE,
+      timeoutMs: Math.min(RENDER_TIMEOUT_MS, timeoutMs), signal });
+  } catch {
+    throw processingError("MYDESK_IMPORT_RENDER_FAILED", "This PDF page could not be rendered. Retry or upload a clearer scan.", true);
   }
-  // prlimit is installed alongside Poppler in the production Linux image. No unbounded Linux fallback.
-  const command = process.platform === "linux" ? "/usr/bin/prlimit" : executable;
-  const args = process.platform === "linux"
-    ? ["--as=536870912", "--cpu=30", "--fsize=16777216", "--nofile=64", "--", executable, ...argumentsList]
-    : argumentsList;
-  return new Promise<string>((resolve, reject) => {
-    execFile(command, args, { cwd: directory, env: environment, windowsHide: true,
-      timeout: timeoutMs, maxBuffer: 8192, killSignal: "SIGKILL", encoding: "utf8" }, (error, stdout) => {
-      if (error) reject(failure());
-      else resolve(stdout);
-    });
-  });
 }
 
-async function renderPdfPage(source: string, prefix: string, page: number, directory: string, timeoutMs: number): Promise<void> {
-  await runImportPoppler("pdftoppm", ["-f", String(page), "-l", String(page), "-singlefile", "-scale-to", String(MAX_RENDER_EDGE),
-    "-jpeg", "-jpegopt", "quality=94", source, prefix], directory, Math.min(RENDER_TIMEOUT_MS, timeoutMs),
-  () => processingError("MYDESK_IMPORT_RENDER_FAILED", "This PDF page could not be rendered. Retry or upload a clearer scan.", true));
-}
-
-export async function renderImportSource(bytes: Buffer, contentType: string): Promise<ImportRenderedPage[]> {
-  const source = await prepareImportSource(bytes, contentType);
+export async function renderImportSource(bytes: Buffer, contentType: string, options: { signal?: AbortSignal } = {}): Promise<ImportRenderedPage[]> {
+  const source = await prepareImportSource(bytes, contentType, options);
   if (source.contentType !== "application/pdf") {
-    const metadata = await sharp(source.bytes).metadata();
+    const metadata = await imageMetadata(source.bytes, options.signal);
     return [{ bytes: source.bytes, width: metadata.width!, height: metadata.height!, pageNumber: 1 }];
   }
   const directory = await mkdtemp(join(tmpdir(), "mydesk-render-"));
@@ -138,15 +122,15 @@ export async function renderImportSource(bytes: Buffer, contentType: string): Pr
       const prefix = join(directory, `page-${page}`);
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw processingError("MYDESK_IMPORT_RENDER_LIMIT", "Rendering this packet took too long. Split it into smaller packets.");
-      await renderPdfPage(input, prefix, page, directory, remaining);
+      await renderPdfPage(input, prefix, page, remaining, options.signal);
       const outputPath = `${prefix}.jpg`;
       const size = (await stat(outputPath)).size;
       if (size <= 0 || size > MYDESK_MAX_FILE_BYTES) throw processingError("MYDESK_IMPORT_RENDER_LIMIT", "A PDF page is too complex. Upload a smaller scan.");
       const output = await readFile(outputPath);
-      const normalized = await prepareImportSource(output, "image/jpeg");
+      const normalized = await prepareImportSource(output, "image/jpeg", options);
       totalBytes += normalized.bytes.length;
       if (totalBytes > MAX_RENDERED_SOURCE_BYTES) throw processingError("MYDESK_IMPORT_RENDER_LIMIT", "The rendered packet is too large. Split it into smaller packets.");
-      const metadata = await sharp(normalized.bytes).metadata();
+      const metadata = await imageMetadata(normalized.bytes, options.signal);
       pages.push({ bytes: normalized.bytes, width: metadata.width!, height: metadata.height!, pageNumber: page });
       await rm(outputPath, { force: true });
     }
@@ -157,35 +141,39 @@ export async function renderImportSource(bytes: Buffer, contentType: string): Pr
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
-export async function cropImportRegion(input: ImportRegionImage): Promise<Buffer> {
+export async function cropImportRegion(input: ImportRegionImage, options: { signal?: AbortSignal } = {}): Promise<Buffer> {
   const parsed = importRegionSchema.safeParse(input.region);
   if (!parsed.success || ![0, 90, 180, 270].includes(input.rotation) || input.bytes.length > MYDESK_MAX_FILE_BYTES) {
     throw processingError("MYDESK_IMPORT_INVALID_REGION", "Choose a crop inside the page.");
   }
   try {
-    const rotated = await sharp(input.bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning", animated: false })
-      .rotate(input.rotation).timeout({ seconds: 15 }).png().toBuffer();
-    const metadata = await sharp(rotated).metadata();
-    if (!metadata.width || !metadata.height) throw new Error();
-    const region = parsed.data;
-    const left = Math.floor(region.x * metadata.width), top = Math.floor(region.y * metadata.height);
-    const right = Math.min(metadata.width, Math.ceil((region.x + region.width) * metadata.width));
-    const bottom = Math.min(metadata.height, Math.ceil((region.y + region.height) * metadata.height));
-    if (right <= left || bottom <= top) throw new Error();
-    const crop = await sharp(rotated).extract({ left, top, width: right - left, height: bottom - top })
-      .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).flatten({ background: "#ffffff" })
-      .jpeg({ quality: 90 }).timeout({ seconds: 15 }).toBuffer();
-    return (await normalizeMyDeskFile(crop, "image/jpeg")).bytes;
-  } catch {
+    const crop = await privateNativeProcessing.run(async () => {
+      const rotated = await sharp(input.bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning", animated: false })
+        .rotate(input.rotation).timeout({ seconds: 15 }).png().toBuffer();
+      const metadata = await sharp(rotated).metadata();
+      if (!metadata.width || !metadata.height) throw new Error();
+      const region = parsed.data;
+      const left = Math.floor(region.x * metadata.width), top = Math.floor(region.y * metadata.height);
+      const right = Math.min(metadata.width, Math.ceil((region.x + region.width) * metadata.width));
+      const bottom = Math.min(metadata.height, Math.ceil((region.y + region.height) * metadata.height));
+      if (right <= left || bottom <= top) throw new Error();
+      return sharp(rotated).extract({ left, top, width: right - left, height: bottom - top })
+        .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).flatten({ background: "#ffffff" })
+        .jpeg({ quality: 90 }).timeout({ seconds: 15 }).toBuffer();
+    }, options);
+    // normalizeMyDeskFile acquires the same permit; release the crop first.
+    return (await normalizeMyDeskFile(crop, "image/jpeg", options)).bytes;
+  } catch (error) {
+    if (error instanceof PrivateNativeProcessingError || (error instanceof MyDeskFileError && error.status === 503)) throw imageUnavailable();
     throw processingError("MYDESK_IMPORT_INVALID_REGION", "This crop could not be read. Adjust it or choose a clearer image.");
   }
 }
 
-export async function buildImportAttachment(pages: ImportRegionImage[]): Promise<{ bytes: Buffer; contentType: string; sha256: string }> {
+export async function buildImportAttachment(pages: ImportRegionImage[], options: { signal?: AbortSignal } = {}): Promise<{ bytes: Buffer; contentType: string; sha256: string }> {
   if (!pages.length || pages.length > MYDESK_IMPORT_MAX_PAGES) throw processingError("MYDESK_IMPORT_REGION_LIMIT", "A form can contain between 1 and 20 regions.");
   const crops: Buffer[] = []; let totalBytes = 0;
   for (const page of pages) {
-    const crop = await cropImportRegion(page); totalBytes += crop.length;
+    const crop = await cropImportRegion(page, options); totalBytes += crop.length;
     if (totalBytes > MYDESK_MAX_FILE_BYTES) throw processingError("MYDESK_IMPORT_ATTACHMENT_LIMIT", "The combined form is larger than 10 MiB. Split its continuation pages.");
     crops.push(crop);
   }
@@ -226,18 +214,23 @@ const BASE_PROMPT = `You extract information from paperwork for a teacher's priv
 
 async function aiImage(bytes: Buffer): Promise<Anthropic.ImageBlockParam> {
   try {
-    // Fits even the standard vision tier; preserve aspect ratio so normalized region coordinates remain meaningful.
-    const metadata = await sharp(bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning" }).metadata();
-    if (!metadata.width || !metadata.height || bytes.length > MYDESK_MAX_FILE_BYTES) throw new Error();
-    let scale = Math.min(1, 1568 / metadata.width, 1568 / metadata.height, Math.sqrt(1_100_000 / (metadata.width * metadata.height)));
-    let width = Math.max(1, Math.floor(metadata.width * scale)), height = Math.max(1, Math.floor(metadata.height * scale));
-    while (Math.ceil(width / 28) * Math.ceil(height / 28) > 1500) {
-      scale *= 0.99; width = Math.max(1, Math.floor(metadata.width * scale)); height = Math.max(1, Math.floor(metadata.height * scale));
-    }
-    const normalized = await sharp(bytes).resize({ width, height, fit: "inside", withoutEnlargement: true })
-      .flatten({ background: "#ffffff" }).jpeg({ quality: 94 }).timeout({ seconds: 15 }).toBuffer();
-    return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: normalized.toString("base64") } };
-  } catch { throw processingError("MYDESK_IMPORT_INVALID_IMAGE", "A form image could not be prepared for reading."); }
+    return await privateNativeProcessing.run(async () => {
+      // Fits even the standard vision tier; preserve aspect ratio so normalized region coordinates remain meaningful.
+      const metadata = await sharp(bytes, { limitInputPixels: MAX_SOURCE_PIXELS, failOn: "warning" }).metadata();
+      if (!metadata.width || !metadata.height || bytes.length > MYDESK_MAX_FILE_BYTES) throw new Error();
+      let scale = Math.min(1, 1568 / metadata.width, 1568 / metadata.height, Math.sqrt(1_100_000 / (metadata.width * metadata.height)));
+      let width = Math.max(1, Math.floor(metadata.width * scale)), height = Math.max(1, Math.floor(metadata.height * scale));
+      while (Math.ceil(width / 28) * Math.ceil(height / 28) > 1500) {
+        scale *= 0.99; width = Math.max(1, Math.floor(metadata.width * scale)); height = Math.max(1, Math.floor(metadata.height * scale));
+      }
+      const normalized = await sharp(bytes).resize({ width, height, fit: "inside", withoutEnlargement: true })
+        .flatten({ background: "#ffffff" }).jpeg({ quality: 94 }).timeout({ seconds: 15 }).toBuffer();
+      return { type: "image", source: { type: "base64", media_type: "image/jpeg", data: normalized.toString("base64") } };
+    });
+  } catch (error) {
+    if (error instanceof PrivateNativeProcessingError) throw imageUnavailable();
+    throw processingError("MYDESK_IMPORT_INVALID_IMAGE", "A form image could not be prepared for reading.");
+  }
 }
 
 export function createImportProviderTransport(apiKey: string, fetch?: typeof globalThis.fetch): ImportAiTransport {

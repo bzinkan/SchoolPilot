@@ -29,6 +29,7 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "rls-enforcement.integration.test.ts",
   "mydesk-imports-schema.integration.test.ts",
   "mydesk-seating-schema.integration.test.ts",
   "mydesk-attachments.integration.test.ts",

@@ -58,6 +58,7 @@ The project is built for schools that want a single account, roster, license, an
 
 - Backend routes: `src/routes/classpilot/`.
 - Frontend pages: `schoolpilot-app/src/products/classpilot/`.
+- My Desk is an included private staff workspace with notes/attachments, seating charts and teacher-reviewed AI paperwork imports. It needs no teaching session or school-specific enrollment; active qualifying membership and ClassPilot entitlement grant access when the relevant global operational modes are on. Administrators cannot read another author's notebook. New schools inherit availability automatically. See [the teacher guide](docs/MYDESK_TEACHER_GUIDE.md) and [release runbook](docs/MYDESK_PRODUCTION_RELEASE.md).
 - Main data: devices, exact student sessions, heartbeats/realtime status, daily usage, groups and rosters, teaching sessions/staff, revisioned student control state, command targets/results, Flight Paths, block lists, FAB/chat delivery, polls, attendance, and teacher settings.
 - Realtime path: `/ws` raw WebSocket for teacher and student/device messages.
 - External dependency: the Chrome extension lives in the separate `C:\GitHub\ClassPilot` repo and is released independently through Chrome Web Store. This API owns registration/exact binding, entitlement, heartbeat/screenshot ingest, command authority/results, FAB/chat/poll persistence, and WebSocket delivery.

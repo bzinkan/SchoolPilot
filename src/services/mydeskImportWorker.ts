@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, isNull, lte, or, sql } from "drizzle-orm";
 import {
   mydeskImports as runs,
   mydeskImportItems as items,
@@ -41,7 +41,6 @@ import {
   IMPORT_MAX_BYTES,
   IMPORT_MAX_ITEMS,
   myDeskImportsEnabledForSchool,
-  myDeskImportEnabledSchoolIds,
 } from "./mydeskImportsValidation.js";
 import {
   loadMyDeskClassRoster,
@@ -50,6 +49,9 @@ import {
 } from "./mydesk.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import db from "../db.js";
+import { schoolMemberships, users } from "../schema/core.js";
+import { readMyDeskModes } from "../config/mydeskModes.js";
+import { classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
 
 export type MyDeskImportProcessor = {
   renderImportSource: typeof renderImportSource;
@@ -590,8 +592,7 @@ export async function processClaimedMyDeskImport(
 export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
   const database = options.database ?? schedulerDb,
     now = options.now ?? new Date();
-  const allowed = myDeskImportEnabledSchoolIds();
-  if (allowed !== null && !allowed.length) return [];
+  if (readMyDeskModes().aiImportMode !== "on") return [];
   const claims = await database.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended('mydesk-import-global-slots',0))`,
@@ -617,10 +618,19 @@ export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
             and(eq(runs.status, "processing"), lte(runs.leaseUntil, now)),
           ),
           sql`${runs.expiresAt}>${now}`,
-          allowed === null ? undefined : inArray(runs.schoolId, allowed),
+          // Filter before LIMIT so ineligible backlogs cannot starve newly entitled schools.
+          classpilotEntitledSchoolPredicate(runs.schoolId),
+          sql`EXISTS (
+            SELECT 1 FROM ${schoolMemberships}
+            INNER JOIN ${users} ON ${users.id}=${schoolMemberships.userId}
+            WHERE ${schoolMemberships.schoolId}=${runs.schoolId}
+              AND ${schoolMemberships.userId}=${runs.authorId}
+              AND ${schoolMemberships.status}='active'
+              AND ${schoolMemberships.role} IN ('teacher','admin','school_admin')
+          )`,
         ),
       )
-      .orderBy(runs.createdAt)
+      .orderBy(runs.createdAt, runs.id)
       .limit(50)
       .for("update", { skipLocked: true });
     const result: MyDeskImport[] = [];

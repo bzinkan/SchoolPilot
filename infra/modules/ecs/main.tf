@@ -47,12 +47,12 @@ locals {
     { name = "CLASSPILOT_TURN_HOSTS", value = var.classpilot_turn_hosts },
     { name = "CLASSPILOT_STUN_URLS", value = join(",", [for host in split(",", var.classpilot_turn_hosts) : "stun:${host}:3478"]) },
   ] : []
-  # Cleanup retains bucket configuration even when the pilot gate is switched off.
+  # Cleanup retains bucket configuration even when all feature modes are off.
   mydesk_environment = var.mydesk_attachments_bucket_name != "" ? [
     { name = "MYDESK_ATTACHMENTS_BUCKET", value = var.mydesk_attachments_bucket_name },
-    { name = "MYDESK_ENABLED_SCHOOL_IDS", value = var.mydesk_enabled_school_ids },
-    { name = "MYDESK_SEATING_ENABLED_SCHOOL_IDS", value = var.mydesk_seating_enabled_school_ids },
-    { name = "MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS", value = var.mydesk_ai_import_enabled_school_ids },
+    { name = "MYDESK_MODE", value = var.mydesk_mode },
+    { name = "MYDESK_SEATING_MODE", value = var.mydesk_seating_mode },
+    { name = "MYDESK_AI_IMPORT_MODE", value = var.mydesk_ai_import_mode },
     { name = "MYDESK_AI_IMPORT_MODEL", value = var.mydesk_ai_import_model },
     { name = "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", value = tostring(var.mydesk_ai_import_teacher_daily_pages) },
     { name = "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES", value = tostring(var.mydesk_ai_import_school_daily_pages) },
@@ -180,7 +180,7 @@ resource "aws_iam_role" "ecs_task" {
 
 # --- Task Definition ---
 resource "aws_iam_role_policy" "mydesk_attachments" {
-  count = var.mydesk_attachments_bucket_arn != "" ? 1 : 0
+  count = var.mydesk_storage_enabled ? 1 : 0
   name  = "${local.name}-mydesk-attachments"
   role  = aws_iam_role.ecs_task.id
   policy = jsonencode({

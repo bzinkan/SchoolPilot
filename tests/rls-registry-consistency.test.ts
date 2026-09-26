@@ -121,6 +121,24 @@ describe("semantic RLS registry", () => {
     );
   });
 
+  it("adds forward My Desk reconciliation while retaining the three original admissions", () => {
+    assert.deepEqual(registry.reviewedEnablementRequests.mydesk, ["mydesk_attachments", "mydesk_notes"]);
+    assert.deepEqual(registry.reviewedEnablementRequests.mydeskSeating, ["mydesk_seating_charts"]);
+    assert.deepEqual(registry.reviewedEnablementRequests.mydeskImports, ["mydesk_import_assets", "mydesk_import_items", "mydesk_imports"]);
+    const combined = [
+      ...registry.reviewedEnablementRequests.mydesk!,
+      ...registry.reviewedEnablementRequests.mydeskSeating!,
+      ...registry.reviewedEnablementRequests.mydeskImports!,
+    ];
+    assert.deepEqual(registry.reviewedEnablementRequests.mydeskReconciliation, combined);
+    assert.equal(isReviewedRlsEnforcementRequest(combined), true);
+    assert.equal(isReviewedRlsEnforcementRequest(combined.slice(0, 5)), false);
+    assert.equal(isReviewedRlsEnforcementRequest([...combined].reverse()), false);
+    assert.equal(registry.inventories.mydeskPostExpand.count, 105);
+    assert.equal(registry.inventories.mydeskSeatingPostExpand.count, 106);
+    assert.equal(registry.inventories.mydeskImportsPostExpand.count, 109);
+  });
+
   it("preserves the intentional active-hands versus FAB bundle distinction", () => {
     const fullInventory = new Set(registry.inventories.schoolPilot270PostExpand.tables);
     const fabBundle = registry.reviewedEnablementRequests.classpilotFabReadmission!;

@@ -98,8 +98,8 @@ async function fixture() {
     await client.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'First','Student','active')", [f.studentId, f.schoolId]);
     await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)", [f.groupId, f.studentId]);
   });
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = schoolIds.join(",");
-  process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_MODE = "on";
+  process.env.MYDESK_SEATING_MODE = "on";
   return f;
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -162,13 +162,13 @@ test("seating HTTP routes enforce exact author, tenant, real membership, imperso
   const cookie = login.headers.get("set-cookie")?.split(";")[0]; assert.ok(cookie);
   assert.equal((await request(f, `/seating-charts/${chart.id}`, "GET", undefined, f.teacherId, cookie)).status, 403);
   assert.equal((await fetch(baseUrl + `/api/mydesk/seating-charts/${chart.id}`)).status, 401);
-  process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = "";
+  process.env.MYDESK_SEATING_MODE = "off";
   assert.equal(z.object({ seatingEnabled: z.boolean() }).parse((await request(f, "/capabilities")).data).seatingEnabled, false);
   assert.equal((await request(f, `/seating-charts/${chart.id}`)).status, 404);
-  process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = schoolIds.join(","); process.env.MYDESK_ENABLED_SCHOOL_IDS = "";
+  process.env.MYDESK_SEATING_MODE = "on"; process.env.MYDESK_MODE = "off";
   assert.equal(z.object({ seatingEnabled: z.boolean() }).parse((await request(f, "/capabilities")).data).seatingEnabled, false);
   assert.equal((await request(f, `/seating-charts/${chart.id}`)).status, 404);
-  process.env.MYDESK_ENABLED_SCHOOL_IDS = schoolIds.join(",");
+  process.env.MYDESK_MODE = "on";
   await fixtureTransaction(async client => {
     await client.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
     await client.query("UPDATE group_teachers SET role='primary' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.colleagueId]);

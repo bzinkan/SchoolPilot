@@ -1,8 +1,8 @@
 import { z } from "zod";
+import { readMyDeskModes } from "../config/mydeskModes.js";
 import {
   myDeskCategory,
   myDeskDate,
-  myDeskEnabledForSchool,
   myDeskId,
 } from "./mydeskValidation.js";
 export const IMPORT_MAX_SOURCES = 5,
@@ -50,31 +50,7 @@ export function myDeskImportLimits() {
   };
 }
 export function myDeskImportsEnabledForSchool(schoolId: string) {
-  const allowed = myDeskImportEnabledSchoolIds();
-  return (
-    myDeskEnabledForSchool(schoolId) &&
-    (allowed === null || allowed.includes(schoolId))
-  );
-}
-/** null is an explicitly permitted nonproduction wildcard, never a production bypass. */
-export function myDeskImportEnabledSchoolIds(): string[] | null {
-  const parse = (value: string | undefined): string[] | null => {
-    const raw = (value || "").trim();
-    if (raw === "*")
-      return process.env.NODE_ENV !== "production" &&
-        process.env.APP_ENV !== "production"
-        ? null
-        : [];
-    const ids = raw.split(",").map((v) => v.trim());
-    return ids.every((v) => /^[a-zA-Z0-9_-]{1,128}$/.test(v))
-      ? [...new Set(ids)]
-      : [];
-  };
-  const base = parse(process.env.MYDESK_ENABLED_SCHOOL_IDS),
-    imports = parse(process.env.MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS);
-  if (base === null) return imports;
-  if (imports === null) return base;
-  return base.filter((id) => imports.includes(id));
+  return Boolean(schoolId) && readMyDeskModes().aiImportMode === "on";
 }
 const uuid = z.string().uuid();
 export const importMutation = z

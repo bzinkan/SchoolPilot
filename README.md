@@ -13,7 +13,7 @@
 
 SchoolPilot is a multi-tenant K-12 school operations platform that puts three products behind one API, one shared student/school data model, and one React app — a single account, roster, license, and admin surface for the whole school:
 
-- **ClassPilot** — classroom Chromebook monitoring: device heartbeats, teaching sessions, web filtering, teacher controls, and student analytics (paired with a Chrome extension maintained in a separate repo).
+- **ClassPilot** — classroom Chromebook monitoring, teacher controls and student analytics, plus My Desk personal notes, seating charts and reviewed paperwork imports. My Desk is included for eligible staff and works between teaching sessions; its release availability is controlled globally. The Chromebook extension is maintained in a separate repo.
 - **PassPilot** — digital hall passes: class-based pass assignment, pass history, and a public kiosk mode.
 - **GoPilot** — school-operated dismissal: staff arrival intake, family/car-number groups, bus and walker handling, teacher release, and a live dismissal queue.
 
@@ -84,6 +84,8 @@ docs/                User guides and security/compliance docs
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Backend layers, data model, realtime, schedulers |
 | [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) | Local setup, conventions, how to add features/routes |
 | [docs/MOBILE_APP_ARCHITECTURE.md](docs/MOBILE_APP_ARCHITECTURE.md) | Capacitor strategy for the GoPilot and PassPilot apps |
+| [docs/MYDESK_TEACHER_GUIDE.md](docs/MYDESK_TEACHER_GUIDE.md) | Personal notes, seating, paperwork review, onboarding and support |
+| [docs/MYDESK_PRODUCTION_RELEASE.md](docs/MYDESK_PRODUCTION_RELEASE.md) | My Desk global availability, production checks and rollback |
 | [docs/SECURITY-tenant-isolation-readiness.md](docs/SECURITY-tenant-isolation-readiness.md) | Tenant-isolation posture and readiness review |
 | [docs/SECURITY-db-backstop-rls-plan.md](docs/SECURITY-db-backstop-rls-plan.md) | Postgres row-level-security backstop rollout plan |
 | [docs/WISP.md](docs/WISP.md) | Written Information Security Program |

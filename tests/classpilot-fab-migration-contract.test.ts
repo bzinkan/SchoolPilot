@@ -80,8 +80,11 @@ test("ClassPilot FAB/chat/poll startup migration is fail-closed and RLS-wired", 
   assert.match(schema, /name: "poll_responses_school_student_fk"[\s\S]*\.onDelete\("restrict"\)/);
   assert.doesNotMatch(storage, /export async function createPollResponse\s*\(/);
   assert.match(storage, /export async function createPollResponseFirstWrite\s*\(/);
-  assert.match(startup, /!catalog\.has_tenant_isolation_policy/);
-  assert.match(startup, /REQUIRE_RLS_TABLE_ENFORCEMENT/);
+  const enforcement = await readFile(new URL("../src/db/rlsEnforcement.ts", import.meta.url), "utf8");
+  assert.match(enforcement, /policy\?\.name === "tenant_isolation"/);
+  assert.match(enforcement, /entry\.policies\.length === 1/);
+  assert.match(enforcement, /REQUIRE_RLS_TABLE_ENFORCEMENT/);
+  assert.match(startup, /async function runMigrationsAndExit[\s\S]*await runVersionedMigrations\(\);[\s\S]*await assertRequiredRlsEnforcement\(pool\)/);
   assert.match(startup, /PARTITION BY COALESCE\(mapping\.keeper_id, session\.student_id\)[\s\S]*UPDATE student_sessions session[\s\S]*ranked\.ordinal > 1/);
   assert.match(startup, /Duplicate student cleanup rolled back; retained original rows/);
   assert.match(startup, /ALTER TABLE polls ALTER COLUMN is_active SET NOT NULL/);

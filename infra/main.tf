@@ -343,11 +343,12 @@ module "ecs" {
   # Runtime topology for the API. Rotated application credentials are externally
   # managed SecureStrings referenced by deterministic ARN inside the ECS module.
   redis_url                            = module.redis.redis_url
-  mydesk_attachments_bucket_name       = aws_s3_bucket.mydesk_attachments.id
-  mydesk_attachments_bucket_arn        = aws_s3_bucket.mydesk_attachments.arn
-  mydesk_enabled_school_ids            = var.mydesk_enabled_school_ids
-  mydesk_seating_enabled_school_ids    = var.mydesk_seating_enabled_school_ids
-  mydesk_ai_import_enabled_school_ids  = var.mydesk_ai_import_enabled_school_ids
+  mydesk_storage_enabled               = true
+  mydesk_attachments_bucket_name       = aws_s3_bucket.mydesk_attachments.bucket
+  mydesk_attachments_bucket_arn        = local.mydesk_bucket_arn
+  mydesk_mode                          = var.mydesk_mode
+  mydesk_seating_mode                  = var.mydesk_seating_mode
+  mydesk_ai_import_mode                = var.mydesk_ai_import_mode
   mydesk_ai_import_model               = var.mydesk_ai_import_model
   mydesk_ai_import_teacher_daily_pages = var.mydesk_ai_import_teacher_daily_pages
   mydesk_ai_import_school_daily_pages  = var.mydesk_ai_import_school_daily_pages

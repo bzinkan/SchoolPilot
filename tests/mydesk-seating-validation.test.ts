@@ -38,22 +38,20 @@ test("seating interfaces reject injected authority, labels and missing retry/rev
   assert.equal(seatingDuplicateInput.safeParse({ clientRequestId: randomUUID(), sourceRevision: 1, targetClassId: valid.classId, name: valid.name, mode: "layout", rosterRevision: valid.rosterRevision }).success, true);
   assert.equal(seatingListQuery.safeParse({ limit: 101 }).success, false);
 });
-test("seating rollout needs both explicit flags and forbids production wildcards", () => {
-  const keys = ["MYDESK_ENABLED_SCHOOL_IDS", "MYDESK_SEATING_ENABLED_SCHOOL_IDS", "NODE_ENV", "APP_ENV"] as const;
+test("seating mode enables every school while requiring the base notebook", () => {
+  const keys = ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE"] as const;
   const original = keys.map(key => process.env[key]);
   try {
-    process.env.NODE_ENV = "test"; process.env.APP_ENV = "test";
-    process.env.MYDESK_ENABLED_SCHOOL_IDS = "school-five";
-    delete process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS;
+    keys.forEach(key => delete process.env[key]);
+    process.env.MYDESK_MODE = "on";
     assert.equal(myDeskSeatingEnabledForSchool("school-five"), false);
-    process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = "school-five";
+    process.env.MYDESK_SEATING_MODE = "on";
     assert.equal(myDeskSeatingEnabledForSchool("school-five"), true);
-    assert.equal(myDeskSeatingEnabledForSchool("school-six"), false);
-    process.env.MYDESK_ENABLED_SCHOOL_IDS = "";
+    assert.equal(myDeskSeatingEnabledForSchool("school-six"), true);
+    process.env.MYDESK_MODE = "off";
     assert.equal(myDeskSeatingEnabledForSchool("school-five"), false);
-    process.env.MYDESK_ENABLED_SCHOOL_IDS = "school-five";
-    process.env.MYDESK_SEATING_ENABLED_SCHOOL_IDS = "*";
-    process.env.APP_ENV = "production";
+    process.env.MYDESK_MODE = "on";
+    process.env.MYDESK_SEATING_MODE = "*";
     assert.equal(myDeskSeatingEnabledForSchool("school-five"), false);
   } finally { keys.forEach((key, i) => { if (original[i] === undefined) delete process.env[key]; else process.env[key] = original[i]; }); }
 });

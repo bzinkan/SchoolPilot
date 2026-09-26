@@ -1154,6 +1154,14 @@
       "mydesk_import_assets",
       "mydesk_import_items",
       "mydesk_imports"
+    ],
+    "mydeskReconciliation": [
+      "mydesk_attachments",
+      "mydesk_notes",
+      "mydesk_seating_charts",
+      "mydesk_import_assets",
+      "mydesk_import_items",
+      "mydesk_imports"
     ]
   },
   "semanticExceptions": {
