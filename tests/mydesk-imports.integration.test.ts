@@ -572,7 +572,7 @@ test("discipline import class choices require primary or co-teacher assignments"
   const client = await fixturePool.connect();
   try {
     await client.query("BEGIN");
-    await client.query("UPDATE group_teachers SET role='observer' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
+    await client.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
     await client.query("UPDATE group_teachers SET role='primary' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.colleagueId]);
     await client.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [f.groupId, f.colleagueId]);
     await client.query("COMMIT");
@@ -583,7 +583,7 @@ test("discipline import class choices require primary or co-teacher assignments"
   const input = { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, destination: "discipline" };
   const denied = await request(f, "/imports", "POST", input);
   assert.equal(denied.status, 409, denied.text);
-  await fixturePool.query("UPDATE group_teachers SET role='co-teacher' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
+  await fixturePool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [f.groupId, f.teacherId]);
   const allowed = await request(f, "/imports", "POST", { ...input, clientRequestId: randomUUID() });
   assert.equal(allowed.status, 201, allowed.text);
 });
