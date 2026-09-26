@@ -28,6 +28,7 @@ const rlsRegistry = JSON.parse(
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
     classpilotRoadmapPostExpand: { count: number; tables: string[] };
+    mydeskImportsPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -88,7 +89,6 @@ describe("one-release RLS table enablement", () => {
         workerTaskDefinition: taskDefinition("scheduler-worker", [...previous, ...present]), table: bundle,
       }), /already enabled/);
     }
-    assert.ok(tables.every((table) => !productionTfvars.includes(table)), "Reconciliation must not pre-adopt a production baseline");
   });
 
   it("admits all three import tables together after notebook admission without changing existing gates", () => {
@@ -106,9 +106,8 @@ describe("one-release RLS table enablement", () => {
       assert.throws(() => addReviewedRlsTable(taskDefinition("api", existing), { containerName: "api", table: invalid }), /exact reviewed/);
     }
     assert.equal(environmentValue(api, "UNCHANGED"), "preserved");
-    assert.ok(tables.every(table => !productionTfvars.includes(table)), "No production baseline adoption before verification");
   });
-  it("admits seating separately while preserving the existing notebook and production baseline", () => {
+  it("admits seating separately while preserving existing notebook settings", () => {
     const tables = rlsRegistry.reviewedEnablementRequests.mydeskSeating;
     assert.deepEqual(tables, ["mydesk_seating_charts"]);
     const existing = ["students", "mydesk_attachments", "mydesk_notes"];
@@ -118,7 +117,6 @@ describe("one-release RLS table enablement", () => {
     addReviewedRlsTable(worker, { containerName: "scheduler-worker", table: tables[0]! });
     verifyEnabledRlsCandidates({ taskDefinitions: [{ taskDefinition: api, containerName: "api" },
       { taskDefinition: worker, containerName: "scheduler-worker" }], table: tables[0]!, expectedPreviousTables: existing });
-    assert.equal(productionTfvars.includes("mydesk_seating_charts"), false);
   });
   it("admits both My Desk tables together and rejects partial or reordered requests", () => {
     const tables = rlsRegistry.reviewedEnablementRequests.mydesk;
@@ -135,7 +133,6 @@ describe("one-release RLS table enablement", () => {
     for (const invalid of [tables[0]!, tables[1]!, [...tables].reverse().join(",")]) {
       assert.throws(() => addReviewedRlsTable(taskDefinition("api"), { containerName: "api", table: invalid }), /exact reviewed/);
     }
-    assert.equal(productionTfvars.includes("mydesk_notes"), false, "Production baseline changes only after verified admission");
   });
 
   it("adds only the reviewed table after matching live API/worker admission", () => {
@@ -566,9 +563,9 @@ describe("one-release RLS table enablement", () => {
       );
     }
     const productionTables = productionAllowlist.split(",");
-    assert.equal(productionTables.length, 90);
-    assert.equal(new Set(productionTables).size, 90);
-    assert.deepEqual(new Set(productionTables), new Set(rlsRegistry.inventories.classpilotRoadmapPostExpand.tables));
+    assert.equal(productionTables.length, 109);
+    assert.equal(new Set(productionTables).size, 109);
+    assert.deepEqual(new Set(productionTables), new Set(rlsRegistry.inventories.mydeskImportsPostExpand.tables));
     assert.deepEqual(defaultAllowlist.split(","), rlsRegistry.inventories.schoolPilot270PostExpand.tables);
     assert.equal(rlsRegistry.inventories.historicalObservedProduction.count, 72);
     assert.equal(rlsRegistry.inventories.historicalObservedProduction.tables.length, 72);

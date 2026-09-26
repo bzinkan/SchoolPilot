@@ -23,7 +23,7 @@ let roleCreated = false;
 let applyCount = 0;
 const migration: SchoolPilotMigration = {
   id: "test_mydesk_admission",
-  checksum: createHash("sha256").update("hermetic My Desk admission fixture v1").digest("hex"),
+  checksum: createHash("sha256").update("hermetic My Desk admission fixture v2").digest("hex"),
   mode: "transactional",
   async apply(connection) {
     applyCount += 1;
@@ -34,6 +34,17 @@ const migration: SchoolPilotMigration = {
       for (const statement of policySqlFor(table)) await connection.query(statement);
       await connection.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
     }
+    await connection.query(`
+      CREATE TABLE readiness_groups (school_id TEXT, id TEXT, PRIMARY KEY (school_id, id));
+      CREATE TABLE readiness_students (school_id TEXT, id TEXT, PRIMARY KEY (school_id, id));
+      ALTER TABLE mydesk_notes ADD COLUMN group_id TEXT, ADD COLUMN student_id TEXT;
+      ALTER TABLE mydesk_notes ADD CONSTRAINT mydesk_notes_group_fk
+        FOREIGN KEY (school_id, group_id) REFERENCES readiness_groups (school_id, id)
+        ON DELETE SET NULL (group_id);
+      ALTER TABLE mydesk_notes ADD CONSTRAINT mydesk_notes_student_fk
+        FOREIGN KEY (school_id, student_id) REFERENCES readiness_students (school_id, id)
+        ON DELETE SET NULL (student_id);
+    `);
   },
 };
 
@@ -181,6 +192,26 @@ test("read-only inventory exposes aggregate state and catalog metadata without p
     assert.equal((await client.query("SELECT count(*)::int AS n FROM schema_migrations")).rows[0].n, 1);
     assert.notEqual((await client.query("SELECT current_setting('app.is_super', true) AS setting")).rows[0].setting, "on",
       "Cross-school inspection scope must end with the read-only transaction");
+  } finally {
+    client.release();
+  }
+});
+
+test("catalog delete-column metadata contains JSON arrays with exact column-specific SET NULL targets", async () => {
+  const client = await pool.connect();
+  try {
+    const report = await inspectMyDeskReadiness(client);
+    for (const constraint of report.constraints) {
+      assert.ok(Array.isArray(constraint.deleteColumns),
+        `${constraint.name} must have an array instead of an unparsed PostgreSQL name[] string`);
+    }
+    const group = report.constraints.find((constraint) => constraint.name === "mydesk_notes_group_fk");
+    const student = report.constraints.find((constraint) => constraint.name === "mydesk_notes_student_fk");
+    assert.equal(group?.deleteAction, "n");
+    assert.deepEqual(group?.deleteColumns, ["group_id"]);
+    assert.equal(student?.deleteAction, "n");
+    assert.deepEqual(student?.deleteColumns, ["student_id"]);
+    assert.deepEqual(report.constraints.find((constraint) => constraint.name === "mydesk_notes_pkey")?.deleteColumns, []);
   } finally {
     client.release();
   }

@@ -36,7 +36,7 @@ function New-MyDeskReadinessTaskRequest {
         if ($property.Name -cin $allowed) { if ($null -ne $property.Value) { $request[$property.Name] = $property.Value } }
         elseif ($property.Name -cnotin $metadata) { throw 'Unreviewed task-definition field in the worker clone.' }
     }
-    $request.tags = @($Response.tags)
+    if (@($Response.tags).Count -gt 0) { $request.tags = @($Response.tags) }
     $clone = $request | ConvertTo-Json -Depth 50 | ConvertFrom-Json -Depth 50
     $clone.family = 'schoolpilot-production-mydesk-readiness'
     $clone.containerDefinitions[0].image = "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$Digest"

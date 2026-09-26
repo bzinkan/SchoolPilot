@@ -33,13 +33,13 @@ export async function inspectMyDeskReadiness(connection: Pick<PoolClient, "query
       [migrations.map((migration) => migration.id)])).rows : [];
     const constraints = (await connection.query<{
       tableName: string; name: string; type: string; validated: boolean;
-      definition: string; deleteAction: string; deleteColumns: string[] | null;
+      definition: string; deleteAction: string; deleteColumns: string[];
     }>(`
       SELECT relation.relname AS "tableName", constraint_row.conname AS name,
         constraint_row.contype AS type, constraint_row.convalidated AS validated,
         pg_get_constraintdef(constraint_row.oid, true) AS definition,
         constraint_row.confdeltype AS "deleteAction",
-        ARRAY(SELECT attribute.attname FROM unnest(constraint_row.confdelsetcols) AS column_id
+        ARRAY(SELECT attribute.attname::text FROM unnest(constraint_row.confdelsetcols) AS column_id
           JOIN pg_attribute attribute ON attribute.attrelid = relation.oid
             AND attribute.attnum = column_id) AS "deleteColumns"
       FROM pg_constraint constraint_row
