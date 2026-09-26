@@ -146,7 +146,7 @@ function Assert-MyDeskStorage {
         }
     }
     $versioning = Invoke-AwsJson -Arguments (@('s3api', 'get-bucket-versioning') + $prefix)
-    if ($null -ne $versioning.PSObject.Properties['Status']) {
+    if ($null -ne $versioning -and $null -ne $versioning.PSObject.Properties['Status']) {
         throw 'My Desk cleanup requires an unversioned bucket; versioned deletions would retain private content.'
     }
 }

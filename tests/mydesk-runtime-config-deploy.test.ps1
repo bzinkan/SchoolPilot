@@ -50,7 +50,7 @@ function Reset-MyDeskMock {
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
         Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false
-        PublicBucket = $false; ExpireObjects = $false; Versioning = $null
+        PublicBucket = $false; ExpireObjects = $false; Versioning = $null; VersioningEmptyOutput = $false
         DuplicateTlsResource = $false; NarrowTlsCondition = $false
         BadIam = $false; DeniedObjects = $false; BroadObjects = $false; FailStart = $false
         ReadinessRequests = [Collections.Generic.List[object]]::new(); ReadinessLostResponse = $false; ReadinessExitCode = 0
@@ -74,11 +74,17 @@ function Invoke-AwsJson {
         'ecs register-task-definition' {
             $path = (Get-ArgumentValue $Arguments '--cli-input-json').Substring(7)
             $request = [IO.File]::ReadAllText($path) | ConvertFrom-Json -Depth 50
+            if ($null -ne $request.PSObject.Properties['tags'] -and @($request.tags).Count -eq 0) {
+                throw 'ClientException: Tags can not be empty.'
+            }
             $script:Mock.Requests.Add((Copy-TestValue $request))
             $script:Mock.Revision++
             $arn = "arn:aws:ecs:us-east-1:135775632425:task-definition/$($request.family):$($script:Mock.Revision)"
             $task = Copy-TestValue $request
-            $tags = @($task.tags); $task.PSObject.Properties.Remove('tags')
+            $tags = @()
+            if ($null -ne $task.PSObject.Properties['tags']) {
+                $tags = @($task.tags); $task.PSObject.Properties.Remove('tags')
+            }
             $task | Add-Member taskDefinitionArn $arn; $task | Add-Member status 'ACTIVE'
             $task | Add-Member revision $script:Mock.Revision
             $response = [pscustomobject]@{ taskDefinition = $task; tags = $tags }
@@ -113,6 +119,7 @@ function Invoke-AwsJson {
             return [pscustomobject]@{ Rules = @($rule) }
         }
         's3api get-bucket-versioning' {
+            if ($script:Mock.VersioningEmptyOutput) { return $null }
             if ($null -ne $script:Mock.Versioning) { return [pscustomobject]@{ Status = $script:Mock.Versioning } }
             return [pscustomobject]@{}
         }
@@ -293,6 +300,11 @@ try {
         Reset-MyDeskMock; $script:Mock.Versioning = $versioning
         Assert-Throws { New-TestMyDeskPlan } 'Previously or currently versioned storage must not silently retain purged private sources.'
     }
+    Reset-MyDeskMock; $script:Mock.VersioningEmptyOutput = $true
+    $plan = New-TestMyDeskPlan
+    Assert-Condition ($script:Mock.Requests.Count -eq 0) 'Successful empty versioning output must permit read-only planning without mutations.'
+    $result = Invoke-MyDeskApply $plan.plan $plan.sha256 $script:TestDirectory
+    Assert-Condition ($result.status -ceq 'applied') 'Successful empty versioning output must permit apply for an unversioned bucket.'
 
     Reset-MyDeskMock; $plan = New-TestMyDeskPlan; $script:Mock.FailWorkerOnce = $true
     Assert-Throws { Invoke-MyDeskApply $plan.plan $plan.sha256 $script:TestDirectory } 'Ambiguous service update must remain an unsuccessful activation.'
@@ -369,8 +381,16 @@ try {
     Assert-Condition (($run.overrides.containerOverrides[0].command -join ' ') -ceq 'node dist/cli/inspectMyDeskReadiness.js' -and $run.count -eq 1) 'The task may execute only the bounded read-only inventory command.'
     Assert-Condition ((Get-CanonicalJsonSha256 $run.networkConfiguration) -ceq (Get-CanonicalJsonSha256 $script:Mock.Services.Worker.networkConfiguration)) 'Inventory must reuse the exact worker network.'
     Assert-Condition ((Get-CanonicalJsonSha256 $script:Mock.Requests[0].containerDefinitions[0].secrets) -ceq (Get-CanonicalJsonSha256 $source.taskDefinition.containerDefinitions[0].secrets)) 'Inventory must reuse references without reading or rewriting secret values.'
+    Assert-Condition ((Get-CanonicalJsonSha256 $script:Mock.Requests[0].tags) -ceq (Get-CanonicalJsonSha256 $source.tags)) 'Readiness registration and canonical verification must preserve nonempty source tags exactly.'
     Assert-Condition (@($script:Mock.Calls | Where-Object { $_ -ceq 'ecs update-service' }).Count -eq 0) 'Readiness inspection must never deploy a serving service.'
     Assert-Condition (@($script:Mock.Calls | Where-Object { $_ -ceq 'ecs deregister-task-definition' }).Count -eq 1) 'A completed inventory must retire its temporary definition.'
+    Reset-ReadinessMock
+    $script:Mock.Tasks[$script:TestWorkerArn].tags = @()
+    $inventory = Invoke-MyDeskReadinessTask $script:TestWorkerArn $script:TestDigest $script:TestSha $script:TestDirectory
+    $receipt = (Read-StrictJsonSnapshot $inventory.path).Value
+    Assert-Condition ($receipt.status -ceq 'inventoried') 'An untagged worker must pass registration and canonical verification.'
+    Assert-Condition ($script:Mock.Requests.Count -eq 1 -and $null -eq $script:Mock.Requests[0].PSObject.Properties['tags']) 'Readiness registration must omit tags when the source has none.'
+    Assert-Condition (@($script:Mock.Tasks[$receipt.taskDefinitionArn].tags).Count -eq 0) 'The verified untagged clone must retain an empty response tag set.'
     $badReport = Copy-TestValue $script:Mock.ReadinessReport; $badReport | Add-Member privateBody 'private source text'
     Assert-Throws { ConvertTo-SafeMyDeskReadinessReport ($badReport | ConvertTo-Json -Depth 50) } 'Unexpected report fields must never reach the evidence file.'
     Reset-ReadinessMock; $script:Mock.ReadinessExtraOutput = $true
