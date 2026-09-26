@@ -8,6 +8,7 @@ import { groups, groupStudents, groupTeachers } from "../schema/classpilot.js";
 import { students } from "../schema/students.js";
 import { mydeskNotes, mydeskAttachments } from "../schema/mydesk.js";
 import { mydeskSeatingCharts } from "../schema/mydeskSeating.js";
+import { mydeskPreferences, type MyDeskPreferencesSnapshot } from "../schema/mydeskPreferences.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { logAudit } from "./audit.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
@@ -15,7 +16,7 @@ import { myDeskCsvCell, myDeskEnabledForSchool, myDeskSeatingEnabledForSchool, t
 import type { MyDeskActor } from "../middleware/requireMyDesk.js";
 
 export type { MyDeskActor } from "../middleware/requireMyDesk.js";
-export type MyDeskDatabase = Pick<typeof db, "select" | "selectDistinctOn" | "insert" | "update" | "delete" | "execute">;
+export type MyDeskDatabase = Pick<typeof db, "select" | "selectDistinct" | "selectDistinctOn" | "insert" | "update" | "delete" | "execute">;
 export type MyDeskNote = typeof mydeskNotes.$inferSelect;
 export type MyDeskAttachment = typeof mydeskAttachments.$inferSelect;
 export const myDeskError = (status: number, code: string, message: string) => Object.assign(new Error(message), { status, code, expose: true });
@@ -73,8 +74,34 @@ export function currentClassWhere(actor: MyDeskActor): SQL {
   )!;
 }
 export async function currentClasses(actor: MyDeskActor, database: MyDeskDatabase) {
-  return database.select({ id: groups.id, name: groups.name, groupType: groups.groupType, periodLabel: groups.periodLabel })
+  return database.select({ id: groups.id, name: groups.name, groupType: groups.groupType, periodLabel: groups.periodLabel,
+    gradeLevel: groups.gradeLevel, schoolYear: groups.schoolYear,
+    personal: sql<boolean>`(${groups.teacherId}=${actor.authorId} OR EXISTS (SELECT 1 FROM group_teachers assignment WHERE assignment.group_id=${groups.id} AND assignment.teacher_id=${actor.authorId}))` })
     .from(groups).where(currentClassWhere(actor)).orderBy(groups.name, groups.id);
+}
+export async function loadMyDeskPreferences(actor: MyDeskActor, database: MyDeskDatabase): Promise<MyDeskPreferencesSnapshot> {
+  const [row] = await database.select().from(mydeskPreferences).where(and(eq(mydeskPreferences.schoolId, actor.schoolId), eq(mydeskPreferences.authorId, actor.authorId))).limit(1);
+  return { revision: row?.revision || 0, preferredClasses: row?.preferredClasses || {} };
+}
+export async function getMyDeskPreferences(actor: MyDeskActor) { return withActor(actor, database => loadMyDeskPreferences(actor, database)); }
+export async function updateMyDeskPreferences(actor: MyDeskActor, input: MyDeskPreferencesSnapshot) {
+  return withActor(actor, async (database, verified) => {
+    await database.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mydesk-preferences:${actor.schoolId}:${actor.authorId}`},0))`);
+    const existing = await loadMyDeskPreferences(actor, database);
+    if (existing.revision !== input.revision) throw myDeskError(409, "MYDESK_PREFERENCES_CONFLICT", "Your default classes changed. Refresh and try again");
+    // A manager's broad roster permission does not make every class a personal assignment.
+    const personalActor = { ...verified, manager: false };
+    for (const [grade, groupId] of Object.entries(input.preferredClasses).sort(([a], [b]) => a.localeCompare(b))) {
+      // An unrelated stale saved grade must not prevent replacing another grade's default.
+      if (existing.preferredClasses[grade] === groupId) continue;
+      const roster = await loadMyDeskClassRoster(personalActor, groupId, database, { lock: true });
+      if (roster.class.gradeLevel !== grade) throw myDeskError(409, "MYDESK_PREFERENCE_STALE", "Choose an assigned class in this grade");
+    }
+    const [saved] = await database.insert(mydeskPreferences).values({ schoolId: actor.schoolId, authorId: actor.authorId,
+      preferredClasses: input.preferredClasses, revision: 1 }).onConflictDoUpdate({ target: [mydeskPreferences.schoolId, mydeskPreferences.authorId],
+      set: { preferredClasses: input.preferredClasses, revision: existing.revision + 1, updatedAt: new Date() } }).returning();
+    return { revision: saved!.revision, preferredClasses: saved!.preferredClasses };
+  });
 }
 export async function listMyDeskClasses(actor: MyDeskActor) {
   return withActor(actor, async (database, verified) => {
@@ -94,14 +121,71 @@ export async function listMyDeskClasses(actor: MyDeskActor) {
     }
     const past = new Map<string, { id: string; name: string }>();
     for (const row of pastRows) if (row.id && !past.has(row.id)) past.set(row.id, { id: row.id, name: row.name || "Past class" });
-    return { current, past: [...past.values()] };
+    const preferences = await loadMyDeskPreferences(actor, database);
+    const personalByGrade = [...new Set(current.filter(row => row.personal).map(row => row.gradeLevel))]
+      .sort((a, b) => (a || "").localeCompare(b || "", undefined, { numeric: true })).map(gradeLevel => {
+        const classes = current.filter(row => row.personal && row.gradeLevel === gradeLevel);
+        const saved = gradeLevel ? preferences.preferredClasses[gradeLevel] : undefined;
+        return { gradeLevel, classes, preferredClassId: classes.some(row => row.id === saved) ? saved : null,
+          preferenceStale: !!saved && !classes.some(row => row.id === saved) };
+      });
+    return { current, past: [...past.values()], personalByGrade, otherCurrent: current.filter(row => !row.personal), preferences };
   });
 }
 export async function listMyDeskClassStudents(actor: MyDeskActor, groupId: string) {
   return withActor(actor, (database, verified) => loadMyDeskClassRoster(verified, groupId, database));
 }
+export async function listMyDeskStudents(actor: MyDeskActor, query: { q: string; cursor?: string; limit: number }) {
+  return withActor(actor, async (database, verified) => {
+    const classes = await currentClasses(verified, database);
+    if (!classes.length) return { students: [], nextCursor: null };
+    const filter = createHash("sha256").update(JSON.stringify([actor.schoolId, actor.authorId, query.q])).digest("hex");
+    const conditions: SQL[] = [eq(students.schoolId, actor.schoolId), eq(students.status, "active"),
+      sql`EXISTS (SELECT 1 FROM group_students membership WHERE membership.student_id=${students.id} AND membership.group_id IN (${sql.join(classes.map(row => sql`${row.id}`), sql`, `)}))`];
+    if (query.q) conditions.push(ilike(sql`${students.firstName} || ' ' || ${students.lastName}`, `%${query.q.replace(/[\\%_]/g, value => "\\" + value)}%`));
+    if (query.cursor) {
+      try {
+        const cursor = z.object({ lastName: z.string(), firstName: z.string(), id: z.string(), filter: z.literal(filter) }).strict()
+          .parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")));
+        conditions.push(sql`(${students.lastName},${students.firstName},${students.id}) > (${cursor.lastName},${cursor.firstName},${cursor.id})`);
+      } catch { throw myDeskError(400, "MYDESK_INVALID_CURSOR", "Refresh the student directory to start a new page"); }
+    }
+    const rows = await database.select({ id: students.id, firstName: students.firstName, lastName: students.lastName, gradeLevel: students.gradeLevel })
+      .from(students).where(and(...conditions)).orderBy(students.lastName, students.firstName, students.id).limit(query.limit + 1);
+    const page = rows.slice(0, query.limit);
+    const memberships = page.length ? await database.select({ studentId: groupStudents.studentId, groupId: groupStudents.groupId }).from(groupStudents)
+      .where(and(inArray(groupStudents.studentId, page.map(row => row.id)), inArray(groupStudents.groupId, classes.map(row => row.id)))) : [];
+    const counts = page.length ? await database.select({ id: mydeskNotes.filingStudentId, count: sql<number>`count(*)::int` }).from(mydeskNotes)
+      .where(and(ownedNoteWhere(actor), eq(mydeskNotes.status, "active"), isNull(mydeskNotes.deletedAt), inArray(mydeskNotes.filingStudentId, page.map(row => row.id))))
+      .groupBy(mydeskNotes.filingStudentId) : [];
+    const last = page.at(-1);
+    return { students: page.map(row => ({ ...row, name: `${row.firstName} ${row.lastName}`.trim(),
+      classes: classes.filter(group => memberships.some(member => member.studentId === row.id && member.groupId === group.id)),
+      noteCount: counts.find(count => count.id === row.id)?.count || 0 })),
+      nextCursor: rows.length > query.limit && last ? Buffer.from(JSON.stringify({ lastName: last.lastName, firstName: last.firstName, id: last.id, filter })).toString("base64url") : null };
+  }, true);
+}
+async function studentHistoryIdentity(database: MyDeskDatabase, actor: MyDeskActor, studentId: string) {
+  const [historical] = await database.select({ name: mydeskNotes.studentName }).from(mydeskNotes).where(and(ownedNoteWhere(actor),
+    eq(mydeskNotes.filingStudentId, studentId), eq(mydeskNotes.status, "active"), isNull(mydeskNotes.deletedAt)))
+    .orderBy(desc(mydeskNotes.updatedAt), desc(mydeskNotes.id)).limit(1);
+  const [current] = await database.select({ firstName: students.firstName, lastName: students.lastName }).from(students)
+    .innerJoin(groupStudents, eq(groupStudents.studentId, students.id)).innerJoin(groups, eq(groups.id, groupStudents.groupId))
+    .where(and(eq(students.id, studentId), eq(students.schoolId, actor.schoolId), eq(students.status, "active"), currentClassWhere(actor))).limit(1);
+  if (!current && !historical) throw myDeskError(404, "MYDESK_STUDENT_NOT_FOUND", "Student history not found");
+  const historyClasses = await database.selectDistinctOn([mydeskNotes.filingGroupId], { id: mydeskNotes.filingGroupId, name: mydeskNotes.groupName })
+    .from(mydeskNotes).where(and(ownedNoteWhere(actor), eq(mydeskNotes.filingStudentId, studentId), eq(mydeskNotes.status, "active"),
+      isNull(mydeskNotes.deletedAt), sql`${mydeskNotes.filingGroupId} IS NOT NULL`))
+    .orderBy(mydeskNotes.filingGroupId, desc(mydeskNotes.updatedAt), desc(mydeskNotes.id));
+  return { id: studentId, name: current ? `${current.firstName} ${current.lastName}`.trim() : historical!.name || "Former student", current: !!current,
+    classes: historyClasses.flatMap(row => row.id ? [{ id: row.id, name: row.name || "Past class" }] : []) };
+}
+export async function listMyDeskStudentHistory(actor: MyDeskActor, studentId: string, query: MyDeskNotesQuery) {
+  return withActor(actor, async (database, verified) => ({ student: await studentHistoryIdentity(database, verified, studentId),
+    ...await listNotes(database, verified, { ...query, scope: "all", studentId }, true) }));
+}
 export async function loadMyDeskClassRoster(actor: MyDeskActor, groupId: string, database: MyDeskDatabase, options: { lock?: boolean } = {}) {
-  const groupQuery = database.select({ id: groups.id, name: groups.name }).from(groups)
+  const groupQuery = database.select({ id: groups.id, name: groups.name, gradeLevel: groups.gradeLevel, schoolYear: groups.schoolYear }).from(groups)
     .where(and(currentClassWhere(actor), eq(groups.id, groupId))).limit(1);
   const [group] = await (options.lock ? groupQuery.for("update") : groupQuery);
   if (!group) throw myDeskError(404, "MYDESK_CLASS_NOT_FOUND", "Class not found");
@@ -297,11 +381,11 @@ const cursorInput = z.object({ pinned: z.boolean(), entryDate: z.string(), creat
 const queryFingerprint = (actor: MyDeskActor, query: MyDeskNotesQuery) => createHash("sha256").update(JSON.stringify([
   actor.schoolId, actor.authorId, query.scope, query.classId || null, query.studentId || null, query.category || null, query.from || null, query.to || null, query.q || null,
 ])).digest("hex");
-async function listNotes(database: MyDeskDatabase, actor: MyDeskActor, query: MyDeskNotesQuery) {
+async function listNotes(database: MyDeskDatabase, actor: MyDeskActor, query: MyDeskNotesQuery, allYears = false) {
   const current = await currentClasses(actor, database); const ids = current.map(group => group.id);
   const conditions: SQL[] = [ownedNoteWhere(actor), eq(mydeskNotes.status, "active"), isNull(mydeskNotes.deletedAt)];
   if (query.scope === "general") conditions.push(eq(mydeskNotes.targetKind, "general"));
-  if (query.scope === "all") conditions.push(or(eq(mydeskNotes.targetKind, "general"), ids.length ? inArray(mydeskNotes.filingGroupId, ids) : sql`false`)!);
+  if (query.scope === "all" && !allYears) conditions.push(or(eq(mydeskNotes.targetKind, "general"), ids.length ? inArray(mydeskNotes.filingGroupId, ids) : sql`false`)!);
   if (query.scope === "past") conditions.push(sql`${mydeskNotes.filingGroupId} IS NOT NULL`, ids.length ? notInArray(mydeskNotes.filingGroupId, ids) : sql`true`);
   if (query.classId) conditions.push(eq(mydeskNotes.filingGroupId, query.classId));
   if (query.studentId) conditions.push(eq(mydeskNotes.filingStudentId, query.studentId));
@@ -312,7 +396,7 @@ async function listNotes(database: MyDeskDatabase, actor: MyDeskActor, query: My
     const search = `%${query.q.replace(/[\\%_]/g, value => "\\" + value)}%`;
     conditions.push(or(ilike(mydeskNotes.title, search), ilike(mydeskNotes.body, search), ilike(mydeskNotes.groupName, search), ilike(mydeskNotes.studentName, search))!);
   }
-  const filter = queryFingerprint(actor, query);
+  const filter = queryFingerprint(actor, query) + (allYears ? ":history" : "");
   if (query.cursor) {
     try {
       const cursor = cursorInput.parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")));
@@ -334,11 +418,15 @@ async function listNotes(database: MyDeskDatabase, actor: MyDeskActor, query: My
   return { notes: page.map(note => safeMyDeskNoteDto(note, photos)), nextCursor };
 }
 export async function listMyDeskNotes(actor: MyDeskActor, query: MyDeskNotesQuery) { return withActor(actor, (database, current) => listNotes(database, current, query)); }
-export async function exportMyDeskNotes(actor: MyDeskActor, query: MyDeskNotesQuery) {
+export async function exportMyDeskNotes(actor: MyDeskActor, query: MyDeskNotesQuery, historyStudentId?: string) {
   const result = await withActor(actor, async (database, verified) => {
+    if (historyStudentId) {
+      await studentHistoryIdentity(database, verified, historyStudentId);
+      query = { ...query, scope: "all", studentId: historyStudentId };
+    }
     const rows: ReturnType<typeof safeMyDeskNoteDto>[] = []; let cursor: string | undefined;
     do {
-      const page = await listNotes(database, verified, { ...query, cursor, limit: 100 });
+      const page = await listNotes(database, verified, { ...query, cursor, limit: 100 }, !!historyStudentId);
       rows.push(...page.notes); cursor = page.nextCursor || undefined;
       if (rows.length > 5000 || rows.length === 5000 && cursor) throw myDeskError(422, "MYDESK_EXPORT_LIMIT", "More than 5,000 notes match. Narrow your filters and export again");
     } while (cursor);

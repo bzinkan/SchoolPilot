@@ -1949,9 +1949,25 @@ const fatalGate={reasonCodes:[reason],observedAt:new Date().toISOString(),kind:"
 fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"fatal_gate",event:"fatal",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
 const summary={runId,stage,devices:1,declaredSecondSchoolCanaryDevices:0,run:{plannedTrafficSeconds:1,actualTrafficSeconds:1,completedConfiguredDuration:true},screenshotFixture:{decodedBytes:1024},thresholds:{passed:false},fatalGate};
 fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"final",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
+const summaryReleasePath=process.env.SCHOOLPILOT_TEST_SUMMARY_RELEASE_PATH;
+const summaryBlockedPath=process.env.SCHOOLPILOT_TEST_SUMMARY_BLOCKED_PATH;
+const summaryTimeoutPath=process.env.SCHOOLPILOT_TEST_SUMMARY_TIMEOUT_PATH;
+const summaryWaitMilliseconds=Number.parseInt(process.env.SCHOOLPILOT_TEST_SUMMARY_WAIT_MS||"0",10);
+if(summaryReleasePath){
+  if(!summaryBlockedPath||!summaryTimeoutPath||!Number.isSafeInteger(summaryWaitMilliseconds)||summaryWaitMilliseconds<=0)process.exit(12);
+  fs.writeFileSync(summaryBlockedPath,JSON.stringify({runId,harnessProcessId:process.pid}));
+}
 if(process.env.SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH)fs.writeFileSync(process.env.SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH,"1");
-const summaryDelayMilliseconds=Number.parseInt(process.env.SCHOOLPILOT_TEST_SUMMARY_DELAY_MS||"0",10);
-if(Number.isFinite(summaryDelayMilliseconds)&&summaryDelayMilliseconds>0)await new Promise(resolve=>setTimeout(resolve,summaryDelayMilliseconds));
+if(summaryReleasePath){
+  const summaryDeadline=performance.now()+summaryWaitMilliseconds;
+  while(!fs.existsSync(summaryReleasePath)){
+    if(performance.now()>=summaryDeadline){
+      fs.writeFileSync(summaryTimeoutPath,JSON.stringify({runId,harnessProcessId:process.pid}));
+      process.exit(13);
+    }
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+}
 fs.writeFileSync(summaryPath,JSON.stringify(summary));
 process.exit(1);
 '@
@@ -1978,9 +1994,13 @@ function Wait-ForPath([string]$Path,[string]$Label){
 Wait-ForPath $MonitorHeartbeatPath "the first monitor heartbeat"
 [IO.File]::WriteAllText($ArmPath,"1")
 Wait-ForPath $ReadyPath "the monitor to enter mocked AWS collection"
+$blockedHeartbeat=Get-Content -LiteralPath $MonitorHeartbeatPath -Raw | ConvertFrom-Json
 Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
 [IO.File]::WriteAllText($ReleasePath,"1")
-[IO.File]::WriteAllText($CompletedPath,"1")
+[IO.File]::WriteAllText($CompletedPath,(@{
+  runId=$blockedHeartbeat.runId
+  lastCompletedIteration=$blockedHeartbeat.iteration
+}|ConvertTo-Json -Compress))
 '@
     [IO.File]::WriteAllText($sampleBarrierCoordinator, $sampleBarrierCoordinatorSource, [Text.UTF8Encoding]::new($false))
     $childProgress = Join-Path $childRoot "progress.jsonl"
@@ -2056,7 +2076,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         "SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE",
         "SCHOOLPILOT_TEST_SNAPSHOT_TIME",
         "SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE",
-        "SCHOOLPILOT_TEST_SUMMARY_DELAY_MS",
+        "SCHOOLPILOT_TEST_SUMMARY_RELEASE_PATH",
+        "SCHOOLPILOT_TEST_SUMMARY_BLOCKED_PATH",
+        "SCHOOLPILOT_TEST_SUMMARY_TIMEOUT_PATH",
+        "SCHOOLPILOT_TEST_SUMMARY_WAIT_MS",
         "SCHOOLPILOT_TEST_SWAP_COUNTER",
         "SCHOOLPILOT_TEST_UPDATE_LOG",
         "SCHOOLPILOT_TEST_WAF_API_BLOCK",
@@ -2299,6 +2322,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                     $barrierConsumed = Join-Path $childRoot "$caseRunId-sample-barrier-consumed.flag"
                     $barrierCompleted = Join-Path $childRoot "$caseRunId-sample-barrier-completed.flag"
                     $terminalProgressWritten = Join-Path $childRoot "$caseRunId-terminal-progress-written.flag"
+                    $summaryRelease = Join-Path $childRoot "$caseRunId-summary-release.flag"
+                    $summaryBlocked = Join-Path $childRoot "$caseRunId-summary-blocked.json"
+                    $summaryTimeout = Join-Path $childRoot "$caseRunId-summary-timeout.json"
                     $caseMonitorHeartbeat = Join-Path $caseEvidence "$caseRunId-monitor-heartbeat.json"
                     $barrierPaths = [ordered]@{
                         SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM = $barrierArm
@@ -2306,7 +2332,13 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                         SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE = $barrierRelease
                         SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED = $barrierConsumed
                         SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH = $terminalProgressWritten
-                        SCHOOLPILOT_TEST_SUMMARY_DELAY_MS = "10000"
+                        # Hold the summary until the monitor stops the bound harness.
+                        # The marker is deliberately never released in this fatal case;
+                        # timing out fails the test instead of publishing a summary.
+                        SCHOOLPILOT_TEST_SUMMARY_RELEASE_PATH = $summaryRelease
+                        SCHOOLPILOT_TEST_SUMMARY_BLOCKED_PATH = $summaryBlocked
+                        SCHOOLPILOT_TEST_SUMMARY_TIMEOUT_PATH = $summaryTimeout
+                        SCHOOLPILOT_TEST_SUMMARY_WAIT_MS = [string]($script:SupervisedSampleBudgetSeconds * 1000)
                     }
                     foreach ($entry in $barrierPaths.GetEnumerator()) {
                         $barrierEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
@@ -2382,8 +2414,22 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                         "$caseRunId did not exercise the deterministic in-sample AWS barrier (exit=$barrierCoordinatorExitCode; stderr=$barrierError)."
                     Assert-Condition ((Get-Item -LiteralPath $barrierReady).LastWriteTimeUtc -le (Get-Item -LiteralPath $terminalProgressWritten).LastWriteTimeUtc) `
                         "$caseRunId terminal evidence must be committed while the monitor is inside mocked AWS collection."
+                    Assert-Condition ((Test-Path -LiteralPath $summaryBlocked) -and
+                        -not (Test-Path -LiteralPath $summaryRelease) -and -not (Test-Path -LiteralPath $summaryTimeout)) `
+                        "$caseRunId must stop the harness while its summary is blocked, without a release or wait timeout."
                     Assert-Condition (-not (Test-Path -LiteralPath $caseSummary)) `
                         "$caseRunId must preserve and act on terminal fatal evidence before the atomic summary exists."
+                    $barrierReceipt = Get-Content -LiteralPath $barrierCompleted -Raw | ConvertFrom-Json
+                    $terminalHeartbeat = Get-Content -LiteralPath $caseMonitorHeartbeat -Raw | ConvertFrom-Json
+                    Assert-Condition ($barrierReceipt.runId -eq $caseRunId -and $terminalHeartbeat.runId -eq $caseRunId -and
+                        $terminalHeartbeat.triggered -and [int]$terminalHeartbeat.iteration -eq ([int]$barrierReceipt.lastCompletedIteration + 1)) `
+                        "$caseRunId must act on fatal evidence in the AWS sample held by the barrier, not a later sweep."
+                    $boundMonitorConfig = Get-Content -LiteralPath (Join-Path $caseEvidence "$caseRunId-bound-monitor-config.json") -Raw | ConvertFrom-Json
+                    $remainingHarness = Get-Process -Id ([int]$boundMonitorConfig.harnessProcessId) -ErrorAction SilentlyContinue
+                    $sameHarness = $null -ne $remainingHarness -and
+                        [string]::Equals([string]$remainingHarness.Path, [string]$boundMonitorConfig.harnessProcessPath, [StringComparison]::OrdinalIgnoreCase) -and
+                        [math]::Abs((([DateTimeOffset]$remainingHarness.StartTime).ToUniversalTime() - [DateTimeOffset]$boundMonitorConfig.harnessProcessStartedAtUtc).TotalSeconds) -le 2
+                    Assert-Condition (-not $sameHarness) "$caseRunId must terminate the exact bound harness before its summary can be released."
                 }
 
                 $caseObservation = Get-Content -LiteralPath $caseObserved -Raw | ConvertFrom-Json -Depth 20

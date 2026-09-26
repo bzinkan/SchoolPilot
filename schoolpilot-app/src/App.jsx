@@ -38,6 +38,8 @@ const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings')
 const CPMyDesk = lazy(() => import('./products/classpilot/pages/MyDesk'));
 const CPSeating = lazy(() => import('./products/classpilot/pages/Seating'));
 const CPImports = lazy(() => import('./products/classpilot/pages/Imports'));
+const CPStudentLogs = lazy(() => import('./products/classpilot/pages/StudentLogs'));
+const CPDisciplineRecords = lazy(() => import('./products/classpilot/pages/DisciplineRecords'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
 const CPTeacherGuide = lazy(() => import('./products/classpilot/pages/TeacherGuide'));
@@ -289,6 +291,10 @@ function AppRoutes() {
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk" element={<CPMyDesk />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students" element={<CPStudentLogs />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<CPStudentLogs />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records" element={<CPDisciplineRecords />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records/:recordId" element={<CPDisciplineRecords />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating" element={<CPSeating />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating/:chartId" element={<CPSeating />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports" element={<CPImports />} />}

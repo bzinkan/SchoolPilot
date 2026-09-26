@@ -11,12 +11,12 @@ export default function MyDeskAttachment({ schoolId, viewerId, noteId, attachmen
     staleTime: 0, gcTime: 0, retry: false, refetchOnMount: 'always' });
   const [object, setObject] = useState(null);
   useEffect(() => {
-    if (!(content.data instanceof Blob)) return;
+    if (content.isError || !(content.data instanceof Blob)) return;
     const url = URL.createObjectURL(content.data);
     // A blob belongs to exactly this fetched response and is never persisted.
     const timer = setTimeout(() => setObject({ blob: content.data, url }), 0);
     return () => { clearTimeout(timer); URL.revokeObjectURL(url); };
-  }, [content.data]);
+  }, [content.data, content.isError]);
   const url = object && object.blob === content.data ? object.url : null;
   if (content.isError) return <div className="mydesk-file-error" role="alert">Could not load {attachment.originalFilename}. <Button variant="link" onClick={() => content.refetch()}>Retry</Button></div>;
   if (!url) return <p role="status" className="text-sm text-muted-foreground">Loading attachment…</p>;

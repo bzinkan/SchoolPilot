@@ -9,6 +9,7 @@ import { z } from "zod";
 import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "../src/db/mydeskSeatingMigration.js";
+import { MYDESK_SEATING_MEASURED_SQL } from "../src/db/mydeskSeatingMeasuredMigration.js";
 import { seatingLayout, type SeatingLayout } from "../src/services/mydeskSeatingValidation.js";
 import myDeskRouter from "../src/routes/mydesk.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -34,6 +35,7 @@ before(async () => {
   if (process.env.ADMIN_DATABASE_URL) assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.ADMIN_DATABASE_URL).hostname));
   await fixturePool.query(MYDESK_SQL);
   await fixturePool.query(MYDESK_SEATING_SQL);
+  await fixturePool.query(MYDESK_SEATING_MEASURED_SQL);
   if (process.env.RLS_GUC_ENABLED === "true") {
     assert.match(process.env.RLS_TEST_ROLE || "", /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/);
     await fixturePool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_seating_charts TO "${process.env.RLS_TEST_ROLE}"`);
@@ -114,6 +116,38 @@ async function request(f: Fixture, path: string, method = "GET", body?: unknown,
 
 const layoutFor = (studentId: string | null, locked = false): SeatingLayout => ({ version: 1,
   seats: [{ id: randomUUID(), x: 0, y: 0, studentId, locked }, { id: randomUUID(), x: 120, y: 0, studentId: null, locked: false }] });
+
+test("measured floor plans persist atomically, block legacy clients and copy room fixtures with fresh anchors", async () => {
+  const f = await fixture(), base = await createInput(f);
+  const vertices = [[0, 0], [9000, 0], [10000, 8000], [0, 8000]].map(([x, y]) => ({ id: randomUUID(), wallId: randomUUID(), x: x!, y: y! }));
+  const layout: SeatingLayout = { version: 2, units: "mm", displayUnit: "imperial", room: { vertices, frontWallId: vertices[0]!.wallId },
+    seats: [{ id: randomUUID(), x: 2000, y: 2000, width: 600, height: 450, rotation: 35, studentId: f.studentId, locked: true }],
+    features: [{ id: randomUUID(), kind: "door", wallId: vertices[0]!.wallId, offset: 0, width: 900, hinge: "start", swing: "in" },
+      { id: randomUUID(), kind: "teacherDesk", label: "Teacher", x: 5000, y: 5000, width: 1200, height: 600, rotation: 20 }] };
+  const chart = await createChart(f, { ...base, layout });
+  assert.equal((await request(f, `/seating-charts/${chart.id}`)).status, 409);
+  const detail = await request(f, `/seating-charts/${chart.id}?layoutVersion=2`);
+  assert.equal(detail.status, 200, detail.text); assert.deepEqual(chartEnvelope.parse(detail.data).chart.layout, layout);
+  assert.equal((await request(f, `/seating-charts/${chart.id}?layoutVersion=2`, "GET", undefined, f.adminId)).status, 404);
+  const downgrade = await request(f, `/seating-charts/${chart.id}`, "PATCH", { requestId: randomUUID(), revision: chart.revision, name: chart.name, layout: layoutFor(f.studentId), rosterRevision: chart.rosterRevision });
+  assert.equal(downgrade.status, 409); assert.equal(z.object({ code: z.string() }).parse(downgrade.data).code, "MYDESK_SEATING_CLIENT_UPDATE_REQUIRED");
+  const invalid = structuredClone(layout); invalid.seats[0]!.x = 49999;
+  assert.equal((await request(f, `/seating-charts/${chart.id}`, "PATCH", { requestId: randomUUID(), revision: chart.revision, name: chart.name, layout: invalid, rosterRevision: chart.rosterRevision })).status, 400);
+  const duplicate = { clientRequestId: randomUUID(), sourceRevision: chart.revision, targetClassId: f.groupId, mode: "layout", name: "Copied room", rosterRevision: chart.rosterRevision };
+  assert.equal((await request(f, `/seating-charts/${chart.id}/duplicate`, "POST", duplicate)).status, 409);
+  const copied = await request(f, `/seating-charts/${chart.id}/duplicate?layoutVersion=2`, "POST", duplicate);
+  assert.equal(copied.status, 201, copied.text); const copy = chartEnvelope.parse(copied.data).chart;
+  assert.equal(copy.layout.version, 2); assert.equal(copy.layout.seats[0]!.studentId, null); assert.equal(copy.layout.seats[0]!.locked, false);
+  if (copy.layout.version !== 2) throw new Error("Expected measured copy");
+  assert.equal(copy.layout.features.length, 2); assert.notEqual(copy.layout.room.frontWallId, layout.room.frontWallId);
+  const door = copy.layout.features.find(f => f.kind === "door"); assert.equal(door && "wallId" in door && door.wallId, copy.layout.room.frontWallId);
+  const replay = await request(f, `/seating-charts/${chart.id}/duplicate?layoutVersion=2`, "POST", duplicate);
+  assert.equal(replay.status, 200); assert.equal(chartEnvelope.parse(replay.data).chart.id, copy.id);
+  const patch = { requestId: randomUUID(), revision: chart.revision, name: chart.name, layout: { ...layout, displayUnit: "metric" }, rosterRevision: chart.rosterRevision };
+  const saved = await request(f, `/seating-charts/${chart.id}`, "PATCH", patch); assert.equal(saved.status, 200, saved.text);
+  assert.equal(chartEnvelope.parse(saved.data).chart.revision, chart.revision + 1);
+  assert.equal((await request(f, `/seating-charts/${chart.id}`, "PATCH", patch)).status, 200);
+});
 async function roster(f: Fixture, classId = f.groupId, authorId = f.teacherId) {
   const response = await request(f, `/classes/${classId}/students`, "GET", undefined, authorId);
   assert.equal(response.status, 200, response.text); return rosterEnvelope.parse(response.data);

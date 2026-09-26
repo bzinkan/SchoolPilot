@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { myDeskId, myDeskRevision } from "./mydeskValidation.js";
+import { measuredLayoutProblem } from "../shared/mydeskSeatingGeometry.js";
 
 export const SEATING_ROOM_WIDTH = 1200;
 export const SEATING_ROOM_HEIGHT = 900;
@@ -16,7 +17,7 @@ const seat = z.object({
   locked: z.boolean(),
 }).strict();
 
-export const seatingLayout = z.object({
+const legacyLayout = z.object({
   version: z.literal(1), seats: z.array(seat).max(SEATING_MAX_DESKS),
 }).strict().superRefine((layout, context) => {
   const ids = new Set<string>();
@@ -33,6 +34,27 @@ export const seatingLayout = z.object({
       item.y < other.y + SEATING_DESK_HEIGHT && item.y + SEATING_DESK_HEIGHT > other.y)) issue("Desks cannot overlap");
   });
 });
+
+const dimension = z.number().int().min(10).max(50000);
+const coordinate = z.number().int().min(0).max(50000);
+const rect = { id: z.string().uuid(), x: coordinate, y: coordinate, width: dimension, height: dimension,
+  rotation: z.number().min(0).lt(360).multipleOf(0.1) };
+const measuredSeat = z.object({ ...rect, studentId: myDeskId.nullable(), locked: z.boolean() }).strict();
+const solid = z.object({ ...rect, kind: z.enum(["teacherDesk", "cabinet", "lockers", "interiorWall"]), label: z.string().trim().max(60).optional() }).strict();
+const opening = z.object({ id: z.string().uuid(), kind: z.enum(["door", "window"]), wallId: z.string().uuid(),
+  offset: coordinate, width: dimension, hinge: z.enum(["start", "end"]), swing: z.enum(["in", "out"]), label: z.string().trim().max(60).optional() }).strict();
+export const measuredSeatingLayout = z.object({
+  version: z.literal(2), units: z.literal("mm"), displayUnit: z.enum(["imperial", "metric"]),
+  room: z.object({ vertices: z.array(z.object({ id: z.string().uuid(), wallId: z.string().uuid(), x: coordinate, y: coordinate }).strict()).min(3).max(24), frontWallId: z.string().uuid() }).strict(),
+  seats: z.array(measuredSeat).max(100), features: z.array(z.union([solid, opening])).max(100),
+}).strict().superRefine((layout, context) => {
+  const problem = measuredLayoutProblem(layout);
+  if (problem) context.addIssue({ code: "custom", message: problem });
+  const students = layout.seats.map(s => s.studentId).filter(Boolean);
+  if (new Set(students).size !== students.length) context.addIssue({ code: "custom", message: "A student may occupy only one desk" });
+  if (layout.seats.some(s => s.locked && !s.studentId)) context.addIssue({ code: "custom", message: "Only an assigned seat can be locked" });
+});
+export const seatingLayout = z.union([legacyLayout, measuredSeatingLayout]);
 
 const name = z.string().trim().min(1, "Name your chart").max(120);
 const rosterRevision = z.string().regex(/^[a-f0-9]{64}$/, "Reload the class roster before saving");

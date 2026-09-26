@@ -32,6 +32,13 @@ export const completeMyDeskNoteInput = patchFields.extend({
   revision: myDeskRevision, attachmentIds: z.array(myDeskId).max(5).optional(),
 }).strict().refine(input => !input.attachmentIds || new Set(input.attachmentIds).size === input.attachmentIds.length, "Attachment IDs must be unique");
 export const deleteMyDeskNoteInput = z.object({ revision: myDeskRevision }).strict();
+export const myDeskPreferencesInput = z.object({ revision: z.number().int().min(0),
+  preferredClasses: z.record(z.string().trim().min(1).max(40), myDeskId)
+    .refine(value => Object.keys(value).length <= 32, "Choose at most 32 grade defaults"),
+}).strict();
+export const myDeskStudentsQuery = z.object({ q: z.string().trim().max(200).default(""),
+  cursor: z.string().max(2048).optional(), limit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
 export const myDeskNotesQuery = z.object({
   scope: z.enum(["all", "general", "past", "class"]).default("all"),
   classId: myDeskId.optional(), studentId: myDeskId.optional(), category: myDeskCategory.optional(),

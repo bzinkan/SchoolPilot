@@ -2,9 +2,10 @@ import { sql } from "drizzle-orm";
 import { boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { schools, users } from "./core.js";
 import { groups } from "./classpilot.js";
+import type { SeatingLayoutGeometry } from "../shared/mydeskSeatingGeometry.js";
 
 export type MyDeskSeat = { id: string; x: number; y: number; studentId: string | null; locked: boolean };
-export type MyDeskSeatingLayout = { version: 1; seats: MyDeskSeat[] };
+export type MyDeskSeatingLayout = SeatingLayoutGeometry;
 export type MyDeskSeatingRosterStudent = { id: string; name: string };
 export type MyDeskSeatingMutationReceipt = { id: string; fingerprint: string; revision: number; kind: string };
 
@@ -38,7 +39,7 @@ export const mydeskSeatingCharts = pgTable("mydesk_seating_charts", {
   check("mydesk_seating_charts_name", sql`${table.deletedAt} IS NOT NULL OR char_length(btrim(${table.name})) BETWEEN 1 AND 120`),
   check("mydesk_seating_charts_group_name", sql`char_length(${table.groupName}) <= 500`),
   check("mydesk_seating_charts_roster_revision", sql`${table.deletedAt} IS NOT NULL OR ${table.rosterRevision} ~ '^[0-9a-f]{64}$'`),
-  check("mydesk_seating_charts_layout", sql`jsonb_typeof(${table.layout}) = 'object' AND (${table.layout}->'version' = '1'::jsonb) IS TRUE AND CASE WHEN jsonb_typeof(${table.layout}->'seats') = 'array' THEN jsonb_array_length(${table.layout}->'seats') <= 100 ELSE false END`),
+  check("mydesk_seating_charts_layout", sql`jsonb_typeof(${table.layout}) = 'object' AND octet_length(${table.layout}::text) <= 262144 AND (${table.layout}->'version' IN ('1'::jsonb,'2'::jsonb)) IS TRUE AND CASE WHEN jsonb_typeof(${table.layout}->'seats') = 'array' THEN jsonb_array_length(${table.layout}->'seats') <= 100 ELSE false END AND (${table.layout}->'version' = '1'::jsonb OR (${table.layout}->>'units' = 'mm' AND ${table.layout}->>'displayUnit' IN ('imperial','metric') AND CASE WHEN jsonb_typeof(${table.layout}->'room'->'vertices') = 'array' THEN jsonb_array_length(${table.layout}->'room'->'vertices') BETWEEN 3 AND 24 ELSE false END AND CASE WHEN jsonb_typeof(${table.layout}->'features') = 'array' THEN jsonb_array_length(${table.layout}->'features') <= 100 ELSE false END)) IS TRUE`),
   check("mydesk_seating_charts_roster", sql`octet_length(${table.rosterSnapshot}::text) <= 1048576 AND CASE WHEN jsonb_typeof(${table.rosterSnapshot}) = 'array' THEN jsonb_array_length(${table.rosterSnapshot}) <= 1000 ELSE false END`),
   check("mydesk_seating_charts_receipts", sql`CASE WHEN jsonb_typeof(${table.mutationReceipts}) = 'array' THEN jsonb_array_length(${table.mutationReceipts}) <= 100 ELSE false END`),
   check("mydesk_seating_charts_deleted", sql`${table.deletedAt} IS NULL OR (NOT ${table.isCurrent} AND ${table.groupId} IS NULL AND ${table.name} = '' AND ${table.groupName} = '' AND ${table.rosterRevision} = '' AND ${table.layout} = '{"version":1,"seats":[]}'::jsonb AND ${table.rosterSnapshot} = '[]'::jsonb)`),

@@ -12,6 +12,8 @@ import { myDeskError, isMyDeskNoteMissing, myDeskKeys, myDeskTarget } from '../l
 import NoteComposerDialog from '../components/NoteComposerDialog';
 import MyDeskAttachment from '../components/MyDeskAttachment';
 import MyDeskTabs from '../components/MyDeskTabs';
+import MyDeskClassIndex from '../components/MyDeskClassIndex';
+import DisciplineSubmitButton from '../components/DisciplineSubmitButton';
 import '../myDesk.css';
 
 export default function MyDesk() {
@@ -20,11 +22,11 @@ export default function MyDesk() {
   return <div className="mydesk-page min-h-screen bg-background text-foreground">
     <header className="mydesk-header"><Button variant="ghost" onClick={() => navigate('/classpilot')}><ArrowLeft className="size-4" />ClassPilot</Button><ThemeToggle /></header>
     <MyDeskTabs seatingEnabled={access.seatingEnabled} />
-    {access.loading ? <p className="mydesk-access" role="status">Opening your desk…</p> : access.enabled ? <MyDeskNotebook key={`${access.schoolId}:${access.viewerId}`} schoolId={access.schoolId} viewerId={access.viewerId} today={access.schoolDate} timeZone={access.school?.timezone} initialNoteId={searchParams.get('note')} onImport={access.importsEnabled ? groupId => navigate('/classpilot/my-desk/imports', { state: { groupId } }) : undefined} /> : <section className="mydesk-access"><LockKeyhole className="size-7 mb-4" aria-hidden="true" /><h1>My Desk is unavailable</h1><p>{access.error ? 'Your notebook could not be opened. Please try again.' : 'My Desk is temporarily unavailable.'}</p>{access.error && <Button onClick={() => access.refresh()}>Try again</Button>}</section>}
+    {access.loading ? <p className="mydesk-access" role="status">Opening your desk…</p> : access.enabled ? <MyDeskNotebook key={`${access.schoolId}:${access.viewerId}`} access={access} schoolId={access.schoolId} viewerId={access.viewerId} today={access.schoolDate} timeZone={access.school?.timezone} initialNoteId={searchParams.get('note')} onImport={access.importsEnabled ? (groupId, source) => navigate('/classpilot/my-desk/imports', { state: { groupId, source } }) : undefined} /> : <section className="mydesk-access"><LockKeyhole className="size-7 mb-4" aria-hidden="true" /><h1>My Desk is unavailable</h1><p>{access.error ? 'Your notebook could not be opened. Please try again.' : 'My Desk is temporarily unavailable.'}</p>{access.error && <Button onClick={() => access.refresh()}>Try again</Button>}</section>}
   </div>;
 }
 
-export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, initialNoteId }) {
+export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, initialNoteId, access }) {
   const [filters, setFilters] = useState({ scope: 'all', classId: '', studentId: '', category: '', from: '', to: '', q: '' });
   const [composer, setComposer] = useState(null);
   const [deleteNote, setDeleteNote] = useState(null);
@@ -101,13 +103,12 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
   };
 
   return <main className="mydesk-shell">
-    <div className="mydesk-intro"><div><div className="mydesk-title-line"><NotebookPen aria-hidden="true" /><h1>My Desk</h1></div><p>Your notes, right where you left them.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" aria-hidden="true" />Only you can see these notes.</p></div><div className="import-entry-actions">{onImport && <Button variant="outline" onClick={() => onImport(filters.scope === 'class' ? filters.classId : undefined)}>Import paperwork</Button>}<Button className="mydesk-new" onClick={() => openComposer()}><Plus className="size-4" />New note</Button></div></div>
+    <div className="mydesk-intro"><div><div className="mydesk-title-line"><NotebookPen aria-hidden="true" /><h1>My Desk</h1></div><p>Your notes, right where you left them.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" aria-hidden="true" />Only you can see these notes.</p></div><div className="import-entry-actions"><Button variant="outline" disabled={!onImport} title={!onImport ? 'AI paperwork import is temporarily unavailable. Your saved files remain available.' : undefined} onClick={() => onImport?.(filters.scope === 'class' ? filters.classId : undefined)}>{onImport ? 'Import paperwork with AI' : 'AI import unavailable'}</Button><Button className="mydesk-new" onClick={() => openComposer()}><Plus className="size-4" />New note</Button></div></div>
     <div className="mydesk-layout">
       <nav className="mydesk-index" aria-label="Notebook sections">
         <button aria-current={filters.scope === 'all' ? 'page' : undefined} onClick={() => chooseScope('all')}><BookOpen className="size-4" />All notes</button>
         <button aria-current={filters.scope === 'general' ? 'page' : undefined} onClick={() => chooseScope('general')}>General</button>
-        <p className="mydesk-index-label">Current classes</p>
-        {classes.isPending ? <p role="status">Loading classes…</p> : classes.isError ? <p role="alert" className="mydesk-error">Classes unavailable. <button onClick={() => classes.refetch()}>Retry</button></p> : current.length ? current.map(item => <button key={item.id} aria-current={filters.scope === 'class' && filters.classId === item.id ? 'page' : undefined} onClick={() => chooseScope('class', item.id)}>{item.name}</button>) : <p className="text-xs text-muted-foreground px-3">No current classes. General notes are always available.</p>}
+        <MyDeskClassIndex classes={classes} schoolId={schoolId} viewerId={viewerId} selectedId={filters.classId} onSelect={id => chooseScope('class', id)} />
         <button className="mydesk-past-link" aria-current={filters.scope === 'past' ? 'page' : undefined} onClick={() => chooseScope('past')}>Past classes</button>
         {filters.scope === 'past' && <p className="text-xs text-muted-foreground px-3">Your notes stay here after a class or roster changes.</p>}
       </nav>
@@ -121,7 +122,7 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
         </div>
         {error && <p className="mydesk-error" role="alert">{error}</p>}<p className="sr-only" role="status">{announcement}</p>
         {students.isError && <p className="mydesk-error" role="alert">Student filters unavailable. <button onClick={() => students.refetch()}>Retry</button></p>}
-        {notes.isPending ? <p className="mydesk-empty" role="status">Loading your notes…</p> : notes.isError ? <div className="mydesk-empty" role="alert"><p>{myDeskError(notes.error)}</p><Button variant="outline" onClick={() => notes.refetch()}>Try again</Button></div> : rows.length === 0 ? <div className="mydesk-empty"><NotebookPen className="size-9" aria-hidden="true" /><h3>A little space to remember.</h3><p>{filters.q || filters.category || filters.from || filters.to ? 'No notes match these filters.' : 'Save a reminder, a classroom moment, or a photo of the paper you want to keep.'}</p><Button variant="outline" onClick={() => openComposer()}>Write a note</Button></div> : <div className="mydesk-note-list">{rows.map(note => <NoteCard key={`${schoolId}:${viewerId}:${note.id}`} note={note} schoolId={schoolId} viewerId={viewerId} categories={categoryList} timeZone={timeZone} busy={busyId === note.id} onEdit={() => openComposer(note)} onPin={() => mutate(note, 'pin')} onDelete={() => setDeleteNote(note)} />)}</div>}
+        {notes.isPending ? <p className="mydesk-empty" role="status">Loading your notes…</p> : notes.isError ? <div className="mydesk-empty" role="alert"><p>{myDeskError(notes.error)}</p><Button variant="outline" onClick={() => notes.refetch()}>Try again</Button></div> : rows.length === 0 ? <div className="mydesk-empty"><NotebookPen className="size-9" aria-hidden="true" /><h3>A little space to remember.</h3><p>{filters.q || filters.category || filters.from || filters.to ? 'No notes match these filters.' : 'Save a reminder, a classroom moment, or a photo of the paper you want to keep.'}</p><Button variant="outline" onClick={() => openComposer()}>Write a note</Button></div> : <div className="mydesk-note-list">{rows.map(note => <NoteCard key={`${schoolId}:${viewerId}:${note.id}`} note={note} access={access} onImport={onImport} schoolId={schoolId} viewerId={viewerId} categories={categoryList} timeZone={timeZone} busy={busyId === note.id} onEdit={() => openComposer(note)} onPin={() => mutate(note, 'pin')} onDelete={() => setDeleteNote(note)} />)}</div>}
         {notes.hasNextPage && <Button className="mydesk-load-more" variant="outline" disabled={notes.isFetchingNextPage} onClick={() => notes.fetchNextPage()}>{notes.isFetchingNextPage ? 'Loading…' : 'Load more notes'}</Button>}
       </section>
     </div>
@@ -130,14 +131,14 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
   </main>;
 }
 
-function NoteCard({ note, schoolId, viewerId, categories, timeZone = 'America/New_York', busy, onEdit, onPin, onDelete }) {
+export function NoteCard({ note, access, onImport, schoolId, viewerId, categories, timeZone = 'America/New_York', busy, onEdit, onPin, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const attachments = (note.attachments || []).filter(item => item.status === 'ready');
   return <article className={`mydesk-note ${note.pinned ? 'mydesk-note-pinned' : ''}`} aria-label={note.title || `Note for ${myDeskTarget(note)}`}>
-    <header className="mydesk-note-meta"><div><span className="mydesk-target">{myDeskTarget(note)}</span>{note.targetKind === 'student' && note.groupName && <span>{note.groupName}</span>}<span>{categories.find(item => item.key === note.category)?.label || note.category}</span></div><time dateTime={note.entryDate}>{note.entryDate}</time></header>
+    <header className="mydesk-note-meta"><div><span className="mydesk-target">{note.targetKind === 'student' && note.filingStudentId ? <a href={`/classpilot/my-desk/students/${encodeURIComponent(note.filingStudentId)}`}>{myDeskTarget(note)}</a> : myDeskTarget(note)}</span>{note.targetKind === 'student' && note.groupName && <span>{note.groupName}</span>}<span>{categories.find(item => item.key === note.category)?.label || note.category}</span></div><time dateTime={note.entryDate}>{note.entryDate}</time></header>
     {(note.title || note.displayTitle) && <h3>{note.title || note.displayTitle}</h3>}{note.body && <p className="mydesk-note-body">{note.body}</p>}
     {note.revision > 2 && note.updatedAt && <p className="mt-3 text-xs text-muted-foreground">Updated <time dateTime={note.updatedAt}>{new Intl.DateTimeFormat('en-US', { timeZone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(note.updatedAt))}</time></p>}
-    <footer className="mydesk-note-actions"><Button size="sm" variant="ghost" disabled={busy} aria-pressed={note.pinned} onClick={onPin}><Pin className="size-4" />{note.pinned ? 'Unpin' : 'Pin'}</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}><Pencil className="size-4" />Edit / refile</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onDelete}><Trash2 className="size-4" />Delete</Button>{attachments.length > 0 && <Button size="sm" variant="ghost" aria-expanded={expanded} aria-controls={`note-files-${note.id}`} onClick={() => setExpanded(value => !value)}><Paperclip className="size-4" />{expanded ? 'Hide' : 'View'} attachments ({attachments.length})</Button>}</footer>
-    {expanded && <div id={`note-files-${note.id}`} className="mydesk-attachments">{attachments.map(attachment => <MyDeskAttachment key={attachment.id} schoolId={schoolId} viewerId={viewerId} noteId={note.id} attachment={attachment} />)}</div>}
+    <footer className="mydesk-note-actions"><Button size="sm" variant="ghost" disabled={busy} aria-pressed={note.pinned} onClick={onPin}><Pin className="size-4" />{note.pinned ? 'Unpin' : 'Pin'}</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}><Pencil className="size-4" />Edit / refile</Button><Button size="sm" variant="ghost" disabled={busy} onClick={onDelete}><Trash2 className="size-4" />Delete</Button>{attachments.length > 0 && <Button size="sm" variant="ghost" aria-expanded={expanded} aria-controls={`note-files-${note.id}`} onClick={() => setExpanded(value => !value)}><Paperclip className="size-4" />{expanded ? 'Hide' : 'View'} attachments ({attachments.length})</Button>}{access && note.targetKind === 'student' && note.status === 'active' && <DisciplineSubmitButton access={access} noteIds={[note.id]} />}</footer>
+    {expanded && <div id={`note-files-${note.id}`} className="mydesk-attachments">{attachments.map(attachment => <div key={attachment.id}><MyDeskAttachment schoolId={schoolId} viewerId={viewerId} noteId={note.id} attachment={attachment} />{['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(attachment.contentType) && <Button variant="outline" disabled={!onImport} onClick={() => onImport?.(note.groupId || undefined, { noteId: note.id, attachmentId: attachment.id })}>{onImport ? 'Extract student notes with AI' : 'AI import unavailable'}</Button>}</div>)}</div>}
   </article>;
 }

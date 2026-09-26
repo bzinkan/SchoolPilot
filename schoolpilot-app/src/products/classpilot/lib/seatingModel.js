@@ -1,3 +1,5 @@
+import { measuredLayoutProblem } from '../../../../../src/shared/mydeskSeatingGeometry.ts';
+import { findMeasuredSpace } from './seatingMeasuredModel.js';
 export const ROOM_WIDTH = 1200;
 export const ROOM_HEIGHT = 900;
 export const DESK_WIDTH = 100;
@@ -6,23 +8,30 @@ export const GRID = 10;
 export const MAX_SEATS = 100;
 const uuid = () => crypto.randomUUID();
 const overlap = (a, b) => a.x < b.x + DESK_WIDTH && a.x + DESK_WIDTH > b.x && a.y < b.y + DESK_HEIGHT && a.y + DESK_HEIGHT > b.y;
-const copy = layout => ({ version: 1, seats: layout.seats.map(seat => ({ ...seat })) });
+const copy = layout => structuredClone(layout);
 
 export function validateLayout(layout) {
-  if (layout?.version !== 1 || !Array.isArray(layout.seats)) return 'This room layout is not supported.';
+  if (![1, 2].includes(layout?.version) || !Array.isArray(layout.seats)) return 'This room layout is not supported.';
   if (layout.seats.length > MAX_SEATS) return 'A chart can have at most 100 desks.';
+  if (layout.version === 2) {
+    if (layout.units !== 'mm' || !['imperial', 'metric'].includes(layout.displayUnit) || layout.features.length > 100) return 'This measured room is not supported.';
+    const rectangles = [...layout.seats, ...layout.features.filter(f => !['door', 'window'].includes(f.kind))];
+    if (rectangles.some(r => ![r.x, r.y, r.width, r.height].every(Number.isInteger) || r.x < 0 || r.y < 0 || r.width < 10 || r.height < 10 || r.width > 50000 || r.height > 50000 || !Number.isFinite(r.rotation) || r.rotation < 0 || r.rotation >= 360)) return 'Use valid dimensions of at least 10 mm and a rotation from 0 to 359.9 degrees.';
+    if (layout.features.some(f => ['door', 'window'].includes(f.kind) && (!Number.isInteger(f.offset) || f.offset < 0 || !Number.isInteger(f.width) || f.width < 10))) return 'Use a positive opening width and nonnegative wall offset.';
+    const problem = measuredLayoutProblem(layout); if (problem) return problem;
+  }
   const ids = new Set();
   const students = new Set();
   for (let i = 0; i < layout.seats.length; i++) {
     const seat = layout.seats[i];
     if (!seat.id || ids.has(seat.id)) return 'Each desk needs a unique ID.';
     ids.add(seat.id);
-    if (!Number.isInteger(seat.x) || !Number.isInteger(seat.y) || seat.x % GRID || seat.y % GRID ||
-      seat.x < 0 || seat.y < 0 || seat.x > ROOM_WIDTH - DESK_WIDTH || seat.y > ROOM_HEIGHT - DESK_HEIGHT) return 'Keep desks inside the room and on the grid.';
+    if (layout.version === 1 && (!Number.isInteger(seat.x) || !Number.isInteger(seat.y) || seat.x % GRID || seat.y % GRID ||
+      seat.x < 0 || seat.y < 0 || seat.x > ROOM_WIDTH - DESK_WIDTH || seat.y > ROOM_HEIGHT - DESK_HEIGHT)) return 'Keep desks inside the room and on the grid.';
     if (seat.studentId && students.has(seat.studentId)) return 'A student can occupy only one desk.';
     if (seat.studentId) students.add(seat.studentId);
     if (seat.locked && !seat.studentId) return 'Only an assigned seat can be locked.';
-    if (layout.seats.slice(0, i).some(other => overlap(seat, other))) return 'Desks cannot overlap.';
+    if (layout.version === 1 && layout.seats.slice(0, i).some(other => overlap(seat, other))) return 'Desks cannot overlap.';
   }
   return null;
 }
@@ -62,6 +71,12 @@ export function createLayout(preset, count, idFactory = uuid) {
 
 export function addDesk(layout, idFactory = uuid) {
   if (layout.seats.length >= MAX_SEATS) throw new Error('A chart can have at most 100 desks.');
+  if (layout.version === 2) {
+    const desk = { id: idFactory(), width: 600, height: 450, rotation: 0, studentId: null, locked: false };
+    const position = findMeasuredSpace(layout, desk);
+    if (!position) throw new Error('There is no free space for another desk. Move or remove a desk first.');
+    return checked({ ...copy(layout), seats: [...layout.seats, { ...desk, ...position }] });
+  }
   for (let y = 0; y <= ROOM_HEIGHT - DESK_HEIGHT; y += GRID) {
     for (let x = 0; x <= ROOM_WIDTH - DESK_WIDTH; x += GRID) {
       const candidate = { x, y };
@@ -77,7 +92,7 @@ export function moveDesk(layout, seatId, x, y) {
 }
 export function removeDesk(layout, seatId) {
   if (find(layout, seatId).locked) throw new Error('Unlock the seat before removing its desk.');
-  return { version: 1, seats: layout.seats.filter(seat => seat.id !== seatId).map(seat => ({ ...seat })) };
+  return { ...copy(layout), seats: layout.seats.filter(seat => seat.id !== seatId).map(seat => ({ ...seat })) };
 }
 export function assignStudent(layout, seatId, studentId) {
   if (!studentId) throw new Error('Choose a student.');
@@ -116,7 +131,7 @@ export function shuffleSeats(layout, roster, random = Math.random) {
   return checked(next);
 }
 export function emptyLayoutCopy(layout) {
-  return { version: 1, seats: layout.seats.map(seat => ({ ...seat, studentId: null, locked: false })) };
+  return { ...copy(layout), seats: layout.seats.map(seat => ({ ...seat, studentId: null, locked: false })) };
 }
 export function unassignedStudents(layout, roster) {
   const assigned = new Set(layout.seats.map(seat => seat.studentId));
@@ -135,7 +150,7 @@ export function rosterChanges(saved, current) {
 export function reconcileRoster(layout, saved, current) {
   const ids = new Set(current.map(student => student.id));
   return {
-    layout: { version: 1, seats: layout.seats.map(seat => seat.studentId && !ids.has(seat.studentId)
+    layout: { ...copy(layout), seats: layout.seats.map(seat => seat.studentId && !ids.has(seat.studentId)
       ? { ...seat, studentId: null, locked: false } : { ...seat }) },
     changes: rosterChanges(saved, current),
   };

@@ -75,7 +75,7 @@ function buildAiReviewRecord({ generatedAt }) {
         {
           featureId: "mydesk_ai_paperwork_import",
           productionStatus: "TODO: default-off school gate; verify actual runtime separately",
-          dataCategories: ["explicitly uploaded page images may include student names and conduct details; no full roster or existing notebook contents"],
+          dataCategories: ["explicitly uploaded page images or an author-selected saved photo/PDF attachment may include student names and conduct details; no full roster, note text or automatic notebook scan"],
           approvalConclusion: "TODO: provider/account review and human synthetic extraction-quality review before enablement",
         },
         {
@@ -129,7 +129,7 @@ function buildAiReviewRecord({ generatedAt }) {
       "Confirm each AI feature's production enablement state and data categories.",
       "Confirm sensitive data is minimized before model-bound processing.",
       "Confirm AI chat tools are role/license scoped and mutating actions require user confirmation.",
-      "For My Desk import, review explicit-upload gating, selected-class server-side matching, prompt-injection/output validation, exact per-form approval, durable source cleanup, and human synthetic accuracy/correction-effort evidence.",
+      "For My Desk import, review explicit upload/selected-attachment gating, independent source-copy retention, frozen filing preferences, orientation/region transforms, selected-class server-side matching, prompt-injection/output validation, exact per-form approval, durable source cleanup, and human synthetic accuracy/correction-effort evidence for the current prompt version.",
       "Confirm audit logging evidence exists for AI chat tool requests, denials, executions, and cancellations.",
       "Confirm vendor/DPA evidence exists privately or record the gap.",
       "Record residual risks and whether any public copy needs a later approved update.",

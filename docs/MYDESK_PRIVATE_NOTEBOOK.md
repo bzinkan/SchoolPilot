@@ -17,11 +17,15 @@ entitlement, and require `author_id` to match the authenticated account. An
 administrator role never grants access to another author's notebook. Tenant RLS
 is a school-isolation backstop, not the author-authorization implementation.
 
-My Desk does not write student timeline events, shared discipline records,
-student evidence packets, parent communications, or administrator reports.
-Ordinary notebook entries and seating charts are not AI inputs. Only source
-pages deliberately uploaded through the separately enabled AI paperwork-import
-workflow are sent for extraction; rosters and existing notes are excluded.
+Ordinary note saves do not write student timeline events, school discipline
+records, student evidence packets, parent communications, or administrator reports.
+The separate **Submit to school log** action deliberately publishes
+a saved student-note snapshot and only the evidence selected by its author; see
+[SCHOOL_DISCIPLINE_RECORDS.md](SCHOOL_DISCIPLINE_RECORDS.md). No category makes a
+private note school-visible. Ordinary note text and seating charts are not AI
+inputs. Only source pages deliberately uploaded or selected from a saved
+attachment through the separately enabled paperwork-import workflow are sent for
+extraction; rosters and unrelated notebook content are excluded.
 It runs in ClassPilot web, including supported phone browsers; there is
 no native PassPilot route or extension change. Existing camera Permissions-Policy
 is unchanged; the browser's file/camera picker supplies images.
@@ -32,6 +36,35 @@ preserving the school ID. Past classes remain available to the author with a
 current authorized school membership; historical access does not grant current
 roster access. Drizzle cannot express PostgreSQL's column-list `SET NULL`, so use
 the ledger migration, not `db:push`, to install or reconcile these two FKs.
+
+## Personal class folders and student history
+
+**My teaching classes** groups active primary/co-teacher assignments by explicit
+grade metadata, including an administrator's own teaching assignments. It does
+not depend on a current teaching session, weekday or schedule enablement. Missing
+grade metadata remains visible in Other teaching classes; do not infer grades
+from class names. Administrators retain their broader current-school class access
+under **Other classes**. Presentation never narrows `currentClassWhere` or roster
+authorization. Existing class IDs, school-year/term labels and filing snapshots
+remain separate even when displayed beneath the same grade.
+
+The teacher chooses one **Default filing class** per grade, stored in
+`mydesk_preferences` with exact school/author ownership and a revision. Validate
+that the preference is a current authorized class of that grade; stale/deleted
+preferences require a new choice, never an arbitrary first class. An explicit
+class context such as a seating-chart shortcut wins over a default. The selected
+student must belong to the chosen current filing class. Preferences do not refile
+existing notes, change rosters, or establish student access.
+
+The student directory deduplicates authorized current rosters by stable student
+ID and includes students with zero notes. Each student's private log includes
+all of this author's notes for that historical student ID across classes and
+years, with cursor pagination and matching export filters. Historical-only rows
+come from owned filing snapshots, without querying newly restricted live student
+details. Renames and promotion do not merge identities or rewrite old note
+labels. General/class notes do not become student notes merely because a student
+belongs to their class. Regular All notes/current-class/Past classes filters
+keep their existing filing behavior.
 
 ## Persistence and save lifecycle
 
@@ -82,6 +115,7 @@ successful DELETE is not proof that no in-flight writer remains.
 | Uploaded PDFs | Same private bucket; validated as readable, unencrypted PDFs | Original bytes and embedded document metadata/signatures are retained until deletion; no metadata-stripping or malware-free guarantee |
 | Pending reservations and failed cleanup | PostgreSQL worker queue | 24-hour abandonment cutoff; bounded retry with retained keys |
 | Operation audit records | Existing audit storage | IDs/actions/counts only; existing audit policy applies |
+| Personal grade filing preferences | School/author-scoped PostgreSQL | Retained until changed or verified account destruction; never alter filed notes |
 
 Ordinary PDF inputs use the same bounded native inspection helper as imports.
 Linux prlimit bounds address space/CPU/output, and the helper bounds wall time,
@@ -112,7 +146,10 @@ This is separate from screen-preview/timeline retention. Disabling My Desk or
 revoking membership blocks notebook access but does not silently destroy records.
 Permanent destruction on contract termination follows the executed agreement and
 verified operator process in WISP section 9. Include notebook DB records, retained
-cleanup keys, and S3 objects in that process; verify worker/backups separately.
+cleanup keys, author preferences, and S3 objects in that process; verify worker/backups separately.
+School discipline records submitted from a note have their own school-owned
+retention and destruction scope. Source-note deletion never queues their copied
+evidence for deletion.
 Do not represent soft deletion or a deployed worker as completed destruction.
 The existing school-delete and staff-removal actions only disable access. For
 permanent erasure, first queue the scoped notebook records, drain/fence outstanding

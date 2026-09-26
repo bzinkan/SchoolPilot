@@ -42,6 +42,7 @@ import {
 } from "../calendarHistoryGuard";
 import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
 import StaffAccessTransitionDialog from "../../../shared/components/StaffAccessTransitionDialog";
+import DisciplineAccessPanel from "../components/DisciplineAccessPanel";
 import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
 
 const ADMIN_TAB_VALUES = new Set(["staff", "student-portal", "calendar", "audit"]);
@@ -873,6 +874,7 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
         </TabsList>
 
         <TabsContent value="staff" className="space-y-6">
+          <DisciplineAccessPanel />
           {/* Staff Management Card */}
           <Card>
             <CardHeader>

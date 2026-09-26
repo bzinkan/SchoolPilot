@@ -9,6 +9,8 @@ export const myDeskKeys = {
   root: (schoolId, viewerId) => [MY_DESK_ROOT, schoolId || 'no-school', viewerId || 'no-viewer'],
   capabilities: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'capabilities'],
   classes: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'classes'],
+  directory: (schoolId, viewerId, q) => [...myDeskKeys.root(schoolId, viewerId), 'directory', q],
+  history: (schoolId, viewerId, studentId, filters) => [...myDeskKeys.root(schoolId, viewerId), 'history', studentId, buildMyDeskQuery(filters)],
   categories: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'categories'],
   students: (schoolId, viewerId, groupId) => [...myDeskKeys.root(schoolId, viewerId), 'students', groupId],
   noteStudents: (schoolId, viewerId, groupId) => [...myDeskKeys.root(schoolId, viewerId), 'note-students', groupId],
@@ -44,6 +46,13 @@ export function myDeskTarget(note) {
 
 export function targetInput(targetKind, groupId, studentId) {
   return { targetKind, ...(targetKind !== 'general' && groupId ? { groupId } : {}), ...(targetKind === 'student' && studentId ? { studentId } : {}) };
+}
+
+export function preferredStudentClass(classes, preferences, explicitClassId) {
+  if (explicitClassId && classes.some(group => group.id === explicitClassId)) return explicitClassId;
+  if (classes.length === 1) return classes[0].id;
+  const preferred = classes.filter(group => group.gradeLevel && preferences?.preferredClasses?.[group.gradeLevel] === group.id);
+  return preferred.length === 1 ? preferred[0].id : '';
 }
 
 export function schoolDate(timeZone = 'America/New_York', date = new Date()) {

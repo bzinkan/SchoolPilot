@@ -7,7 +7,7 @@ import { Input } from '../../../components/ui/input';
 import { Textarea } from '../../../components/ui/textarea';
 import { useMyDeskCategories, useMyDeskClasses, useMyDeskStudents, useMyDeskStudentClasses } from '../hooks/useMyDesk';
 import { attachmentDigest, invalidateMyDesk, myDeskApi } from '../lib/myDesk';
-import { myDeskError, isMyDeskNoteMissing, schoolDate, targetInput, validateMyDeskAttachment, MY_DESK_MAX_ATTACHMENTS } from '../lib/myDeskModel';
+import { myDeskError, isMyDeskNoteMissing, schoolDate, targetInput, validateMyDeskAttachment, MY_DESK_MAX_ATTACHMENTS, preferredStudentClass } from '../lib/myDeskModel';
 import '../myDesk.css';
 
 // Closing unmounts the form itself, not just Radix's portal. Parents also key by identity.
@@ -42,9 +42,11 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
   const classes = useMyDeskClasses(schoolId, viewerId);
   const allCurrentClasses = classes.data?.current || [];
   const fixedStudent = targetKind === 'student' && student && !note;
-  const studentClasses = useMyDeskStudentClasses(schoolId, viewerId, fixedStudent ? student.id : null, allCurrentClasses);
-  const currentClasses = fixedStudent ? studentClasses.data || [] : allCurrentClasses;
-  const effectiveGroupId = fixedStudent && !groupId && currentClasses.length === 1 ? currentClasses[0].id : groupId;
+  const studentClasses = useMyDeskStudentClasses(schoolId, viewerId, fixedStudent && !student.classes ? student.id : null, allCurrentClasses);
+  const currentClasses = fixedStudent ? student.classes || studentClasses.data || [] : allCurrentClasses;
+  const effectiveGroupId = fixedStudent && !groupId ? preferredStudentClass(currentClasses, classes.data?.preferences, initialGroupId) : groupId;
+  const selectedClass = currentClasses.find(item => item.id === effectiveGroupId);
+  const canSetDefault = fixedStudent && selectedClass?.personal && selectedClass.gradeLevel && currentClasses.filter(item => item.personal && item.gradeLevel === selectedClass.gradeLevel).length > 1 && classes.data?.preferences?.preferredClasses?.[selectedClass.gradeLevel] !== selectedClass.id;
   const isCurrentClass = currentClasses.some(item => item.id === effectiveGroupId);
   const students = useMyDeskStudents(schoolId, viewerId, targetKind === 'student' && isCurrentClass ? effectiveGroupId : null);
   useEffect(() => {
@@ -59,6 +61,17 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, busy, partial]);
 
+  const saveClassDefault = async () => {
+    const controller = lifetime.current;
+    if (inFlight.current || !controller || controller.signal.aborted || !canSetDefault) return;
+    inFlight.current = true; setBusy(true); setError('');
+    try {
+      await myDeskApi(schoolId, controller.signal).updatePreferences({ revision: classes.data.preferences.revision,
+        preferredClasses: { ...classes.data.preferences.preferredClasses, [selectedClass.gradeLevel]: selectedClass.id } });
+      controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId);
+    } catch (failure) { if (!controller.signal.aborted) { setError(myDeskError(failure)); await classes.refetch(); } }
+    finally { inFlight.current = false; if (!controller.signal.aborted) setBusy(false); }
+  };
   const close = () => onOpenChange(false);
   const requestClose = () => {
     if (inFlight.current) return;
@@ -186,6 +199,8 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
           <fieldset disabled={busy || partial} className="space-y-4 min-w-0">
             <div className="mydesk-form-grid"><label>File under<select aria-label="File under" value={targetKind} onChange={event => { setTargetKind(event.target.value); setGroupId(''); setStudentId(student?.id || ''); }}><option value="general">General</option><option value="class">Class</option><option value="student">Student</option></select></label>
               <label>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}>{(categories.data?.categories || [{ key: 'note', label: 'Note' }]).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label></div>
+            {fixedStudent && currentClasses.length > 1 && <p className="text-sm text-muted-foreground">Choose a class for this student. A saved grade default is used only when the student belongs to it.</p>}
+            {canSetDefault && <Button type="button" variant="outline" onClick={saveClassDefault}>Use {selectedClass.name} as my grade {selectedClass.gradeLevel} default</Button>}
             {targetKind !== 'general' && <div className="mydesk-form-grid"><label>Class<select aria-label="Class" value={effectiveGroupId} onChange={event => { setGroupId(event.target.value); if (!fixedStudent) setStudentId(''); }}><option value="">Choose a class</option>{effectiveGroupId && !isCurrentClass && note && <option value={effectiveGroupId}>{note.groupName || 'Saved class'}</option>}{currentClasses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               {targetKind === 'student' && <label>Student<select aria-label="Student" value={studentId} disabled={Boolean(fixedStudent)} onChange={event => setStudentId(event.target.value)}><option value="">Choose a student</option>{studentId && !(students.data?.students || []).some(item => item.id === studentId) && <option value={studentId}>{note?.studentName || student?.name || 'Saved student'}</option>}{(students.data?.students || []).map(item => <option key={item.id} value={item.id}>{item.name || `${item.firstName} ${item.lastName}`}</option>)}</select></label>}</div>}
             {fixedStudent && !studentClasses.isPending && currentClasses.length === 0 && <p role="alert" className="mydesk-error">This student is not in one of your current classes. You can write a general note instead.</p>}

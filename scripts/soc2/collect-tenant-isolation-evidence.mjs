@@ -17,6 +17,10 @@ const REQUIRED_HASH_FILES = [
   { key: "rlsPolicyTests", label: "RLS policy tests", path: "tests/rls-policy.test.ts" },
   { key: "rlsTenantContextTests", label: "RLS tenant context tests", path: "tests/rls-tenant-context.test.ts" },
   { key: "rlsCiSetup", label: "RLS CI setup", path: "tests/setup-rls-ci.ts" },
+  { key: "workspaceSchemaTests", label: "Personal preferences and discipline schema/RLS behavior", path: "tests/mydesk-workspace-schema.integration.test.ts" },
+  { key: "disciplineAuthorizationTests", label: "School discipline grants, ownership, immutable evidence and recovery behavior", path: "tests/school-discipline.integration.test.ts" },
+  { key: "disciplineAccess", label: "School discipline authorization and grant management", path: "src/services/schoolDisciplineAccess.ts" },
+  { key: "disciplineDataFlow", label: "School-owned discipline data flow and retention contract", path: "docs/SCHOOL_DISCIPLINE_RECORDS.md" },
 ];
 
 function argValue(name, fallback = "") {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { QueryClient } from '@tanstack/react-query';
-import { myDeskKeys, buildMyDeskQuery, targetInput, validateMyDeskAttachment, schoolDate, clearMyDeskQueries } from '../src/products/classpilot/lib/myDeskModel.js';
+import { myDeskKeys, buildMyDeskQuery, targetInput, validateMyDeskAttachment, schoolDate, clearMyDeskQueries, preferredStudentClass } from '../src/products/classpilot/lib/myDeskModel.js';
 
 test('private notebook cache separates schools, authors and attachment bytes', () => {
   assert.notDeepEqual(myDeskKeys.notes('school', 'alice', {}), myDeskKeys.notes('school', 'bob', {}));
@@ -27,4 +27,16 @@ test('attachment validation and school-local dates match notebook constraints', 
   assert.match(validateMyDeskAttachment({ type: 'image/png', size: 10 * 1024 * 1024 + 1 }), /10 MiB/);
   assert.match(validateMyDeskAttachment({ type: 'application/pdf', size: 0 }), /empty/);
   assert.equal(schoolDate('America/New_York', new Date('2026-09-25T01:00:00Z')), '2026-09-24');
+});
+
+test('student defaults use exact grade metadata and enrollment; explicit class wins and stale defaults stay unselected', () => {
+  const classes = [{ id: 'reading', gradeLevel: '5' }, { id: 'science', gradeLevel: '5' }];
+  const preferences = { preferredClasses: { '5': 'reading' } };
+  assert.equal(preferredStudentClass(classes, preferences), 'reading');
+  assert.equal(preferredStudentClass(classes, preferences, 'science'), 'science');
+  assert.equal(preferredStudentClass(classes, { preferredClasses: { '5': 'not-enrolled' } }), '');
+  assert.equal(preferredStudentClass([{ id: 'misleading-grade-5-name', gradeLevel: '6' }, { id: 'other', gradeLevel: '6' }], preferences), '');
+  assert.equal(preferredStudentClass([{ id: 'only', gradeLevel: '6' }], preferences), 'only');
+  assert.notDeepEqual(myDeskKeys.history('school', 'alice', 'student', {}), myDeskKeys.history('school', 'bob', 'student', {}));
+  assert.notDeepEqual(myDeskKeys.directory('a', 'alice', ''), myDeskKeys.directory('b', 'alice', ''));
 });

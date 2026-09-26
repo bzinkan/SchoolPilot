@@ -20,10 +20,10 @@ import {
   buildImportAttachment,
   cropImportRegion,
   importExtractionSchema,
-  importRegionSchema,
+  detectedRegionToCrop,
   MyDeskImportProcessingError,
   createImportAiProcessor,
-  MYDESK_IMPORT_PROMPT_VERSION,
+  supportedImportPromptVersion,
 } from "./mydeskImportProcessing.js";
 import {
   importAssetOwn,
@@ -44,6 +44,7 @@ import {
 } from "./mydeskImportsValidation.js";
 import {
   loadMyDeskClassRoster,
+  currentClasses,
   type MyDeskActor,
   type MyDeskDatabase,
 } from "./mydesk.js";
@@ -246,6 +247,7 @@ export async function processClaimedMyDeskImport(
       ...defaultProcessor,
       ...createImportAiProcessor(undefined, {
         model: claim.modelVersion ?? undefined,
+        promptVersion: claim.promptVersion ?? undefined,
       }),
     },
     store = options.store ?? myDeskObjectStore;
@@ -262,7 +264,7 @@ export async function processClaimedMyDeskImport(
   try {
     if (
       !claim.modelVersion ||
-      claim.promptVersion !== MYDESK_IMPORT_PROMPT_VERSION
+      !supportedImportPromptVersion(claim.promptVersion)
     )
       throw importError(
         "PROCESSOR_VERSION_UNAVAILABLE",
@@ -343,7 +345,7 @@ export async function processClaimedMyDeskImport(
       await withLease(actor, claim.id, leaseId, async () => undefined);
       const found = await processor.detectImportForms(bytes); // Every provider boundary has a fresh authority + lease check.
       await withLease(actor, claim.id, leaseId, async (database) => {
-        const regions = found.map((r) => importRegionSchema.parse(r));
+        const regions = found.map(detectedRegionToCrop);
         const list = await database
           .select({ id: items.id })
           .from(items)
@@ -363,7 +365,7 @@ export async function processClaimedMyDeskImport(
               importId: claim.id,
               clientRequestId: importUuid(`import-form:${page.id}:${index}`),
               ordinal: list.length + index,
-              regions: [{ assetId: page.id, ...region, rotation: 0 as const }],
+              regions: [{ assetId: page.id, ...region }],
               extractRequested: true,
             })),
           );
@@ -473,7 +475,17 @@ export async function processClaimedMyDeskImport(
                     throw error;
                 }
               }
-              if (matches.length === 1) Object.assign(match, matches[0]);
+              if (new Set(matches.map(candidate => candidate.studentId)).size === 1) {
+                if (matches.length === 1) Object.assign(match, matches[0]);
+                else {
+                  const personalClasses = await currentClasses(current, database);
+                  const defaults = run.preferencesSnapshot.preferredClasses;
+                  const preferred = matches.filter(candidate => personalClasses.some(group =>
+                    group.id === candidate.groupId && group.personal && group.gradeLevel != null &&
+                    defaults[String(group.gradeLevel)] === group.id));
+                  if (preferred.length === 1) Object.assign(match, preferred[0]);
+                }
+              }
             }
             // A reread replaces extracted text, not the teacher's already selected student.
             await database

@@ -11,6 +11,52 @@ PR #510 contains all three immutable migrations. Feature modes do not defer DDL.
 Do not downgrade that combined artifact or edit its checksummed migrations.
 Operational evidence, not this document, establishes actual production status.
 
+## Workspace expansion after the verified base release
+
+The September 26 verified live Terraform baseline remains exactly 109 tables.
+The personal grade folders/student history, selected-attachment AI import,
+measured seating and explicit school-discipline work is a new release. It does
+not authorize pushing, merging, deployment, AI enablement or production writes.
+Keep all original checksummed migrations and historical inventories unchanged.
+
+The additive manifest includes `mydesk-workspace-expansion-20260926`,
+`mydesk-measured-seating-20260926`, and `school-discipline-records-20260927`.
+Workspace preferences and four discipline tables expand the reviewed target to
+114 tables. The measured seating migration changes a bounded JSON compatibility
+constraint without converting saved v1 layouts. The workspace migration adds
+frozen preference/source metadata to imports without changing original checksums.
+
+Before an authorized release, run backend/frontend checks, ordinary and real
+restricted-role RLS tests, migration/schema and admission contracts, router and
+dashboard regressions, and SOC2 checks. Relevant behavior includes personal admin
+defaults without reduced permissions, zero-note student directories, historical
+labels, source-copy races, orientation/crop correction, measured room geometry,
+immutable school records, selected evidence, grants/revocation, retries, and
+identity switching. Verify the existing serving baseline and migration ledger.
+
+After explicit release authorization, deploy backend/worker and admit this exact
+registered five-table bundle through the existing reviewed deploy process:
+
+```text
+mydesk_preferences,school_discipline_records,school_discipline_versions,school_discipline_attachments,school_discipline_access
+```
+
+Verify all five canonical forced policies plus existing RLS protections, then
+deploy the matching frontend. Do not rerun the already-admitted six-table flag or
+use a task template to replace serving configuration. Keep the verified109
+Terraform CSV/order/hash unchanged until a separate observed114 adoption review.
+School-wide discipline reader grants begin empty. They are managed deliberately
+by active school administrators, not by a product enablement setting.
+
+Keep AI imports off: orientation prompt `mydesk-forms-20260926-v2` and the selected
+attachment flow require updated provider/data-flow, synthetic quality and
+capacity review. Existing readiness evidence for a different prompt is not valid.
+Use synthetic source notes and test identities for destructive/recovery checks;
+verify real Android interaction and Letter/A4 output during the authorized live
+walkthrough. Rollback preserves new tables, private ownership, school evidence,
+forced RLS, bucket permissions and cleanup. Coordinate compatible API/frontend
+versions; an older client must not rewrite a saved v2 chart as v1.
+
 ## Configuration and interfaces
 
 | Setting | Default | Effect |
@@ -119,8 +165,9 @@ prerequisite; a separate staging acceptance environment is not required.
 
 Keep AI off until the actual provider account/model retention arrangement is
 reviewed, not inferred from a general policy or local object deletion. Use direct
-requests without Files API archives or prompt caching. Never send existing notes
-or class rosters. Only teacher-selected source images are sent, and nothing is
+requests without Files API archives or prompt caching. Never scan existing notes
+or send note text or class rosters. Only teacher-selected source images, including
+an explicitly selected saved attachment, are sent, and nothing is
 published until teacher review and atomic Save.
 
 Run the synthetic evaluator documented in [MYDESK_AI_IMPORT.md](MYDESK_AI_IMPORT.md)

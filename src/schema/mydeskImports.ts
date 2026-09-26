@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, check, date, foreignKey, index, integer, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import { schools, users } from "./core.js";
+import type { MyDeskPreferencesSnapshot } from "./mydeskPreferences.js";
 
 export type ImportRegion = { assetId: string; x: number; y: number; width: number; height: number; rotation: 0 | 90 | 180 | 270 };
 export type ImportReceipt = { id: string; fingerprint: string; kind: string; revision: number };
@@ -15,6 +16,8 @@ export const mydeskImports = pgTable("mydesk_imports", {
   status: text("status").$type<ImportStatus>().notNull().default("uploading"), revision: integer("revision").notNull().default(1),
   expectedSourceCount: integer("expected_source_count").notNull(),
   selectedGroupIds: jsonb("selected_group_ids").$type<string[]>().notNull().default([]),
+  preferencesSnapshot: jsonb("preferences_snapshot").$type<MyDeskPreferencesSnapshot>().notNull().default({ revision: 0, preferredClasses: {} }),
+  sourceNoteId: varchar("source_note_id"), sourceAttachmentId: varchar("source_attachment_id"),
   pageDecisions: jsonb("page_decisions").$type<Array<{ assetId: string; excluded: boolean }>>().notNull().default([]),
   mutationReceipts: jsonb("mutation_receipts").$type<ImportReceipt[]>().notNull().default([]), commitReceipt: jsonb("commit_receipt").$type<ImportCommitReceipt>(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }).notNull(),
@@ -24,6 +27,7 @@ export const mydeskImports = pgTable("mydesk_imports", {
 }, t => [unique("mydesk_imports_owner_id").on(t.schoolId,t.authorId,t.id), uniqueIndex("mydesk_imports_request").on(t.schoolId,t.authorId,t.clientRequestId),
   index("mydesk_imports_queue").on(t.status,t.nextAttemptAt,t.leaseUntil), index("mydesk_imports_owner").on(t.schoolId,t.authorId,t.createdAt), index("mydesk_imports_quota").on(t.schoolId,t.quotaDate),
   check("mydesk_imports_state", sql`${t.status} IN ('uploading','queued','processing','review','failed','completed','cancelled','expired')`),
+  check("mydesk_imports_workspace_snapshot", sql`jsonb_typeof(${t.preferencesSnapshot})='object' AND octet_length(${t.preferencesSnapshot}::text)<=12288 AND ((${t.sourceNoteId} IS NULL)=(${t.sourceAttachmentId} IS NULL)) AND (${t.sourceNoteId} IS NULL OR char_length(${t.sourceNoteId}) BETWEEN 1 AND 128) AND (${t.sourceAttachmentId} IS NULL OR char_length(${t.sourceAttachmentId}) BETWEEN 1 AND 128)`),
   check("mydesk_imports_bounds", sql`${t.revision}>0 AND ${t.expectedSourceCount} BETWEEN 1 AND 5 AND ${t.attempts}>=0 AND ${t.pageCount} BETWEEN 0 AND 20 AND ${t.requestFingerprint} ~ '^[0-9a-f]{64}$' AND (${t.lastErrorCode} IS NULL OR ${t.lastErrorCode} ~ '^[A-Za-z0-9_]{1,64}$') AND ((${t.leaseId} IS NULL)=(${t.leaseUntil} IS NULL))`),
   check("mydesk_imports_provenance", sql`(${t.modelVersion} IS NULL OR ${t.modelVersion} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$') AND (${t.promptVersion} IS NULL OR ${t.promptVersion} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$')`),
   check("mydesk_imports_json", sql`

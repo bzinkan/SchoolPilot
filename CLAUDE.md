@@ -122,8 +122,28 @@ toggle, school-ID configuration or individual enrollment exists.
 `off`/`on`, default off; seating and AI require the base mode. Retired school
 allowlists are rejected. Cleanup remains active when modes or membership are off.
 The only AI exception is teacher-started paperwork import of selected source
-images; never scan existing notes or send class rosters to the provider. Preserve
+images, including an explicitly selected saved attachment; never scan existing
+notes or send note text, seating charts or class rosters to the provider. Preserve
 manual review, atomic Save, private byte serving and content-free operational logs.
+
+Personal grade folders come from active primary/co-teacher assignments even for
+administrators, without a teaching session or schedule-day filter. Keep broader
+administrator class authorization intact under Other classes. `mydesk_preferences`
+stores one explicit default filing class per grade per school/author; preferences
+never move filed notes. Student logs collect only the author's historical notes
+across classes/years using stable filing IDs; current directory labels require
+current roster authorization. Measured seating layouts are version 2; never
+silently convert or mutate stored version-1 charts.
+
+School discipline records are a separate, deliberate teacher submission of a
+saved student-note snapshot and selected independently copied evidence. Categories,
+private imports and note saves never publish automatically. The four
+`school_discipline_*` tables allow own submissions plus explicitly granted active
+admin/school_admin readers. Grants default off and revoke permanently on loss of
+the last qualifying admin membership. School administrators manage grants through
+the narrow audited endpoint; they may self-grant. Readers only view/export; only
+the author appends reasoned corrections/withdrawals. Private deletion does not
+erase school records. See `docs/SCHOOL_DISCIPLINE_RECORDS.md`.
 
 Follow `docs/MYDESK_PRODUCTION_RELEASE.md` for combined six-table forward admission,
 production RLS verification (including already-applied migrations), private storage,
@@ -132,6 +152,10 @@ PR #510 already combines the immutable migrations; do not downgrade to an M1-onl
 artifact or rewrite historical checksums. Runtime templates are not serving task
 definitions. Keep production Terraform RLS at the verified baseline until separate
 observed adoption. Preserve bucket/IAM, cleanup and RLS on rollback.
+The workspace expansion has a separate five-table admission (`mydesk_preferences`
+and four school discipline tables) and a 114-table target. Keep the verified
+109-table production baseline unchanged until a separately authorized release and
+observed adoption. This implementation does not authorize deployment or AI enablement.
 
 Notebook/seating/import data flows and retention remain documented in
 `docs/MYDESK_PRIVATE_NOTEBOOK.md`, `docs/MYDESK_PRIVATE_SEATING.md`, and

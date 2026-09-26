@@ -160,7 +160,7 @@ export default function Subprocessors() {
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
                     <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; separately enabled, teacher-started My Desk paperwork import</td>
-                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail message text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. My Desk paperwork import processes explicitly uploaded page images, which may include student names and conduct details, to prepare private drafts for teacher review; it does not send school rosters or existing notebook entries.</td>
+                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail message text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. My Desk paperwork import processes explicitly uploaded images or a saved photo/PDF attachment deliberately selected by its author, which may include student names and conduct details, to prepare private drafts for teacher review. It does not send note text, unselected files, school rosters or seating charts, or automatically scan existing notes.</td>
                   </tr>
                 </tbody>
               </table>
@@ -182,7 +182,8 @@ export default function Subprocessors() {
               explain Anthropic's training-use limits for customer API inputs and outputs. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
             </p>
             <p className="text-slate-600 text-sm mt-2">
-              My Desk AI imports require separate school enablement and an explicit author upload.
+              My Desk AI imports require separate operational activation and an explicit author upload
+              or saved-attachment selection.
               Provider account retention and access terms are reviewed before activation. Deleting
               Schoolpilot's temporary source files does not itself delete provider-retained data.
             </p>

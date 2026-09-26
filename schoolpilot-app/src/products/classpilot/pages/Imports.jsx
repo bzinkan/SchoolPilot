@@ -33,12 +33,12 @@ function ImportLoader({ access, importId }) {
 }
 
 export function ImportLibrary({ access }) {
-  const navigate = useNavigate(); const location = useLocation(); const [creating, setCreating] = useState(false);
+  const navigate = useNavigate(); const location = useLocation(); const [source, setSource] = useState(location.state?.source || null); const [creating, setCreating] = useState(Boolean(location.state?.source));
   const leaveRef = useRef(null);
   const query = useInfiniteQuery({ queryKey: myDeskKeys.imports(access.schoolId, access.viewerId), initialPageParam: '', queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).imports(pageParam), getNextPageParam: page => page.nextCursor || undefined, retry: false });
   const rows = query.data?.pages.flatMap(page => page.imports) || [];
-  return <ImportShell onNavigate={path => leaveRef.current ? leaveRef.current(path) : navigate(path)}><main className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><h1>Paperwork</h1></div><p>Turn paper forms into notes you have checked.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see these imports.</p></div><Button onClick={() => setCreating(true)}><Plus className="size-4" />New import</Button></div>
-    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} onClose={() => setCreating(false)} onStarted={batch => navigate(`/classpilot/my-desk/imports/${batch.id}`)} /> : <>
+  return <ImportShell onNavigate={path => leaveRef.current ? leaveRef.current(path) : navigate(path)}><main className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><h1>Paperwork</h1></div><p>Turn paper forms into notes you have checked.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see these imports.</p></div><Button disabled={creating} onClick={() => { setSource(null); setCreating(true); }}><Plus className="size-4" />New import</Button></div>
+    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} source={source} onClose={() => { setCreating(false); setSource(null); }} onStarted={batch => navigate(`/classpilot/my-desk/imports/${batch.id}`)} /> : <>
       <div className="import-explainer"><span>1. Upload your forms</span><span>2. Check pages and students</span><span>3. Save your notes together</span></div>
       {query.isPending ? <p role="status">Loading saved progress…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <section className="mydesk-empty"><FileScan /><h2>A little less retyping.</h2><p>Import detention or referral forms, including several forms on one page. You decide what becomes a note.</p></section> : <div className="import-list">{rows.map(batch => <article key={batch.id}><div><h2>Paperwork import</h2><p>{batch.pageCount || 0} pages · {batch.status}</p><p className="import-muted">{batch.status === 'completed' ? 'Saved to your private notes' : `Review expires ${importExpiry(batch.expiresAt || batch.uploadExpiresAt)}`}</p></div><Button variant="outline" onClick={() => navigate(`/classpilot/my-desk/imports/${batch.id}`)}>{batch.status === 'completed' ? 'View saved notes' : 'Resume review'}</Button></article>)}</div>}
       {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>Load more imports</Button>}
@@ -46,14 +46,14 @@ export function ImportLibrary({ access }) {
   </main></ImportShell>;
 }
 
-export function ImportUpload({ access, initialGroupId, onClose, onStarted, leaveRef }) {
+export function ImportUpload({ access, initialGroupId, source, onClose, onStarted, leaveRef }) {
   const { schoolId, viewerId } = access; const navigate = useNavigate();
   const classes = useMyDeskClasses(schoolId, viewerId); const [groups, setGroups] = useState(initialGroupId ? [initialGroupId] : []); const [files, setFiles] = useState([]);
   const selectedGroups = groups.filter(id => classes.data?.current?.some(group => group.id === id));
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [progress, setProgress] = useState(''); const [pending, setPending] = useState(false); const [confirm, setConfirm] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const transaction = useRef(null), lifetime = useRef(null), working = useRef(false), picker = useRef(null), camera = useRef(null);
-  const dirty = files.length > 0 || groups.length > 0 || pending;
+  const dirty = Boolean(source) || files.length > 0 || groups.length > 0 || pending;
   useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => controller.abort(); }, []);
   useEffect(() => { if (!dirty) return; const warn = event => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty]);
   useEffect(() => { if (!dirty) return; return guardPrivateWorkspaceHistory(path => setConfirm({ title: 'Leave this upload?', description: 'Files that have not finished uploading will need to be selected again. Uploaded private sources expire automatically.', label: 'Leave upload', action: () => navigate(path) })); }, [dirty, navigate]);
@@ -65,7 +65,7 @@ export function ImportUpload({ access, initialGroupId, onClose, onStarted, leave
     try {
       const tx = transaction.current, api = myDeskApi(schoolId, controller.signal);
       // A lost create response still resolves through the same idempotent key.
-      if (!tx.batch) tx.batch = (await api.createImport(tx.create)).import;
+      if (!tx.batch) tx.batch = (await (source ? api.importFromAttachment(tx.create) : api.createImport(tx.create))).import;
       if (!tx.cancel) { const fresh = (await api.import(tx.batch.id)).import; tx.cancel = { requestId: crypto.randomUUID(), revision: fresh.revision }; }
       await api.cancelImport(tx.batch.id, tx.cancel); controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); onClose();
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
@@ -78,11 +78,11 @@ export function ImportUpload({ access, initialGroupId, onClose, onStarted, leave
     const api = myDeskApi(schoolId, controller.signal); working.current = true; setBusy(true); setError('');
     try {
       if (!transaction.current) {
-        const problem = validateImportFiles(files); if (problem) throw new Error(problem); if (!selectedGroups.length) throw new Error('Select the current classes whose students are on these forms.');
-        transaction.current = { create: { clientRequestId: crypto.randomUUID(), selectedGroupIds: [...selectedGroups], expectedSourceCount: files.length }, files: files.map(file => ({ file, clientRequestId: crypto.randomUUID() })) }; setPending(true);
+        const problem = source ? '' : validateImportFiles(files); if (problem) throw new Error(problem); if (!selectedGroups.length) throw new Error('Select the current classes whose students are on these forms.');
+        transaction.current = { create: { clientRequestId: crypto.randomUUID(), selectedGroupIds: [...selectedGroups], ...(source ? { noteId: source.noteId, attachmentId: source.attachmentId } : { expectedSourceCount: files.length }) }, files: source ? [] : files.map(file => ({ file, clientRequestId: crypto.randomUUID() })) }; setPending(true);
       }
       const tx = transaction.current;
-      if (!tx.batch) { setProgress('Opening your private import…'); tx.batch = (await api.createImport(tx.create)).import; }
+      if (!tx.batch) { setProgress('Opening your private import…'); tx.batch = (await (source ? api.importFromAttachment(tx.create) : api.createImport(tx.create))).import; }
       for (const [index, entry] of tx.files.entries()) {
         if (entry.uploaded) continue; setProgress(`Uploading ${index + 1} of ${tx.files.length}…`);
         if (!entry.digest) entry.digest = await attachmentDigest(entry.file); controller.signal.throwIfAborted();
@@ -97,10 +97,10 @@ export function ImportUpload({ access, initialGroupId, onClose, onStarted, leave
   return <section className="import-upload"><div><p className="import-eyebrow">New import</p><h2>Gather your paperwork</h2><p>Up to 5 PDFs or JPEG, PNG, WebP photos · 10 MiB each · 20 pages · 50 forms.</p></div>
     <fieldset disabled={busy || pending}><legend>Which current classes are on these forms?</legend><p className="import-muted">Choose every relevant class. You will match each subject student during review.</p><div className="import-class-options">{classes.data?.current?.map(group => <label key={group.id}><input type="checkbox" checked={groups.includes(group.id)} onChange={event => setGroups(previous => event.target.checked ? [...previous, group.id].slice(0, 20) : previous.filter(id => id !== group.id))} />{group.name}</label>)}</div>{classes.isError && <p role="alert">Classes could not be loaded. <button type="button" onClick={() => classes.refetch()}>Try again</button></p>}</fieldset>
     <input ref={picker} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple hidden onChange={choose} /><input ref={camera} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={choose} />
-    <div className="import-file-zone"><FileScan className="size-8" /><p>Several forms on one page are welcome.</p><div className="import-actions"><Button variant="outline" disabled={busy || pending} onClick={() => picker.current.click()}><Upload className="size-4" />Choose files</Button><Button variant="outline" disabled={busy || pending} onClick={() => camera.current.click()}><Camera className="size-4" />Take a photo</Button></div></div>
+    {source ? <div className="import-notice"><strong>Use your saved attachment</strong><p>A separate private review copy will be prepared. The original file stays attached to your note until you delete it. AI imports support up to 20 PDF pages.</p></div> : <div className="import-file-zone"><FileScan className="size-8" /><p>Several forms on one page are welcome.</p><div className="import-actions"><Button variant="outline" disabled={busy || pending} onClick={() => picker.current.click()}><Upload className="size-4" />Choose files</Button><Button variant="outline" disabled={busy || pending} onClick={() => camera.current.click()}><Camera className="size-4" />Take a photo</Button></div></div>}
     {files.length > 0 && <ul className="import-files">{files.map((file, index) => <li key={`${file.name}:${index}`}><span>{file.name} <small>{(file.size / 1048576).toFixed(1)} MiB</small></span><Button variant="ghost" disabled={busy || pending} onClick={() => setFiles(previous => previous.filter((_, i) => i !== index))}>Remove</Button></li>)}</ul>}
     <div className="import-notice"><strong>Prepare drafts with {access.importProvider || 'Anthropic'}</strong><p>These documents will be sent to our AI provider to prepare private drafts. Review every form before saving. Existing notes and class rosters are not sent.</p><p>Private review progress expires after 7 days. Nothing is added to your notes until you save.</p>{access.importLimits && <p>Daily allowance: <strong>{Number(access.importLimits.teacherDailyPages).toLocaleString()} pages per teacher</strong> · <strong>{Number(access.importLimits.schoolDailyPages).toLocaleString()} pages per school</strong>. Preparing drafts, re-reading forms, and reading newly added forms count toward these allowances.</p>}</div>
     {error && <p className="import-error" role="alert">{error}</p>}{busy && <p role="status">{progress}</p>}
-    <div className="import-actions"><Button disabled={busy || (!pending && (!files.length || !selectedGroups.length))} onClick={cancelling ? cancel : start}>{busy ? 'Working…' : cancelling ? 'Retry cancellation' : pending ? 'Retry import' : 'Send files and prepare drafts'}</Button><Button variant="ghost" disabled={busy} onClick={close}>Cancel</Button></div><ImportConfirm request={confirm} onClose={() => setConfirm(null)} />
+    <div className="import-actions"><Button disabled={busy || (!pending && ((!source && !files.length) || !selectedGroups.length))} onClick={cancelling ? cancel : start}>{busy ? 'Working…' : cancelling ? 'Retry cancellation' : pending ? 'Retry import' : source ? 'Use saved attachment and prepare drafts' : 'Send files and prepare drafts'}</Button><Button variant="ghost" disabled={busy} onClick={close}>Cancel</Button></div><ImportConfirm request={confirm} onClose={() => setConfirm(null)} />
   </section>;
 }

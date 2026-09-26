@@ -32,6 +32,8 @@ type Registry = {
     mydeskPostExpand: RegistryInventory;
     mydeskSeatingPostExpand: RegistryInventory;
     mydeskImportsPostExpand: RegistryInventory;
+    mydeskWorkspacePostExpand: RegistryInventory;
+    schoolDisciplinePostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -166,7 +168,7 @@ describe("semantic RLS registry", () => {
     assert.deepEqual(new Set(production), new Set(expected));
     assert.equal(sha256(production), "3fc773aafdbed1c6d8f0b2c1ad6d2d2b4cd683e037a20e58c926d941ca68c021",
       "Production CSV must retain the exact 2026-09-26 post-admission observation order");
-    assert.deepEqual(ciAllowlist(), registry.inventories.mydeskImportsPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.schoolDisciplinePostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,
@@ -193,5 +195,23 @@ describe("semantic RLS registry", () => {
     assert.match(terraformMain, /src\/config\/rlsRegistry\.json/);
     assert.match(terraformMain, /check "rls_registry_contract"/);
     assert.match(terraformMain, /setsubtract/);
+  });
+
+  it("adds only author preferences and separate school discipline tables to the 109-table baseline", () => {
+    const workspace = registry.reviewedEnablementRequests.mydeskWorkspace!;
+    const discipline = registry.reviewedEnablementRequests.schoolDiscipline!;
+    assert.deepEqual(workspace, ["mydesk_preferences"]);
+    assert.deepEqual(discipline, ["school_discipline_records", "school_discipline_versions", "school_discipline_attachments", "school_discipline_access"]);
+    assert.deepEqual(registry.reviewedEnablementRequests.mydeskWorkspaceAndDiscipline, [...workspace, ...discipline]);
+    const preferences = registry.inventories.mydeskWorkspacePostExpand, all = registry.inventories.schoolDisciplinePostExpand;
+    assert.equal(preferences.count, 110);
+    assert.equal(all.count, 114);
+    assert.deepEqual(preferences.tables, [...registry.inventories.mydeskImportsPostExpand.tables, ...workspace]);
+    assert.deepEqual(all.tables, [...preferences.tables, ...discipline]);
+    assert.equal(sha256(preferences.tables), preferences.sha256);
+    assert.equal(sha256(all.tables), all.sha256);
+    assert.equal(isReviewedRlsEnforcementRequest([...workspace, ...discipline]), true);
+    assert.equal(isReviewedRlsEnforcementRequest([...discipline, ...workspace]), false);
+    assert.equal(isReviewedRlsEnforcementRequest(discipline.slice(0, 3)), false);
   });
 });

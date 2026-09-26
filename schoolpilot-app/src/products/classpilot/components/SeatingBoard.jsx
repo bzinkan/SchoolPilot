@@ -2,8 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { GripVertical, LockKeyhole, Minus, Plus, Scan } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { ROOM_WIDTH, ROOM_HEIGHT, DESK_WIDTH, DESK_HEIGHT, GRID } from '../lib/seatingModel';
+import SeatingMeasuredBoard from './SeatingMeasuredBoard';
 
-export default function SeatingBoard({ layout, roster, selectedSeat, selectedStudent, disabled, onSelectSeat, onAssign, onMove, onRemove }) {
+export default function SeatingBoard(props) {
+  return props.layout.version === 2 ? <SeatingMeasuredBoard {...props} /> : <LegacySeatingBoard {...props} />;
+}
+function LegacySeatingBoard({ layout, roster, selectedSeat, selectedStudent, disabled, onSelectSeat, onAssign, onMove, onRemove }) {
   const viewport = useRef(null);
   const drag = useRef(null);
   const [width, setWidth] = useState(800);

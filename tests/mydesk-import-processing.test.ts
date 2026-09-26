@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { PDFDocument, rgb } from "pdf-lib";
 import {
-  buildImportAttachment, createImportAiProcessor, createImportProviderTransport, cropImportRegion, importExtractionSchema,
+  buildImportAttachment, createImportAiProcessor, createImportProviderTransport, cropImportRegion, detectedRegionToCrop, importExtractionSchema,
   MyDeskImportProcessingError, prepareImportSource, renderImportSource, type ImportAiTransport,
+  MYDESK_IMPORT_LEGACY_PROMPT_VERSION, MYDESK_IMPORT_PROMPT_VERSION, supportedImportPromptVersion,
 } from "../src/services/mydeskImportProcessing.js";
 import { MyDeskFileError } from "../src/services/mydeskFiles.js";
 import { privateNativeProcessing } from "../src/services/privateNativeProcessing.js";
@@ -15,6 +17,56 @@ const full = { x: 0, y: 0, width: 1, height: 1 };
 const extraction = { subjectNames: ["Jordan Example"], entryDate: "2026-09-25", category: "detention", title: "Detention form",
   body: "The form reports a classroom disruption. A detention was assigned.", warnings: [] };
 const response = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }], stop_reason: "end_turn" });
+
+test("stored v1 imports retain their exact detection contract and zero rotation without changing provider provenance", async () => {
+  const calls: Parameters<ImportAiTransport>[0][] = [];
+  const transport: ImportAiTransport = async request => {
+    calls.push(request); return response(calls.length === 1 ? { regions: [{ x: .1, y: .2, width: .3, height: .4 }] } : extraction);
+  };
+  const ai = createImportAiProcessor(transport, { model: "frozen-v1-model", promptVersion: MYDESK_IMPORT_LEGACY_PROMPT_VERSION });
+  const bytes = await photo();
+  assert.deepEqual(await ai.detectImportForms(bytes), [{ x: .1, y: .2, width: .3, height: .4, rotation: 0 }]);
+  await ai.extractImportForm([bytes]);
+  assert.equal(calls.length, 2);
+  for (const call of calls) { assert.equal(call.model, "frozen-v1-model"); assert.ok(String(call.system).endsWith(`Prompt version: ${MYDESK_IMPORT_LEGACY_PROMPT_VERSION}`)); }
+  const schema = calls[0]!.output_config!.format!.schema;
+  assert.deepEqual(schema, { type: "object", additionalProperties: false, required: ["regions"], properties: { regions: { type: "array", items: {
+    type: "object", additionalProperties: false, required: ["x", "y", "width", "height"], properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } },
+  } } } });
+  const instruction = (call: Parameters<ImportAiTransport>[0]) => {
+    const content = call.messages[0]!.content; assert.ok(Array.isArray(content)); const last = content.at(-1); assert.ok(last?.type === "text"); return last.text;
+  };
+  // These hashes pin the actual pre-expansion provider instructions, not source-code spelling.
+  assert.equal(createHash("sha256").update(String(calls[0]!.system)).digest("hex"), "f09bf1633b53e0038b5bcb7f66349b44db45b998790d2d92f258eb7ffb596809");
+  assert.equal(createHash("sha256").update(instruction(calls[0]!)).digest("hex"), "bbd5d47f7ec93a30d5bf2abaf5d59d743473efa510040a9e71c7012f9e437ced");
+  assert.equal(createHash("sha256").update(instruction(calls[1]!)).digest("hex"), "92ed96c7a03ec8bf3883825b42b2893bfecdbc3ae53d9cb82c7ce22244fa49ab");
+  assert.equal(supportedImportPromptVersion(MYDESK_IMPORT_LEGACY_PROMPT_VERSION), true);
+  assert.equal(supportedImportPromptVersion(MYDESK_IMPORT_PROMPT_VERSION), true);
+  assert.equal(supportedImportPromptVersion("unreviewed-next-version"), false);
+});
+
+test("unavailable prompt versions fail before provider transmission and v1 does not accept injected orientation", async () => {
+  const bytes = await photo(); let called = false;
+  await assert.rejects(createImportAiProcessor(async () => { called = true; return response(extraction); }, { promptVersion: "unreviewed-next-version" }).extractImportForm([bytes]),
+    (error: unknown) => error instanceof MyDeskImportProcessingError && error.code === "MYDESK_IMPORT_PROCESSOR_VERSION_UNAVAILABLE" && !error.retryable);
+  assert.equal(called, false);
+  await assert.rejects(createImportAiProcessor(async () => response({ regions: [{ ...full, rotation: 180 }] }), { promptVersion: MYDESK_IMPORT_LEGACY_PROMPT_VERSION }).detectImportForms(bytes), MyDeskImportProcessingError);
+});
+
+test("suggested reading rotation keeps each crop on its original form rather than a neighboring student", async () => {
+  const red = await sharp({create:{width:100,height:80,channels:3,background:"red"}}).png().toBuffer();
+  const page = await sharp({create:{width:400,height:300,channels:3,background:"blue"}})
+    .composite([{input:red,left:40,top:30}]).png().toBuffer();
+  for (const rotation of [0,90,180,270] as const) {
+    const detected = {x:0.1,y:0.1,width:0.25,height:80/300,rotation};
+    const crop = detectedRegionToCrop(detected), {rotation: readingRotation,...region} = crop;
+    const bytes = await cropImportRegion({bytes:page,region,rotation:readingRotation});
+    const statistics = await sharp(bytes).stats();
+    assert.ok(statistics.channels[0]!.mean > 240, `wrong form at ${rotation} degrees`);
+    assert.ok(statistics.channels[2]!.mean < 20, `neighbor included at ${rotation} degrees`);
+  }
+  assert.throws(() => detectedRegionToCrop({...full,rotation:45}));
+});
 
 test("all import image paths use the shared bounded permit and release it before provider calls", async () => {
   const bytes = await photo();
@@ -158,7 +210,7 @@ test("AI outputs are bounded and cannot supply ownership, target IDs or arbitrar
 test("AI detection accepts separate regions but never silently truncates overflow or trusts out-of-page coordinates", async () => {
   const bytes = await photo();
   const regions = [{ x: 0, y: 0, width: 1, height: 0.45 }, { x: 0, y: 0.55, width: 1, height: 0.45 }];
-  assert.deepEqual(await createImportAiProcessor(async () => response({ regions })).detectImportForms(bytes), regions);
+  assert.deepEqual(await createImportAiProcessor(async () => response({ regions })).detectImportForms(bytes), regions.map(region => ({...region, rotation: 0})));
   for (const invalid of [{ regions: Array(51).fill(full) }, { regions: [{ ...full, x: 0.1 }] }, { regions: [{ ...full, width: -1 }] }]) {
     await assert.rejects(createImportAiProcessor(async () => response(invalid)).detectImportForms(bytes), MyDeskImportProcessingError);
   }

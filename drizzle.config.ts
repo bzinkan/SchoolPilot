@@ -31,6 +31,8 @@ export default defineConfig({
     "./src/schema/mydesk.ts",
     "./src/schema/mydeskSeating.ts",
     "./src/schema/mydeskImports.ts",
+    "./src/schema/mydeskPreferences.ts",
+    "./src/schema/schoolDiscipline.ts",
   ],
   out: "./migrations",
   dialect: "postgresql",

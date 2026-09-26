@@ -11,7 +11,11 @@ import { myDeskCategory, myDeskDate } from "./mydeskValidation.js";
 import { inspectPrivatePdf, PrivatePdfError, renderPrivatePdfPage } from "./privatePdfProcessing.js";
 import { privateNativeProcessing, PrivateNativeProcessingError } from "./privateNativeProcessing.js";
 
-export const MYDESK_IMPORT_PROMPT_VERSION = "mydesk-forms-20260925-v1";
+export const MYDESK_IMPORT_PROMPT_VERSION = "mydesk-forms-20260926-v2";
+export const MYDESK_IMPORT_LEGACY_PROMPT_VERSION = "mydesk-forms-20260925-v1";
+export function supportedImportPromptVersion(value: string | null): boolean {
+  return value === MYDESK_IMPORT_PROMPT_VERSION || value === MYDESK_IMPORT_LEGACY_PROMPT_VERSION;
+}
 export const MYDESK_IMPORT_PROVIDER_TIMEOUT_MS = 90_000;
 export const MYDESK_IMPORT_MAX_PAGES = 20;
 const MAX_RENDER_EDGE = 4096;
@@ -45,6 +49,21 @@ export const importRegionSchema = z.object({
   width: z.number().finite().positive().max(1), height: z.number().finite().positive().max(1),
 }).strict().refine(value => value.x + value.width <= 1.000001 && value.y + value.height <= 1.000001);
 export type ImportRegion = z.infer<typeof importRegionSchema>;
+export type DetectedImportRegion = ImportRegion & { rotation?: 0 | 90 | 180 | 270 };
+export const detectedImportRegionSchema = z.object({
+  x: z.number().finite().min(0).max(1), y: z.number().finite().min(0).max(1),
+  width: z.number().finite().positive().max(1), height: z.number().finite().positive().max(1),
+  rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]).default(0),
+}).strict().refine(value => value.x + value.width <= 1.000001 && value.y + value.height <= 1.000001);
+/** Detection uses the original page; cropping uses coordinates after clockwise page rotation. */
+export function detectedRegionToCrop(input: unknown) {
+  const { x, y, width, height, rotation } = detectedImportRegionSchema.parse(input);
+  const box = rotation === 90 ? { x: 1 - y - height, y: x, width: height, height: width }
+    : rotation === 180 ? { x: 1 - x - width, y: 1 - y - height, width, height }
+    : rotation === 270 ? { x: y, y: 1 - x - width, width: height, height: width }
+    : { x, y, width, height };
+  return { ...box, x: Math.max(0, box.x), y: Math.max(0, box.y), rotation };
+}
 export type ImportRegionImage = { bytes: Buffer; region: ImportRegion; rotation: 0 | 90 | 180 | 270 };
 export type ImportRenderedPage = { bytes: Buffer; width: number; height: number; pageNumber: number };
 const warningValues = ["unreadable", "uncertain_subject", "multiple_subjects", "uncertain_date", "incomplete_form", "uncertain_text"] as const;
@@ -196,10 +215,18 @@ export async function buildImportAttachment(pages: ImportRegionImage[], options:
 
 type AiResponse = { content: unknown; stop_reason: string | null };
 export type ImportAiTransport = (request: Anthropic.MessageCreateParamsNonStreaming, signal: AbortSignal) => Promise<AiResponse>;
-const REGION_JSON_SCHEMA = {
+// Retain the exact v1 contract for already-admitted, resumable imports. Never silently change a stored prompt version.
+const LEGACY_REGION_JSON_SCHEMA = {
   type: "object", additionalProperties: false, required: ["regions"], properties: { regions: {
     type: "array", items: { type: "object", additionalProperties: false, required: ["x", "y", "width", "height"],
       properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" } } },
+  } },
+};
+const LEGACY_DETECTION_PROMPT = "Identify separate paperwork forms on this page, including small detention slips. Return one rectangular region per form, including its complete border and content but excluding neighboring forms. Coordinates x/y/width/height are fractions from 0 to 1 of the full displayed image; origin is top-left. Do not create a form for a person mentioned inside another form. A continuation occupying its own page is one region. A blank or unrelated page may have no regions. Do not silently omit a form to fit an output limit.";
+const REGION_JSON_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["regions"], properties: { regions: {
+    type: "array", items: { type: "object", additionalProperties: false, required: ["x", "y", "width", "height", "rotation"],
+      properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, rotation: { type: "integer", enum: [0, 90, 180, 270] } } },
   } },
 };
 const EXTRACTION_JSON_SCHEMA = {
@@ -248,8 +275,10 @@ async function providerTransport(request: Anthropic.MessageCreateParamsNonStream
 }
 
 /** Dependency injection supports behavioral tests without transmitting any real documents. */
-export function createImportAiProcessor(transport: ImportAiTransport = providerTransport, options: { model?: string; timeoutMs?: number } = {}) {
+export function createImportAiProcessor(transport: ImportAiTransport = providerTransport, options: { model?: string; timeoutMs?: number; promptVersion?: string } = {}) {
+  const promptVersion = options.promptVersion ?? MYDESK_IMPORT_PROMPT_VERSION;
   async function request(images: Buffer[], instruction: string, schema: Record<string, unknown>): Promise<unknown> {
+    if (!supportedImportPromptVersion(promptVersion)) throw processingError("MYDESK_IMPORT_PROCESSOR_VERSION_UNAVAILABLE", "This import uses a processing version that is no longer available. Start a new import", false, 422);
     if (!images.length || images.length > MYDESK_IMPORT_MAX_PAGES) throw processingError("MYDESK_IMPORT_REGION_LIMIT", "Choose between 1 and 20 form images.");
     const content: Array<Anthropic.ImageBlockParam | Anthropic.TextBlockParam> = [];
     for (let index = 0; index < images.length; index++) {
@@ -261,7 +290,7 @@ export function createImportAiProcessor(transport: ImportAiTransport = providerT
     try {
       const response = await Promise.race([
         transport({ model: options.model || myDeskImportModel(), max_tokens: 8192,
-          system: `${BASE_PROMPT}\nPrompt version: ${MYDESK_IMPORT_PROMPT_VERSION}`,
+          system: `${BASE_PROMPT}\nPrompt version: ${promptVersion}`,
           messages: [{ role: "user", content }], output_config: { format: { type: "json_schema", schema } } }, controller.signal),
         new Promise<never>((_resolve, reject) => { timer = setTimeout(() => {
           controller.abort(); reject(processingError("MYDESK_IMPORT_AI_TIMEOUT", "AI reading timed out. Retry this step.", true, 503));
@@ -279,9 +308,15 @@ export function createImportAiProcessor(transport: ImportAiTransport = providerT
     } finally { clearTimeout(timer); controller.abort(); }
   }
   return {
-    async detectImportForms(bytes: Buffer): Promise<ImportRegion[]> {
-      const result = await request([bytes], "Identify separate paperwork forms on this page, including small detention slips. Return one rectangular region per form, including its complete border and content but excluding neighboring forms. Coordinates x/y/width/height are fractions from 0 to 1 of the full displayed image; origin is top-left. Do not create a form for a person mentioned inside another form. A continuation occupying its own page is one region. A blank or unrelated page may have no regions. Do not silently omit a form to fit an output limit.", REGION_JSON_SCHEMA);
-      const parsed = z.object({ regions: z.array(importRegionSchema).max(50) }).strict().safeParse(result);
+    async detectImportForms(bytes: Buffer): Promise<DetectedImportRegion[]> {
+      if (promptVersion === MYDESK_IMPORT_LEGACY_PROMPT_VERSION) {
+        const result = await request([bytes], LEGACY_DETECTION_PROMPT, LEGACY_REGION_JSON_SCHEMA);
+        const parsed = z.object({ regions: z.array(importRegionSchema).max(50) }).strict().safeParse(result);
+        if (!parsed.success) throw processingError("MYDESK_IMPORT_AI_INVALID", "Form boundaries could not be read reliably. Retry or mark the forms manually.", true);
+        return parsed.data.regions.map(region => ({ ...region, rotation: 0 }));
+      }
+      const result = await request([bytes], "Identify separate paperwork forms on this page, including small detention slips. Return one rectangular region per form, including its complete border and content but excluding neighboring forms. Coordinates x/y/width/height are fractions from 0 to 1 of the ORIGINAL full displayed image; origin is top-left. rotation is the clockwise rotation (0, 90, 180, or 270 degrees) that makes that form readable upright, including upside-down scans. Do not change coordinates to the rotated frame. Use 0 if orientation is uncertain; the teacher confirms the crop. Do not create a form for a person mentioned inside another form. A continuation occupying its own page is one region. A blank or unrelated page may have no regions. Do not silently omit a form to fit an output limit.", REGION_JSON_SCHEMA);
+      const parsed = z.object({ regions: z.array(detectedImportRegionSchema).max(50) }).strict().safeParse(result);
       if (!parsed.success) throw processingError("MYDESK_IMPORT_AI_INVALID", "Form boundaries could not be read reliably. Retry or mark the forms manually.", true);
       return parsed.data.regions;
     },
