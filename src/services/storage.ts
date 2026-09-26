@@ -1169,7 +1169,8 @@ export async function getSchoolCounts(): Promise<
         cnt: sql<number>`count(*)::int`,
       })
       .from(schoolMemberships)
-      .where(eq(schoolMemberships.status, "active"))
+      .innerJoin(schools, eq(schools.id, schoolMemberships.schoolId))
+      .where(and(eq(schoolMemberships.status, "active"), isNull(schools.deletedAt)))
       .groupBy(schoolMemberships.schoolId, schoolMemberships.role),
     db
       .select({
@@ -1177,7 +1178,8 @@ export async function getSchoolCounts(): Promise<
         cnt: sql<number>`count(*)::int`,
       })
       .from(students)
-      .where(eq(students.status, "active"))
+      .innerJoin(schools, eq(schools.id, students.schoolId))
+      .where(and(eq(students.status, "active"), isNull(schools.deletedAt)))
       .groupBy(students.schoolId),
   ]);
 

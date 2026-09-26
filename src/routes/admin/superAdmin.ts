@@ -78,8 +78,8 @@ router.get("/stats", ...auth, async (req, res, next) => {
     const pendingInquiries = (await getSchoolInquiries({ status: "pending" })).length;
 
     let totalStudents = 0;
-    for (const c of counts.values()) {
-      totalStudents += c.studentCount;
+    for (const school of schools) {
+      totalStudents += counts.get(school.id)?.studentCount ?? 0;
     }
 
     return res.json({
