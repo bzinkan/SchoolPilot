@@ -607,9 +607,9 @@ describe("one-release RLS table enablement", () => {
       );
     }
     const productionTables = productionAllowlist.split(",");
-    assert.equal(productionTables.length, 109);
-    assert.equal(new Set(productionTables).size, 109);
-    assert.deepEqual(new Set(productionTables), new Set(rlsRegistry.inventories.mydeskImportsPostExpand.tables));
+    assert.equal(productionTables.length, 119);
+    assert.equal(new Set(productionTables).size, 119);
+    assert.deepEqual(new Set(productionTables), new Set(rlsRegistry.inventories.studentInformationPostExpand.tables));
     assert.deepEqual(defaultAllowlist.split(","), rlsRegistry.inventories.schoolPilot270PostExpand.tables);
     assert.equal(rlsRegistry.inventories.historicalObservedProduction.count, 72);
     assert.equal(rlsRegistry.inventories.historicalObservedProduction.tables.length, 72);

@@ -105,6 +105,7 @@ The runtime configuration tool requires separate `-StudentInformationReadinessPa
 evidence, exact prompt/model/image and report hashes; discipline evidence cannot
 substitute. The reviewed `studentInformation` RLS bundle contains exactly these five
 tables and expands the historical 114-table inventory to 119. Deploy compatible
-backend/worker and admission before frontend. Keep the verified Terraform baseline
-unchanged until observed adoption. No deployment or AI activation occurs by editing
-these defaults or documentation.
+backend/worker and admission before frontend. The production release runbook records
+the verified API151/worker166 119-table admission and separate observed Terraform
+baseline adoption; historical inventories remain unchanged. No deployment or AI
+activation occurs by editing these defaults or documentation.
