@@ -569,8 +569,17 @@ test("discipline destination is immutable and personal groups cannot expand shar
 
 test("discipline import class choices require primary or co-teacher assignments", async () => {
   const f = await disciplineFixture();
-  await fixturePool.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [f.groupId, f.colleagueId]);
-  await fixturePool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'observer') ON CONFLICT(group_id,teacher_id) DO UPDATE SET role='observer'", [f.groupId, f.teacherId]);
+  const client = await fixturePool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("UPDATE group_teachers SET role='observer' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacherId]);
+    await client.query("UPDATE group_teachers SET role='primary' WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.colleagueId]);
+    await client.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [f.groupId, f.colleagueId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally { client.release(); }
   const input = { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, destination: "discipline" };
   const denied = await request(f, "/imports", "POST", input);
   assert.equal(denied.status, 409, denied.text);

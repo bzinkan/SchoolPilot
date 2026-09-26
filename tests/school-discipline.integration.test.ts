@@ -100,6 +100,17 @@ async function fixtureTransaction(operation: (client: pg.PoolClient) => Promise<
   catch(error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 }
+async function deactivateFixtureTeacher(f: Fixture) {
+  // A departing teacher must hand off their live class and its primary mirror
+  // atomically. Private notes and cleanup work still belong to the old author.
+  await fixtureTransaction(async client => {
+    await client.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [f.groupId, f.other]);
+    await client.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [f.groupId, f.teacher]);
+    await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [f.groupId, f.other]);
+    await client.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [f.schoolId, f.teacher]);
+  });
+  assert.equal((await request(f, "/capabilities")).status, 403);
+}
 async function addEvidence(f: Fixture) {
   const id = randomUUID(), key = `mydesk/${f.schoolId}/${f.teacher}/${f.noteId}/${id}`, bytes = Buffer.from(`synthetic image ${id}`);
   objects.set(key, bytes);
@@ -144,7 +155,10 @@ test("automatic administrators and current assigned co-teachers; self-created gr
   assert.equal((await request(f,`/access/${f.admin}`,"PUT",{enabled:true,revision:0,clientRequestId:randomUUID()},f.admin)).status,410);
   for(const user of [f.other,f.super]) assert.equal((await request(f,`/${record.id}`,"GET",undefined,user)).status,404);
   for(const user of [f.outside,f.office]) assert.equal((await request(f,"/capabilities","GET",undefined,user)).status,403);
-  const personal=randomUUID();await fixtureTransaction(async tx=>{await tx.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Self-selected','teacher_created','active')",[personal,f.schoolId,f.other]);});
+  const personal=randomUUID();await fixtureTransaction(async tx=>{
+    await tx.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Self-selected','teacher_created','active')",[personal,f.schoolId,f.other]);
+    await tx.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')",[personal,f.other]);
+  });
   await fixturePool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)",[personal,f.studentId]);
   assert.equal((await request(f,`/${record.id}`,"GET",undefined,f.other)).status,404);
   await fixturePool.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')",[f.groupId,f.other]);
@@ -173,7 +187,10 @@ test("former students immediately leave shared access, even for the submitting t
 test("wrong-student correction does not expose former student's version or evidence to the new student's teacher",async()=>{
   const f=await fixture();await addEvidence(f);const record=await submit(f),previous=record.currentVersion;
   const student=randomUUID(),group=randomUUID();await fixturePool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Second','Student','active')",[student,f.schoolId]);
-  await fixtureTransaction(async tx=>{await tx.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Sixth','admin_class','active')",[group,f.schoolId,f.other]);});
+  await fixtureTransaction(async tx=>{
+    await tx.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Sixth','admin_class','active')",[group,f.schoolId,f.other]);
+    await tx.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')",[group,f.other]);
+  });
   await fixturePool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)",[group,student]);
   const corrected=await request(f,`/${record.id}/correct`,"POST",{...correctionInput(f,record),studentId:student,groupId:group,attachmentIds:[]},f.admin);assert.equal(corrected.status,200,corrected.text);
   const second=await request(f,`/${record.id}`,"GET",undefined,f.other);assert.equal(second.status,200);assert.equal(second.data.record.versions.length,1);
@@ -248,7 +265,7 @@ test("source changes or roster departure during evidence copy never publish; fai
   putHook=async()=>{if(!touched){touched=true;await fixturePool.query("UPDATE mydesk_notes SET body='Changed after review',revision=2 WHERE id=$1",[f.noteId]);}};
   const response=await request(f,"/submit","POST",submitInput(f));putHook=null;assert.equal(response.status,409,response.text);
   assert.equal((await request(f,"/search","POST",{})).data.records.length,0);
-  await fixturePool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2",[f.schoolId,f.teacher]);
+  await deactivateFixtureTeacher(f);
   await fixturePool.query("UPDATE school_discipline_versions SET created_at=now()-interval '25 hours' WHERE school_id=$1",[f.schoolId]);
   await fixturePool.query("UPDATE school_discipline_attachments SET lease_until=NULL WHERE school_id=$1",[f.schoolId]);
   const keys=(await fixturePool.query("SELECT storage_key FROM school_discipline_attachments WHERE school_id=$1",[f.schoolId])).rows.map(row=>row.storage_key);
@@ -262,7 +279,7 @@ test("cancelled and omitted draft files are durably removed even with published 
   await cleanupSchoolDiscipline({database:fixtureDb,store});assert.equal(objects.has(key),false);
   const cancel=await draft(f),second=await upload(f,cancel),input={clientRequestId:randomUUID(),revision:cancel.revision};
   assert.equal((await request(f,`/${cancel.id}/draft`,"DELETE",input)).status,200);assert.equal((await request(f,`/${cancel.id}/draft`,"DELETE",input)).status,200);
-  await fixturePool.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2",[f.schoolId,f.teacher]);
+  await deactivateFixtureTeacher(f);
   await cleanupSchoolDiscipline({database:fixtureDb,store});assert.equal((await fixturePool.query("SELECT status FROM school_discipline_attachments WHERE id=$1",[second.id])).rows[0].status,"deleted");
 });
 

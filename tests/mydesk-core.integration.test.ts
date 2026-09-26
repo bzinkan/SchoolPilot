@@ -460,6 +460,7 @@ test("grade preferences are personal, directory deduplicates classes, and legacy
     await client.query("UPDATE groups SET grade_level='5' WHERE id=$1",[f.groupId]);
     await client.query("UPDATE students SET grade_level='5' WHERE id=$1",[f.studentId]);
     await client.query("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES($1,$2,$3,'Math','5','teacher_created','active')",[second,f.schoolId,f.teacherId]);
+    await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')",[second,f.teacherId]);
     await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)",[second,f.studentId]);
     await client.query("INSERT INTO mydesk_notes(school_id,author_id,client_request_id,request_fingerprint,target_kind,group_id,filing_group_id,group_name,body,entry_date,status) VALUES($1,$2,gen_random_uuid(),repeat('a',64),'class',$3,$3,'Old class label','Legacy private wording','2020-01-01','active')",[f.schoolId,f.teacherId,f.groupId]);
   });
