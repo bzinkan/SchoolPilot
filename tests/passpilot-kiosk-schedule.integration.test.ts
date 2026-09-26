@@ -137,8 +137,17 @@ test("standalone schools opt each teacher into their own ClassPilot timetable wi
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM grades WHERE school_id=$1 AND classpilot_group_id IS NULL", [f.schoolId])).rows[0].count, 2);
 });
 
-test("teacher ClassPilot kiosk passes coexist with legacy overrides, report accurately, and return across sources", async () => {
+test("teacher ClassPilot kiosk passes coexist with legacy overrides, report accurately, and return across sources", async (t) => {
+  // Stay near the database clock for session expiry checks, away from midnight,
+  // and explicitly make this fixture's date instructional even on weekends.
+  const now = new Date();
+  now.setUTCHours(13, 30, 0, 0);
+  t.mock.timers.enable({ apis: ["Date"], now });
   const f = await teacherTimetable(true);
+  await pool.query("INSERT INTO classpilot_school_schedules(school_id,config) VALUES($1,$2::jsonb)", [f.schoolId, JSON.stringify({
+    ...emptySchoolSchedulingConfig(),
+    dateOverrides: { [now.toISOString().slice(0, 10)]: { instructional: true } },
+  })]);
   await save(f, 0, "classpilot");
   const headers = kioskHeaders(f);
   assert.equal((await fetch(baseUrl + "/snapshot", { headers: { ...headers, "x-passpilot-class-model": "" } })).status, 426);
