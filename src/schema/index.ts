@@ -26,3 +26,5 @@ export * from "./classpilotTools.js";
 export * from "./mydesk.js";
 export * from "./mydeskSeating.js";
 export * from "./mydeskImports.js";
+export * from "./mydeskPreferences.js";
+export * from "./schoolDiscipline.js";

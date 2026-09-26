@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { measuredRoom, arrangeMeasured, addRoomFeature } from '../src/products/classpilot/lib/seatingMeasuredModel.js';
 import { createLayout, emptyLayoutCopy } from '../src/products/classpilot/lib/seatingModel.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,6 +19,84 @@ before(async () => {
 after(async () => { await browser?.close(); await server?.close(); });
 const roster = [{ id: 'student-a', name: 'Avery Lee' }, { id: 'student-b', name: 'Blair Patel' }, { id: 'student-c', name: 'Casey Morgan' }];
 const fixture = (patch = {}) => ({ id: 'chart-a', schoolId: 'school-a', authorId: 'teacher-a', classId: 'class-a', filingGroupId: 'class-a', className: 'Science 5', name: 'Morning seats', layout: createLayout('rows', 3), roster, rosterRevision: 'roster-1', revision: 1, isCurrent: true, canEdit: true, createdAt: '2026-09-25T12:00:00Z', updatedAt: '2026-09-25T12:00:00Z', ...patch });
+
+test('legacy conversion requires an explicit measurement preview and preserves identity, placements and locks', { timeout: 60_000 }, async () => {
+  const chart = fixture(); chart.layout.seats[0].studentId = roster[0].id; chart.layout.seats[0].locked = true;
+  const t = await setup({ charts: [chart], url: '/chart-a' });
+  try {
+    await t.page.getByRole('button', { name: 'Set room measurements' }).click();
+    assert(await t.page.getByRole('button', { name: 'Preview measurements' }).isDisabled());
+    await t.page.getByLabel('Measured room width').fill('30\' 4.5"'); await t.page.getByRole('button', { name: 'Preview measurements' }).click();
+    await t.page.getByRole('button', { name: 'Apply measured room' }).waitFor(); assert.equal(t.state.charts[0].layout.version, 1);
+    await t.page.getByRole('button', { name: 'Apply measured room' }).click(); await t.page.getByRole('button', { name: 'Save chart', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Seat 1, Avery Lee, locked' }).waitFor();
+    const saved = t.state.charts[0].layout; assert.equal(saved.version, 2); assert.deepEqual(saved.seats.map(s => [s.id, s.studentId, s.locked]), chart.layout.seats.map(s => [s.id, s.studentId, s.locked]));
+    assert(t.requests.some(r => r.method === 'GET' && r.path.endsWith('/chart-a'))); assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
+test('measured room numeric editing, angled walls, fixtures and arrangement preview preserve the saved chart until save', { timeout: 60_000 }, async () => {
+  const layout = arrangeMeasured(measuredRoom(9144, 7315), 'rows', 3);
+  const t = await setup({ charts: [fixture({ layout })], url: '/chart-a', viewport: { width: 1280, height: 1000 } });
+  try {
+    await t.page.getByLabel('Display units', { exact: true }).selectOption('metric');
+    await t.page.getByRole('button', { name: 'Edit room outline' }).click();
+    await t.page.getByLabel('Corner 3 X', { exact: true }).fill('8.5'); await t.page.getByRole('button', { name: 'Apply outline', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Split wall 3', exact: true }).click(); await t.page.getByLabel('Corner 4 X', { exact: true }).waitFor();
+    await t.page.getByRole('button', { name: 'Done', exact: true }).click();
+    await t.page.getByLabel('Fixture type').selectOption('teacherDesk'); await t.page.getByRole('button', { name: 'Add fixture', exact: true }).click();
+    await t.page.getByLabel('Fixture label').fill('Teacher'); await t.page.getByRole('button', { name: 'Apply dimensions', exact: true }).click();
+    await t.page.getByLabel('Fixture type').selectOption('door'); await t.page.getByRole('button', { name: 'Add fixture', exact: true }).click();
+    await t.page.getByLabel('Swing', { exact: true }).selectOption('out'); await t.page.getByRole('button', { name: 'Apply dimensions', exact: true }).click();
+    await t.page.getByLabel('Layout preset').selectOption('groups'); await t.page.getByRole('button', { name: 'Apply layout', exact: true }).click();
+    await t.page.getByRole('alertdialog').waitFor(); assert.equal(t.state.charts[0].layout.features.length, 0);
+    await t.page.getByRole('button', { name: 'Replace layout', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Save chart', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Print', exact: true }).waitFor();
+    assert.equal(t.state.charts[0].layout.room.vertices.length, 5); assert.equal(t.state.charts[0].layout.features.length, 2); assert.equal(t.state.charts[0].layout.features[0].label, 'Teacher');
+    await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-measured-desktop.png') });
+    for (const paper of ['letter', 'a4']) {
+      await t.page.getByRole('button', { name: 'Print', exact: true }).click(); await t.page.getByLabel('Paper size', { exact: true }).selectOption(paper); await t.page.getByRole('button', { name: 'Open print preview', exact: true }).click(); await t.page.waitForFunction(() => window.printCalls > 0);
+      assert.equal(await t.page.locator('.seating-print polygon').count(), 2);
+      const pdf = await t.page.pdf({ path: path.join(artifactDir, `seating-measured-${paper}.pdf`), preferCSSPageSize: true, printBackground: true }); assert.equal((pdf.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length, 1);
+      await t.page.evaluate(() => { window.printCalls = 0; window.dispatchEvent(new Event('afterprint')); });
+    }
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
+test('measured phone controls and keyboard movement retain room geometry and save exact millimetres', { timeout: 60_000 }, async () => {
+  const layout = arrangeMeasured(measuredRoom(9000, 7000), 'rows', 3);
+  const t = await setup({ charts: [fixture({ layout })], url: '/chart-a', viewport: { width: 390, height: 844 } });
+  try {
+    await t.page.getByLabel('Display units', { exact: true }).selectOption('metric');
+    await t.page.getByLabel('Selected seat').selectOption(layout.seats[0].id);
+    await t.page.getByLabel('Object Y', { exact: true }).fill('1.2'); await t.page.getByRole('button', { name: 'Apply dimensions', exact: true }).click();
+    await t.page.getByRole('button', { name: 'Seat 1, empty', exact: true }).focus(); await t.page.keyboard.press('ArrowDown');
+    await t.page.getByRole('button', { name: 'Save chart', exact: true }).click();
+    await t.page.waitForResponse(response => response.request().method() === 'PATCH'); assert.equal(t.state.charts[0].layout.seats[0].y, 1210, JSON.stringify(t.requests.filter(r => r.method === 'PATCH'))); assert.deepEqual(t.state.charts[0].layout.room, layout.room);
+    await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-measured-mobile.png') }); assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
+test('dense measured room prints all seats and fixtures inside one Letter or A4 page', { timeout: 60_000 }, async () => {
+  let layout = arrangeMeasured(measuredRoom(12000, 10000), 'rows', 100);
+  layout = addRoomFeature(layout, 'teacherDesk'); layout = addRoomFeature(layout, 'window');
+  const students = Array.from({ length: 100 }, (_, i) => ({ id: `dense-${i}`, name: `Student ${i + 1} Example` }));
+  layout.seats.forEach((seat, i) => { seat.studentId = students[i].id; });
+  const t = await setup({ charts: [fixture({ layout, roster: students, canEdit: false, classId: null })], url: '/chart-a' });
+  try {
+    for (const paper of ['letter', 'a4']) {
+      await t.page.getByRole('button', { name: 'Print', exact: true }).click(); await t.page.getByLabel('Paper size', { exact: true }).selectOption(paper); await t.page.getByRole('button', { name: 'Open print preview', exact: true }).click(); await t.page.waitForFunction(() => window.printCalls > 0);
+      assert.equal(await t.page.locator('.seating-print svg rect').count(), 100);
+      const overflow = await t.page.locator('.seating-print svg g[transform] > text:last-child').evaluateAll(nodes => nodes.some(node => { const text = node.getBBox(), rect = node.parentElement.querySelector('rect').getBBox(); return text.x < rect.x || text.y < rect.y || text.x + text.width > rect.x + rect.width || text.y + text.height > rect.y + rect.height; }));
+      assert.equal(overflow, false);
+      const pdf = await t.page.pdf({ path: path.join(artifactDir, `seating-measured-100-${paper}.pdf`), preferCSSPageSize: true, printBackground: true }); assert.equal((pdf.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length, 1);
+      await t.page.evaluate(() => { window.printCalls = 0; window.dispatchEvent(new Event('afterprint')); });
+    }
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
 
 async function setup({ charts = [], url = '', viewport, currentRoster = roster, enabled = true } = {}) {
   const page = await browser.newPage({ viewport: viewport || { width: 1440, height: 1000 } });
@@ -76,6 +155,7 @@ test('create, tap placement, swap, lock, shuffle, undo and note keep edits priva
   const t = await setup();
   try {
     await t.page.getByRole('button', { name: 'New chart', exact: true }).click(); await t.page.getByLabel('Class', { exact: true }).selectOption('class-a'); await t.page.getByLabel('Chart name', { exact: true }).fill('First period');
+    await t.page.getByLabel('Room width', { exact: true }).fill('30'); await t.page.getByLabel('Room depth', { exact: true }).fill('24');
     t.state.failCreate = true; await t.page.getByRole('button', { name: 'Create chart', exact: true }).click(); await t.page.getByText('Create response interrupted').waitFor(); await t.page.getByRole('button', { name: 'Retry save', exact: true }).click();
     await t.page.getByRole('heading', { name: 'First period', exact: true }).waitFor(); assert.equal(t.state.charts.length, 1);
     await t.page.getByRole('button', { name: 'Avery Lee', exact: true }).click(); await t.page.getByRole('button', { name: 'Seat 1, empty', exact: true }).click();
@@ -108,7 +188,7 @@ test('phone tap controls, browser history and setup cancellation preserve unsave
   try {
     await t.page.getByRole('button', { name: 'Open chart', exact: true }).click(); await t.page.getByLabel('Selected seat').selectOption(t.state.charts[0].layout.seats[0].id);
     await t.page.getByRole('button', { name: 'Avery Lee', exact: true }).click(); await t.page.getByRole('button', { name: 'Place in selected seat', exact: true }).click(); await t.page.getByRole('button', { name: 'Move desk down', exact: true }).click();
-    assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true); await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-mobile.png') });
+    assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, JSON.stringify(await t.page.locator('body *').evaluateAll(nodes => nodes.filter(n => n.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(n => ({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right}))))); await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-mobile.png') });
     await t.page.goBack(); await t.page.getByRole('alertdialog').waitFor(); await t.page.getByRole('button', { name: 'Keep editing', exact: true }).click(); await t.page.getByRole('button', { name: 'Seat 1, Avery Lee', exact: true }).waitFor();
     await t.page.getByRole('button', { name: 'Cancel changes', exact: true }).click(); await t.page.getByRole('button', { name: 'Discard changes', exact: true }).click(); await t.page.getByRole('button', { name: 'Seat 1, empty', exact: true }).waitFor();
     await t.page.getByRole('button', { name: 'All charts', exact: true }).click(); await t.page.goBack(); await t.page.getByLabel('Chart name', { exact: true }).fill('Forward draft'); await t.page.goForward(); await t.page.getByRole('button', { name: 'Keep editing', exact: true }).click(); assert.equal(await t.page.getByLabel('Chart name', { exact: true }).inputValue(), 'Forward draft');

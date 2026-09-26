@@ -10,6 +10,7 @@ import { z } from "zod";
 import { myDeskActor } from "../middleware/requireMyDesk.js";
 import {
   createMyDeskImport,
+  createMyDeskImportFromAttachment,
   listMyDeskImports,
   getMyDeskImport,
   updateMyDeskImport,
@@ -26,6 +27,7 @@ import {
 } from "../services/mydeskImports.js";
 import {
   importCreate,
+  importFromAttachment,
   importUpdate,
   importReservation,
   importMutation,
@@ -86,6 +88,16 @@ mydeskImportsRouter.post(
     return res
       .status(result.created ? 201 : 200)
       .json({ import: result.import });
+  }),
+);
+mydeskImportsRouter.post(
+  "/imports/from-attachment", boundUploads,
+  myDeskEndpoint(async (req, res) => {
+    res.locals.importUploadStarted = true;
+    try {
+      const result = await createMyDeskImportFromAttachment(myDeskActor(req, res), importFromAttachment.parse(req.body));
+      return res.status(result.created ? 201 : 200).json({ import: result.import });
+    } finally { res.locals.releaseImportUpload?.(); }
   }),
 );
 mydeskImportsRouter.get(

@@ -8,8 +8,8 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { resolveClasspilotEntitlement } from "../services/classpilotEntitlement.js";
 import { myDeskActor, rejectMyDeskPrivilegedAccess, requireMyDeskAuthor, requireMyDeskEnabled } from "../middleware/requireMyDesk.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
-import { completeMyDeskNote, createMyDeskNote, deleteMyDeskNote, exportMyDeskNotes, getMyDeskNote, listMyDeskClasses, listMyDeskClassStudents, listMyDeskClassNoteStudents, listMyDeskNotes, myDeskError, updateMyDeskNote } from "../services/mydesk.js";
-import { completeMyDeskNoteInput, createMyDeskNoteInput, deleteMyDeskNoteInput, MYDESK_CATEGORIES, myDeskEnabledForSchool, myDeskSeatingEnabledForSchool, myDeskId, myDeskNotesQuery, updateMyDeskNoteInput } from "../services/mydeskValidation.js";
+import { completeMyDeskNote, createMyDeskNote, deleteMyDeskNote, exportMyDeskNotes, getMyDeskNote, listMyDeskClasses, listMyDeskClassStudents, listMyDeskClassNoteStudents, listMyDeskNotes, myDeskError, updateMyDeskNote, getMyDeskPreferences, updateMyDeskPreferences, listMyDeskStudents, listMyDeskStudentHistory } from "../services/mydesk.js";
+import { completeMyDeskNoteInput, createMyDeskNoteInput, deleteMyDeskNoteInput, MYDESK_CATEGORIES, myDeskEnabledForSchool, myDeskSeatingEnabledForSchool, myDeskId, myDeskNotesQuery, updateMyDeskNoteInput, myDeskPreferencesInput, myDeskStudentsQuery } from "../services/mydeskValidation.js";
 import { mydeskAttachmentsRouter } from "./mydeskAttachments.js";
 import { mydeskSeatingRouter } from "./mydeskSeating.js";
 import { mydeskImportsRouter } from "./mydeskImports.js";
@@ -54,6 +54,15 @@ router.get("/categories", (_req, res) => { res.json({ categories: MYDESK_CATEGOR
 router.get("/classes", myDeskEndpoint(async (req, res) => res.json(await listMyDeskClasses(myDeskActor(req, res)))));
 router.get("/classes/:id/students", myDeskEndpoint(async (req, res) => res.json(await listMyDeskClassStudents(myDeskActor(req, res), myDeskId.parse(req.params.id)))));
 router.get("/classes/:id/note-students", myDeskEndpoint(async (req, res) => res.json(await listMyDeskClassNoteStudents(myDeskActor(req, res), myDeskId.parse(req.params.id)))));
+router.get("/preferences", myDeskEndpoint(async (req, res) => res.json(await getMyDeskPreferences(myDeskActor(req, res)))));
+router.patch("/preferences", myDeskEndpoint(async (req, res) => res.json(await updateMyDeskPreferences(myDeskActor(req, res), myDeskPreferencesInput.parse(req.body)))));
+router.post("/students/search", myDeskEndpoint(async (req, res) => res.json(await listMyDeskStudents(myDeskActor(req, res), myDeskStudentsQuery.parse(req.body)))));
+router.post("/students/:id/history", myDeskEndpoint(async (req, res) => res.json(await listMyDeskStudentHistory(myDeskActor(req, res), myDeskId.parse(req.params.id), noteFilters(req)))));
+router.post("/students/:id/export", myDeskEndpoint(async (req, res) => {
+  const result = await exportMyDeskNotes(myDeskActor(req, res), noteFilters(req), myDeskId.parse(req.params.id));
+  res.set("Content-Type", "text/csv; charset=utf-8"); res.set("Content-Disposition", 'attachment; filename="student-history.csv"');
+  res.set("X-MyDesk-Row-Count", String(result.rowCount)); res.set("X-MyDesk-Export-Limit", "5000"); return res.send(result.csv);
+}));
 function noteFilters(req: Request) {
   const filters = myDeskNotesQuery.parse(req.method === "POST" ? req.body : req.query);
   // Authored search terms belong in the JSON body, not browser/ALB URL logs.

@@ -8,6 +8,9 @@ import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigrati
 import { MYDESK_SQL } from "./db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "./db/mydeskSeatingMigration.js";
 import { MYDESK_IMPORTS_SQL } from "./db/mydeskImportsMigration.js";
+import { MYDESK_WORKSPACE_SQL } from "./db/mydeskWorkspaceMigration.js";
+import { MYDESK_SEATING_MEASURED_SQL } from "./db/mydeskSeatingMeasuredMigration.js";
+import { SCHOOL_DISCIPLINE_SQL } from "./db/schoolDisciplineMigration.js";
 import { setupSocketIO, stopSocketIoWork, drainSocketIoWork } from "./realtime/socketio.js";
 import { setupWebSocket, stopWebSocketWork, drainWebSocketWork } from "./realtime/websocket.js";
 import { createUpgradedTransportShutdown } from "./realtime/websocketShutdown.js";
@@ -4951,6 +4954,9 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(MYDESK_SQL);
   await pool.query(MYDESK_SEATING_SQL);
   await pool.query(MYDESK_IMPORTS_SQL);
+  await pool.query(MYDESK_WORKSPACE_SQL);
+  await pool.query(MYDESK_SEATING_MEASURED_SQL);
+  await pool.query(SCHOOL_DISCIPLINE_SQL);
 }
 
 async function startServer(): Promise<void> {

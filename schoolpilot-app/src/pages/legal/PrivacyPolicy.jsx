@@ -68,7 +68,8 @@ export default function PrivacyPolicy() {
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
               <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
-              <li>Private notes, attachments, and separately enabled, author-uploaded My Desk paperwork import sources and drafts</li>
+              <li>Private notes, filing preferences, seating layouts, attachments, and separately enabled My Desk paperwork import sources and drafts deliberately uploaded or selected by their author</li>
+              <li>School discipline records explicitly submitted by a teacher, with selected evidence copies and correction/withdrawal history; these are separate from private notebook content</li>
             </ul>
 
             <h3 className="text-xl font-medium text-slate-800 mb-3">2.3 Technical Data</h3>
@@ -98,7 +99,8 @@ export default function PrivacyPolicy() {
               <li>Display student screens to authorized teachers during class sessions</li>
               <li>Generate usage reports for teachers and administrators</li>
               <li>Classify monitored URL/domain signals and generate automated safety alerts for authorized human review</li>
-              <li>When separately enabled and deliberately started by an author, extract uploaded paperwork into private My Desk drafts for that author's review and approval</li>
+              <li>When separately enabled and deliberately started by an author, extract uploaded paperwork or a selected saved attachment into private My Desk drafts for that author's review and approval; existing notes are not scanned automatically</li>
+              <li>Provide the submitting teacher and explicitly designated school administrators access to deliberately submitted school discipline records; designated administrators may view and export, but cannot edit another author's submission or read their private notebook</li>
               <li>Maintain and improve our service</li>
               <li>Communicate important updates about the service</li>
               <li>Ensure compliance with school policies and legal requirements</li>
@@ -117,6 +119,7 @@ export default function PrivacyPolicy() {
               <li><strong>Hall pass records:</strong> Retained for the current school year for analytics</li>
               <li><strong>Dismissal records:</strong> Retained for the current school year for safety audits</li>
               <li><strong>My Desk private notes and approved attachments:</strong> Retained until author deletion or the agreed account-destruction process</li>
+              <li><strong>Submitted school discipline records:</strong> Independent school-owned snapshots, selected evidence copies and version history remain under the executed agreement and verified school destruction process. Private-source deletion or staff departure does not erase them; correction and withdrawal preserve earlier versions. Abandoned evidence preparations expire after 24 hours and enter durable cleanup</li>
               <li><strong>My Desk AI paperwork imports:</strong> Incomplete uploads expire after 24 hours, and review expires seven days after upload completion. Completion, cancellation, or expiry scrubs drafts and queues temporary source files for deletion. Minimal operational retry and cleanup records remain. Local deletion does not establish deletion of provider-retained data; reviewed provider/account terms apply</li>
               <li><strong>Account, audit, communication, and teacher-downloaded files:</strong> Follow separate documented or contractual policies and are not governed by the ClassPilot heartbeat-retention setting</li>
             </ul>

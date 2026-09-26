@@ -10,6 +10,7 @@ import { z } from "zod";
 import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_IMPORTS_SQL } from "../src/db/mydeskImportsMigration.js";
+import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
 import myDeskRouter from "../src/routes/mydesk.js";
 import { myDeskUpstreamErrorBoundary } from "../src/middleware/mydeskUpstreamErrorBoundary.js";
 import { signUserToken } from "../src/services/jwt.js";
@@ -28,9 +29,10 @@ before(async () => {
     assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(value).hostname), "HTTP fixtures are local only");
   }
   await fixturePool.query(MYDESK_SQL); await fixturePool.query(MYDESK_IMPORTS_SQL);
+  await fixturePool.query(MYDESK_WORKSPACE_SQL);
   if (process.env.RLS_GUC_ENABLED === "true") {
     const roleName = process.env.RLS_TEST_ROLE || ""; assert.match(roleName, /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/);
-    await fixturePool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_notes,mydesk_attachments TO "${roleName}"`);
+    await fixturePool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_notes,mydesk_attachments,mydesk_preferences TO "${roleName}"`);
     const role = await pool.query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");
     assert.deepEqual(role.rows[0], { rolsuper: false, rolbypassrls: false });
   }

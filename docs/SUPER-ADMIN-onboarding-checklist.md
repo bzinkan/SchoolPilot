@@ -35,6 +35,9 @@ to pass school-hours just to get one).
 - [ ] The right **product licenses** are attached.
 - [ ] The **admin** received the welcome email and can log in.
 - [ ] For ClassPilot schools, an active teacher/admin membership can open its own **My Desk** once the global release is available, including without a teaching session. No school toggle, enrollment or school-ID configuration is needed. Check primary/co-teacher class assignments if a class is missing. Each staff member starts with a separate private workspace; administrators and support impersonation cannot open someone else's content. See [My Desk help](MYDESK_TEACHER_GUIDE.md).
+- [ ] Confirm **My classes** uses each teacher's primary/co-teaching assignments and explicit grade metadata. Administrators retain Other authorized classes. Have teachers select a default class where a grade has several choices; defaults never move past notes. Verify student logs include zero-note roster students and only the viewer's historical notes.
+- [ ] Explain the separate **Submit to school discipline records** confirmation and selected evidence copies. Categories and AI-import saves do not share notes. School-wide readers start with no grants; active school administrators manage the audited permission in Staff management, including self-grants. Readers only view/export, authors correct/withdraw with history, and source deletion/staff departure do not erase school records. See [school discipline contract](SCHOOL_DISCIPLINE_RECORDS.md).
+- [ ] For AI imports, keep the separate mode off until the current prompt/model, actual provider arrangements and reviewed extraction/capacity checks are approved. Explicitly processing one saved attachment copies that source; it does not scan the notebook or send note text/rosters.
 
 ---
 

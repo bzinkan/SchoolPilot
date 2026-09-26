@@ -6,6 +6,7 @@ import { groups } from "../schema/classpilot.js";
 import { logAudit } from "./audit.js";
 import { currentClasses, loadMyDeskClassRoster, myDeskError, withActor, type MyDeskActor, type MyDeskDatabase } from "./mydesk.js";
 import { myDeskSeatingEnabledForSchool } from "./mydeskValidation.js";
+import { copySeatingGeometry } from "../shared/mydeskSeatingGeometry.js";
 import { seatingCreateInput, seatingUpdateInput, seatingDuplicateInput, seatingMutationInput, seatingListQuery,
   type SeatingLayout, type SeatingRosterEntry } from "./mydeskSeatingValidation.js";
 
@@ -140,6 +141,9 @@ export async function updateMyDeskSeatingChart(actor: MyDeskActor, id: string, i
   const hash = fingerprint(["update", id, input]);
   const result = await withSeating(actor, async (database, verified) => {
     const chart = await lockedChart(database, actor, id);
+    if (chart.layout.version === 2 && input.layout.version !== 2) {
+      throw myDeskError(409, "MYDESK_SEATING_CLIENT_UPDATE_REQUIRED", "Reload My Desk to edit this measured floor plan. Its room cannot be removed by an older client");
+    }
     if (replayMutation(chart, input.requestId, hash, "update")) return dto(database, verified, chart);
     assertRevision(chart, input.revision);
     const roster = await editableRoster(database, verified, chart.groupId, input.rosterRevision);
@@ -153,7 +157,7 @@ export async function updateMyDeskSeatingChart(actor: MyDeskActor, id: string, i
   });
   await audit(actor, "update", id); return result;
 }
-export async function duplicateMyDeskSeatingChart(actor: MyDeskActor, id: string, input: DuplicateInput) {
+export async function duplicateMyDeskSeatingChart(actor: MyDeskActor, id: string, input: DuplicateInput, supportedLayoutVersion = 2) {
   const hash = fingerprint(["duplicate", id, input]);
   const result = await withSeating(actor, async (database, verified) => {
     await lockRequest(database, actor, input.clientRequestId);
@@ -163,22 +167,23 @@ export async function duplicateMyDeskSeatingChart(actor: MyDeskActor, id: string
     for (const classId of [...new Set([snapshot.filingGroupId, input.targetClassId])].sort()) await lockClass(database, actor, classId);
     await lockLiveGroups(database, actor, [input.targetClassId, ...(snapshot.groupId ? [snapshot.groupId] : [])]);
     const source = await ownedChart(database, actor, id, true); assertRevision(source, input.sourceRevision);
+    if (source.layout.version > supportedLayoutVersion) throw myDeskError(409, "MYDESK_SEATING_CLIENT_UPDATE_REQUIRED", "Reload My Desk to copy this measured floor plan");
     if (input.mode === "chart" && (!source.groupId || source.groupId !== input.targetClassId)) {
       throw myDeskError(400, "MYDESK_SEATING_COPY_CLASS", "Copy the layout when using a different class");
     }
     const roster = input.mode === "chart" ? await editableRoster(database, verified, source.groupId)
       : await loadMyDeskClassRoster(verified, input.targetClassId, database, { lock: true });
     if (roster.rosterRevision !== input.rosterRevision) throw myDeskError(409, "MYDESK_SEATING_ROSTER_CHANGED", "The class roster changed. Refresh it before saving");
-    const layout: SeatingLayout = { version: 1, seats: source.layout.seats.map(seat => ({ ...seat, id: randomUUID(),
-      ...(input.mode === "layout" ? { studentId: null, locked: false } : {}) })) };
+    const layout: SeatingLayout = copySeatingGeometry(source.layout, randomUUID, input.mode === "layout");
     return insertChart(database, verified, { clientRequestId: input.clientRequestId, name: input.name, layout }, hash, roster);
   });
   if (result.created) await audit(actor, "duplicate", result.chart.id); return result;
 }
-export async function setCurrentMyDeskSeatingChart(actor: MyDeskActor, id: string, input: MutationInput) {
+export async function setCurrentMyDeskSeatingChart(actor: MyDeskActor, id: string, input: MutationInput, supportedLayoutVersion = 2) {
   const hash = fingerprint(["current", id, input]);
   const result = await withSeating(actor, async (database, verified) => {
     const chart = await lockedChart(database, actor, id);
+    if (chart.layout.version > supportedLayoutVersion) throw myDeskError(409, "MYDESK_SEATING_CLIENT_UPDATE_REQUIRED", "Reload My Desk to use this measured floor plan");
     if (replayMutation(chart, input.requestId, hash, "current")) return dto(database, verified, chart);
     assertRevision(chart, input.revision); await editableRoster(database, verified, chart.groupId);
     const now = new Date();

@@ -76,7 +76,7 @@
     "mobile:gopilot": "npm run build:gopilot && npm run cap:sync:gopilot",
     "mobile:passpilot": "npm run build:passpilot && npm run cap:sync:passpilot",
     "test:passpilot-kiosk-schedule": "node --test scripts/passpilot-kiosk-schedule-browser.test.mjs",
-    "test:my-desk": "node --test scripts/my-desk-model.test.mjs scripts/my-desk-browser.test.mjs",
+    "test:my-desk": "node --test scripts/my-desk-model.test.mjs scripts/my-desk-browser.test.mjs scripts/my-desk-workspace-browser.test.mjs scripts/discipline-browser.test.mjs",
     "test:my-desk-seating": "node --test scripts/seating-model.test.mjs scripts/seating-browser.test.mjs",
     "test:my-desk-imports": "node --test scripts/import-review-model.test.mjs scripts/import-browser.test.mjs"
   },

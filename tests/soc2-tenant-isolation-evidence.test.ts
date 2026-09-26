@@ -19,6 +19,10 @@ function tempRoot() {
     "tests/rls-policy.test.ts",
     "tests/rls-tenant-context.test.ts",
     "tests/setup-rls-ci.ts",
+    "tests/mydesk-workspace-schema.integration.test.ts",
+    "tests/school-discipline.integration.test.ts",
+    "src/services/schoolDisciplineAccess.ts",
+    "docs/SCHOOL_DISCIPLINE_RECORDS.md",
   ]) {
     const fullPath = path.join(root, relativePath);
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
@@ -117,6 +121,8 @@ describe("SOC 2 tenant isolation evidence", () => {
     assert.match(packet.fileHashes.rlsPolicies.sha256 || "", /^[a-f0-9]{64}$/);
     assert.match(packet.fileHashes.crossTenantTests.sha256 || "", /^[a-f0-9]{64}$/);
     assert.match(packet.fileHashes.rlsCiSetup.sha256 || "", /^[a-f0-9]{64}$/);
+    assert.match(packet.fileHashes.workspaceSchemaTests.sha256 || "", /^[a-f0-9]{64}$/);
+    assert.match(packet.fileHashes.disciplineAuthorizationTests.sha256 || "", /^[a-f0-9]{64}$/);
   });
 
   it("references CI artifacts and keeps production exports private", () => {

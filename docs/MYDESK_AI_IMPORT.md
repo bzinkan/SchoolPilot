@@ -8,13 +8,24 @@ production. The underlying private notebook contract is
 
 ## Authorized scope
 
-An author deliberately uploads selected paperwork for AI-assisted transcription
-and organization. This is a narrow exception to My Desk's ordinary exclusion of
-notebook content from AI. Existing notebook entries, seating charts, school
-rosters, and unrelated files are not submitted. Imports require both the base
+An author deliberately uploads selected paperwork, or selects one saved photo/PDF
+attachment, for AI-assisted transcription and organization. This is a narrow
+exception to My Desk's ordinary exclusion of notebook content from AI. Note text,
+seating charts, school rosters, unselected attachments and unrelated files are not
+submitted. There is no automatic scan of existing notes. Imports require both the base
 My Desk gate and the separate import gate, ClassPilot entitlement, and a real
 active teacher or school-administrator membership. An administrator owns a
 separate notebook; support impersonation and cross-author access remain denied.
+
+`POST /api/mydesk/imports/from-attachment` accepts the explicit source note,
+attachment, selected current class IDs and stable request UUID. It reserves an
+independent import source key before copying, verifies the owned active note and
+ready committed attachment again after the copy, and preserves the original note
+and file. A private attachment of up to 1,000 PDF pages can still be rejected by
+the import's 20-page budget. Source deletion or mutation during copying cannot
+silently select replacement bytes; durable reservations cover interrupted writes.
+Import completion/cancellation cleans only the copied import source, not the
+original saved attachment. Retries reuse the stable import receipt.
 
 The output is a set of editable private-note drafts. It does not create formal
 discipline records, student timeline events, shared evidence packets, parent
@@ -41,6 +52,19 @@ It returns names and source regions as suggestions. The server matches normalize
 names against the selected authorized rosters; duplicate, incomplete, or unknown
 names require explicit teacher resolution. Students/class membership are checked
 again when saving. Model confidence never establishes a student identity.
+The import freezes the author's grade-default preference revision and mapping at
+creation. The server may use that default only when it is among the selected
+authorized classes containing the uniquely matched student. A preference change
+during review does not move drafts. Partial or duplicate names still require
+teacher selection; a preferred class never establishes a student's identity.
+
+Detection returns a bounded clockwise orientation suggestion (0/90/180/270)
+alongside regions measured in the original page coordinate system. The server
+transforms those coordinates into its deterministic crop frame. Orientation,
+boundaries and continuations remain teacher-reviewable. Rotating or changing a
+crop invalidates the affected review and cannot silently overwrite teacher edits.
+Repeated forms for a subject remain separate entries; witness/staff names do not
+create notes. Missing dates require explicit resolution.
 
 The review workspace supports multiple forms per page, manual splitting/cropping,
 joining continuation regions, and rotation. Each source page must be accounted
@@ -159,6 +183,9 @@ do not commit generated reports or private approval evidence.
   Retired school allowlists are rejected. Seating remains independent.
 - `MYDESK_AI_IMPORT_MODEL` defaults to `claude-sonnet-5`; changing it requires
   extraction evaluation and recorded model-version review.
+- The workspace extraction prompt is `mydesk-forms-20260926-v2`. Its orientation
+  behavior requires a fresh reviewed evaluation with that exact version; prior
+  prompt evaluation does not authorize activation. Keep AI off until review.
 - `MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES` and `MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES`
   default to 100 and 500. The five-file, 10 MiB/file, 20-page, 50-form bounds remain.
 - Both API and worker retain `MYDESK_ATTACHMENTS_BUCKET` and scoped IAM, and use
@@ -169,6 +196,10 @@ production readiness evidence, private runtime configuration and staged activati
 The combined manifest is already the release starting point; do not remove later
 migrations or construct a notebook-only predecessor. Preserve all three original
 checksums and adopt the observed RLS baseline only after live verification.
+The later workspace expansion separately adds frozen preference/source metadata
+through `mydesk-workspace-expansion-20260926`, together with its five-table
+workspace/discipline admission. Preserve the observed 109-table baseline until
+that new release is separately authorized and verified.
 
 API and worker sizing must be measured from live definitions. One shared native
 processing permit per process bounds both Poppler and all My Desk Sharp transforms;
