@@ -36,10 +36,51 @@ run "observed_mydesk_rls_baseline_is_registry_valid" {
   assert {
     condition = (
       length(local.rls_configured_tables) == 109 &&
-      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+      toset(local.rls_configured_tables) == toset(local.rls_registry.inventories.mydeskImportsPostExpand.tables) &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The admitted 109-table My Desk baseline must be accepted without changing historical inventories or the generic default."
   }
+}
+
+run "historical_workspace_rls_inventory_is_registry_valid" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.schoolDisciplinePostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 114 &&
+      toset(local.rls_configured_tables) == toset(local.rls_registry.inventories.schoolDisciplinePostExpand.tables) &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The historical 114-table workspace inventory must remain accepted without rewriting its registry snapshot."
+  }
+}
+
+run "student_information_rls_target_is_registry_valid" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.studentInformationPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 119 &&
+      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+    )
+    error_message = "The registered 119-table target must be accepted without claiming live production admission."
+  }
+}
+
+run "unregistered_rls_table_is_rejected" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", concat(jsondecode(file("../src/config/rlsRegistry.json")).inventories.studentInformationPostExpand.tables, ["unreviewed_fixture_table"]))
+  }
+  expect_failures = [check.rls_registry_contract]
 }
 
 run "notebook_bucket_is_private_encrypted_and_tls_only" {

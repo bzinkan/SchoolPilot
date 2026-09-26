@@ -72,13 +72,15 @@ Four additive migrations extend grade filing, discipline structures, import
 destinations and contact storage. The five new contact tables are registered in
 bootstrap, RLS, CI inventories and the exact reviewed `studentInformation`
 admission bundle. They expand the historical 114-table release inventory to 119.
-The Terraform production baseline remains the previously verified 109-table
-baseline; editing a target inventory does not establish live admission.
+The backend's 119-table admission was verified on API151/worker166 on September 26,
+2026 and recorded through a separate Terraform baseline adoption. Preserve the
+historical 109/114-table inventories; editing a target inventory does not establish
+live admission. The production release runbook records the exact receipt/hash.
 
 Follow [the production release runbook](MYDESK_PRODUCTION_RELEASE.md): verify the
 serving release and live catalog/ledger/RLS state, deploy compatible backend and
 cleanup workers with the reviewed admission, then deploy the matching frontend.
-Adopt a subsequently verified live allowlist through a separate reviewed change.
+Adopt later verified live allowlists through separate reviewed changes.
 Do not restore older code that grants a former teacher shared-record access or
 misinterprets new note/incident versions.
 

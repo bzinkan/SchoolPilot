@@ -160,15 +160,15 @@ describe("semantic RLS registry", () => {
   });
 
   it("adopts the verified production inventory without changing the generic rollout baseline", () => {
-    const expected = registry.inventories.mydeskImportsPostExpand.tables;
+    const expected = registry.inventories.studentInformationPostExpand.tables;
     assert.deepEqual(terraformDefaultAllowlist(), registry.inventories.schoolPilot270PostExpand.tables);
     const production = productionAllowlist();
-    assert.equal(production.length, 109);
-    assert.equal(new Set(production).size, 109);
+    assert.equal(production.length, 119);
+    assert.equal(new Set(production).size, 119);
     // Preserve observed runtime CSV order; the registry target has its own immutable order.
     assert.deepEqual(new Set(production), new Set(expected));
-    assert.equal(sha256(production), "3fc773aafdbed1c6d8f0b2c1ad6d2d2b4cd683e037a20e58c926d941ca68c021",
-      "Production CSV must retain the exact 2026-09-26 post-admission observation order");
+    assert.equal(sha256(production), "1441661e3f5af6582b24e6ec8145f4b76705a13511aeb21bf4ea0030c27f1358",
+      "Production CSV must retain the exact 2026-09-26 API151/worker166 redesign observation order");
     assert.deepEqual(ciAllowlist(), registry.inventories.studentInformationPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,

@@ -200,8 +200,9 @@ migrations or construct a notebook-only predecessor. Preserve all three original
 checksums and adopt the observed RLS baseline only after live verification.
 The later workspace expansion separately adds frozen preference/source metadata
 through `mydesk-workspace-expansion-20260926`, together with its five-table
-workspace/discipline admission. Preserve the observed 109-table baseline until
-that new release is separately authorized and verified.
+workspace/discipline admission. The production runbook now records the separately
+verified and adopted 119-table backend admission. Preserve the historical
+109/114-table inventories; RLS baseline adoption does not authorize AI activation.
 
 API and worker sizing must be measured from live definitions. One shared native
 processing permit per process bounds both Poppler and all My Desk Sharp transforms;
