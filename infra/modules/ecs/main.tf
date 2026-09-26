@@ -53,6 +53,7 @@ locals {
     { name = "MYDESK_MODE", value = var.mydesk_mode },
     { name = "MYDESK_SEATING_MODE", value = var.mydesk_seating_mode },
     { name = "MYDESK_AI_IMPORT_MODE", value = var.mydesk_ai_import_mode },
+    { name = "STUDENT_INFORMATION_AI_IMPORT_MODE", value = var.student_information_ai_import_mode },
     { name = "MYDESK_AI_IMPORT_MODEL", value = var.mydesk_ai_import_model },
     { name = "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", value = tostring(var.mydesk_ai_import_teacher_daily_pages) },
     { name = "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES", value = tostring(var.mydesk_ai_import_school_daily_pages) },

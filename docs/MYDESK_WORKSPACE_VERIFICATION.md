@@ -1,3 +1,5 @@
+> Historical verification report for the preceding workspace expansion. Its grant-based access and 114-table release instructions are superseded by the redesign contract in [MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md). Test counts below are historical, not claims about this new release.
+
 # My Desk workspace expansion: local verification
 
 Implementation branch: `codex/my-desk-workspace-expansion`, based on

@@ -1,136 +1,128 @@
 # My Desk for teachers
 
-My Desk is your personal workspace inside ClassPilot. Open it from the desktop
-sidebar or the labeled mobile-header entry, including between teaching sessions.
-It is included for active teachers and school administrators with ClassPilot
-access. Schools added later receive the same availability automatically; there is
-no school-admin toggle or individual enrollment. Notes and seating release first;
-AI imports appear after their separate production checks are complete.
+Open My Desk from the ClassPilot sidebar or labeled phone-header entry, including
+between teaching sessions. Its four areas are **Notes**, **Discipline logs**,
+**Student information**, and **Seating**. Eligible staff in newly entitled schools
+receive released features automatically; there is no school-admin enable switch.
 
-Your notes, files, seating charts and import drafts belong to you in the selected
-school. Another teacher or administrator cannot read them. They do not appear in
-shared student timelines. A separate **Submit to school log** action
-lets you deliberately submit a saved student note and selected evidence; saving
-or categorizing a note never submits it. Switching
-schools keeps each school's workspace separate. Losing membership blocks access;
-it does not move your content to a different school.
+Choose **Grades** or **Classes** to browse. The view preference is remembered for
+your account in this school. Grade directories combine current teaching rosters
+without repeating students from several classes. Teaching administrators see
+personal assignments first, with other authorized classes separate. Choosing a
+view never changes rosters or moves old notes.
 
-## Notes and files
+## Notes: your private notebook
 
-Choose **New note**, then General, Class or Student. Student notes also have a
-filing class. Use text, a photo or a PDF, with up to five files of 10 MiB each.
-JPEG, PNG, WebP and PDF are supported; a phone camera option is available. Ordinary
-PDF attachments can contain up to 1,000 pages. Unsupported phone formats and
-encrypted or unreadable PDFs need conversion before upload.
+Notes, files, seating charts and import drafts are yours alone. Other staff and
+administrators cannot open them. Changing schools keeps notebooks separate;
+losing school access does not move content.
 
-Pin, edit, refile or delete a note whenever needed. Categories such as detention
-and parent contact are personal labels; they do not trigger discipline, messages
-or sharing. Class filters follow where you filed the note, even when a student
-changes classes. **All notes** includes General and current classes; use **Past
-classes** for old class notes. Search and personal CSV export follow your filters.
-An exported attachment link still requires you to sign in.
+Choose **New note** and General, Grade, Class or Student. Grade notes do not
+require a class. Student notes can have grade-only or explicit class filing,
+including a class selected from seating. Saved grade, class, school year and
+student labels describe filing at that time. Promotion never silently refiles an
+old note. Existing notes without a saved grade remain under **Grade not recorded**
+until deliberately refiled.
 
-**My teaching classes** puts your primary/co-teaching assignments into grade
-folders, such as 5th grade and 6th grade, including when you are also an
-administrator. Other authorized classes remain available separately. Choose one
-**Default filing class** for each grade when asked; changing this default does
-not move old notes. A note started from a particular class or seating chart keeps
-that class. A default that no longer fits requires a new choice.
+Each note allows text or up to five JPEG, PNG, WebP or PDF files, 10 MiB each.
+Attachment-only notes and a phone camera option are supported. Ordinary PDF
+storage allows 1,000 pages; AI processing has smaller limits. Unsupported,
+encrypted or unreadable files need conversion.
 
-**Student logs** lists your students even when they have no notes. Opening a
-student shows your own notes across classes and years, with their original filing
-labels. Students are distinguished by their records, not their names. Historical
-notes remain available without giving access to a former student's current
-roster details. General/class notes are not added to every student's log.
+Pin, edit, refile or delete whenever needed. Categories remain private labels:
+referral or detention does not create a shared incident. Search and CSV export
+follow your filters; attachment links require sign-in. Past classes/grades retain
+historical filing. **Private notes by student**, within Notes, shows only your
+notes across years. This history never grants current roster or contact access.
 
-If an upload fails, retry the same save, finish with successfully uploaded files
-when offered, or cancel. Keep the existing save open while recovering a lost
-connection. Incomplete uploads expire after 24 hours. Deleting a note removes
-access immediately; background cleanup retries physical file deletion.
+Keep a failed save open and retry the same save, finish with uploaded files when
+offered, or cancel. Unfinished saves expire after 24 hours. Deletion removes app
+access immediately; the worker retries physical file deletion. Copying a saved
+student note to Discipline logs requires a separate school-record confirmation.
 
-## Seating charts
+## Discipline logs: shared student incidents
 
-Open **Seating charts**, select a class and create a named arrangement. Place
-students, move desks with drag or select-and-place controls, and use keyboard
-controls when convenient. Lock assignments you want shuffle to preserve. Changes
-remain a draft until **Save changes**; Undo and Cancel are available.
+Open a student to see dated incidents, typed information and corresponding forms.
+Directory totals follow the displayed school-year/date filter. One incident may
+record both a referral and an assigned detention. One detention assignment counts
+once even with several scheduled dates. Withdrawn/superseded versions do not
+inflate active totals. These are recorded events, not student ratings.
 
-Each class can have multiple arrangements and one current chart. Duplicate an
-arrangement within a class, or reuse only its empty room layout in another class.
-Roster changes require your review and never silently move students. Save before
-printing; Letter/A4 output contains the chart and names, without private notes.
-Past-class charts remain available for viewing, printing and empty-layout reuse.
+Use **Add incident** or AI paperwork import when enabled. Review student, date,
+factual description, referral/detention flags, scheduled dates and evidence before
+saving. The school-record confirmation explains visibility; saving here does not
+first create a private note. Nothing publishes automatically or sends a parent/
+staff message or external report. Possible duplicates require a decision: keep a
+separate incident, add evidence to an authorized existing incident, or exclude.
 
-Measured rooms let you draw the room outline and enter dimensions in feet/inches
-or metric units. Add sized desks, a teacher desk, cabinets, lockers, interior
-walls, doors and windows. Mark the front wall. The editor rejects invalid room
-boundaries and overlapping furniture, and warns about door clearance without
-blocking a save. Existing simple charts
-stay unchanged until you explicitly convert a draft with chosen room dimensions;
-inspect placements and save when ready. Print fits the saved layout to the page;
-it is not a construction-scale drawing.
+Teachers see incidents for students they currently teach in official school-managed
+classes, including records from other staff. A teacher's own older submission does
+not remain accessible after current assignment access ends. Active school
+administrators automatically access school records through Admin and Discipline
+logs. No grant/self-grant is needed; private notes and seating remain author-only.
 
-## Import paperwork with AI
+Administrators can correct or withdraw with a reason. Teachers can do so for their
+own records while current student access remains. Prior versions and evidence
+remain in restricted history. School copies survive private-source deletion,
+class archiving and staff departure. Downloaded exports cannot be recalled.
 
-When available, choose **Import paperwork with AI**, select the current classes to
-search, and upload up to five files, 10 MiB each, with 20 total pages/images and
-50 forms. The selected document images go to the configured AI provider to
-prepare drafts. You can also choose **Extract student notes with AI** on a saved
-photo or PDF when the feature is available. That copies only the selected file
-into a separate import and leaves the original note/file in place. Note text,
-unselected attachments, seating charts and class rosters are not sent.
+## Student information: reviewed school contact profiles
 
-Check each page's form boundaries, correct crops, join continuations and account
-for blank or excluded pages. Review the actual form next to its suggested
-student, class, date, category and factual log. Resolve ambiguity explicitly;
-missing dates are not silently replaced with today. Confirm every included form
-before **Save X private notes**. Nothing is published automatically.
-Orientation suggestions can be wrong; check and correct rotation before reviewing
-the crop. Filing defaults are frozen when an import begins. Later preference
-changes do not silently change its review assignments; resolve ambiguous classes
-explicitly. Repeated forms for the same student remain separate reviewed entries.
+Find a currently authorized student, including students with no saved contacts.
+Review contact names, stated relationships, phones, emails and explicitly supplied
+preferences. Give a reason for manual changes. Blank import fields keep current
+values; removal requires an explicit edit. History records who changed each version.
 
-Review progress is saved on the server for up to seven days after upload
-completion. Completion, cancellation or expiry removes source/draft access and
-queues temporary files for deletion; approved form attachments remain with your
-notes. SchoolPilot deletion does not establish deletion by the AI provider.
+Profiles are shared school information. They do not change parent logins, custody
+settings or authorized pickups. Teacher access follows current official assignments.
+Administrators use Admin → Students or Student information and can include former
+students where available.
 
-## School discipline records
+When separately enabled, import PDF, JPEG/PNG/WebP, DOCX, XLSX or CSV. Select the
+pages, sheets or text sections to read, review hidden/unsupported-content warnings,
+and confirm sending selected sections to Anthropic. Match student and adult,
+check uncertain digits/emails/relationships, and choose keep current, add contact,
+or replace stated fields. No profile changes until review and batch Save.
 
-On a saved student note, choose **Submit to school log**, review
-the fields and select the attachments to include. The confirmation explains that
-this creates a separate school-owned copy. It does not notify parents, file an
-external disciplinary report, or expose your notebook. An AI-imported note needs
-this separate submission too.
+Approved values and history remain school-owned. Sources, previews and unapproved
+proposals are temporary and queued for deletion after completion/cancel/expiry.
+Uploads expire after 24 hours, review after seven days. Local deletion does not
+establish the provider's deletion.
 
-You can view/export your own submissions. Only designated active school
-administrators can view/export school-wide records; a school administrator grants
-this permission in Staff management, including to themselves when needed. That
-grant never opens other teachers' notebooks and does not allow editing their
-submitted records. Losing the administrative role revokes the grant; returning
-to it requires a new grant.
+## Paperwork imports
 
-Use **Correct** or **Withdraw** with a reason for a mistaken submission. These
-actions keep earlier versions and evidence visible in the record history.
-Changing or deleting the private source does not change the submitted copy.
-Records remain school-owned after staff departure, under the school's agreed
-retention and destruction process. Exports and already downloaded files cannot
-be recalled. Multiple selected submissions report each outcome so failed items
-can be retried without duplicating successful ones.
+When enabled, upload five PDF/photos at most, 10 MiB each, 20 pages/images and 50
+forms. Selecting an existing attachment copies it independently and preserves the
+original. Rosters, note text, current contact profiles and unrelated files are
+not sent to the provider.
+
+Check boundaries, rotations, missed forms and continuations. Account for every
+page and review the form beside suggested fields. Resolve ambiguous students and
+dates; missing dates never silently become today. Witnesses and reporting staff
+must not become subjects. Separate incidents remain separate.
+
+The destination stays clear: private notes remain author-only; Discipline logs
+creates shared incidents after its final confirmation. Review included entries
+and exclude the rest. Failed atomic saves preserve review and reuse retry IDs.
+
+## Seating
+
+Seating remains your private planning tool. Select a class and create a named
+arrangement. Use drag, select-and-place or keyboard controls; lock assignments for
+shuffle. Save explicitly, or Undo/Cancel. Measured rooms, angled walls and fixtures
+stay with charts. Grades/Classes navigation does not combine class charts.
+
+Duplicate an arrangement or reuse its empty room for another class. Roster changes
+require review. Save before Letter/A4 printing; output excludes private notes and
+controls. Past charts stay viewable, printable and reusable as room templates.
 
 ## Getting help
 
-If My Desk is absent, first confirm that you are in the intended school with an
-active staff membership and ClassPilot access. A temporary global release or
-service interruption can hide it. A school administrator has no enable switch;
-contact SchoolPilot support with the time and displayed error code. Support
-cannot use impersonation to read your notebook.
+Check selected school, active membership and ClassPilot entitlement when access
+is missing. Ask an administrator to check official assignments for missing students.
+AI may remain unavailable pending separate release checks; manual work still works.
+Support impersonation cannot open these records.
 
-If a class is missing, ask your administrator to check your primary/co-teacher
-assignment. Past-class access does not grant access to a current student roster.
-For import errors, preserve the server review and use Retry when offered; do not
-start duplicate imports to recover the same work.
-
-Provide operational identifiers and error codes when available. Do not include
-student paperwork, note text, filenames, student names or screenshots containing
-private content in routine support reports.
+Report operational identifiers, time and error codes. Do not put student names,
+contact details, paperwork, private text or screenshots in routine tickets. Use
+Retry on existing work rather than starting duplicates after an interrupted save.

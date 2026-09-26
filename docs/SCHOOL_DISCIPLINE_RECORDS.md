@@ -1,147 +1,110 @@
 # School discipline records
 
-Implementation contract for deliberately submitted school records. This document
-does not establish production deployment, effective permissions, completed
-destruction, or approval of a retention period. Private My Desk notes, drafts and
-attachments remain governed by [MYDESK_PRIVATE_NOTEBOOK.md](MYDESK_PRIVATE_NOTEBOOK.md).
+Implementation contract for deliberately saved school records. This document is
+not evidence of deployment, extraction accuracy, completed destruction or retention
+approval. Private notebooks retain their separate author-only boundary.
 
-## A separate, explicit publication
+## Publication and access
 
-A teacher chooses **Submit to school log** on a saved student
-note, reviews its student, filing class, date, category and text, and selects the
-ready attachments to include. General/class notes and unfinished uploads cannot
-be submitted. A category such as detention or referral never makes a note shared.
-AI imports save private notes first; a later teacher action is required for any
-school submission. There is no automatic publication, timeline event, parent or
-administrator notification, official external-report submission, or disciplinary
-recommendation.
+Create incidents manually with files or through reviewed AI packets. Discipline
+imports commit directly to school records; they need no intermediate private note.
+Copying an existing private student note remains an explicit school-copy action.
+Private categories/saves and AI extraction never publish automatically. No timeline
+entry, notification, external report or punishment recommendation is generated.
 
-The submission creates a school-owned snapshot and separate copies of the chosen
-evidence. Other private notes and unselected files are not exposed. Subsequent
-source-note editing, deletion, class archival, or staff departure does not erase
-or rewrite the school record. Historical notes use their stored student/class
-IDs and labels; publishing them does not fetch a restricted current roster.
-Teachers must review old labels before publication and correct a mistaken target
-through the explicit correction flow.
+The final preview shows subject student, incident date, description, optional
+class, referral/detention flags, detention dates and selected evidence. Labels are
+server-derived snapshots. Evidence contains approved forms/crops, not unrelated
+multi-student pages. School copies survive source deletion and staff departure.
 
-## Access and staff permissions
+Every operation requires current active school membership and ClassPilot entitlement.
+Active admin/school_admin roles automatically grant school access. Legacy
+school_discipline_access rows are historical data and grant no authority; the old
+permission-management interface is retired. Platform status and impersonation give
+no bypass and school access never opens private notes, drafts, packets or charts.
 
-Every operation requires the active school, current ClassPilot entitlement, and
-a real active teacher/admin/school_admin membership. Impersonation is denied.
-Super-administrator status gives no bypass. Teachers can read/export their own
-submissions and their histories. Another teacher's private source-note identifier
-is never returned to a school viewer.
+Teachers read records only for active students in their current official
+school-managed primary/co-teacher class assignments, including records from other
+staff. Authorship gives no exception after assignment loss. Ad hoc monitoring,
+coverage, personal groups or UI scope do not establish authority. Apply the same
+predicate to counts, lists, exports, details, history, duplicates and attachments.
+Downloads recheck access after fetching bytes; downloaded files cannot be recalled.
 
-School-wide viewing/export requires both an active admin/school_admin membership
-and an explicit `school_discipline_access` grant. No grants exist by default.
-An active school administrator manages these grants in Staff management through
-the narrow discipline-access endpoint, including granting their own access. Every
-grant, revocation and self-grant is audited. This permission does not enable My
-Desk or confer access to another author's notebook, imports or seating charts.
+Same-school roster/authority notifications cancel shared-record requests, clear
+their caches and close open editors/previews before fresh authorized reads.
+Reconnect reconciles missed notifications; focus and visible polling revalidate
+without discarding authorized drafts. This does not clear private notebook history.
 
-Revoking the grant takes effect on subsequent requests. Downloads recheck after
-reading the private object and before delivering bytes. Losing the last active
-admin/school_admin membership permanently revokes its enabled grant through a
-database trigger, including membership deletion, imports and other staff writers.
-Reactivation or promotion requires a fresh explicit grant. A second qualifying
-active membership preserves access until the last one ends. An already downloaded
-file/export cannot be recalled by the server.
+Administrators may append reasoned corrections/withdrawals. Teachers may do so only
+for their own currently authorized records. Published versions stay immutable;
+withdrawal and supersession retain labeled restricted history.
 
-Designated viewers have read/export access only: no follow-up comments, edits,
-status decisions or corrections on another author's records. Staff-management
-authority is independently checked; the new endpoint does not widen unrelated
-staff-editing permissions.
+## Students, totals and duplicate decisions
 
-## Corrections, withdrawal and history
+The directory includes zero-record students and deduplicates stable student IDs
+across authorized current rosters. Grades view uses current roster grade; incident
+detail retains historical snapshots. Filters use the configured school year when
+available and explicit dates; history/export use matching scope. Former students
+remain an administrator context, without expanding teacher access.
 
-Only the submitting author can append a correction or withdraw a record, while
-they retain qualifying school access. Each action requires the current revision,
-a stable request ID, and an explanation. Published versions are immutable at the
-database layer. Corrections supersede earlier versions; withdrawal adds a visible
-withdrawn version and reason. Earlier text and evidence remain in version history.
-A deliberate later correction may resubmit a withdrawn record.
+Referral and detention flags are independent: one incident may increment both.
+A detention assignment counts once regardless of scheduled dates; this is not an
+attendance/completion counter. Count active current versions only. Pending drafts,
+withdrawn records and superseded versions do not inflate totals. Legacy categories
+map deterministically without rewriting immutable snapshots.
 
-An unchanged historical student/class target preserves its stored labels without
-requiring current roster access. Selecting a different target requires current
-class/student authorization, checked again when publishing. Existing evidence
-may be selected from this record's history; replacement private evidence must
-come from the author's saved note for the chosen student and class. Administrators
-cannot perform these author actions. If the author has departed, authorized
-school staff can export the record; an exceptional correction or destruction
-request follows the verified school-support process rather than impersonation.
+Potential duplicate dates/evidence require an explicit reviewer decision. Keep a
+separate incident, exclude a form, or add evidence to an incident the reviewer may
+correct. Adding evidence does not add another counted incident. Recheck record
+revision and access during the final atomic transaction.
 
-## Atomic publication and cleanup
+## Persistence and durable cleanup
 
-`school_discipline_records` identifies the school-owned submission and current
-revision; `school_discipline_versions` stores immutable published snapshots;
-`school_discipline_attachments` owns independently reserved evidence copies;
-`school_discipline_access` stores scoped grants and bounded retry receipts.
-Composite school/parent FKs prevent cross-school version/evidence relationships.
-All four tables enforce tenant RLS. Ownership/grant checks are separate from RLS.
+school_discipline_records, school_discipline_versions and
+school_discipline_attachments hold current pointers, immutable versions and object
+ownership. The legacy access table stays for history compatibility. Additive
+migrations preserve old checksums and versions.
 
-Reserve every destination key before writing to the existing encrypted private
-bucket under `mydesk/<school>/school-discipline/`. Copy and verify byte hashes
-outside database transactions. Final publication locks the record/version/files,
-rechecks source revision and evidence hashes, membership, entitlement and any
-changed target, then commits the version, attachment ownership and audit together.
-Partially copied submissions remain hidden. Stable request fingerprints and
-receipts return the original result after a lost response, even if the private
-source was later deleted. Changed requests or stale revisions return a conflict.
-Bulk UI actions report individual submission outcomes; they are not one atomic
-batch across several school records.
+Reserve evidence keys before writes. Manual drafts stay hidden until reviewed
+Save; unfinished uploads/copies expire after 24 hours. Image normalization, bounded
+PDF validation, file limits and authenticated no-store bytes retain existing
+protections. Stable request IDs and revision checks prevent duplicate saves.
 
-Two evidence-copy operations may run concurrently per API process. Durable leases
-and bounded object I/O protect in-flight writes. After 24 hours, abandoned
-preparations are scrubbed and their reserved objects enter durable cleanup.
-Cleanup locks and rechecks publication before claiming deletion; committed
-evidence is never an abandoned-copy candidate. Failed deletions retry, and
-operational tombstones retain daily deletion retries for interrupted late writes.
-Cleanup runs regardless of My Desk modes, grants, membership or entitlement.
+AI review stays in author-owned import tables with an immutable destination.
+Review hashes cover fields and evidence. The final transaction rechecks membership,
+student/roster/source revisions and duplicate decisions, then writes all entries
+and transfers evidence ownership. Lost-response retries return the original
+receipt. Cleanup claims assets under lock and never deletes promoted evidence.
+Interrupted writes retain durable cleanup work, independent of modes or membership.
 
-## Data flow, export and retention
+## Data flow and retention
 
-| Data | Destination/access | Lifecycle |
+| Data | Access | Retention |
 | --- | --- | --- |
-| Submitted note fields, student/class labels and submitting staff label | School-scoped PostgreSQL; author and designated viewers | Retained as school records under the executed agreement and verified destruction process |
-| Selected evidence copies | Existing encrypted private bucket; authorized API bytes only | Same school-record retention, independent of the source attachment |
-| Corrections/withdrawal reasons and earlier versions | Immutable PostgreSQL history; same readers | Withdrawal marks the record; it does not erase history |
-| Preparing copies and private source references | Short-lived reservation metadata | Abandoned after 24 hours; durable cleanup removes objects and scrubs content |
-| Grants, retry receipts, deletion markers and audits | Operational storage | IDs/actions/counts/revisions only in audits; existing audit and agreed destruction policies apply |
+| Active incidents and saved student/staff labels | Current authorized teachers and school administrators | School-owned under executed agreement and verified destruction |
+| Approved form copies | Same authorized school readers via API bytes | Independent of private source/temporary import lifecycle |
+| Earlier versions and reasons | Same currently authorized restricted history | No automatic erasure on correction/withdrawal |
+| Unfinished incidents, imports and source packets | Author only | 24-hour upload/copy expiry; seven-day review; durable cleanup after finish/cancel/expiry |
+| Retry receipts, legacy grants and cleanup records | Operational storage | Minimal operational evidence included in agreed destruction |
 
-Search/filter/export requests use JSON bodies to avoid names and text in URLs.
-CSV exports honor the chosen own/school scope, status, student, submitting teacher,
-category, dates and text filters; spreadsheet formula escaping applies. The 5,000
-record limit fails explicitly rather than silently truncating. Evidence links
-require current sign-in, school access and record permission. Version history is
-paginated in pages of at most 100; school records use cursor pagination.
+No automatic age-based school-record deletion is added. School/staff deactivation
+blocks access without destroying records. Verified destruction fences writers,
+confirms object removal and removes related rows in dependency order, including
+backups under the agreement. Soft deletion or a running worker does not establish
+physical destruction. See WISP section 9.
 
-All responses and evidence bytes use no-store. Browser queries, drafts and blob
-URLs are scoped to school and viewer, cleared on identity/school/impersonation
-transitions. Audit/errors omit student/staff names, filenames, text, evidence,
-search terms, and correction/withdrawal reasons. This is not the Safety Center's
-automatic evidence-retention policy or the heartbeat-history setting.
+Search/export JSON bodies keep names/text out of URLs. CSV applies identical scope,
+escapes formulas and fails explicitly above its limit. No-store responses and
+identity-scoped caches prevent carryover; auth changes discard drafts and blobs.
+Audits contain IDs/actions/counts/timing, never names, filenames, record text or
+images. Existing private content is never retrospectively shared.
 
-There is no invented automatic disciplinary-record expiry. Staff removal and
-school deactivation block access without destroying school-owned records. On
-verified contractual destruction, fence active writers, delete independently
-owned evidence and verify object removal, then remove attachment/version/record
-and grant rows in dependency order before user/school parents. Include backups
-and cleanup tombstones in the agreed process. Soft deletion and a running worker
-do not prove completed destruction. See WISP section 9.
+## Release
 
-## Release and validation
-
-Use the additive workspace/measured-seating/discipline migrations and the exact
-five-table admission in [MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md).
-Existing notebook/seating/import migration checksums and observed production
-inventories remain untouched. Keep AI imports off until their separate review.
-The deployed permission state starts with no school-wide viewers; a school
-administrator deliberately grants access after release.
-
-Behavioral tests cover real restricted-role RLS, author/admin/super-admin/tenant
-boundaries, impersonation, historical labels, source revision races, grant changes
-during byte retrieval, independent evidence retention, retry receipts, concurrent
-corrections, partial-copy recovery, cleanup failures and promotion races. Before
-release verify these flows and account switching with synthetic identities and
-confirm cleanup against actual storage. No test result alone establishes an
-operating production privacy or destruction control.
+Deploy compatible additive backend/migrations before frontend. Follow
+[MYDESK_PRODUCTION_RELEASE.md](MYDESK_PRODUCTION_RELEASE.md) from the actual verified
+serving RLS baseline. The redesign reaches 119 tables after separate contact-table
+admission; historical inventories remain immutable. Discipline AI stays default-off
+until its independent provider, extraction and isolated capacity gates pass.
+Restricted-RLS tests and synthetic behavior checks are required; real-device and
+live cleanup verification remain rollout acceptance work.

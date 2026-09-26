@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Armchair, Copy, Plus, Trash2, LockKeyhole } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -14,6 +14,7 @@ import { MAX_SEATS } from '../lib/seatingModel';
 import { measuredRoom, measurementToMm, arrangeMeasured } from '../lib/seatingMeasuredModel';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
 import MyDeskTabs from '../components/MyDeskTabs';
+import MyDeskScopePicker from '../components/MyDeskScopePicker';
 import SeatingEditor from '../components/SeatingEditor';
 import '../myDesk.css';
 import '../seating.css';
@@ -38,14 +39,17 @@ function ChartLoader({ access, chartId }) {
 
 export function SeatingLibrary({ access }) {
   const { schoolId, viewerId } = access; const navigate = useNavigate();
-  const [scope, setScope] = useState('current'); const [classId, setClassId] = useState('');
+  const [scope, setScope] = useState('current'); const [scopeParams, setScopeParams] = useSearchParams();
+  const classId = scopeParams.get('classId') || '', gradeLevel = scope === 'current' && !classId ? scopeParams.get('gradeLevel') || '' : '';
+  const chooseScope = value => { const next = new URLSearchParams(scopeParams); next.delete('classId'); next.delete('gradeLevel');
+    if (value.classId) next.set('classId', value.classId); else if (value.gradeLevel) next.set('gradeLevel', value.gradeLevel); setScopeParams(next, { replace: true }); };
   const [form, setForm] = useState(null); const [deleting, setDeleting] = useState(null);
   const [pending, setPending] = useState(null); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
   const actionLocked = busy || Boolean(pending);
   const lifetime = useRef(null); const working = useRef(false);
   useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => controller.abort(); }, []);
   const classes = useMyDeskClasses(schoolId, viewerId);
-  const filters = { scope, classId };
+  const filters = { scope, classId, gradeLevel };
   const charts = useInfiniteQuery({ queryKey: myDeskKeys.seatingCharts(schoolId, viewerId, filters), initialPageParam: '', queryFn: ({ signal, pageParam }) => myDeskApi(schoolId, signal).seatingCharts({ ...filters, cursor: pageParam, limit: 30 }), getNextPageParam: page => page.nextCursor || undefined, retry: false });
   const rows = charts.data?.pages.flatMap(page => page.charts) || [];
   const mutate = async (chart, action, previous) => {
@@ -61,7 +65,7 @@ export function SeatingLibrary({ access }) {
   };
   return <SeatingShell><main className="mydesk-shell seating-library">
     <div className="mydesk-intro"><div><div className="mydesk-title-line"><Armchair /><h1>Seating charts</h1></div><p>A place for everyone.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see your charts.</p></div><Button disabled={actionLocked} onClick={() => setForm({ mode: 'new', sessionId: crypto.randomUUID() })}><Plus className="size-4" />New chart</Button></div>
-    <div className="seating-library-filters"><div className="seating-scope"><Button variant={scope === 'current' ? 'default' : 'outline'} aria-pressed={scope === 'current'} onClick={() => { setScope('current'); setClassId(''); }}>Current classes</Button><Button variant={scope === 'past' ? 'default' : 'outline'} aria-pressed={scope === 'past'} onClick={() => { setScope('past'); setClassId(''); }}>Past classes</Button></div><label>Class<select aria-label="Filter class" value={classId} onChange={event => setClassId(event.target.value)}><option value="">All classes</option>{(classes.data?.[scope] || []).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div>
+    <div className="seating-library-filters"><div className="seating-scope"><Button variant={scope === 'current' ? 'default' : 'outline'} aria-pressed={scope === 'current'} onClick={() => { setScope('current'); chooseScope({}); }}>Current classes</Button><Button variant={scope === 'past' ? 'default' : 'outline'} aria-pressed={scope === 'past'} onClick={() => { setScope('past'); chooseScope({}); }}>Past classes</Button></div>{scope === 'current' ? <MyDeskScopePicker classes={classes} schoolId={schoolId} viewerId={viewerId} value={{ classId, gradeLevel }} onChange={chooseScope} includeOtherClasses disabled={actionLocked} /> : <label>Original class<select aria-label="Filter class" value={classId} onChange={event => chooseScope({ classId: event.target.value })}><option value="">All past classes</option>{(classes.data?.past || []).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><span>Past charts have no saved grade metadata; use their original class.</span></label>}</div>
     {error && <div role="alert" className="seating-error"><p>{error}</p>{pending && <Button variant="outline" disabled={busy} onClick={() => mutate(pending.chart, pending.action, pending)}>Retry {pending.action === 'delete' ? 'delete' : 'make current'}</Button>}<Button variant="ghost" disabled={busy} onClick={() => { setPending(null); setError(''); charts.refetch(); }}>Refresh charts</Button></div>}
     {charts.isPending ? <p role="status">Loading charts…</p> : charts.isError ? <div role="alert"><p>{myDeskError(charts.error)}</p><Button onClick={() => charts.refetch()}>Try again</Button></div> : !rows.length ? <section className="mydesk-empty"><Armchair className="size-8" /><h2>{scope === 'past' ? 'No past charts here yet.' : 'Set up your classroom.'}</h2><p>{scope === 'past' ? 'Your saved charts stay available after a class changes.' : 'Start with rows, pairs, groups, or a blank room. Arrange names when you are ready.'}</p></section> : <div className="seating-chart-list">{rows.map(chart => <article key={chart.id} className="seating-chart-card" aria-label={chart.name}><div className="seating-card-heading"><div><p>{chart.className}</p><h2><button disabled={actionLocked} onClick={() => navigate(`/classpilot/my-desk/seating/${chart.id}`)}>{chart.name}</button></h2></div>{chart.isCurrent && <span className="seating-current">Current</span>}</div><p className="seating-card-meta">Updated <time dateTime={chart.updatedAt}>{new Date(chart.updatedAt).toLocaleDateString('en-US', { timeZone: access.school?.timezone || 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' })}</time></p><div className="seating-card-actions"><Button variant="outline" disabled={actionLocked} onClick={() => navigate(`/classpilot/my-desk/seating/${chart.id}`)}>{chart.canEdit ? 'Open chart' : 'View chart'}</Button>{chart.canEdit && !chart.isCurrent && <Button variant="ghost" disabled={actionLocked} onClick={() => mutate(chart, 'current')}>Make current</Button>}{chart.canEdit && <Button variant="ghost" disabled={actionLocked} onClick={() => setForm({ mode: 'chart', source: chart, sessionId: crypto.randomUUID() })}><Copy className="size-4" />Duplicate</Button>}<Button variant="ghost" disabled={actionLocked} onClick={() => setForm({ mode: 'layout', source: chart, sessionId: crypto.randomUUID() })}>Reuse layout</Button><Button variant="ghost" disabled={actionLocked} onClick={() => setDeleting(chart)}><Trash2 className="size-4" />Delete</Button></div></article>)}</div>}
     {charts.hasNextPage && <Button className="mydesk-load-more" disabled={charts.isFetchingNextPage} onClick={() => charts.fetchNextPage()}>Load more charts</Button>}

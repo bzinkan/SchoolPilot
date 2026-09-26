@@ -5,10 +5,12 @@ import { ArrowLeft, Download, LockKeyhole } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { ThemeToggle } from '../../../components/ThemeToggle';
-import { useMyDeskAccess, useMyDeskCategories } from '../hooks/useMyDesk';
+import { useMyDeskAccess, useMyDeskCategories, useMyDeskClasses } from '../hooks/useMyDesk';
 import { invalidateMyDesk, myDeskApi } from '../lib/myDesk';
 import { myDeskError, myDeskKeys } from '../lib/myDeskModel';
 import MyDeskTabs from '../components/MyDeskTabs';
+import MyDeskScopePicker from '../components/MyDeskScopePicker';
+import { myDeskScopeFilters } from '../lib/myDeskScopeModel';
 import MyDeskStudentAction from '../components/MyDeskStudentAction';
 import NoteComposerDialog from '../components/NoteComposerDialog';
 import DisciplineStudentLinks from '../components/DisciplineStudentLinks';
@@ -28,17 +30,21 @@ export default function StudentLogs() {
 
 export function StudentDirectory({ access }) {
   const [search, setSearch] = useState(''); const q = useDeferredValue(search);
-  const query = useInfiniteQuery({ queryKey: myDeskKeys.directory(access.schoolId, access.viewerId, q), initialPageParam: '',
-    queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).students({ q, ...(pageParam ? { cursor: pageParam } : {}), limit: 50 }),
+  const [scope, setScope] = useState({ gradeLevel: '', classId: '' });
+  const classes = useMyDeskClasses(access.schoolId, access.viewerId);
+  const scopeFilters = myDeskScopeFilters(scope);
+  const query = useInfiniteQuery({ queryKey: myDeskKeys.directory(access.schoolId, access.viewerId, q, scopeFilters), initialPageParam: '',
+    queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).students({ ...scopeFilters, personal: true, q, ...(pageParam ? { cursor: pageParam } : {}), limit: 50 }),
     getNextPageParam: page => page.nextCursor || undefined, retry: false });
   const rows = query.data?.pages.flatMap(page => page.students || []) || [];
-  return <main className="mydesk-shell"><div className="mydesk-intro"><div><h1>Student logs</h1><p>Every student in your authorized current class rosters, including students without notes.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only your own notes appear here.</p></div></div>
+  return <main className="mydesk-shell"><div className="mydesk-intro"><div><h1>Private notes by student</h1><p>Your personal notes for students in your current classes. Older notes remain in your notebook.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only your own notes appear here.</p></div></div>
+    <MyDeskScopePicker classes={classes} schoolId={access.schoolId} viewerId={access.viewerId} value={scope} onChange={setScope} />
     <label className="mydesk-search">Find a student<Input maxLength={200} value={search} onChange={event => setSearch(event.target.value)} placeholder="Student name" /></label>
     {query.isPending ? <p role="status">Loading students…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <p className="mydesk-empty">No current roster students match.</p> :
       <div className="mydesk-note-list">{rows.map(student => <article className="mydesk-note" key={student.id}>
-        <h2><Link to={`/classpilot/my-desk/students/${encodeURIComponent(student.id)}`}>{student.name}</Link></h2>
+        <h2><Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(student.id)}`}>{student.name}</Link></h2>
         <p>{student.classes.map(group => group.name).join(' · ')}</p><p>{student.noteCount} private {student.noteCount === 1 ? 'note' : 'notes'} across all years</p>
-        <div className="mydesk-note-actions"><Button asChild variant="outline"><Link to={`/classpilot/my-desk/students/${encodeURIComponent(student.id)}`}>Open private history</Link></Button><MyDeskStudentAction access={access} student={student} /></div>
+        <div className="mydesk-note-actions"><Button asChild variant="outline"><Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(student.id)}`}>Open private history</Link></Button><MyDeskStudentAction access={access} student={student} /></div>
       </article>)}</div>}
     {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>Load more students</Button>}
   </main>;
@@ -46,7 +52,7 @@ export function StudentDirectory({ access }) {
 
 export function StudentHistory({ access, studentId }) {
   const navigate = useNavigate(); const { schoolId, viewerId } = access;
-  const [filters, setFilters] = useState({ q: '', category: '', classId: '', from: '', to: '' }); const deferred = useDeferredValue(filters.q);
+  const [filters, setFilters] = useState({ q: '', category: '', classId: '', gradeLevel: '', from: '', to: '' }); const deferred = useDeferredValue(filters.q);
   const requestFilters = { ...filters, q: deferred }; const categories = useMyDeskCategories(schoolId, viewerId);
   const [composer, setComposer] = useState(null), [error, setError] = useState(''), [busyId, setBusyId] = useState(null);
   const lifetime = useRef(null), working = useRef(false);
@@ -75,8 +81,8 @@ export function StudentHistory({ access, studentId }) {
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusyId(null); }
   };
-  return <main className="mydesk-shell"><Button asChild variant="ghost"><Link to="/classpilot/my-desk/students"><ArrowLeft className="size-4" />Student directory</Link></Button>
-    <div className="mydesk-intro"><div><h1>{student?.name || 'Student history'}</h1><p>Your private notes across current and past classes and school years. Each note keeps its saved class and student labels.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only your own notes.</p></div><div className="mydesk-note-actions">{student?.current && <MyDeskStudentAction access={access} student={{ id: student.id, name: student.name }} />}<Button variant="outline" disabled={!!busyId || !student} onClick={exportHistory}><Download className="size-4" />Export CSV</Button></div></div>
+  return <main className="mydesk-shell"><Button asChild variant="ghost"><Link to="/classpilot/my-desk/notes/students"><ArrowLeft className="size-4" />Private notes by student</Link></Button>
+    <div className="mydesk-intro"><div><h1>{student?.name || 'Private student history'}</h1><p>Your private notes across current and past classes and school years. Each note keeps its saved class and student labels.</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only your own notes.</p></div><div className="mydesk-note-actions">{student?.current && <MyDeskStudentAction access={access} student={{ id: student.id, name: student.name }} />}<Button variant="outline" disabled={!!busyId || !student} onClick={exportHistory}><Download className="size-4" />Export CSV</Button></div></div>
     <div className="mydesk-filters"><label>Search notes<Input maxLength={200} value={filters.q} onChange={event => setFilters(value => ({ ...value, q: event.target.value }))} /></label>
       <label>Category<select aria-label="Category" value={filters.category} onChange={event => setFilters(value => ({ ...value, category: event.target.value }))}><option value="">All categories</option>{categoryList.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label>
       <label>Class<select aria-label="History class" value={filters.classId} onChange={event => setFilters(value => ({ ...value, classId: event.target.value }))}><option value="">All current and past classes</option>{(student?.classes || []).map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>

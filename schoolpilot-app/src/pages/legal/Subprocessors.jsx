@@ -159,8 +159,8 @@ export default function Subprocessors() {
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; separately enabled, teacher-started My Desk paperwork import</td>
-                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail message text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. My Desk paperwork import processes explicitly uploaded images or a saved photo/PDF attachment deliberately selected by its author, which may include student names and conduct details, to prepare private drafts for teacher review. It does not send note text, unselected files, school rosters or seating charts, or automatically scan existing notes.</td>
+                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; independently enabled, staff-started paperwork and student-contact imports</td>
+                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. Paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. It does not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
                   </tr>
                 </tbody>
               </table>

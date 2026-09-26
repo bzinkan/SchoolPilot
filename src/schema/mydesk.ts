@@ -4,7 +4,7 @@ import { schools, users } from "./core.js";
 import { groups } from "./classpilot.js";
 import { students } from "./students.js";
 
-export type MyDeskTargetKind = "general" | "class" | "student";
+export type MyDeskTargetKind = "general" | "grade" | "class" | "student";
 export type MyDeskNoteStatus = "pending" | "active" | "deleted";
 export type MyDeskAttachmentStatus = "pending" | "uploading" | "ready" | "delete_pending" | "deleted";
 const identity = () => ({
@@ -26,6 +26,8 @@ export const mydeskNotes = pgTable("mydesk_notes", {
   groupId: varchar("group_id"),
   filingGroupId: varchar("filing_group_id"),
   groupName: text("group_name"),
+  filingGradeLevel: text("filing_grade_level"),
+  filingSchoolYear: text("filing_school_year"),
   studentId: varchar("student_id"),
   filingStudentId: varchar("filing_student_id"),
   studentName: text("student_name"),
@@ -46,16 +48,19 @@ export const mydeskNotes = pgTable("mydesk_notes", {
   // Drizzle does not represent the column-list form; never db:push these FKs.
   foreignKey({ name: "mydesk_notes_group_fk", columns: [table.schoolId, table.groupId], foreignColumns: [groups.schoolId, groups.id] }),
   foreignKey({ name: "mydesk_notes_student_fk", columns: [table.schoolId, table.studentId], foreignColumns: [students.schoolId, students.id] }),
-  check("mydesk_notes_target_kind", sql`${table.targetKind} IN ('general','class','student')`),
+  check("mydesk_notes_target_kind", sql`${table.targetKind} IN ('general','grade','class','student')`),
   check("mydesk_notes_status", sql`${table.status} IN ('pending','active','deleted')`),
   check("mydesk_notes_revision", sql`${table.revision} > 0`),
   check("mydesk_notes_category", sql`${table.category} ~ '^[a-z][a-z0-9_]{0,31}$'`),
   check("mydesk_notes_fingerprint", sql`${table.requestFingerprint} ~ '^[0-9a-f]{64}$'`),
   check("mydesk_notes_target_shape", sql`(
-    (${table.targetKind} = 'general' AND ${table.filingGroupId} IS NULL AND ${table.filingStudentId} IS NULL AND ${table.groupId} IS NULL AND ${table.studentId} IS NULL)
+    (${table.targetKind} = 'general' AND ${table.filingGroupId} IS NULL AND ${table.filingStudentId} IS NULL AND ${table.groupId} IS NULL AND ${table.studentId} IS NULL AND ${table.filingGradeLevel} IS NULL)
+    OR (${table.targetKind} = 'grade' AND ${table.filingGradeLevel} IS NOT NULL AND ${table.filingGroupId} IS NULL AND ${table.groupId} IS NULL AND ${table.filingStudentId} IS NULL AND ${table.studentId} IS NULL)
     OR (${table.targetKind} = 'class' AND ${table.filingGroupId} IS NOT NULL AND ${table.groupName} IS NOT NULL AND ${table.filingStudentId} IS NULL AND ${table.studentId} IS NULL)
-    OR (${table.targetKind} = 'student' AND ${table.filingGroupId} IS NOT NULL AND ${table.groupName} IS NOT NULL AND ${table.filingStudentId} IS NOT NULL AND ${table.studentName} IS NOT NULL)
+    OR (${table.targetKind} = 'student' AND ${table.filingStudentId} IS NOT NULL AND ${table.studentName} IS NOT NULL AND ((${table.filingGroupId} IS NOT NULL AND ${table.groupName} IS NOT NULL) OR (${table.filingGroupId} IS NULL AND ${table.groupId} IS NULL AND ${table.filingGradeLevel} IS NOT NULL)))
   )`),
+  check("mydesk_notes_grade_bounds", sql`(${table.filingGradeLevel} IS NULL OR char_length(${table.filingGradeLevel}) BETWEEN 1 AND 40) AND (${table.filingSchoolYear} IS NULL OR char_length(${table.filingSchoolYear}) BETWEEN 1 AND 100)`),
+  index("mydesk_notes_grade_page").on(table.schoolId, table.authorId, table.filingGradeLevel, table.entryDate.desc(), table.id).where(sql`${table.status} = 'active'`),
   index("mydesk_notes_page").on(table.schoolId, table.authorId, table.pinned, table.entryDate.desc(), table.createdAt.desc(), table.id).where(sql`${table.status} = 'active'`),
   index("mydesk_notes_class_page").on(table.schoolId, table.authorId, table.filingGroupId, table.entryDate.desc(), table.id).where(sql`${table.status} = 'active'`),
   index("mydesk_notes_student_page").on(table.schoolId, table.authorId, table.filingStudentId, table.entryDate.desc(), table.id).where(sql`${table.status} = 'active'`),

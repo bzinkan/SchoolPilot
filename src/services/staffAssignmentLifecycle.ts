@@ -1,3 +1,4 @@
+import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { createHash } from "node:crypto";
 import {
   and,
@@ -1496,6 +1497,7 @@ async function invalidateStaffAuthorization(schoolId: string): Promise<void> {
   } as const;
   dispatchCacheInvalidation(target);
   await publishCacheInvalidation(target);
+  await announceSharedRecordAccessChanged(schoolId);
 }
 
 async function loadClassStateCounts(

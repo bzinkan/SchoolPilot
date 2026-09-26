@@ -63,12 +63,14 @@ const groups = z
   .refine((v) => new Set(v).size === v.length, "Choose distinct classes");
 export const importCreate = z
   .object({
+    destination: z.enum(["notes", "discipline"]).optional(),
     clientRequestId: uuid,
     selectedGroupIds: groups,
     expectedSourceCount: z.number().int().min(1).max(IMPORT_MAX_SOURCES),
   })
   .strict();
 export const importFromAttachment = z.object({
+  destination: z.enum(["notes", "discipline"]).optional(),
   clientRequestId: uuid,
   noteId: myDeskId,
   attachmentId: myDeskId,
@@ -112,8 +114,17 @@ export const importItemJoin = importMutation
     sourceItemRevision: z.number().int().positive(),
   })
   .strict();
+export const importDisciplineFields = z.object({
+  referral: z.boolean(),
+  detentionAssignment: z.object({ dates: z.array(myDeskDate).max(30), details: z.string().trim().max(2000).optional() }).strict().nullable(),
+}).strict();
+export const importDuplicateDecision = z.object({
+  action: z.enum(["separate", "add_evidence"]), recordId: uuid.optional(), revision: z.number().int().positive().optional(), reason: z.string().trim().min(1).max(2000).optional(), candidatesFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+}).strict().refine(value => value.action !== "add_evidence" || Boolean(value.recordId && value.revision && value.reason), "Choose an existing incident and explain the evidence correction");
 export const importItemUpdate = importMutation
   .extend({
+    disciplineFields: importDisciplineFields.optional(),
+    duplicateDecision: importDuplicateDecision.nullable().optional(),
     itemRevision: z.number().int().positive(),
     regions: z.array(importRegion).max(20).optional(),
     groupId: myDeskId.nullable().optional(),

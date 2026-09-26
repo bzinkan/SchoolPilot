@@ -27,3 +27,13 @@
 .mydesk-index section,.mydesk-index details{min-width:0}.mydesk-index section>button,.mydesk-index details>button{display:block;width:100%;min-height:44px;padding:10px 12px;text-align:left;border-radius:5px;font-size:14px}.mydesk-index section>button[aria-current=page],.mydesk-index details>button[aria-current=page]{background:var(--desk-paper);box-shadow:inset 3px 0 var(--desk-blue);font-weight:600}.mydesk-index summary{padding:12px 8px;cursor:pointer;font-size:13px}.mydesk-default-class{display:flex;flex-direction:column;gap:5px;padding:8px;font-size:12px}.mydesk-default-class select{width:100%;min-width:0;min-height:40px;background:var(--desk-paper);border:1px solid var(--desk-line);border-radius:5px;padding:5px}.mydesk-default-class small{color:var(--desk-blue)}
 @media(max-width:767px){.mydesk-index section,.mydesk-index details{flex-basis:100%;width:100%}.mydesk-index section>button{display:inline-block;width:auto;border:1px solid var(--desk-line);margin:3px;padding:8px 11px}.mydesk-default-class{max-width:100%}.mydesk-intro{flex-wrap:wrap}.mydesk-intro>div{min-width:0;max-width:100%}.import-entry-actions{flex-wrap:wrap}}
 .import-entry-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.65rem}@media(max-width:720px){.import-entry-actions{width:100%}.import-entry-actions button{flex:1}}
+.mydesk-scope-picker { display: grid; gap: .8rem; padding: .7rem 0; }
+.mydesk-scope-picker label { display: grid; gap: .35rem; font-size: .85rem; }
+.mydesk-scope-picker select { min-height: 2.75rem; max-width: 100%; border: 1px solid hsl(var(--border)); border-radius: .4rem; background: hsl(var(--background)); padding: .45rem .6rem; }
+.mydesk-view-by { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; font-size: .8rem; }
+.mydesk-view-by span { width: 100%; color: hsl(var(--muted-foreground)); }
+.mydesk-view-by button { padding: .45rem .75rem; min-height: 2.75rem; border: 1px solid hsl(var(--border)); border-radius: .4rem; }
+.mydesk-view-by button[aria-pressed="true"] { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.mydesk-tabs { overflow-x: auto; }
+.mydesk-private-history-link { padding: .7rem .75rem; min-height: 44px; font-size: .875rem; text-decoration: underline; text-underline-offset: .2rem; }
+@media(max-width:767px) { .mydesk-index .mydesk-scope-picker { flex-basis: 100%; width: 100%; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: end; } }

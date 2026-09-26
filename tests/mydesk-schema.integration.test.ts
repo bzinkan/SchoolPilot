@@ -65,7 +65,10 @@ test("migration is replayable and PostgreSQL columns match the typed schema", as
   assert.equal(mydeskMigration.checksum, createHash("sha256").update(MYDESK_SQL).digest("hex"));
   for (const table of [mydeskNotes, mydeskAttachments]) {
     const result = await client.query<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2", [schema, getTableName(table)]);
-    assert.deepEqual(result.rows.map(row => row.column_name).sort(), Object.values(getTableColumns(table)).map(column => column.name).sort());
+    // This suite intentionally exercises the immutable M1 migration. The complete
+    // upgraded schema is compared in mydesk-redesign-schema.integration.test.ts.
+    const laterColumns = new Set(["filing_grade_level", "filing_school_year"]);
+    assert.deepEqual(result.rows.map(row => row.column_name).sort(), Object.values(getTableColumns(table)).map(column => column.name).filter(name => !laterColumns.has(name)).sort());
     const policies = await client.query<{ enabled: boolean; forced: boolean; policies: string[] }>(`SELECT c.relrowsecurity AS enabled, c.relforcerowsecurity AS forced,
       ARRAY(SELECT polname::text FROM pg_policy WHERE polrelid=c.oid) AS policies FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2`, [schema, getTableName(table)]);
     assert.deepEqual(policies.rows[0], { enabled: true, forced: true, policies: ["tenant_isolation"] });

@@ -1,3 +1,7 @@
+import { MYDESK_GRADE_FILING_SQL } from "./db/mydeskGradeFilingMigration.js";
+import { SCHOOL_DISCIPLINE_REDESIGN_SQL } from "./db/schoolDisciplineRedesignMigration.js";
+import { MYDESK_IMPORT_DESTINATION_SQL } from "./db/mydeskImportDestinationMigration.js";
+import { STUDENT_INFORMATION_REDESIGN_SQL } from "./db/studentInformationRedesignMigration.js";
 import "dotenv/config";
 import http from "http";
 import type { Server as SocketIOServer } from "socket.io";
@@ -4957,6 +4961,11 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(MYDESK_WORKSPACE_SQL);
   await pool.query(MYDESK_SEATING_MEASURED_SQL);
   await pool.query(SCHOOL_DISCIPLINE_SQL);
+  await pool.query(MYDESK_GRADE_FILING_SQL);
+  await pool.query(SCHOOL_DISCIPLINE_REDESIGN_SQL);
+  await pool.query(MYDESK_IMPORT_DESTINATION_SQL);
+  await pool.query(STUDENT_INFORMATION_REDESIGN_SQL);
+
 }
 
 async function startServer(): Promise<void> {

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import sharp from "sharp";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
+import { applyMyDeskRedesign } from "./helpers/mydeskRedesign.js";
 import { mydeskAttachments, mydeskNotes } from "../src/schema/mydesk.js";
 import { myDeskSha256, type MyDeskObjectStore } from "../src/services/mydeskFiles.js";
 
@@ -41,6 +42,7 @@ before(async () => {
   notes = await import("../src/services/mydesk.js"); files = await import("../src/services/mydeskAttachments.js");
   ({ cleanupMyDesk: cleanup } = await import("../src/services/mydeskCleanup.js"));
   await pool.query(MYDESK_SQL);
+  await applyMyDeskRedesign(pool);
   await pool.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Private notebook fixture',$2,'active','active')", [ids.school, `${ids.school}.example.test`]);
   for (const id of [ids.teacher, ids.other]) {
     await pool.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Notebook','Teacher')", [id, `${id}@example.test`]);

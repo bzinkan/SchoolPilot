@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Camera, Paperclip, X, LockKeyhole } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from '../../../components/ui/alert-dialog';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Textarea } from '../../../components/ui/textarea';
-import { useMyDeskCategories, useMyDeskClasses, useMyDeskStudents, useMyDeskStudentClasses } from '../hooks/useMyDesk';
+import { useMyDeskCategories, useMyDeskClasses, useMyDeskStudents, useMyDeskStudentContext } from '../hooks/useMyDesk';
 import { attachmentDigest, invalidateMyDesk, myDeskApi } from '../lib/myDesk';
-import { myDeskError, isMyDeskNoteMissing, schoolDate, targetInput, validateMyDeskAttachment, MY_DESK_MAX_ATTACHMENTS, preferredStudentClass } from '../lib/myDeskModel';
+import { myDeskError, myDeskKeys, myDeskSavedPayloadMatches, isMyDeskNoteMissing, schoolDate, targetInput, validateMyDeskAttachment, MY_DESK_MAX_ATTACHMENTS } from '../lib/myDeskModel';
 import '../myDesk.css';
 
 // Closing unmounts the form itself, not just Radix's portal. Parents also key by identity.
@@ -15,10 +16,13 @@ export default function NoteComposerDialog(props) {
   return props.open ? <ComposerSession key={props.sessionId} {...props} /> : null;
 }
 
-function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, groupId: initialGroupId, today, timeZone, onSaved }) {
+function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, groupId: initialGroupId, gradeLevel: initialGrade, today, timeZone, onSaved }) {
   const lifetime = useRef(null);
   const [requestId] = useState(() => crypto.randomUUID());
-  const [targetKind, setTargetKind] = useState(note?.targetKind || (student ? 'student' : initialGroupId ? 'class' : 'general'));
+  const [targetKind, setTargetKind] = useState(note?.targetKind || (student ? 'student' : initialGroupId ? 'class' : initialGrade ? 'grade' : 'general'));
+  const [gradeLevel, setGradeLevel] = useState(note?.filingGradeLevel || initialGrade || student?.gradeLevel || '');
+  const [studentSearch, setStudentSearch] = useState('');
+  const deferredStudentSearch = useDeferredValue(studentSearch);
   const [groupId, setGroupId] = useState(note?.groupId || note?.filingGroupId || initialGroupId || '');
   const [studentId, setStudentId] = useState(note?.studentId || note?.filingStudentId || student?.id || '');
   const [category, setCategory] = useState(note?.category || 'note');
@@ -42,13 +46,17 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
   const classes = useMyDeskClasses(schoolId, viewerId);
   const allCurrentClasses = classes.data?.current || [];
   const fixedStudent = targetKind === 'student' && student && !note;
-  const studentClasses = useMyDeskStudentClasses(schoolId, viewerId, fixedStudent && !student.classes ? student.id : null, allCurrentClasses);
-  const currentClasses = fixedStudent ? student.classes || studentClasses.data || [] : allCurrentClasses;
-  const effectiveGroupId = fixedStudent && !groupId ? preferredStudentClass(currentClasses, classes.data?.preferences, initialGroupId) : groupId;
-  const selectedClass = currentClasses.find(item => item.id === effectiveGroupId);
-  const canSetDefault = fixedStudent && selectedClass?.personal && selectedClass.gradeLevel && currentClasses.filter(item => item.personal && item.gradeLevel === selectedClass.gradeLevel).length > 1 && classes.data?.preferences?.preferredClasses?.[selectedClass.gradeLevel] !== selectedClass.id;
+  const studentContext = useMyDeskStudentContext(schoolId, viewerId, fixedStudent ? student.id : null);
+  const currentClasses = fixedStudent ? studentContext.data?.student?.classes || student.classes || [] : allCurrentClasses;
+  const effectiveGroupId = groupId;
+  const effectiveGrade = gradeLevel || studentContext.data?.student?.gradeLevel || '';
   const isCurrentClass = currentClasses.some(item => item.id === effectiveGroupId);
   const students = useMyDeskStudents(schoolId, viewerId, targetKind === 'student' && isCurrentClass ? effectiveGroupId : null);
+  const directoryFilters = { ...(effectiveGrade ? { gradeLevel: effectiveGrade } : {}), personal: true };
+  const directory = useInfiniteQuery({ queryKey: myDeskKeys.directory(schoolId, viewerId, deferredStudentSearch, directoryFilters), initialPageParam: '',
+    queryFn: ({ signal, pageParam }) => myDeskApi(schoolId, signal).students({ ...directoryFilters, q: deferredStudentSearch, ...(pageParam ? { cursor: pageParam } : {}), limit: 50 }),
+    getNextPageParam: page => page.nextCursor || undefined, enabled: targetKind === 'student' && !effectiveGroupId && !fixedStudent, retry: false });
+  const availableStudents = effectiveGroupId ? students.data?.students || [] : directory.data?.pages.flatMap(page => page.students || []) || [];
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -61,17 +69,6 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, busy, partial]);
 
-  const saveClassDefault = async () => {
-    const controller = lifetime.current;
-    if (inFlight.current || !controller || controller.signal.aborted || !canSetDefault) return;
-    inFlight.current = true; setBusy(true); setError('');
-    try {
-      await myDeskApi(schoolId, controller.signal).updatePreferences({ revision: classes.data.preferences.revision,
-        preferredClasses: { ...classes.data.preferences.preferredClasses, [selectedClass.gradeLevel]: selectedClass.id } });
-      controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId);
-    } catch (failure) { if (!controller.signal.aborted) { setError(myDeskError(failure)); await classes.refetch(); } }
-    finally { inFlight.current = false; if (!controller.signal.aborted) setBusy(false); }
-  };
   const close = () => onOpenChange(false);
   const requestClose = () => {
     if (inFlight.current) return;
@@ -88,12 +85,13 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
   };
 
   const makePayload = () => {
-    const targetChanged = !note || targetKind !== note.targetKind || effectiveGroupId !== (note.groupId || note.filingGroupId || '') || studentId !== (note.studentId || note.filingStudentId || '');
-    if (targetChanged && targetKind !== 'general' && (!effectiveGroupId || !isCurrentClass)) throw new Error('Choose one of your current classes.');
+    const targetChanged = !note || targetKind !== note.targetKind || effectiveGroupId !== (note.groupId || note.filingGroupId || '') || studentId !== (note.studentId || note.filingStudentId || '') || gradeLevel !== (note.filingGradeLevel || '');
+    if (targetChanged && (targetKind === 'class' || targetKind === 'student' && effectiveGroupId) && (!effectiveGroupId || !isCurrentClass)) throw new Error('Choose one of your current classes.');
+    if (targetChanged && targetKind === 'grade' && !classes.data?.grades?.some(grade => grade.gradeLevel === effectiveGrade)) throw new Error('Choose one of your current grades.');
     if (targetChanged && targetKind === 'student' && !studentId) throw new Error('Choose a student.');
     if (!body.trim() && !title.trim() && !files.length && !existingIds.length) throw new Error('Add a title, note, photo or PDF before saving.');
     if (!entryDate) throw new Error('Choose an entry date.');
-    return { ...(targetChanged ? targetInput(targetKind, effectiveGroupId, studentId) : {}), category, title: title.trim(), body: body.trim(), entryDate, pinned };
+    return { ...(targetChanged ? targetInput(targetKind, effectiveGroupId, studentId, targetKind === 'class' ? '' : effectiveGrade) : {}), category, title: title.trim(), body: body.trim(), entryDate, pinned };
   };
 
   const save = async (finishUploaded = false) => {
@@ -166,7 +164,7 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
         // Remove only uploads staged by this editor; original attachments remain until complete.
         const latest = (await api.get(`/notes/${encodeURIComponent(note.id)}`)).note;
         const committedIds = new Set((latest.attachments || []).filter(item => item.committedAt).map(item => item.id));
-        if (tx.completion && latest.revision > tx.note.revision && Object.entries(tx.payload).every(([key, value]) => (latest[key] ?? null) === value)) {
+        if (tx.completion && latest.revision > tx.note.revision && myDeskSavedPayloadMatches(latest, tx.payload)) {
           await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); onSaved?.(latest); close(); return;
         }
         let revision = latest.revision;
@@ -197,13 +195,14 @@ function ComposerSession({ onOpenChange, schoolId, viewerId, note, student, grou
         <DialogHeader><DialogTitle>{note ? 'Edit private note' : 'New private note'}</DialogTitle><DialogDescription className="flex items-center gap-2"><LockKeyhole className="size-3.5" aria-hidden="true" />Only you can see this note.</DialogDescription></DialogHeader>
         <form className="mydesk-composer-form" onSubmit={event => { event.preventDefault(); void save(); }} onChange={() => setDirty(true)}>
           <fieldset disabled={busy || partial} className="space-y-4 min-w-0">
-            <div className="mydesk-form-grid"><label>File under<select aria-label="File under" value={targetKind} onChange={event => { setTargetKind(event.target.value); setGroupId(''); setStudentId(student?.id || ''); }}><option value="general">General</option><option value="class">Class</option><option value="student">Student</option></select></label>
+            <div className="mydesk-form-grid"><label>File under<select aria-label="File under" value={targetKind} onChange={event => { setTargetKind(event.target.value); setGroupId(''); setGradeLevel(''); setStudentId(event.target.value === 'student' ? student?.id || '' : ''); }}><option value="general">General</option><option value="grade">Grade</option><option value="class">Class</option><option value="student">Student</option></select></label>
               <label>Category<select aria-label="Category" value={category} onChange={event => setCategory(event.target.value)}>{(categories.data?.categories || [{ key: 'note', label: 'Note' }]).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label></div>
-            {fixedStudent && currentClasses.length > 1 && <p className="text-sm text-muted-foreground">Choose a class for this student. A saved grade default is used only when the student belongs to it.</p>}
-            {canSetDefault && <Button type="button" variant="outline" onClick={saveClassDefault}>Use {selectedClass.name} as my grade {selectedClass.gradeLevel} default</Button>}
-            {targetKind !== 'general' && <div className="mydesk-form-grid"><label>Class<select aria-label="Class" value={effectiveGroupId} onChange={event => { setGroupId(event.target.value); if (!fixedStudent) setStudentId(''); }}><option value="">Choose a class</option>{effectiveGroupId && !isCurrentClass && note && <option value={effectiveGroupId}>{note.groupName || 'Saved class'}</option>}{currentClasses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-              {targetKind === 'student' && <label>Student<select aria-label="Student" value={studentId} disabled={Boolean(fixedStudent)} onChange={event => setStudentId(event.target.value)}><option value="">Choose a student</option>{studentId && !(students.data?.students || []).some(item => item.id === studentId) && <option value={studentId}>{note?.studentName || student?.name || 'Saved student'}</option>}{(students.data?.students || []).map(item => <option key={item.id} value={item.id}>{item.name || `${item.firstName} ${item.lastName}`}</option>)}</select></label>}</div>}
-            {fixedStudent && !studentClasses.isPending && currentClasses.length === 0 && <p role="alert" className="mydesk-error">This student is not in one of your current classes. You can write a general note instead.</p>}
+            {(targetKind === 'grade' || targetKind === 'student' && !effectiveGroupId) && <label>Grade<select aria-label="Grade" value={effectiveGrade} disabled={Boolean(fixedStudent && studentContext.data?.student?.gradeLevel)} onChange={event => { setGradeLevel(event.target.value); if (!fixedStudent) setStudentId(''); }}><option value="">{targetKind === 'student' ? 'All my grades' : 'Choose a grade'}</option>{effectiveGrade && !(classes.data?.grades || []).some(grade => grade.gradeLevel === effectiveGrade) && <option value={effectiveGrade}>Grade {effectiveGrade}</option>}{(classes.data?.grades || []).map(grade => <option key={grade.gradeLevel} value={grade.gradeLevel}>{grade.label}</option>)}</select></label>}
+            {(targetKind === 'class' || targetKind === 'student') && <div className="mydesk-form-grid"><label>Class{targetKind === 'student' && <span className="mydesk-optional"> optional</span>}<select aria-label="Class" value={effectiveGroupId} onChange={event => { setGroupId(event.target.value); setGradeLevel(''); if (!fixedStudent) setStudentId(''); }}><option value="">{targetKind === 'student' ? 'No class — file by student and grade' : 'Choose a class'}</option>{effectiveGroupId && !isCurrentClass && note && <option value={effectiveGroupId}>{note.groupName || 'Saved class'}</option>}{currentClasses.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              {targetKind === 'student' && <label>Student<select aria-label="Student" value={studentId} disabled={Boolean(fixedStudent)} onChange={event => setStudentId(event.target.value)}><option value="">Choose a student</option>{studentId && !availableStudents.some(item => item.id === studentId) && <option value={studentId}>{note?.studentName || student?.name || 'Saved student'}</option>}{availableStudents.map(item => <option key={item.id} value={item.id}>{item.name || `${item.firstName} ${item.lastName}`}</option>)}</select></label>}</div>}
+            {targetKind === 'student' && !effectiveGroupId && !fixedStudent && <><label>Find a student<Input aria-label="Find a student for note" value={studentSearch} onChange={event => setStudentSearch(event.target.value)} maxLength={200} /></label>{directory.hasNextPage && <Button type="button" variant="outline" disabled={directory.isFetchingNextPage} onClick={() => directory.fetchNextPage()}>Load more students</Button>}{directory.isError && <p role="alert" className="mydesk-error">Students could not be loaded. <button type="button" onClick={() => directory.refetch()}>Retry</button></p>}</>}
+            {note && note.targetKind !== 'general' && !note.filingGradeLevel && <p className="text-sm text-muted-foreground">This older note has no saved grade. Editing its text preserves its original class filing.</p>}
+            {fixedStudent && studentContext.isError && <p role="alert" className="mydesk-error">This student is not available in your current assignments. You can write a general note instead.</p>}
             {(classes.isError || students.isError || categories.isError) && <p role="alert" className="mydesk-error">Could not load note options. Close and try again.</p>}
             <label>Title <span className="mydesk-optional">optional</span><Input maxLength={160} value={title} onChange={event => setTitle(event.target.value)} placeholder="A quick reminder, a moment to remember…" autoFocus /></label>
             <label>Note <span className="mydesk-optional">optional with a title or attachment</span><Textarea maxLength={5000} rows={6} value={body} onChange={event => setBody(event.target.value)} placeholder="Keep the details here." /></label>

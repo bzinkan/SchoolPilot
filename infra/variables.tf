@@ -51,12 +51,21 @@ variable "mydesk_ai_import_mode" {
   }
 }
 variable "mydesk_ai_import_model" {
-  description = "Reviewed Anthropic model for tool-free private paperwork extraction"
+  description = "Reviewed Anthropic model for tool-free private paperwork and contact extraction"
   type        = string
   default     = "claude-sonnet-5"
   validation {
     condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.mydesk_ai_import_model))
     error_message = "AI import model must be a nonempty bounded model identifier."
+  }
+}
+variable "student_information_ai_import_mode" {
+  description = "Separate contact extraction release; requires base My Desk but not discipline AI"
+  type        = string
+  default     = "off"
+  validation {
+    condition     = contains(["off", "on"], var.student_information_ai_import_mode) && (var.student_information_ai_import_mode == "off" || var.mydesk_mode == "on")
+    error_message = "student_information_ai_import_mode must be off or on; on requires mydesk_mode=on."
   }
 }
 variable "mydesk_ai_import_teacher_daily_pages" {

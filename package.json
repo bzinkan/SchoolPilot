@@ -64,12 +64,14 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.8.3",
+    "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.0",
     "express-session": "^1.18.1",
     "googleapis": "^181.0.0",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.12.3",
     "multer": "^2.4.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
@@ -84,6 +86,11 @@
     "ws": "^8.21.3",
     "yauzl": "^3.4.0",
     "zod": "^3.24.2"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   },
   "devDependencies": {
     "@types/connect-pg-simple": "^7.0.3",

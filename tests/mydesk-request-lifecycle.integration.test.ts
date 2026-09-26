@@ -9,6 +9,7 @@ import sharp from "sharp";
 import { z } from "zod";
 import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
+import { applyMyDeskRedesign } from "./helpers/mydeskRedesign.js";
 import myDeskRouter from "../src/routes/mydesk.js";
 import { drainTenantContextReleases } from "../src/middleware/tenantContext.js";
 import { myDeskObjectStore, myDeskSha256 } from "../src/services/mydeskFiles.js";
@@ -54,6 +55,7 @@ before(async () => {
     assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(url!).hostname), "Only local fixture databases are permitted");
   }
   await fixturePool.query(MYDESK_SQL);
+  await applyMyDeskRedesign(fixturePool);
   if (process.env.RLS_GUC_ENABLED === "true") {
     const role = await pool.query<{ current_user: string; rolsuper: boolean; rolbypassrls: boolean }>(
       "SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");

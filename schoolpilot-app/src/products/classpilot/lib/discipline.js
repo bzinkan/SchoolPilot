@@ -6,6 +6,7 @@ export const disciplineKeys = {
   capabilities: (schoolId, viewerId) => [...disciplineKeys.root(schoolId, viewerId), 'capabilities'],
   access: (schoolId, viewerId) => [...disciplineKeys.root(schoolId, viewerId), 'access'],
   records: (schoolId, viewerId, filters) => [...disciplineKeys.root(schoolId, viewerId), 'records', filters],
+  students: (schoolId, viewerId, filters) => [...disciplineKeys.root(schoolId, viewerId), 'students', filters],
   record: (schoolId, viewerId, id) => [...disciplineKeys.root(schoolId, viewerId), 'record', id],
   attachment: (schoolId, viewerId, id, versionId, attachmentId) => [...disciplineKeys.root(schoolId, viewerId), 'attachment', id, versionId, attachmentId],
 };
@@ -20,7 +21,7 @@ export function disciplineApi(schoolId, signal) {
     };
     check();
     try {
-      const result = await apiRequest(method, `/classpilot/discipline-records${path}`, data, { ...config, signal, headers: { 'X-School-Id': schoolId } });
+      const result = await apiRequest(method, `/classpilot/discipline-records${path}`, data, { ...config, signal, headers: { 'X-School-Id': schoolId, ...config.headers } });
       check();
       return result;
     } catch (error) {
@@ -34,8 +35,18 @@ export function disciplineApi(schoolId, signal) {
   const id = encodeURIComponent;
   return {
     capabilities: () => request('GET', '/capabilities'),
-    access: () => request('GET', '/access'),
-    setAccess: (userId, data) => request('PUT', `/access/${id(userId)}`, data),
+    students: data => request('POST', '/students/search', data),
+    studentHistory: (studentId, data) => request('POST', `/students/${id(studentId)}/history`, data),
+    exportStudents: data => request('POST', '/students/export', data, { responseType: 'blob' }),
+    createDraft: data => request('POST', '/drafts', data),
+    draft: recordId => request('GET', `/${id(recordId)}/draft`),
+    updateDraft: (recordId, data) => request('PATCH', `/${id(recordId)}/draft`, data),
+    cancelDraft: (recordId, data) => request('DELETE', `/${id(recordId)}/draft`, data),
+    reserveEvidence: (recordId, data) => request('POST', `/${id(recordId)}/attachments`, data),
+    uploadEvidence: (recordId, assetId, file) => request('PUT', `/${id(recordId)}/attachments/${id(assetId)}/content`, file, { headers: { 'Content-Type': file.type } }),
+    draftContent: (recordId, assetId) => request('GET', `/${id(recordId)}/attachments/${id(assetId)}/content`, undefined, { responseType: 'blob' }),
+    duplicates: recordId => request('GET', `/${id(recordId)}/duplicates`),
+    finalize: (recordId, data) => request('POST', `/${id(recordId)}/finalize`, data),
     search: data => request('POST', '/search', data),
     export: data => request('POST', '/export', data, { responseType: 'blob' }),
     record: (recordId, versionsCursor) => request('GET', `/${id(recordId)}${versionsCursor ? `?versionsCursor=${encodeURIComponent(versionsCursor)}` : ''}`),

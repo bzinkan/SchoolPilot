@@ -11,6 +11,7 @@ import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_IMPORTS_SQL } from "../src/db/mydeskImportsMigration.js";
 import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
+import { applyMyDeskRedesign } from "./helpers/mydeskRedesign.js";
 import myDeskRouter from "../src/routes/mydesk.js";
 import { myDeskUpstreamErrorBoundary } from "../src/middleware/mydeskUpstreamErrorBoundary.js";
 import { signUserToken } from "../src/services/jwt.js";
@@ -30,6 +31,7 @@ before(async () => {
   }
   await fixturePool.query(MYDESK_SQL); await fixturePool.query(MYDESK_IMPORTS_SQL);
   await fixturePool.query(MYDESK_WORKSPACE_SQL);
+  await applyMyDeskRedesign(fixturePool);
   if (process.env.RLS_GUC_ENABLED === "true") {
     const roleName = process.env.RLS_TEST_ROLE || ""; assert.match(roleName, /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/);
     await fixturePool.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_notes,mydesk_attachments,mydesk_preferences TO "${roleName}"`);

@@ -1,3 +1,4 @@
+import studentInformationRoutes from "./studentInformation.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import myDeskRoutes from "./mydesk.js";
 import schoolDisciplineRoutes from "./schoolDiscipline.js";
@@ -424,6 +425,7 @@ router.use("/classpilot", dashboardActivityRoutes);
 router.use("/classpilot", scheduledConflictRoutes);
 router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/classpilot/discipline-records", schoolDisciplineRoutes);
+router.use("/classpilot/student-information", studentInformationRoutes);
 router.use("/classpilot", competitiveRoutes);
 router.use("/classpilot", monitoringEventRoutes);
 router.use("/classpilot/schedule-changes", scheduleChangeRoutes);

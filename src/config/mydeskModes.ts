@@ -1,9 +1,9 @@
-export const MYDESK_MODE_KEYS = ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE"] as const;
+export const MYDESK_MODE_KEYS = ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE", "STUDENT_INFORMATION_AI_IMPORT_MODE"] as const;
 export const MYDESK_LEGACY_KEYS = [
   "MYDESK_ENABLED_SCHOOL_IDS", "MYDESK_SEATING_ENABLED_SCHOOL_IDS", "MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS",
 ] as const;
 export type MyDeskMode = "off" | "on";
-export type MyDeskModes = { mode: MyDeskMode; seatingMode: MyDeskMode; aiImportMode: MyDeskMode };
+export type MyDeskModes = { mode: MyDeskMode; seatingMode: MyDeskMode; aiImportMode: MyDeskMode; studentInformationAiImportMode: MyDeskMode };
 type Environment = Readonly<Record<string, string | undefined>>;
 
 /** Release preflight uses this strict parser; never expose configuration values in errors. */
@@ -17,13 +17,13 @@ export function parseMyDeskModes(env: Environment = process.env): MyDeskModes {
     if (value !== "off" && value !== "on") throw invalid();
     return value;
   });
-  const [mode, seatingMode, aiImportMode] = values as [MyDeskMode, MyDeskMode, MyDeskMode];
-  if (mode !== "on" && (seatingMode === "on" || aiImportMode === "on")) throw invalid();
-  return { mode, seatingMode, aiImportMode };
+  const [mode, seatingMode, aiImportMode, studentInformationAiImportMode] = values as [MyDeskMode, MyDeskMode, MyDeskMode, MyDeskMode];
+  if (mode !== "on" && (seatingMode === "on" || aiImportMode === "on" || studentInformationAiImportMode === "on")) throw invalid();
+  return { mode, seatingMode, aiImportMode, studentInformationAiImportMode };
 }
 
 /** A bad configuration hides all private features while independent cleanup keeps running. */
 export function readMyDeskModes(env: Environment = process.env): MyDeskModes {
   try { return parseMyDeskModes(env); }
-  catch { return { mode: "off", seatingMode: "off", aiImportMode: "off" }; }
+  catch { return { mode: "off", seatingMode: "off", aiImportMode: "off", studentInformationAiImportMode: "off" }; }
 }

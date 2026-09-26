@@ -42,7 +42,6 @@ import {
 } from "../calendarHistoryGuard";
 import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
 import StaffAccessTransitionDialog from "../../../shared/components/StaffAccessTransitionDialog";
-import DisciplineAccessPanel from "../components/DisciplineAccessPanel";
 import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
 
 const ADMIN_TAB_VALUES = new Set(["staff", "student-portal", "calendar", "audit"]);
@@ -817,6 +816,8 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ThemeToggle />
+          <Button variant="outline" onClick={() => requestRouteChange("/classpilot/discipline-records?entry=admin")}><FileText className="h-4 w-4 mr-2" />Discipline logs</Button>
+          <Button variant="outline" onClick={() => requestRouteChange("/classpilot/students")}><Users className="h-4 w-4 mr-2" />Students</Button>
           <Button
             variant="outline"
             onClick={() => requestRouteChange("/classpilot/admin/analytics")}
@@ -874,7 +875,6 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
         </TabsList>
 
         <TabsContent value="staff" className="space-y-6">
-          <DisciplineAccessPanel />
           {/* Staff Management Card */}
           <Card>
             <CardHeader>

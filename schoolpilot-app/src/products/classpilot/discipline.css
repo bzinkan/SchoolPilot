@@ -70,3 +70,21 @@
  .discipline-record .discipline-version { break-inside:avoid; }
  .discipline-record .discipline-body { max-width:none; }
 }
+
+.discipline-summary-scroll { overflow-x: auto; margin-block: 1rem; }
+.discipline-summary { width: 100%; border-collapse: collapse; text-align: left; }
+.discipline-summary th, .discipline-summary td { padding: 1rem; border-bottom: 1px solid hsl(var(--border)); }
+.discipline-summary th { font-size: .85rem; font-weight: 600; }
+.discipline-summary td:not(:first-child) { font-variant-numeric: tabular-nums; }
+.discipline-summary button { text-align: left; color: hsl(var(--primary)); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.discipline-summary small { display: block; margin-top: .35rem; color: hsl(var(--muted-foreground)); }
+.discipline-composer { max-width: 720px; max-height: 90dvh; overflow-y: auto; }
+.discipline-composer fieldset { display: grid; gap: 1rem; min-width: 0; }
+.discipline-composer label { display: grid; gap: .4rem; }
+.discipline-composer select, .discipline-composer textarea { width: 100%; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); border-radius: .4rem; padding: .6rem; }
+.discipline-composer .discipline-check { display: flex; align-items: center; }
+.discipline-additional-filters { margin-block: 1rem; }
+.discipline-additional-filters[open] { display: grid; gap: 1rem; }
+@media(max-width:640px) { .discipline-summary th, .discipline-summary td { padding: .75rem .5rem; } .discipline-summary th { font-size: .75rem; } }
+
+@media print { .discipline-composer { display:none!important; } }

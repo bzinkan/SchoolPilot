@@ -34,6 +34,7 @@ type Registry = {
     mydeskImportsPostExpand: RegistryInventory;
     mydeskWorkspacePostExpand: RegistryInventory;
     schoolDisciplinePostExpand: RegistryInventory;
+    studentInformationPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -168,7 +169,7 @@ describe("semantic RLS registry", () => {
     assert.deepEqual(new Set(production), new Set(expected));
     assert.equal(sha256(production), "3fc773aafdbed1c6d8f0b2c1ad6d2d2b4cd683e037a20e58c926d941ca68c021",
       "Production CSV must retain the exact 2026-09-26 post-admission observation order");
-    assert.deepEqual(ciAllowlist(), registry.inventories.schoolDisciplinePostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.studentInformationPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,
@@ -213,5 +214,16 @@ describe("semantic RLS registry", () => {
     assert.equal(isReviewedRlsEnforcementRequest([...workspace, ...discipline]), true);
     assert.equal(isReviewedRlsEnforcementRequest([...discipline, ...workspace]), false);
     assert.equal(isReviewedRlsEnforcementRequest(discipline.slice(0, 3)), false);
+  });
+  it("admits exactly five student-information tables without changing historical inventories", () => {
+    const tables = ["student_contact_profiles", "student_contact_profile_versions", "student_information_imports", "student_information_import_items", "student_information_import_assets"];
+    assert.deepEqual(registry.reviewedEnablementRequests.studentInformation, tables);
+    const target = registry.inventories.studentInformationPostExpand;
+    assert.equal(target.count, 119);
+    assert.deepEqual(target.tables, [...registry.inventories.schoolDisciplinePostExpand.tables, ...tables]);
+    assert.equal(sha256(target.tables), target.sha256);
+    assert.equal(isReviewedRlsEnforcementRequest(tables), true);
+    assert.equal(isReviewedRlsEnforcementRequest(tables.slice(0, 4)), false);
+    assert.equal(isReviewedRlsEnforcementRequest([...tables].reverse()), false);
   });
 });

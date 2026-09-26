@@ -192,8 +192,24 @@ function Wait-ExactServicePairConvergence {
     if ($script:Mock.Services.Api.taskDefinition -cne $ExpectedApiArn -or $script:Mock.Services.Worker.taskDefinition -cne $ExpectedWorkerArn -or $ExpectedDesiredCount -ne 3) { throw 'Incorrect convergence pair' }
     return $true
 }
-function New-TestMyDeskPlan($Config = $script:TestConfig, $EvidencePath = $null) {
-    return New-MyDeskPlan $Config $script:TestDirectory $script:TestApiArn $script:TestWorkerArn $script:TestDigest $script:TestSha $EvidencePath
+function New-TestMyDeskPlan($Config = $script:TestConfig, $EvidencePath = $null, $ContactEvidencePath = $null) {
+    return New-MyDeskPlan $Config $script:TestDirectory $script:TestApiArn $script:TestWorkerArn $script:TestDigest $script:TestSha $EvidencePath $ContactEvidencePath
+}
+function New-TestContactEvidence {
+    $validation = Get-Content (Join-Path $PSScriptRoot '../src/services/studentInformationValidation.ts') -Raw
+    $prompt = [regex]::Match($validation, 'INFORMATION_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
+    return [pscustomobject]@{
+        schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'synthetic-contact-review'; imageDigest = $script:TestDigest
+        model = 'claude-sonnet-5'; promptVersion = $prompt; providerContactReviewApproved = $true
+        qualityReportSha256 = ('c' * 64); capacityReportSha256 = ('d' * 64); profileCount = 100; sourceFormats = @('pdf','photo','docx','xlsx','csv')
+        typedPhoneEmailAccuracy = 0.99; difficultCasesReported = $true; criticalFailures = 0; correctionTimingRecorded = $true
+        workerCpu = '256'; workerMemory = '512'; peakMemoryFraction = 0.6; apiP95Ratio = 1.1; noServiceDisruption = $true; reviewAndRecoveryPassed = $true
+    }
+}
+function Add-TestContactAdmission {
+    foreach ($arn in @($script:TestApiArn,$script:TestWorkerArn)) {
+        Set-TestEnvironment $script:Mock.Tasks[$arn] 'RLS_ENABLED_TABLES' ('students,' + (($script:MyDeskTables + $script:StudentInformationTables) -join ','))
+    }
 }
 function New-TestAiEvidence {
     $processing = Get-Content (Join-Path $PSScriptRoot '../src/services/mydeskImportProcessing.ts') -Raw
@@ -237,6 +253,12 @@ try {
     Assert-Throws { ConvertTo-MyDeskRuntime $disabled } 'Child features require the base mode.'
     $extra = Copy-TestValue $script:TestConfig; $extra | Add-Member schoolId 'forbidden-opt-in'
     Assert-Throws { ConvertTo-MyDeskRuntime $extra } 'Runtime must not accept per-school opt-ins.'
+    Assert-Condition ((ConvertTo-MyDeskRuntime $script:TestConfig).Environment.STUDENT_INFORMATION_AI_IMPORT_MODE -ceq 'off') 'Legacy config is compatible only with contact mode off.'
+    $contact = Copy-TestValue $script:TestConfig; $contact | Add-Member studentInformationAiImportMode 'on'
+    $contact.mode = 'off'; $contact.seatingMode = 'off'
+    Assert-Throws { ConvertTo-MyDeskRuntime $contact } 'Contact AI must require base My Desk independently of discipline AI.'
+    $contact.mode = 'on'; $contact.studentInformationAiImportMode = 'ON'
+    Assert-Throws { ConvertTo-MyDeskRuntime $contact } 'Contact mode must reject noncanonical values.'
 
     $plan = New-TestMyDeskPlan
     Assert-Condition ($script:Mock.Requests.Count -eq 0 -and -not $script:OperationLockHeld) 'Planning must not register or update AWS state.'
@@ -367,6 +389,45 @@ try {
     Reset-MyDeskMock
     $script:Mock.Tasks[$script:TestWorkerArn].taskDefinition.containerDefinitions[0].secrets = @()
     Assert-Throws { New-TestMyDeskPlan $ai $evidencePath } 'AI requires a secret reference on both serving roles.'
+
+    Reset-MyDeskMock
+    $contact = Copy-TestValue $script:TestConfig; $contact | Add-Member studentInformationAiImportMode 'on'
+    $contactEvidencePath = Join-Path $script:TestDirectory 'contact-evidence.json'
+    $contactEvidence = New-TestContactEvidence; Write-SanitizedJson $contactEvidencePath $contactEvidence
+    Assert-Throws { New-TestMyDeskPlan $contact $null $contactEvidencePath } 'Contact AI requires its five-table RLS admission.'
+    Add-TestContactAdmission
+    Assert-Throws { New-TestMyDeskPlan $contact } 'Contact AI requires independent readiness evidence.'
+    Assert-Throws { New-TestMyDeskPlan $contact $null $evidencePath } 'Discipline quality evidence cannot stand in for contact quality.'
+    $contactPlan = New-TestMyDeskPlan $contact $null $contactEvidencePath
+    Assert-Condition ($null -eq $contactPlan.plan.aiEvidence -and $null -ne $contactPlan.plan.contactEvidence) 'Contact AI can be reviewed while discipline AI remains off.'
+    foreach ($change in @(@('profileCount',99), @('typedPhoneEmailAccuracy',0.98), @('criticalFailures',1), @('providerContactReviewApproved',$false),
+        @('difficultCasesReported',$false), @('peakMemoryFraction',0.7), @('apiP95Ratio',1.21), @('workerMemory','1024'), @('promptVersion','old-contact-prompt'), @('sourceFormats',@('pdf','photo','docx','csv')))) {
+        $bad = Copy-TestValue $contactEvidence; $bad.($change[0]) = $change[1]; Write-SanitizedJson $contactEvidencePath $bad
+        Assert-Throws { New-TestMyDeskPlan $contact $null $contactEvidencePath } 'Incomplete contact quality or capacity evidence must block activation.'
+    }
+    $contactEvidence.reviewReference = 'changed-contact-review'; Write-SanitizedJson $contactEvidencePath $contactEvidence
+    Assert-Throws { Invoke-MyDeskApply $contactPlan.plan $contactPlan.sha256 $script:TestDirectory } 'Contact evidence drift must stop before mutation.'
+    Assert-Condition ($script:Mock.Requests.Count -eq 0) 'Rejected contact evidence must never register definitions.'
+    $contactPlan = New-TestMyDeskPlan $contact $null $contactEvidencePath
+    $contactResult = Invoke-MyDeskApply $contactPlan.plan $contactPlan.sha256 $script:TestDirectory
+    Assert-Condition ($contactResult.status -ceq 'applied') 'Complete contact evidence permits only the mocked independent contact activation.'
+    foreach ($role in @('Api','Worker')) {
+        $env = Get-MyDeskEnvironment $script:Mock.Tasks[$script:Mock.Services.$role.taskDefinition].taskDefinition $(if ($role -ceq 'Api') { 'api' } else { 'scheduler-worker' })
+        Assert-Condition ($env['STUDENT_INFORMATION_AI_IMPORT_MODE'] -ceq 'on' -and $env['MYDESK_AI_IMPORT_MODE'] -ceq 'off') 'Both services receive matching independent AI controls.'
+    }
+    $script:Action = 'Rollback'; $script:Execute = $true; $script:ManifestPath = $contactPlan.path; $script:ManifestHash = $contactPlan.sha256
+    $script:AiReadinessPath = $null; $script:StudentInformationReadinessPath = $null
+    Invoke-MyDeskMain
+    foreach ($role in @('Api','Worker')) {
+        $env = Get-MyDeskEnvironment $script:Mock.Tasks[$script:Mock.Services.$role.taskDefinition].taskDefinition $(if ($role -ceq 'Api') { 'api' } else { 'scheduler-worker' })
+        Assert-Condition ($env['STUDENT_INFORMATION_AI_IMPORT_MODE'] -ceq 'off' -and $env['MYDESK_ATTACHMENTS_BUCKET'] -ceq $script:TestConfig.bucket) 'Contact rollback restores its prior mode while retaining durable cleanup storage.'
+    }
+    Reset-MyDeskMock; Add-TestContactAdmission
+    foreach ($arn in @($script:TestApiArn,$script:TestWorkerArn)) {
+        Set-TestEnvironment $script:Mock.Tasks[$arn] 'MYDESK_MODE' 'on'
+        Set-TestEnvironment $script:Mock.Tasks[$arn] 'STUDENT_INFORMATION_AI_IMPORT_MODE' 'on'
+    }
+    Assert-Throws { New-TestMyDeskPlan $script:TestConfig } 'A legacy config must not silently disable live contact imports.'
 
     Reset-ReadinessMock
     $source = Copy-TestValue $script:Mock.Tasks[$script:TestWorkerArn]

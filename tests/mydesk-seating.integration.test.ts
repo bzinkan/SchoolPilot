@@ -8,6 +8,7 @@ import pg from "pg";
 import { z } from "zod";
 import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
+import { applyMyDeskRedesign } from "./helpers/mydeskRedesign.js";
 import { MYDESK_SEATING_SQL } from "../src/db/mydeskSeatingMigration.js";
 import { MYDESK_SEATING_MEASURED_SQL } from "../src/db/mydeskSeatingMeasuredMigration.js";
 import { seatingLayout, type SeatingLayout } from "../src/services/mydeskSeatingValidation.js";
@@ -34,6 +35,7 @@ before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
   if (process.env.ADMIN_DATABASE_URL) assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.ADMIN_DATABASE_URL).hostname));
   await fixturePool.query(MYDESK_SQL);
+  await applyMyDeskRedesign(fixturePool);
   await fixturePool.query(MYDESK_SEATING_SQL);
   await fixturePool.query(MYDESK_SEATING_MEASURED_SQL);
   if (process.env.RLS_GUC_ENABLED === "true") {
@@ -443,4 +445,18 @@ test("seating library paginates same-timestamp summaries and binds cursors to ow
   if (process.env.RLS_GUC_ENABLED === "true") {
     assert.equal((await pool.query<{ count: number }>("SELECT count(*)::int AS count FROM mydesk_seating_charts WHERE school_id=$1", [f.schoolId])).rows[0]!.count, 0);
   }
+});
+
+test('seating grade selection filters before pagination and never infers past chart grades',async()=>{
+  const f=await fixture();
+  await fixturePool.query("UPDATE groups SET grade_level='Grade 5' WHERE id=$1",[f.groupId]);
+  await fixturePool.query("INSERT INTO mydesk_seating_charts(school_id,author_id,client_request_id,request_fingerprint,group_id,filing_group_id,group_name,name,roster_revision) SELECT $1,$2,gen_random_uuid(),repeat('a',64),$3,$3,'Science','Grade chart '||n,repeat('b',64) FROM generate_series(1,12)n",[f.schoolId,f.teacherId,f.groupId]);
+  const page=await list(f,'?gradeLevel=5&limit=5');assert.equal(page.charts.length,5);assert.ok(page.nextCursor);
+  assert.equal((await list(f,'?gradeLevel=6')).charts.length,0);
+  assert.equal((await request(f,`/seating-charts?gradeLevel=6&cursor=${encodeURIComponent(page.nextCursor)}`)).status,400);
+  const next=await list(f,`?gradeLevel=5&limit=5&cursor=${encodeURIComponent(page.nextCursor)}`);assert.equal(next.charts.length,5);
+  assert.equal(new Set([...page.charts,...next.charts].map(chart=>chart.id)).size,10);
+  await fixturePool.query("UPDATE groups SET status='archived' WHERE id=$1",[f.groupId]);
+  assert.equal((await request(f,'/seating-charts?scope=past&gradeLevel=5')).status,400);
+  assert.equal((await list(f,`?scope=past&classId=${f.groupId}`)).charts.length,12);
 });

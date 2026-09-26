@@ -142,6 +142,15 @@ variable "mydesk_ai_import_mode" {
     error_message = "mydesk_ai_import_mode must be off or on; on requires mydesk_mode=on."
   }
 }
+variable "student_information_ai_import_mode" {
+  description = "Separate contact extraction release; requires base My Desk but not discipline AI"
+  type        = string
+  default     = "off"
+  validation {
+    condition     = contains(["off", "on"], var.student_information_ai_import_mode) && (var.student_information_ai_import_mode == "off" || var.mydesk_mode == "on")
+    error_message = "student_information_ai_import_mode must be off or on; on requires mydesk_mode=on."
+  }
+}
 variable "mydesk_ai_import_model" {
   type    = string
   default = "claude-sonnet-5"

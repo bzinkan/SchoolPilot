@@ -1,3 +1,8 @@
+import { once } from "node:events";
+import { WebSocket, WebSocketServer } from "ws";
+import { registerWsClient, authenticateWsClient, removeWsClient } from "../src/realtime/ws-broadcast.js";
+import { removeGroupStudent, addGroupTeacher } from "../src/services/storage.js";
+import { runWithTenantContext } from "../src/middleware/tenantContext.js";
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
@@ -9,6 +14,7 @@ import { z } from "zod";
 import { pool, sessionPool } from "../src/db.js";
 import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
+import { MYDESK_GRADE_FILING_SQL } from "../src/db/mydeskGradeFilingMigration.js";
 import myDeskRouter from "../src/routes/mydesk.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { signUserToken } from "../src/services/jwt.js";
@@ -18,6 +24,7 @@ const schoolIds: string[] = [];
 const fixturePool = process.env.ADMIN_DATABASE_URL ? new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2 }) : pool;
 const noteSchema = z.object({ id: z.string(), clientRequestId: z.string(), title: z.string(), displayTitle: z.string(), body: z.string(), status: z.string(), revision: z.number(),
   targetKind: z.string(), groupName: z.string().nullable(), studentName: z.string().nullable(), groupId: z.string().nullable(),
+  filingGradeLevel: z.string().nullable(), filingSchoolYear: z.string().nullable(),
   pinned: z.boolean(), attachments: z.array(z.object({ id: z.string(), status: z.string() })) });
 const noteEnvelope = z.object({ note: noteSchema });
 const listEnvelope = z.object({ notes: z.array(noteSchema), nextCursor: z.string().nullable() });
@@ -27,6 +34,7 @@ before(async () => {
   if (process.env.ADMIN_DATABASE_URL) assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.ADMIN_DATABASE_URL).hostname));
   await fixturePool.query(MYDESK_SQL);
   await fixturePool.query(MYDESK_WORKSPACE_SQL);
+  await fixturePool.query(MYDESK_GRADE_FILING_SQL);
   if (process.env.RLS_GUC_ENABLED === "true") {
     const role = await pool.query<{ current_user: string; rolsuper: boolean; rolbypassrls: boolean }>(
       "SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");
@@ -101,7 +109,7 @@ async function draft(f: Fixture, fields: Record<string, unknown> = {}, authorId 
   assert.equal(response.status, 201, response.text); return noteEnvelope.parse(response.data).note;
 }
 async function activate(f: Fixture, note: z.infer<typeof noteSchema>, authorId = f.teacherId) {
-  const response = await request(f, `/notes/${note.id}/complete`, "POST", { revision: note.revision, attachmentIds: [] }, authorId);
+  const response = await request(f, `/notes/${note.id}/complete`, "POST", { revision: note.revision, attachmentIds: [], workspaceVersion: 2 }, authorId);
   assert.equal(response.status, 200, response.text); return noteEnvelope.parse(response.data).note;
 }
 test("author privacy across co-teacher, admin, school and direct-ID mutations", async () => {
@@ -363,7 +371,7 @@ test("personal grade groups and revisioned defaults stay separate from administr
   assert.deepEqual(updates.map(row => row.status).sort(), [200, 409]);
   const saved = z.object({ revision: z.number(), preferredClasses: z.record(z.string()) }).parse((await request(f, "/preferences")).data);
   assert.equal(saved.revision, 1);
-  assert.deepEqual((await request(f, "/preferences", "GET", undefined, f.colleagueId)).data, { revision: 0, preferredClasses: {} });
+  assert.deepEqual((await request(f, "/preferences", "GET", undefined, f.colleagueId)).data, { revision: 0, preferredClasses: {}, viewBy: "grades" });
   assert.equal((await request(f, "/preferences", "PATCH", { revision: 1, preferredClasses: { '6': otherGroup } })).status, 409);
   await fixturePool.query("UPDATE groups SET status='archived' WHERE id=$1", [saved.preferredClasses['5']]);
   const stale = schema.parse((await request(f, "/classes")).data).personalByGrade.find(row => row.gradeLevel === '5');
@@ -409,4 +417,121 @@ test("directory includes zero-note students; all-years history keeps own snapsho
   const csv = await request(f, `/students/${f.studentId}/export`, "POST", { category: "positive" });
   assert.equal(csv.status, 200); assert.ok(csv.text.includes("Saved observation") && csv.text.includes("Science") && !csv.text.includes("Colleague content"));
   assert.equal(csv.headers.get("cache-control"), "private, no-store");
+});
+
+test("grade filing is independent of classes and preserves student grade snapshots after promotion", async () => {
+  const f = await fixture();
+  await fixturePool.query("UPDATE groups SET grade_level='Grade 5' WHERE id=$1", [f.groupId]);
+  await fixturePool.query("UPDATE students SET grade_level='5th' WHERE id=$1", [f.studentId]);
+  const grade = await activate(f, await draft(f, { targetKind: 'grade', gradeLevel: '5', title: 'Fifth-grade materials' }));
+  assert.equal(grade.groupId, null); assert.equal(grade.filingGradeLevel, '5');
+  const student = await activate(f, await draft(f, { targetKind: 'student', gradeLevel: '5', studentId: f.studentId, title: 'Original incident' }));
+  assert.equal(student.groupId, null); assert.equal(student.filingGradeLevel, '5');
+  const retryable = await draft(f, { targetKind: 'class', groupId: f.groupId, gradeLevel: null, title: 'Class reservation' });
+  const completion = { revision: retryable.revision, attachmentIds: [], targetKind: 'class', groupId: f.groupId, gradeLevel: null, studentId: null };
+  assert.equal((await request(f, `/notes/${retryable.id}/complete`, 'POST', completion)).status, 200);
+  assert.equal((await request(f, `/notes/${retryable.id}/complete`, 'POST', completion)).status, 200, 'Derived grade labels must not break lost-response retries');
+  await request(f, `/notes/${retryable.id}`, 'DELETE', { revision: retryable.revision + 1 });
+  assert.equal((await request(f, '/notes', 'POST', { clientRequestId: randomUUID(), targetKind: 'grade', gradeLevel: '6', body: 'unauthorized' })).status, 404);
+  assert.equal((await request(f, '/notes', 'POST', { clientRequestId: randomUUID(), targetKind: 'grade', gradeLevel: '5', body: 'admin without teaching assignment' }, f.adminId)).status, 404);
+  assert.equal((await request(f, `/notes/${student.id}`,'GET',undefined,f.adminId)).status,404);
+  await fixturePool.query("UPDATE students SET grade_level='6',first_name='Renamed' WHERE id=$1", [f.studentId]);
+  const fifth = listEnvelope.parse((await request(f, '/notes/search', 'POST', { scope: 'grade', gradeLevel: '5' })).data);
+  assert.deepEqual(new Set(fifth.notes.map(note => note.id)),new Set([grade.id,student.id]));
+  assert.equal(fifth.notes.find(note => note.id===student.id)?.studentName,'First Student');
+  assert.equal(listEnvelope.parse((await request(f,'/notes/search','POST',{scope:'grade',gradeLevel:'6'})).data).notes.length,0);
+  assert.equal(listEnvelope.parse((await request(f,'/notes/search','POST',{scope:'class',classId:f.groupId})).data).notes.length,0);
+  const edit=await request(f,`/notes/${student.id}`,'PATCH',{revision:student.revision,workspaceVersion:2,body:'Edited wording'});
+  assert.equal(edit.status,200,edit.text); assert.equal(noteEnvelope.parse(edit.data).note.filingGradeLevel,'5');
+  const csv=await request(f,'/export','POST',{scope:'grade',gradeLevel:'5'}); assert.equal(csv.status,200);assert.equal(csv.headers.get('x-mydesk-row-count'),'2');
+  const directory=z.object({students:z.array(z.object({id:z.string()}))});
+  assert.deepEqual(directory.parse((await request(f,'/students/search','POST',{gradeLevel:'5'})).data).students,[]);
+  assert.deepEqual(directory.parse((await request(f,'/students/search','POST',{gradeLevel:'6'})).data).students.map(row=>row.id),[f.studentId]);
+  await fixturePool.query("UPDATE groups SET status='archived' WHERE id=$1",[f.groupId]);
+  const past=listEnvelope.parse((await request(f,'/notes/search','POST',{scope:'past'})).data).notes;
+  assert.deepEqual(new Set(past.map(note=>note.id)),new Set([grade.id,student.id]));
+  assert.equal((await request(f,`/students/${f.studentId}/context`)).status,404);
+  assert.equal((await request(f,`/students/${f.studentId}/history`,'POST',{})).status,200);
+});
+
+test("grade preferences are personal, directory deduplicates classes, and legacy notes never acquire a current grade",async()=>{
+  const f=await fixture(),second=randomUUID();
+  await fixtureTransaction(async client=>{
+    await client.query("UPDATE groups SET grade_level='5' WHERE id=$1",[f.groupId]);
+    await client.query("UPDATE students SET grade_level='5' WHERE id=$1",[f.studentId]);
+    await client.query("INSERT INTO groups(id,school_id,teacher_id,name,grade_level,group_type,status) VALUES($1,$2,$3,'Math','5','teacher_created','active')",[second,f.schoolId,f.teacherId]);
+    await client.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)",[second,f.studentId]);
+    await client.query("INSERT INTO mydesk_notes(school_id,author_id,client_request_id,request_fingerprint,target_kind,group_id,filing_group_id,group_name,body,entry_date,status) VALUES($1,$2,gen_random_uuid(),repeat('a',64),'class',$3,$3,'Old class label','Legacy private wording','2020-01-01','active')",[f.schoolId,f.teacherId,f.groupId]);
+  });
+  const directory=z.object({students:z.array(z.object({id:z.string()}))}).parse((await request(f,'/students/search','POST',{gradeLevel:'5'})).data);
+  assert.deepEqual(directory.students.map(row=>row.id),[f.studentId]);
+  const preferences=await request(f,'/preferences','PATCH',{revision:0,preferredClasses:{},viewBy:'classes'}); assert.equal(preferences.status,200,preferences.text);
+  assert.equal(z.object({viewBy:z.string()}).parse((await request(f,'/preferences')).data).viewBy,'classes');
+  assert.equal(z.object({viewBy:z.string()}).parse((await request(f,'/preferences','GET',undefined,f.colleagueId)).data).viewBy,'grades');
+  const legacy=listEnvelope.parse((await request(f,'/notes/search','POST',{scope:'legacy'})).data).notes;
+  assert.equal(legacy.length,1);assert.equal(legacy[0]!.filingGradeLevel,null);
+  assert.equal(listEnvelope.parse((await request(f,'/notes/search','POST',{scope:'grade',gradeLevel:'5'})).data).notes.length,0);
+  const response=await request(f,`/notes/${legacy[0]!.id}`,'PATCH',{revision:legacy[0]!.revision,title:'Still private',targetKind:'class',groupId:f.groupId,studentId:null});
+  assert.equal(response.status,200,response.text);assert.equal(noteEnvelope.parse(response.data).note.filingGradeLevel,null);
+  assert.equal(noteEnvelope.parse(response.data).note.groupName,'Old class label','Echoed targets must preserve the historical label');
+  const bad=await request(f,'/notes','POST',{clientRequestId:randomUUID(),targetKind:'grade',gradeLevel:'5',groupId:f.groupId,body:'invalid'});assert.equal(bad.status,400);
+});
+
+test('legacy writers cannot overwrite grade filing; modern text edits preserve snapshots after access changes',async()=>{
+  const f=await fixture();
+  await fixturePool.query("UPDATE groups SET grade_level='5' WHERE id=$1",[f.groupId]);
+  await fixturePool.query("UPDATE students SET grade_level='5' WHERE id=$1",[f.studentId]);
+  const grade=await draft(f,{targetKind:'grade',gradeLevel:'5'});
+  const rejected=await request(f,`/notes/${grade.id}/complete`,'POST',{revision:grade.revision,attachmentIds:[]});
+  assert.equal(rejected.status,409);assert.equal(z.object({code:z.string()}).parse(rejected.data).code,'MYDESK_REFRESH_REQUIRED');
+  const saved=await activate(f,grade);
+  assert.equal((await request(f,`/notes/${saved.id}`,'PATCH',{revision:saved.revision,targetKind:'general',body:'Old client would drop grade'})).status,409);
+  const student=await activate(f,await draft(f,{targetKind:'student',studentId:f.studentId,gradeLevel:'5'}));
+  assert.equal((await request(f,`/notes/${student.id}`,'PATCH',{revision:student.revision,body:'Old writer'})).status,409);
+  await fixturePool.query("UPDATE students SET grade_level='6',first_name='New name' WHERE id=$1",[f.studentId]);
+  await fixturePool.query("UPDATE groups SET status='archived' WHERE id=$1",[f.groupId]);
+  const edited=await request(f,`/notes/${student.id}`,'PATCH',{revision:student.revision,workspaceVersion:2,targetKind:'student',groupId:null,studentId:f.studentId,gradeLevel:'5',body:'Modern text correction'});
+  assert.equal(edited.status,200,edited.text);
+  assert.equal(noteEnvelope.parse(edited.data).note.filingGradeLevel,'5');assert.equal(noteEnvelope.parse(edited.data).note.studentName,'First Student');
+  const refile=await request(f,`/notes/${student.id}`,'PATCH',{revision:noteEnvelope.parse(edited.data).note.revision,workspaceVersion:2,gradeLevel:'6'});
+  assert.equal(refile.status,404,'Changed filing must revalidate current student access');
+});
+
+
+test("official roster refresh reaches only same-school staff after commit and never after rollback", async () => {
+  const f = await fixture();
+  await fixturePool.query("UPDATE groups SET group_type='admin_class' WHERE id=$1", [f.groupId]);
+  const wsServer = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(wsServer, "listening");
+  const address = wsServer.address(); assert.ok(address && typeof address !== "string");
+  const sockets: Array<{ client: WebSocket; server: WebSocket; messages: unknown[] }> = [];
+  try {
+    for (const binding of [
+      { schoolId: f.schoolId, userId: f.teacherId, role: "teacher" as const },
+      { schoolId: randomUUID(), userId: f.colleagueId, role: "teacher" as const },
+      { schoolId: f.schoolId, studentId: f.studentId, role: "student" as const },
+    ]) {
+      const accepted = once(wsServer, "connection");
+      const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+      await once(client, "open");
+      const [connection] = await accepted; assert.ok(connection instanceof WebSocket);
+      registerWsClient(connection); authenticateWsClient(connection, binding);
+      const messages: unknown[] = [];
+      client.on("message", bytes => messages.push(JSON.parse(bytes.toString())));
+      sockets.push({ client, server: connection, messages });
+    }
+    await assert.rejects(runWithTenantContext({ schoolId: f.schoolId }, () => addGroupTeacher(f.groupId, f.colleagueId, "observer")));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.deepEqual(sockets.map(socket => socket.messages.length), [0, 0, 0]);
+    const delivered = once(sockets[0]!.client, "message");
+    await runWithTenantContext({ schoolId: f.schoolId }, () => removeGroupStudent(f.groupId, f.studentId));
+    await delivered;
+    assert.deepEqual(sockets[0]!.messages, [{ type: "shared-record-access-changed", schoolId: f.schoolId }]);
+    assert.deepEqual(sockets.slice(1).map(socket => socket.messages.length), [0, 0]);
+    const roster = await fixturePool.query("SELECT student_id FROM group_students WHERE group_id=$1", [f.groupId]);
+    assert.equal(roster.rowCount, 0);
+  } finally {
+    for (const socket of sockets) { removeWsClient(socket.server); socket.client.terminate(); socket.server.terminate(); }
+    await new Promise<void>(resolve => wsServer.close(() => resolve()));
+  }
 });

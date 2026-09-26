@@ -1,3 +1,4 @@
+import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
@@ -1356,7 +1357,7 @@ export async function getStudentEmailsBySchool(
 
 export async function createStudent(data: InsertStudent): Promise<Student> {
   const normalized = normalizeStudentEmailFields(data);
-  return db.transaction(async (tx) => {
+  const created = await db.transaction(async (tx) => {
     if (normalized.emailLc) {
       await takeStaffIdentityLocks(tx as unknown as typeof db, [
         staffIdentityEmailLockKey(normalized.emailLc),
@@ -1370,6 +1371,8 @@ export async function createStudent(data: InsertStudent): Promise<Student> {
     const [student] = await tx.insert(students).values(normalized).returning();
     return student!;
   });
+  await announceSharedRecordAccessChanged(created.schoolId);
+  return created;
 }
 
 export async function getStudentById(
@@ -1414,7 +1417,7 @@ export async function updateStudent(
   data: Partial<InsertStudent>
 ): Promise<Student | undefined> {
   const normalized = normalizeStudentEmailFields(data);
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [current] = await tx
       .select({ emailLc: students.emailLc, schoolId: students.schoolId })
       .from(students)
@@ -1439,8 +1442,12 @@ export async function updateStudent(
       .set({ ...normalized, updatedAt: new Date() })
       .where(eq(students.id, id))
       .returning();
-    return student;
+    return student ? { student, previousSchoolId: current.schoolId } : undefined;
   });
+  if (updated && ["status", "gradeLevel", "schoolId", "firstName", "lastName"].some(key => Object.prototype.hasOwnProperty.call(data, key))) {
+    await Promise.all([...new Set([updated.previousSchoolId, updated.student.schoolId])].map(announceSharedRecordAccessChanged));
+  }
+  return updated?.student;
 }
 
 export async function getStudentsByExactEmails(
@@ -1564,6 +1571,7 @@ export async function deactivateStudentsForRoster(
       students: lockedStudents.map(({ id, email }) => ({ id, email })),
     };
   });
+  if (result.deactivatedStudentIds.length > 0) await announceSharedRecordAccessChanged(schoolId);
   if (result.endedSessionCount > 0 || result.deactivatedStudentIds.length > 0) {
     await invalidateClasspilotPassiveAuthorization(schoolId);
   }
@@ -1694,7 +1702,10 @@ export async function reactivateInactiveStudentForRosterImport(
 
     return { student, reactivated };
   });
-  if (result.reactivated) await invalidateClasspilotPassiveAuthorization(schoolId);
+  if (result.reactivated) {
+    await invalidateClasspilotPassiveAuthorization(schoolId);
+    await announceSharedRecordAccessChanged(schoolId);
+  }
   return result;
 }
 
@@ -16362,6 +16373,7 @@ async function withPasspilotGroupMutationLock<T>(
     if (!lockedGroup) {
       throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
     }
+    if (lockedGroup.groupType === "admin_class") queueSharedRecordAccessChanged(tx, lockedGroup.schoolId);
     return operation(tx, lockedGroup);
   });
 }
@@ -16862,6 +16874,7 @@ export async function createGroup(
         dbInstance: transactionDb,
       });
     }
+    if (group.groupType === "admin_class") queueSharedRecordAccessChanged(tx, group.schoolId);
     return group;
   });
 }
@@ -17554,6 +17567,7 @@ export async function upsertAdminClassroomClass(options: {
       if (options.primaryTeacherId !== undefined || options.coTeacherIds !== undefined) await preserveManualRosterMemberships(tx, group.id, "teacher", intendedTeacherIds);
     }
     await options.afterWrite?.(tx, group);
+    if (group.groupType === "admin_class" || lockedGroup?.groupType === "admin_class") queueSharedRecordAccessChanged(tx, options.schoolId);
     return { group, roster };
   });
 }
@@ -17655,6 +17669,7 @@ export async function archiveGroup(
       .set({ status: "archived", archivedAt: new Date(), scheduleEnabled: false })
       .where(and(eq(groups.id, groupId), eq(groups.schoolId, candidate.schoolId)))
       .returning();
+    if (group?.groupType === "admin_class") queueSharedRecordAccessChanged(tx, group.schoolId);
     return group;
   });
 }
@@ -17671,9 +17686,9 @@ export async function hardDeleteGroupWithCleanup(
   groupId: string,
   _scheduleChangeActorId?: string
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const [candidate] = await tx
-      .select({ id: groups.id, schoolId: groups.schoolId })
+      .select({ id: groups.id, schoolId: groups.schoolId, groupType: groups.groupType })
       .from(groups)
       .where(eq(groups.id, groupId))
       .limit(1);
@@ -17803,6 +17818,7 @@ export async function hardDeleteGroupWithCleanup(
     await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
     await tx.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
     await tx.delete(groups).where(eq(groups.id, groupId));
+    if (candidate.groupType === "admin_class") queueSharedRecordAccessChanged(tx, candidate.schoolId);
     return true;
   });
 }
@@ -29174,6 +29190,11 @@ function dispatchScheduleChangePostCommitNotices(
  * transaction register IDs against the transaction object; ordinary workflow
  * actions do not use this wrapper because their routes announce explicitly.
  */
+const sharedRecordPostCommitCollectors = new WeakMap<object, Set<string>>();
+function queueSharedRecordAccessChanged(tx: object, schoolId: string): void {
+  sharedRecordPostCommitCollectors.get(tx)?.add(schoolId);
+}
+
 export async function withClasspilotSchedulePostCommitTransaction<T>(
   operation: (tx: StorageTransaction) => Promise<T>,
   dbInstance: typeof db = db
@@ -29185,19 +29206,23 @@ export async function withClasspilotSchedulePostCommitTransaction<T>(
     scheduleChangePostCommitCollectors.set(key, collector);
     const monitoringSchools = new Set<string>();
     monitoringPolicyPostCommitCollectors.set(key, monitoringSchools);
+    const sharedRecordSchools = new Set<string>();
+    sharedRecordPostCommitCollectors.set(key, sharedRecordSchools);
     try {
       const value = await operation(tx);
       const notices = [...collector.entries()].map(([schoolId, ids]) => ({
         schoolId,
         changeIds: [...ids].sort(),
       }));
-      return { value, notices, monitoringSchools: [...monitoringSchools] };
+      return { value, notices, monitoringSchools: [...monitoringSchools], sharedRecordSchools: [...sharedRecordSchools] };
     } finally {
       scheduleChangePostCommitCollectors.delete(key);
       monitoringPolicyPostCommitCollectors.delete(key);
+      sharedRecordPostCommitCollectors.delete(key);
     }
   });
   dispatchScheduleChangePostCommitNotices(committed.notices);
+  await Promise.all(committed.sharedRecordSchools.map(announceSharedRecordAccessChanged));
   for (const schoolId of committed.monitoringSchools) invalidateHeartbeatTrackingSettingsCache(schoolId);
   await Promise.allSettled(committed.monitoringSchools.map(schoolId => publishCacheInvalidation({ kind: "cache-invalidation", schoolId, cache: "heartbeat-tracking-settings" })));
   return committed.value;
