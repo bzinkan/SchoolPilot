@@ -117,7 +117,7 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     assert.deepEqual(writes(state).map(row => row.body), [{ expectedRevision: 0, maxTabsPerStudent: 9 }]);
     await page.getByRole('radio', { name: 'Use school default', exact: true }).check();
     await page.getByRole('button', { name: 'Save classroom defaults', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('[data-testid="button-save"]')?.disabled);
+    await page.getByText('Personal default saved.', { exact: false }).waitFor();
     assert.deepEqual(writes(state).at(-1).body, { expectedRevision: 1, maxTabsPerStudent: null });
     assert(writes(state).every(row => row.path === '/api/classpilot/teacher/preferences' && row.schoolId === 'school-a'));
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-defaults-desktop.png'), fullPage: true, animations: 'disabled' });
@@ -125,6 +125,7 @@ test('Teaching tools keeps section drafts, saves scoped inherited preferences wi
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-defaults-mobile.png'), fullPage: true, animations: 'disabled' });
     await page.getByRole('link', { name: 'Website tools', exact: true }).click();
+    await page.getByText('Research destinations', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({ path: path.join(artifacts, 'teaching-tools-websites-mobile.png'), fullPage: true, animations: 'disabled' });
     assert(!state.requests.some(row => row.path.includes('/teacher/settings')));
