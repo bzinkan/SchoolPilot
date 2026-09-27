@@ -126,9 +126,27 @@ test('pending save blocks exits and an old identity response cannot replace new 
   await page.getByLabel('Maximum tabs per student').fill('9'); await page.getByRole('button', { name: 'Save browsing defaults' }).click();
   await page.getByRole('link', { name: 'Overview', exact: true }).click(); await page.getByText('Wait for the current operation', { exact: false }).waitFor();
   assert.equal(await page.getByLabel('Maximum tabs per student').isDisabled(), true);
-  await page.evaluate(() => window.setFixtureSchool('school-b')); await page.getByTestId('school-settings-workspace').waitFor();
-  await page.getByRole('heading', { level: 1, name: 'Browsing & monitoring' }).waitFor(); assert.equal(await page.getByLabel('Maximum tabs per student').inputValue(), '');
-  state.release(); await page.waitForTimeout(150); assert.equal(await page.getByLabel('Maximum tabs per student').inputValue(), ''); assert.equal(state.writes[0].schoolId, 'school-a');
+  const oldWorkspace = await page.getByTestId('school-settings-workspace').elementHandle();
+  const newSchoolRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/classpilot/admin/settings'
+    && response.request().method() === 'GET' && response.request().headers()['x-school-id'] === 'school-b');
+  await page.evaluate(() => window.setFixtureSchool('school-b'));
+  // The heading and test id are shared by both schools. Wait for the old owner
+  // to unmount and the new school's read before inspecting the replacement.
+  await page.waitForFunction(element => !element.isConnected, oldWorkspace);
+  await newSchoolRead;
+  await page.locator('header').getByText('Other School', { exact: true }).waitFor();
+  await page.getByTestId('school-settings-workspace').waitFor();
+  assert.equal(await page.getByLabel('Maximum tabs per student').inputValue(), '');
+  assert.equal(await page.getByLabel('Maximum tabs per student').isDisabled(), false, 'The new identity has no pending save');
+  const oldSave = page.waitForResponse(response => new URL(response.url()).pathname === state.pending
+    && response.request().method() === 'PATCH' && response.request().headers()['x-school-id'] === 'school-a');
+  state.release();
+  await (await oldSave).finished();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.getByLabel('Maximum tabs per student').inputValue(), '');
+  assert.equal(await page.evaluate(() => window.queryClient.getQueryData(['/api/classpilot/admin/settings', 'school-b', 'viewer-a'])?.sections.classroom.maxTabsPerStudent), null, 'The old response cannot replace the new school snapshot');
+  assert.equal(await page.getByText('Changes saved.', { exact: true }).count(), 0, 'The old response cannot announce success in the new identity');
+  assert.equal(state.writes[0].schoolId, 'school-a');
   await page.evaluate(() => window.setFixtureRole('teacher')); await page.getByRole('heading', { name: 'ClassPilot fixture' }).waitFor(); assert.equal(await page.getByTestId('school-settings-workspace').count(), 0); assert.deepEqual(state.errors, []);
 });
 
