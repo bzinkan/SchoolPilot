@@ -67,7 +67,7 @@ test('grade and class views persist the personal preference and retain exact fil
     assert.deepEqual(requests.find(row=>row.path.endsWith('/preferences')).body,{revision:0,preferredClasses:{},viewBy:'classes'});
     await page.waitForFunction(()=>document.querySelector('.mydesk-notes h2')?.textContent==='Reading');
     assert.ok(requests.some(row=>row.path.endsWith('/notes/search')&&row.body.classId==='class-b'&&!row.body.gradeLevel));
-    assert.equal(await page.getByRole('button',{name:'AI import unavailable'}).isDisabled(),true);assert.deepEqual(errors,[]);
+    assert.equal(await page.getByRole('button',{name:'Add from paperwork'}).isDisabled(),true);assert.deepEqual(errors,[]);
   }finally{await page.close();}
 });
 

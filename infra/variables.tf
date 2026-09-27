@@ -53,7 +53,7 @@ variable "mydesk_ai_import_mode" {
 variable "mydesk_ai_import_model" {
   description = "Reviewed Anthropic model for tool-free private paperwork and contact extraction"
   type        = string
-  default     = "claude-sonnet-5"
+  default     = "claude-opus-5-5"
   validation {
     condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.mydesk_ai_import_model))
     error_message = "AI import model must be a nonempty bounded model identifier."

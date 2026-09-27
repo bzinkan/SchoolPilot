@@ -194,36 +194,83 @@ async function executeScenario(options: MeasurementOptions, directory: string, s
   }
 }
 
-type Memory = { current: number | null; peak: number | null; limit: number | null; version: "v2" | "v1" | "unavailable" };
+export type MeasurementMemory = { current: number | null; peak: number | null; limit: number | null; version: "v2" | "v1" | "unavailable" };
 const numericMemory = (raw: string | undefined): number | null => {
   if (!raw || !/^[0-9]+$/.test(raw.trim())) return null;
   const value = Number(raw.trim()); return Number.isSafeInteger(value) && value >= 0 ? value : null;
 };
-export async function readMeasurementCgroup(): Promise<Memory> {
+export async function readMeasurementCgroup(
+  readText: (path: string) => Promise<string | undefined> = path => readFile(path, "utf8").catch(() => undefined),
+): Promise<MeasurementMemory> {
   for (const [version, paths] of [
     ["v2", ["/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.peak", "/sys/fs/cgroup/memory.max"]],
     ["v1", ["/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.max_usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]],
   ] as const) {
-    const values = await Promise.all(paths.map(path => readFile(path, "utf8").catch(() => undefined)));
+    const values = await Promise.all(paths.map(readText));
     if (values[0] !== undefined) return { version, current: numericMemory(values[0]), peak: numericMemory(values[1]), limit: numericMemory(values[2]) };
   }
   return { version: "unavailable", current: null, peak: null, limit: null };
 }
 
+/** ECS exposes task Memory in MiB even when the container's v1 limit is unlimited. */
+export async function readMeasurementTaskMemory(
+  uri = process.env.ECS_CONTAINER_METADATA_URI_V4,
+  request: typeof fetch = fetch,
+): Promise<number | null> {
+  if (!uri) return null;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  try {
+    const url = new URL(uri);
+    // Never turn a metadata setting into an arbitrary outbound request or follow redirects.
+    if (url.protocol !== "http:" || url.hostname !== "169.254.170.2" || url.port || url.username || url.password ||
+      url.search || url.hash || !/^\/v4\/[a-zA-Z0-9-]{1,128}$/.test(url.pathname)) return null;
+    const response = await request(`${url.href}/task`, { signal: AbortSignal.timeout(2000), redirect: "error", credentials: "omit" });
+    if (!response.ok || !response.body) { await response.body?.cancel(); return null; }
+    reader = response.body.getReader();
+    const chunks: Uint8Array[] = []; let size = 0;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 128 * 1024) return null;
+      chunks.push(value);
+    }
+    const metadata = z.object({
+      LaunchType: z.literal("FARGATE"),
+      Limits: z.object({ Memory: z.number().int().min(1).max(131072) }),
+      Containers: z.array(z.object({ Type: z.string() })).refine(containers => containers.filter(container => container.Type === "NORMAL").length === 1),
+    }).safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    return metadata.success ? metadata.data.Limits.Memory * 1024 * 1024 : null;
+  } catch { return null; }
+  finally { await reader?.cancel().catch(() => {}); }
+}
+
+function effectiveMemoryLimit(cgroup: number | null, task: number | null): number | null {
+  const limits = [cgroup, task].filter((limit): limit is number => limit !== null && Number.isSafeInteger(limit) && limit > 0);
+  return limits.length ? Math.min(...limits) : null;
+}
+
 /** Run only in an isolated task/container. No database, object store or provider transport is used. */
-export async function measureMyDeskProcessing(options: MeasurementOptions) {
+export async function measureMyDeskProcessing(options: MeasurementOptions, readers: {
+  cgroup?: () => Promise<MeasurementMemory>; taskMemory?: () => Promise<number | null>;
+} = {}) {
   options = configuration.parse(options);
-  const started = performance.now(), directory = await mkdtemp(join(tmpdir(), "mydesk-measure-"));
+  const started = performance.now(); let directory: string | undefined;
   let child: ChildProcess | undefined, childResult: ChildResult | null = null, outputBytes = 0;
-  let failure: "MEMORY_STOP" | "DEADLINE" | "INTERRUPTED" | "PROCESSING_FAILED" | "INVALID_CHILD_OUTPUT" | null = null;
+  let failure: "MEMORY_UNAVAILABLE" | "MEMORY_STOP" | "DEADLINE" | "INTERRUPTED" | "PROCESSING_FAILED" | "INVALID_CHILD_OUTPUT" | null = null;
   let hardKilled = false, memorySamples = 0, sampledPeak = 0, childClosed = false;
   let childFinished: Promise<void> | undefined, treeKill: Promise<void> | undefined;
   const processPeaks = { rss: 0, heapUsed: 0, external: 0, arrayBuffers: 0 };
-  const before = await readMeasurementCgroup();
+  const readCgroup = readers.cgroup ?? readMeasurementCgroup;
+  const [before, taskMemoryLimit] = await Promise.all([readCgroup(), (readers.taskMemory ?? readMeasurementTaskMemory)()]);
+  let effectiveLimit = effectiveMemoryLimit(before.limit, taskMemoryLimit);
+  let effectiveLimitSource = effectiveLimit === null ? null : effectiveLimit === before.limit ? "cgroup" : "ecs_task_metadata";
+  if (effectiveLimit === null || before.current === null) failure = "MEMORY_UNAVAILABLE";
+  else if (before.current / effectiveLimit >= 0.85) failure = "MEMORY_STOP";
   let lastMemory = before, sample: Promise<void> | undefined;
   let hardTimer: NodeJS.Timeout | undefined;
   const terminateGroup = () => {
-    if (childClosed || hardKilled) return;
+    if (!child || childClosed || hardKilled) return;
     hardKilled = true;
     if (child?.pid && process.platform !== "win32") { try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); } }
     else if (child?.pid && process.platform === "win32") {
@@ -242,15 +289,24 @@ export async function measureMyDeskProcessing(options: MeasurementOptions) {
     if (!childClosed) hardTimer ??= setTimeout(terminateGroup, 20_000);
   };
   const takeSample = async () => {
-    lastMemory = await readMeasurementCgroup(); memorySamples++;
+    lastMemory = await readCgroup(); memorySamples++;
+    const observedLimit = effectiveMemoryLimit(lastMemory.limit, taskMemoryLimit);
+    // Losing a stricter cgroup reading must never relax an already verified bound.
+    if (observedLimit !== null && (effectiveLimit === null || observedLimit < effectiveLimit)) {
+      effectiveLimit = observedLimit;
+      effectiveLimitSource = observedLimit === lastMemory.limit ? "cgroup" : "ecs_task_metadata";
+    }
     sampledPeak = Math.max(sampledPeak, lastMemory.current ?? 0);
-    if (lastMemory.limit && lastMemory.current !== null && lastMemory.current / lastMemory.limit >= 0.85) stop("MEMORY_STOP");
+    if (effectiveLimit === null || lastMemory.current === null) stop("MEMORY_UNAVAILABLE");
+    else if (lastMemory.current / effectiveLimit >= 0.85) stop("MEMORY_STOP");
   };
   const timer = setInterval(() => { if (!sample) sample = takeSample().finally(() => { sample = undefined; }); }, 100);
   const deadline = setTimeout(() => stop("DEADLINE"), options.deadlineSeconds * 1000);
   const interrupt = () => stop("INTERRUPTED");
   process.on("SIGINT", interrupt); process.on("SIGTERM", interrupt);
   try {
+    if (failure) throw new Error("MYDESK_MEASUREMENT_MEMORY");
+    directory = await mkdtemp(join(tmpdir(), "mydesk-measure-"));
     const entry = fileURLToPath(import.meta.url);
     const env: NodeJS.ProcessEnv = { NODE_ENV: "test", PATH: process.env.PATH, LANG: "C", LC_ALL: "C",
       TMPDIR: directory, TEMP: directory, TMP: directory, MYDESK_MEASUREMENT_CHILD: "1" };
@@ -284,18 +340,18 @@ export async function measureMyDeskProcessing(options: MeasurementOptions) {
     await childFinished; await treeKill;
     clearInterval(timer); clearTimeout(deadline); clearTimeout(hardTimer); await sample;
     await takeSample(); clearTimeout(hardTimer);
-    await rm(directory, { recursive: true, force: true }).catch(() => { failure ??= "PROCESSING_FAILED"; });
+    if (directory) await rm(directory, { recursive: true, force: true }).catch(() => { failure ??= "PROCESSING_FAILED"; });
     process.off("SIGINT", interrupt); process.off("SIGTERM", interrupt);
   }
   // Copy the IPC result through its whitelist; never include subprocess output/errors, paths or environment.
   const result = childMessage.safeParse(childResult);
   const completed = result.success && result.data.kind === "result" ? result.data : null;
-  const peakFraction = lastMemory.limit ? sampledPeak / lastMemory.limit : null;
+  const peakFraction = effectiveLimit ? sampledPeak / effectiveLimit : null;
   // The kernel's lifetime peak catches brief spikes between samples. It can be
   // conservative in a reused cgroup, which is why this command belongs in a
   // fresh isolated task and also reports the starting lifetime peak.
   const observedPeak = Math.max(sampledPeak, lastMemory.peak ?? 0);
-  const observedPeakFraction = lastMemory.limit ? observedPeak / lastMemory.limit : null;
+  const observedPeakFraction = effectiveLimit ? observedPeak / effectiveLimit : null;
   return {
     schemaVersion: 1, measurement: "synthetic_processing_only", role: options.role, scenario: options.scenario,
     imageDigest: options.imageDigest, imageDigestVerified: false, platform: process.platform,
@@ -306,6 +362,8 @@ export async function measureMyDeskProcessing(options: MeasurementOptions) {
     operationElapsedMs: completed?.operationElapsedMs ?? null,
     failedOperation: completed?.failedOperation ?? null,
     memory: { cgroupVersion: lastMemory.version, cgroupLimitBytes: lastMemory.limit, cgroupBeforeBytes: before.current,
+      taskMetadataLimitBytes: taskMemoryLimit, effectiveLimitBytes: effectiveLimit,
+      effectiveLimitSource,
       cgroupLifetimePeakBeforeBytes: before.peak, cgroupLifetimePeakAfterBytes: lastMemory.peak,
       sampledCgroupPeakBytes: sampledPeak || null, sampledCgroupPeakFraction: peakFraction,
       observedCgroupPeakBytes: observedPeak || null, observedCgroupPeakFraction: observedPeakFraction,
@@ -351,7 +409,7 @@ async function workerMain(raw: string) {
 
 export async function runMyDeskProcessingCli(args: string[]): Promise<number> {
   if (args.length === 1 && ["--help", "-h"].includes(args[0]!)) {
-    process.stdout.write("Usage: node dist/cli/measureMyDeskProcessing.js [--role api|worker|combined] [--scenario smoke|max] [--deadline-seconds 1..600] [--image-digest sha256:<digest>]\nDefault: small smoke, combined role, 90 seconds. Max: two 20-page/50-form packets, five 10 MiB sources each, 600 seconds. Run only in an isolated task/container. Output is processing evidence, never AI or production-readiness approval.\n"); return 0;
+    process.stdout.write("Usage: node dist/cli/measureMyDeskProcessing.js [--role api|worker|combined] [--scenario smoke|max] [--deadline-seconds 1..600] [--image-digest sha256:<digest>]\nDefault: small smoke, combined role, 90 seconds. Max: two 20-page/50-form packets, five 10 MiB sources each, 600 seconds. Run only in an isolated task/container. Requires readable cgroup usage and a finite cgroup or single-container Fargate task-metadata memory limit; otherwise fails before generating fixtures. Output is processing evidence, never AI or production-readiness approval.\n"); return 0;
   }
   let options: MeasurementOptions;
   try { options = parseMyDeskMeasurementArgs(args); }

@@ -153,7 +153,7 @@ variable "student_information_ai_import_mode" {
 }
 variable "mydesk_ai_import_model" {
   type    = string
-  default = "claude-sonnet-5"
+  default = "claude-opus-5-5"
 }
 variable "mydesk_ai_import_teacher_daily_pages" {
   type    = number

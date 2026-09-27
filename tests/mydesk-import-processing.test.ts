@@ -8,6 +8,7 @@ import {
   buildImportAttachment, createImportAiProcessor, createImportProviderTransport, cropImportRegion, detectedRegionToCrop, importExtractionSchema,
   MyDeskImportProcessingError, prepareImportSource, renderImportSource, type ImportAiTransport,
   MYDESK_IMPORT_LEGACY_PROMPT_VERSION, MYDESK_IMPORT_PROMPT_VERSION, supportedImportPromptVersion,
+  myDeskImportModel,
 } from "../src/services/mydeskImportProcessing.js";
 import { MyDeskFileError } from "../src/services/mydeskFiles.js";
 import { privateNativeProcessing } from "../src/services/privateNativeProcessing.js";
@@ -192,6 +193,52 @@ test("tool-free AI extraction sends only source images and returns unknown dates
   assert.deepEqual(result.subjectNames, []); assert.ok(result.warnings.includes("uncertain_date")); assert.ok(result.warnings.includes("uncertain_subject"));
 });
 
+test("new imports default to Opus 5.5 while configured and stored model bindings remain authoritative", async () => {
+  const originalModel = process.env.MYDESK_AI_IMPORT_MODEL;
+  const bytes = await photo();
+  try {
+    for (const configured of [undefined, "  ", "  configured-model  "]) {
+      if (configured === undefined) delete process.env.MYDESK_AI_IMPORT_MODEL;
+      else process.env.MYDESK_AI_IMPORT_MODEL = configured;
+      const expected = configured?.trim() || "claude-opus-5-5";
+      assert.equal(myDeskImportModel(), expected);
+      for (const storedModel of [undefined, "stored-import-model"]) {
+        const ai = createImportAiProcessor(async request => {
+          assert.equal(request.model, storedModel ?? expected);
+          assert.equal(request.max_tokens, 8192);
+          assert.equal(request.thinking, undefined);
+          assert.equal(request.temperature, undefined);
+          assert.equal(request.top_p, undefined);
+          assert.equal(request.top_k, undefined);
+          return response(extraction);
+        }, { model: storedModel });
+        assert.deepEqual(await ai.extractImportForm([bytes]), extraction);
+      }
+    }
+  } finally {
+    if (originalModel === undefined) delete process.env.MYDESK_AI_IMPORT_MODEL;
+    else process.env.MYDESK_AI_IMPORT_MODEL = originalModel;
+  }
+});
+
+test("paperwork detection and extraction accept Opus thinking metadata and return only validated JSON", async () => {
+  const bytes = await photo();
+  for (const thinking of [
+    [{ type: "thinking", thinking: "", signature: "synthetic-signature" }],
+    [{ type: "thinking", thinking: "PRIVATE_THINKING_CANARY", signature: "synthetic-signature" },
+      { type: "redacted_thinking", data: "PRIVATE_REDACTED_CANARY" }],
+  ]) {
+    let calls = 0;
+    const ai = createImportAiProcessor(async () => {
+      const text = response(calls++ === 0 ? { regions: [full] } : extraction).content;
+      return { content: [...thinking, ...text], stop_reason: "end_turn" };
+    });
+    assert.deepEqual(await ai.detectImportForms(bytes), [{ ...full, rotation: 0 }]);
+    assert.deepEqual(await ai.extractImportForm([bytes]), extraction);
+    assert.equal(calls, 2);
+  }
+});
+
 test("AI outputs are bounded and cannot supply ownership, target IDs or arbitrary warning text", async () => {
   const bytes = await photo();
   for (const invalid of [
@@ -220,13 +267,19 @@ test("AI detection accepts separate regions but never silently truncates overflo
 test("provider truncation, refusals and malformed output remain retryable and private", async () => {
   const bytes = await photo();
   for (const result of [
-    { ...response(extraction), stop_reason: "max_tokens" },
-    { ...response(extraction), stop_reason: "refusal" },
+    ...["max_tokens", "refusal", "tool_use", "pause_turn", null].map(stop_reason => ({ ...response(extraction), stop_reason })),
     { content: [{ type: "tool_use", name: "save_note", input: extraction }], stop_reason: "end_turn" },
+    { content: [...response(extraction).content, { type: "tool_use", name: "save_note", input: extraction }], stop_reason: "end_turn" },
+    { content: [...response(extraction).content, ...response(extraction).content], stop_reason: "end_turn" },
+    { content: [{ type: "thinking", thinking: "PRIVATE", signature: "fixture" }], stop_reason: "end_turn" },
+    { content: [{ type: "thinking", thinking: "PRIVATE" }, ...response(extraction).content], stop_reason: "end_turn" },
+    { content: [{ type: "redacted_thinking", data: 1 }, ...response(extraction).content], stop_reason: "end_turn" },
+    ...[null, [], [null], [{ type: "text", text: 1 }]].map(content => ({ content, stop_reason: "end_turn" })),
+    { content: [{ type: "text", text: `${" ".repeat(65_536)}${JSON.stringify(extraction)}` }], stop_reason: "end_turn" },
     { content: [{ type: "text", text: "PRIVATE provider failure" }], stop_reason: "end_turn" },
   ]) {
     await assert.rejects(createImportAiProcessor(async () => result).extractImportForm([bytes]),
-      (error: unknown) => error instanceof MyDeskImportProcessingError && error.retryable && !error.message.includes("PRIVATE"));
+      (error: unknown) => error instanceof MyDeskImportProcessingError && error.retryable && !String(error.stack).includes("PRIVATE"));
   }
   await assert.rejects(createImportAiProcessor(async () => { throw new Error("PRIVATE request body and key"); }).extractImportForm([bytes]),
     (error: unknown) => error instanceof MyDeskImportProcessingError && error.code === "MYDESK_IMPORT_AI_FAILED" && !error.stack?.includes("PRIVATE"));
@@ -251,7 +304,8 @@ test("dedicated SDK transport suppresses inherited debug logging of private requ
     const fakeFetch: typeof globalThis.fetch = async (_input, init) => {
       calls++; assert.ok(String(init?.body).includes("PRIVATE_REQUEST_CANARY"));
       return new Response(JSON.stringify({ id: "msg_fixture", type: "message", role: "assistant", model: "fixture-model",
-        content: [{ type: "text", text: "PRIVATE_RESPONSE_CANARY" }], stop_reason: "end_turn", stop_sequence: null,
+        content: [{ type: "thinking", thinking: "PRIVATE_THINKING_CANARY", signature: "fixture" },
+          { type: "text", text: "PRIVATE_RESPONSE_CANARY" }], stop_reason: "end_turn", stop_sequence: null,
         usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json", "request-id": "fixture" } });
     };
     const transport = createImportProviderTransport("fixture-api-key", fakeFetch);

@@ -235,6 +235,11 @@ test("provider contract freezes model/prompt, rejects unknown output and sends o
     transport: async (input) => {
       called++;
       assert.equal(input.model, "synthetic-model");
+      assert.equal(input.thinking, undefined);
+      assert.equal(input.temperature, undefined);
+      assert.equal(input.top_p, undefined);
+      assert.equal(input.top_k, undefined);
+      assert.equal(input.max_tokens, 16000);
       assert.equal(input.tools, undefined);
       assert.deepEqual(input.output_config?.format, {
         type: "json_schema",
@@ -296,4 +301,83 @@ test("provider contract freezes model/prompt, rejects unknown output and sends o
   await assert.rejects(
     invalid({ bytes: Buffer.from("source"), contentType: "text/plain" }),
   );
+});
+
+test("contact extraction accepts thinking and redacted blocks while returning only its validated draft", async () => {
+  const expected = { profiles: [{ studentName: "Synthetic Child", studentIdentifier: null, contacts: [], warnings: [] }] };
+  for (const thinking of [
+    [{ type: "thinking", thinking: "", signature: "synthetic-signature" }],
+    [{ type: "thinking", thinking: "PRIVATE_THINKING_CANARY", signature: "synthetic-signature" },
+      { type: "redacted_thinking", data: "PRIVATE_REDACTED_CANARY" }],
+  ]) {
+    const extract = createInformationExtractor({
+      model: "claude-opus-5-5", promptVersion: INFORMATION_PROMPT_VERSION,
+      transport: async () => ({ content: [...thinking, { type: "text", text: JSON.stringify(expected) }], stop_reason: "end_turn" }),
+    });
+    assert.deepEqual(await extract({ bytes: Buffer.from("selected synthetic source"), contentType: "text/plain" }), expected);
+  }
+});
+
+test("contact extraction rejects incomplete, malformed, multiple-text and unexpected provider blocks privately", async () => {
+  const text = { type: "text", text: '{"profiles":[]}' };
+  for (const response of [
+    ...["max_tokens", "refusal", "tool_use", "pause_turn", null].map(stop_reason => ({ content: [text], stop_reason })),
+    ...[
+      null, [], [null], [text, text],
+      [{ type: "thinking", thinking: "PRIVATE", signature: "fixture" }],
+      [{ type: "thinking", thinking: "PRIVATE" }, text],
+      [{ type: "redacted_thinking", data: null }, text],
+      [{ type: "tool_use", name: "update_profile", input: "PRIVATE" }, text],
+      [{ type: "unknown", text: "PRIVATE" }, text],
+      [{ type: "text", text: 1 }],
+      [{ type: "text", text: "PRIVATE invalid JSON" }],
+      [{ type: "text", text: '{"profiles":[],"private":"PRIVATE"}' }],
+      [{ type: "text", text: `${" ".repeat(1024 * 1024)}${text.text}` }],
+    ].map(content => ({ content, stop_reason: "end_turn" })),
+  ]) {
+    const extract = createInformationExtractor({
+      model: "claude-opus-5-5", promptVersion: INFORMATION_PROMPT_VERSION,
+      transport: async () => response,
+    });
+    await assert.rejects(extract({ bytes: Buffer.from("source"), contentType: "text/plain" }), error =>
+      error instanceof Error && "code" in error && error.code === "STUDENT_INFORMATION_EXTRACTION_FAILED" && !String(error.stack).includes("PRIVATE"));
+  }
+});
+
+test("contact SDK transport suppresses inherited debug logs and does not retry provider errors", async (t) => {
+  const originalKey = process.env.ANTHROPIC_API_KEY;
+  const originalLog = process.env.ANTHROPIC_LOG;
+  process.env.ANTHROPIC_API_KEY = "fixture-api-key";
+  process.env.ANTHROPIC_LOG = "debug";
+  const captured: unknown[][] = [];
+  for (const method of ["log", "debug", "info", "warn", "error"] as const)
+    t.mock.method(console, method, (...values: unknown[]) => { captured.push(values); });
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (_input: unknown, init?: RequestInit) => {
+    calls++;
+    const input = JSON.parse(String(init?.body));
+    assert.equal(input.model, "claude-opus-5-5");
+    assert.equal(input.temperature, undefined);
+    assert.ok(String(init?.body).includes("PRIVATE_SOURCE_CANARY"));
+    if (calls > 1) return new Response(JSON.stringify({ type: "error", error: { type: "api_error", message: "PRIVATE_PROVIDER_ERROR" } }),
+      { status: 500, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ id: "msg_fixture", type: "message", role: "assistant", model: "claude-opus-5-5",
+      content: [{ type: "thinking", thinking: "PRIVATE_THINKING_CANARY", signature: "fixture" },
+        { type: "text", text: '{"profiles":[]}' }], stop_reason: "end_turn", stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  try {
+    const extract = createInformationExtractor({ model: "claude-opus-5-5", promptVersion: INFORMATION_PROMPT_VERSION });
+    const source = { bytes: Buffer.from("PRIVATE_SOURCE_CANARY"), contentType: "text/plain" };
+    assert.deepEqual(await extract(source), { profiles: [] });
+    assert.equal(calls, 1);
+    await assert.rejects(extract(source), error => error instanceof Error && !String(error.stack).includes("PRIVATE"));
+    assert.equal(calls, 2);
+    assert.deepEqual(captured, []);
+  } finally {
+    if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalKey;
+    if (originalLog === undefined) delete process.env.ANTHROPIC_LOG;
+    else process.env.ANTHROPIC_LOG = originalLog;
+  }
 });

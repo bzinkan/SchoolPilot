@@ -191,7 +191,7 @@ function ProfileReview({ access, run, item, onAction, busy }) {
       <section>
         <h2>{item.studentName || "Unmatched student"}</h2>
         <p>
-          Review each adult and every phone and email against the source. AI
+          Review each adult and every phone and email against the source. These
           suggestions have not changed the school profile.
         </p>
         <StudentMatch
@@ -504,8 +504,8 @@ export function StudentInformationUpload({ access, run, onUploaded }) {
       <p>
         Choose PDF, photos, DOCX, XLSX, or CSV. Up to five files, 10 MiB each;
         20 pages or photos, five sheets, 500 rows and 50 columns, 500 student
-        profiles, and 1 MiB of extracted text. Only source sections you select
-        will be sent to Anthropic.
+        profiles, and 1 MiB of extracted text. Only the sections you select
+        will be used to prepare suggestions.
       </p>
       <p>
         Private drafts expire after seven days. Sources, previews, and
@@ -588,7 +588,7 @@ export default function StudentInformationImport({ access, importId }) {
   });
   const [selected, setSelected] = useState([]),
     [acknowledged, setAcknowledged] = useState(false),
-    [providerConfirmed, setProviderConfirmed] = useState(false),
+    [processingConfirmed, setProcessingConfirmed] = useState(false),
     [itemId, setItemId] = useState(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -733,11 +733,11 @@ export default function StudentInformationImport({ access, importId }) {
           <label className="student-info-section">
             <input
               type="checkbox"
-              checked={providerConfirmed}
-              onChange={(e) => setProviderConfirmed(e.target.checked)}
+              checked={processingConfirmed}
+              onChange={(e) => setProcessingConfirmed(e.target.checked)}
             />
-            Send only these selected sections to Anthropic to draft contact
-            fields. Current profiles and rosters will stay in SchoolPilot.
+            Prepare contact suggestions from only these selected sections.
+            I will review the suggestions before saving.
           </label>
           <button
             disabled={
@@ -745,14 +745,14 @@ export default function StudentInformationImport({ access, importId }) {
               !access.aiImportEnabled ||
               !selected.length ||
               units > 20 ||
-              !providerConfirmed ||
+              !processingConfirmed ||
               !acknowledged
             }
             onClick={() =>
               action("process", {
                 sectionIds: selected,
                 acknowledgedWarnings: acknowledged,
-                confirmedProvider: true,
+                confirmedProvider: processingConfirmed,
               })
             }
           >

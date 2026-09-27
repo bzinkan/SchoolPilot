@@ -10,6 +10,7 @@ import { MYDESK_MAX_FILE_BYTES, MyDeskFileError, normalizeMyDeskFile, validateMy
 import { myDeskCategory, myDeskDate } from "./mydeskValidation.js";
 import { inspectPrivatePdf, PrivatePdfError, renderPrivatePdfPage } from "./privatePdfProcessing.js";
 import { privateNativeProcessing, PrivateNativeProcessingError } from "./privateNativeProcessing.js";
+import { privateImportResponseText } from "./privateImportAiResponse.js";
 
 export const MYDESK_IMPORT_PROMPT_VERSION = "mydesk-forms-20260928-v3";
 export const MYDESK_IMPORT_ORIENTATION_PROMPT_VERSION = "mydesk-forms-20260926-v2";
@@ -31,7 +32,7 @@ export class MyDeskImportProcessingError extends Error {
 }
 const processingError = (code: string, message: string, retryable = false, status = 422) =>
   new MyDeskImportProcessingError(code, message, retryable, status);
-export function myDeskImportModel() { return process.env.MYDESK_AI_IMPORT_MODEL?.trim() || "claude-sonnet-5"; }
+export function myDeskImportModel() { return process.env.MYDESK_AI_IMPORT_MODEL?.trim() || "claude-opus-5-5"; }
 
 const imageUnavailable = () => processingError("MYDESK_IMPORT_IMAGE_UNAVAILABLE",
   "Image processing is temporarily unavailable. Retry this import.", true, 503);
@@ -308,9 +309,9 @@ export function createImportAiProcessor(transport: ImportAiTransport = providerT
         }, options.timeoutMs ?? MYDESK_IMPORT_PROVIDER_TIMEOUT_MS); }),
       ]);
       if (response.stop_reason !== "end_turn") throw processingError("MYDESK_IMPORT_AI_INCOMPLETE", "AI reading was incomplete. Retry or enter the form details yourself.", true);
-      const blocks = z.array(z.object({ type: z.literal("text"), text: z.string().max(65_536) }).passthrough()).length(1).safeParse(response.content);
-      if (!blocks.success) throw processingError("MYDESK_IMPORT_AI_INVALID", "AI reading returned an invalid result. Retry or enter the details yourself.", true);
-      try { return JSON.parse(blocks.data[0]!.text); }
+      const text = privateImportResponseText(response.content);
+      if (text === null || text.length > 65_536) throw processingError("MYDESK_IMPORT_AI_INVALID", "AI reading returned an invalid result. Retry or enter the details yourself.", true);
+      try { return JSON.parse(text); }
       catch { throw processingError("MYDESK_IMPORT_AI_INVALID", "AI reading returned an invalid result. Retry or enter the details yourself.", true); }
     } catch (error) {
       if (error instanceof MyDeskImportProcessingError) throw error;

@@ -124,7 +124,7 @@ test('contact processing requires selected source sections, warning acknowledgem
     assert.equal(await process.isDisabled(), true); await page.getByLabel('Selected page').check();
     await page.getByText('Preview Selected page', { exact: true }).click(); await page.getByText('Synthetic source: student and guardian details.', { exact: true }).waitFor();
     assert.equal(await process.isDisabled(), true); await page.getByLabel('I reviewed hidden and unsupported content warnings.', { exact: false }).check();
-    assert.equal(await process.isDisabled(), true); await page.getByLabel('Send only these selected sections to Anthropic', { exact: false }).check();
+    assert.equal(await process.isDisabled(), true); await page.getByLabel('Prepare contact suggestions from only these selected sections', { exact: false }).check();
     await process.click(); await page.getByText('Preparing contact suggestions.', { exact: false }).waitFor();
     const request = requests.find(value => value.path.endsWith('/process')); assert.deepEqual(request.body.sectionIds, ['section-a']); assert.equal(request.body.confirmedProvider, true); assert.equal(request.body.acknowledgedWarnings, true);
     assert.equal(requests.some(value => value.path.endsWith('/commit')), false); assert.deepEqual(errors, []);

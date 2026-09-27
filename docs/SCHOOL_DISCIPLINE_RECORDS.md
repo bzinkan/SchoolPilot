@@ -47,6 +47,19 @@ detail retains historical snapshots. Filters use the configured school year when
 available and explicit dates; history/export use matching scope. Former students
 remain an administrator context, without expanding teacher access.
 
+The Admin Panel entry retains its return destination through student, incident,
+and paperwork views. The entry marker affects navigation only; current server
+authorization still determines school-wide access. Teacher entry returns to My Desk.
+
+School-year boundaries come from ClassPilot's school scheduling configuration,
+not class labels or calendar closure dates. When boundaries are missing or do not
+include the school's local today, results explicitly use All dates. The selector
+reflects that effective period, and the notice distinguishes missing dates from
+a configured past or future year. Administrators can open the existing Bells &
+rotation editor to set or review dates through its preview-and-save workflow.
+Teachers receive administrator guidance. Never guess year boundaries or change
+school scheduling while loading discipline records.
+
 Referral and detention flags are independent: one incident may increment both.
 A detention assignment counts once regardless of scheduled dates; this is not an
 attendance/completion counter. Count active current versions only. Pending drafts,

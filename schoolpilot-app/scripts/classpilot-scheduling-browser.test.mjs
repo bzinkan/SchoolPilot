@@ -11,18 +11,19 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
   const entry = `
     import React from 'react';
     import { createRoot } from 'react-dom/client';
-    import { MemoryRouter } from 'react-router-dom';
+    import { MemoryRouter, useLocation } from 'react-router-dom';
     import { QueryClientProvider } from '@tanstack/react-query';
     import { AuthProvider } from '/src/contexts/AuthContext.jsx';
     import { queryClient } from '/src/lib/queryClient.js';
     import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';
     import { AdminClassesTabs } from '/src/products/classpilot/components/ScheduleRouteTabs.jsx';
     import '/src/index.css';
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/classes/scheduling']},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(AdminClassesTabs),React.createElement(Scheduling))))));
+    function RouteProbe(){const route=useLocation();return React.createElement('output',{'aria-label':'Scheduling route'},route.pathname+route.search);}
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/classes/scheduling'+location.search]},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(RouteProbe),React.createElement(AdminClassesTabs),React.createElement(Scheduling))))));
   `;
   const vite = await createServer({ root, logLevel: "error", server: { host: "127.0.0.1", port: 0 }, plugins: [{ name: "scheduling-browser-test",
     configureServer(server) { server.middlewares.use(async (req, res, next) => {
-      if (req.url !== "/__scheduling-test") return next();
+      if (!req.url?.startsWith("/__scheduling-test")) return next();
       res.setHeader("Content-Type", "text/html");
       res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/__scheduling-entry.jsx"></script></body></html>'));
     }); },
@@ -329,6 +330,20 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     assert.equal(await prerequisiteHint.isVisible(), true);
     assert.equal(writes.length, 1, "Adding and discarding an empty-school period must not save it");
     await captureViews("empty");
+    const fixtureUrl = page.url().split('?')[0];
+    await page.goto(fixtureUrl + '?section=bells');
+    await page.getByLabel('School year starts', { exact: true }).waitFor();
+    assert.equal(await bellsTab.getAttribute('aria-selected'), 'true');
+    await page.reload();
+    await page.getByLabel('School year starts', { exact: true }).waitFor();
+    assert.equal(await bellsTab.getAttribute('aria-selected'), 'true', 'A refreshed school-year settings link keeps Bells & rotation open');
+    await calendarTab.click();
+    await page.waitForFunction(() => document.querySelector('output[aria-label="Scheduling route"]')?.textContent.endsWith('?section=calendar'));
+    assert.equal(await page.getByLabel('Scheduling route').textContent(), '/classpilot/admin/classes/scheduling?section=calendar');
+    await page.goto(fixtureUrl + '?section=https%3A%2F%2Fexample.invalid');
+    await createProfile.waitFor();
+    assert.equal(await profilesTab.getAttribute('aria-selected'), 'true', 'Unknown section values use the normal profile landing section');
+
     await writeFile(path.join(artifactDir, "accessibility-evidence.json"), JSON.stringify({ ...accessibility, calendarSave: { previews: calendarPreviews.length, writes: calendarWrites.length, verifiedRevision: calendarReads.find(read => read.revision === 1)?.revision, retainedSeparateDraft: true } }, null, 2));
     assert.deepEqual(errors, []);
   } finally { await browser?.close(); await vite.close(); }

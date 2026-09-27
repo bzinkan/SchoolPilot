@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { createImportAiProcessor, cropImportRegion, myDeskImportModel, MYDESK_IMPORT_PROMPT_VERSION } from '../src/services/mydeskImportProcessing.ts';
+import { createImportAiProcessor, cropImportRegion, detectedRegionToCrop, myDeskImportModel, MYDESK_IMPORT_PROMPT_VERSION } from '../src/services/mydeskImportProcessing.ts';
 
 const FIXTURE_VERSION = 'mydesk-synthetic-20260925-v2';
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -225,7 +225,8 @@ export async function runProviderEvaluation(directory, { model = myDeskImportMod
         group.sources.push({ pageId: page.id, matchIoU: match?.score ?? null, expectedRegion: expected.region });
         if (!match) group.missed = true;
         else {
-          const cropped = await cropImportRegion({ bytes, region: detected[match.detectedIndex], rotation: 0 }), hash = sha256(cropped);
+          const { rotation, ...region } = detectedRegionToCrop(detected[match.detectedIndex]);
+          const cropped = await cropImportRegion({ bytes, region, rotation }), hash = sha256(cropped);
           const file = page.id + '-' + index + '-' + hash + '.jpg', path = join(directory, 'crops', file);
           if (await exists(path)) { if (sha256(await readFile(path)) !== hash) throw failure('CROP_HASH_MISMATCH'); }
           else await writeNew(path, cropped);

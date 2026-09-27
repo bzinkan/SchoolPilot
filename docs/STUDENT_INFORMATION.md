@@ -49,7 +49,7 @@ review. Source previews let the teacher choose exactly which sections to send.
 One page/photo is one admission unit; each started 4,000-character DOCX text section
 or 25 spreadsheet rows is one unit. A job allows 20 units. Daily per-author/school
 admission shares the existing 100/500 budget with paperwork imports. Source selection
-and provider confirmation precede processing. Only selected images/extracted text
+and explicit processing confirmation precede processing. Only selected images/extracted text
 go to Anthropic; current profiles, rosters and unrelated sources remain local.
 
 Tool-free extraction returns strict, validated suggestions. Documents/model outputs

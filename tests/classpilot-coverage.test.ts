@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 import db, { pool } from "../dist/db.js";
+import * as schema from "../dist/schema/index.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
+import { lockStaffAssignmentLifecycleSchool } from "../dist/services/staffAssignmentLifecycleLock.js";
 import { signUserToken } from "../dist/services/jwt.js";
 import { createStudentToken } from "../dist/services/deviceJwt.js";
 import {
@@ -3915,6 +3918,112 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       requireAvailable: true, coverageAssignmentReview: grants })), { code: "COVERAGE_PERMISSION_STALE" });
     const noGrant = await requestJson("POST", "/coverage/claim", { studentIds: [pupil.id] }, staffAuth);
     assert.equal(noGrant.status, 403);
+  });
+
+  it("rejects an older waiting claim without changing the newer winning claim", async () => {
+    const winnerStaff = await createUser({ email: `waiting-claim@${TAG}.example.edu`, firstName: "Waiting", lastName: "Claim" });
+    await createMembership({ userId: winnerStaff.id, schoolId: school.id, role: "teacher", status: "active" });
+    const pupil = await inSchool(school.id, () => createStudent({ schoolId: school.id, firstName: "Waiting", lastName: "Student", status: "active" }));
+    const deviceId = `${TAG}-waiting-claim-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({ schoolId: school.id, deviceId, classId: "default" });
+      await linkStudentDevice({ studentId: pupil.id, deviceId });
+      await setActiveStudentForDevice(deviceId, pupil.id);
+    });
+    const claimOptions = {
+      schoolId: school.id, studentIds: [pupil.id], source: "staff_claim",
+      endsAt: new Date(Date.now() + 30 * 60_000), requireAvailable: true,
+    };
+    const snapshot = async (database: Pick<typeof db, "execute">) => (await database.execute(sql`
+      SELECT
+        (SELECT jsonb_agg(to_jsonb(c) ORDER BY c.id) FROM classpilot_supervision_contexts c
+          WHERE c.school_id = ${school.id}) AS contexts,
+        (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.id) FROM classpilot_supervision_students a
+          WHERE a.school_id = ${school.id} AND a.student_id = ${pupil.id}) AS assignments,
+        (SELECT to_jsonb(s) FROM classpilot_student_control_states s
+          WHERE s.school_id = ${school.id} AND s.student_id = ${pupil.id}) AS control
+    `)).rows;
+    const loserClient = await pool.connect();
+    const winnerClient = await pool.connect();
+    let clientsReleased = false;
+    let startLoser!: () => void;
+    const winnerHasLock = new Promise<void>(resolve => { startLoser = resolve; });
+    let reportLoserStarted!: (value: { pid: number; startedAt: string }) => void;
+    const loserStarted = new Promise<{ pid: number; startedAt: string }>(resolve => { reportLoserStarted = resolve; });
+    let loserSettled = false;
+    // Attach both handlers immediately so failure while arranging the race is safe.
+    const loserOutcome = drizzle(loserClient, { schema }).transaction(async tx => {
+      await tx.execute(sql`SELECT set_config('app.school_id', ${school.id}, true), set_config('app.is_super', 'off', true)`);
+      const started = await tx.execute<{ pid: number; startedAt: string }>(sql`
+        SELECT pg_backend_pid() AS pid, now()::text AS "startedAt"
+      `);
+      reportLoserStarted(started.rows[0]!);
+      await winnerHasLock;
+      return assignAdHocSupervisionStudents({ ...claimOptions, assignedStaffId: admin.id, actorId: admin.id }, tx);
+    }).then(
+      value => { loserSettled = true; return { value, error: undefined }; },
+      error => { loserSettled = true; return { value: undefined, error }; }
+    );
+    try {
+      const loser = await Promise.race([
+        loserStarted,
+        loserOutcome.then(result => { throw result.error ?? new Error("Losing transaction exited before starting"); }),
+      ]);
+      const winner = await drizzle(winnerClient, { schema }).transaction(async tx => {
+        await tx.execute(sql`SELECT set_config('app.school_id', ${school.id}, true), set_config('app.is_super', 'off', true)`);
+        assert.equal(await lockStaffAssignmentLifecycleSchool(tx, school.id), true);
+        const clock = await tx.execute<{ pid: number; later: boolean }>(sql`
+          SELECT pg_backend_pid() AS pid, now() > ${loser.startedAt}::timestamptz AS later
+        `);
+        assert.equal(clock.rows[0]?.later, true, "the winner's transaction must begin after the loser's frozen now()");
+        startLoser();
+        let waiting = false;
+        const deadline = Date.now() + 5_000;
+        while (!waiting && Date.now() < deadline) {
+          const blocked = await tx.execute<{ waiting: boolean }>(sql`
+            SELECT ${clock.rows[0]!.pid}::integer = ANY(pg_blocking_pids(${loser.pid}::integer)) AS waiting
+          `);
+          waiting = blocked.rows[0]?.waiting === true;
+          if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.equal(waiting, true, "the older claim must wait on the winner's canonical school lock");
+        assert.equal(loserSettled, false);
+        const claim = await assignAdHocSupervisionStudents({ ...claimOptions,
+          assignedStaffId: winnerStaff.id, actorId: winnerStaff.id }, tx);
+        const [assignment] = claim.assignments;
+        assert.equal(assignment?.studentId, pupil.id);
+        // A fresh staff member guarantees insertion with the winner's later now().
+        const window = await tx.execute<{ afterLoser: boolean }>(sql`
+          SELECT starts_at > ${loser.startedAt}::timestamptz AS "afterLoser"
+          FROM classpilot_supervision_contexts WHERE school_id = ${school.id} AND id = ${claim.context.id}
+        `);
+        assert.equal(window.rows[0]?.afterLoser, true);
+        return { claim, before: await snapshot(tx) };
+      });
+      const result = await loserOutcome;
+      // The test pool may have only two connections. Return both leases before
+      // reading committed state through the normal tenant-scoped database.
+      loserClient.release();
+      winnerClient.release();
+      clientsReleased = true;
+      assert.equal(result.error?.status, 409);
+      assert.equal(result.error?.code, "COVERAGE_STUDENT_UNAVAILABLE");
+      assert.deepEqual(await inSchool(school.id, () => snapshot(db)), winner.before,
+        "a rejected claim must not insert a context, release the winner, or change student control state");
+      const ownership = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, pupil.id));
+      assert.equal(ownership?.context.id, winner.claim.context.id);
+      assert.equal(ownership?.context.assignedStaffId, winnerStaff.id);
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id, contextId: winner.claim.context.id, studentIds: [pupil.id],
+      }));
+    } finally {
+      startLoser();
+      await loserOutcome;
+      if (!clientsReleased) {
+        loserClient.release();
+        winnerClient.release();
+      }
+    }
   });
 
   it("keeps scheduled deadlines under scheduling even for legacy PATCH callers while allowing notes and release", async () => {
