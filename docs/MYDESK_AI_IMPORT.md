@@ -183,8 +183,13 @@ do not commit generated reports or private approval evidence.
 - `MYDESK_MODE` and `MYDESK_AI_IMPORT_MODE` must both be `on`. Each defaults off;
   once enabled the feature applies to all eligible current and future schools.
   Retired school allowlists are rejected. Seating remains independent.
-- `MYDESK_AI_IMPORT_MODEL` defaults to `claude-sonnet-5`; changing it requires
+- `MYDESK_AI_IMPORT_MODEL` defaults to `claude-opus-5-5`; changing it requires
   extraction evaluation and recorded model-version review.
+- Opus 5.5 uses adaptive thinking. Accept its recognized thinking blocks without
+  retaining or logging them, then require exactly one bounded JSON text block and
+  a complete response. Do not send disabled thinking or non-default sampling
+  controls. The same model setting serves contact extraction, whose readiness
+  review remains independent. See the [provider migration guide](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide).
 - The workspace extraction prompt is `mydesk-forms-20260928-v3`. Its orientation
   and discipline-field extraction require a fresh reviewed evaluation with that
   exact version; prior prompt evaluation does not authorize activation. Keep AI off

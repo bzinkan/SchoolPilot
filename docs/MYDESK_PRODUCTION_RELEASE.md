@@ -142,7 +142,7 @@ Store this non-secret configuration in a private external file:
   "aiImportMode": "off",
   "studentInformationAiImportMode": "off",
   "bucket": "schoolpilot-production-mydesk-attachments",
-  "model": "claude-sonnet-5",
+  "model": "claude-opus-5-5",
   "teacherDailyPages": 100,
   "schoolDailyPages": 500
 }
@@ -167,6 +167,13 @@ if those checks fail, preserving bucket access for cleanup.
 Teachers may use their own private workspaces while the operator performs the
 desktop and physical Android walkthrough in production. Automated CI remains a
 prerequisite; a separate staging acceptance environment is not required.
+
+A model change with both AI modes off uses the same runtime plan/apply path and
+does not authorize processing. The setting is shared by paperwork and contact
+imports; each still needs its own evaluation with the selected model. Opus 5.5
+requires the compatible structured-response parser before activation. Existing
+imports retain their recorded model. To reverse a model change, create a fresh
+plan with the previous model; the mode-only Rollback action retains the model.
 
 ## AI readiness and capacity
 
