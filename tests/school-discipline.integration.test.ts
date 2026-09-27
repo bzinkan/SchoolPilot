@@ -18,6 +18,7 @@ import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { createSchoolDisciplineRouter } from "../src/routes/schoolDiscipline.js";
 import { cleanupSchoolDiscipline } from "../src/services/schoolDisciplineCleanup.js";
 import { listDisciplineStudents } from "../src/services/schoolDisciplineWorkspace.js";
+import { datePlusDays, emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
 import { signUserToken } from "../src/services/jwt.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
 import { myDeskUpstreamErrorBoundary } from "../src/middleware/mydeskUpstreamErrorBoundary.js";
@@ -301,6 +302,82 @@ test("grade normalization, incident/teacher filters, latest dates, and stale sch
   const exportResult=await request(f,'/export','POST',{scope:'assigned',incidentType:'detention'});assert.equal(exportResult.status,200,exportResult.text);assert.equal(exportResult.headers.get('x-discipline-row-count'),'1');
   await fixturePool.query("INSERT INTO classpilot_school_schedules(school_id,config) VALUES($1,$2::jsonb)",[f.schoolId,JSON.stringify({yearStart:'2020-08-01',yearEnd:'2021-06-30'})]);
   const stale=await request(f,'/students/search','POST',{period:'school_year'});assert.equal(stale.status,200,stale.text);assert.equal(stale.data.range.period,'all');assert.match(stale.data.range.notice,/Showing all dates/);
+  assert.equal(stale.data.range.noticeCode,'SCHOOL_YEAR_OUTSIDE_RANGE');
+  assert.deepEqual(stale.data.range.configuredSchoolYear,{from:'2020-08-01',to:'2021-06-30'});
+});
+
+test("school-year summaries, history and exports distinguish missing, invalid, current and outside date ranges", async (t) => {
+  const now = new Date(); now.setUTCHours(12, 0, 0, 0);
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const today = now.toISOString().slice(0, 10), from = datePlusDays(today, -30), to = datePlusDays(today, 30);
+  const allDates = [datePlusDays(from, -1), from, today, to, datePlusDays(to, 1)].sort().reverse();
+  const f = await fixture();
+  for (const entryDate of allDates) await finish(f, await draft(f, { entryDate }));
+  const saveRange = async (boundaries: Record<string, unknown>) => fixturePool.query(
+    "INSERT INTO classpilot_school_schedules(school_id,config) VALUES($1,$2::jsonb) ON CONFLICT(school_id) DO UPDATE SET config=EXCLUDED.config",
+    [f.schoolId, JSON.stringify({ ...emptySchoolSchedulingConfig(), ...boundaries })],
+  );
+  const verify = async (query: Record<string, unknown>, expected: { period: string; from?: string; to?: string; noticeCode?: string; configuredSchoolYear?: { from: string; to: string } }, dates: string[]) => {
+    const summary = await request(f, "/students/search", "POST", query);
+    assert.equal(summary.status, 200, summary.text);
+    assert.equal(summary.data.students[0].incidentCount, dates.length);
+    assert.equal(summary.data.students[0].referralCount, dates.length);
+    const { notice, ...range } = summary.data.range;
+    assert.deepEqual(range, expected);
+    if (expected.noticeCode) assert.match(notice, /Showing all dates/);
+    else assert.equal(notice, undefined);
+    if (expected.noticeCode === "SCHOOL_YEAR_OUTSIDE_RANGE") assert.match(notice, /configured school year .* does not include today/);
+    const history = await request(f, `/students/${f.studentId}/history`, "POST", query);
+    assert.equal(history.status, 200, history.text);
+    assert.deepEqual(history.data.range, summary.data.range);
+    assert.deepEqual(history.data.records.map((record: any) => record.currentVersion.entryDate), dates);
+    const summaryExport = await request(f, "/students/export", "POST", query);
+    assert.equal(summaryExport.status, 200, summaryExport.text);
+    assert.equal(summaryExport.text.split("\r\n")[1], `"${f.studentId}","Synthetic Student","","${dates.length}","${dates.length}","0"`);
+    const incidentExport = await request(f, "/export", "POST", { scope: "assigned", studentId: f.studentId, from: range.from, to: range.to });
+    assert.equal(incidentExport.status, 200, incidentExport.text);
+    assert.equal(incidentExport.headers.get("x-discipline-row-count"), String(dates.length));
+  };
+
+  const missing = { period: "all", noticeCode: "SCHOOL_YEAR_NOT_CONFIGURED" };
+  await verify({ period: "school_year" }, missing, allDates);
+  for (const boundaries of [{}, { yearStart: from }, { yearEnd: to }, { yearStart: "2026-02-30", yearEnd: to },
+    { yearStart: 2026, yearEnd: to }, { yearStart: to, yearEnd: from }, { yearStart: from, yearEnd: datePlusDays(from, 551) }]) {
+    await saveRange(boundaries);
+    await verify({ period: "school_year" }, missing, allDates);
+  }
+  await saveRange({ yearStart: from, yearEnd: to });
+  await verify({ period: "school_year", from: today, to: today },
+    { period: "school_year", from, to, configuredSchoolYear: { from, to } }, [to, today, from]);
+  await verify({ period: "all" }, { period: "all" }, allDates);
+  await verify({ period: "all", from: today, to: today }, { period: "all", from: today, to: today }, [today]);
+  await verify({ period: "custom", from: today, to: today }, { period: "custom", from: today, to: today }, [today]);
+  for (const configuredSchoolYear of [
+    { from: datePlusDays(today, -60), to: datePlusDays(today, -1) },
+    { from: datePlusDays(today, 1), to: datePlusDays(today, 60) },
+  ]) {
+    await saveRange({ yearStart: configuredSchoolYear.from, yearEnd: configuredSchoolYear.to });
+    await verify({ period: "school_year" }, { period: "all", noticeCode: "SCHOOL_YEAR_OUTSIDE_RANGE", configuredSchoolYear }, allDates);
+  }
+});
+
+test("school-year availability follows the school's local date at a UTC day boundary", async (t) => {
+  const now = new Date(); now.setUTCHours(2, 30, 0, 0);
+  t.mock.timers.enable({ apis: ["Date"], now });
+  const utcToday = now.toISOString().slice(0, 10), localToday = datePlusDays(utcToday, -1);
+  const f = await fixture();
+  await fixturePool.query("UPDATE schools SET school_timezone='America/Los_Angeles' WHERE id=$1", [f.schoolId]);
+  await fixturePool.query("INSERT INTO classpilot_school_schedules(school_id,config) VALUES($1,$2::jsonb)",
+    [f.schoolId, JSON.stringify({ ...emptySchoolSchedulingConfig(), yearStart: localToday, yearEnd: localToday })]);
+  const local = await request(f, "/students/search", "POST", { period: "school_year" });
+  assert.equal(local.status, 200, local.text);
+  assert.deepEqual(local.data.range, { period: "school_year", from: localToday, to: localToday, configuredSchoolYear: { from: localToday, to: localToday } });
+  await fixturePool.query("UPDATE schools SET school_timezone='UTC' WHERE id=$1", [f.schoolId]);
+  const utc = await request(f, "/students/search", "POST", { period: "school_year" });
+  assert.equal(utc.status, 200, utc.text);
+  assert.equal(utc.data.range.period, "all");
+  assert.equal(utc.data.range.noticeCode, "SCHOOL_YEAR_OUTSIDE_RANGE");
+  assert.deepEqual(utc.data.range.configuredSchoolYear, { from: localToday, to: localToday });
 });
 
 test("administrators retain deleted-student history from immutable snapshots, teachers do not",async()=>{

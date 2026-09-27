@@ -41,7 +41,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     if (pathname.endsWith('/imports') && method === 'GET') return json({ imports: state.viewer === 'teacher-a' ? [state.batch] : [], nextCursor: null });
     if (pathname.endsWith('/imports') && method === 'POST') {
       assert.equal(body.expectedSourceCount, 1);
-      if (!receipts.has(body.clientRequestId)) { state.batch = fixture({ status: 'uploading', revision: 1, selectedGroupIds: body.selectedGroupIds, assets: [], items: [] }); receipts.set(body.clientRequestId, true); }
+      if (!receipts.has(body.clientRequestId)) { state.batch = fixture({ status: 'uploading', revision: 1, selectedGroupIds: body.selectedGroupIds, destination: body.destination, assets: [], items: [] }); receipts.set(body.clientRequestId, true); }
       if (state.failCreate) { state.failCreate = false; return json({ error: 'Create response interrupted' }, 503); } return json({ import: state.batch });
     }
     const match = pathname.match(/\/imports\/([^/]+)(.*)$/); if (!match) return json({});
@@ -57,7 +57,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     if (state.failureCode) { const code = state.failureCode; state.failureCode = null; return json({ error: code === 'MYDESK_IMPORT_ROSTER_CHANGED' ? 'Roster changed. Check the subject again.' : 'This import changed in another tab.', code }, 409); }
     assert.equal(body.revision, state.batch.revision);
     state.batch.revision++;
-    if (action === '/process') { state.batch = fixture({ revision: state.batch.revision }); if (state.failProcess) { state.failProcess = false; receipts.set(body.requestId, true); return json({ error: 'Process response interrupted' }, 503); } }
+    if (action === '/process') { state.batch = fixture({ revision: state.batch.revision, destination: state.batch.destination }); if (state.failProcess) { state.failProcess = false; receipts.set(body.requestId, true); return json({ error: 'Process response interrupted' }, 503); } }
     else if (action === '/commit') { assert.deepEqual(body.itemIds, state.batch.items.filter(item => !item.excluded).map(item => item.id)); assert.ok(state.batch.items.every(item => item.excluded || item.reviewed)); assert.equal(state.batch.pageDecisions.length, state.batch.assets.filter(asset => asset.kind === 'page').length); state.batch.status = 'completed'; state.batch.commitReceipt = state.batch.destination === 'discipline' ? { notes: [], records: body.itemIds.map((itemId, index) => ({ itemId, recordId: `record-${index}` })) } : { notes: body.itemIds.map((itemId, index) => ({ itemId, noteId: `note-${index}` })) }; }
     else if (method === 'DELETE') { state.batch.status = 'cancelled'; }
     else if (action.startsWith('/items/')) {
@@ -71,10 +71,47 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     if ((action === '/commit' && state.failCommit) || (method === 'DELETE' && state.failCancel)) { state.failCommit = false; state.failCancel = false; return json({ error: 'Response interrupted. Retry safely.' }, 503); }
     return json({ import: state.batch, receipt: state.batch.commitReceipt });
   });
-  await page.goto(`${base}/classpilot/my-desk/imports${url}`); await page.getByRole('heading', { name: url ? 'Review your paperwork' : 'Paperwork', exact: true }).waitFor();
+  await page.goto(`${base}/classpilot/my-desk/imports${url}`); await page.getByRole('heading', { name: url.startsWith('/') ? 'Review your paperwork' : 'Paperwork', exact: true }).waitFor();
   return { page, state, requests, errors };
 }
 const forms = page => page.getByRole('button', { name: /2\. Review forms/ }).click();
+
+test('admin paperwork origin survives upload, save for later, resume, refresh and completed returns', async () => {
+  const { page, requests, errors } = await setup({ url: '?destination=discipline&entry=admin' });
+  try {
+    await page.getByRole('button', { name: 'Admin Panel', exact: true }).waitFor();
+    await page.getByLabel('Science 5', { exact: true }).check();
+    await page.locator('input[type=file][multiple]').setInputFiles(imagePath);
+    await page.getByRole('button', { name: 'Prepare drafts' }).click();
+    await page.waitForURL('**/imports/import-a?entry=admin');
+    assert.equal(requests.find(request => request.path.endsWith('/imports') && request.method === 'POST').body.destination, 'discipline');
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports?destination=discipline&view=library&entry=admin');
+    await page.getByRole('button', { name: 'Resume review' }).click();
+    await page.waitForURL('**/imports/import-a?entry=admin');
+    await page.reload();
+    await page.getByRole('button', { name: 'Admin Panel', exact: true }).click();
+    await page.waitForURL('**/classpilot/admin');
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+  const complete = await setup({ url: '/import-a?entry=admin', batch: fixture({ destination: 'discipline', status: 'completed', commitReceipt: { records: [{ itemId: 'form-a', recordId: 'record-a' }] } }) });
+  try {
+    await complete.page.getByRole('button', { name: 'Open discipline logs', exact: true }).click();
+    await complete.page.waitForURL('**/discipline-records?entry=admin');
+  } finally { await complete.page.close(); }
+  const cancelled = await setup({ url: '/import-a?entry=admin', batch: fixture({ destination: 'discipline', status: 'cancelled' }) });
+  try {
+    await cancelled.page.getByRole('button', { name: 'Back to paperwork', exact: true }).click();
+    await cancelled.page.waitForURL('**/imports?destination=discipline&view=library&entry=admin');
+    await cancelled.page.getByRole('button', { name: 'Admin Panel', exact: true }).waitFor();
+    await cancelled.page.getByRole('button', { name: 'Add from paperwork', exact: true }).click();
+    await cancelled.page.getByLabel('Science 5', { exact: true }).check();
+    await cancelled.page.locator('input[type=file][multiple]').setInputFiles(imagePath);
+    await cancelled.page.getByRole('button', { name: 'Prepare drafts' }).click();
+    await cancelled.page.waitForURL('**/imports/import-a?entry=admin');
+    assert.equal(cancelled.requests.find(request => request.path.endsWith('/imports') && request.method === 'POST').body.destination, 'discipline');
+  } finally { await cancelled.page.close(); }
+});
 async function chooseSubject(page, student = 'student-a') { await page.getByLabel('Subject class', { exact: true }).selectOption('class-a'); await page.getByLabel('Subject student', { exact: true }).selectOption(student); await page.getByLabel('Form date', { exact: true }).fill('2026-09-24'); }
 
 test('review each form with an exact subject and explicit date, then atomically commit with a lost-response retry', async () => {
@@ -92,7 +129,7 @@ test('review each form with an exact subject and explicit date, then atomically 
 });
 
 test('discipline review requires explicit incident counts and duplicate choice before direct school publication', async () => {
-  const { page, state, requests, errors } = await setup({ batch: fixture({ destination: 'discipline', items: [item('form-a', 0)] }) });
+  const { page, state, requests, errors } = await setup({ url: '/import-a?entry=admin', batch: fixture({ destination: 'discipline', items: [item('form-a', 0)] }) });
   await page.getByRole('button', { name: 'All forms on this page are accounted for' }).click(); await forms(page);
   await chooseSubject(page); await page.getByRole('img', { name: 'Form 1, part 1', exact: true }).waitFor();
   assert.equal(await page.getByLabel('Form category', { exact: true }).count(), 0);
@@ -121,7 +158,7 @@ test('discipline review requires explicit incident counts and duplicate choice b
   const commits = requests.filter(request => request.path.endsWith('/commit'));
   assert.equal(commits.length, 2); assert.deepEqual(commits[0].body, commits[1].body);
   assert.equal(requests.some(request => request.path.endsWith('/notes') && request.method === 'POST'), false);
-  await page.getByRole('button', { name: 'Open disciplinary record 1' }).click(); await page.waitForURL('**/discipline-records/record-0');
+  await page.getByRole('button', { name: 'Open disciplinary record 1' }).click(); await page.waitForURL('**/discipline-records/record-0?entry=admin');
   assert.deepEqual(errors, []); await page.close();
 });
 

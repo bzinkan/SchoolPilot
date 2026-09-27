@@ -6,6 +6,7 @@ import { myDeskGradeSql, normalizeMyDeskGrade } from "./mydeskGrade.js";
 import { students } from "../schema/students.js";
 import { groups, groupStudents } from "../schema/classpilot.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
+import { datePlusDays, isSchedulingDate } from "./classpilotSchedulingRules.js";
 import { schoolDisciplineRecords as records, schoolDisciplineVersions as versions, schoolDisciplineAttachments as attachments,
   type DisciplineSnapshot } from "../schema/schoolDiscipline.js";
 import type { MyDeskDatabase } from "./mydesk.js";
@@ -261,11 +262,17 @@ async function summaryRange(tx: MyDeskDatabase, actor: DisciplineActor, query: D
     return { from: query.from, to: query.to, period: "custom" };
   }
   const [schedule] = await tx.select({ config: classpilotSchoolSchedules.config }).from(classpilotSchoolSchedules).where(eq(classpilotSchoolSchedules.schoolId, actor.schoolId));
+  const from = schedule?.config?.yearStart, to = schedule?.config?.yearEnd;
+  if (!isSchedulingDate(from) || !isSchedulingDate(to) || to < from || to > datePlusDays(from, 550))
+    return { from: undefined, to: undefined, period: "all", noticeCode: "SCHOOL_YEAR_NOT_CONFIGURED",
+      notice: "A valid school year date range is not configured. Showing all dates." };
+  const configuredSchoolYear = { from, to };
   const [school] = await tx.select({ timezone: schools.schoolTimezone }).from(schools).where(eq(schools.id, actor.schoolId));
   const today = localDateInTimeZone(new Date(), school?.timezone || "America/New_York");
-  if (!schedule?.config?.yearStart || !schedule.config.yearEnd || today < schedule.config.yearStart || today > schedule.config.yearEnd)
-    return { from: undefined, to: undefined, period: "all", notice: "Current school year dates are not configured. Showing all dates." };
-  return { from: query.from || schedule.config.yearStart, to: query.to || schedule.config.yearEnd, period: "school_year" };
+  if (today < from || today > to)
+    return { from: undefined, to: undefined, period: "all", noticeCode: "SCHOOL_YEAR_OUTSIDE_RANGE", configuredSchoolYear,
+      notice: `The configured school year (${from} to ${to}) does not include today. Showing all dates.` };
+  return { from, to, period: "school_year", configuredSchoolYear };
 }
 function studentSummaryWhere(identity: DisciplineIdentity, query: DisciplineStudentsQuery): SQL[] {
   if (query.scope === "school" && !identity.manager) throw disciplineError(403, "VIEW_ACCESS_REQUIRED", "School discipline access is required");

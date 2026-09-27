@@ -8,7 +8,31 @@ import { createServer } from 'vite';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let vite, browser, base;
-const entry = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{MemoryRouter}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{DisciplineLibrary,RecordLoader}from'/src/products/classpilot/pages/DisciplineRecords.jsx';import DisciplineSubmitButton,{SubmissionReview}from'/src/products/classpilot/components/DisciplineSubmitButton.jsx';import DisciplineIncidentComposer from'/src/products/classpilot/components/DisciplineIncidentComposer.jsx';import{disciplineKeys}from'/src/products/classpilot/lib/discipline.js';import{clearMyDeskQueries}from'/src/products/classpilot/lib/myDeskModel.js';import{useDisciplineCapabilities}from'/src/products/classpilot/hooks/useDiscipline.js';import'/src/index.css';const h=React.createElement;window.refreshDiscipline=()=>queryClient.invalidateQueries({queryKey:['mydesk-private']});function Harness(){const[viewerId,setViewer]=useState('teacher-a');const identity={schoolId:'school-a',viewerId,enabled:true,eligible:true};const capability=useDisciplineCapabilities(identity);const access={...identity,capabilities:capability.data||{canSubmit:false,canViewSchool:false,canManageAccess:false}};const mode=new URLSearchParams(location.search).get('mode');const C=mode==='library'||mode==='admin'?DisciplineLibrary:mode==='composer'?DisciplineIncidentComposer:mode==='limit'?SubmissionReview:mode==='record'?RecordLoader:DisciplineSubmitButton;return h(React.Fragment,null,h('button',{onClick:()=>{clearMyDeskQueries(queryClient);window.__viewer='teacher-b';setViewer('teacher-b')}},'Switch author'),h('div',{className:'mydesk-page discipline-page'},capability.usable?h(C,{key:viewerId+':'+access.capabilities.canViewSchool,access,onSaved:id=>{window.__saved=id},recordId:'record-a',noteIds:mode==='limit'?Array.from({length:51},(_,i)=>'note-'+i):['note-a','note-b'],onClose:()=>{window.__closed=true}}):h('p',null,'Access unavailable')));}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(MemoryRouter,{initialEntries:[new URLSearchParams(location.search).get('mode')==='admin'?'/classpilot/discipline-records?entry=admin':'/classpilot/discipline-records']},h(Harness))));`;
+const entry = `
+import React,{useState}from'react';import{createRoot}from'react-dom/client';
+import{MemoryRouter,Routes,Route,useLocation,useParams}from'react-router-dom';
+import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';
+import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';
+import{DisciplineShell,DisciplineLibrary,RecordLoader}from'/src/products/classpilot/pages/DisciplineRecords.jsx';
+import DisciplineSubmitButton,{SubmissionReview}from'/src/products/classpilot/components/DisciplineSubmitButton.jsx';
+import DisciplineIncidentComposer from'/src/products/classpilot/components/DisciplineIncidentComposer.jsx';
+import{clearMyDeskQueries}from'/src/products/classpilot/lib/myDeskModel.js';
+import{useDisciplineCapabilities}from'/src/products/classpilot/hooks/useDiscipline.js';import'/src/index.css';
+const h=React.createElement;const fixtureParams=new URLSearchParams(location.search);
+window.refreshDiscipline=()=>queryClient.invalidateQueries({queryKey:['mydesk-private']});
+function RoutedRecord({access}){const {recordId}=useParams();return h(DisciplineShell,null,h(RecordLoader,{access,recordId}));}
+function Navigation({access}){const route=useLocation();return h(React.Fragment,null,h('output',{'aria-label':'Current route'},route.pathname+route.search),h(Routes,null,
+  h(Route,{path:'/classpilot/discipline-records',element:h(DisciplineShell,null,h(DisciplineLibrary,{access}))}),
+  h(Route,{path:'/classpilot/discipline-records/:recordId',element:h(RoutedRecord,{access})}),
+  h(Route,{path:'/classpilot/admin',element:h('h1',null,'Admin destination')}),
+  h(Route,{path:'/classpilot/my-desk',element:h('h1',null,'My Desk destination')}),
+  h(Route,{path:'/classpilot/my-desk/imports',element:h('h1',null,'Paperwork destination')})
+));}
+function Harness(){const[viewerId,setViewer]=useState('teacher-a');const identity={schoolId:'school-a',viewerId,enabled:true,eligible:true};const capability=useDisciplineCapabilities(identity);const access={...identity,importsEnabled:true,capabilities:capability.data||{canSubmit:false,canViewSchool:false,canManageAccess:false}};
+const mode=fixtureParams.get('mode');const C=mode==='navigation'?Navigation:mode==='library'||mode==='admin'?DisciplineLibrary:mode==='composer'?DisciplineIncidentComposer:mode==='limit'?SubmissionReview:mode==='record'?RecordLoader:DisciplineSubmitButton;
+return h(React.Fragment,null,h('button',{onClick:()=>{clearMyDeskQueries(queryClient);window.__viewer='teacher-b';setViewer('teacher-b')}},'Switch author'),h('div',{className:'mydesk-page discipline-page'},capability.usable?h(C,{key:viewerId+':'+access.capabilities.canViewSchool,access,onSaved:id=>{window.__saved=id},recordId:'record-a',noteIds:mode==='limit'?Array.from({length:51},(_,i)=>'note-'+i):['note-a','note-b'],onClose:()=>{window.__closed=true}}):h('p',null,'Access unavailable')));}
+createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(MemoryRouter,{initialEntries:[fixtureParams.get('route')||(fixtureParams.get('mode')==='admin'?'/classpilot/discipline-records?entry=admin':'/classpilot/discipline-records')]},h(ThemeProvider,null,h(Harness)))));
+`;
 before(async () => {
   vite=await createServer({root,logLevel:'error',cacheDir:`node_modules/.vite-discipline-${process.pid}`,server:{host:'127.0.0.1',port:0},plugins:[{name:'discipline-browser',configureServer(server){server.middlewares.use(async(req,res,next)=>{if(!req.url?.startsWith('/__discipline?'))return next();res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml(req.url,'<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/__discipline-entry.jsx"></script></body></html>'));});},resolveId(id){if(id==='/__discipline-entry.jsx')return '\0discipline-entry';},load(id){if(id==='\0discipline-entry')return entry;}}]});
   await vite.listen();base=`http://127.0.0.1:${vite.httpServer.address().port}`;browser=await chromium.launch({headless:true});
@@ -19,7 +43,7 @@ const version=(number,title=`Version ${number}`)=>({id:`version-${number}`,numbe
 const record=(revision=3)=>({id:'record-a',revision,status:'submitted',canCorrect:true,canWithdraw:true,currentVersion:version(revision),versions:[version(revision),version(revision-1)],nextVersionsCursor:revision-1,submittedBy:{id:'teacher-a',name:'Synthetic Teacher'}});
 async function setup(mode, options = {}) {
   const page=await browser.newPage({viewport:{width:390,height:844}}),requests=[],errors=[];
-  const state={capabilityStatus:200,recordStatus:200,blobStatus:200,submitFail:true,correctionMode:'conflict',correctionCalls:[],submissions:[],grants:[],failGrant:true,revision:3,withdrawals:[],withdrawConflict:false,withdrawn:false,canViewSchool:true,recordAuthor:'teacher-a',createdDrafts:[],finalizations:[],duplicates:[],finalizeStatus:200,...options};
+  const state={capabilityStatus:200,recordStatus:200,blobStatus:200,submitFail:true,correctionMode:'conflict',correctionCalls:[],submissions:[],grants:[],failGrant:true,revision:3,withdrawals:[],withdrawConflict:false,withdrawn:false,canViewSchool:true,recordAuthor:'teacher-a',createdDrafts:[],finalizations:[],duplicates:[],finalizeStatus:200,range:{period:'all',from:null,to:null,noticeCode:'SCHOOL_YEAR_NOT_CONFIGURED',notice:'Showing all dates because school year dates have not been configured.'},...options};
   page.setDefaultTimeout(10000);
   page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(()=>{window.__viewer='teacher-a';window.__revoked=[];localStorage.setItem('sp_activeSchoolId','school-a');const revoke=URL.revokeObjectURL.bind(URL);URL.revokeObjectURL=url=>{window.__revoked.push(url);revoke(url)};});
@@ -37,8 +61,9 @@ async function setup(mode, options = {}) {
     if(url.pathname.endsWith('/access/teacher-a')){state.grants.push(body);if(state.failGrant){state.failGrant=false;return json({error:'Temporary permission interruption'},503);}return json({ok:true});}
     if(url.pathname.endsWith('/access'))return json({staff:[{userId:'teacher-a',name:'Synthetic Teacher',email:'synthetic@example.test',enabled:false,revision:0}]});
     if(url.pathname.endsWith('/mydesk/classes'))return json({current:[{id:'class-a',name:'Grade five',gradeLevel:'5',personal:true,groupType:'admin_class'},{id:'class-b',name:'Grade six',gradeLevel:'6',personal:false,groupType:'admin_class'}],grades:[{gradeLevel:'5',label:'Grade 5'}],preferences:{revision:0,viewBy:'grades',preferredClasses:{}}});
-    if(url.pathname.endsWith('/students/search'))return json({students:[{id:'student-a',name:'Synthetic Student',status:'active',gradeLevel:'5',referralCount:3,detentionCount:1,latestIncident:'2026-09-26',classes:[{id:'class-a',name:'Grade five'}]},{id:'student-b',name:'Zero Notes',status:'active',gradeLevel:'5',referralCount:0,detentionCount:0,latestIncident:null,classes:[]}],range:{period:'all',notice:'Showing all dates because the configured school year has ended.'},nextCursor:null});
-    if(url.pathname.endsWith('/students/student-a/history'))return json({student:{id:'student-a',name:'Synthetic Student',status:'active',classes:[{id:'class-a',name:'Grade five'}]},records:[record()],range:{period:'all'},nextCursor:null});
+    const range=body?.period==='custom'?{period:'custom',from:body.from,to:body.to}:body?.period==='all'?{period:'all',from:null,to:null}:state.range;
+    if(url.pathname.endsWith('/students/search'))return json({students:[{id:'student-a',name:'Synthetic Student',status:'active',gradeLevel:'5',referralCount:3,detentionCount:1,latestIncident:'2026-09-26',classes:[{id:'class-a',name:'Grade five'}]},{id:'student-b',name:'Zero Notes',status:'active',gradeLevel:'5',referralCount:0,detentionCount:0,latestIncident:null,classes:[]}],range,nextCursor:null});
+    if(url.pathname.endsWith('/students/student-a/history'))return json({student:{id:'student-a',name:'Synthetic Student',status:'active',classes:[{id:'class-a',name:'Grade five'}]},records:[record()],range,nextCursor:null});
     if(url.pathname.endsWith('/drafts')){state.createdDrafts.push(body);if(!state.draft)state.draft={...body,id:'draft-a',revision:1,studentName:'Synthetic Student',className:body.groupId?'Grade five':null,attachments:[]};return json({created:true,draft:state.draft},201);}
     if(url.pathname.endsWith('/draft-a/draft')){if(method==='PATCH'){state.draft={...state.draft,...body,revision:state.draft.revision+1};}if(method==='DELETE')return json({cancelled:true});return json({draft:state.draft});}
     if(url.pathname.endsWith('/draft-a/attachments')){state.draft.revision++;const attachment={id:'draft-form-a',filename:body.filename,contentType:body.contentType,status:'pending'};state.draft.attachments.push(attachment);return json({attachment,revision:state.draft.revision},201);}
@@ -49,9 +74,79 @@ async function setup(mode, options = {}) {
     if(url.pathname.endsWith('/record-a')){if(state.recordStatus!==200)return json({error:'Record temporarily unavailable'},state.recordStatus);if(url.searchParams.has('versionsCursor'))return json({record:{...record(state.revision),versions:[version(1,'Earliest submission')],nextVersionsCursor:null}});return json({record:{...record(state.revision),submittedBy:{id:state.recordAuthor,name:'Synthetic Teacher'},...(state.withdrawn?{status:'withdrawn',canWithdraw:false}:{})}});}
     return json({error:'Unexpected synthetic endpoint'},404);
   });
-  await page.goto(`${base}/__discipline?mode=${mode}`, { timeout: 30000 });await page.waitForLoadState('networkidle');assert.deepEqual(errors,[]);return{page,requests,errors,state};
+  await page.goto(`${base}/__discipline?mode=${mode}${options.route ? `&route=${encodeURIComponent(options.route)}` : ''}`, { timeout: 30000 });await page.waitForLoadState('networkidle');assert.deepEqual(errors,[]);return{page,requests,errors,state};
 }
 const noOverflow=async page=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+
+test('admin origin survives student and record drilldowns, errors and return to the Admin Panel',async()=>{
+ const {page,state,errors}=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin'});try{
+  await page.getByRole('button',{name:'Admin Panel',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();
+  await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
+  await page.getByRole('link',{name:'All discipline records',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Current route').textContent(),'/classpilot/discipline-records/record-a?entry=admin');
+  await page.getByRole('link',{name:'All discipline records',exact:true}).click();
+  await page.getByRole('heading',{name:'Discipline logs',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Current route').textContent(),'/classpilot/discipline-records?entry=admin');
+  state.recordStatus=404;await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();
+  await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
+  await page.getByRole('heading',{name:'Record unavailable'}).waitFor();
+  assert.equal(await page.getByRole('link',{name:'All records',exact:true}).getAttribute('href'),'/classpilot/discipline-records?entry=admin');
+  await page.getByRole('button',{name:'Admin Panel',exact:true}).click();
+  await page.getByRole('heading',{name:'Admin destination'}).waitFor();assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('manual composer links and saved records retain admin origin and paperwork starts with the same origin',async()=>{
+ const {page,state,errors}=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin',duplicates:[{id:'record-a',revision:4,entryDate:'2026-09-26',title:'Existing incident',canAddEvidence:true}]});try{
+  await page.getByRole('button',{name:'Add incident',exact:true}).click();await page.getByLabel('Student',{exact:true}).selectOption('student-a');await page.getByLabel('Incident date',{exact:true}).fill('2026-09-26');await page.getByLabel('Factual information').fill('Synthetic incident.');
+  await page.getByRole('button',{name:'Review incident',exact:true}).click();await page.getByRole('heading',{name:'Possible existing incidents'}).waitFor();
+  assert.equal(await page.getByRole('link',{name:'Review existing record'}).getAttribute('href'),'/classpilot/discipline-records/record-a?entry=admin');
+  await page.getByLabel('How should this form be saved?').selectOption('separate');await page.getByLabel('I reviewed the student, date, factual information, and selected forms.').check();await page.getByRole('button',{name:'Save disciplinary record'}).click();
+  await page.getByRole('link',{name:'All discipline records',exact:true}).waitFor();assert.equal(state.finalizations.length,1);assert.equal(await page.getByLabel('Current route').textContent(),'/classpilot/discipline-records/record-a?entry=admin');
+  await page.getByRole('link',{name:'All discipline records',exact:true}).click();await page.getByRole('button',{name:'Add from paperwork',exact:true}).click();await page.getByRole('heading',{name:'Paperwork destination'}).waitFor();
+  assert.equal(await page.getByLabel('Current route').textContent(),'/classpilot/my-desk/imports?destination=discipline&entry=admin');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
+test('teacher and unknown origins return to My Desk; an admin marker never grants school scope',async()=>{
+ for(const route of ['/classpilot/discipline-records','/classpilot/discipline-records?entry=https%3A%2F%2Fexample.invalid&returnTo=https%3A%2F%2Fexample.invalid']){
+  const {page,requests,errors}=await setup('navigation',{route,canViewSchool:false});try{
+   await page.getByRole('button',{name:'My Desk',exact:true}).waitFor();await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
+   assert.equal(await page.getByRole('link',{name:'All discipline records',exact:true}).getAttribute('href'),'/classpilot/discipline-records');
+   assert.ok(requests.filter(row=>row.path.endsWith('/students/search')).every(row=>row.body.scope==='assigned'));
+   await page.getByRole('button',{name:'My Desk',exact:true}).click();await page.getByRole('heading',{name:'My Desk destination'}).waitFor();assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+ }
+ const forged=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin',canViewSchool:false});try{assert.equal(forged.requests.find(row=>row.path.endsWith('/students/search')).body.scope,'assigned');assert.equal(await forged.page.getByRole('option',{name:'All my grades',exact:true}).count(),1);}finally{await forged.page.close();}
+});
+
+test('school-year fallbacks show effective all dates with accurate admin settings actions and matched exports',async()=>{
+ for(const range of [
+  {period:'all',from:null,to:null,noticeCode:'SCHOOL_YEAR_NOT_CONFIGURED',notice:'Showing all dates because school year dates have not been configured.'},
+  {period:'all',from:null,to:null,noticeCode:'SCHOOL_YEAR_OUTSIDE_RANGE',notice:'Showing all dates because today is outside the configured school year.',configuredSchoolYear:{from:'2025-08-01',to:'2026-06-30'}},
+ ]){
+  const {page,requests,errors}=await setup('admin',{range});try{
+   assert.equal(await page.getByLabel('Period',{exact:true}).inputValue(),'all');await page.getByText(range.notice,{exact:true}).waitFor();
+   const action=page.getByRole('link',{name:range.noticeCode==='SCHOOL_YEAR_NOT_CONFIGURED'?'Set school year dates':'Review school year dates',exact:true});assert.equal(await action.getAttribute('href'),'/classpilot/admin/classes/scheduling?section=bells');
+   if(range.configuredSchoolYear)await page.getByText('Configured school year: 2025-08-01 to 2026-06-30.',{exact:true}).waitFor();
+   await page.getByRole('button',{name:'Export student summary CSV'}).click();await page.waitForTimeout(100);const exported=requests.find(row=>row.path.endsWith('/students/export'));assert.equal(exported.body.period,'all');assert.equal(exported.body.from,undefined);assert.equal(exported.body.to,undefined);assert.deepEqual(errors,[]);
+  }finally{await page.close();}
+ }
+});
+
+test('teachers get school-year guidance and custom ranges remain explicit; valid years export the displayed dates',async()=>{
+ const {page,requests,errors}=await setup('library',{canViewSchool:false});try{
+  await page.getByText('Ask a school administrator to set the school year dates.',{exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:'Set school year dates'}).count(),0);
+  const before=requests.filter(row=>row.path.endsWith('/students/search')).length;await page.getByLabel('Period',{exact:true}).selectOption('custom');await page.getByLabel('From',{exact:true}).fill('2026-09-01');await page.waitForTimeout(100);assert.equal(requests.filter(row=>row.path.endsWith('/students/search')).length,before);
+  await page.getByLabel('To',{exact:true}).fill('2026-09-30');await page.getByRole('button',{name:'Synthetic Student',exact:true}).waitFor();assert.equal(await page.getByLabel('Period',{exact:true}).inputValue(),'custom');await page.getByRole('button',{name:'Export student summary CSV'}).click();await page.waitForTimeout(100);
+  const exported=requests.find(row=>row.path.endsWith('/students/export'));assert.equal(exported.body.period,'custom');assert.equal(exported.body.from,'2026-09-01');assert.equal(exported.body.to,'2026-09-30');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+ const active=await setup('library',{range:{period:'school_year',from:'2026-08-01',to:'2027-06-30'}});try{
+  assert.equal(await active.page.getByLabel('Period',{exact:true}).inputValue(),'school_year');assert.equal(await active.page.getByRole('link',{name:'Set school year dates'}).count(),0);
+  await active.page.getByRole('button',{name:'Export student summary CSV'}).click();await active.page.waitForTimeout(100);const exported=active.requests.find(row=>row.path.endsWith('/students/export'));assert.equal(exported.body.period,'custom');assert.equal(exported.body.from,'2026-08-01');assert.equal(exported.body.to,'2027-06-30');
+ }finally{await active.page.close();}
+});
 
 test('explicit school submission shares only selected forms and retries unfinished entries with stable keys',async()=>{
   const {page,state,errors}=await setup('submit');try{

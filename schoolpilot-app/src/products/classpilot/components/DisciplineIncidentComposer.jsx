@@ -1,5 +1,7 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { withDisciplineEntry } from '../lib/disciplineNavigation';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
@@ -17,7 +19,7 @@ function todayInSchool(timeZone) {
 const compact = object => Object.fromEntries(Object.entries(object).filter(([, value]) => value !== '' && value != null));
 
 export default function DisciplineIncidentComposer({ access, scope = 'assigned', selectedStudent, onClose, onSaved }) {
-  const { schoolId, viewerId } = access;
+  const { schoolId, viewerId } = access; const [params] = useSearchParams();
   const [form, setForm] = useState({ studentId: selectedStudent?.id || '', groupId: '', title: '', body: '', entryDate: todayInSchool(access.school?.schoolTimezone), referralRecorded: true, detentionAssigned: false, detentionDates: '' });
   const [search, setSearch] = useState(''), deferredSearch = useDeferredValue(search);
   const [files, setFiles] = useState([]), [stage, setStage] = useState('edit'), [busy, setBusy] = useState(false), [pending, setPending] = useState(false), [error, setError] = useState('');
@@ -123,7 +125,7 @@ export default function DisciplineIncidentComposer({ access, scope = 'assigned',
       {!!savedDraft?.attachments.length && <p>{savedDraft.attachments.length} uploaded forms retained in this draft.</p>}
     </fieldset> : <section><h2>Review the record</h2><p><strong>{savedDraft?.studentName || selected?.name}</strong> · {form.entryDate}</p>{savedDraft?.className && <p>{savedDraft.className}</p>}<p>{form.referralRecorded ? 'Referral' : ''}{form.referralRecorded && form.detentionAssigned ? ' and ' : ''}{form.detentionAssigned ? 'one detention assignment' : ''}</p>{form.detentionAssigned && form.detentionDates && <p>Assigned dates: {form.detentionDates}</p>}<h3>{form.title}</h3><p className="discipline-body">{form.body}</p><p>{savedDraft?.attachments.length || 0} selected forms</p>
       {savedDraft?.attachments.filter(file => file.status === 'ready').map(file => <DisciplineAttachment key={file.id} access={access} recordId={savedDraft.id} attachment={file} draft />)}
-      {!!candidates.length && <div className="discipline-notice"><h3>Possible existing incidents</h3>{candidates.map(candidate => <p key={candidate.id}>{candidate.entryDate} · {candidate.title || 'Incident'} <a href={`/classpilot/discipline-records/${candidate.id}`} target="_blank" rel="noreferrer">Review existing record</a></p>)}
+      {!!candidates.length && <div className="discipline-notice"><h3>Possible existing incidents</h3>{candidates.map(candidate => <p key={candidate.id}>{candidate.entryDate} · {candidate.title || 'Incident'} <a href={withDisciplineEntry(`/classpilot/discipline-records/${encodeURIComponent(candidate.id)}`, params)} target="_blank" rel="noreferrer">Review existing record</a></p>)}
         <label>How should this form be saved?<select aria-label="How should this form be saved?" disabled={pending} value={duplicateAction} onChange={event => { setDuplicateAction(event.target.value); setReviewed(false); }}><option value="">Choose after reviewing matches</option><option value="separate">Separate incident</option><option value="add_evidence">Add evidence to existing incident</option></select></label>
         {duplicateAction === 'add_evidence' && <><label>Existing incident<select aria-label="Existing incident" value={existingId} disabled={pending} onChange={event => { setExistingId(event.target.value); setReviewed(false); }}><option value="">Choose an incident</option>{candidates.filter(candidate => candidate.canAddEvidence).map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.entryDate} — {candidate.title || 'Incident'}</option>)}</select></label><label>Reason<textarea disabled={pending} value={reason} maxLength={2000} onChange={event => { setReason(event.target.value); setReviewed(false); }} /></label><p>The existing incident and counts stay unchanged; the selected forms become additional evidence.</p></>}
       </div>}

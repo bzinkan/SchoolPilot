@@ -168,7 +168,18 @@ function SchoolAdminScheduling() {
     const { testingGroupPrefill: _prefill, ...state } = location.state || {};
     navigate({ pathname: location.pathname, search: location.search, hash: location.hash }, { replace: true, state });
   };
-  const [section, setSection] = useState("profiles");
+  const requestedSection = new URLSearchParams(location.search).get('section');
+  const routeSection = sections.some(item => item.value === requestedSection) ? requestedSection : 'profiles';
+  const [selection, setSelection] = useState({ search: location.search, section: routeSection });
+  if (selection.search !== location.search) setSelection({ search: location.search, section: routeSection });
+  const section = selection.search === location.search ? selection.section : routeSection;
+  const setSection = value => {
+    if (!sections.some(item => item.value === value)) return;
+    // Keyboard tabs update immediately while the router commits the query change.
+    setSelection({ search: location.search, section: value });
+    const params = new URLSearchParams(location.search); params.set('section', value);
+    navigate({ pathname: location.pathname, search: params.toString(), hash: location.hash }, { replace: true, state: location.state });
+  };
   const [advancedDirty, setAdvancedDirty] = useState(false);
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileWorkspace, setProfileWorkspace] = useState(false);
