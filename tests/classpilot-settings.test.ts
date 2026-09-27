@@ -128,24 +128,28 @@ beforeEach(async () => {
 });
 
 after(async () => {
-  if (server) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-  await system(async () => {
-    if (schoolIds.length) {
-      await db.delete(schema.classpilotTeacherPreferences).where(inArray(schema.classpilotTeacherPreferences.schoolId, schoolIds));
-      await db.delete(schema.classpilotSchoolWebsitePolicies).where(inArray(schema.classpilotSchoolWebsitePolicies.schoolId, schoolIds));
-      await db.delete(schema.auditLogs).where(inArray(schema.auditLogs.schoolId, schoolIds));
-      await db.delete(schema.settings).where(inArray(schema.settings.schoolId, schoolIds));
-      await db.delete(schema.productLicenses).where(inArray(schema.productLicenses.schoolId, schoolIds));
-      await db.delete(schema.schoolMemberships).where(inArray(schema.schoolMemberships.schoolId, schoolIds));
-      await db.delete(schema.schools).where(inArray(schema.schools.id, schoolIds));
-    }
-    if (userIds.length) {
-      await db.delete(schema.teacherSettings).where(inArray(schema.teacherSettings.teacherId, userIds));
-      await db.delete(schema.users).where(inArray(schema.users.id, userIds));
-    }
-  });
-  mock.timers.reset();
-  await Promise.all([pool.end(), sessionPool.end(), fixturePool.end()]);
+  try {
+    if (server) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await system(() => db.transaction(async tx => {
+      if (schoolIds.length) {
+        // Converged schemas retain school/user lifecycle roots. The disposable
+        // test database owns their final cleanup; never disable retention guards.
+        await tx.update(schema.schools).set({ deletedAt: new Date() }).where(inArray(schema.schools.id, schoolIds));
+        await tx.delete(schema.classpilotTeacherPreferences).where(inArray(schema.classpilotTeacherPreferences.schoolId, schoolIds));
+        await tx.delete(schema.classpilotSchoolWebsitePolicies).where(inArray(schema.classpilotSchoolWebsitePolicies.schoolId, schoolIds));
+        await tx.delete(schema.auditLogs).where(inArray(schema.auditLogs.schoolId, schoolIds));
+        await tx.delete(schema.settings).where(inArray(schema.settings.schoolId, schoolIds));
+        await tx.delete(schema.productLicenses).where(inArray(schema.productLicenses.schoolId, schoolIds));
+        await tx.delete(schema.schoolMemberships).where(inArray(schema.schoolMemberships.schoolId, schoolIds));
+      }
+      if (userIds.length) {
+        await tx.delete(schema.teacherSettings).where(inArray(schema.teacherSettings.teacherId, userIds));
+      }
+    }));
+  } finally {
+    mock.timers.reset();
+    await Promise.all([pool.end(), sessionPool.end(), fixturePool.end()]);
+  }
 });
 
 describe("ClassPilot scoped settings saves", () => {
