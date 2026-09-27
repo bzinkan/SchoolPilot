@@ -52,7 +52,7 @@ test('measured room numeric editing, angled walls, fixtures and arrangement prev
     await t.page.getByRole('alertdialog').waitFor(); assert.equal(t.state.charts[0].layout.features.length, 0);
     await t.page.getByRole('button', { name: 'Replace layout', exact: true }).click();
     await t.page.getByRole('button', { name: 'Save chart', exact: true }).click();
-    await t.page.getByRole('button', { name: 'Print', exact: true }).waitFor();
+    await t.page.getByRole('button', { name: 'Print', exact: true, disabled: false }).waitFor();
     assert.equal(t.state.charts[0].layout.room.vertices.length, 5); assert.equal(t.state.charts[0].layout.features.length, 2); assert.equal(t.state.charts[0].layout.features[0].label, 'Teacher');
     await t.page.locator('.seating-page').screenshot({ path: path.join(artifactDir, 'seating-measured-desktop.png') });
     for (const paper of ['letter', 'a4']) {
