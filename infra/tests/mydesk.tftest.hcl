@@ -150,7 +150,7 @@ run "disabled_features_retains_bucket_and_narrow_worker_cleanup_permissions" {
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_SEATING_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "STUDENT_INFORMATION_AI_IMPORT_MODE"]) == "off" &&
-      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODEL"]) == "claude-sonnet-5" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODEL"]) == "claude-opus-5-5" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES"]) == "100" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"]) == "500"
     ])

@@ -24241,7 +24241,7 @@ export async function assignAdHocSupervisionStudents(options: {
   source: string; endsAt: Date; note?: string; group?: { id: string; name: string };
   requireAvailable?: boolean; requiredCoverageGroupId?: string;
   coverageAssignmentReview?: CoverageAssignmentReview;
-}, dbInstance: typeof db = db): Promise<{ context: ClasspilotSupervisionContext; assignments: ClasspilotSupervisionStudent[] }> {
+}, dbInstance: Pick<typeof db, "transaction"> = db): Promise<{ context: ClasspilotSupervisionContext; assignments: ClasspilotSupervisionStudent[] }> {
   const studentIds = [...new Set(options.studentIds.filter(Boolean))].sort();
   return dbInstance.transaction(async tx => {
     const database = tx as unknown as typeof db;
@@ -24287,24 +24287,33 @@ export async function assignAdHocSupervisionStudents(options: {
       throw new CoverageDeletionError("Supervision membership changed. Refresh before claiming students.", "COVERAGE_PERMISSION_STALE", 409);
     }
     if (options.requireAvailable) {
-      // The open-assignment uniqueness constraint also covers rare pre-created
-      // future contexts. Do not silently release such an assignment to claim now.
-      const futureAssignment = studentIds.length ? await tx.select({ id: classpilotSupervisionStudents.id })
-        .from(classpilotSupervisionStudents).innerJoin(classpilotSupervisionContexts, and(
-          eq(classpilotSupervisionContexts.id, classpilotSupervisionStudents.contextId),
-          eq(classpilotSupervisionContexts.schoolId, options.schoolId), eq(classpilotSupervisionContexts.status, "active"),
-          gt(classpilotSupervisionContexts.startsAt, new Date()), gt(classpilotSupervisionContexts.endsAt, new Date())))
-        .where(and(eq(classpilotSupervisionStudents.schoolId, options.schoolId),
-          inArray(classpilotSupervisionStudents.studentId, studentIds), isNull(classpilotSupervisionStudents.releasedAt))).limit(1) : [];
-      if (futureAssignment.length) throw new CoverageDeletionError(
+      // A lock wait can outlive this transaction's frozen now(). Check every
+      // unreleased reservation using one fresh database instant after the locks,
+      // including future contexts without rounding their timestamps through JS.
+      const reservations = studentIds.length ? (await tx.execute<{ future: boolean }>(sql`
+        WITH claim_clock AS MATERIALIZED (SELECT clock_timestamp() AS checked_at)
+        SELECT ${classpilotSupervisionContexts.startsAt} > claim_clock.checked_at AS future
+        FROM ${classpilotSupervisionStudents}
+        INNER JOIN ${classpilotSupervisionContexts}
+          ON ${classpilotSupervisionContexts.id} = ${classpilotSupervisionStudents.contextId}
+        CROSS JOIN claim_clock
+        WHERE ${and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          eq(classpilotSupervisionContexts.status, "active"),
+          inArray(classpilotSupervisionStudents.studentId, studentIds),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        )}
+          AND ${classpilotSupervisionContexts.endsAt} > claim_clock.checked_at
+      `)).rows : [];
+      if (reservations.some(row => row.future)) throw new CoverageDeletionError(
         "A future supervision assignment already reserves one or more students. Refresh before claiming.", "COVERAGE_FUTURE_ASSIGNMENT", 409);
-      const activeSupervision = await getActiveSupervisionForStudents(options.schoolId, studentIds, database);
       const activeClasses = await getActiveClassOwnersForStudents(options.schoolId, studentIds, database, new Date());
       const onlineRows = studentIds.length ? await tx.select({ studentId: studentSessions.studentId }).from(studentSessions)
         .innerJoin(devices, and(eq(devices.deviceId, studentSessions.deviceId), eq(devices.schoolId, options.schoolId)))
         .where(and(inArray(studentSessions.studentId, studentIds), currentStudentSessionAuthorityPredicate(),
           gte(studentSessions.lastSeenAt, new Date(Date.now() - 5 * 60_000)))) : [];
-      if (activeSupervision.length || activeClasses.length || studentIds.some(id => !onlineRows.some(row => row.studentId === id))) {
+      if (reservations.length || activeClasses.length || studentIds.some(id => !onlineRows.some(row => row.studentId === id))) {
         throw new CoverageDeletionError("One or more students are no longer available to claim", "COVERAGE_STUDENT_UNAVAILABLE", 409);
       }
     }
