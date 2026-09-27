@@ -7,7 +7,6 @@ import {
   Link2,
   Loader2,
   Plus,
-  Settings2,
   Trash2,
 } from "lucide-react";
 
@@ -32,6 +31,7 @@ import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { apiRequest } from "../../../lib/queryClient";
+import { ScheduleChangePolicyCard } from "../components/ScheduleChangePolicyCard";
 import { AdminClassesTabs } from "../components/ScheduleRouteTabs";
 import {
   ScheduleChangeEmpty,
@@ -314,6 +314,7 @@ export default function AdminScheduleChanges() {
       </SchedulePageHeader>)}
 {adminShell && (<div className="flex justify-end">{canManage && <Button onClick={() => setRequestOpen(true)} data-testid="button-admin-create-schedule-change"><CalendarPlus className="mr-2 size-4" />Create schedule change</Button>}</div>)}
       <main className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
+        <ScheduleChangePolicyCard schoolId={schoolId} canManage={isAdmin || currentUser?.isSuperAdmin === true} />
         <section aria-labelledby="eligible-pairs-heading" data-testid="schedule-pairs">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3 border-b border-slate-300 pb-2 dark:border-slate-700">
             <div>
@@ -324,11 +325,6 @@ export default function AdminScheduleChanges() {
               {canManage ? (
                 <Button type="button" variant="outline" size="sm" onClick={() => setPairOpen(true)} data-testid="button-add-schedule-pair">
                   <Plus className="mr-2 h-4 w-4" /> Enable pair
-                </Button>
-              ) : null}
-              {canManage ? (
-                <Button type="button" variant="outline" size="sm" onClick={() => navigate("/classpilot/settings#schedule-changes")}>
-                  <Settings2 className="mr-2 h-4 w-4" /> Policy
                 </Button>
               ) : null}
             </div>

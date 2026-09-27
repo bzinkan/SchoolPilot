@@ -140,7 +140,7 @@ export default function ScheduleChanges() {
   return (
     <div className="min-h-screen bg-muted/30">
       <SchedulePageHeader
-        eyebrow="My Settings"
+        eyebrow="Teaching tools"
         title="Schedule Changes"
         description="Request a one-day time swap with a shared class. Your teachers, student rosters, and recurring schedules do not change."
         actions={(

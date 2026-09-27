@@ -33,6 +33,8 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
+import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
 import { useScheduledTestingView } from '../lib/useScheduledTestingView';
 import { consumeSupervisionDashboardIntent, hasSupervisionDashboardIntent, withoutSupervisionDashboardIntent } from '../lib/supervisionDashboardNavigation';
@@ -4533,8 +4535,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   // Teacher-level default tab limit. Fetched lazily only while Manage Tabs is
   // open for an owned class so the dashboard mount issues no extra request.
   const { data: teacherSettings } = useQuery({
-    queryKey: ['/api/teacher/settings'],
-    queryFn: () => apiRequest('GET', '/teacher/settings'),
+    queryKey: teacherPreferencesKey(activeSchoolId, currentUser?.id),
+    queryFn: ({ signal }) => apiRequest('GET', '/classpilot/teacher/preferences', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: (data) => (data && typeof data === 'object' && !Array.isArray(data) ? data : null),
     enabled: showCloseTabsDialog && dashboardCapabilities.allows('limit-tabs'),
     staleTime: 60_000,
@@ -4542,8 +4544,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   useEffect(() => {
     if (!showCloseTabsDialog || tabLimitDraftSeedRef.current.seeded || teacherSettings === undefined) return;
     tabLimitDraftSeedRef.current.seeded = true;
-    const teacherLimit = teacherSettings?.maxTabsPerStudent;
-    if (teacherLimit === undefined || teacherLimit === null || teacherLimit === '') return;
+    const teacherLimit = teacherTabLimitSeed(teacherSettings);
     const seededDraft = tabLimitDraftSeedRef.current.initial;
     setTabLimitDraft((current) => (current === seededDraft ? String(teacherLimit) : current));
   }, [showCloseTabsDialog, teacherSettings]);
@@ -4634,31 +4635,23 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     void performLogout();
   };
 
-  const updateGradesMutation = useMutation({
-    mutationFn: async (gradeLevels) => {
-      if (!settings) throw new Error("Settings not loaded");
-      const payload = {
-        schoolId: settings.schoolId, schoolName: settings.schoolName, wsSharedKey: settings.wsSharedKey,
-        retentionHours: settings.retentionHours, blockedDomains: settings.blockedDomains || [],
-        allowedDomains: settings.allowedDomains || [], ipAllowlist: settings.ipAllowlist || [], gradeLevels,
-      };
-      return apiRequest('POST', '/settings', payload);
-    },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['/api/settings'] }); toast({ title: "Success", description: "Grade levels updated successfully" }); },
-    onError: (error) => {
-      if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+  const { query: gradeSettingsQuery, mutation: updateGradesMutation } = useRosterGradeSettings({
+    schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: showGradeDialog, canWrite: isAdmin,
+    onSaved: () => { setNewGrade(''); toast({ title: 'Grade levels updated' }); },
+    onError: description => toast({ variant: 'destructive', title: 'Grade update failed', description }),
   });
 
   const handleAddGrade = () => {
+    if (updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching) return;
     if (!newGrade.trim()) { toast({ variant: "destructive", title: "Invalid Grade", description: "Please enter a grade level" }); return; }
-    const currentGrades = settings?.gradeLevels || [];
+    const currentGrades = gradeSettingsQuery.data?.gradeLevels || [];
     if (currentGrades.includes(newGrade.trim())) { toast({ variant: "destructive", title: "Duplicate Grade", description: "This grade level already exists" }); return; }
     updateGradesMutation.mutate([...currentGrades, newGrade.trim()]);
-    setNewGrade("");
   };
 
   const handleDeleteGrade = (grade) => {
-    const currentGrades = settings?.gradeLevels || [];
+    if (updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching) return;
+    const currentGrades = gradeSettingsQuery.data?.gradeLevels || [];
     if (currentGrades.length <= 1) { toast({ variant: "destructive", title: "Cannot Delete", description: "You must have at least one grade level" }); return; }
     updateGradesMutation.mutate(currentGrades.filter(g => g !== grade));
   };
@@ -5242,7 +5235,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setManageTabsTargetSnapshot(namedStudent?.studentName || targetBannerLabel);
     setManageTabsStudentIds(studentIds);
     setSelectedTabsToClose(new Set());
-    const configuredTabLimit = teacherSettings?.maxTabsPerStudent || settings?.maxTabsPerStudent || "";
+    const configuredTabLimit = teacherTabLimitSeed(teacherSettings, settings?.maxTabsPerStudent);
     const tabLimitSeed = configuredTabLimit === "" ? "" : String(configuredTabLimit);
     tabLimitDraftSeedRef.current = { seeded: teacherSettings !== undefined, initial: tabLimitSeed };
     setTabLimitDraft(tabLimitSeed);
@@ -6003,9 +5996,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="flex items-center gap-2">
               <ThemeToggle />
               {myDeskAccess.enabled && <Button variant="outline" size="sm" className="lg:hidden" onClick={() => navigate('/classpilot/my-desk')}>My Desk</Button>}
-              {isTeacher && !scheduledSupervisionId && (
-                <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
-                  <User className="h-[18px] w-[18px]" />
+              {(isTeacher || isAdmin) && !scheduledSupervisionId && (
+                <button onClick={() => navigate("/classpilot/my-settings")} className="flex items-center gap-1.5 rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800" data-testid="button-my-settings" title="Teaching tools">
+                  <User className="h-4 w-4" /> Teaching tools
                 </button>
               )}
               {isAdmin && !scheduledSupervisionId && (
@@ -6013,9 +6006,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   <button onClick={() => navigate("/classpilot/admin")} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-admin">
                     <Shield className="h-4 w-4" /> Admin Panel
                   </button>
-                  <button onClick={() => navigate("/classpilot/settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-settings">
-                    <SettingsIcon className="h-[18px] w-[18px]" />
-                  </button>
+
                 </>
               )}
               <button onClick={requestLogout} disabled={logoutPending} className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors disabled:opacity-50" data-testid="button-logout" title="Log out">
@@ -7164,8 +7155,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Current Grade Levels</Label>
+              {gradeSettingsQuery.isError && <p role="alert">Grades could not be loaded. <Button variant="link" onClick={() => gradeSettingsQuery.refetch()}>Retry</Button></p>}
               <div className="flex flex-wrap gap-2">
-                {settings?.gradeLevels?.map((grade) => (
+                {gradeSettingsQuery.data?.gradeLevels?.map((grade) => (
                   <Badge key={grade} variant="secondary" className="text-sm px-3 py-1" data-testid={`badge-grade-${grade}`}>
                     {grade}<button onClick={() => handleDeleteGrade(grade)} className="ml-2 hover:text-destructive" data-testid={`button-delete-grade-${grade}`}><X className="h-3 w-3" /></button>
                   </Badge>
@@ -7175,8 +7167,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="space-y-2">
               <Label htmlFor="new-grade">Add New Grade Level</Label>
               <div className="flex gap-2">
-                <Input id="new-grade" placeholder="e.g., 5th, K, Pre-K" value={newGrade} onChange={(e) => setNewGrade(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddGrade(); }} data-testid="input-new-grade" />
-                <Button onClick={handleAddGrade} disabled={updateGradesMutation.isPending} data-testid="button-add-grade"><Plus className="h-4 w-4 mr-2" />Add</Button>
+                <Input id="new-grade" disabled={updateGradesMutation.isPending} placeholder="e.g., 5th, K, Pre-K" value={newGrade} onChange={(e) => setNewGrade(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleAddGrade(); }} data-testid="input-new-grade" />
+                <Button onClick={handleAddGrade} disabled={updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching} data-testid="button-add-grade"><Plus className="h-4 w-4 mr-2" />Add</Button>
               </div>
             </div>
           </div>
@@ -7469,7 +7461,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <SelectTrigger id="block-list-select" data-testid="select-block-list"><SelectValue placeholder="Choose a block list" /></SelectTrigger>
                 <SelectContent>
                   {blockLists.map((bl) => (<SelectItem key={bl.id} value={bl.id} data-testid={`option-block-list-${bl.id}`}>{bl.name}</SelectItem>))}
-                  {blockLists.length === 0 && <div className="p-2 text-sm text-muted-foreground">No block lists available. Create one in My Settings.</div>}
+                  {blockLists.length === 0 && <div className="p-2 text-sm text-muted-foreground">No block lists available. Create one in Teaching tools.</div>}
                 </SelectContent>
               </Select>
               {selectedBlockListId && (() => {
@@ -7502,7 +7494,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
             <div className="border-t pt-4">
               <p className="text-sm font-medium mb-2">Your Block Lists</p>
-              {blockLists.length === 0 ? <p className="text-sm text-muted-foreground">No block lists created yet. Create one in My Settings.</p> : (
+              {blockLists.length === 0 ? <p className="text-sm text-muted-foreground">No block lists created yet. Create one in Teaching tools.</p> : (
                 <div className="space-y-2 max-h-[250px] overflow-y-auto">
                   {blockLists.map((bl) => (
                     <div key={bl.id} className="flex items-center justify-between p-3 border rounded-md" data-testid={`block-list-item-${bl.id}`}>

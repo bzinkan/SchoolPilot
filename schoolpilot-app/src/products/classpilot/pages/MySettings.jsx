@@ -1,35 +1,46 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "../../../components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, User, Users, Settings as SettingsIcon, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
+import { ArrowLeft, User, Users, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { TeacherSettingsTabs } from "../components/ScheduleRouteTabs";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
-
-const teacherSettingsSchema = z.object({
-  maxTabsPerStudent: z.string().optional(),
-  blockedDomains: z.string(),
-  defaultFlightPathId: z.string().optional(),
-});
+import { useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
+import { teachingToolsSection, teachingToolsShouldBlock } from "../lib/teachingTools";
+import TeachingDefaults from "../components/TeachingDefaults";
+import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
 
 export default function MySettings() {
-  const navigate = useNavigate();
+  const { currentUser, isLoading, logout } = useClassPilotAuth();
+  if (isLoading) return <p role="status" className="p-6">Loading Teaching tools…</p>;
+  if (!currentUser?.schoolId || !currentUser?.roles?.some(role => ['teacher', 'admin', 'school_admin'].includes(role))) return <p className="p-6">Sign in with an active school teaching account to use Teaching tools.</p>;
+  return <TeachingToolsContent key={`${currentUser.schoolId}:${currentUser.id}:${currentUser.roles.join(',')}`} currentUser={currentUser} logout={logout} />;
+}
+
+function TeachingToolsContent({ currentUser, logout }) {
+  const { navigate, requestAction } = useAdminNavigation();
+  const location = useLocation();
+  const routeNavigate = useNavigate();
+  const section = teachingToolsSection(location.search);
   const { toast } = useToast();
-  const { currentUser } = useClassPilotAuth();
+  const scope = [currentUser.schoolId, currentUser.id];
+  const lifetime = useRef({ alive: true, controller: new AbortController() });
+  useEffect(() => { const state = lifetime.current; state.alive = true; if (state.controller.signal.aborted) state.controller = new AbortController(); return () => { state.alive = false; state.controller.abort(); }; }, []);
+  const request = (method, path, data, options = {}) => apiRequest(method, path, data, {
+    ...options, signal: options.signal || lifetime.current.controller.signal,
+    headers: { ...options.headers, 'X-School-Id': currentUser.schoolId },
+  });
+  const closeEditor = action => { void requestAction(action, { id: 'teaching-close:editor' }); };
 
   const [showFlightPathDialog, setShowFlightPathDialog] = useState(false);
   const [editingFlightPath, setEditingFlightPath] = useState(null);
@@ -47,7 +58,8 @@ export default function MySettings() {
   const [deleteBlockListId, setDeleteBlockListId] = useState(null);
 
   // Subgroups state
-  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const requestedGroupId = new URLSearchParams(location.search).get("classId") || new URLSearchParams(location.search).get("groupId") || "";
+  const classEpoch = useRef(0);
   const [showSubgroupDialog, setShowSubgroupDialog] = useState(false);
   const [editingSubgroup, setEditingSubgroup] = useState(null);
   const [subgroupName, setSubgroupName] = useState("");
@@ -55,53 +67,77 @@ export default function MySettings() {
   const [deleteSubgroupId, setDeleteSubgroupId] = useState(null);
   const [showManageMembersDialog, setShowManageMembersDialog] = useState(false);
   const [managingSubgroup, setManagingSubgroup] = useState(null);
-  const [subgroupMembers, setSubgroupMembers] = useState([]);
 
   // Co-teachers state
-  const [coTeacherGroupId, setCoTeacherGroupId] = useState("");
   const [coTeacherToAdd, setCoTeacherToAdd] = useState("");
 
-  const { data: teacherSettings, isLoading } = useQuery({
-    queryKey: ['/api/teacher/settings'],
-    queryFn: () => apiRequest('GET', '/teacher/settings'),
-  });
-
-  const { data: flightPaths = [] } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
+  const { data: flightPaths = [], isError: flightPathsError, refetch: retryFlightPaths } = useQuery({
+    queryKey: ['/api/flight-paths', ...scope],
+    queryFn: ({ signal }) => request('GET', '/flight-paths', undefined, { signal }),
     select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
-  const { data: blockLists = [] } = useQuery({
-    queryKey: ['/api/block-lists'],
-    queryFn: () => apiRequest('GET', '/block-lists'),
+  const { data: blockLists = [], isError: blockListsError, refetch: retryBlockLists } = useQuery({
+    queryKey: ['/api/block-lists', ...scope],
+    queryFn: ({ signal }) => request('GET', '/block-lists', undefined, { signal }),
     select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
   });
 
   const { data: groups = [] } = useQuery({
-    queryKey: ['/api/teacher/groups'],
-    queryFn: () => apiRequest('GET', '/teacher/groups'),
+    queryKey: ['/api/teacher/groups', ...scope],
+    queryFn: ({ signal }) => request('GET', '/teacher/groups', undefined, { signal }),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
+  const selectedGroupId = groups.some(group => group.id === requestedGroupId) ? requestedGroupId : '';
+  const [classDraftScope, setClassDraftScope] = useState(selectedGroupId);
+  if (classDraftScope !== selectedGroupId) {
+    setClassDraftScope(selectedGroupId);
+    setShowSubgroupDialog(false); setEditingSubgroup(null); setSubgroupName(''); setSubgroupColor('#9333ea');
+    setDeleteSubgroupId(null); setShowManageMembersDialog(false); setManagingSubgroup(null); setCoTeacherToAdd('');
+  }
+  useLayoutEffect(() => {
+    classEpoch.current += 1;
+    return () => {
+      classEpoch.current += 1;
+      const predicate = query => query.queryKey.at(-2) === currentUser.schoolId && query.queryKey.at(-1) === currentUser.id
+        && ((query.queryKey[0] === '/api/groups' && query.queryKey[1] === selectedGroupId) || query.queryKey[0] === '/api/subgroups');
+      void queryClient.cancelQueries({ predicate });
+      queryClient.removeQueries({ predicate });
+    };
+  }, [selectedGroupId, currentUser.schoolId, currentUser.id]);
+  const selectGroup = value => {
+    if (!groups.some(group => group.id === value)) return;
+    void requestAction(() => {
+      const params = new URLSearchParams(location.search); params.set('classId', value); params.delete('groupId');
+      routeNavigate({ pathname: location.pathname, search: `?${params}`, hash: location.hash }, { state: location.state });
+    }, { id: 'teaching-class-switch' });
+  };
+
   const { data: subgroups = [], refetch: refetchSubgroups } = useQuery({
-    queryKey: ['/api/groups', selectedGroupId, 'subgroups'],
-    queryFn: async () => {
+    queryKey: ['/api/groups', selectedGroupId, 'subgroups', ...scope],
+    queryFn: async ({ signal }) => {
       if (!selectedGroupId) return [];
-      const data = await apiRequest('GET', `/groups/${selectedGroupId}/subgroups`);
+      const data = await request('GET', `/groups/${selectedGroupId}/subgroups`, undefined, { signal });
       return data.subgroups || [];
     },
     enabled: !!selectedGroupId,
   });
 
   const { data: groupStudents = [] } = useQuery({
-    queryKey: ['/api/groups', selectedGroupId, 'students'],
-    queryFn: async () => {
+    queryKey: ['/api/groups', selectedGroupId, 'students', ...scope],
+    queryFn: async ({ signal }) => {
       if (!selectedGroupId) return [];
-      const data = await apiRequest('GET', `/groups/${selectedGroupId}/students`);
+      const data = await request('GET', `/groups/${selectedGroupId}/students`, undefined, { signal });
       return Array.isArray(data) ? data : [];
     },
     enabled: !!selectedGroupId,
+  });
+
+  const { data: subgroupMembers = [], refetch: refetchMembers } = useQuery({
+    queryKey: ['/api/subgroups', managingSubgroup?.id, 'members', ...scope],
+    queryFn: async ({ signal }) => (await request('GET', `/subgroups/${managingSubgroup.id}/members`, undefined, { signal })).members || [],
+    enabled: Boolean(selectedGroupId) && showManageMembersDialog && Boolean(managingSubgroup?.id),
   });
 
   // Only classes this teacher owns can have their co-teachers managed here.
@@ -111,25 +147,27 @@ export default function MySettings() {
   );
 
   const { data: groupTeachers = [] } = useQuery({
-    queryKey: ['/api/groups', coTeacherGroupId, 'teachers'],
-    queryFn: async () => {
-      if (!coTeacherGroupId) return [];
-      const data = await apiRequest('GET', `/groups/${coTeacherGroupId}/teachers`);
+    queryKey: ['/api/groups', selectedGroupId, 'teachers', ...scope],
+    queryFn: async ({ signal }) => {
+      if (!selectedGroupId) return [];
+      const data = await request('GET', `/groups/${selectedGroupId}/teachers`, undefined, { signal });
       return Array.isArray(data?.teachers) ? data.teachers : [];
     },
-    enabled: !!coTeacherGroupId,
+    enabled: !!selectedGroupId,
   });
 
   // ?teachable=true also returns admins / school admins who may teach a class
   // (the school owner is often an admin who also teaches).
   const { data: schoolTeachers = [] } = useQuery({
-    queryKey: ['/api/users/teachers', 'teachable'],
-    queryFn: async () => {
-      const data = await apiRequest('GET', '/users/teachers?teachable=true');
+    queryKey: ['/api/users/teachers', 'teachable', ...scope],
+    queryFn: async ({ signal }) => {
+      const data = await request('GET', '/users/teachers?teachable=true', undefined, { signal });
       return Array.isArray(data?.teachers) ? data.teachers : [];
     },
-    enabled: !!coTeacherGroupId,
+    enabled: !!selectedGroupId,
   });
+
+  const canManageCoTeachers = ownedGroups.some(group => group.id === selectedGroupId);
 
   const assignedTeacherIds = new Set(groupTeachers.map((entry) => entry.teacherId));
   const availableCoTeachers = schoolTeachers.filter(
@@ -145,25 +183,6 @@ export default function MySettings() {
     return isAdmin ? `${name} (admin)` : name;
   };
 
-  const form = useForm({
-    resolver: zodResolver(teacherSettingsSchema),
-    defaultValues: {
-      maxTabsPerStudent: "",
-      blockedDomains: "",
-      defaultFlightPathId: "",
-    },
-  });
-
-  useEffect(() => {
-    if (teacherSettings) {
-      form.reset({
-        maxTabsPerStudent: teacherSettings.maxTabsPerStudent || "",
-        blockedDomains: teacherSettings.teacherBlockedDomains?.join(", ") || "",
-        defaultFlightPathId: teacherSettings.defaultFlightPathId || "",
-      });
-    }
-  }, [teacherSettings, form]);
-
   const normalizeDomain = (domain) => {
     return domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
   };
@@ -177,19 +196,21 @@ export default function MySettings() {
 
   const createFlightPathMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/flight-paths", {
+      return await request("POST", "/flight-paths", {
         flightPathName,
         description: flightPathDescription || undefined,
         allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
       });
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/flight-paths'] });
       toast({ title: "Flight Path created", description: `"${flightPathName}" has been created successfully` });
       setShowFlightPathDialog(false);
       resetFlightPathForm();
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to create Flight Path", description: error.message });
     },
   });
@@ -197,33 +218,37 @@ export default function MySettings() {
   const updateFlightPathMutation = useMutation({
     mutationFn: async () => {
       if (!editingFlightPath) throw new Error("No Flight Path to update");
-      return await apiRequest("PATCH", `/flight-paths/${editingFlightPath.id}`, {
+      return await request("PATCH", `/flight-paths/${editingFlightPath.id}`, {
         flightPathName,
         description: flightPathDescription || undefined,
         allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
       });
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/flight-paths'] });
       toast({ title: "Flight Path updated", description: `"${flightPathName}" has been updated successfully` });
       setShowFlightPathDialog(false);
       resetFlightPathForm();
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to update Flight Path", description: error.message });
     },
   });
 
   const deleteFlightPathMutation = useMutation({
     mutationFn: async (id) => {
-      return await apiRequest("DELETE", `/flight-paths/${id}`, {});
+      return await request("DELETE", `/flight-paths/${id}`, {});
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/flight-paths'] });
       toast({ title: "Flight Path deleted", description: "Flight Path has been deleted successfully" });
       setDeleteFlightPathId(null);
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to delete Flight Path", description: error.message });
     },
   });
@@ -238,19 +263,21 @@ export default function MySettings() {
 
   const createBlockListMutation = useMutation({
     mutationFn: async () => {
-      return await apiRequest("POST", "/block-lists", {
+      return await request("POST", "/block-lists", {
         name: blockListName,
         description: blockListDescription || undefined,
         blockedDomains: blockListDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
       });
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/block-lists'] });
       toast({ title: "Block List created", description: `"${blockListName}" has been created successfully` });
       setShowBlockListDialog(false);
       resetBlockListForm();
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to create Block List", description: error.message });
     },
   });
@@ -258,33 +285,37 @@ export default function MySettings() {
   const updateBlockListMutation = useMutation({
     mutationFn: async () => {
       if (!editingBlockList) throw new Error("No Block List to update");
-      return await apiRequest("PATCH", `/block-lists/${editingBlockList.id}`, {
+      return await request("PATCH", `/block-lists/${editingBlockList.id}`, {
         name: blockListName,
         description: blockListDescription || undefined,
         blockedDomains: blockListDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
       });
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/block-lists'] });
       toast({ title: "Block List updated", description: `"${blockListName}" has been updated successfully` });
       setShowBlockListDialog(false);
       resetBlockListForm();
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to update Block List", description: error.message });
     },
   });
 
   const deleteBlockListMutation = useMutation({
     mutationFn: async (id) => {
-      return await apiRequest("DELETE", `/block-lists/${id}`, {});
+      return await request("DELETE", `/block-lists/${id}`, {});
     },
     onSuccess: () => {
+      if (!lifetime.current.alive) return;
       queryClient.invalidateQueries({ queryKey: ['/api/block-lists'] });
       toast({ title: "Block List deleted", description: "Block List has been deleted successfully" });
       setDeleteBlockListId(null);
     },
     onError: (error) => {
+      if (!lifetime.current.alive) return;
       toast({ variant: "destructive", title: "Failed to delete Block List", description: error.message });
     },
   });
@@ -307,82 +338,97 @@ export default function MySettings() {
 
   // Subgroup mutations
   const createSubgroupMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async () => {
-      return await apiRequest("POST", `/groups/${selectedGroupId}/subgroups`, {
+      return await request("POST", `/groups/${selectedGroupId}/subgroups`, {
         name: subgroupName,
         color: subgroupColor,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       refetchSubgroups();
       toast({ title: "Subgroup created", description: `${subgroupName} has been created successfully` });
       resetSubgroupForm();
       setShowSubgroupDialog(false);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({ variant: "destructive", title: "Failed to create subgroup", description: error.message });
     },
   });
 
   const updateSubgroupMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async () => {
       if (!editingSubgroup) return;
-      return await apiRequest("PUT", `/subgroups/${editingSubgroup.id}`, {
+      return await request("PUT", `/subgroups/${editingSubgroup.id}`, {
         name: subgroupName,
         color: subgroupColor,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       refetchSubgroups();
       toast({ title: "Subgroup updated", description: `${subgroupName} has been updated successfully` });
       resetSubgroupForm();
       setShowSubgroupDialog(false);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({ variant: "destructive", title: "Failed to update subgroup", description: error.message });
     },
   });
 
   const deleteSubgroupMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async (id) => {
-      return await apiRequest("DELETE", `/subgroups/${id}`, {});
+      return await request("DELETE", `/subgroups/${id}`, {});
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       refetchSubgroups();
       toast({ title: "Subgroup deleted", description: "Subgroup has been deleted successfully" });
       setDeleteSubgroupId(null);
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({ variant: "destructive", title: "Failed to delete subgroup", description: error.message });
     },
   });
 
   const addSubgroupMemberMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async ({ subgroupId, studentId }) => {
-      return await apiRequest("POST", `/subgroups/${subgroupId}/members`, { studentIds: [studentId] });
+      return await request("POST", `/subgroups/${subgroupId}/members`, { studentIds: [studentId] });
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       if (managingSubgroup) {
-        fetchSubgroupMembers(managingSubgroup.id);
+        refetchMembers();
       }
       toast({ title: "Student added", description: "Student has been added to the subgroup" });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({ variant: "destructive", title: "Failed to add student", description: error.message });
     },
   });
 
   const removeSubgroupMemberMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async ({ subgroupId, studentId }) => {
-      return await apiRequest("DELETE", `/subgroups/${subgroupId}/members/${studentId}`, {});
+      return await request("DELETE", `/subgroups/${subgroupId}/members/${studentId}`, {});
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       if (managingSubgroup) {
-        fetchSubgroupMembers(managingSubgroup.id);
+        refetchMembers();
       }
       toast({ title: "Student removed", description: "Student has been removed from the subgroup" });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({ variant: "destructive", title: "Failed to remove student", description: error.message });
     },
   });
@@ -408,42 +454,29 @@ export default function MySettings() {
     }
   };
 
-  const handleManageMembers = async (subgroup) => {
+  const handleManageMembers = (subgroup) => {
     setManagingSubgroup(subgroup);
-    await fetchSubgroupMembers(subgroup.id);
     setShowManageMembersDialog(true);
   };
 
-  const fetchSubgroupMembers = async (subgroupId) => {
-    try {
-      const data = await apiRequest("GET", `/subgroups/${subgroupId}/members`);
-      setSubgroupMembers(data.members || []);
-    } catch (err) {
-      console.error("Error fetching subgroup members:", err);
-      setSubgroupMembers([]);
-    }
-  };
-
   // Co-teacher mutations
-  const handleSelectCoTeacherGroup = (groupId) => {
-    setCoTeacherGroupId(groupId);
-    setCoTeacherToAdd("");
-  };
-
   const invalidateGroupTeachers = () => {
-    queryClient.invalidateQueries({ queryKey: ['/api/groups', coTeacherGroupId, 'teachers'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/groups', selectedGroupId, 'teachers', ...scope] });
   };
 
   const addCoTeacherMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async (teacherId) => {
-      return await apiRequest("POST", `/groups/${coTeacherGroupId}/teachers`, { teacherId });
+      return await request("POST", `/groups/${selectedGroupId}/teachers`, { teacherId });
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       invalidateGroupTeachers();
       setCoTeacherToAdd("");
       toast({ title: "Co-teacher added", description: "They can now start and manage this class." });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({
         variant: "destructive",
         title: "Failed to add co-teacher",
@@ -453,46 +486,21 @@ export default function MySettings() {
   });
 
   const removeCoTeacherMutation = useMutation({
+    onMutate: () => ({ epoch: classEpoch.current }),
     mutationFn: async (teacherId) => {
-      return await apiRequest("DELETE", `/groups/${coTeacherGroupId}/teachers/${teacherId}`, {});
+      return await request("DELETE", `/groups/${selectedGroupId}/teachers/${teacherId}`, {});
     },
-    onSuccess: () => {
+    onSuccess: (_data, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       invalidateGroupTeachers();
       toast({ title: "Co-teacher removed", description: "They can no longer start or manage this class." });
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
+      if (!lifetime.current.alive || context?.epoch !== classEpoch.current) return;
       toast({
         variant: "destructive",
         title: "Failed to remove co-teacher",
         description: error.response?.data?.error || error.message,
-      });
-    },
-  });
-
-  const updateSettingsMutation = useMutation({
-    mutationFn: async (data) => {
-      const payload = {
-        maxTabsPerStudent: data.maxTabsPerStudent || null,
-        blockedDomains: data.blockedDomains
-          ? data.blockedDomains.split(",").map(d => d.trim()).filter(Boolean)
-          : [],
-        defaultFlightPathId: data.defaultFlightPathId || null,
-      };
-
-      return await apiRequest("POST", "/teacher/settings", payload);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/teacher/settings'] });
-      toast({
-        title: "Settings saved",
-        description: "Your personal settings have been updated successfully.",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save settings",
-        variant: "destructive",
       });
     },
   });
@@ -513,46 +521,41 @@ export default function MySettings() {
     }
   };
 
-  const onSubmit = (data) => {
-    updateSettingsMutation.mutate(data);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
+  const toolDirty = (showFlightPathDialog && JSON.stringify([flightPathName, flightPathDescription, flightPathAllowedDomains]) !== JSON.stringify([editingFlightPath?.flightPathName || '', editingFlightPath?.description || '', editingFlightPath?.allowedDomains?.join(', ') || '']))
+    || (showBlockListDialog && JSON.stringify([blockListName, blockListDescription, blockListDomains]) !== JSON.stringify([editingBlockList?.name || '', editingBlockList?.description || '', editingBlockList?.blockedDomains?.join(', ') || '']))
+    || (showSubgroupDialog && JSON.stringify([subgroupName, subgroupColor]) !== JSON.stringify([editingSubgroup?.name || '', editingSubgroup?.color || '#9333ea']))
+    || Boolean(coTeacherToAdd);
+  const toolBusy = [createFlightPathMutation, updateFlightPathMutation, deleteFlightPathMutation, createBlockListMutation, updateBlockListMutation, deleteBlockListMutation,
+    createSubgroupMutation, updateSubgroupMutation, deleteSubgroupMutation, addSubgroupMemberMutation, removeSubgroupMemberMutation, addCoTeacherMutation, removeCoTeacherMutation].some(item => item.isPending);
+  useAdminNavigationBlocker({ id: 'teaching-tool-editors', dirty: toolDirty, busy: toolBusy,
+    shouldBlock: transition => ['teaching-close:editor', 'teaching-class-switch'].includes(transition.actionId) || teachingToolsShouldBlock(transition),
+    onDiscard: () => { resetFlightPathForm(); resetBlockListForm(); resetSubgroupForm(); setCoTeacherToAdd(''); setShowFlightPathDialog(false); setShowBlockListDialog(false); setShowSubgroupDialog(false); setShowManageMembersDialog(false); } });
 
   return (
     <div className="min-h-screen bg-background">
       <div className="border-b bg-card">
         <div className="max-w-5xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex w-full flex-col gap-3 sm:w-auto">
               <Button
                 data-testid="button-back"
                 variant="ghost"
-                size="icon"
+                className="w-fit px-0"
                 onClick={() => navigate("/classpilot")}
               >
-                <ArrowLeft className="h-5 w-5" />
+                <ArrowLeft className="mr-2 h-4 w-4" />Back to ClassPilot
               </Button>
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-primary/10 rounded-lg">
                   <User className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold">My Settings</h1>
-                  <p className="text-sm text-muted-foreground">Customize your personal teaching preferences</p>
+                  <h1 className="text-2xl font-bold">Teaching tools</h1>
+                  <p className="text-sm text-muted-foreground">Your websites, classes and personal defaults</p>
                 </div>
               </div>
             </div>
-            <ThemeToggle />
+            <div className="flex items-center gap-2"><ThemeToggle /><Button variant="ghost" onClick={() => { void requestAction(logout, { id: "logout" }); }}>Sign out</Button></div>
           </div>
         </div>
       </div>
@@ -560,16 +563,22 @@ export default function MySettings() {
       <div className="border-b bg-card">
         <div className="max-w-5xl mx-auto px-6 pt-3">
           <TeacherSettingsTabs />
+          <div className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+            <Link className="text-primary underline-offset-4 hover:underline" to="/classpilot/my-settings/schedule-changes">Schedule changes</Link>
+            <span className="text-muted-foreground">Help: <Link className="text-primary underline-offset-4 hover:underline" to="/classpilot/my-settings/guide">Teacher guide</Link></span>
+          </div>
         </div>
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8">
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <div className="space-y-6">
+          <section hidden={section !== "websites"} className="space-y-6" aria-label="Website tools">
+            <h2 className="text-xl font-semibold">Website tools</h2>
+            <ClassroomWebsiteImport schoolId={currentUser.schoolId} viewerId={currentUser.id} />
             {/* Flight Paths Section */}
             <Card data-testid="card-flight-paths">
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Plane className="h-5 w-5 text-primary" />
                     <CardTitle>My Flight Paths</CardTitle>
@@ -592,7 +601,7 @@ export default function MySettings() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {flightPaths.length === 0 ? (
+                {flightPathsError ? <p role="alert">Flight Paths could not be loaded. <Button variant="link" onClick={() => retryFlightPaths()}>Retry</Button></p> : flightPaths.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <Plane className="h-12 w-12 mx-auto mb-3 opacity-20" />
                     <p>No Flight Paths created yet</p>
@@ -655,7 +664,7 @@ export default function MySettings() {
             {/* Block Lists Section */}
             <Card data-testid="card-block-lists">
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <ShieldBan className="h-5 w-5 text-destructive" />
                     <CardTitle>My Block Lists</CardTitle>
@@ -679,7 +688,7 @@ export default function MySettings() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {blockLists.length === 0 ? (
+                {blockListsError ? <p role="alert">Block Lists could not be loaded. <Button variant="link" onClick={() => retryBlockLists()}>Retry</Button></p> : blockLists.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <ShieldBan className="h-12 w-12 mx-auto mb-3 opacity-20" />
                     <p>No Block Lists created yet</p>
@@ -742,6 +751,9 @@ export default function MySettings() {
               </CardContent>
             </Card>
 
+          </section>
+          <section hidden={section !== "classes"} className="space-y-6" aria-label="Class setup">
+            <h2 className="text-xl font-semibold">Class setup</h2>
             {/* Subgroups Section */}
             <Card data-testid="card-subgroups">
               <CardHeader>
@@ -756,10 +768,10 @@ export default function MySettings() {
               <CardContent className="space-y-4">
                 {/* Group Selector */}
                 <div className="space-y-2">
-                  <Label>Select Class</Label>
-                  <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a class to manage subgroups" />
+                  <Label htmlFor="teaching-class-selector">Class</Label>
+                  <Select value={selectedGroupId} onValueChange={selectGroup}>
+                    <SelectTrigger id="teaching-class-selector" data-testid="select-teaching-class">
+                      <SelectValue placeholder="Select a class" />
                     </SelectTrigger>
                     <SelectContent>
                       {groups.map((group) => (
@@ -778,7 +790,7 @@ export default function MySettings() {
 
                 {selectedGroupId && (
                   <>
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm font-medium">Subgroups</p>
                       <Button
                         type="button"
@@ -867,29 +879,9 @@ export default function MySettings() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Class Selector (classes this teacher owns) */}
-                <div className="space-y-2">
-                  <Label>Select Class</Label>
-                  <Select value={coTeacherGroupId} onValueChange={handleSelectCoTeacherGroup}>
-                    <SelectTrigger data-testid="select-co-teacher-class">
-                      <SelectValue placeholder="Select a class you own to manage co-teachers" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ownedGroups.map((group) => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                      {ownedGroups.length === 0 && (
-                        <div className="p-2 text-sm text-muted-foreground">
-                          No classes you own yet. Official classes are managed by administrators.
-                        </div>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {!canManageCoTeachers && <p className="text-sm text-muted-foreground">{selectedGroupId ? 'Co-teachers for official or shared classes are managed by the class owner or school administrator.' : 'Choose a class above to view its teaching tools.'}</p>}
 
-                {coTeacherGroupId && (
+                {selectedGroupId && canManageCoTeachers && (
                   <>
                     <div className="space-y-2">
                       <p className="text-sm font-medium">Teachers</p>
@@ -966,85 +958,15 @@ export default function MySettings() {
               </CardContent>
             </Card>
 
-            <Card data-testid="card-classroom-controls">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <SettingsIcon className="h-5 w-5 text-primary" />
-                  <CardTitle>Classroom Controls</CardTitle>
-                </div>
-                <CardDescription>
-                  Configure default settings for your classroom. These settings apply to all your students.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <FormField
-                  control={form.control}
-                  name="maxTabsPerStudent"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Maximum Tabs Per Student</FormLabel>
-                      <div className="flex items-center gap-2">
-                        <FormControl>
-                          <Input
-                            data-testid="input-max-tabs"
-                            type="number"
-                            min="1"
-                            placeholder="No limit"
-                            {...field}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || (parseInt(val, 10) >= 1)) {
-                                field.onChange(val);
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        {field.value && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => field.onChange("")}
-                          >
-                            Clear
-                          </Button>
-                        )}
-                      </div>
-                      <FormDescription>
-                        Limit the number of browser tabs students can have open. Leave empty or clear to allow unlimited tabs.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-              </CardContent>
-            </Card>
-
-            <div className="flex justify-end gap-3">
-              <Button
-                data-testid="button-cancel"
-                type="button"
-                variant="outline"
-                onClick={() => navigate("/classpilot")}
-              >
-                Cancel
-              </Button>
-              <Button
-                data-testid="button-save"
-                type="submit"
-                disabled={updateSettingsMutation.isPending}
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {updateSettingsMutation.isPending ? "Saving..." : "Save Settings"}
-              </Button>
-            </div>
-          </form>
-        </Form>
+          </section>
+          <section hidden={section !== "defaults"} aria-label="Personal defaults">
+            <TeachingDefaults schoolId={currentUser.schoolId} viewerId={currentUser.id} active={section === 'defaults'} />
+          </section>
+        </div>
       </div>
 
       {/* Flight Path Create/Edit Dialog */}
-      <Dialog open={showFlightPathDialog} onOpenChange={setShowFlightPathDialog}>
+      <Dialog open={showFlightPathDialog} onOpenChange={open => open ? setShowFlightPathDialog(true) : closeEditor(() => setShowFlightPathDialog(false))}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
@@ -1062,6 +984,7 @@ export default function MySettings() {
               <Input
                 id="flight-path-name"
                 data-testid="input-flight-path-name"
+                disabled={toolBusy}
                 value={flightPathName}
                 onChange={(e) => setFlightPathName(e.target.value)}
                 placeholder="e.g., Math Research, Reading Time"
@@ -1072,6 +995,7 @@ export default function MySettings() {
               <Textarea
                 id="flight-path-description"
                 data-testid="textarea-flight-path-description"
+                disabled={toolBusy}
                 value={flightPathDescription}
                 onChange={(e) => setFlightPathDescription(e.target.value)}
                 placeholder="Describe the purpose of this Flight Path"
@@ -1083,6 +1007,7 @@ export default function MySettings() {
               <Input
                 id="flight-path-domains"
                 data-testid="input-flight-path-domains"
+                disabled={toolBusy}
                 value={flightPathAllowedDomains}
                 onChange={(e) => setFlightPathAllowedDomains(e.target.value)}
                 placeholder="classroom.google.com, docs.google.com, khanacademy.org"
@@ -1106,7 +1031,7 @@ export default function MySettings() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setShowFlightPathDialog(false)}
+              onClick={() => closeEditor(() => setShowFlightPathDialog(false))}
               data-testid="button-cancel-flight-path"
             >
               Cancel
@@ -1158,7 +1083,7 @@ export default function MySettings() {
       </Dialog>
 
       {/* Block List Create/Edit Dialog */}
-      <Dialog open={showBlockListDialog} onOpenChange={setShowBlockListDialog}>
+      <Dialog open={showBlockListDialog} onOpenChange={open => open ? setShowBlockListDialog(true) : closeEditor(() => setShowBlockListDialog(false))}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
@@ -1176,6 +1101,7 @@ export default function MySettings() {
               <Input
                 id="block-list-name"
                 data-testid="input-block-list-name"
+                disabled={toolBusy}
                 value={blockListName}
                 onChange={(e) => setBlockListName(e.target.value)}
                 placeholder="e.g., AI Tools, Social Media, Gaming Sites"
@@ -1186,6 +1112,7 @@ export default function MySettings() {
               <Textarea
                 id="block-list-description"
                 data-testid="textarea-block-list-description"
+                disabled={toolBusy}
                 value={blockListDescription}
                 onChange={(e) => setBlockListDescription(e.target.value)}
                 placeholder="Describe the purpose of this Block List"
@@ -1197,6 +1124,7 @@ export default function MySettings() {
               <Input
                 id="block-list-domains"
                 data-testid="input-block-list-domains"
+                disabled={toolBusy}
                 value={blockListDomains}
                 onChange={(e) => setBlockListDomains(e.target.value)}
                 placeholder="lens.google.com, chatgpt.com, quillbot.com"
@@ -1221,7 +1149,7 @@ export default function MySettings() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => setShowBlockListDialog(false)}
+              onClick={() => closeEditor(() => setShowBlockListDialog(false))}
               data-testid="button-cancel-block-list"
             >
               Cancel
@@ -1286,6 +1214,7 @@ export default function MySettings() {
               <Label htmlFor="subgroup-name">Subgroup Name</Label>
               <Input
                 id="subgroup-name"
+                disabled={toolBusy}
                 value={subgroupName}
                 onChange={(e) => setSubgroupName(e.target.value)}
                 placeholder="e.g., Reading Group A"
@@ -1298,7 +1227,8 @@ export default function MySettings() {
                 <input
                   type="color"
                   id="subgroup-color"
-                  value={subgroupColor}
+                  disabled={toolBusy}
+                value={subgroupColor}
                   onChange={(e) => setSubgroupColor(e.target.value)}
                   className="w-12 h-10 rounded cursor-pointer"
                   data-testid="input-subgroup-color"
@@ -1372,7 +1302,7 @@ export default function MySettings() {
       </Dialog>
 
       {/* Manage Subgroup Members Dialog */}
-      <Dialog open={showManageMembersDialog} onOpenChange={(open) => { if (!open) { setManagingSubgroup(null); setSubgroupMembers([]); } setShowManageMembersDialog(open); }}>
+      <Dialog open={showManageMembersDialog} onOpenChange={open => open ? setShowManageMembersDialog(true) : closeEditor(() => { setManagingSubgroup(null); setShowManageMembersDialog(false); })}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -1436,7 +1366,7 @@ export default function MySettings() {
             )}
           </div>
           <DialogFooter>
-            <Button onClick={() => setShowManageMembersDialog(false)} data-testid="button-close-members">
+            <Button onClick={() => closeEditor(() => setShowManageMembersDialog(false))} data-testid="button-close-members">
               Done
             </Button>
           </DialogFooter>

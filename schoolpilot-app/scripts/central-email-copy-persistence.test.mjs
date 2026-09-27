@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { chromium } from "playwright";
 import { createServer } from "vite";
+import { schoolSettingsFixture } from "./school-settings-fixture.mjs";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -11,20 +12,6 @@ const ADMIN_ID = "11111111-1111-4111-8111-111111111111";
 const RECIPIENT_ID = "22222222-2222-4222-8222-222222222222";
 const SCHOOL_ID = "33333333-3333-4333-8333-333333333333";
 
-function settingsResponse(centralEmailRecipientUserId) {
-  return {
-    schoolName: "Central Copy Test School",
-    retentionHours: "720",
-    maxTabsPerStudent: null,
-    blockedDomains: [],
-    allowedDomains: [],
-    ipAllowlist: [],
-    aiSafetyEmailsEnabled: true,
-    autoBlockUnsafeUrls: true,
-    sharedChromebookSignInEnabled: false,
-    centralEmailRecipientUserId,
-  };
-}
 
 test("central email copy survives delayed staff loading, refresh, and another save", { timeout: 60_000 }, async () => {
   const vite = await createServer({
@@ -79,23 +66,18 @@ test("central email copy survives delayed staff loading, refresh, and another sa
         return;
       }
 
-      if (pathname === "/api/settings" && request.method() === "GET") {
-        await route.fulfill({ json: settingsResponse(persistedRecipientId) });
+      if (pathname === "/api/classpilot/admin/settings" && request.method() === "GET") {
+        await route.fulfill({ json: schoolSettingsFixture(persistedRecipientId, SCHOOL_ID) });
         return;
       }
 
-      if (pathname === "/api/settings" && request.method() === "POST") {
+      if (pathname.startsWith("/api/classpilot/admin/settings/") && request.method() === "PATCH") {
         const payload = request.postDataJSON();
         savedPayloads.push(payload);
 
-        // Mirror the legacy normalization: blank values cleared the recipient.
-        // This keeps a transient empty Select emission observable as the
-        // destructive persistence bug fixed by this regression.
-        const rawRecipientId = String(payload.centralEmailRecipientUserId || "").trim();
-        persistedRecipientId = rawRecipientId && rawRecipientId !== "none"
-          ? rawRecipientId
-          : null;
-        await route.fulfill({ json: { id: "teacher-settings" } });
+        const section = pathname.split("/").at(-1);
+        if (section === "email") persistedRecipientId = payload.centralEmailRecipientUserId;
+        await route.fulfill({ json: { ...schoolSettingsFixture(persistedRecipientId, SCHOOL_ID).sections[section], ...payload, version: "saved-2", schoolId: SCHOOL_ID } });
         return;
       }
 
@@ -137,19 +119,18 @@ test("central email copy survives delayed staff loading, refresh, and another sa
       await route.fulfill({ status: 200, json: {} });
     });
 
-    const appUrl = `http://127.0.0.1:${address.port}/classpilot/settings`;
+    const appUrl = `http://127.0.0.1:${address.port}/classpilot/settings?section=notifications`;
     await page.goto(appUrl);
 
-    const recipientSelect = page.getByTestId("select-central-email-recipient");
+    const recipientSelect = page.getByLabel("Copy recipient");
     await recipientSelect.waitFor();
-    await recipientSelect.click();
-    await page.getByRole("option", { name: /Casey Copy - copy@example\.edu/ }).click();
+    await recipientSelect.selectOption(RECIPIENT_ID);
 
     const firstSave = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === "/api/settings"
-      && response.request().method() === "POST"
+      new URL(response.url()).pathname.startsWith("/api/classpilot/admin/settings/")
+      && response.request().method() === "PATCH"
     );
-    await page.getByTestId("button-save-settings").click();
+    await page.getByRole("button", { name: "Save email recipient" }).click();
     await firstSave;
 
     assert.equal(savedPayloads.length, 1);
@@ -166,22 +147,25 @@ test("central email copy survives delayed staff loading, refresh, and another sa
 
     assert.match(
       (await recipientSelect.textContent()) || "",
-      /Casey Copy - copy@example\.edu/,
+      /Casey Copy \(copy@example\.edu\)/,
       "refresh must display the saved recipient after delayed staff options load"
     );
 
+    assert.equal(await recipientSelect.inputValue(), RECIPIENT_ID);
+    await page.getByRole("link", { name: "Browsing & monitoring", exact: true }).click();
+    await page.getByLabel("Maximum tabs per student").fill("6");
     const secondSave = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === "/api/settings"
-      && response.request().method() === "POST"
+      new URL(response.url()).pathname.startsWith("/api/classpilot/admin/settings/")
+      && response.request().method() === "PATCH"
     );
-    await page.getByTestId("button-save-settings").click();
+    await page.getByRole("button", { name: "Save browsing defaults" }).click();
     await secondSave;
 
     assert.equal(savedPayloads.length, 2);
     assert.equal(
       savedPayloads[1].centralEmailRecipientUserId,
-      RECIPIENT_ID,
-      "saving after refresh must never submit the Select's transient blank value"
+      undefined,
+      "saving another section must never write the central recipient"
     );
     assert.equal(persistedRecipientId, RECIPIENT_ID);
   } finally {

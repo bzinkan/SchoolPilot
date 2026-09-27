@@ -3343,21 +3343,25 @@ describe("ClassPilot supervision coverage storage contracts", () => {
   it("lets admins configure one active staff account for central ClassPilot email copies", async () => {
     const adminAuth = authFor(admin, school.id);
     const teacherAuth = authFor(teacher, school.id);
+    const settingsRead = await requestJson("GET", "/classpilot/admin/settings", undefined, adminAuth);
+    assert.equal(settingsRead.status, 200);
+    const expectedVersion = settingsRead.body.sections.email.version;
 
-    const forbidden = await requestJson("POST", "/settings", {
+    const forbidden = await requestJson("PATCH", "/classpilot/admin/settings/email", {
+      expectedVersion,
       centralEmailRecipientUserId: coverageStaff.id,
     }, teacherAuth);
     assert.equal(forbidden.status, 403);
 
-    const invalid = await requestJson("POST", "/settings", {
+    const invalid = await requestJson("PATCH", "/classpilot/admin/settings/email", {
+      expectedVersion,
       centralEmailRecipientUserId: studentUnassigned.id,
     }, adminAuth);
     assert.equal(invalid.status, 400);
     assert.match(invalid.body.error, /active staff/);
 
-    const update = await requestJson("POST", "/settings", {
-      schoolName: school.name,
-      retentionHours: "720",
+    const update = await requestJson("PATCH", "/classpilot/admin/settings/email", {
+      expectedVersion,
       centralEmailRecipientUserId: coverageStaff.id,
     }, adminAuth);
     assert.equal(update.status, 200);
@@ -3378,11 +3382,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(teacherRead.status, 200);
     assert.equal(teacherRead.body.centralEmailRecipientUserId, null);
 
-    const blank = await requestJson("POST", "/settings", {
+    const blank = await requestJson("PATCH", "/classpilot/admin/settings/email", {
+      expectedVersion: update.body.version,
       centralEmailRecipientUserId: "   ",
     }, adminAuth);
     assert.equal(blank.status, 400);
-    assert.match(blank.body.error, /cannot be blank/);
+    assert.equal(blank.body.code, "CLASSPILOT_SETTINGS_INVALID");
     const unchangedAfterBlank = await inSchool(school.id, () => getSettingsForSchool(school.id));
     assert.equal(unchangedAfterBlank?.centralEmailRecipientUserId, coverageStaff.id);
 
@@ -3399,9 +3404,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     );
     assert.deepEqual(deduped, [coverageStaff.email.toUpperCase()]);
 
-    const clear = await requestJson("POST", "/settings", {
-      schoolName: school.name,
-      retentionHours: "720",
+    const clear = await requestJson("PATCH", "/classpilot/admin/settings/email", {
+      expectedVersion: update.body.version,
       centralEmailRecipientUserId: null,
     }, adminAuth);
     assert.equal(clear.status, 200);

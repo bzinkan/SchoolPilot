@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarClock, Check, Loader2, RefreshCw, Save } from "lucide-react";
 
@@ -8,6 +8,8 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Switch } from "../../../components/ui/switch";
 import { useToast } from "../../../hooks/use-toast";
+import { apiRequest } from "../../../lib/queryClient";
+import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import {
   isRevisionConflict,
   invalidateScheduleChanges,
@@ -33,18 +35,30 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
   const [draft, setDraft] = useState(() => toDraft(initialSettings));
   const [dirty, setDirty] = useState(false);
   const [conflict, setConflict] = useState(null);
+  const [seen, setSeen] = useState(initialSettings);
+  const alive = useRef(true);
+  const [baseline, setBaseline] = useState(() => toDraft(initialSettings));
+  useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  if (seen !== initialSettings) {
+    setSeen(initialSettings);
+    if (!dirty) { const latest = toDraft(initialSettings); setBaseline(latest); setDraft(latest); }
+    else if (initialSettings.revision !== draft.revision) setConflict(initialSettings);
+  }
 
   const mutation = useMutation({
-    mutationFn: (payload) => scheduleChangeApi.updateSettings(payload),
+    mutationFn: (payload) => apiRequest("PATCH", "/classpilot/schedule-changes/settings", payload, { headers: { "X-School-Id": schoolId } }),
     onSuccess: async (data) => {
+      if (!alive.current) return;
       const authoritative = unwrapSettings(data);
+      setBaseline(toDraft(authoritative));
       setDraft(toDraft(authoritative));
       setDirty(false);
       setConflict(null);
-      await invalidateScheduleChanges(schoolId);
+      void invalidateScheduleChanges(schoolId);
       toast({ title: "Schedule-change policy saved", description: "The verified school policy is now active." });
     },
     onError: (error) => {
+      if (!alive.current) return;
       if (isRevisionConflict(error)) {
         setConflict(error.response?.data?.current ? unwrapSettings(error.response.data.current) : true);
         return;
@@ -52,22 +66,25 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
       toast({ variant: "destructive", title: "Policy was not saved", description: scheduleChangeError(error) });
     },
   });
+  useAdminNavigationBlocker({ id: "schedule-change-policy", dirty, busy: mutation.isPending,
+    onDiscard: () => { setDraft(baseline); setDirty(false); setConflict(null); } });
 
   const updateDraft = (updates) => {
     setDraft((current) => ({ ...current, ...updates }));
     setDirty(true);
-    setConflict(null);
   };
 
   const loadLatest = async () => {
     if (conflict && conflict !== true) {
+      setBaseline(toDraft(conflict));
       setDraft(toDraft(conflict));
       setDirty(false);
       setConflict(null);
       return;
     }
     const result = await refetch();
-    if (result.data) {
+    if (alive.current && result.data) {
+      setBaseline(toDraft(result.data));
       setDraft(toDraft(result.data));
       setDirty(false);
       setConflict(null);
@@ -75,7 +92,7 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
   };
 
   return (
-    <div className="space-y-6">
+    <fieldset className="min-w-0 space-y-6" disabled={mutation.isPending}>
             <div className="flex items-start justify-between gap-5 border-b pb-5">
               <div>
                 <Label htmlFor="teacher-schedule-change-requests" className="text-sm font-semibold">Teacher requests</Label>
@@ -177,14 +194,14 @@ function PolicyEditor({ schoolId, initialSettings, refetch }) {
                   reasonRequired: draft.reasonRequired,
                   expectedRevision: draft.revision,
                 })}
-                disabled={!dirty || mutation.isPending || !draft.sameDayCutoff}
+                disabled={!dirty || mutation.isPending || Boolean(conflict) || !draft.sameDayCutoff}
                 data-testid="button-save-schedule-change-policy"
               >
                 {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                 Save schedule policy
               </Button>
             </div>
-    </div>
+    </fieldset>
   );
 }
 
@@ -222,7 +239,7 @@ export function ScheduleChangePolicyCard({ schoolId, canManage }) {
     >
       <CardHeader className="border-b border-slate-200 bg-slate-900 text-white dark:border-slate-700">
         <CardTitle id="schedule-changes-title" className="flex items-center gap-2 text-base">
-          <CalendarClock className="h-5 w-5 text-amber-300" /> Schedule Changes
+          <CalendarClock className="h-5 w-5 text-amber-300" /> Schedule-change policy
         </CardTitle>
         <CardDescription className="text-slate-300">
           Set who may request one-day class-time swaps and when teacher requests close.
@@ -231,18 +248,19 @@ export function ScheduleChangePolicyCard({ schoolId, canManage }) {
       <CardContent className="pt-6">
         {settingsQuery.isLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading schedule policy…</div>
-        ) : settingsQuery.error ? (
+        ) : settingsQuery.error && !settingsQuery.data ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
             {scheduleChangeError(settingsQuery.error, "Schedule policy could not be loaded.")}
             <Button type="button" variant="link" className="ml-2 h-auto p-0 text-destructive" onClick={() => settingsQuery.refetch()}>Try again</Button>
           </div>
-        ) : settingsQuery.data ? (
+        ) : settingsQuery.data ? (<>
+          {settingsQuery.error && <p role="alert" className="mb-4 text-sm text-destructive">Could not refresh the schedule policy. Your draft is still here. <Button variant="link" onClick={() => settingsQuery.refetch()}>Retry refresh</Button></p>}
           <PolicyEditor
             key={schoolId}
             schoolId={schoolId}
             initialSettings={settingsQuery.data}
             refetch={settingsQuery.refetch}
-          />
+          /></>
         ) : null}
       </CardContent>
     </Card>

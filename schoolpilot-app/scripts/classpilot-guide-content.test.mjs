@@ -33,6 +33,7 @@ const validRoutes = new Set([
   "/classpilot/admin/it-readiness",
   "/classpilot/roster",
   "/classpilot/settings",
+  "/classpilot/settings?section=school",
   "/classpilot/students",
 ]);
 
@@ -106,7 +107,7 @@ test("router source fail-closes admin settings and exposes both lazy guide route
   assert.match(appSource, /canReadClassPilotTeacherGuide && <Route path="\/classpilot\/my-settings\/guide"/);
   assert.match(appSource, /lazy\(\(\) => import\('\.\/products\/classpilot\/pages\/TeacherGuide'\)\)/);
   assert.match(appSource, /lazy\(\(\) => import\('\.\/products\/classpilot\/pages\/AdminGuide'\)\)/);
-  assert.match(settingsSource, /if \(!canManageSchoolSettings\) \{\s*return <Navigate to="\/classpilot" replace \/>/);
-  assert.equal((settingsSource.match(/useQuery\(\{/g) || []).length, 6, "unexpected Admin Settings query inventory");
-  assert.equal((settingsSource.match(/enabled: canManageSchoolSettings/g) || []).length, 6, "every Admin Settings query must wait for admin authority");
+  assert.match(settingsSource, /if \(!currentUser \|\| !currentUser.schoolId \|\| !\(isAdmin \|\| currentUser.isSuperAdmin\)\) return <Navigate/);
+  assert.match(settingsSource, /return <SettingsWorkspace key=\{scope\}/, "only authorized identities mount the querying workspace");
+  assert.doesNotMatch(settingsSource, /POST.*['"]\/settings['"]/, "admin edits must use scoped section APIs");
 });

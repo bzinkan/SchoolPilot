@@ -68,9 +68,23 @@ run "student_information_rls_target_is_registry_valid" {
   assert {
     condition = (
       length(local.rls_configured_tables) == 119 &&
-      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The registered 119-table target must be accepted without claiming live production admission."
+  }
+}
+run "teacher_preferences_rls_target_is_registry_valid" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotTeacherPreferencesPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 120 &&
+      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+    )
+    error_message = "The registered preference-table target must be accepted without pre-admitting it in production."
   }
 }
 

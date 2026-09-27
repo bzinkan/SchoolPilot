@@ -284,11 +284,11 @@ describe("ClassPilot command authority envelopes", () => {
   });
 
   it("binds every per-target command envelope to the frozen student session", async () => {
-    const [dispatcher, chat, devices, dashboard] = await Promise.all([
+    const [dispatcher, chat, devices, settings] = await Promise.all([
       source("src/services/classpilotCommandDispatcher.ts"),
       source("src/routes/classpilot/chat.ts"),
       source("src/routes/classpilot/devices.ts"),
-      source("src/routes/classpilot/dashboard.ts"),
+      source("src/services/classpilotSettings.ts"),
     ]);
     const envelopes = dispatcher.slice(
       dispatcher.indexOf("export function classpilotCommandFrameForTarget"),
@@ -299,20 +299,20 @@ describe("ClassPilot command authority envelopes", () => {
     assert.match(chat, /studentSessionId: targetBinding\.id/);
     assert.match(chat, /studentSessionId: binding\.id/);
     assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
-    assert.match(dashboard, /getActiveSessions\(sid\)[\s\S]*studentSessionId: binding\.id/);
-    assert.doesNotMatch(dashboard, /publishWS\(\{ kind: "students", schoolId: sid \}, limitMsg\)/);
+    assert.match(settings, /getActiveSessions\(schoolId\)[\s\S]*studentSessionId: binding\.id/);
+    assert.doesNotMatch(settings, /target:\s*\{\s*kind:\s*"students"/);
   });
 
   it("uses explicit school-policy authority for administrator settings and retires AI closure", async () => {
     assert.deepEqual(classpilotSchoolPolicyAuthorityEnvelope("school-1", "school_settings"), {
       authority: { kind: "school_policy", schoolId: "school-1", source: "school_settings" },
     });
-    const [devices, dashboard] = await Promise.all([
+    const [devices, settings] = await Promise.all([
       source("src/routes/classpilot/devices.ts"),
-      source("src/routes/classpilot/dashboard.ts"),
+      source("src/services/classpilotSettings.ts"),
     ]);
     assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);
-    assert.match(dashboard, /classpilotSchoolPolicyAuthorityEnvelope\(sid, "school_settings"\)/);
+    assert.match(settings, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "school_settings"\)/);
     assert.ok(
       devices.indexOf('router.use("/remote"') < devices.indexOf('router.post("/remote/open-tab"'),
       "the 410 retirement guard must run before every legacy /remote action"

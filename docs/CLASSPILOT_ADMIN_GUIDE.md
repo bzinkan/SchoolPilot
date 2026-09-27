@@ -18,7 +18,7 @@ Overview is your starting point. One menu organizes school administration on des
 
 1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, Discipline logs, or Calendar. A loading failure is shown separately from missing dates.
 2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes. Discipline logs opens school records organized by student.
-3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School settings, Student portal, Integrations & IT readiness, this Admin guide, and Maintenance.
+3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
 4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
 5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
 
@@ -167,17 +167,22 @@ Configure eligible pairs and approve dated exceptions without rewriting recurrin
 
 Set school-wide defaults without confusing them with an individual administrator’s teaching tools.
 
-1. **Set core boundaries.** Review school identity, retention, tab limits, allowed domains and blocked domains. Every active school administrator receives distinct safety alerts; this is managed through Safety Center.
-2. **Set monitoring hours.** Configure school-local tracking hours and the after-hours choice: Off, Safety only, or Full. Safety only retains actual unsuppressed safety alerts without ordinary browsing history, screenshots or teacher presence; unsupported clients stop after-hours monitoring.
-3. **Choose an optional summary copy.** The Central Email Recipient setting can receive a copy of completed class, testing and Coverage activity summaries. Each supervisor still receives only the students and time intervals they supervised. This setting does not replace Safety Center notifications or announce schedule changes.
-4. **Configure shared sign-in.** Enable shared Chromebook sign-in only when the school’s device model requires it, then manage setup keys as protected configuration.
-5. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
-6. **Set workflow policy.** Review the schedule-change policy and other school-level controls before teachers depend on them.
-7. **Respect data boundaries.** Use retention and access controls according to school policy. Do not copy student browsing or sign-in details into general-purpose notes.
+1. **Review school identity.** School details shows the canonical saved school name and timezone. These are read-only here; use an authorized school-profile editor or contact your SchoolPilot administrator. School-year dates remain under Calendar & schedules.
+2. **Set browsing defaults.** Browsing & monitoring separates school tab limits and educational domains, blocked websites, and monitoring hours. Each group has its own Save. Educational domains affect activity classification, not safety approvals. AI detections leave tabs open for administrator review.
+3. **Set monitoring hours.** Configure school-local tracking hours and the after-hours choice: Off, Safety only, or Full. Safety only retains actual unsuppressed safety alerts without ordinary browsing history, screenshots or teacher presence; unsupported clients stop after-hours monitoring.
+4. **Choose an optional summary copy.** The Central Email Recipient setting can receive a copy of completed class, testing and Coverage activity summaries. Each supervisor still receives only the students and time intervals they supervised. This setting does not replace Safety Center notifications or announce schedule changes.
+5. **Configure sign-in.** Sign-in & devices contains staff password access, shared Chromebook sign-in, and setup keys. Toggles remain drafts until their Save button is used. Key rotation is a separate confirmed action.
+6. **Deploy managed policy.** Copy the generated managed policy to the exact Google Admin application configuration. Rotate a setup key when exposure is suspected.
+7. **Set workflow policy.** Configure schedule-change policy beside the workflow under Calendar & schedules → Schedule changes. Student Portal configuration stays in its own Settings destination.
+8. **Respect data boundaries.** Data & maintenance contains activity retention and the existing destructive device/history cleanup. Use the separate Save for retention. Cleanup requires confirmation and is not a roster-editing tool.
 
-> **Flight note:** Flight Paths displayed in School Settings belong to the signed-in administrator’s teaching profile; they are not a school-wide library.
+> **Flight note:** Personal Flight Paths and Block Lists are in Teaching tools, shared with teachers and scoped to the signed-in educator.
 
-[Open School Settings](/classpilot/settings)
+> **Flight note:** Staff notifications contains the central email recipient and daily monitoring interruption digest, each with an explicit Save.
+
+> **Flight note:** Section navigation preserves drafts. If settings change elsewhere, compare your draft with the latest saved values before choosing what to save.
+
+[Open School Settings](/classpilot/settings?section=school)
 
 ### Configure required Google Workspace policies
 
@@ -268,7 +273,7 @@ Keep operational health, instructional trends, and evidence workflows in their p
 
 **Who can use this:** Administrator or school administrator
 
-Use Admin Panel → School operations → Safety Center. Destructive cleanup tools are separate under Settings → Maintenance.
+Use Admin Panel → School operations → Safety Center. Destructive cleanup tools are separate under Settings → Data & maintenance.
 
 1. **Open the student report.** Review individual alerts, evidence, explanations, observations and delivery status. Severity provides context; every new distinct concern follows the same administrator email workflow. Repeated observations do not generate repeated initial emails.
 2. **Acknowledge or assess.** Acknowledge receipt to stop the single fifteen-minute follow-up. Mark an alert reviewed when you have assessed it. Assignment and review notes preserve who acted; closing a case requires a resolution note.

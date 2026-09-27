@@ -258,7 +258,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
 
     await teacherPage.goto(`${baseURL}/classpilot/my-settings/schedule-changes`);
     await teacherPage.getByRole("heading", { name: "Schedule Changes", exact: true }).waitFor();
-    await teacherPage.getByRole("link", { name: "Teaching Tools" }).waitFor();
+    await teacherPage.getByRole("link", { name: "Website tools" }).waitFor();
     await teacherPage.getByText("7th Math").first().waitFor();
     await teacherPage.getByTestId(`button-accept-${CHANGE_ID}`).click();
     await teacherPage.waitForFunction(() => document.body.textContent.includes("Time swap accepted"));
@@ -438,8 +438,9 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     await settingsPage.getByTestId("card-schedule-change-policy").waitFor();
     await settingsPage.waitForFunction(() => document.activeElement?.id === "schedule-changes");
     assert.equal(await settingsPage.getByTestId("card-schedule-change-policy").evaluate((card) => (
-      card.nextElementSibling?.textContent?.includes("Privacy & Compliance") === true
-    )), true, "Schedule Changes must sit immediately before Privacy & Compliance");
+      card.nextElementSibling?.textContent?.includes("Eligible class pairs") === true
+    )), true, "Schedule-change policy belongs beside eligible class pairs in its workflow");
+    assert.equal(new URL(settingsPage.url()).pathname, "/classpilot/admin/classes/schedule-changes", "old policy anchor must redirect to the canonical workflow");
     await settingsPage.getByTestId("switch-teacher-schedule-change-requests").click();
     await settingsPage.getByTestId("switch-schedule-change-cutoff-enforced").focus();
     await settingsPage.keyboard.press("Space");

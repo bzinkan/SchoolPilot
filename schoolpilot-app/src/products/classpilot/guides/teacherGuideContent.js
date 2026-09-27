@@ -12,8 +12,9 @@ export const teacherGuideTopics = [
     routeLabel: "Open teaching tools",
     steps: [
       { title: "Review your assigned classes", body: "Confirm the class and students you expect to teach. Ask an administrator to correct official class membership or teacher assignments." },
-      { title: "Build reusable tools", body: "Create personal Flight Paths, Block Lists, and subgroups in My Settings. Flight Paths allow only their listed destinations; Block Lists deny their listed domains." },
-      { title: "Choose classroom defaults", body: "Set your preferred tab limit and default Flight Path. School policy can be stricter than a personal preference." },
+      { title: "Build reusable tools", body: "In Teaching tools, Website tools contains your personal Flight Paths and Block Lists. From Classroom uses your own Google Classroom resources to create a Flight Path. Apply a Flight Path or Block List explicitly from the Dashboard when ready." },
+      { title: "Organize a class", body: "Open Class tools and select a class once to manage its subgroups and co-teachers. Official class assignments remain administrator-managed; only the owner of a personal class can change its co-teachers." },
+      { title: "Choose classroom defaults", body: "Choose Use school default or a custom tab limit from 1 to 100. Save classroom defaults changes only your preference in this school and sends no student commands. Manage Tabs starts with your personal limit, then the school default, then unlimited; apply the limit explicitly during class." },
       { title: "Check today’s schedule", body: "If your school permits one-day schedule changes, review requests and approved changes before class begins." },
     ],
     tips: ["Use clear names such as “Period 2 Research” so the right tool is easy to find during class."],

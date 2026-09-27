@@ -31,6 +31,8 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-settings.test.ts",
+  "classpilot-teacher-preferences-schema.integration.test.ts",
   "mydesk-redesign-schema.integration.test.ts",
   "mydesk-workspace-schema.integration.test.ts",
   "rls-enforcement.integration.test.ts",
