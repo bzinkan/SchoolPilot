@@ -38,7 +38,7 @@ try {
       else if(url.pathname.endsWith('/approved-urls'))body={items:rules};
       else body={csrfToken:'fixture-token'};
     } else {
-      const submitted=request.postDataJSON()||{};actions.push({path:url.pathname,method:request.method(),body:submitted});
+      const submitted=request.postDataJSON()||{};actions.push({path:url.pathname,method:request.method(),body:submitted,schoolId:request.headers()['x-school-id']});
       if(url.pathname.endsWith('/actions') && submitted.action==='acknowledge'){
         report.case.revision++;
         for(const alert of report.alerts){alert.acknowledged_at=new Date().toISOString();alert.revision++;}
@@ -47,6 +47,11 @@ try {
       if(request.method()==='DELETE'){rules=[];report.alerts[0].suppressed=false;}
       if(url.pathname.endsWith('/block-website')){report.alerts[0].websitePolicy.blocked=true;}
       body={ok:true};
+      if(url.pathname==='/api/classpilot/admin/settings/monitoring'&&request.method()==='PATCH'){
+        const {expectedVersion,...monitoring}=submitted;
+        assert.equal(expectedVersion,'a'.repeat(64),'Monitoring save uses its loaded section version');
+        body={schoolId:'school-a',...monitoring,version:'b'.repeat(64)};
+      }
     }
     await route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
   });
@@ -88,18 +93,24 @@ try {
   await page.getByRole('button',{name:'Block website: example.test',exact:true}).waitFor();
   await page.getByRole('button',{name:'Newest actions',exact:true}).click();
   await page.getByText('Latest administrator note.',{exact:true}).waitFor();
-  const hours=page.getByRole('region',{name:'Monitoring hours',exact:true});
+  const hours=page.getByRole('group').filter({has:page.getByLabel('Start',{exact:true})}).first();
   const timezone=hours.getByRole('textbox',{name:'School timezone',exact:true});
   assert.equal(await timezone.inputValue(),'America/Chicago','Show the canonical timezone supplied by the school settings DTO');
   assert.equal(await timezone.isEditable(),false,'Monitoring hours cannot edit the canonical school clock');
   assert.equal(await timezone.getAttribute('readonly'),'');
-  await hours.getByText('The school profile timezone also controls class schedules. Update it through school administration.',{exact:true}).waitFor();
+  await hours.getByText('The school profile timezone also controls class schedules. Contact your SchoolPilot administrator to request a change.',{exact:true}).waitFor();
   await hours.getByLabel('Start',{exact:true}).fill('08:30');
-  const savedHours=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/settings'&&response.request().method()==='POST');
-  await hours.getByRole('button',{name:'Save monitoring hours',exact:true}).click();await savedHours;
-  assert.equal(actions.at(-1).path,'/api/settings');
+  assert.equal(actions.some(action=>action.path==='/api/classpilot/admin/settings/monitoring'),false,'Changing hours keeps a local draft until Save');
+  const savedHours=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/classpilot/admin/settings/monitoring'&&response.request().method()==='PATCH');
+  await page.getByRole('button',{name:'Save monitoring hours',exact:true}).click();await savedHours;
+  await page.getByText('Changes saved.',{exact:true}).waitFor();
+  assert.equal(actions.at(-1).path,'/api/classpilot/admin/settings/monitoring');
+  assert.equal(actions.at(-1).method,'PATCH');
+  assert.equal(actions.at(-1).schoolId,'school-a','Monitoring save pins the loaded school');
   assert.equal(actions.at(-1).body.trackingStartTime,'08:30');
+  assert.deepEqual(Object.keys(actions.at(-1).body).sort(),['expectedVersion','enableTrackingHours','trackingStartTime','trackingEndTime','trackingDays','afterHoursMode'].sort(),'Monitoring save submits only its visible section and version');
   assert.equal('schoolTimezone' in actions.at(-1).body,false,'Saving monitoring hours cannot submit a separate timezone override');
+  assert.equal(actions.some(action=>action.path==='/api/settings'),false,'Monitoring hours never uses the retired mixed settings writer');
   assert.equal(await timezone.inputValue(),'America/Chicago');
   await mkdir(path.join(root,'artifacts/classpilot-roadmap'),{recursive:true});
   await page.screenshot({path:path.join(root,'artifacts/classpilot-roadmap/safety-center.png'),fullPage:true});
