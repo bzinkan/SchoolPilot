@@ -27,6 +27,7 @@ async function assertHistoryPanels(dialog, selectedName) {
 async function fixture(t, role = "school_admin") {
   const entry = `
     import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {MemoryRouter} from 'react-router-dom';
     import {QueryClientProvider} from '@tanstack/react-query';
     import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
     import {queryClient} from '/src/lib/queryClient.js';
@@ -34,7 +35,7 @@ async function fixture(t, role = "school_admin") {
     import '/src/index.css';
     queryClient.setDefaultOptions({queries:{retry:false,refetchOnWindowFocus:false}});
     function Content(){const auth=useAuth();React.useEffect(()=>{window.__switchMonitoringSchool=auth.switchSchool;window.__refreshMonitoringActor=auth.refetchUser;},[auth.switchSchool,auth.refetchUser]);return React.createElement(React.Fragment,null,React.createElement(Panel),auth.activeMembership?.role==='school_admin'&&React.createElement(MonitoringDigestSettings));}
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(Content))));
+    createRoot(document.getElementById('root')).render(React.createElement(MemoryRouter,null,React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(Content)))));
   `;
   const vite = await createServer({ root, logLevel: "error", server: { host: "127.0.0.1", port: 0 }, plugins: [{ name: "monitoring-test-page", configureServer(server) {
     server.middlewares.use(async (req, res, next) => {
@@ -80,7 +81,8 @@ async function fixture(t, role = "school_admin") {
     return route.fulfill({ json: {} });
   });
   await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__monitoring-panel-test`);
-  await page.getByText("No open monitoring interruptions", { exact: false }).waitFor();
+  try { await page.getByText("No open monitoring interruptions", { exact: false }).waitFor(); }
+  catch (error) { assert.fail(`${error.message}: ${JSON.stringify({ errors: state.errors, reads: state.reads })}`); }
   return { page, state };
 }
 

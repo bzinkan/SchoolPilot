@@ -22,7 +22,7 @@ test("administrator SSO policy card is role-contained and uses the dedicated rev
   assert.match(admin, /<StudentSsoPolicyCard canManage=\{canManageStudentPortal\}/);
   assert.match(admin, /isAdmin: isSchoolAdmin/);
   assert.match(admin, /canManageStudentPortal = isSchoolAdmin \|\| currentUser\?\.isSuperAdmin === true/);
-  assert.match(admin, /<TabsContent value="student-portal"/);
+  assert.match(admin, /activeTab === "student-portal" && <section aria-label="Student portal"[\s\S]*?<StudentSsoPolicyCard canManage=\{canManageStudentPortal\}/);
   assert.doesNotMatch(settings, /<StudentSsoPolicyCard/);
   assert.match(settings, /\/classpilot\/admin\?tab=student-portal/);
   assert.match(component, /if \(!canManage\) return null/);

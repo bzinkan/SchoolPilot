@@ -9,6 +9,7 @@ import { disciplineApi, disciplineCategory, disciplineKeys, invalidateDiscipline
 import { myDeskApi } from '../lib/myDesk';
 import { myDeskError, myDeskKeys } from '../lib/myDeskModel';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import DisciplineAttachment from './DisciplineAttachment';
 import MyDeskAttachment from './MyDeskAttachment';
 
@@ -37,14 +38,17 @@ export default function DisciplineCorrection({ access, record, onClose }) {
   const source = notes.find(note => note.id === sourceNoteId);
   const availableAttachments = replaceEvidence ? (source?.attachments || []).filter(item => item.status === 'ready' && item.committedAt) : version.attachments;
   const change = patch => { setDraft(previous => ({ ...previous, ...patch })); setReviewed(false); setDirty(true); };
+  const shell = useAdminShell();
+  const { requestAction } = useAdminNavigation();
+  const committedNavigation = useAdminNavigationBlocker({ id: `discipline-correction:${record.id}`, dirty: dirty || pending, busy, onDiscard: onClose });
   useEffect(() => {
-    if (!dirty && !pending) return;
+    if (shell || (!dirty && !pending)) return;
     const warn = event => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     const release = guardPrivateWorkspaceHistory(() => setConfirmClose(true));
     return () => { window.removeEventListener('beforeunload', warn); release(); };
-  }, [dirty, pending]);
-  const close = () => { if (busy) return; if (dirty || pending) setConfirmClose(true); else onClose(); };
+  }, [dirty, pending, shell]);
+  const close = () => { if (shell) return requestAction(onClose, { id: 'discipline-correction-close' }); if (busy) return; if (dirty || pending) setConfirmClose(true); else onClose(); };
   const failureMessage = (failure, controller) => {
     if (controller.signal.aborted) return;
     if ([401, 403, 404].includes(failure.response?.status)) { setDenied(true); controller.abort(); void invalidateDiscipline(schoolId, viewerId); }
@@ -57,7 +61,7 @@ export default function DisciplineCorrection({ access, record, onClose }) {
     working.current = true; setBusy(true); setError('');
     try {
       await disciplineApi(schoolId, controller.signal).correct(record.id, transaction.current); controller.signal.throwIfAborted();
-      await invalidateDiscipline(schoolId, viewerId); controller.signal.throwIfAborted(); onClose();
+      await invalidateDiscipline(schoolId, viewerId); controller.signal.throwIfAborted(); await committedNavigation.requestActionAfterCommit(onClose, { id: 'discipline-correction-saved' });
     } catch (failure) {
       if (!controller.signal.aborted) {
         failureMessage(failure, controller);

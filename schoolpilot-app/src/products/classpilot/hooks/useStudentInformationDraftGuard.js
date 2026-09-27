@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { guardPrivateWorkspaceHistory } from "../lib/privateWorkspaceNavigation";
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from "./useAdminNavigation";
 
-export function useStudentInformationDraftGuard(dirty) {
+export function useStudentInformationDraftGuard(dirty, { busy = false, id = "student-information", onDiscard } = {}) {
   const [destination, setDestination] = useState(null),
     [leaving, setLeaving] = useState(false);
   const navigate = useNavigate();
+  const shell = useAdminShell();
+  const navigation = useAdminNavigation();
+  const afterCommit = useAdminNavigationBlocker({ id, dirty, busy, onDiscard });
   useEffect(() => {
-    if (!dirty || leaving) return;
+    if (shell || (!dirty && !busy) || leaving) return;
     const warn = (event) => {
       event.preventDefault();
       event.returnValue = "";
@@ -43,13 +47,15 @@ export function useStudentInformationDraftGuard(dirty) {
       document.removeEventListener("click", link, true);
       release();
     };
-  }, [dirty, leaving]);
+  }, [dirty, busy, leaving, shell]);
   useEffect(() => {
     if (leaving && destination) navigate(destination);
   }, [leaving, destination, navigate]);
   return {
-    destination,
+    destination: shell ? null : destination,
     stay: () => setDestination(null),
     leave: () => setLeaving(true),
+    ...navigation,
+    ...afterCommit,
   };
 }

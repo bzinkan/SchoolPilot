@@ -1,6 +1,7 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { ArrowLeft, ShieldAlert, RefreshCw, FileArchive } from "lucide-react";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
@@ -23,7 +24,8 @@ const name = row => [row?.first_name, row?.last_name].filter(Boolean).join(" ") 
 const selectClass = "rounded-md border bg-background p-2 text-sm";
 
 export default function SafetyCenter() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const [params, setParams] = useSearchParams();
   const { toast } = useToast();
   const [view, setView] = useState("reports");
@@ -84,10 +86,11 @@ export default function SafetyCenter() {
   const data = report.data;
   const zone = data?.timezone || "America/New_York";
   return <div className="min-h-screen bg-background">
-    <header className="border-b"><div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-6 py-4">
+    {!adminShell && (<header className="border-b"><div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-6 py-4">
       <div className="flex items-center gap-3"><Button variant="ghost" size="icon" aria-label="Back to Admin panel" onClick={() => navigate("/classpilot/admin")}><ArrowLeft className="h-5 w-5" /></Button><div><h1 className="text-xl font-semibold">Safety Center</h1><p className="text-sm text-muted-foreground">Review student concerns and decide what action is appropriate.</p></div></div>
       <div className="flex gap-2"><ThemeToggle /><Button variant="outline" onClick={refresh}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button></div>
-    </div></header>
+    </div></header>)}
+{adminShell && (<div className="flex justify-end"><Button variant="outline" onClick={refresh}><RefreshCw className="mr-2 size-4" />Refresh</Button></div>)}
     <main className="mx-auto max-w-7xl space-y-5 px-6 py-6">
       <div className="flex flex-wrap gap-2"><Button variant={view === "reports" ? "default" : "outline"} onClick={() => setView("reports")}>Student reports</Button><Button variant={view === "approved" ? "default" : "outline"} onClick={() => setView("approved")}>Approved URLs</Button></div>
       <p className="text-sm text-muted-foreground">All new distinct safety alerts notify every active school administrator. Repeated observations are grouped. An unacknowledged alert receives one follow-up after fifteen minutes.</p>

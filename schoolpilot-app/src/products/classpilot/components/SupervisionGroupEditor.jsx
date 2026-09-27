@@ -24,6 +24,7 @@ import {
 } from "../../../components/ui/select";
 import { Textarea } from "../../../components/ui/textarea";
 import { refreshSupervisionSetup } from "./supervisionGroupQueries";
+import { useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { Badge } from "../../../components/ui/badge";
 
 const ALL_FILTER = "all",
@@ -210,6 +211,8 @@ function GroupForm({ opener, schoolId, initialGroup, onOpenChange, onSaved }) {
     ],
     active: initialGroup?.active !== false,
   }));
+  const [baseline] = useState(scopeGroupForm);
+  const { requestAction } = useAdminNavigation();
   const [scopeGroupStaffSearch, setScopeGroupStaffSearch] = useState("");
   const [scopeGroupStaffPage, setScopeGroupStaffPage] = useState(1);
   const [scopeGroupStudentSearch, setScopeGroupStudentSearch] = useState("");
@@ -387,13 +390,17 @@ function GroupForm({ opener, schoolId, initialGroup, onOpenChange, onSaved }) {
     onSuccess: async (result) => {
       const refreshWarning = await refreshSupervisionSetup(client, schoolId);
       if (!committed.current) return;
-      onSaved?.({ group: result.group, refreshWarning });
-      onOpenChange(false);
+      await committedNavigation.requestActionAfterCommit(() => { onSaved?.({ group: result.group, refreshWarning }); onOpenChange(false); }, { id: "supervision-group-saved" });
     },
     onError: () => {
       void refreshSupervisionSetup(client, schoolId);
     },
   });
+  const committedNavigation = useAdminNavigationBlocker({ id: `supervision-group:${initialGroup?.id || "new"}`,
+    dirty: JSON.stringify(scopeGroupForm) !== JSON.stringify(baseline), busy: saveScopeGroupMutation.isPending,
+    onDiscard: () => onOpenChange(false),
+  });
+  const close = () => requestAction(() => onOpenChange(false), { id: "supervision-group-close" });
   const submitScopeGroup = () => {
     if (!dependenciesUnavailable && !saveScopeGroupMutation.isPending)
       saveScopeGroupMutation.mutate();
@@ -402,7 +409,7 @@ function GroupForm({ opener, schoolId, initialGroup, onOpenChange, onSaved }) {
     <Dialog
       open={live}
       onOpenChange={(value) => {
-        if (!value && !saveScopeGroupMutation.isPending) onOpenChange(false);
+        if (!value && !saveScopeGroupMutation.isPending) void close();
       }}
     >
       <DialogContent
@@ -894,7 +901,7 @@ function GroupForm({ opener, schoolId, initialGroup, onOpenChange, onSaved }) {
           <Button
             variant="outline"
             disabled={saveScopeGroupMutation.isPending}
-            onClick={() => onOpenChange(false)}
+            onClick={close}
           >
             Cancel
           </Button>

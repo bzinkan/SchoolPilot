@@ -5,7 +5,7 @@ import { refreshSupervisionSetup } from "../components/supervisionGroupQueries";
 import SupervisionGroupDirectory from "../components/SupervisionGroupDirectory";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Eye, History, Plus, RefreshCw, Search, UserCheck, Trash2 } from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -17,6 +17,7 @@ import { Label } from "../../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { Badge } from "../../../components/ui/badge";
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from "../hooks/useAdminNavigation";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { createSupervisionDashboardIntent, createObservedActivityDashboardIntent, createDashboardWorkspaceIntent } from "../lib/supervisionDashboardNavigation";
@@ -102,8 +103,10 @@ export default function Coverage() {
 }
 
 function CoverageWorkspace({ currentUser, timeZone }) {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { navigate, requestAction } = useAdminNavigation();
+  const shell = useAdminShell();
+  const Content = shell ? "section" : "main";
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
   const schoolId = currentUser?.schoolId;
@@ -143,6 +146,8 @@ function CoverageWorkspace({ currentUser, timeZone }) {
     studentIds: [],
     active: true,
   });
+  const [assignmentBaseline, setInitialAssignment] = useState(assignmentForm);
+  const setAssignmentBaseline = next => { setInitialAssignment(next); setAssignmentForm(next); };
   const contextsQuery = useQuery({
     queryKey: ["/api/coverage/contexts", schoolId, currentUser?.id],
     queryFn: ({ signal }) => apiRequest("GET", "/coverage/contexts", undefined, { signal, headers: { "X-School-Id": schoolId } }),
@@ -161,7 +166,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
   const visibleTab = requestedTab === "access" && !isAdmin ? (canManageSupervisionSetup ? "groups" : "live")
     : requestedTab === "groups" && !canManageSupervisionSetup ? "live"
     : ["live", "scheduled", "groups", "access"].includes(requestedTab) ? requestedTab : "live";
-  const setActiveTab = tab => setSearchParams(params => { params.set("tab", tab); return params; });
+  const setActiveTab = tab => { const params = new URLSearchParams(searchParams); params.set("tab", tab); return navigate(`/classpilot/coverage?${params}`); };
   useEffect(() => {
     if (!schoolId || !currentUser?.id) return;
     if (["console", "claimed", "unassigned", "available"].includes(activeTab)) navigate("/classpilot", { replace: true, state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser?.id, view: ["unassigned", "available"].includes(activeTab) ? "available" : "claimed" }) });
@@ -490,7 +495,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
   };
 
   const resetAssignmentForm = () => {
-    setAssignmentForm({
+    setAssignmentBaseline({
       existingIds: [],
       staffId: "",
       claim: true,
@@ -532,7 +537,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
         (scope.value || []).forEach((studentId) => studentIds.add(studentId));
       }
     });
-    setAssignmentForm({
+    setAssignmentBaseline({
       existingIds: assignments.map((assignment) => assignment.id),
       staffId: permissionPackage.staffId || assignments[0]?.staffId || "",
       claim,
@@ -679,9 +684,16 @@ function CoverageWorkspace({ currentUser, timeZone }) {
     if (action === "start" && result?.context?.assignedStaffId === currentUser.id) openDashboard(result.context);
   };
 
+  useAdminNavigationBlocker({ id: "coverage-setup",
+    dirty: assignmentOpen && JSON.stringify(assignmentForm) !== JSON.stringify(assignmentBaseline) || Boolean(releaseDialog && releaseReason !== "returned_to_class"),
+    busy: setupWriteBusy || releaseMutation.isPending,
+    onDiscard: () => { setAssignmentOpen(false); setReleaseDialog(null); setSetupDeletion(null); },
+  });
+  const closeAssignment = () => requestAction(() => setAssignmentOpen(false), { id: "coverage-assignment-close" });
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b bg-card">
+    <div className={shell ? "text-foreground" : "min-h-screen bg-background text-foreground"}>
+      {!shell && <header className="border-b bg-card">
         <div className="max-w-screen-2xl mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <Button variant="ghost" size="icon" aria-label="Back to dashboard" onClick={() => navigate("/classpilot")}>
@@ -697,12 +709,13 @@ function CoverageWorkspace({ currentUser, timeZone }) {
             Refresh
           </Button>
         </div>
-      </header>
+      </header>}
 
-      <main className="max-w-screen-2xl mx-auto px-6 py-6">
+      <Content className="max-w-screen-2xl mx-auto px-6 py-6">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-2xl text-sm text-muted-foreground">Saved groups keep a roster for later. Students are supervised only during a started session or scheduled activity.</p>
           <div className="flex flex-wrap gap-2">
+            {shell && <Button variant="outline" onClick={refreshCoverage}><RefreshCw className="h-4 w-4 mr-2" />Refresh</Button>}
             <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "available" }) })}>Available students</Button>
             <Button variant="outline" onClick={() => navigate("/classpilot", { state: createDashboardWorkspaceIntent({ schoolId, viewerId: currentUser.id, view: "claimed" }) })}>Claimed students</Button>
           </div>
@@ -747,7 +760,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
           <TabsContent value="scheduled" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">Applied testing and scheduled coverage. Times use {scheduledQuery.data?.timeZone || "the school timezone"}.</p>
-              <label className="flex items-center gap-2 text-sm">Date<Input aria-label="Scheduled date" className="w-auto" type="date" value={selectedDate || scheduledQuery.data?.date || ""} onChange={event => setSearchParams(params => { event.target.value ? params.set("date", event.target.value) : params.delete("date"); return params; })} /></label>
+              <label className="flex items-center gap-2 text-sm">Date<Input aria-label="Scheduled date" className="w-auto" type="date" value={selectedDate || scheduledQuery.data?.date || ""} onChange={event => { const params = new URLSearchParams(searchParams); event.target.value ? params.set("date", event.target.value) : params.delete("date"); void navigate(`/classpilot/coverage?${params}`); }} /></label>
             </div>
             {scheduledQuery.isError ? <p role="alert" className="rounded-md border p-4 text-sm text-destructive">Scheduled activities could not load. Use Refresh to try again.</p> : <div className="divide-y rounded-md border">
               {(scheduledQuery.data?.items || []).length === 0 ? <p role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">{scheduledQuery.isPending ? "Loading scheduled activities…" : "No applied testing or scheduled coverage for this date. Saved groups do not create scheduled activities."}</p> : scheduledQuery.data.items.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
@@ -822,7 +835,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
             </TabsContent>
           )}
         </Tabs>
-      </main>
+      </Content>
 
       <AlertDialog open={!!visibleSetupDeletion} onOpenChange={(open) => { if (!open) closeSetupDeletion(); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg overflow-y-auto" onEscapeKeyDown={(event) => { if (setupDeletionBusy) event.preventDefault(); }} onCloseAutoFocus={(event) => {
@@ -861,7 +874,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
 
       {sessionDialog && <SupervisionSessionDialog key={`${schoolId}:${currentUser.id}:${sessionDialog.group?.id || sessionDialog.context?.id || ""}`} open onOpenChange={open => { if (!open) setSessionDialog(null); }} {...sessionDialog} onSuccess={sessionComplete} />}
 
-      <Dialog open={isAdmin && assignmentOpen} onOpenChange={setAssignmentOpen}>
+      <Dialog open={isAdmin && assignmentOpen} onOpenChange={open => open ? setAssignmentOpen(true) : closeAssignment()}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{assignmentForm.existingIds.length ? "Edit Staff Access" : "Give Staff Access"}</DialogTitle>
@@ -1037,7 +1050,7 @@ function CoverageWorkspace({ currentUser, timeZone }) {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignmentOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={closeAssignment}>Cancel</Button>
             <Button
               onClick={submitAssignment}
               disabled={

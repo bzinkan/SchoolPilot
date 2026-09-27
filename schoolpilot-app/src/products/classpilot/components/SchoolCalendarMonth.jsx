@@ -1,3 +1,5 @@
+import { useAuth } from "../../../contexts/AuthContext";
+import { useAdminNavigationBlocker, useAdminShell } from "../hooks/useAdminNavigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronLeft, ChevronRight, CircleAlert, Clock3, Loader2, RotateCcw, Save, Sparkles } from "lucide-react";
@@ -254,7 +256,11 @@ function CalendarLoadError({ error, onRetry }) {
   );
 }
 
-function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMonthChange, apiBasePath }) {
+function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMonthChange, apiBasePath, defaultMonth, schoolId }) {
+  const shell = useAdminShell();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const requestOptions = { headers: { 'X-School-Id': schoolId } };
   const { toast } = useToast();
   const [baseline, setBaseline] = useState(initialProjection);
   const [draft, setDraft] = useState(() => new Set(initialProjection.nonInstructionalDates));
@@ -274,7 +280,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   const sortedDraft = useMemo(() => [...draft].sort(), [draft]);
   const draftIdentity = JSON.stringify([baseline.month, baseline.revision, sortedDraft]);
   const draftIdentityRef = useRef(draftIdentity);
-  draftIdentityRef.current = draftIdentity;
+  useLayoutEffect(() => { draftIdentityRef.current = draftIdentity; }, [draftIdentity]);
   const dirty = !sameDates(sortedDraft, baseline.nonInstructionalDates);
   const timeZone = baseline.schoolTimezone;
   const firstEditableDate = baseline.schoolLocalToday > `${baseline.month}-01`
@@ -284,19 +290,19 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   const hasEditableDate = firstEditableDate <= lastMonthDate;
 
   useLayoutEffect(() => {
-    onDirtyChange(dirty);
-    return () => onDirtyChange(false);
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
   }, [dirty, onDirtyChange]);
 
   useEffect(() => {
-    if (!dirty) return undefined;
+    if (shell || !dirty) return undefined;
     const warnBeforeUnload = (event) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [dirty]);
+  }, [dirty, shell]);
 
   const clearTransientSaveState = () => {
     setSchedulePreview(null);
@@ -323,9 +329,11 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
           "PUT",
           `${apiBasePath}/${baseline.month}`,
           { expectedRevision, nonInstructionalDates: dates, previewToken: schedulePreview?.previewToken },
+          requestOptions,
         );
         saved = normalizeProjection(response, baseline.month);
         if (!saved) throw new Error("The server returned an invalid saved calendar.");
+        if (!mounted.current) return saved;
         queryClient.setQueryData(queryKey, saved);
       }
 
@@ -333,6 +341,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
         const response = await apiRequest(
           "GET",
           `${apiBasePath}?month=${encodeURIComponent(baseline.month)}`,
+          undefined, requestOptions,
         );
         const verified = normalizeProjection(response, baseline.month);
         if (verified && saved && verified.revision > saved.revision) {
@@ -358,13 +367,17 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
       }
     },
     onSuccess: (verified) => {
+      if (!mounted.current) return;
       adoptProjection(verified);
+      void queryClient.invalidateQueries({ queryKey: ["classpilot-school-scheduling"] });
+      void queryClient.invalidateQueries({ queryKey: ["classpilot-schedule-profiles"] });
       toast({
         title: "Calendar saved",
         description: `${formatMonthLabel(verified.month)} was saved and verified.`,
       });
     },
     onError: (error) => {
+      if (!mounted.current) return;
       const conflict = error?.code === "CALENDAR_SAVE_CONFLICT"
         ? error.currentProjection
         : error?.response?.status === 409
@@ -389,9 +402,9 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
   });
 
   const previewMutation = useMutation({
-    mutationFn: ({ month, dates }) => apiRequest("POST", `${apiBasePath}/${month}/preview`, { nonInstructionalDates: dates }),
-    onSuccess: (result, variables) => { if (variables.identity === draftIdentityRef.current) { setSchedulePreview(result); setSaveError(""); } },
-    onError: (error) => setSaveError(getErrorMessage(error)),
+    mutationFn: ({ month, dates }) => apiRequest("POST", `${apiBasePath}/${month}/preview`, { nonInstructionalDates: dates }, requestOptions),
+    onSuccess: (result, variables) => { if (mounted.current && variables.identity === draftIdentityRef.current) { setSchedulePreview(result); setSaveError(""); } },
+    onError: (error) => { if (mounted.current) setSaveError(getErrorMessage(error)); },
     onSettled: () => { previewInFlightRef.current = false; },
   });
 
@@ -435,13 +448,29 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
     clearTransientSaveState();
   };
 
+  const busy = saveMutation.isPending || previewMutation.isPending;
+  useAdminNavigationBlocker({
+    id: "school-calendar-month", dirty, busy,
+    shouldBlock: ({ currentLocation, nextLocation }) => {
+      if (!nextLocation || nextLocation.pathname !== currentLocation.pathname) return true;
+      const requested = new URLSearchParams(nextLocation.search).get("month");
+      return (parseMonthKey(requested) ? requested : defaultMonth) !== baseline.month;
+    },
+    onDiscard: handleDiscard,
+  });
+  // Keep refreshes separate from an in-progress save or an unresolved conflict.
+  if (!busy && !unverifiedProjection && !conflictProjection && initialProjection.revision >= baseline.revision && !sameProjection(initialProjection, baseline)) {
+    if (dirty) setConflictProjection(initialProjection);
+    else { setBaseline(initialProjection); setDraft(new Set(initialProjection.nonInstructionalDates)); setSchedulePreview(null); }
+  }
+
   const requestMonthChange = (date) => {
     const month = formatMonthKey(date, timeZone);
     requestMonthKey(month);
   };
 
   const requestMonthKey = (month) => {
-    if (month === baseline.month) return;
+    if (busy || month === baseline.month) return;
     if (dirty) setPendingMonth(month);
     else onMonthChange(month);
   };
@@ -743,7 +772,7 @@ function LoadedSchoolCalendar({ initialProjection, queryKey, onDirtyChange, onMo
               onClick={() => {
                 const month = pendingMonth;
                 setPendingMonth(null);
-                if (month) onMonthChange(month);
+                if (month) { handleDiscard(); onMonthChange(month); }
               }}
               data-testid="button-discard-month-draft"
             >
@@ -772,14 +801,17 @@ export default function SchoolCalendarMonth({
   onDirtyChange,
   onMonthChange,
   apiBasePath = "/classpilot/admin/instructional-calendar",
+  defaultMonth = month,
 }) {
-  const queryKey = ["instructional-calendar", apiBasePath, month];
+  const { activeSchoolId, user } = useAuth();
+  const queryKey = ["instructional-calendar", apiBasePath, activeSchoolId, user?.id, month];
   const calendarQuery = useQuery({
     queryKey,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const response = await apiRequest(
         "GET",
         `${apiBasePath}?month=${encodeURIComponent(month)}`,
+        undefined, { signal, headers: { "X-School-Id": activeSchoolId } },
       );
       const projection = normalizeProjection(response, month);
       if (!projection) throw new Error("The server returned an invalid school calendar.");
@@ -788,18 +820,20 @@ export default function SchoolCalendarMonth({
   });
 
   if (calendarQuery.isLoading) return <CalendarLoading />;
-  if (calendarQuery.isError || !calendarQuery.data) {
+  if (!calendarQuery.data) {
     return <CalendarLoadError error={calendarQuery.error} onRetry={() => calendarQuery.refetch()} />;
   }
 
   return (
-    <LoadedSchoolCalendar
-      key={month}
+    <><p hidden={!calendarQuery.isError} role={calendarQuery.isError ? "alert" : undefined} className="text-sm text-destructive">Could not refresh the calendar. Your draft is still here.</p><LoadedSchoolCalendar
+      key={`${activeSchoolId}:${user?.id}:${month}`}
       initialProjection={calendarQuery.data}
       queryKey={queryKey}
       onDirtyChange={onDirtyChange}
       onMonthChange={onMonthChange}
       apiBasePath={apiBasePath}
-    />
+      defaultMonth={defaultMonth}
+      schoolId={activeSchoolId}
+    /></>
   );
 }

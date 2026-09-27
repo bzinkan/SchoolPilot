@@ -1,3 +1,4 @@
+import { useAdminShell } from "../hooks/useAdminNavigation";
 import { createElement } from "react";
 import { NavLink } from "react-router-dom";
 import { BookOpenCheck, CalendarClock, GraduationCap, Settings2, SlidersHorizontal } from "lucide-react";
@@ -42,6 +43,8 @@ export function TeacherSettingsTabs() {
 }
 
 export function AdminSettingsTabs() {
+  const adminShell = useAdminShell();
+  if (adminShell) return null;
   return (
     <RouteTabs
       ariaLabel="Admin Settings sections"
@@ -54,6 +57,8 @@ export function AdminSettingsTabs() {
 }
 
 export function AdminClassesTabs({ canManageClasses = true }) {
+  const adminShell = useAdminShell();
+  if (adminShell) return null;
   const items = [
     canManageClasses ? { label: "Classes", path: "/classpilot/admin/classes", icon: GraduationCap, end: true } : null,
     canManageClasses ? { label: "Scheduling", path: "/classpilot/admin/classes/scheduling", icon: CalendarClock, end: true } : null,

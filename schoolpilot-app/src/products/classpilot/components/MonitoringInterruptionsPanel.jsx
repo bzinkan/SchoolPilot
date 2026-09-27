@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "../../../components/ui/card";
@@ -112,6 +113,7 @@ function ScopedMonitoringDigestSettings({ schoolId, identity }) {
   const query = useQuery({ queryKey: settingsKey, enabled: Boolean(schoolId), queryFn: ({ signal }) => apiRequest("GET", `${API}/settings`, undefined, { signal, headers: { "X-School-Id": schoolId } }) });
   const save = useMutation({ mutationFn: (digestEnabled) => apiRequest("PUT", `${API}/settings`, { digestEnabled, expectedRevision: query.data.revision }, { headers: { "X-School-Id": schoolId } }),
     onSuccess: (data) => queryClient.setQueryData(settingsKey, data), onError: () => queryClient.invalidateQueries({ queryKey: settingsKey }) });
+  useAdminNavigationBlocker({ id: "monitoring-digest", busy: save.isPending });
   return <div className="space-y-2 rounded-lg border p-4" data-testid="monitoring-digest-settings">
     <div className="flex items-center justify-between gap-4"><Label htmlFor="monitoring-digest-enabled">Daily monitoring interruption digest</Label><Switch id="monitoring-digest-enabled" checked={query.data?.digestEnabled === true} onCheckedChange={(enabled) => save.mutate(enabled)} disabled={!query.data || query.isFetching || save.isPending} /></div>
     <p className="text-sm text-muted-foreground">Off by default. Send active school administrators one operational summary 30 minutes after the configured tracking end time on tracking days, when interruptions occurred. Student safety notifications are separate.</p>

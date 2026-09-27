@@ -1,6 +1,7 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useQuery } from "@tanstack/react-query";
 import MonitoringInterruptionsPanel from "../components/MonitoringInterruptionsPanel";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowLeft, BookOpenCheck, CheckCircle2, Download, ExternalLink, MonitorCheck, RefreshCw, ShieldAlert, ShieldCheck, TriangleAlert, XCircle } from "lucide-react";
 import { apiRequest } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
@@ -222,7 +223,8 @@ function ClassOwnershipIntegrity({ integrity, onOpenClasses, onOpenStaff }) {
 }
 
 export default function ITReadiness() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["/api/classpilot/it-readiness"],
     queryFn: () => apiRequest("GET", "/classpilot/it-readiness"),
@@ -232,7 +234,7 @@ export default function ITReadiness() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b">
+      {!adminShell && (<header className="border-b">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-4">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" onClick={() => navigate("/classpilot/admin")}>
@@ -257,8 +259,8 @@ export default function ITReadiness() {
             </Button>
           </div>
         </div>
-      </header>
-
+      </header>)}
+{adminShell && (<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => refetch()}><RefreshCw className="mr-2 size-4" />Refresh</Button><Button asChild><a href="/api/classpilot/it-readiness/export.csv" download><Download className="mr-2 size-4" />Export CSV</a></Button></div>)}
       <main className="mx-auto max-w-6xl space-y-6 px-6 py-6">
         <MonitoringInterruptionsPanel />
         <div className="grid gap-3 md:grid-cols-6">

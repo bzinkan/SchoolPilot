@@ -1,3 +1,4 @@
+import ClassPilotAdminOperationGuard from "./ClassPilotAdminOperationGuard";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Clipboard, ExternalLink, Loader2, ShieldCheck, TriangleAlert } from "lucide-react";
@@ -37,6 +38,7 @@ export default function GoogleRosterConnectorPanel({
   const verifyMutation = useMutation({
     mutationFn: () => apiRequest("POST", `${basePath}/verify`, { delegatedAdminEmail: delegatedAdminEmail.trim() }),
     onSuccess: async () => {
+      setDelegatedAdminEmail("");
       await queryClient.invalidateQueries({ queryKey: [basePath, "setup-info"] });
       onConnected?.();
     },
@@ -49,6 +51,7 @@ export default function GoogleRosterConnectorPanel({
     },
   });
 
+  const busy = verifyMutation.isPending || disconnectMutation.isPending;
   const data = setupQuery.data || {};
   const connector = data.connector;
   const connected = connector?.status === "verified";
@@ -85,7 +88,7 @@ export default function GoogleRosterConnectorPanel({
     );
   }
 
-  if (setupQuery.isError) {
+  if (setupQuery.isError && !setupQuery.data) {
     return (
       <div className={`rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive ${className}`}>
         Failed to load the Google Workspace Roster Connector setup.
@@ -95,6 +98,9 @@ export default function GoogleRosterConnectorPanel({
 
   return (
     <div className={`space-y-4 rounded-md border p-4 ${className}`}>
+      <ClassPilotAdminOperationGuard id="google-roster-connector" dirty={Boolean(delegatedAdminEmail.trim())} busy={busy}
+        onDiscard={() => setDelegatedAdminEmail("")} />
+      {setupQuery.isError && <p role="alert" className="text-sm text-destructive">Could not refresh connector status. Your changes are still here.</p>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -204,6 +210,8 @@ export default function GoogleRosterConnectorPanel({
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
           <Input
             type="email"
+            aria-label="Delegated administrator email"
+            disabled={busy}
             value={delegatedAdminEmail}
             onChange={(event) => setDelegatedAdminEmail(event.target.value)}
             placeholder={connector?.delegatedAdminEmail || `admin@${data.schoolDomain || "school.edu"}`}
@@ -211,7 +219,7 @@ export default function GoogleRosterConnectorPanel({
           <Button
             type="button"
             onClick={() => verifyMutation.mutate()}
-            disabled={!serviceConfigured || !delegatedAdminEmail.trim() || verifyMutation.isPending}
+            disabled={!serviceConfigured || !delegatedAdminEmail.trim() || busy}
           >
             {verifyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             Verify
@@ -220,7 +228,7 @@ export default function GoogleRosterConnectorPanel({
             type="button"
             variant="outline"
             onClick={() => disconnectMutation.mutate()}
-            disabled={!connector || disconnectMutation.isPending}
+            disabled={!connector || busy}
           >
             Disable
           </Button>

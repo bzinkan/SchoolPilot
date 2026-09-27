@@ -1,6 +1,6 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useToast } from "../../../hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -41,7 +41,8 @@ const CATEGORY_LABELS = {
 };
 
 export default function EmailMonitoring() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
   const [reviewStatus, setReviewStatus] = useState("unreviewed");
   const [severity, setSeverity] = useState("");
@@ -141,7 +142,7 @@ export default function EmailMonitoring() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
+      {!adminShell && (<div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
             <ShieldAlert className="h-6 w-6 text-primary-foreground" />
@@ -165,8 +166,8 @@ export default function EmailMonitoring() {
             <LogOut className="h-5 w-5" />
           </Button>
         </div>
-      </div>
-
+      </div>)}
+{adminShell && (<div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-muted-foreground">{statsData?.mailboxesMonitored ?? 0} mailboxes monitored</p><Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring/setup")}><SettingsIcon className="mr-2 size-4" />Setup</Button></div>)}
       {/* Stat cards */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

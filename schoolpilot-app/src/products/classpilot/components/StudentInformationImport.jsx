@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { studentInformationApi } from "../lib/studentInformationApi";
 import {
   informationMessage,
@@ -11,6 +11,8 @@ import {
 } from "../lib/studentInformationModel";
 import { attachmentDigest } from "../lib/myDesk";
 import StudentContactFields from "./StudentContactFields";
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from "../hooks/useAdminNavigation";
+import { withDisciplineEntry } from "../lib/disciplineNavigation";
 import { useStudentInformationDraftGuard } from "../hooks/useStudentInformationDraftGuard";
 
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.csv";
@@ -110,7 +112,7 @@ function StudentMatch({ access, value, onChange }) {
     </div>
   );
 }
-function ProfileReview({ access, run, item, onAction, busy }) {
+function ProfileReview({ access, run, item, onAction, busy, onDirty }) {
   const [manualContacts, setManualContacts] = useState([]),
     [removed, setRemoved] = useState([]);
   const [studentId, setStudentId] = useState(item.studentId),
@@ -131,6 +133,8 @@ function ProfileReview({ access, run, item, onAction, busy }) {
     staleTime: 0,
     refetchOnWindowFocus: "always",
   });
+  const dirty = manualContacts.length > 0 || removed.length > 0 || studentId !== item.studentId || resolved || Object.keys(decisions).length > 0;
+  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   const profile = current.isError ? null : current.data?.profile;
   const proposedContacts = [...item.proposed.contacts, ...manualContacts];
   const decided = proposedContacts.every(
@@ -423,6 +427,8 @@ export function StudentInformationUpload({ access, run, onUploaded }) {
     [error, setError] = useState("");
   const lifetime = useRef(null),
     attempt = useRef(null);
+  const committedNavigation = useAdminNavigationBlocker({ id: `contact-upload:${run?.id || "new"}`, dirty: files.length > 0 || hasAttempt, busy,
+    onDiscard: () => { setFiles([]); setHasAttempt(false); attempt.current = null; } });
   useEffect(() => {
     const controller = new AbortController();
     lifetime.current = controller;
@@ -489,7 +495,8 @@ export function StudentInformationUpload({ access, run, onUploaded }) {
           await api.upload(saved.runId, asset.id, file, contentType);
       }
       controller.signal.throwIfAborted();
-      onUploaded(saved.runId);
+      setFiles([]); setHasAttempt(false); attempt.current = null;
+      await onUploaded(saved.runId, committedNavigation.navigateAfterCommit);
     } catch (failure) {
       if (!controller.signal.aborted) setError(informationMessage(failure));
     } finally {
@@ -537,6 +544,8 @@ export function StudentInformationUpload({ access, run, onUploaded }) {
 function ManualProfile({ access, run, busy, onAction }) {
   const [studentId, setStudentId] = useState(null),
     [sourceSectionId, setSourceSectionId] = useState("");
+  useAdminNavigationBlocker({ id: `contact-manual-profile:${run.id}`, dirty: Boolean(studentId || sourceSectionId), busy,
+    onDiscard: () => { setStudentId(null); setSourceSectionId(""); } });
   return (
     <details>
       <summary>Add a student missed in the source reading</summary>
@@ -559,7 +568,7 @@ function ManualProfile({ access, run, busy, onAction }) {
       </label>
       <button
         disabled={busy || !studentId || !sourceSectionId}
-        onClick={() => onAction("addItem", { studentId, sourceSectionId })}
+        onClick={async () => { if (await onAction("addItem", { studentId, sourceSectionId })) { setStudentId(null); setSourceSectionId(""); } }}
       >
         Add draft for manual review
       </button>
@@ -567,8 +576,12 @@ function ManualProfile({ access, run, busy, onAction }) {
   );
 }
 export default function StudentInformationImport({ access, importId }) {
-  const client = useQueryClient(),
-    navigate = useNavigate();
+  const client = useQueryClient();
+  const { navigate, requestAction } = useAdminNavigation();
+  const shell = useAdminShell();
+  const Heading = shell ? "h2" : "h1";
+  const [params] = useSearchParams();
+  const directoryPath = withDisciplineEntry("/classpilot/my-desk/student-information", params);
   const key = [
     ...studentInformationKeys.root(access.schoolId, access.viewerId),
     "import",
@@ -590,6 +603,7 @@ export default function StudentInformationImport({ access, importId }) {
     [acknowledged, setAcknowledged] = useState(false),
     [processingConfirmed, setProcessingConfirmed] = useState(false),
     [itemId, setItemId] = useState(null),
+    [reviewDirty, setReviewDirty] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const lifetime = useRef(null),
@@ -600,7 +614,9 @@ export default function StudentInformationImport({ access, importId }) {
     return () => controller.abort();
   }, []);
   const run = query.isError ? null : query.data?.import;
-  const guard = useStudentInformationDraftGuard(Boolean(itemId) || busy);
+  const guard = useStudentInformationDraftGuard(shell ? reviewDirty || selected.length > 0 || acknowledged || processingConfirmed : Boolean(itemId), {
+    id: `contact-import:${importId}`, busy, onDiscard: () => { setItemId(null); setReviewDirty(false); setSelected([]); setAcknowledged(false); setProcessingConfirmed(false); },
+  });
   const action = async (kind, details = {}) => {
     const controller = lifetime.current;
     if (busy || !run || !controller || controller.signal.aborted) return;
@@ -628,7 +644,8 @@ export default function StudentInformationImport({ access, importId }) {
       await client.invalidateQueries({
         queryKey: studentInformationKeys.root(access.schoolId, access.viewerId),
       });
-      setItemId(null);
+      setItemId(null); setReviewDirty(false); setSelected([]); setAcknowledged(false); setProcessingConfirmed(false);
+      return true;
     } catch (failure) {
       if (!controller.signal.aborted) setError(informationMessage(failure));
     } finally {
@@ -651,10 +668,10 @@ export default function StudentInformationImport({ access, importId }) {
       run.items.some((value) => value.reviewed && !value.excluded);
   return (
     <section>
-      <Link to="/classpilot/my-desk/student-information">
+      <Link to={directoryPath}>
         Student information
       </Link>
-      <h1>Review contact import</h1>
+      <Heading>Review contact import</Heading>
       <p>
         State: {run.status}. Private review expires{" "}
         {new Date(run.expiresAt).toLocaleString()}.
@@ -796,6 +813,7 @@ export default function StudentInformationImport({ access, importId }) {
             <button
               key={value.id}
               onClick={() => {
+                if (shell) { if (itemId !== value.id) void requestAction(() => setItemId(value.id), { id: "contact-review-switch" }); return; }
                 if (
                   !itemId ||
                   itemId === value.id ||
@@ -820,6 +838,7 @@ export default function StudentInformationImport({ access, importId }) {
               access={access}
               run={run}
               item={item}
+              onDirty={setReviewDirty}
               onAction={action}
               busy={busy}
             />
@@ -827,6 +846,7 @@ export default function StudentInformationImport({ access, importId }) {
           {item && (
             <button
               onClick={() => {
+                if (shell) { void requestAction(() => setItemId(null), { id: "contact-review-close" }); return; }
                 if (
                   window.confirm(
                     "Discard unsaved edits and close this profile review?",
@@ -860,7 +880,7 @@ export default function StudentInformationImport({ access, importId }) {
           {run.receipt?.profiles.map((profile) => (
             <p key={profile.itemId}>
               <Link
-                to={`/classpilot/my-desk/student-information/${encodeURIComponent(profile.studentId)}`}
+                to={withDisciplineEntry(`/classpilot/my-desk/student-information/${encodeURIComponent(profile.studentId)}`, params)}
               >
                 Open saved student profile
               </Link>
@@ -885,11 +905,12 @@ export default function StudentInformationImport({ access, importId }) {
       )}
       <button
         onClick={() => {
+          if (shell) { void navigate(directoryPath); return; }
           if (
             !itemId ||
             window.confirm("Discard unsaved review edits and return?")
           )
-            navigate("/classpilot/my-desk/student-information");
+            navigate(directoryPath);
         }}
       >
         Return to student information

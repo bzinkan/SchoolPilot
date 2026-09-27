@@ -10,6 +10,36 @@ Launch, govern, operate, and support ClassPilot across the complete school admin
 
 
 
+### Find your way around the Admin Panel
+
+**Who can use this:** Administrator or school administrator
+
+Overview is your starting point. One menu organizes school administration on desktop and phone.
+
+1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, Discipline logs, or Calendar. A loading failure is shown separately from missing dates.
+2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes. Discipline logs opens school records organized by student.
+3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School settings, Student portal, Integrations & IT readiness, this Admin guide, and Maintenance.
+4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
+5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
+
+> **Check before continuing:** Administrator navigation does not grant access to another teacher’s private Notes, Seating, packets, or unfinished imports.
+
+[Open Overview](/classpilot/admin)
+
+### Set the school year and calendar
+
+**Who can use this:** Administrator or school administrator
+
+School-year dates have their own page and do not require an A/B rotation setup.
+
+1. **Review the saved dates.** Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview and discipline’s missing-date notice link here.
+2. **Enter both dates.** Use School year starts and School year ends. Dates come from your school’s actual calendar; no year boundaries are guessed. Ordinary bell periods are in Bells & rotation, with optional A/B settings in an expandable section.
+3. **Preview and save.** Preview changes shows scheduling impacts and blockers. Save reviewed schedule saves the complete reviewed configuration, including changed year dates, bells, rotation, and date overrides. The editor lists the changed sections. Classes already in progress retain their saved times.
+4. **Keep closures separate.** Calendar manages monthly holidays and closures through its own save and verification process. Special schedules manages reusable testing and dated profiles. Moving between sections keeps drafts; a newer saved revision requires review rather than replacing unsaved work.
+5. **Verify the result.** After saving, check Overview and the discipline period. They refresh from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration.
+
+[Open School year](/classpilot/admin/scheduling?section=school-year)
+
 ### Launch checklist
 
 **Who can use this:** Administrator or school administrator
@@ -42,7 +72,7 @@ Create staff, assign the least privilege, and keep lifecycle actions auditable.
 
 > **Check before continuing:** Disabling or deleting access can interrupt active work. Verify the exact staff record and school first.
 
-[Open Admin Panel](/classpilot/admin)
+[Open Staff accounts](/classpilot/admin?tab=staff)
 
 ### Manage students and shared-device PINs
 
@@ -81,9 +111,9 @@ Official classes define teacher authority, student membership, and scheduled ses
 1. **Create or import.** Create an official class or import from Google Classroom, then verify its school, name, and source.
 2. **Assign teaching staff.** Set one primary teacher and any appropriate co-teachers. These assignments control who can start and operate the class.
 3. **Build the roster.** Add the exact students who belong in the class. A student can belong to more than one official class.
-4. **Configure the recurring window.** Set each class’s weekdays, term dates, A days/B days/both, and fixed times or named period. Class Management keeps Classes | Scheduling | Schedule Changes in that order.
-5. **Separate saved plans from applied dates.** Scheduling → Schedule profiles has two sections: Saved profiles holds reusable plans, and Applied dates shows their dated uses. Each saved-profile row summarizes configured testing blocks, custom class times and skipped-class rules. No schedule changes configured means the profile has none of those settings, even if classes are included. Including a class does not mean its time changed; actual changes depend on which classes meet on each applied date. The next date is strictly after today in the school’s timezone, excluding cancelled applications and dates without eligible class changes or testing blocks. Applied today appears separately. No future dates does not mean today’s schedule was cancelled.
-6. **Build a special-day profile.** Open Scheduling → Schedule profiles and create a named plan such as NWEA. Choose Preview schedule for, then Load regular schedule or Start blank. Day planner keeps classes, testing and review together. Timeline uses compact rows aligned to one shared time axis, with a sticky time header and pinned row labels while scrolling. It shows regular times as thin bars beside proposed class and testing bars. List offers the same editing controls and is the initial mobile view; Timeline remains available with horizontal scrolling. Skipped and unchanged classes remain visible.
+4. **Configure the recurring window.** Set each class’s weekdays, term dates, A days/B days/both, and fixed times or named period. Use People & classes → Classes for rosters and Calendar & schedules for school-year dates, bells, special schedules, and Schedule changes.
+5. **Separate saved plans from applied dates.** Calendar & schedules → Special schedules has two sections: Saved profiles holds reusable plans, and Applied dates shows their dated uses. Each saved-profile row summarizes configured testing blocks, custom class times and skipped-class rules. No schedule changes configured means the profile has none of those settings, even if classes are included. Including a class does not mean its time changed; actual changes depend on which classes meet on each applied date. The next date is strictly after today in the school’s timezone, excluding cancelled applications and dates without eligible class changes or testing blocks. Applied today appears separately. No future dates does not mean today’s schedule was cancelled.
+6. **Build a special-day profile.** Open Calendar & schedules → Special schedules and create a named plan such as NWEA. Choose Preview schedule for, then Load regular schedule or Start blank. Day planner keeps classes, testing and review together. Timeline uses compact rows aligned to one shared time axis, with a sticky time header and pinned row labels while scrolling. It shows regular times as thin bars beside proposed class and testing bars. List offers the same editing controls and is the initial mobile view; Timeline remains available with horizontal scrolling. Skipped and unchanged classes remain visible.
 7. **Read the school-hours timeline.** Timeline uses the exact start and end of the school’s enabled, valid daytime Monitoring Hours. Time edits never expand the axis. Disabled or unconfigured hours use a labeled 08:00–16:00 display default. Unavailable, invalid or overnight configured hours show the editable List until the hours can be read or corrected. Class and testing times outside school hours remain visible, labeled and editable; their bars are clipped to the axis without changing their times. This display behavior adds no scheduling, saving or application restrictions.
 8. **Choose the view you need.** Use School, Class or Teacher view, then filter by grade, class, teacher or search. In School view, testing appears alongside classes within each participating grade, using checked student associations. A mixed-grade block appears under every participating grade as linked views of one block: editing any occurrence updates them all, and counts and the 30-block limit include it once. Testing with an unknown association remains visible with that status. Teacher view includes co-teachers and duties across grades. Class view includes testing associated with that class’s students, with participation counts when available. Display filters and collapsed grades do not change which classes the profile includes; included classes, custom-time rules, skipped classes and testing blocks have separate counts.
 9. **Edit directly in Day planner.** Click a class name or bar to open its controls in that row. Explicitly include an outside class before changing it, then choose Keep existing schedule, Custom time or Does not meet. Restore regular schedule removes that class’s override. For example, shorten Homeroom from 8:30–9:10 to 8:30–9:00 before 9:00 testing. The proposed bar updates immediately. Undo last change restores draft edits; nothing automatically shortens, skips, moves or reassigns ordinary classes.
@@ -176,7 +206,7 @@ Apply the standard Chrome and sign-in policies that force-install ClassPilot and
 
 Choose the portal students open after ClassPilot sign-in while their Waypoint or Flight Path remains active.
 
-1. **Open Admin Panel → Student Portal.** Review rollout and Chromebook readiness, then enable the Student Portal for active Waypoints and Flight Paths. Only school administrators can configure it.
+1. **Open Admin Panel → Settings → Student portal.** Review rollout and Chromebook readiness, then enable the Student Portal for active Waypoints and Flight Paths. Only school administrators can configure it.
 2. **Choose Clever as the first portal.** Select Clever under First portal after ClassPilot sign-in to start restricted students there. They then choose a teacher-approved learning destination from the portal; completing provider sign-in does not automatically send them to a learning site.
 3. **Configure providers.** Use the built-in Google or Clever profile, enter the district Clever launch address when required, or add a bounded custom provider for the school’s identity system.
 4. **Approve exact hosts.** Prefer exact hostnames. Allow subdomains only when the provider genuinely requires them. Lookalikes, wildcards, public suffixes, local addresses, and unsafe URLs are rejected.
@@ -219,7 +249,7 @@ Define who can temporarily supervise students and preserve clear ownership throu
 20. **Read unavailable data honestly.** Summaries allow at least 30 seconds for final observations to settle. They distinguish recorded activity from missing or unavailable observations; no data is not proof that a student stayed on task. A testing block that never started produces no activity summary. Saving or applying a profile does not itself send an activity summary or a new scheduling announcement.
 21. **Remove unused setup.** In Saved groups, choose Delete group and review the confirmation to remove a group and its group-specific permissions. In Staff access, Disable retains permission entries for later use; Remove permissions removes the displayed permissions for that staff member, including disabled entries, without deleting supervision groups. These actions preserve staff and student accounts, regular class rosters and supervision history. Resolve any saved-profile, upcoming-testing or active-supervision dependency shown in the message before deleting.
 
-[Open Supervision](/classpilot/coverage)
+[Open Supervision](/classpilot/coverage?entry=admin)
 
 ### Use Analytics, IT Readiness, and Safety Center
 
@@ -238,7 +268,7 @@ Keep operational health, instructional trends, and evidence workflows in their p
 
 **Who can use this:** Administrator or school administrator
 
-Use Safety Center in the Admin panel, below Coverage and above Database Cleanup.
+Use Admin Panel → School operations → Safety Center. Destructive cleanup tools are separate under Settings → Maintenance.
 
 1. **Open the student report.** Review individual alerts, evidence, explanations, observations and delivery status. Severity provides context; every new distinct concern follows the same administrator email workflow. Repeated observations do not generate repeated initial emails.
 2. **Acknowledge or assess.** Acknowledge receipt to stop the single fifteen-minute follow-up. Mark an alert reviewed when you have assessed it. Assignment and review notes preserve who acted; closing a case requires a resolution note.

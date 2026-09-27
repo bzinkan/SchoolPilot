@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useForm } from "react-hook-form";
@@ -30,40 +30,15 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../components/ui/tabs";
 import { Badge } from "../../../components/ui/badge";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
-import { ThemeToggle } from "../../../components/ThemeToggle";
 import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
-import {
-  continueCalendarHistoryNavigation,
-  disableCalendarHistoryGuard,
-  updateCalendarHistoryGuard,
-} from "../calendarHistoryGuard";
-import SchoolCalendarMonth from "../components/SchoolCalendarMonth";
 import StaffAccessTransitionDialog from "../../../shared/components/StaffAccessTransitionDialog";
 import { StudentSsoPolicyCard } from "../components/StudentSsoPolicyCard";
+import AdminOverview from "../components/admin/AdminOverview";
+import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 
-const ADMIN_TAB_VALUES = new Set(["staff", "student-portal", "calendar", "audit"]);
-const MONTH_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
-
-function currentMonthInTimeZone(timeZone) {
-  const formatMonth = (zone) => {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: zone,
-      year: "numeric",
-      month: "2-digit",
-    }).formatToParts(new Date());
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return `${values.year}-${values.month}`;
-  };
-  try {
-    return formatMonth(timeZone);
-  } catch {
-    return formatMonth("America/New_York");
-  }
-}
-
+const ADMIN_TAB_VALUES = new Set(["overview", "staff", "student-portal", "audit", "active-classes", "maintenance"]);
 const createStaffSchema = z.object({
   name: z.string().optional(),
   email: z.string().email("Invalid email address"),
@@ -165,12 +140,11 @@ export default function Admin() {
     );
   }
 
-  return <AdminPanel currentUser={currentUser} schoolTimezone={school?.timezone || "America/New_York"} canManageStudentPortal={canManageStudentPortal} />;
+  return <AdminPanel key={`${currentUser?.schoolId}:${currentUser?.id}`} currentUser={currentUser} schoolTimezone={school?.timezone || "America/New_York"} canManageStudentPortal={canManageStudentPortal} />;
 }
 
 function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
 
   const [staffTransitionRequest, setStaffTransitionRequest] = useState(null);
@@ -183,10 +157,6 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [staffToResetPassword, setStaffToResetPassword] = useState(null);
   const [newPassword, setNewPassword] = useState("");
-  const [calendarDirty, setCalendarDirty] = useState(false);
-  const [calendarDraftEpoch, setCalendarDraftEpoch] = useState(0);
-  const [pendingAdminNavigation, setPendingAdminNavigation] = useState(null);
-  const historyGuardOwnerRef = useRef(Symbol("school-calendar-history-guard"));
   const [auditPage, setAuditPage] = useState(0);
   const [auditActionFilter, setAuditActionFilter] = useState("");
   const [addStaffDialogOpen, setAddStaffDialogOpen] = useState(false);
@@ -205,91 +175,7 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   const [importResult, setImportResult] = useState(null);
   const STAFF_PER_PAGE = 10;
   const requestedTab = searchParams.get("tab");
-  const activeTab = ADMIN_TAB_VALUES.has(requestedTab) ? requestedTab : "staff";
-  const requestedMonth = searchParams.get("month");
-  const calendarMonth = MONTH_PATTERN.test(requestedMonth || "")
-    ? requestedMonth
-    : currentMonthInTimeZone(schoolTimezone);
-
-  useEffect(() => {
-    if (activeTab !== "calendar" || MONTH_PATTERN.test(requestedMonth || "")) return;
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", "calendar");
-    next.set("month", calendarMonth);
-    setSearchParams(next, { replace: true });
-  }, [activeTab, calendarMonth, requestedMonth, searchParams, setSearchParams]);
-
-  useLayoutEffect(() => {
-    const owner = historyGuardOwnerRef.current;
-    updateCalendarHistoryGuard({
-      owner,
-      enabled: activeTab === "calendar" && calendarDirty,
-      currentEntry: {
-        index: window.history.state?.idx,
-        state: window.history.state,
-        href: window.location.href,
-      },
-      onBlocked: setPendingAdminNavigation,
-      onRestored: () => setPendingAdminNavigation((pending) => (
-        pending?.kind === "history" ? { ...pending, restored: true } : pending
-      )),
-    });
-    return () => disableCalendarHistoryGuard(owner);
-  }, [activeTab, calendarDirty, calendarMonth]);
-
-  const commitTabChange = (tab) => {
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", tab);
-    if (tab === "calendar") next.set("month", calendarMonth);
-    setSearchParams(next);
-  };
-
-  const requestTabChange = (tab) => {
-    if (tab === activeTab) return;
-    if (activeTab === "calendar" && calendarDirty) {
-      setPendingAdminNavigation({ kind: "tab", value: tab });
-      return;
-    }
-    commitTabChange(tab);
-  };
-
-  const requestRouteChange = (path) => {
-    if (activeTab === "calendar" && calendarDirty) {
-      setPendingAdminNavigation({ kind: "route", value: path });
-      return;
-    }
-    navigate(path);
-  };
-
-  const updateCalendarMonth = (month) => {
-    const next = new URLSearchParams(searchParams);
-    next.set("tab", "calendar");
-    next.set("month", month);
-    setSearchParams(next);
-  };
-
-  const confirmAdminNavigation = () => {
-    const pending = pendingAdminNavigation;
-    setPendingAdminNavigation(null);
-    if (!pending) return;
-    setCalendarDirty(false);
-    setCalendarDraftEpoch((epoch) => epoch + 1);
-    if (pending.kind === "history") {
-      if (pending.delta === null) {
-        disableCalendarHistoryGuard(historyGuardOwnerRef.current);
-        navigate(pending.targetPath);
-      } else {
-        continueCalendarHistoryNavigation(pending);
-      }
-      return;
-    }
-    if (pending.kind === "tab") commitTabChange(pending.value);
-    else {
-      disableCalendarHistoryGuard(historyGuardOwnerRef.current);
-      navigate(pending.value);
-    }
-  };
-
+  const activeTab = ADMIN_TAB_VALUES.has(requestedTab) ? requestedTab : "overview";
   const form = useForm({
     resolver: zodResolver(createStaffSchema),
     defaultValues: {
@@ -302,40 +188,32 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
   const watchedRole = form.watch("role");
 
   const { data: staffData, isLoading } = useQuery({
-    queryKey: ["/api/users/staff", "all"],
+    queryKey: ["/api/users/staff", "all", currentUser.schoolId, currentUser.id],
+    enabled: activeTab === "staff" || activeTab === "active-classes",
     queryFn: () => apiRequest("GET", "/users/staff?status=all"),
     select: (data) => ({
       users: (data?.staff ?? data?.users ?? []).map(normalizeStaffRecord),
     }),
   });
 
-  const { data: safetyCount } = useQuery({
-    queryKey: ["classpilot-safety-center", "count"],
-    queryFn: ({ signal }) => apiRequest("GET", "/classpilot/safety-center/count", undefined, { signal }),
-    refetchInterval: 60000,
-  });
-
-  const { data: _settings } = useQuery({
-    queryKey: ["/api/settings"],
-    queryFn: () => apiRequest("GET", "/settings"),
-  });
-
   const { data: activeSessions = [] } = useQuery({
-    queryKey: ["/api/sessions/all"],
+    queryKey: ["/api/sessions/all", currentUser.schoolId, currentUser.id],
+    enabled: activeTab === "active-classes",
     queryFn: () => apiRequest("GET", "/sessions/all"),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     refetchInterval: 10000, // Poll every 10 seconds
   });
 
   const { data: allGroups = [] } = useQuery({
-    queryKey: ["/api/teacher/groups"],
+    queryKey: ["/api/teacher/groups", currentUser.schoolId, currentUser.id],
+    enabled: activeTab === "active-classes",
     queryFn: () => apiRequest("GET", "/teacher/groups"),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
   // Audit logs query
   const { data: auditLogsData, isLoading: auditLogsLoading } = useQuery({
-    queryKey: ["/api/admin/audit-logs", auditPage, auditActionFilter],
+    queryKey: ["/api/admin/audit-logs", currentUser.schoolId, currentUser.id, auditPage, auditActionFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("limit", "20");
@@ -455,12 +333,12 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
 
   // Google Workspace staff import queries
   const { data: wsUsersData, isLoading: wsUsersLoading, error: wsUsersError, refetch: wsUsersRefetch } = useQuery({
-    queryKey: ["/api/directory/users"],
+    queryKey: ["/api/directory/users", currentUser.schoolId, currentUser.id],
     queryFn: () => apiRequest("GET", "/directory/users"),
     enabled: wsImportDialogOpen,
   });
   const { data: wsOUData, isLoading: wsOULoading, refetch: wsOURefetch } = useQuery({
-    queryKey: ["/api/directory/orgunits"],
+    queryKey: ["/api/directory/orgunits", currentUser.schoolId, currentUser.id],
     queryFn: () => apiRequest("GET", "/directory/orgunits"),
     enabled: wsImportDialogOpen,
   });
@@ -798,87 +676,30 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
     if (existing) identityConflictCandidates.push(existing);
   }
 
+  useAdminNavigationBlocker({
+    id: "staff-and-maintenance",
+    dirty: Boolean((addStaffDialogOpen && form.formState.isDirty)
+      || (editDialogOpen && (editEmailChanged || editProfileChanged))
+      || (passwordDialogOpen && newPassword) || (importDialogOpen && importFile)
+      || (wsImportDialogOpen && !wsImportResult) || staffTransitionRequest),
+    busy: [createStaffMutation, bulkImportMutation, wsImportMutation, reactivateStaffMutation,
+      updateStaffMutation, resetPasswordMutation, cleanupStudentsMutation].some(mutation => mutation.isPending),
+    description: "Your unsaved staff changes will be discarded. Saved accounts are unchanged.",
+    onDiscard: () => {
+      setAddStaffDialogOpen(false); form.reset(); setEditDialogOpen(false); setStaffToEdit(null);
+      setPasswordDialogOpen(false); setNewPassword(""); setImportDialogOpen(false); setImportFile(null);
+      setImportPreview([]); setWsImportDialogOpen(false); setStaffTransitionRequest(null); setIdentityConflict(null);
+    },
+  });
+
   return (
-    <div className="container mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
-            <Users className="h-6 w-6 text-primary-foreground" />
-          </div>
-          <div>
-            <h1 className="text-3xl font-semibold">Admin Panel</h1>
-            <p className="text-muted-foreground">
-              {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
-              {currentUser?.schoolName && ' \u2022 '}
-              Manage staff, the student portal, schedules, and school operations
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <ThemeToggle />
-          <Button variant="outline" onClick={() => requestRouteChange("/classpilot/discipline-records?entry=admin")}><FileText className="h-4 w-4 mr-2" />Discipline logs</Button>
-          <Button variant="outline" onClick={() => requestRouteChange("/classpilot/students")}><Users className="h-4 w-4 mr-2" />Students</Button>
-          <Button
-            variant="outline"
-            onClick={() => requestRouteChange("/classpilot/admin/analytics")}
-          >
-            <BarChart3 className="h-4 w-4 mr-2" />
-            Analytics
-          </Button>
-          {currentUser?.mailpilotEntitled && (
-            <Button
-              variant="outline"
-              onClick={() => requestRouteChange("/classpilot/admin/email-monitoring")}
-            >
-              <ShieldAlert className="h-4 w-4 mr-2" />
-              Email Monitor
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => requestRouteChange("/classpilot")}
-            data-testid="button-back-dashboard"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Dashboard
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => requestRouteChange("/login")}
-            data-testid="button-logout"
-            title="Log out"
-          >
-            <LogOut className="h-5 w-5" />
-          </Button>
-        </div>
-      </div>
-
-      <Tabs value={activeTab} onValueChange={requestTabChange} className="space-y-4">
-        <TabsList className="h-auto flex-wrap justify-start">
-          <TabsTrigger value="staff" className="flex items-center gap-2">
-            <Users className="h-4 w-4" />
-            Staff & Settings
-          </TabsTrigger>
-          <TabsTrigger value="student-portal" className="flex items-center gap-2" data-testid="tab-student-portal">
-            <Key className="h-4 w-4" />
-            Student Portal
-          </TabsTrigger>
-          <TabsTrigger value="calendar" className="flex items-center gap-2" data-testid="tab-school-calendar">
-            <CalendarDays className="h-4 w-4" />
-            School Calendar
-          </TabsTrigger>
-          <TabsTrigger value="audit" className="flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            Audit Logs
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="staff" className="space-y-6">
+    <div className="space-y-6">
+      {activeTab === "overview" && <AdminOverview schoolId={currentUser.schoolId} viewerId={currentUser.id} schoolTimezone={schoolTimezone} />}
+      {activeTab === "staff" && <section aria-label="Staff accounts" className="space-y-6">
           {/* Staff Management Card */}
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Users className="h-5 w-5" />
@@ -888,7 +709,7 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
                     {activeStaff.length} active
                   </CardDescription>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -1081,75 +902,13 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
             </CardContent>
           </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Student Roster Management
-          </CardTitle>
-          <CardDescription>
-            Manage student records and import new students
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-muted p-4 rounded-lg">
-            <p className="text-sm mb-2">
-              <strong>Student Roster:</strong> Centralized management of all student records.
-            </p>
-            <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
-              <li>Import students via CSV files</li>
-              <li>Edit student information (name, email, grade)</li>
-              <li>Delete student records</li>
-              <li>Filter students by grade level</li>
-            </ul>
-          </div>
-          <Button
-            variant="default"
-            data-testid="button-manage-students"
-            onClick={() => requestRouteChange("/classpilot/students")}
-          >
-            Manage Students
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <SettingsIcon className="h-5 w-5" />
-            Class Management
-          </CardTitle>
-          <CardDescription>
-            Create and manage class rosters for teachers
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="bg-muted p-4 rounded-lg">
-            <p className="text-sm mb-2">
-              <strong>Admin Class Creation:</strong> Create official class rosters for teachers.
-            </p>
-            <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
-              <li>Browse classes by grade level</li>
-              <li>Create classes (e.g., "7th Science P3") and assign to teachers</li>
-              <li>Assign students to class rosters</li>
-              <li>Teachers can then start/end sessions for these classes</li>
-            </ul>
-          </div>
-          <Button
-            variant="default"
-            data-testid="button-manage-classes"
-            onClick={() => requestRouteChange("/classpilot/admin/classes")}
-          >
-            Manage Classes
-          </Button>
-        </CardContent>
-      </Card>
-
+      </section>}
+      {activeTab === "active-classes" && <section aria-label="Active classes">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5" />
-            Active Sessions Monitor
+            Active classes
           </CardTitle>
           <CardDescription>
             View all ongoing class sessions school-wide
@@ -1189,38 +948,8 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ClipboardCheck className="h-5 w-5" />
-            Coverage
-          </CardTitle>
-          <CardDescription>
-            Monitor online unassigned students and manage temporary coverage
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            variant="default"
-            data-testid="button-manage-coverage"
-            onClick={() => requestRouteChange("/classpilot/coverage")}
-          >
-            Open Coverage
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5" />Safety Center</CardTitle>
-          <CardDescription>Review student safety alerts, approve exact URLs, and block websites.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3">
-          <Button data-testid="button-open-safety-center" onClick={() => requestRouteChange("/classpilot/admin/safety")}>Open Safety Center</Button>
-          <span className="text-sm text-muted-foreground">{safetyCount ? `${safetyCount.count} unreviewed alert${safetyCount.count === 1 ? "" : "s"}` : "Alert count unavailable"}</span>
-        </CardContent>
-      </Card>
-
+      </section>}
+      {activeTab === "maintenance" && <section aria-label="Maintenance">
       <Card className="border-destructive/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">
@@ -1255,22 +984,13 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
           </Button>
         </CardContent>
       </Card>
-        </TabsContent>
+      </section>}
 
-        <TabsContent value="student-portal" className="space-y-4">
+      {activeTab === "student-portal" && <section aria-label="Student portal" className="space-y-4">
           <StudentSsoPolicyCard canManage={canManageStudentPortal} />
-        </TabsContent>
+      </section>}
 
-        <TabsContent value="calendar" className="space-y-4">
-          <SchoolCalendarMonth
-            key={`${calendarMonth}:${calendarDraftEpoch}`}
-            month={calendarMonth}
-            onDirtyChange={setCalendarDirty}
-            onMonthChange={updateCalendarMonth}
-          />
-        </TabsContent>
-
-        <TabsContent value="audit" className="space-y-4">
+        {activeTab === "audit" && <section aria-label="Audit logs" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1393,40 +1113,7 @@ function AdminPanel({ currentUser, schoolTimezone, canManageStudentPortal }) {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
-
-      <AlertDialog
-        open={Boolean(pendingAdminNavigation)}
-        onOpenChange={(open) => {
-          if (!open && (pendingAdminNavigation?.kind !== "history" || pendingAdminNavigation.restored)) {
-            setPendingAdminNavigation(null);
-          }
-        }}
-      >
-        <AlertDialogContent data-testid="dialog-calendar-navigation-guard">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard unsaved calendar changes?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingAdminNavigation?.kind === "history"
-                ? "Using Back or Forward will discard this month’s draft. Saved dates will not be affected."
-                : "Leaving the School Calendar will discard this month’s draft. Saved dates will not be affected."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={pendingAdminNavigation?.kind === "history" && !pendingAdminNavigation.restored}>
-              Keep editing
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmAdminNavigation}
-              disabled={pendingAdminNavigation?.kind === "history" && !pendingAdminNavigation.restored}
-              data-testid="button-discard-calendar-navigation"
-            >
-              Discard and leave
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      </section>}
 
       <Dialog
         open={editDialogOpen}

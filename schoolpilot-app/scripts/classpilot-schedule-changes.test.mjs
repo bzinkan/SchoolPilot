@@ -366,6 +366,7 @@ test("ClassPilot schedule-change teacher, admin, policy, and mobile workflows", 
     });
 
     await adminPage.goto(`${baseURL}/classpilot/admin/classes/schedule-changes`);
+    await adminPage.getByRole("button", { name: "People & classes", exact: true }).click();
     await adminPage.getByRole("link", { name: "Classes", exact: true }).waitFor();
     await adminPage.getByTestId(`button-approve-${CHANGE_ID}`).click();
     await adminPage.waitForFunction(() => document.body.textContent.includes("Schedule change approved"));

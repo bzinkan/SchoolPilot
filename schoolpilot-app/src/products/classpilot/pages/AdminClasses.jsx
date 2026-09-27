@@ -1,3 +1,4 @@
+import { useAdminShell, useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -19,7 +20,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import {
   AlertDialog,
@@ -188,6 +189,10 @@ function ClassFormDialog({
   const [coTeacherIds, setCoTeacherIds] = useState(() => new Set((initialClass?.coTeachers || []).map((teacher) => teacher.id).filter(Boolean)));
   const [teacherPickerOpen, setTeacherPickerOpen] = useState(false);
   const [coTeacherPickerOpen, setCoTeacherPickerOpen] = useState(false);
+
+  const draftFingerprint = JSON.stringify([name, teacherId, gradeLevel, periodLabel, description, schoolYear, term, scheduleEnabled, blockStartTime, blockEndTime, scheduleRule, [...coTeacherIds].sort()]);
+  const [initialFingerprint] = useState(draftFingerprint);
+  useAdminNavigationBlocker({ id: "class-form-" + mode, dirty: open && draftFingerprint !== initialFingerprint, busy: open && isSaving, onDiscard: () => onOpenChange(false) });
 
   const sortedTeachers = useMemo(
     () => [...teachers].sort((a, b) => {
@@ -413,7 +418,7 @@ function ClassFormDialog({
             <div className="flex flex-col gap-2 rounded-md bg-muted/60 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <p>Automatic classes pause on dates marked closed in the school calendar.</p>
               <Button type="button" variant="link" size="sm" className="h-auto justify-start p-0" asChild>
-                <Link to="/classpilot/admin/classes/scheduling" data-testid="link-school-calendar">
+                <Link to="/classpilot/admin/scheduling?section=school-year" data-testid="link-school-calendar">
                   <CalendarDays className="h-4 w-4" />
                   Manage School Calendar
                 </Link>
@@ -726,6 +731,18 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
     },
   });
 
+  useAdminNavigationBlocker({
+    id: "classroom-course-import",
+    dirty: open && (selectedCourseIds.size > 0
+      || Object.keys(teacherAssignments).length > 0
+      || Object.keys(gradeAssignments).length > 0),
+    busy: classroomImportMutation.isPending,
+    onDiscard: () => {
+      resetSelections();
+      onOpenChange(false);
+    },
+  });
+
   const importSelectedCourses = () => {
     classroomImportMutation.mutate({
       courses: selectedCourses.map((course) => {
@@ -927,7 +944,8 @@ function ClassroomImportDialog({ open, onOpenChange, teachers }) {
 }
 
 export default function AdminClasses() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const location = useLocation();
   const { toast } = useToast();
   const { currentUser, isLoading: authLoading } = useClassPilotAuth();
@@ -1060,6 +1078,10 @@ export default function AdminClasses() {
   });
 
   const classes = useMemo(() => classesQuery.data || [], [classesQuery.data]);
+  useAdminNavigationBlocker({
+    id: "class-roster-operations",
+    busy: [createClassMutation, updateClassMutation, assignStudentsMutation, archiveClassMutation, deleteClassMutation].some(mutation => mutation.isPending),
+  });
   const teachers = useMemo(() => teachersQuery.data || [], [teachersQuery.data]);
   const students = useMemo(() => studentsQuery.data || [], [studentsQuery.data]);
   const assignmentHandoffStudent = assignmentHandoffStudentId
@@ -1249,7 +1271,7 @@ export default function AdminClasses() {
   return (
     <div className="min-h-screen bg-muted/30">
       <div className="container mx-auto max-w-7xl space-y-6 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        {!adminShell && (<div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-3xl font-semibold">Class Management</h1>
             <p className="text-muted-foreground">
@@ -1273,8 +1295,8 @@ export default function AdminClasses() {
               Admin Panel
             </Button>
           </div>
-        </div>
-
+        </div>)}
+{adminShell && (<div className="flex flex-wrap gap-2">{safeReturnTarget && <Button variant="outline" onClick={() => navigate(safeReturnTarget.path)} data-testid={safeReturnTarget.testId}><ArrowLeft className="mr-2 size-4" />{safeReturnTarget.label}</Button>}</div>)}
         <AdminClassesTabs />
         {location.pathname.endsWith("/scheduling") ? <AdminScheduling /> : <>
         <RosterIntegrations />

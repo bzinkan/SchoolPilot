@@ -1,3 +1,4 @@
+import './products/classpilot/lib/adminNavigationHistory';
 import './products/classpilot/lib/privateWorkspaceNavigation';
 import { lazy, Suspense, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
@@ -20,12 +21,16 @@ import LandingV2 from './pages/LandingV2';
 import AuthCallback from './pages/AuthCallback';
 import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
 import SharedRecordAccessBoundary from './products/classpilot/components/SharedRecordAccessBoundary';
+import AdminQueryBoundary from './products/classpilot/components/admin/AdminQueryBoundary';
+import { adminIdentityKey, adminRoute } from './products/classpilot/lib/adminNavigation';
 
 // ClassPilot pages (lazy-loaded)
 const CPClassToolsPresentation = lazy(() => import('./products/classpilot/pages/ClassToolsPresentation'));
 const CPDashboard = lazy(() => import('./products/classpilot/pages/Dashboard'));
 const CPRoster = lazy(() => import('./products/classpilot/pages/Roster'));
 const CPAdmin = lazy(() => import('./products/classpilot/pages/Admin'));
+const CPAdminLayout = lazy(() => import('./products/classpilot/components/admin/ClassPilotAdminShell'));
+const CPAdminScheduling = lazy(() => import('./products/classpilot/pages/AdminScheduling'));
 const CPAdminClasses = lazy(() => import('./products/classpilot/pages/AdminClasses'));
 const CPAdminAnalytics = lazy(() => import('./products/classpilot/pages/AdminAnalytics'));
 const CPCoverage = lazy(() => import('./products/classpilot/pages/Coverage'));
@@ -192,7 +197,8 @@ function ImpersonationBanner() {
 }
 
 function AppRoutes() {
-  const { user, loading, activeMembership, schoolSelectionRequired } = useAuth();
+  const location = useLocation();
+  const { user, loading, activeMembership, activeSchoolId, schoolSelectionRequired } = useAuth();
   const { hasClassPilot, hasPassPilot, hasGoPilot, roleBasedDefaultPath } = useLicenses();
   const { isNative, product } = useNative();
 
@@ -229,6 +235,8 @@ function AppRoutes() {
   }
 
   return (
+    <AdminQueryBoundary scopeKey={adminIdentityKey(user, activeMembership, activeSchoolId)}
+      blockChildren={Boolean(adminRoute(location))}>
     <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Login & OAuth callback — always accessible */}
@@ -278,12 +286,13 @@ function AppRoutes() {
 
         {/* ClassPilot — web only (not suitable for mobile) */}
         {!isNative && hasClassPilot && (
-          <>
+          <Route element={<CPAdminLayout />}>
             <Route path="/classpilot" element={<CPDashboard />} />
             <Route path="/classpilot/class/:classId" element={<CPDashboard />} />
             <Route path="/classpilot/roster" element={<CPRoster />} />
             <Route path="/classpilot/admin" element={<CPAdmin />} />
             <Route path="/classpilot/admin/classes" element={<CPAdminClasses />} />
+            <Route path="/classpilot/admin/scheduling" element={canManageClassPilotSchool ? <CPAdminScheduling /> : <CPAdminClasses />} />
             <Route path="/classpilot/admin/classes/scheduling" element={<CPAdminClasses />} />
             <Route path="/classpilot/admin/classes/schedule-changes" element={<CPAdminScheduleChanges />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
@@ -314,7 +323,7 @@ function AppRoutes() {
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports/:importId" element={<CPImports />} />}
             <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
-          </>
+          </Route>
         )}
 
         {/* GoPilot routes — web or native (product may be null if VITE_APP_PRODUCT not set) */}
@@ -350,6 +359,7 @@ function AppRoutes() {
         <Route path="*" element={user ? <Navigate to={defaultDest} replace /> : <Navigate to={isNative ? '/login' : '/'} replace />} />
       </Routes>
     </Suspense>
+    </AdminQueryBoundary>
   );
 }
 

@@ -1,3 +1,4 @@
+import ClassPilotAdminOperationGuard from "./ClassPilotAdminOperationGuard";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Loader2 } from "lucide-react";
@@ -224,11 +225,14 @@ export default function StaffAccessTransitionDialog({
   };
 
   const handleOpenChange = (nextOpen) => {
-    if (!nextOpen && !transitionMutation.isPending) setDecisionOverrides({});
+    if (transitionMutation.isPending) return;
+    if (!nextOpen) setDecisionOverrides({});
     onOpenChange(nextOpen);
   };
 
   return (
+    <><ClassPilotAdminOperationGuard id="staff-access-transition" dirty={open && Object.keys(decisionOverrides).length > 0}
+      busy={transitionMutation.isPending} onDiscard={() => { setDecisionOverrides({}); onOpenChange(false); }} />
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto" data-testid="dialog-staff-transition">
         <DialogHeader>
@@ -391,6 +395,6 @@ export default function StaffAccessTransitionDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+    </Dialog></>
   );
 }

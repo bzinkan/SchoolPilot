@@ -1,8 +1,9 @@
+import { useAdminShell, useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import MonitoringHoursSettings from "../components/MonitoringHoursSettings";
 import { MonitoringDigestSettings } from "../components/MonitoringInterruptionsPanel";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -118,7 +119,8 @@ const settingsSchema = z.object({
 });
 
 export default function Settings() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
   const { currentUser, isAdmin, isLoading: authLoading, school, refetchUser } = useClassPilotAuth();
   const canManageSchoolSettings = isAdmin || currentUser?.isSuperAdmin === true;
@@ -197,7 +199,7 @@ export default function Settings() {
 
   // Update form when settings load
   useEffect(() => {
-    if (settings) {
+    if (settings && !form.formState.isDirty) {
       form.reset({
         schoolName: settings.schoolName,
         retentionDays: settings.retentionHours ? String(Math.round(parseInt(settings.retentionHours) / 24)) : "30",
@@ -243,7 +245,8 @@ export default function Settings() {
       };
       return await apiRequest("POST", "/settings", payload);
     },
-    onSuccess: () => {
+    onSuccess: (_saved, variables) => {
+      form.reset(variables.formData);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       toast({
         title: "Settings saved",
@@ -452,6 +455,12 @@ export default function Settings() {
     }
   };
 
+  useAdminNavigationBlocker({
+    id: "school-settings", dirty: form.formState.isDirty || (showSceneDialog && Boolean(flightPathName || sceneDescription || sceneAllowedDomains)) || (showClassroomDialog && Boolean(selectedCourseId || classroomFlightPathName)),
+    busy: [updateSettingsMutation, rotateEnrollmentKeyMutation, staffPasswordLoginMutation, createSceneMutation, updateSceneMutation, deleteSceneMutation, classroomFlightPathMutation].some(item => item.isPending),
+    onDiscard: () => { form.reset(); resetSceneForm(); setShowSceneDialog(false); setShowClassroomDialog(false); },
+  });
+
   const copyText = async (text, label) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -491,7 +500,7 @@ export default function Settings() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-background">
+      {!adminShell && (<><header className="border-b border-border bg-background">
         <div className="max-w-4xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -517,8 +526,7 @@ export default function Settings() {
         <div className="max-w-4xl mx-auto px-6 pt-3">
           <AdminSettingsTabs />
         </div>
-      </div>
-
+      </div></>)}
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 py-8 space-y-8">
         {/* General Settings */}
@@ -534,6 +542,7 @@ export default function Settings() {
           </CardHeader>
           <CardContent>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+              <fieldset className="min-w-0 space-y-6" disabled={updateSettingsMutation.isPending}>
               <div className="space-y-2">
                 <Label htmlFor="schoolName">School Name</Label>
                 <Input
@@ -637,7 +646,7 @@ export default function Settings() {
               <div className="rounded-md border p-4 text-sm">
                 Student safety alerts are reviewed in the Safety Center. Every new distinct alert notifies the school administrators. AI detections leave tabs open for administrator review.
               </div>
-              {canManageSchoolSettings && settings && <MonitoringHoursSettings key={JSON.stringify([settings.enableTrackingHours, settings.trackingStartTime, settings.trackingEndTime, settings.trackingDays, settings.schoolTimezone, settings.afterHoursMode])} settings={settings} />}
+              {canManageSchoolSettings && settings && <MonitoringHoursSettings key={adminShell?.scopeKey || currentUser?.schoolId} settings={settings} />}
               {canManageSchoolSettings && <MonitoringDigestSettings />}
               {canManageSchoolSettings && (
                 <div className="rounded-md border p-4 space-y-3">
@@ -839,6 +848,7 @@ export default function Settings() {
               >
                 {updateSettingsMutation.isPending ? "Saving..." : "Save Settings"}
               </Button>
+              </fieldset>
             </form>
           </CardContent>
         </Card>
