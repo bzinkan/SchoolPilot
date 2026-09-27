@@ -123,9 +123,12 @@ fields. Never repost school settings snapshots from roster grade editors.
 
 See `docs/CLASSPILOT_SETTINGS_ORGANIZATION.md` for explicit save boundaries,
 one-time eligible-membership preference migration, the reviewed one-table RLS
-admission, backend-first deployment and rollback. Preserve the observed
-119-table Terraform baseline until the new admission is verified; the new
-registry target has 120 tables. Teaching tools is personal for both teaching
+admission, backend-first deployment and rollback. The 120-table production
+baseline was verified at `2026-09-27T19:31:04.9769077Z` on API153/worker168 and
+adopted separately into Terraform configuration without an apply. Omit the
+already-admitted preference table's one-shot deployment flag. Preserve historical
+inventories, migration checksums and the generic 75-table default.
+Teaching tools is personal for both teaching
 administrators and teachers; it does not broaden official class permissions.
 
 ### My Desk private notebook

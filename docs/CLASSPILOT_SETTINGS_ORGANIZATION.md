@@ -58,30 +58,41 @@ bootstrap's repeated schema convergence does not repeat the data backfill.
 
 ## Release and compatibility
 
+The production backend admission was verified at
+`2026-09-27T19:31:04.9769077Z` on API emergency 153 and worker 168, release
+`4c5a859d624dac7c46e6b1901006d2bc7a3519b1`. Private `postflight.json` and
+`database-readiness.json` evidence confirms matching serving allowlists, all 120
+canonical enabled/forced tenant policies, a non-bypass database role, and the
+completed `classpilot-teacher-preferences-20260927` migration with checksum
+`16f6b98348868ce93223e055ee526e0a33fc8c24d33876e6b7b67dd2e12cf369`.
+The separately adopted production CSV preserves the observed runtime order and
+SHA-256 `09d3fd8a4aa6579dbb08f73f951d4bf1a2fe8b8a1cb93e2f4e607e6efb39c0c2`.
+This adoption performs no Terraform apply and does not establish frontend or AI
+activation. Historical 119-table inventories and migration checksums remain
+unchanged, as does the generic 75-table default.
+
 1. Verify final PR and main-branch CI, including backend, frontend, database,
    tenant isolation, router/dashboard and governance checks.
 2. Inspect the live serving API/worker image, task definitions and matching RLS
-   allowlists. The observed September 27 starting point is API emergency 152 and
-   worker 167 with 119 admitted tables. This observation does not replace a fresh
+   allowlists. The verified 120-table observation above does not replace a fresh
    release preflight.
-3. Deploy backend and worker with the exact one-shot admission:
+3. Deploy backend and worker without repeating the completed one-shot admission:
 
    ```bash
-   ./scripts/deploy.sh production --backend --activate-emergency \
-     --enable-rls-table classpilot_teacher_preferences
+   ./scripts/deploy.sh production --backend --activate-emergency
    ```
 
-   The script must prove the table, forced RLS, tenant policy and completed
-   migration before updating services. Preserve serving image/configuration
-   controls and secret references. The historical 119-table inventory remains
-   unchanged; the new target has one additional table. Omit the one-shot flag
-   after verified admission.
+   The initial admission used the reviewed singleton
+   `--enable-rls-table classpilot_teacher_preferences`; omit it on later deploys.
+   Preserve serving image/configuration controls, secret references, the
+   completed migration and forced tenant RLS.
 4. Deploy matching frontend after the new API is healthy. Stale open pages receive
    the refresh-required response instead of mixed writes. Verify section-scoped
    saves, inheritance, and teacher/admin navigation using authorized identities.
-5. Adopt the observed live RLS allowlist into Terraform production configuration
-   in a separate reviewed change before a later apply. Do not preload the new
-   admission into production tfvars or use Terraform to bypass the live gate.
+5. Retain the separately adopted, observed live RLS allowlist in Terraform
+   production configuration. Future admissions require their own live verification
+   and separate baseline adoption before a later apply; never use Terraform to
+   bypass the live gate.
 
 Rollback must retain the new preference table, school-specific values and RLS.
 Keep the narrow writer and refresh-required compatibility response. Do not revert
