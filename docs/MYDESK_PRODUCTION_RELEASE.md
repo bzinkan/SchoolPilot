@@ -195,6 +195,17 @@ readiness: provider latency, storage, database leases, normal API traffic and
 scheduler interference require separate measurements. Padded PDFs exercise input
 size, not worst-case PDF complexity.
 
+The measurement fails before generating fixtures if cgroup usage or a finite
+memory limit is unavailable. On Fargate, an unlimited container cgroup can use
+the single-container task's `Limits.Memory` from the injected, link-local
+`ECS_CONTAINER_METADATA_URI_V4/task` endpoint. This metadata request is bounded
+and cannot follow redirects; no credentials or metadata contents enter reports.
+The smaller finite cgroup/task limit controls the stop guard. Reports preserve
+both raw limits and identify the effective limit; metadata failure never supplies
+an assumed worker size. Loss of usage readings cancels an active measurement.
+Use the task-level limit, not a container reservation; see the
+[AWS v4 task metadata examples](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-metadata-endpoint-v4-fargate-examples.html).
+
 Measure the actual Linux image in an isolated production task before loading the
 serving scheduler. Poppler and all My Desk Sharp image transforms share one native
 processing permit per process, at most four waiters and bounded waiting. Two
