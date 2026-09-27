@@ -1,16 +1,11 @@
 import { lazy, Suspense, useState } from "react";
 import { BarChart3, Route, ClipboardCheck } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
-import { apiRequest } from "../../../lib/queryClient";
-import { useQuery } from "@tanstack/react-query";
 
 const StudentDataDialog = lazy(() => import("./StudentDataDialog"));
 
 function RemoteControlToolbar({
   selectedStudentIds,
-  selectedGrade,
-  onGradeChange,
   userRole,
   schoolId,
   viewerId,
@@ -40,34 +35,12 @@ function RemoteControlToolbar({
   ].join(" ");
   const coverageCountClass = "ml-1 min-w-5 rounded-full bg-white/85 px-1.5 py-0.5 text-center text-[11px] font-bold leading-none text-slate-950 ring-1 ring-yellow-700/20";
 
-  const { data: settings } = useQuery({
-    queryKey: ['/api/settings'],
-    queryFn: () => apiRequest('GET', '/settings'),
-    select: (data) => data?.settings ?? data ?? null,
-  });
-
   return (
     <>
       <div className="border-b border-border bg-muted/30 px-6 py-4 mb-8">
         <div className="max-w-screen-2xl mx-auto">
           <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 lg:justify-start">
-              {userRole === 'admin' && settings?.gradeLevels && settings.gradeLevels.length > 0 && (
-                <Tabs value={selectedGrade} onValueChange={onGradeChange}>
-                  <TabsList className="flex-wrap h-auto gap-2 p-1.5 bg-muted/50 rounded-xl">
-                    {settings.gradeLevels.map((grade) => (
-                      <TabsTrigger
-                        key={grade}
-                        value={grade}
-                        data-testid={`tab-grade-${grade}`}
-                        className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground rounded-lg px-5 py-2.5 font-medium transition-all duration-200 data-[state=active]:shadow-md"
-                      >
-                        {grade}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
-              )}
               {canViewHistoricalTelemetry && (
                 <Button
                   size="sm"

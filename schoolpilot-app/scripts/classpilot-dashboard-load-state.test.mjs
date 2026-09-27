@@ -236,6 +236,7 @@ async function configureDashboard(page, {
   activeSession = null,
   allSessions = [],
   blockedDomains = [],
+  gradeLevels,
   groupStudentIds = [],
   subgroups = [],
   subgroupMembers = {},
@@ -342,6 +343,7 @@ async function configureDashboard(page, {
               sessionFabRevision: 1,
             } : {}),
             blockedDomains,
+            ...(gradeLevels ? { gradeLevels } : {}),
           },
         },
       });
@@ -4106,6 +4108,39 @@ async function assignedTestingBrowser(context, options = {}) {
   browser = await chromium.launch({ headless: true });
   return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }
+
+test('admin Dashboard ignores a persisted grade filter and retains its student controls after reload', { timeout: 60_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: chatBaselinePlugins() });
+  const page = await browser.newPage();
+  await page.addInitScript(() => localStorage.setItem('classpilot-selected-grade', '6'));
+  const rows = [
+    student({ gradeLevel: '5' }),
+    student({ studentId: SIGNED_OUT_STUDENT_ID, studentName: 'Bea Student', studentEmail: 'bea@example.edu', gradeLevel: '6' }),
+  ];
+  const aggregate = aggregateController({ school: success({ students: rows }) });
+  const harness = await configureDashboard(page, {
+    aggregate, userRole: 'admin', activeSession: null, gradeLevels: ['5', '6'],
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  for (const phase of ['initial load', 'reload']) {
+    if (phase === 'reload') await page.reload();
+    // Grade 6 establishes that the saved-filter cohort loaded before asserting
+    // that grade 5 is also visible, so a baseline failure is not a load failure.
+    await page.getByTestId(`card-student-${rows[1].studentId}`).waitFor();
+    await page.getByTestId(`card-student-${rows[0].studentId}`).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('[data-testid^="tab-grade-"]').count(), 0, `${phase}: the obsolete grade chips must not return`);
+    for (const testId of ['button-student-data-tab', 'button-view-class-students', 'button-view-available-students', 'button-view-claimed-students']) {
+      assert.equal(await page.getByTestId(testId).isVisible(), true, `${phase}: ${testId} stays available`);
+    }
+    await assertPickupView(page, 'class');
+    assert.equal(await page.evaluate(() => localStorage.getItem('classpilot-selected-grade')), '6', 'The legacy persisted value is inert, not silently rewritten');
+  }
+  assert.ok(aggregate.completedRequests.length >= 2, 'Both loads use the authorized school aggregate');
+  assert.ok(aggregate.requests.every(request => request.teachingSessionId === null && request.supervisionContextId === null), 'No class or supervision authority is invented');
+  assert.deepEqual(harness.commandPosts, []);
+  assert.deepEqual(harness.coverageMutationRequests, []);
+  assert.deepEqual(harness.pageErrors, []);
+});
 
 async function numericSupervisionBadge(page, testId) {
   return page.getByTestId(testId).locator(':scope > span').allTextContents()

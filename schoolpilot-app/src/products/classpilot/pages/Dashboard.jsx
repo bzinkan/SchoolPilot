@@ -274,14 +274,6 @@ function pendingTransientControls(entries) {
   };
 }
 
-// Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
-function normalizeGrade(grade) {
-  if (!grade) return null;
-  const trimmed = grade.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
-}
-
 function classStartOverlapData(error) {
   const data = error?.response?.data || error?.data || null;
   if (data?.code !== "CLASS_ROSTER_ACTIVE_OVERLAP") return null;
@@ -465,14 +457,6 @@ export default function Dashboard() {
   const [selectedStudentBindingSnapshots, setSelectedStudentBindingSnapshots] = useState(new Map());
   const [searchQuery, setSearchQuery] = useState("");
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const [selectedGrade, setSelectedGrade] = useState(() => {
-    try {
-      const saved = localStorage.getItem('classpilot-selected-grade');
-      return saved || "";
-    } catch {
-      return "";
-    }
-  });
   const [wsConnected, setWsConnected] = useState(false);
   const [liveViewState, setLiveViewState] = useState(EMPTY_LIVE_VIEW);
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
@@ -1553,7 +1537,7 @@ export default function Dashboard() {
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
-    setSearchQuery(''); setSelectedGrade(''); setSelectedSubgroupId('');
+    setSearchQuery(''); setSelectedSubgroupId('');
     setShowOpenTabDialog(false); setShowLockScreenDialog(false); setShowCloseTabsDialog(false);
     setShowApplyFlightPathDialog(false); setShowFlightPathViewerDialog(false);
     setShowApplyBlockListDialog(false); setShowBlockListViewerDialog(false);
@@ -2618,22 +2602,6 @@ export default function Dashboard() {
     };
   }, [transientCommandVersion, toast]);
 
-  // Set initial grade when settings load
-  useEffect(() => {
-    if (settings?.gradeLevels && settings.gradeLevels.length > 0) {
-      if (!selectedGrade || !settings.gradeLevels.includes(selectedGrade)) {
-        setSelectedGrade(settings.gradeLevels[0]);
-      }
-    }
-  }, [settings, selectedGrade]);
-
-  // Save selected grade to localStorage
-  useEffect(() => {
-    if (selectedGrade) {
-      try { localStorage.setItem('classpilot-selected-grade', selectedGrade); } catch { /* intentionally empty */ }
-    }
-  }, [selectedGrade]);
-
   // Check if student is off-task
   const isStudentOffTask = (student) => {
     const monitoring = studentView === 'class'
@@ -2960,9 +2928,6 @@ export default function Dashboard() {
   // can hide students added to or removed from the group after class started.
   const sessionFilteredStudents = students.filter((student) => {
     if (effectiveActivity && isStudentOwnedByAnotherClass(student)) return false;
-    if (isAdmin && !effectiveActivity) {
-      return normalizeGrade(student.gradeLevel) === normalizeGrade(selectedGrade);
-    }
     return true;
   });
   const lateSignInRestrictionsEnabled = (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
@@ -3126,7 +3091,7 @@ export default function Dashboard() {
   }, [claimedStudentsQueryKey, summaryQueryKey]);
   const observationScope = useMemo(() => {
     // Rapid previews cover the exact frozen class while Class view is open.
-    // Grade/subgroup filters are presentation-only and must not silently slow
+    // Search/subgroup filters are presentation-only and must not silently slow
     // the rest of the authorized class back to the background cadence.
     return studentView === 'class' || claimedPreviewActive ? { kind: 'class' } : null;
   }, [studentView, claimedPreviewActive]);
@@ -6090,8 +6055,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             selectedStudentIds={selectedStudentIds}
             onToggleStudent={toggleStudentSelection}
             onClearSelection={clearSelection}
-            selectedGrade={selectedGrade}
-            onGradeChange={setSelectedGrade}
             userRole={isAdmin ? 'admin' : 'teacher'}
             schoolId={activeSchoolId} contextAuthorityRevision={contextAuthorityRevision}
             viewerId={currentUser?.id}
