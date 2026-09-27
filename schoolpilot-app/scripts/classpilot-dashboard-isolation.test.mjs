@@ -936,13 +936,13 @@ test('Manage Tabs exposes a capability-gated tab limit that routes through the a
   assert.match(dialog, /type="number"[\s\S]{0,80}min=\{1\}[\s\S]{0,40}max=\{100\}/);
   assert.match(
     dashboard,
-    /queryKey: \['\/api\/teacher\/settings'\][\s\S]{0,260}enabled: showCloseTabsDialog && dashboardCapabilities\.allows\('limit-tabs'\)[\s\S]{0,80}staleTime: 60_000/,
-    'teacher settings must load lazily only while Manage Tabs is open for an owned class',
+    /queryKey: teacherPreferencesKey\(activeSchoolId, currentUser\?\.id\)[\s\S]{0,400}enabled: showCloseTabsDialog && dashboardCapabilities\.allows\('limit-tabs'\)[\s\S]{0,80}staleTime: 60_000/,
+    'school/viewer preferences must load lazily only while Manage Tabs is open for an owned class',
   );
   assert.match(
     dashboard,
-    /teacherSettings\?\.maxTabsPerStudent \|\| settings\?\.maxTabsPerStudent \|\| ""/,
-    'the draft must seed from the teacher default before the school default',
+    /teacherTabLimitSeed\(teacherSettings, settings\?\.maxTabsPerStudent\)/,
+    'the draft must seed from the resolved personal/school default before unlimited',
   );
 });
 

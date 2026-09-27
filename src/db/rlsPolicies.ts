@@ -34,7 +34,8 @@ const mydeskSeatingInventory: RlsRegistryInventory = rlsRegistry.inventories.myd
 const mydeskImportsInventory: RlsRegistryInventory = rlsRegistry.inventories.mydeskImportsPostExpand;
 const mydeskWorkspaceInventory: RlsRegistryInventory = rlsRegistry.inventories.mydeskWorkspacePostExpand;
 const schoolDisciplineInventory: RlsRegistryInventory = rlsRegistry.inventories.schoolDisciplinePostExpand;
-const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.studentInformationPostExpand;
+const studentInformationInventory: RlsRegistryInventory = rlsRegistry.inventories.studentInformationPostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotTeacherPreferencesPostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -84,7 +85,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, currentInventory];
+  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(

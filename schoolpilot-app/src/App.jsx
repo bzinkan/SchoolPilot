@@ -23,6 +23,7 @@ import GateKioskExitBoundary from './products/passpilot/components/GateKioskExit
 import SharedRecordAccessBoundary from './products/classpilot/components/SharedRecordAccessBoundary';
 import AdminQueryBoundary from './products/classpilot/components/admin/AdminQueryBoundary';
 import { adminIdentityKey, adminRoute } from './products/classpilot/lib/adminNavigation';
+import TeachingToolsLayout from './products/classpilot/components/TeachingToolsLayout';
 
 // ClassPilot pages (lazy-loaded)
 const CPClassToolsPresentation = lazy(() => import('./products/classpilot/pages/ClassToolsPresentation'));
@@ -306,7 +307,11 @@ function AppRoutes() {
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/students/:studentId/profile" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings" element={<CPSettings />} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
+            <Route element={<TeachingToolsLayout />}>
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
+            <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
+            </Route>
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk" element={<CPMyDesk />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students" element={<PrivateHistoryRedirect />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<PrivateHistoryRedirect />} />}
@@ -321,8 +326,6 @@ function AppRoutes() {
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating/:chartId" element={<CPSeating />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports" element={<CPImports />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports/:importId" element={<CPImports />} />}
-            <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
           </Route>
         )}
 

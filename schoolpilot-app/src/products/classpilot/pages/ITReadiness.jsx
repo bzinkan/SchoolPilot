@@ -374,7 +374,7 @@ export default function ITReadiness() {
         <ClassOwnershipIntegrity
           integrity={data?.details?.classOwnershipIntegrity}
           onOpenClasses={() => navigate("/classpilot/admin/classes")}
-          onOpenStaff={() => navigate("/classpilot/admin")}
+          onOpenStaff={() => navigate("/classpilot/admin?tab=staff")}
         />
 
         <div className="grid gap-4 lg:grid-cols-2">

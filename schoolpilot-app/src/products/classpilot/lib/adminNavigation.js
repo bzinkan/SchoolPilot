@@ -1,5 +1,12 @@
 const admin = '/classpilot/admin';
 const scheduling = `${admin}/scheduling`;
+export const SETTINGS_SECTIONS = [
+  { section: 'school', label: 'School details' },
+  { section: 'browsing', label: 'Browsing & monitoring' },
+  { section: 'notifications', label: 'Staff notifications' },
+  { section: 'sign-in', label: 'Sign-in & devices' },
+  { section: 'data', label: 'Data & maintenance' },
+];
 
 export const ADMIN_NAVIGATION = [
   { label: 'Overview', items: [{ id: 'overview', label: 'Overview', to: admin }] },
@@ -27,15 +34,15 @@ export const ADMIN_NAVIGATION = [
     { id: 'audit', label: 'Audit logs', to: `${admin}?tab=audit` },
   ] },
   { label: 'Settings', items: [
-    { id: 'settings', label: 'School settings', to: '/classpilot/settings' },
+    ...SETTINGS_SECTIONS.filter(item => item.section !== 'data').map(item => ({ id: `settings-${item.section}`, label: item.label, to: `/classpilot/settings?section=${item.section}` })),
     { id: 'student-portal', label: 'Student portal', to: `${admin}?tab=student-portal` },
     { id: 'it', label: 'Integrations & IT readiness', to: `${admin}/it-readiness` },
-    { id: 'guide', label: 'Admin guide', to: '/classpilot/settings/guide' },
-    { id: 'maintenance', label: 'Maintenance', to: `${admin}?tab=maintenance` },
+    { id: 'settings-data', label: 'Data & maintenance', to: '/classpilot/settings?section=data' },
   ] },
+  { label: 'Help', items: [{ id: 'guide', label: 'Admin guide', to: '/classpilot/settings/guide' }] },
 ];
 
-const tabs = new Set(['overview', 'staff', 'active-classes', 'audit', 'student-portal', 'maintenance']);
+const tabs = new Set(['overview', 'staff', 'active-classes', 'audit', 'student-portal']);
 const sections = new Set(['school-year', 'calendar', 'bells', 'profiles']);
 const isWithin = (path, root) => path === root || path.startsWith(`${root}/`);
 
@@ -49,7 +56,7 @@ export function adminRoute(location) {
   else if (isWithin(pathname, `${admin}/classes`)) id = 'classes';
   else if (isWithin(pathname, '/classpilot/students')) id = 'students';
   else if (isWithin(pathname, '/classpilot/settings/guide')) id = 'guide';
-  else if (pathname === '/classpilot/settings') id = 'settings';
+  else if (pathname === '/classpilot/settings') id = `settings-${SETTINGS_SECTIONS.some(item => item.section === params.get('section')) ? params.get('section') : 'school'}`;
   else if (isWithin(pathname, `${admin}/email-monitoring`)) id = 'email';
   else if (pathname === `${admin}/analytics`) id = 'analytics';
   else if (pathname === `${admin}/it-readiness`) id = 'it';
@@ -77,12 +84,21 @@ export function adminLegacyDestination(location) {
     pathname = scheduling; params.delete('tab'); params.set('section', 'calendar');
   } else if (location.pathname === admin && params.get('tab') === 'students') {
     pathname = '/classpilot/students'; params.delete('tab');
+  } else if (location.pathname === admin && params.get('tab') === 'maintenance') {
+    pathname = '/classpilot/settings'; params.delete('tab'); params.set('section', 'data');
+  } else if (location.pathname === '/classpilot/settings' && location.hash === '#schedule-changes') {
+    pathname = `${admin}/classes/schedule-changes`;
   }
   return pathname ? { pathname, search: params.size ? `?${params}` : '', hash: location.hash, state: location.state } : null;
 }
 
 export function adminNavigationTarget(item, location) {
   const target = new URL(item.to, 'https://navigation.invalid');
+  if (target.pathname === '/classpilot/settings' && location.pathname === target.pathname) {
+    const params = new URLSearchParams(location.search);
+    params.set('section', target.searchParams.get('section'));
+    return { pathname: target.pathname, search: `?${params}`, hash: location.hash, state: location.state };
+  }
   if (target.pathname === scheduling && [scheduling, `${admin}/classes/scheduling`].includes(location.pathname)) {
     const params = new URLSearchParams(location.search);
     params.set('section', target.searchParams.get('section'));
@@ -98,7 +114,7 @@ const LEGACY_ADMIN_KEYS = new Set([
   '/api/admin/teachers', '/api/admin/teacher-students', '/api/admin/users',
   '/api/users/staff', '/api/admin/audit-logs', '/api/sessions/all', '/api/teacher/groups',
   '/api/admin/analytics/summary', '/api/admin/analytics/by-teacher', '/api/admin/analytics/by-group',
-  '/api/settings', '/api/flight-paths', '/api/classpilot/enrollment-key', '/api/classpilot/it-readiness',
+  '/api/settings', '/classpilot/admin/settings', '/api/classpilot/admin/settings', '/api/flight-paths', '/api/classpilot/enrollment-key', '/api/classpilot/it-readiness',
   '/api/classpilot/admin/sso-policy', '/google/roster-connector',
   '/api/classroom/courses', '/api/classroom/resources', '/api/directory/users', '/api/directory/orgunits',
   '/api/mailpilot/setup/info', '/api/mailpilot/alerts', '/api/mailpilot/alerts/stats',

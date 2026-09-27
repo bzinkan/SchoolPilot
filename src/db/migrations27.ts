@@ -2,6 +2,7 @@ import { mydeskGradeFilingMigration } from "./mydeskGradeFilingMigration.js";
 import { schoolDisciplineRedesignMigration } from "./schoolDisciplineRedesignMigration.js";
 import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigration.js";
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
+import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -513,6 +514,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   schoolDisciplineRedesignMigration,
   mydeskImportDestinationMigration,
   studentInformationRedesignMigration,
+  classpilotTeacherPreferencesMigration,
   staffIdentityIntegrityMigration,
 ];
 

@@ -10,7 +10,7 @@ const NAV_ITEMS = {
   CLASSPILOT: [
     { label: 'Dashboard', path: '/classpilot', icon: '📊' },
     { label: 'Roster', path: '/classpilot/roster', icon: '📋' },
-    { label: 'My Settings', path: '/classpilot/my-settings', icon: '👤' },
+    { label: 'Teaching tools', path: '/classpilot/my-settings', icon: '👤' },
     { label: 'Admin', path: '/classpilot/admin', icon: '🛡️', adminOnly: true },
     { label: 'Classes', path: '/classpilot/admin/classes', icon: '🏫', adminOnly: true },
     { label: 'Students', path: '/classpilot/students', icon: '👩‍🎓', adminOnly: true },

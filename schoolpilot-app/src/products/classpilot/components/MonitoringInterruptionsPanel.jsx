@@ -1,6 +1,7 @@
-import { useId, useState } from "react";
-import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useContext, useEffect, useId, useState } from "react";
+import { SettingsAccessContext, settingsAccessDenied, useSettingsDraft } from "../hooks/useSettingsDraft";
+import SettingsSaveState from "./admin/SettingsSaveState";
+import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
@@ -108,17 +109,28 @@ export default function MonitoringInterruptionsPanel() {
   return <ScopedMonitoringPanel key={`${activeSchoolId}:${identity}`} schoolId={user?.id ? activeSchoolId : null} identity={identity} />;
 }
 
+function DigestEditor({ schoolId, query, settingsKey }) {
+  const editor = useSettingsDraft({ id: 'monitoring-digest', source: query.data, fields: ['digestEnabled'], version: 'revision',
+    save: (draft, baseline) => apiRequest('PUT', `${API}/settings`, { digestEnabled: draft.digestEnabled, expectedRevision: baseline.revision }, { headers: { 'X-School-Id': schoolId } }),
+    refresh: async () => { const result = await query.refetch(); if (result.error) throw result.error; return result.data; },
+    onSaved: saved => queryClient.setQueryData(settingsKey, saved),
+  });
+  return <div className="space-y-4 rounded-lg border bg-card p-5" data-testid="monitoring-digest-settings">
+    <div className="flex items-center justify-between gap-4"><Label htmlFor="monitoring-digest-enabled">Daily monitoring interruption digest</Label><Switch id="monitoring-digest-enabled" checked={editor.draft.digestEnabled} onCheckedChange={enabled => editor.update('digestEnabled', enabled)} disabled={editor.busy} /></div>
+    <p className="text-sm text-muted-foreground">Off by default. Send active school administrators one operational summary 30 minutes after the configured tracking end time on tracking days, when interruptions occurred. Student safety notifications are separate.</p>
+    {query.error && <p role="alert" className="text-sm text-destructive">Could not refresh digest settings. Your draft is still here. <Button variant="link" onClick={() => query.refetch()}>Retry refresh</Button></p>}
+    <SettingsSaveState editor={editor} labels={{ digestEnabled: 'Daily monitoring interruption digest' }} version="revision" saveLabel="Save monitoring digest" />
+  </div>;
+}
+
 function ScopedMonitoringDigestSettings({ schoolId, identity }) {
+  const accessLost = useContext(SettingsAccessContext);
   const settingsKey = [API, schoolId, identity, "settings"];
   const query = useQuery({ queryKey: settingsKey, enabled: Boolean(schoolId), queryFn: ({ signal }) => apiRequest("GET", `${API}/settings`, undefined, { signal, headers: { "X-School-Id": schoolId } }) });
-  const save = useMutation({ mutationFn: (digestEnabled) => apiRequest("PUT", `${API}/settings`, { digestEnabled, expectedRevision: query.data.revision }, { headers: { "X-School-Id": schoolId } }),
-    onSuccess: (data) => queryClient.setQueryData(settingsKey, data), onError: () => queryClient.invalidateQueries({ queryKey: settingsKey }) });
-  useAdminNavigationBlocker({ id: "monitoring-digest", busy: save.isPending });
-  return <div className="space-y-2 rounded-lg border p-4" data-testid="monitoring-digest-settings">
-    <div className="flex items-center justify-between gap-4"><Label htmlFor="monitoring-digest-enabled">Daily monitoring interruption digest</Label><Switch id="monitoring-digest-enabled" checked={query.data?.digestEnabled === true} onCheckedChange={(enabled) => save.mutate(enabled)} disabled={!query.data || query.isFetching || save.isPending} /></div>
-    <p className="text-sm text-muted-foreground">Off by default. Send active school administrators one operational summary 30 minutes after the configured tracking end time on tracking days, when interruptions occurred. Student safety notifications are separate.</p>
-    {query.error || save.error ? <p role="alert" className="text-sm text-destructive">{errorText(save.error || query.error)}</p> : null}
-  </div>;
+  useEffect(() => { if (settingsAccessDenied(query.error)) accessLost?.(); }, [query.error, accessLost]);
+  if (settingsAccessDenied(query.error)) return <p role="alert">Monitoring settings access is no longer available.</p>;
+  if (query.data) return <DigestEditor schoolId={schoolId} query={query} settingsKey={settingsKey} />;
+  return <div className="rounded-md border p-4">{query.isPending ? <p>Loading monitoring digest…</p> : <p role="alert">{errorText(query.error)} <Button variant="link" onClick={() => query.refetch()}>Try again</Button></p>}</div>;
 }
 
 export function MonitoringDigestSettings() {

@@ -1,6 +1,7 @@
 import { useAdminShell } from "../hooks/useAdminNavigation";
 import { createElement } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { teachingToolsSection } from "../lib/teachingTools";
 import { BookOpenCheck, CalendarClock, GraduationCap, Settings2, SlidersHorizontal } from "lucide-react";
 
 const baseClass = "inline-flex min-h-10 items-center gap-2 border-b-2 px-1 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2";
@@ -30,16 +31,18 @@ function RouteTabs({ ariaLabel, items }) {
 }
 
 export function TeacherSettingsTabs() {
-  return (
-    <RouteTabs
-      ariaLabel="My Settings sections"
-      items={[
-        { label: "Teaching Tools", path: "/classpilot/my-settings", icon: SlidersHorizontal, end: true },
-        { label: "Schedule Changes", path: "/classpilot/my-settings/schedule-changes", icon: CalendarClock },
-        { label: "Teacher Guide", path: "/classpilot/my-settings/guide", icon: BookOpenCheck },
-      ]}
-    />
-  );
+  const location = useLocation();
+  const root = '/classpilot/my-settings';
+  const section = teachingToolsSection(location.search);
+  const items = [['websites', 'Website tools'], ['classes', 'Class setup'], ['defaults', 'Classroom defaults']];
+  return <nav aria-label="Teaching tools sections" className="flex flex-wrap gap-x-5 gap-y-1 border-b">
+    {items.map(([id, label]) => {
+      const params = new URLSearchParams(location.pathname === root ? location.search : ''); params.set('section', id); params.delete('tab');
+      const active = location.pathname === root && section === id;
+      return <Link key={id} to={{ pathname: root, search: `?${params}`, hash: location.hash }} state={location.state} aria-current={active ? 'page' : undefined}
+        className={`${baseClass} ${active ? 'border-amber-500 text-foreground' : 'border-transparent text-muted-foreground'}`}>{label}</Link>;
+    })}
+  </nav>;
 }
 
 export function AdminSettingsTabs() {

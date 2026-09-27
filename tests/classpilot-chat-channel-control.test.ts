@@ -103,7 +103,7 @@ describe("student chat channel control", () => {
     assert.match(chat, /typeof pauseReason === "string" \? \{ pauseReason \} : \{\}/, "403 chat_paused carries who paused it");
   });
 
-  it("exposes the pause on every settings surface and advertises chatPauseV1 to the dashboard", async () => {
+  it("retains pause reads and authorized classroom controls while retiring the mixed settings writer", async () => {
     const [sessions, activity, dashboard, devices, compat] = await Promise.all([
       source("src/routes/classpilot/sessions.ts"),
       source("src/routes/classpilot/dashboardActivity.ts"),
@@ -117,8 +117,8 @@ describe("student chat channel control", () => {
     assert.match(activity, /action: body\.chatPaused \? "classpilot\.chat\.paused" : "classpilot\.chat\.resumed"/);
     assert.match(dashboard, /sessionChatPaused: fabToggles\.sessionChatPaused/);
     assert.match(dashboard, /pauseChatDuringTesting: schoolSettings\?\.pauseChatDuringTesting !== false/);
-    assert.match(dashboard, /schoolData\.pauseChatDuringTesting = pauseChatDuringTesting/);
-    assert.match(dashboard, /activeScheduledTestingStudentIds\(schoolId\)[\s\S]*syncClasspilotControlStatesToActiveDevices\(schoolId, testingStudentIds\)/);
+    assert.match(dashboard, /code: "SETTINGS_REFRESH_REQUIRED"/);
+    assert.doesNotMatch(dashboard, /schoolData\.pauseChatDuringTesting = pauseChatDuringTesting/);
     const settingsRoute = devices.slice(devices.indexOf('router.get("/extension/settings"'), devices.indexOf('router.get("/extension/settings"') + 8000);
     assert.match(settingsRoute, /messagesPaused: monitoringPolicy\.policyMode === "full" && settingsFab\.messagesPaused/);
     assert.match(settingsRoute, /pauseReason: monitoringPolicy\.policyMode === "full" \? settingsFab\.pauseReason : null/);

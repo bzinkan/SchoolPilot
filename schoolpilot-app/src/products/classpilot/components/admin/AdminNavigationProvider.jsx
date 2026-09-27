@@ -18,7 +18,7 @@ function targetLocation(to, options, current) {
   return { ...destination, state: options?.state ?? (typeof to === 'object' ? to.state : null) ?? null };
 }
 
-export default function AdminNavigationProvider({ scopeKey, children }) {
+export default function AdminNavigationProvider({ scopeKey, shell = true, children }) {
   const location = useLocation();
   const routeNavigate = useNavigate();
   const owners = useRef(new Map());
@@ -150,8 +150,8 @@ export default function AdminNavigationProvider({ scopeKey, children }) {
     };
   }, [blockers, request]);
 
-  const value = useMemo(() => ({ shell: { scopeKey }, navigation: { navigate, requestAction }, register, afterCommit }),
-    [scopeKey, navigate, requestAction, register, afterCommit]);
+  const value = useMemo(() => ({ shell: shell ? { scopeKey } : null, navigation: { navigate, requestAction }, register, afterCommit }),
+    [scopeKey, shell, navigate, requestAction, register, afterCommit]);
   return <AdminNavigationContext.Provider value={value}>
     {notice && <p role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">{notice}</p>}
     {children}

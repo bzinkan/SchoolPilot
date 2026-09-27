@@ -120,6 +120,9 @@ test("compact exact counts load without student details; history pages and diges
   assert.equal(await opener.evaluate(el => el === document.activeElement), true);
   const toggle = page.getByRole("switch", { name: "Daily monitoring interruption digest" });
   await toggle.click(); await page.waitForFunction(() => document.getElementById("monitoring-digest-enabled")?.getAttribute("data-state") === "checked");
+  assert.equal(state.writes.length, 0, "switch remains a draft until Save");
+  await page.getByRole("button", { name: "Save monitoring digest" }).click();
+  await page.getByText("Changes saved.", { exact: true }).waitFor();
   assert.deepEqual(state.writes, [{ schoolId: "school", body: { digestEnabled: true, expectedRevision: 0 } }]);
   await mkdir(screenshots, { recursive: true });
   for (const theme of ["light", "dark"]) for (const [size, width] of [["desktop", 1280], ["mobile", 390]]) {

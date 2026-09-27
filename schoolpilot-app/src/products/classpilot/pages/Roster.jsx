@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useToast } from "../../../hooks/use-toast";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+import { useRosterGradeSettings } from "../hooks/useRosterGradeSettings";
 import { queryClient, apiRequest } from "../../../lib/queryClient";
 
 const NO_GRADE_VALUE = "__no_grade__";
@@ -148,7 +149,7 @@ function blankDeviceForm() {
 export default function RosterPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { isAdmin } = useClassPilotAuth();
+  const { isAdmin, currentUser } = useClassPilotAuth();
   const [activeTab, setActiveTab] = useState("students");
   const [selectedGrade, setSelectedGrade] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -364,35 +365,12 @@ export default function RosterPage() {
     },
   });
 
-  const updateGradesMutation = useMutation({
-    mutationFn: async (gradeLevels) => {
-      if (!settings) throw new Error("Settings not loaded");
-      return apiRequest("POST", "/settings", {
-        schoolId: settings.schoolId,
-        schoolName: settings.schoolName,
-        wsSharedKey: settings.wsSharedKey,
-        retentionHours: settings.retentionHours,
-        blockedDomains: settings.blockedDomains || [],
-        allowedDomains: settings.allowedDomains || [],
-        ipAllowlist: settings.ipAllowlist || [],
-        gradeLevels,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-      toast({
-        title: "Grades updated",
-        description: "Roster grade filters have been updated.",
-      });
-    },
-    onError: (error) => {
-      toast({
-        variant: "destructive",
-        title: "Grade update failed",
-        description: error.message,
-      });
-    },
+  const { query: gradeSettingsQuery, mutation: updateGradesMutation } = useRosterGradeSettings({
+    schoolId: currentUser?.schoolId, viewerId: currentUser?.id, enabled: showGradeDialog, canWrite: isAdmin,
+    onSaved: () => { setNewGrade(''); toast({ title: 'Grades updated', description: 'Roster grade filters have been updated.' }); },
+    onError: description => toast({ variant: 'destructive', title: 'Grade update failed', description }),
   });
+  const editableGrades = (gradeSettingsQuery.data?.gradeLevels || []).map(normalizeGrade).filter(Boolean);
 
   const validateStudentForm = () => {
     if (!studentForm.firstName.trim() || !studentForm.lastName.trim()) {
@@ -448,6 +426,7 @@ export default function RosterPage() {
   };
 
   const handleAddGrade = () => {
+    if (updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching) return;
     const grade = normalizeGrade(newGrade);
     if (!grade) {
       toast({
@@ -457,7 +436,7 @@ export default function RosterPage() {
       });
       return;
     }
-    if (manualGrades.includes(grade)) {
+    if (editableGrades.includes(grade)) {
       toast({
         variant: "destructive",
         title: "Duplicate grade",
@@ -465,13 +444,13 @@ export default function RosterPage() {
       });
       return;
     }
-    updateGradesMutation.mutate([...manualGrades, grade].sort((a, b) => gradeSortValue(a) - gradeSortValue(b)));
-    setNewGrade("");
+    updateGradesMutation.mutate([...editableGrades, grade].sort((a, b) => gradeSortValue(a) - gradeSortValue(b)));
   };
 
   const handleDeleteGrade = (grade) => {
+    if (updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching) return;
     const normalized = normalizeGrade(grade);
-    const nextGrades = manualGrades.filter((existing) => existing !== normalized);
+    const nextGrades = editableGrades.filter((existing) => existing !== normalized);
     updateGradesMutation.mutate(nextGrades);
     if (selectedGrade === normalized) {
       setSelectedGrade("All");
@@ -1036,6 +1015,7 @@ export default function RosterPage() {
 
       <Dialog open={showGradeDialog} onOpenChange={setShowGradeDialog}>
         <DialogContent data-testid="dialog-manage-grades-roster">
+          {gradeSettingsQuery.isError && <p role="alert">Grades could not be loaded. <Button variant="link" onClick={() => gradeSettingsQuery.refetch()}>Retry</Button></p>}
           <DialogHeader>
             <DialogTitle>Manage Grades</DialogTitle>
             <DialogDescription>
@@ -1046,10 +1026,10 @@ export default function RosterPage() {
             <div className="space-y-2">
               <Label>Current Grades</Label>
               <div className="flex flex-wrap gap-2">
-                {manualGrades.length === 0 ? (
+                {editableGrades.length === 0 ? (
                   <span className="text-sm text-muted-foreground">No manual grade filters</span>
                 ) : (
-                  manualGrades.map((grade) => (
+                  editableGrades.map((grade) => (
                     <Badge key={grade} variant="secondary" className="text-sm px-3 py-1" data-testid={`badge-grade-${grade}`}>
                       {gradeLabel(grade)}
                       <button
@@ -1070,7 +1050,7 @@ export default function RosterPage() {
               <Label htmlFor="new-grade">Add Grade</Label>
               <div className="flex gap-2">
                 <Input
-                  id="new-grade"
+                  id="new-grade" disabled={updateGradesMutation.isPending}
                   placeholder="PK, K, or 8..."
                   value={newGrade}
                   onChange={(e) => setNewGrade(e.target.value)}
@@ -1083,7 +1063,7 @@ export default function RosterPage() {
                 />
                 <Button
                   onClick={handleAddGrade}
-                  disabled={updateGradesMutation.isPending}
+                  disabled={updateGradesMutation.isPending || !gradeSettingsQuery.data || gradeSettingsQuery.isFetching}
                   data-testid="button-add-grade-roster"
                 >
                   <Plus className="h-4 w-4 mr-2" />

@@ -35,6 +35,7 @@ type Registry = {
     mydeskWorkspacePostExpand: RegistryInventory;
     schoolDisciplinePostExpand: RegistryInventory;
     studentInformationPostExpand: RegistryInventory;
+    classpilotTeacherPreferencesPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -86,6 +87,15 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("adds only the school-specific personal preference table to the preserved contact inventory", () => {
+    const previous = registry.inventories.studentInformationPostExpand;
+    const target = registry.inventories.classpilotTeacherPreferencesPostExpand;
+    assert.deepEqual(registry.reviewedEnablementRequests.classpilotTeacherPreferences, ["classpilot_teacher_preferences"]);
+    assert.deepEqual(target.tables, [...previous.tables, "classpilot_teacher_preferences"]);
+    assert.equal(target.count, previous.count + 1);
+    assert.equal(target.sha256, sha256(target.tables));
+    assert.equal(isReviewedRlsEnforcementRequest(["classpilot_teacher_preferences"]), true);
+  });
   it("preserves the exact historical observation independently of the expansion", () => {
     assert.doesNotThrow(assertRlsRegistryIntegrity);
     const historical = registry.inventories.historicalObservedProduction;
@@ -169,7 +179,7 @@ describe("semantic RLS registry", () => {
     assert.deepEqual(new Set(production), new Set(expected));
     assert.equal(sha256(production), "1441661e3f5af6582b24e6ec8145f4b76705a13511aeb21bf4ea0030c27f1358",
       "Production CSV must retain the exact 2026-09-26 API151/worker166 redesign observation order");
-    assert.deepEqual(ciAllowlist(), registry.inventories.studentInformationPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotTeacherPreferencesPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

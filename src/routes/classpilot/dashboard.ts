@@ -1,24 +1,18 @@
-import crypto from "crypto";
 import { requireScheduledClassroomContext, parseClasspilotActivityAuthority } from "../../services/classpilotActivityAuthority.js";
-import { activeScheduledTestingStudentIds, getScheduledClassroomHands } from "../../services/classpilotScheduledClassroomTools.js";
-import { syncClasspilotControlStatesToActiveDevices } from "../../services/classpilotControlStateDelivery.js";
-import { logAudit } from "../../services/audit.js";
+import { getScheduledClassroomHands } from "../../services/classpilotScheduledClassroomTools.js";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
-import { assertClasspilotRetentionHours } from "../../util/classpilotRetention.js";
 import {
   getDashboardTabs,
   createDashboardTab,
   updateDashboardTab,
   deleteDashboardTab,
   getTeacherSettings,
-  upsertTeacherSettings,
   getSettingsForSchool,
   getSchoolById,
-  upsertSettings,
   getActiveTeachingSessionForSchool,
   getTeachingSessionByIdAndSchool,
   getActiveHandsBySession,
@@ -33,23 +27,17 @@ import {
   getUserById,
   validateStaffEmailDomainForSchool,
   isAuthorizedClasspilotSessionStaff,
-  getActiveSessions,
 } from "../../services/storage.js";
-import { broadcastToStudentsLocal, sendToDeviceLocal } from "../../realtime/ws-broadcast.js";
-import { publishWS, publishWSBatch } from "../../realtime/ws-redis.js";
 import {
   getEffectiveFabToggles,
   updateAndFanoutSessionFabSettings,
 } from "../../services/classpilotFab.js";
 import {
   effectiveSharedChromebookLoginMethod,
-  normalizeSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
 import { classPilotStudentDto } from "../../util/safeStudent.js";
-import { classpilotSchoolPolicyAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
-import { getSchoolWebsitePolicy, replaceSchoolBlockedWebsites } from "../../services/classpilotSchoolWebsitePolicy.js";
-import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "../../services/classpilotMonitoringSettings.js";
+import { getSchoolWebsitePolicy } from "../../services/classpilotSchoolWebsitePolicy.js";
 
 const router = Router();
 
@@ -59,20 +47,6 @@ function param(req: any, key: string): string {
 
 function isAdminRole(req: any, res: any): boolean {
   return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
-}
-
-function validateClasspilotRuleList(value: unknown, label: string): string[] {
-  if (!Array.isArray(value)) {
-    throw Object.assign(new Error(`${label} must be an array`), { status: 400 });
-  }
-  if (value.length > 1_000) {
-    throw Object.assign(new Error(`${label} cannot contain more than 1,000 entries`), {
-      status: 400,
-      code: "CLASSROOM_RULE_LIMIT_EXCEEDED",
-    });
-  }
-  const normalized = [...new Set(value.map((entry) => String(entry || "").trim()).filter(Boolean))];
-  return normalized;
 }
 
 function safeSchoolSettingsResponse(
@@ -85,6 +59,8 @@ function safeSchoolSettingsResponse(
     retentionHours: schoolSettings?.retentionHours || "720",
     ipAllowlist: schoolSettings?.ipAllowlist || [],
     blockedDomains: schoolSettings?.blockedDomains || [],
+    allowedDomains: schoolSettings?.allowedDomains || [],
+    gradeLevels: schoolSettings?.gradeLevels || [],
     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
     aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
     pauseChatDuringTesting: schoolSettings?.pauseChatDuringTesting !== false,
@@ -218,226 +194,12 @@ router.get("/settings", ...auth, async (req, res, next) => {
   }
 });
 
-// POST /api/classpilot/teacher/settings
-router.post("/settings", ...auth, async (req, res, next) => {
-  try {
-    const {
-      maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
-      schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
-      centralEmailRecipientUserId,
-      enableTrackingHours, trackingStartTime, trackingEndTime, trackingDays, schoolTimezone, afterHoursMode,
-      sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
-      pauseChatDuringTesting,
-    } = req.body;
-
-    // Teacher-specific settings
-    const data: Record<string, unknown> = {};
-    if (maxTabsPerStudent !== undefined) data.maxTabsPerStudent = maxTabsPerStudent;
-    if (allowedDomains !== undefined) data.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
-    if (blockedDomains !== undefined) data.blockedDomains = validateClasspilotRuleList(blockedDomains, "Blocked domains");
-    if (defaultFlightPathId !== undefined) data.defaultFlightPathId = defaultFlightPathId;
-
-    // School-wide settings — only when the admin settings page sends them.
-    // The admin page sends schoolName/retentionHours/ipAllowlist/aiSafetyEmailsEnabled
-    // which the teacher's MySettings page never includes.
-    const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
-      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
-      || centralEmailRecipientUserId !== undefined
-      || enableTrackingHours !== undefined || trackingStartTime !== undefined || trackingEndTime !== undefined
-      || trackingDays !== undefined || schoolTimezone !== undefined || afterHoursMode !== undefined
-      || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
-      || sharedChromebookPinLoginEnabled !== undefined || pauseChatDuringTesting !== undefined;
-
-    let normalizedCentralEmailRecipientUserId: string | null | undefined;
-    if (isAdminSettingsRequest) {
-      if (!isAdminRole(req, res)) {
-        return res.status(403).json({ error: "Admin access required to update school settings" });
-      }
-
-      if (centralEmailRecipientUserId !== undefined) {
-        if (centralEmailRecipientUserId === null) {
-          normalizedCentralEmailRecipientUserId = null;
-        } else {
-          if (typeof centralEmailRecipientUserId !== "string") {
-            return res.status(400).json({ error: "Central email recipient must be a staff user ID or an explicit clear value" });
-          }
-          const rawRecipientId = centralEmailRecipientUserId.trim();
-          if (!rawRecipientId) {
-            return res.status(400).json({ error: "Central email recipient cannot be blank; use null to clear it" });
-          }
-          if (rawRecipientId === "none" || rawRecipientId === "__none__") {
-            normalizedCentralEmailRecipientUserId = null;
-          } else {
-            const schoolId = res.locals.schoolId!;
-            const membership = await getMembershipByUserAndSchool(rawRecipientId, schoolId);
-            const allowedRoles = new Set(["admin", "school_admin", "teacher", "office_staff"]);
-            if (!membership || !allowedRoles.has(membership.role)) {
-              return res.status(400).json({ error: "Central email recipient must be active staff at this school" });
-            }
-            const user = await getUserById(rawRecipientId);
-            if (!user?.email?.trim()) {
-              return res.status(400).json({ error: "Central email recipient must have an email address" });
-            }
-            normalizedCentralEmailRecipientUserId = rawRecipientId;
-          }
-        }
-      }
-    }
-
-    const monitoringPatch = { enableTrackingHours, trackingStartTime, trackingEndTime, trackingDays, schoolTimezone, afterHoursMode };
-    if (changesClasspilotMonitoringSettings(monitoringPatch)) {
-      const [current, school] = await Promise.all([getSettingsForSchool(res.locals.schoolId!), getSchoolById(res.locals.schoolId!)]);
-      assertClasspilotMonitoringTimezoneUpdate(school?.schoolTimezone, monitoringPatch);
-      assertClasspilotMonitoringSettingsUpdate({ ...current, schoolTimezone: school?.schoolTimezone || "America/New_York" }, monitoringPatch);
-    }
-    const settings = await upsertTeacherSettings(req.authUser!.id, data);
-
-    let savedSchoolSettings: Awaited<ReturnType<typeof getSettingsForSchool>> = undefined;
-    if (isAdminSettingsRequest) {
-      const schoolId = res.locals.schoolId!;
-      const schoolData: Record<string, unknown> = {};
-      if (enableTrackingHours !== undefined) {
-        if (typeof enableTrackingHours !== "boolean") return res.status(400).json({ error: "Tracking hours must be a boolean" });
-        schoolData.enableTrackingHours = enableTrackingHours;
-      }
-      for (const [key, value] of Object.entries({ trackingStartTime, trackingEndTime })) {
-        if (value === undefined) continue;
-        if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
-          return res.status(400).json({ error: "Tracking times must use HH:mm" });
-        }
-        schoolData[key] = value;
-      }
-      if (trackingDays !== undefined) {
-        const days = new Set(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]);
-        if (!Array.isArray(trackingDays) || trackingDays.length === 0 || trackingDays.some((day) => !days.has(day))) {
-          return res.status(400).json({ error: "Select at least one valid tracking day" });
-        }
-        schoolData.trackingDays = [...new Set(trackingDays)];
-      }
-      if (schoolTimezone !== undefined) {
-        try {
-          if (typeof schoolTimezone !== "string") throw new Error();
-          new Intl.DateTimeFormat("en", { timeZone: schoolTimezone }).format();
-        } catch { return res.status(400).json({ error: "A valid school timezone is required" }); }
-        // Read-only here: do not synchronize the shared settings timezone,
-        // which other products may still use independently.
-      }
-      if (afterHoursMode !== undefined) {
-        if (!["off", "limited", "full"].includes(afterHoursMode)) return res.status(400).json({ error: "Invalid after-hours mode" });
-        schoolData.afterHoursMode = afterHoursMode;
-      }
-      if (schoolName !== undefined) schoolData.schoolName = schoolName;
-      if (retentionHours !== undefined) {
-        schoolData.retentionHours = String(assertClasspilotRetentionHours(retentionHours));
-      }
-      if (ipAllowlist !== undefined) schoolData.ipAllowlist = ipAllowlist;
-      if (allowedDomains !== undefined) schoolData.allowedDomains = validateClasspilotRuleList(allowedDomains, "Allowed domains");
-      if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
-      if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
-      if (pauseChatDuringTesting !== undefined) {
-        if (typeof pauseChatDuringTesting !== "boolean") return res.status(400).json({ error: "pauseChatDuringTesting must be a boolean" });
-        schoolData.pauseChatDuringTesting = pauseChatDuringTesting;
-      }
-      if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
-      if (normalizedCentralEmailRecipientUserId !== undefined) {
-        schoolData.centralEmailRecipientUserId = normalizedCentralEmailRecipientUserId;
-      }
-      if (sharedChromebookSignInEnabled !== undefined) {
-        schoolData.sharedChromebookSignInEnabled = sharedChromebookSignInEnabled === true;
-        if (sharedChromebookSignInEnabled === true && sharedChromebookLoginMethod === undefined && sharedChromebookPinLoginEnabled === undefined) {
-          schoolData.sharedChromebookLoginMethod = "name_pin";
-          schoolData.sharedChromebookPinLoginEnabled = true;
-        }
-      }
-      if (sharedChromebookLoginMethod !== undefined || sharedChromebookPinLoginEnabled !== undefined) {
-        const method = normalizeSharedChromebookLoginMethod(
-          sharedChromebookLoginMethod,
-          sharedChromebookPinLoginEnabled === false ? "email_id" : "name_pin"
-        );
-        schoolData.sharedChromebookLoginMethod = method;
-        schoolData.sharedChromebookPinLoginEnabled = method === "name_pin";
-      }
-
-      const previousPauseChatDuringTesting = pauseChatDuringTesting !== undefined
-        ? (await getSettingsForSchool(schoolId))?.pauseChatDuringTesting !== false
-        : undefined;
-      if (Object.keys(schoolData).length > 0) {
-        savedSchoolSettings = await upsertSettings(schoolId, schoolData, { validateClasspilotMonitoring: true });
-      } else {
-        savedSchoolSettings = await getSettingsForSchool(schoolId);
-      }
-      if (previousPauseChatDuringTesting !== undefined && previousPauseChatDuringTesting !== pauseChatDuringTesting) {
-        // Students sitting in a live testing block see the pause flip at once.
-        const testingStudentIds = await activeScheduledTestingStudentIds(schoolId);
-        await syncClasspilotControlStatesToActiveDevices(schoolId, testingStudentIds);
-        await logAudit({
-          schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole,
-          action: "classpilot.chat.testing_pause_updated", entityType: "settings", entityId: schoolId,
-          changes: { pauseChatDuringTesting: { from: previousPauseChatDuringTesting, to: pauseChatDuringTesting } },
-          metadata: { resyncedStudentCount: testingStudentIds.length },
-        });
-      }
-
-      // Broadcast updated global blacklist to all connected students
-      if (blockedDomains !== undefined) {
-        await replaceSchoolBlockedWebsites({
-          schoolId, actorId: req.authUser!.id,
-          blockedDomains: validateClasspilotRuleList(blockedDomains, "Blocked domains"),
-          expectedRevision: req.body.policyRevision,
-        });
-        savedSchoolSettings = await getSettingsForSchool(schoolId);
-      }
-    }
-
-    // If maxTabsPerStudent changed from admin settings, broadcast limit-tabs to all students
-    if (isAdminSettingsRequest && maxTabsPerStudent !== undefined) {
-      const sid = res.locals.schoolId!;
-      const maxTabs = maxTabsPerStudent ? parseInt(String(maxTabsPerStudent), 10) : null;
-      const activeBindings = await getActiveSessions(sid);
-      const publications = activeBindings.map((binding) => {
-        const exactBinding = {
-          studentId: binding.studentId,
-          studentSessionId: binding.id,
-        };
-        const limitMsg = {
-          type: "remote-control",
-          _msgId: crypto.randomUUID(),
-          ...exactBinding,
-          command: {
-            type: "limit-tabs",
-            ...exactBinding,
-            ...classpilotSchoolPolicyAuthorityEnvelope(sid, "school_settings"),
-            data: {
-              maxTabs: (maxTabs && maxTabs > 0) ? maxTabs : null,
-              ...exactBinding,
-            },
-          },
-        };
-        sendToDeviceLocal(sid, binding.deviceId, limitMsg);
-        return {
-          target: { kind: "device" as const, schoolId: sid, deviceId: binding.deviceId },
-          message: limitMsg,
-        };
-      });
-      if (publications.length > 0) void publishWSBatch(publications);
-    }
-
-    if (!isAdminSettingsRequest) {
-      return res.json(settings);
-    }
-
-    if (savedSchoolSettings === undefined) {
-      savedSchoolSettings = await getSettingsForSchool(res.locals.schoolId!);
-    }
-
-    return res.json({
-      ...(settings || {}),
-      ...safeSchoolSettingsResponse(savedSchoolSettings, isAdminRole(req, res), (await getSchoolById(res.locals.schoolId!))?.schoolTimezone),
-    });
-  } catch (err) {
-    next(err);
-  }
-});
+// Legacy aliases /settings and /teacher/settings share this route. Their mixed
+// payload cannot establish which scope an operator intended to save.
+router.post("/settings", ...auth, (_req, res) => res.status(409).json({
+  error: "Settings have moved. Refresh the page before saving again.",
+  code: "SETTINGS_REFRESH_REQUIRED",
+}));
 
 // ============================================================================
 // Teacher-Student Assignments

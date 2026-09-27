@@ -124,7 +124,7 @@ test('every approved Admin tool is reachable through an expanded group and a reg
   try {
     const nav = page.getByRole('navigation', { name: 'Admin navigation', exact: true });
     await nav.waitFor();
-    assert.deepEqual(ADMIN_NAVIGATION.map(group => group.label), ['Overview', 'People & classes', 'Calendar & schedules', 'Discipline logs', 'School operations', 'Reports', 'Settings']);
+    assert.deepEqual(ADMIN_NAVIGATION.map(group => group.label), ['Overview', 'People & classes', 'Calendar & schedules', 'Discipline logs', 'School operations', 'Reports', 'Settings', 'Help']);
     for (const group of ADMIN_NAVIGATION) {
       if (group.items.length > 1) await nav.getByRole('button', { name: group.label, exact: true }).click();
       for (const item of group.items) {

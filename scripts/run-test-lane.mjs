@@ -8,6 +8,7 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
+  "classpilot-settings.test.ts",
   "student-information.integration.test.ts",
   "school-discipline.integration.test.ts",
   "mydesk-imports-http.integration.test.ts",
@@ -31,6 +32,7 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-teacher-preferences-schema.integration.test.ts",
   "mydesk-redesign-schema.integration.test.ts",
   "mydesk-workspace-schema.integration.test.ts",
   "rls-enforcement.integration.test.ts",

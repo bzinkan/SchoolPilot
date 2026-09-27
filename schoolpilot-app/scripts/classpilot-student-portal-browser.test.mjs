@@ -6,6 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createServer } from "vite";
+import { schoolSettingsFixture } from "./school-settings-fixture.mjs";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHOOL_ID = "portal-school-a";
@@ -87,6 +88,7 @@ async function fixture(browser, baseURL, role = "school_admin", roles) {
       revision: 1, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01",
       profiles: [], applications: [], classes: [], staff: [], supervisionGroups: [], testingStatuses: [],
     } });
+    if (url.pathname === "/api/classpilot/admin/settings") return route.fulfill({ json: schoolSettingsFixture(null, SCHOOL_ID) });
     if (url.pathname === "/api/settings") return route.fulfill({ json: { schoolName: "Portal Test School", retentionDays: 30 } });
     if (["/api/sessions/all", "/api/teacher/groups", "/api/flight-paths"].includes(url.pathname)) return route.fulfill({ json: [] });
     return route.fulfill({ json: {} });
@@ -196,8 +198,8 @@ test("Student Portal placement, guarded navigation, revisioned save and administ
     await t.test("monitoring-hours drafts use the same admin navigation guard", async () => {
       const f = await fixture(browser, baseURL);
       try {
-        await f.page.goto('/classpilot/settings', { waitUntil: 'networkidle' });
-        const hours = f.page.getByRole('region', { name: 'Monitoring hours', exact: true });
+        await f.page.goto('/classpilot/settings?section=browsing', { waitUntil: 'networkidle' });
+        const hours = f.page.getByRole('group').filter({ has: f.page.getByLabel('Start', { exact: true }) }).first();
         await hours.getByLabel('Start', { exact: true }).fill('07:45');
         await f.page.getByRole('link', { name: 'Overview', exact: true }).click();
         await f.page.getByRole('button', { name: 'Keep editing', exact: true }).click();
@@ -226,14 +228,14 @@ test("Student Portal placement, guarded navigation, revisioned save and administ
         assert.deepEqual(f.errors, []);
       } finally { await f.context.close(); }
     });
-    await t.test("Settings keeps its old anchor as a link and no longer loads the policy editor", async () => {
+    await t.test("Settings keeps Student portal in the shared menu and does not mount a second policy editor", async () => {
       const f = await fixture(browser, baseURL);
       try {
         await f.page.goto("/classpilot/settings#student-sign-in-during-waypoints", { waitUntil: "networkidle" });
-        await f.page.getByRole("button", { name: "Open Student Portal configuration", exact: true }).waitFor();
+        await f.page.getByRole("link", { name: "Student portal", exact: true }).waitFor();
         assert.equal(await f.page.getByTestId("card-student-sso-policy").count(), 0);
         assert.equal(f.requests.length, 0);
-        await f.page.getByRole("button", { name: "Open Student Portal configuration", exact: true }).click();
+        await f.page.getByRole("link", { name: "Student portal", exact: true }).click();
         await f.page.getByTestId("card-student-sso-policy").waitFor();
         assert.equal(new URL(f.page.url()).searchParams.get("tab"), "student-portal");
         assert.deepEqual(f.errors, []);

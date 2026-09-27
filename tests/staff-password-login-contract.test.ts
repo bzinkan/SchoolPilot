@@ -155,9 +155,11 @@ test("web client sends the client hint, honours the policy code, and manages it 
   assert.match(hook, /staffPasswordLoginEnabled: activeMembership\.staffPasswordLoginEnabled !== false/);
 
   const settings = source("schoolpilot-app/src/products/classpilot/pages/Settings.jsx");
-  assert.match(settings, /apiRequest\("PUT", `\/schools\/\$\{currentUser\?\.schoolId\}\/staff-password-login`, \{ enabled \}\)/);
-  assert.match(settings, /Allow email and password sign-in for staff/);
-  assert.match(settings, /When off, staff sign in to the web app with Google only\. The GoPilot staff app is not affected\./);
+  assert.match(settings, /apiRequest\('PUT', `\/schools\/\$\{schoolId\}\/staff-password-login`, \{ enabled: draft\.enabled \}/);
+  assert.match(settings, /Allow staff to sign in with email and password/);
+  assert.match(settings, /When off, staff use Google sign-in\. The GoPilot staff app keeps password access while the school has a GoPilot license\./);
+  assert.match(settings, /saveLabel="Save staff sign-in"/);
+  assert.match(settings, /onChange=\{event => editor\.update\('enabled', event\.target\.checked\)\}/, "the switch changes a draft, not the server");
   assert.match(settings, /school\?\.staffPasswordLoginEnabled !== false/);
   assert.doesNotMatch(settings, /queryKey: \[[^\]]*staff-password-login/, "policy is read from the auth context, not a new query");
 });
