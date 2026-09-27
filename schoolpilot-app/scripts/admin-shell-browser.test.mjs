@@ -22,7 +22,7 @@ import Boundary from'/src/products/classpilot/components/admin/AdminQueryBoundar
 import Admin from'/src/products/classpilot/pages/Admin.jsx';
 import AdminClasses from'/src/products/classpilot/pages/AdminClasses.jsx';
 import{useAdminShell,useAdminNavigation,useAdminNavigationBlocker}from'/src/products/classpilot/hooks/useAdminNavigation.js';
-import{adminIdentityKey}from'/src/products/classpilot/lib/adminNavigation.js';import'/src/index.css';
+import{adminIdentityKey,adminRoute}from'/src/products/classpilot/lib/adminNavigation.js';import'/src/index.css';
 const h=React.createElement,params=new URLSearchParams(location.search),mode=params.get('mode')||'guard';
 const initial=params.get('route')||'/classpilot/admin/scheduling?section=school-year';
 history.replaceState({idx:0,key:'fixture-start',usr:{marker:'initial'}},'',initial);
@@ -38,7 +38,7 @@ useAdminNavigationBlocker({id:'other-editor',dirty:other,busy:false,onDiscard:()
 window.fixtureBusy=setBusy;window.fixtureOther=setOther;window.fixtureGuardedNavigate=navigation.navigate;
 window.fixtureAction=()=>navigation.requestAction(async()=>{window.__actions++;return !window.__actionVeto;},{id:'fixture-action'}).then(value=>window.__actionResult=value);
 window.fixtureOldCommit=commit.navigateAfterCommit;
-return h('section',{className:'space-y-4 rounded-xl border bg-card p-6'},child&&h(CommittedChild),h('h2',{className:'text-lg font-semibold'},shell?'Synthetic editor':'Teacher workspace'),
+return h('section',{'data-testid':'fixture-editor','data-busy':String(busy),'data-child':String(child),className:'space-y-4 rounded-xl border bg-card p-6'},child&&h(CommittedChild),h('h2',{className:'text-lg font-semibold'},shell?'Synthetic editor':'Teacher workspace'),
 h('label',{className:'block'},'Draft',h('input',{'aria-label':'Draft',className:'ml-3 rounded border p-2',value:draft,onChange:event=>setDraft(event.target.value)})),
 h(Link,{to:'/classpilot/admin/classes?returnTo=%2Fpasspilot%2Fclasses',state:{marker:'link-state'},className:'block underline'},'Local return with state'),
 h('button',{onClick:()=>navigation.navigate('/classpilot/admin/classes',{state:{marker:'button-state'}})},'Guarded return'),
@@ -48,12 +48,12 @@ h('a',{href:'/classpilot/admin/classes',target:'_blank'},'Open new tab'));}
 function Destination(){return h('section',null,h('h2',null,'Destination'),h(Link,{to:'/classpilot/admin/scheduling?section=school-year',state:{marker:'editor-link'}},'Open editor'));}
 function LegacyQuery({identity}){const query=useQuery({queryKey:['/api/admin/teacher-students'],queryFn:({signal})=>new Promise(resolve=>{window.__requests??=[];const call={identity,aborted:false};window.__requests.push(call);signal.addEventListener('abort',()=>call.aborted=true);window['resolve-'+identity]=()=>resolve({name:identity});}),retry:false});return h('output',{'aria-label':'Legacy data'},query.data?.name||'Loading roster');}
 function RouteOutput(){const route=useLocation();window.__route=route;return null;}
-function Harness(){const[identity,setIdentity]=useState('school-a'),[role,setRole]=useState(params.get('role')||'school_admin');
+function Harness(){const route=useLocation();const[identity,setIdentity]=useState('school-a'),[role,setRole]=useState(params.get('role')||'school_admin');
 const user={id:'viewer-a',firstName:'Morgan',lastName:'Reed',email:'synthetic@example.invalid'};
 const activeMembership={schoolId:identity,schoolName:'Cedar Grove School',schoolTimezone:'America/New_York',role,roles:[role],mailpilotEntitled:true,classpilotEmailMonitoring:false};
 const value={user,activeMembership,activeSchoolId:identity,loading:false,token:'synthetic-token',logout:async()=>{window.__signedOut=true},refetchUser:async()=>{}};
 window.fixtureIdentity=setIdentity;window.fixtureRole=setRole;
-return h(FixtureAuthContext.Provider,{value},h(Boundary,{scopeKey:adminIdentityKey(user,activeMembership,identity)},h(RouteOutput),h(Routes,null,h(Route,{element:h(Layout)},
+return h(FixtureAuthContext.Provider,{value},h(Boundary,{scopeKey:adminIdentityKey(user,activeMembership,identity),blockChildren:Boolean(adminRoute(route))},h(RouteOutput),h(Routes,null,h(Route,{element:h(Layout)},
 h(Route,{path:'/classpilot/admin',element:mode==='overview'?h(Admin):h(Editor)}),
 h(Route,{path:'/classpilot/admin/scheduling',element:mode==='identity'?h(LegacyQuery,{identity}):h(Editor)}),
 h(Route,{path:'/classpilot/admin/classes/scheduling',element:h(Editor)}),h(Route,{path:'/classpilot/admin/classes',element:mode==='classes'?h(AdminClasses):h(Destination)}),
@@ -217,6 +217,7 @@ test('busy state and asynchronous discard veto keep the editor and settle the re
     await page.getByText('Wait for the current operation to finish before leaving.').waitFor();
     assert.equal(await page.getByRole('alertdialog').count(), 0);
     await page.evaluate(() => { window.fixtureBusy(false); window.__veto = true; });
+    await page.waitForFunction(() => document.querySelector('[data-testid="fixture-editor"]')?.dataset.busy === 'false');
     await page.getByLabel('Draft').fill('Unsaved');
     await page.evaluate(() => { void window.fixtureAction(); });
     await page.getByRole('button', { name: 'Discard changes and leave' }).click();
@@ -334,6 +335,7 @@ test('a queued committed-owner navigation is vetoed if that editor unmounts befo
     await page.evaluate(() => { void window.committedChildNavigate('/classpilot/admin/classes').then(result => window.__childResult = result); });
     await page.getByRole('alertdialog').waitFor();
     await page.evaluate(() => window.fixtureChild(false));
+    await page.waitForFunction(() => document.querySelector('[data-testid="fixture-editor"]')?.dataset.child === 'false');
     await page.getByRole('button', { name: 'Discard changes and leave' }).click();
     await page.waitForFunction(() => window.__childResult === false);
     assert.equal(await page.getByRole('heading', { name: 'Destination' }).count(), 0);
@@ -352,6 +354,7 @@ test('committed-owner unmount during asynchronous discard cancels its continuati
     await page.getByRole('button', { name: 'Discard changes and leave' }).click();
     await page.waitForFunction(() => typeof window.__resolveDiscard === 'function');
     await page.evaluate(() => window.fixtureChild(false));
+    await page.waitForFunction(() => document.querySelector('[data-testid="fixture-editor"]')?.dataset.child === 'false');
     await page.evaluate(() => window.__resolveDiscard());
     await page.waitForFunction(() => window.__childResult === false);
     assert.equal(await page.getByRole('heading', { name: 'Destination' }).count(), 0);
@@ -369,9 +372,12 @@ test('mobile menu links respect dirty confirmation and Escape keeps the draft', 
     await menu.getByRole('link', { name: 'Overview', exact: true }).click();
     await page.getByRole('alertdialog').waitFor();
     await page.keyboard.press('Escape');
+    await page.getByRole('alertdialog').waitFor({ state: 'hidden' });
     assert.equal(await page.getByRole('alertdialog').count(), 0);
     assert.equal(await menu.isVisible(), true);
     await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Admin menu');
     assert.equal(await page.getByRole('button', { name: 'Admin menu' }).evaluate(element => element === document.activeElement), true);
     assert.equal(await page.getByLabel('Draft').inputValue(), 'Mobile draft');
     assert.deepEqual(errors, []);
@@ -400,6 +406,21 @@ test('identity/access changes clear drafts, cancel relevant cache work and retai
     assert.equal(await fixture.page.evaluate(() => window.staleCommit('/classpilot/admin/classes')), false);
     assert.deepEqual(fixture.errors, []);
   } finally { await fixture.page.close(); }
+});
+
+test('nonadmin route lifetimes stay mounted while identity cache cleanup runs', async () => {
+  const { page, errors } = await open({ role: 'teacher', route: '/classpilot/coverage' });
+  try {
+    await page.getByLabel('Draft').fill('A page with its own identity lifecycle');
+    await page.evaluate(() => {
+      window.queryClient.setQueryData(['/api/admin/teacher-students'], { school: 'old' });
+      window.fixtureIdentity('school-b');
+    });
+    await page.waitForFunction(() => window.queryClient.getQueryData(['/api/admin/teacher-students']) === undefined);
+    assert.equal(await page.getByLabel('Draft').inputValue(), 'A page with its own identity lifecycle');
+    assert.equal(await page.getByTestId('classpilot-admin-shell').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });
 
 test('admin origin does not add admin chrome to teacher flows and print/download remain native', async () => {

@@ -22,7 +22,7 @@ import AuthCallback from './pages/AuthCallback';
 import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
 import SharedRecordAccessBoundary from './products/classpilot/components/SharedRecordAccessBoundary';
 import AdminQueryBoundary from './products/classpilot/components/admin/AdminQueryBoundary';
-import { adminIdentityKey } from './products/classpilot/lib/adminNavigation';
+import { adminIdentityKey, adminRoute } from './products/classpilot/lib/adminNavigation';
 
 // ClassPilot pages (lazy-loaded)
 const CPClassToolsPresentation = lazy(() => import('./products/classpilot/pages/ClassToolsPresentation'));
@@ -197,6 +197,7 @@ function ImpersonationBanner() {
 }
 
 function AppRoutes() {
+  const location = useLocation();
   const { user, loading, activeMembership, activeSchoolId, schoolSelectionRequired } = useAuth();
   const { hasClassPilot, hasPassPilot, hasGoPilot, roleBasedDefaultPath } = useLicenses();
   const { isNative, product } = useNative();
@@ -234,7 +235,8 @@ function AppRoutes() {
   }
 
   return (
-    <AdminQueryBoundary scopeKey={adminIdentityKey(user, activeMembership, activeSchoolId)}>
+    <AdminQueryBoundary scopeKey={adminIdentityKey(user, activeMembership, activeSchoolId)}
+      blockChildren={Boolean(adminRoute(location))}>
     <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Login & OAuth callback — always accessible */}
