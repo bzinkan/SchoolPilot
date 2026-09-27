@@ -23,12 +23,14 @@ async function fixture(context, options = {}) {
     import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';
     import {queryClient} from '/src/lib/queryClient.js';
     import Coverage from '/src/products/classpilot/pages/Coverage.jsx';
+    import AdminNavigationProvider from '/src/products/classpilot/components/admin/AdminNavigationProvider.jsx';
     import {Toaster} from '/src/components/ui/toaster.jsx';
     import '/src/index.css';
     queryClient.setDefaultOptions({queries:{retry:false,refetchOnWindowFocus:false}});
     window.__coverageTestClient = queryClient;
     function SchoolSwitchBridge() { const {switchSchool,refetchUser} = useAuth(); React.useEffect(() => { window.__switchCoverageSchool = switchSchool; window.__refreshCoverageAuth = refetchUser; }, [switchSchool,refetchUser]); return null; }
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(SchoolSwitchBridge),React.createElement(Coverage),React.createElement(Toaster))))));
+    function Subject(){const {activeSchoolId,user}=useAuth();return ${options.adminShell ? 'true' : 'false'}?React.createElement(AdminNavigationProvider,{key:activeSchoolId+user?.id,scopeKey:activeSchoolId+user?.id},React.createElement('h1',null,'Coverage'),React.createElement(Coverage)):React.createElement(Coverage);}
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement(React.Fragment,null,React.createElement(SchoolSwitchBridge),React.createElement(Subject),React.createElement(Toaster))))));
   `;
   const vite = await createServer({ cacheDir: path.join(root, "node_modules", `.vite-supervision-groups-${process.pid}`), root, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: [{
     name: 'coverage-group-editor-browser-fixture',
@@ -989,4 +991,34 @@ test('a late group save stays scoped to its original school and cannot close or 
   assert.equal(state.reads.filter(read => read.schoolId === 'other-school').length, before, 'Original-school refresh cannot invalidate the new school editor data');
   assert.equal(await page.getByText(/Prior School Creation.*saved/).count(), 0);
   assert.deepEqual(state.errors, []);
+});
+
+
+test('admin supervision group closes cleanly, guards a draft once, and closes after an acknowledged save', { timeout: 90_000 }, async context => {
+  const { page, state, dialog } = await fixture(context, { adminShell: true });
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' }); assert.equal(await page.getByRole('alertdialog').count(), 0);
+  await page.getByRole('button', { name: 'New Group', exact: true }).click();
+  await dialog.getByPlaceholder('State testing - 8th grade').fill('Reviewed admin group');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('alertdialog').waitFor(); assert.equal(await page.getByRole('alertdialog').count(), 1);
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  assert.equal(await dialog.getByPlaceholder('State testing - 8th grade').inputValue(), 'Reviewed admin group');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' }); assert.equal(await page.getByRole('alertdialog').count(), 0);
+  assert.ok(state.writes.some(write => write.body?.name === 'Reviewed admin group')); assert.deepEqual(state.errors, []);
+});
+
+test('admin supervision session cancels through the shared guard without changing assignments', { timeout: 90_000 }, async context => {
+  const { page, state } = await fixture(context, { adminShell: true, openCreate: false });
+  await page.getByRole('button', { name: 'Start session', exact: true }).click();
+  const dialog = page.getByTestId('supervision-session-dialog');
+  await dialog.getByLabel('Session name', { exact: true }).fill('Unfinished session');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('alertdialog').waitFor(); assert.equal(await page.getByRole('alertdialog').count(), 1);
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  assert.equal(await dialog.getByLabel('Session name', { exact: true }).inputValue(), 'Unfinished session');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Discard changes and leave' }).click();
+  await dialog.waitFor({ state: 'hidden' }); assert.equal(state.writes.length, 0); assert.deepEqual(state.errors, []);
 });

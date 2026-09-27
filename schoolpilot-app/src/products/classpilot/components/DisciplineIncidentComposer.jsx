@@ -10,6 +10,7 @@ import { attachmentDigest } from '../lib/myDesk';
 import { myDeskError } from '../lib/myDeskModel';
 import { useDisciplineLifetime } from '../hooks/useDiscipline';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import DisciplineAttachment from './DisciplineAttachment';
 
 function todayInSchool(timeZone) {
@@ -34,14 +35,18 @@ export default function DisciplineIncidentComposer({ access, scope = 'assigned',
   const students = [...new Map([...(selectedStudent ? [selectedStudent] : []), ...(query.isError ? [] : query.data?.pages.flatMap(page => page.students) || [])].map(student => [student.id, student])).values()];
   const selected = students.find(student => student.id === form.studentId);
   const changed = Boolean(dirty || files.length || savedDraft || pending);
+  const shell = useAdminShell();
+  const { requestAction } = useAdminNavigation();
+  const committedNavigation = useAdminNavigationBlocker({ id: 'discipline-composer', dirty: changed, busy,
+    onDiscard: async () => { if (denied || await cancel(false)) { onClose(); return true; } return false; }, description: 'Discard this unfinished incident? Published records are retained.' });
   const rememberDraft = value => { serverDraft.current = value; setSavedDraft(value); };
   useEffect(() => {
-    if (!changed) return;
+    if (shell || !changed) return;
     const handler = event => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', handler);
     const stop = guardPrivateWorkspaceHistory(() => setCloseConfirm(true));
     return () => { window.removeEventListener('beforeunload', handler); stop?.(); };
-  }, [changed]);
+  }, [changed, shell]);
   const edit = patch => { setForm(previous => ({ ...previous, ...patch })); setDirty(true); setReviewed(false); setError(''); };
   const choose = event => {
     const incoming = [...files, ...Array.from(event.target.files || [])]; event.target.value = '';
@@ -93,23 +98,24 @@ export default function DisciplineIncidentComposer({ access, scope = 'assigned',
       attachmentIds: serverDraft.current.attachments.filter(file => file.status === 'ready').map(file => file.id), acknowledgedDuplicates: candidates.map(({ id, revision }) => ({ id, revision })), duplicateAction,
       ...(duplicateAction === 'add_evidence' ? { existingRecordId: chosen.id, existingRevision: chosen.revision, reason: reason.trim() } : {}) };
     try { const result = await disciplineApi(schoolId, controller.signal).finalize(serverDraft.current.id, finalRequest.current); controller.signal.throwIfAborted();
-      await invalidateDiscipline(schoolId, viewerId); controller.signal.throwIfAborted(); onSaved(result.receipt?.recordId || result.record?.id || serverDraft.current.id);
+      await invalidateDiscipline(schoolId, viewerId); controller.signal.throwIfAborted(); await onSaved(result.receipt?.recordId || result.record?.id || serverDraft.current.id, committedNavigation.navigateAfterCommit);
     } catch (failure) { fail(failure, controller); if (failure.response?.status === 409 && !controller.signal.aborted) { finalRequest.current = null; setPending(false); setReviewed(false); setStage('edit'); } }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
-  const cancel = async () => {
-    const controller = lifetime.current; if (working.current || !controller || controller.signal.aborted) return;
-    if (!serverDraft.current && !transaction.current) { onClose(); return; }
+  const cancel = async (closeAfter = true) => {
+    const controller = lifetime.current; if (working.current || !controller || controller.signal.aborted) return false;
+    if (!serverDraft.current && !transaction.current) { if (closeAfter) onClose(); return true; }
     working.current = true; setBusy(true);
     try {
       const api = disciplineApi(schoolId, controller.signal);
-      if (!serverDraft.current) { const result = await api.createDraft(transaction.current.payload); if (result.receipt) { controller.signal.throwIfAborted(); onSaved(result.receipt.recordId); return; } rememberDraft(result.draft); }
+      if (!serverDraft.current) { const result = await api.createDraft(transaction.current.payload); if (result.receipt) { controller.signal.throwIfAborted(); if (closeAfter) await onSaved(result.receipt.recordId, committedNavigation.navigateAfterCommit); return true; } rememberDraft(result.draft); }
       if (!cancelRequest.current) { const latest = (await api.draft(serverDraft.current.id)).draft; cancelRequest.current = { clientRequestId: crypto.randomUUID(), revision: latest.revision }; }
-      await api.cancelDraft(serverDraft.current.id, cancelRequest.current); controller.signal.throwIfAborted(); onClose();
-    } catch (failure) { fail(failure, controller); }
+      await api.cancelDraft(serverDraft.current.id, cancelRequest.current); controller.signal.throwIfAborted(); if (closeAfter) onClose(); return true;
+    } catch (failure) { fail(failure, controller); return false; }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
-  return <Dialog open onOpenChange={open => { if (!open && !busy) { if (changed) setCloseConfirm(true); else onClose(); } }}><DialogContent className="discipline-composer"><DialogHeader><DialogTitle>Add incident</DialogTitle><DialogDescription>Drafts stay private until you save the disciplinary record.</DialogDescription></DialogHeader>
+  const close = () => shell ? requestAction(onClose, { id: 'discipline-composer-close' }) : setCloseConfirm(true);
+  return <Dialog open onOpenChange={open => { if (!open && !busy) { if (shell || changed) close(); else onClose(); } }}><DialogContent className="discipline-composer"><DialogHeader><DialogTitle>Add incident</DialogTitle><DialogDescription>Drafts stay private until you save the disciplinary record.</DialogDescription></DialogHeader>
     {denied ? <p role="alert">Access to this student or school has changed. Close this draft and refresh.</p> : <>
     {stage === 'edit' ? <fieldset disabled={busy || pending}>
       <label>Find a student<Input value={search} onChange={event => setSearch(event.target.value)} /></label><label>Student<select aria-label="Student" value={form.studentId} onChange={event => edit({ studentId: event.target.value, groupId: '' })}><option value="">Choose a student</option>{students.map(student => <option key={student.id} value={student.id}>{student.name}</option>)}</select></label>
@@ -132,7 +138,7 @@ export default function DisciplineIncidentComposer({ access, scope = 'assigned',
       <p className="discipline-visibility">Visible to school administrators and teachers currently assigned to this student.</p><label className="discipline-check"><input type="checkbox" disabled={pending} checked={reviewed} onChange={event => setReviewed(event.target.checked)} />I reviewed the student, date, factual information, and selected forms.</label>
     </section>}
     {error && <p role="alert">{error} Your draft is preserved.</p>}
-    <div className="discipline-actions"><Button variant="outline" disabled={busy} onClick={() => setCloseConfirm(true)}>Cancel</Button>{stage === 'review' && <Button variant="outline" disabled={busy || pending} onClick={() => { setStage('edit'); setReviewed(false); }}>Edit draft</Button>}<Button disabled={busy || (stage === 'review' && (!reviewed || !duplicateAction))} onClick={stage === 'edit' ? prepare : save}>{busy ? 'Saving…' : pending ? 'Retry save' : stage === 'edit' ? 'Review incident' : 'Save disciplinary record'}</Button></div>
+    <div className="discipline-actions"><Button variant="outline" disabled={busy} onClick={close}>Cancel</Button>{stage === 'review' && <Button variant="outline" disabled={busy || pending} onClick={() => { setStage('edit'); setReviewed(false); }}>Edit draft</Button>}<Button disabled={busy || (stage === 'review' && (!reviewed || !duplicateAction))} onClick={stage === 'edit' ? prepare : save}>{busy ? 'Saving…' : pending ? 'Retry save' : stage === 'edit' ? 'Review incident' : 'Save disciplinary record'}</Button></div>
     </>}
     {closeConfirm && <section className="discipline-notice"><p>Discard this unfinished entry? Published records are never removed by cancelling a draft.</p><Button variant="outline" disabled={busy} onClick={() => setCloseConfirm(false)}>Keep editing</Button><Button variant="destructive" disabled={busy} onClick={denied ? onClose : cancel}>Discard draft</Button></section>}
   </DialogContent></Dialog>;

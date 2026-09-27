@@ -1,6 +1,6 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useToast } from "../../../hooks/use-toast";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -11,7 +11,8 @@ import { Badge } from "../../../components/ui/badge";
 import { ArrowLeft, ArrowRight, CheckCircle2, Copy, ExternalLink, Mail, Power, PowerOff, RefreshCw, ShieldCheck, AlertTriangle } from "lucide-react";
 
 export default function EmailMonitoringSetup() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
   const [step, setStep] = useState(1);
   const [testEmail, setTestEmail] = useState("");
@@ -95,7 +96,7 @@ export default function EmailMonitoringSetup() {
 
   return (
     <div className="container mx-auto p-6 max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
+      {!adminShell && (<div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
             <Mail className="h-6 w-6 text-primary-foreground" />
@@ -108,8 +109,8 @@ export default function EmailMonitoringSetup() {
         <Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring")}>
           <ArrowLeft className="h-4 w-4 mr-2" /> Back
         </Button>
-      </div>
-
+      </div>)}
+{adminShell && (<Button variant="outline" onClick={() => navigate("/classpilot/admin/email-monitoring")}><ArrowLeft className="mr-2 size-4" />Back to Email monitoring</Button>)}
       {!configured && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
           <CardHeader>

@@ -9,7 +9,7 @@ import { createServer } from 'vite';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.resolve(root, '../../artifacts');
 let vite, browser, base;
-const entry = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{MemoryRouter}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import Page,{StudentInformationShell} from'/src/products/classpilot/pages/StudentInformation.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import Profile from'/src/products/classpilot/components/StudentContactProfileEditor.jsx';import Import from'/src/products/classpilot/components/StudentInformationImport.jsx';import{clearMyDeskQueries}from'/src/products/classpilot/lib/myDeskModel.js';import'/src/index.css';const h=React.createElement;window.refreshInformation=()=>queryClient.invalidateQueries({queryKey:['mydesk-private']});window.informationCache=()=>queryClient.getQueriesData({queryKey:['mydesk-private']});function Harness(){const[who,setWho]=useState({schoolId:'school-a',viewerId:'teacher-a'});const mode=new URLSearchParams(location.search).get('mode');const change=(schoolId,viewerId)=>{clearMyDeskQueries(queryClient);localStorage.setItem('sp_activeSchoolId',schoolId);window.__viewer=viewerId;setWho({schoolId,viewerId});};return h(React.Fragment,null,h('button',{onClick:()=>change('school-b','teacher-a')},'Change school'),h('button',{onClick:()=>change('school-a','teacher-b')},'Change teacher'),mode==='directory'?h(Page):mode==='profile'?h(StudentInformationShell,null,h(Profile,{key:who.schoolId+who.viewerId,...who,studentId:'student-a'})):h(Import,{key:who.schoolId+who.viewerId,access:{...who,aiImportEnabled:true,limits:{teacherDailyUnits:100,schoolDailyUnits:500}},importId:'run-a'}));}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(ThemeProvider,null,h(MemoryRouter,{initialEntries:['/classpilot/my-desk/student-information']},h(Harness)))));`;
+const entry = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{MemoryRouter,Link,useLocation}from'react-router-dom';import AdminNavigationProvider from'/src/products/classpilot/components/admin/AdminNavigationProvider.jsx';import{AdminShellFrame}from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import Page,{StudentInformationShell} from'/src/products/classpilot/pages/StudentInformation.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import Profile from'/src/products/classpilot/components/StudentContactProfileEditor.jsx';import Import from'/src/products/classpilot/components/StudentInformationImport.jsx';import{clearMyDeskQueries}from'/src/products/classpilot/lib/myDeskModel.js';import'/src/index.css';const h=React.createElement;window.refreshInformation=()=>queryClient.invalidateQueries({queryKey:['mydesk-private']});window.informationCache=()=>queryClient.getQueriesData({queryKey:['mydesk-private']});function Harness(){const[who,setWho]=useState({schoolId:'school-a',viewerId:'teacher-a'});const mode=new URLSearchParams(location.search).get('mode');const change=(schoolId,viewerId)=>{clearMyDeskQueries(queryClient);localStorage.setItem('sp_activeSchoolId',schoolId);window.__viewer=viewerId;setWho({schoolId,viewerId});};return h(React.Fragment,null,h('button',{onClick:()=>change('school-b','teacher-a')},'Change school'),h('button',{onClick:()=>change('school-a','teacher-b')},'Change teacher'),mode==='directory'?h(Page):mode==='profile'?h(StudentInformationShell,null,h(Profile,{key:who.schoolId+who.viewerId,...who,studentId:'student-a'})):h(Import,{key:who.schoolId+who.viewerId,access:{...who,aiImportEnabled:true,limits:{teacherDailyUnits:100,schoolDailyUnits:500}},importId:'run-a'}));}function AdminHarness(){const route=useLocation();return h(AdminNavigationProvider,{scopeKey:'school-a:teacher-a'},h(AdminShellFrame,{route:{id:'contacts',title:'Student contacts'},schoolName:'Synthetic School'},h(Link,{to:'/classpilot/admin'},'Leave shared editor'),h('output',{'aria-label':'Current route'},route.pathname+route.search),route.pathname==='/classpilot/admin'?h('h2',null,'Admin destination'):h(Harness)));}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(ThemeProvider,null,h(MemoryRouter,{initialEntries:['/classpilot/my-desk/student-information'+(new URLSearchParams(location.search).get('admin')?'?entry=admin':'')]},new URLSearchParams(location.search).get('admin')?h(AdminHarness):h(Harness)))));`;
 before(async () => {
   await mkdir(artifacts, { recursive: true });
   vite = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-student-information-${process.pid}`, server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'information-browser', configureServer(server) { server.middlewares.use(async (req, res, next) => {
@@ -56,7 +56,7 @@ async function setup(mode, overrides = {}) {
     if (url.pathname.endsWith('/commit')) { state.run.status = 'completed'; state.run.revision++; state.run.receipt = { profiles: [{ itemId: 'item-a', studentId: 'student-a' }] }; return json({ import: state.run }); }
     return json({ error: 'Unexpected fixture request' }, 404);
   });
-  await page.goto(`${base}/__information?mode=${mode}`); return { page, requests, state, errors };
+  await page.goto(`${base}/__information?mode=${mode}${overrides.admin ? "&admin=1" : ""}`); return { page, requests, state, errors };
 }
 
 test('manual contact changes require a reason, preserve retry identity, and clear explicit fields only', async () => {
@@ -172,4 +172,61 @@ test('synthetic directory and profile remain usable at desktop and phone widths'
       assert.deepEqual(errors,[]);
     } finally { await page.close(); }
   }
+});
+
+
+test('admin contact editor uses one shell guard, retains edits on Stay, and leaves after discard', async () => {
+  const { page, errors } = await setup('profile', { admin: true });
+  try {
+    await page.getByLabel('Contact name', { exact: true }).first().fill('Unsaved guardian');
+    assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
+    assert.equal(await page.getByRole('link', { name: 'My Desk', exact: true }).count(), 0);
+    await page.getByRole('link', { name: 'Leave shared editor' }).click();
+    await page.getByRole('alertdialog').waitFor();
+    assert.equal(await page.getByRole('alertdialog').count(), 1);
+    await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    assert.equal(await page.getByLabel('Contact name', { exact: true }).first().inputValue(), 'Unsaved guardian');
+    await page.getByRole('link', { name: 'Leave shared editor' }).click();
+    await page.getByRole('button', { name: 'Discard changes and leave' }).click();
+    await page.getByRole('heading', { name: 'Admin destination' }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('admin contact save blocks leaving while busy and successful save clears the guard', async () => {
+  const { page, state, errors } = await setup('profile', { admin: true, holdSave: true });
+  try {
+    await page.getByLabel('Phone numbers, one per line').first().fill('555-0199');
+    await page.getByLabel('Reason for this update').fill('Verified contact');
+    await page.getByRole('button', { name: 'Save reviewed changes' }).click();
+    await page.getByRole('button', { name: 'Saving…', exact: true }).waitFor();
+    await page.getByRole('link', { name: 'Leave shared editor' }).click();
+    await page.getByText('Wait for the current operation to finish before leaving.').waitFor();
+    assert.equal(await page.getByRole('alertdialog').count(), 0);
+    await page.waitForFunction(() => Boolean(document.querySelector('form.student-info-form')));
+    const deadline = Date.now() + 5000; while (!state.releaseSave && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(typeof state.releaseSave, "function");
+    state.releaseSave();
+    await page.getByRole('button', { name: 'Save reviewed changes' }).waitFor();
+    await page.getByRole('link', { name: 'Leave shared editor' }).click();
+    await page.getByRole('heading', { name: 'Admin destination' }).waitFor();
+    assert.equal(await page.getByRole('alertdialog').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { state.releaseSave?.(); await page.close(); }
+});
+
+test('admin student directory and completed contact import retain admin entry in profile links', async () => {
+  const directory = await setup('directory', { admin: true });
+  try {
+    const link = directory.page.getByRole('link', { name: 'Synthetic Student', exact: true }); await link.waitFor();
+    assert.equal(await link.getAttribute('href'), '/classpilot/my-desk/student-information/student-a?entry=admin');
+    assert.equal(await directory.page.getByRole('heading', { level: 1 }).count(), 1);
+  } finally { await directory.page.close(); }
+  const completed = await setup('import', { admin: true, run: run({ status: 'completed', receipt: { profiles: [{ itemId: 'item-a', studentId: 'student-a' }] } }) });
+  try {
+    const link = completed.page.getByRole('link', { name: 'Open saved student profile' }); await link.waitFor();
+    assert.equal(await link.getAttribute('href'), '/classpilot/my-desk/student-information/student-a?entry=admin');
+    assert.equal(await completed.page.getByRole('link', { name: 'Student information', exact: true }).getAttribute('href'), '/classpilot/my-desk/student-information?entry=admin');
+    assert.deepEqual(completed.errors, []);
+  } finally { await completed.page.close(); }
 });

@@ -1,3 +1,4 @@
+import { useAdminShell } from "../hooks/useAdminNavigation";
 import { useEffect, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -132,6 +133,7 @@ export function GuideLayout({
   backLabel = "Dashboard",
   tabs,
 }) {
+  const adminShell = useAdminShell();
   const [searchParams, setSearchParams] = useSearchParams();
   const query = (searchParams.get("q") || "").trim();
   const selectedTopic = searchParams.get("topic") || "";
@@ -166,7 +168,7 @@ export function GuideLayout({
 
   return (
     <div className="min-h-screen bg-slate-50 text-foreground dark:bg-slate-950">
-      <header className="border-b border-slate-800 bg-slate-950 text-white">
+      {!adminShell && (<><header className="border-b border-slate-800 bg-slate-950 text-white">
         <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <Button asChild variant="ghost" className="text-slate-200 hover:bg-white/10 hover:text-white">
@@ -193,8 +195,8 @@ export function GuideLayout({
 
       <div className="border-b border-slate-200 bg-card dark:border-slate-800">
         <div className="mx-auto max-w-7xl px-4 pt-3 sm:px-6">{tabs}</div>
-      </div>
-
+      </div></>)}
+      {adminShell && <p className="text-muted-foreground">{description}</p>}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
         <section className="rounded-2xl border border-slate-200 bg-card p-4 shadow-sm dark:border-slate-800 sm:p-5" aria-labelledby="guide-search-label">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">

@@ -12,6 +12,7 @@ import ScheduleAfterTesting from './ScheduleAfterTesting';
 import ScheduleProfilesOverview from './ScheduleProfilesOverview';
 import { cancellationState, historyRemovalState, scheduleDateText, useScheduleOverviewClock } from './useScheduleOverviewClock';
 import { useScheduleProfileDraftReview } from './useScheduleProfileDraftReview';
+import { useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import { testingGroupDraft } from '../lib/testingSchedulePrefill';
 
 const API = '/classpilot/admin/schedule-profiles';
@@ -125,8 +126,9 @@ export default function ScheduleProfiles(props) {
 
 function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, onWorkspaceChange, testingPrefill, onDismissTestingPrefill }) {
   const client = useQueryClient();
+  const shell = useAdminShell();
   const { activeSchoolId, user } = useAuth();
-  const query = useQuery({ queryKey: [...KEY, activeSchoolId], queryFn: async ({ signal }) => { const overviewRequestStartedAt = performance.now(); const result = await apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }); return { ...result, overviewRequestStartedAt, overviewReceivedAt: performance.now() }; }, refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
+  const query = useQuery({ queryKey: [...KEY, activeSchoolId, user?.id], queryFn: async ({ signal }) => { const overviewRequestStartedAt = performance.now(); const result = await apiRequest('GET', API, undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }); return { ...result, overviewRequestStartedAt, overviewReceivedAt: performance.now() }; }, refetchInterval: current => current.state.data?.testingStatuses?.some(row => ['pending', 'active', 'releasing'].includes(row.status)) ? 30_000 : false });
   const [session, setSession] = useState(null);
   const hoursQuery = useQuery({
     queryKey: ['/api/settings', 'day-planner-hours', activeSchoolId, user?.id],
@@ -199,7 +201,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const referenceDate = session?.referenceDate || '';
   const previewDateDirty = Boolean(session && session.mode !== 'apply' && referenceDate !== session.initialPreviewDate);
   const regularQuery = useQuery({
-    queryKey: [...KEY, 'regular-schedule', activeSchoolId, referenceDate],
+    queryKey: [...KEY, 'regular-schedule', activeSchoolId, user?.id, referenceDate],
     queryFn: ({ signal }) => apiRequest('GET', `${API}/regular-schedule`, undefined, { signal, headers: { 'X-School-Id': activeSchoolId }, params: { referenceDate } }),
     enabled: Boolean(session) && isReferenceDate(referenceDate),
     retry: false,
@@ -243,11 +245,16 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     handledFocus.current = focusTarget;
   }, [sessionId, sessionMode, sessionSetup, focusTarget, busy]);
   useEffect(() => {
-    if (!dirty) return undefined;
+    if (shell || !dirty) return undefined;
     const handler = event => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [dirty]);
+  }, [dirty, shell]);
+  useAdminNavigationBlocker({
+    id: 'schedule-profile', dirty, busy,
+    shouldBlock: ({ currentLocation, nextLocation }) => !nextLocation || nextLocation.pathname !== currentLocation.pathname,
+    onDiscard: () => { setSession(null); setTestingPicker(false); setPreview(null); setError(''); editGroup.current = null; },
+  });
   const refresh = async (scheduleChanged = false) => {
     await Promise.all([client.invalidateQueries({ queryKey: KEY }, { throwOnError: true }), ...(scheduleChanged ? [client.invalidateQueries({ queryKey: ['classpilot-school-scheduling'] }, { throwOnError: true }), client.invalidateQueries({ queryKey: ['classpilot-admin-classes'] }, { throwOnError: true })] : [])]);
   };
@@ -370,7 +377,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     const result = await apiRequest('POST', API, { revision: session.revision, ...(!asNew && session.profile ? { id: session.profile.id, profileRevision: session.profile.revision } : {}), definition, previewDate: referenceDate }, { headers: { 'X-School-Id': activeSchoolId } });
     if (!isCurrent()) return;
     // The save result is the exact normalized version to review, even if catalog refresh fails.
-    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, profiles: [...current.profiles.filter(profile => profile.id !== result.profile.id), result.profile] } : current);
+    client.setQueryData([...KEY, activeSchoolId, user?.id], current => current ? { ...current, revision: result.revision, profiles: [...current.profiles.filter(profile => profile.id !== result.profile.id), result.profile] } : current);
     editGroup.current = null;
     setSession(current => ({ ...current, mode: 'view', profile: copy(result.profile), definition: copy(result.profile.definition), original: JSON.stringify(result.profile.definition), revision: result.revision,
       referenceDate: result.profile.previewDate || data.schoolLocalToday, initialPreviewDate: result.profile.previewDate || data.schoolLocalToday,
@@ -398,7 +405,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     const result = await apiRequest('POST', `${API}/apply`, { ...preview.payload, previewToken: preview.previewToken,
       ...((preview.warnings || EMPTY).length > 0 ? { acknowledgeExistingApplications: true } : {}) }, { headers: { 'X-School-Id': activeSchoolId } });
     if (!mounted.current) return;
-    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision, applications: [...current.applications.filter(application => application.id !== result.application.id), result.application] } : current);
+    client.setQueryData([...KEY, activeSchoolId, user?.id], current => current ? { ...current, revision: result.revision, applications: [...current.applications.filter(application => application.id !== result.application.id), result.application] } : current);
     setSession(null); setPreview(null); setNotice('Schedule profile applied to the reviewed dates.');
     setCommittedRefreshNotice(null);
     requestAnimationFrame(() => listHeading.current?.focus());
@@ -427,7 +434,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       return;
     }
     if (!mounted.current) return;
-    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision,
+    client.setQueryData([...KEY, activeSchoolId, user?.id], current => current ? { ...current, revision: result.revision,
       applications: current.applications.map(row => row.id === captured.application.id ? { ...row, status: 'cancelled' } : row),
       // Cancellation may still be releasing contexts. Discard the old summary until reread.
       applicationSummaries: Object.fromEntries(Object.entries(current.applicationSummaries || {}).filter(([id]) => id !== captured.application.id)),
@@ -465,7 +472,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
     if (!mounted.current) return;
     // The release and the hand-back to the regular class settle server-side, so
     // drop this application's summary rather than predicting its new statuses.
-    client.setQueryData([...KEY, activeSchoolId], current => current ? { ...current, revision: result.revision,
+    client.setQueryData([...KEY, activeSchoolId, user?.id], current => current ? { ...current, revision: result.revision,
       applicationSummaries: Object.fromEntries(Object.entries(current.applicationSummaries || {}).filter(([id]) => id !== captured.application.id)),
     } : current);
     setCancellingBlock(null);
@@ -477,7 +484,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
   const seedGroupMetadata = groups => {
     const byId = new Map(groups.map(group => [group.id, group]));
     const people = new Map(groups.flatMap(group => group.staff || []).map(person => [person.id, person]));
-    client.setQueryData([...KEY, activeSchoolId], current => current ? {
+    client.setQueryData([...KEY, activeSchoolId, user?.id], current => current ? {
       ...current,
       supervisionGroups: [...current.supervisionGroups.filter(row => !byId.has(row.id)), ...groups.map(group => ({
         id: group.id, name: group.name, studentCount: group.studentCount,
@@ -507,7 +514,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       return;
     }
     if (!mounted.current || origin.schoolId !== activeSchoolId || origin.actorId !== user.id) return;
-    client.setQueryData([...KEY, origin.schoolId], current => current ? { ...current, revision: result.revision,
+    client.setQueryData([...KEY, origin.schoolId, origin.actorId], current => current ? { ...current, revision: result.revision,
       applications: current.applications.map(application => application.id === origin.application.id ? { ...application, historyHiddenAt: result.historyHiddenAt } : application),
     } : current);
     historyOpener.current = null;
@@ -560,7 +567,7 @@ function SchoolScheduleProfiles({ blockedByAdvancedDraft = false, onBusyChange, 
       return;
     }
     if (!mounted.current || origin.schoolId !== activeSchoolId || origin.actorId !== user.id) return;
-    client.setQueryData([...KEY, origin.schoolId], current => current ? { ...current, revision: result.revision, profiles: current.profiles.filter(profile => profile.id !== origin.profile.id) } : current);
+    client.setQueryData([...KEY, origin.schoolId, origin.actorId], current => current ? { ...current, revision: result.revision, profiles: current.profiles.filter(profile => profile.id !== origin.profile.id) } : current);
     deleteOpener.current = null;
     setDeleting(null); setPreview(null); setDeleteRefreshFailed(false);
     setNotice('Profile deleted. Applied schedules and history were preserved.');

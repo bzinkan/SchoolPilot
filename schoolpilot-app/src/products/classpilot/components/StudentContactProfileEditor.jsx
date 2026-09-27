@@ -12,6 +12,7 @@ import {
   informationMessage,
 } from "../lib/studentInformationModel";
 import StudentContactFields from "./StudentContactFields";
+import { useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useStudentInformationDraftGuard } from "../hooks/useStudentInformationDraftGuard";
 import "./studentInformation.css";
 
@@ -38,7 +39,10 @@ function ProfileForm({
     return () => controller.abort();
   }, []);
   const changes = contactChanges(result.profile.data, draft);
-  const guard = useStudentInformationDraftGuard(changes.length > 0 || busy);
+  const guard = useStudentInformationDraftGuard(changes.length > 0, {
+    id: `student-contact:${studentId}`, busy,
+    onDiscard: () => { setDraft(structuredClone(result.profile.data)); setReason(""); },
+  });
   const save = async (event) => {
     event.preventDefault();
     if (busy || !changes.length) return;
@@ -232,6 +236,7 @@ export default function StudentContactProfileEditor({
   onClose,
 }) {
   const client = useQueryClient();
+  const { requestAction } = useAdminNavigation();
   const [session, setSession] = useState(0);
   const [denied, setDenied] = useState(null);
   const query = useQuery({
@@ -277,7 +282,7 @@ export default function StudentContactProfileEditor({
     <section className="student-info-profile">
       <header>
         <h2>{query.data.student.name}</h2>
-        {onClose && <button onClick={onClose}>Close student</button>}
+        {onClose && <button onClick={() => requestAction(onClose, { id: "student-contact-close" })}>Close student</button>}
       </header>
       <ProfileForm
         key={identity}

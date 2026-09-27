@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, FileScan, LockKeyhole, Camera, Upload, Plus } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { ThemeToggle } from '../../../components/ThemeToggle';
@@ -8,6 +8,7 @@ import { useMyDeskAccess, useMyDeskClasses } from '../hooks/useMyDesk';
 import { myDeskApi, attachmentDigest, invalidateMyDesk } from '../lib/myDesk';
 import { myDeskKeys, myDeskError } from '../lib/myDeskModel';
 import { validateImportFiles, importExpiry } from '../lib/importReviewModel';
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
 import { disciplineParent, withDisciplineEntry } from '../lib/disciplineNavigation';
 import { ImportConfirm } from '../components/ImportShared';
@@ -17,7 +18,8 @@ import '../myDesk.css';
 import '../imports.css';
 
 export function ImportShell({ children, onNavigate }) {
-  const navigate = useNavigate(); const [params] = useSearchParams(); const parent = disciplineParent(params);
+  const { navigate } = useAdminNavigation(); const shell = useAdminShell(); const [params] = useSearchParams(); const parent = disciplineParent(params);
+  if (shell) return <div className="import-page">{children}</div>;
   return <div className="mydesk-page import-page min-h-screen"><header className="mydesk-header"><Button variant="ghost" onClick={() => (onNavigate || navigate)(parent.path)}><ArrowLeft className="size-4" />{parent.label}</Button><ThemeToggle /></header>{children}</div>;
 }
 
@@ -36,31 +38,35 @@ function ImportLoader({ access, importId, disciplineBoundary = false }) {
 }
 
 export function ImportLibrary({ access }) {
-  const navigate = useNavigate(); const location = useLocation(); const [params] = useSearchParams(); const destination = location.state?.destination || (params.get('destination') === 'discipline' ? 'discipline' : 'notes'); const [source, setSource] = useState(location.state?.source || null); const [creating, setCreating] = useState(Boolean(location.state?.source) || (destination === 'discipline' && params.get('view') !== 'library'));
+  const { navigate } = useAdminNavigation(); const location = useLocation(); const [params] = useSearchParams(); const destination = location.state?.destination || (params.get('destination') === 'discipline' ? 'discipline' : 'notes'); const [source, setSource] = useState(location.state?.source || null); const [creating, setCreating] = useState(Boolean(location.state?.source) || (destination === 'discipline' && params.get('view') !== 'library'));
   const leaveRef = useRef(null);
+  const shell = useAdminShell(); const Heading = shell ? 'h2' : 'h1'; const Content = shell ? 'section' : 'main';
   const query = useInfiniteQuery({ queryKey: myDeskKeys.imports(access.schoolId, access.viewerId), initialPageParam: '', queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).imports(pageParam), getNextPageParam: page => page.nextCursor || undefined, retry: false });
   const rows = query.data?.pages.flatMap(page => page.imports) || [];
-  return <ImportShell onNavigate={path => leaveRef.current ? leaveRef.current(path) : navigate(path)}><main className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><h1>Paperwork</h1></div><p>{destination === 'discipline' ? 'Prepare student disciplinary records for your review.' : 'Turn paper forms into notes you have checked.'}</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see unfinished drafts.</p></div><Button disabled={creating} onClick={() => { setSource(null); setCreating(true); }}><Plus className="size-4" />Add from paperwork</Button></div>
-    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} initialGradeLevel={location.state?.gradeLevel} destination={destination} source={source} onClose={() => { setCreating(false); setSource(null); }} onStarted={batch => navigate(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params))} /> : <>
+  return <ImportShell onNavigate={path => leaveRef.current ? leaveRef.current(path) : navigate(path)}><Content className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><Heading>Paperwork</Heading></div><p>{destination === 'discipline' ? 'Prepare student disciplinary records for your review.' : 'Turn paper forms into notes you have checked.'}</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see unfinished drafts.</p></div><Button disabled={creating} onClick={() => { setSource(null); setCreating(true); }}><Plus className="size-4" />Add from paperwork</Button></div>
+    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} initialGradeLevel={location.state?.gradeLevel} destination={destination} source={source} onClose={() => { setCreating(false); setSource(null); }} onStarted={(batch, committedNavigate) => (committedNavigate || navigate)(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params))} /> : <>
       <div className="import-explainer"><span>1. Upload your forms</span><span>2. Check pages and students</span><span>3. Save your notes together</span></div>
       {query.isPending ? <p role="status">Loading saved progress…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <section className="mydesk-empty"><FileScan /><h2>A little less retyping.</h2><p>Import detention or referral forms, including several forms on one page. You decide what becomes a note.</p></section> : <div className="import-list">{rows.map(batch => <article key={batch.id}><div><h2>Paperwork import</h2><p>{batch.pageCount || 0} pages · {batch.status}</p><p className="import-muted">{batch.status === 'completed' ? batch.destination === 'discipline' ? 'Saved to the school discipline log' : 'Saved to your private notes' : `Review expires ${importExpiry(batch.expiresAt || batch.uploadExpiresAt)}`}</p></div><Button variant="outline" onClick={() => navigate(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params))}>{batch.status === 'completed' ? 'View saved entries' : 'Resume review'}</Button></article>)}</div>}
       {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>Load more imports</Button>}
     </>}
-  </main></ImportShell>;
+  </Content></ImportShell>;
 }
 
 export function ImportUpload({ access, initialGroupId, initialGradeLevel, destination = 'notes', source, onClose, onStarted, leaveRef }) {
-  const { schoolId, viewerId } = access; const navigate = useNavigate();
+  const { schoolId, viewerId } = access; const { navigate } = useAdminNavigation();
   const classes = useMyDeskClasses(schoolId, viewerId); const [chosenGroups, setGroups] = useState(initialGroupId ? [initialGroupId] : null); const eligibleClasses = (classes.data?.current || []).filter(group => destination !== 'discipline' || !group.groupType || group.groupType === 'admin_class'); const groups = chosenGroups ?? eligibleClasses.filter(group => group.personal && (!initialGradeLevel || String(group.gradeLevel) === initialGradeLevel)).map(group => group.id).slice(0, 20); const [files, setFiles] = useState([]);
   const selectedGroups = groups.filter(id => classes.data?.current?.some(group => group.id === id));
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [progress, setProgress] = useState(''); const [pending, setPending] = useState(false); const [confirm, setConfirm] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const transaction = useRef(null), lifetime = useRef(null), working = useRef(false), picker = useRef(null), camera = useRef(null);
-  const dirty = Boolean(source) || files.length > 0 || groups.length > 0 || pending;
+  const shell = useAdminShell();
+  const dirty = Boolean(source) || files.length > 0 || pending || (!shell && groups.length > 0);
+  const { requestAction } = useAdminNavigation();
+  const committedNavigation = useAdminNavigationBlocker({ id: 'paperwork-upload', dirty, busy, onDiscard: transition => { if (transition.actionId !== 'paperwork-upload-close') onClose(); } });
   useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => controller.abort(); }, []);
-  useEffect(() => { if (!dirty) return; const warn = event => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty]);
-  useEffect(() => { if (!dirty) return; return guardPrivateWorkspaceHistory(path => setConfirm({ title: 'Leave this upload?', description: 'Files that have not finished uploading will need to be selected again. Uploaded private sources expire automatically.', label: 'Leave upload', action: () => navigate(path) })); }, [dirty, navigate]);
-  useEffect(() => { if (!leaveRef) return; leaveRef.current = path => dirty ? setConfirm({ title: 'Leave this upload?', description: 'Files that have not finished uploading will need to be selected again. Uploaded private sources expire automatically.', label: 'Leave upload', action: () => navigate(path) }) : navigate(path); return () => { leaveRef.current = null; }; }, [dirty, leaveRef, navigate]);
+  useEffect(() => { if (shell || !dirty) return; const warn = event => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty, shell]);
+  useEffect(() => { if (shell || !dirty) return; return guardPrivateWorkspaceHistory(path => setConfirm({ title: 'Leave this upload?', description: 'Files that have not finished uploading will need to be selected again. Uploaded private sources expire automatically.', label: 'Leave upload', action: () => navigate(path) })); }, [dirty, navigate, shell]);
+  useEffect(() => { if (!leaveRef) return; leaveRef.current = path => !shell && dirty ? setConfirm({ title: 'Leave this upload?', description: 'Files that have not finished uploading will need to be selected again. Uploaded private sources expire automatically.', label: 'Leave upload', action: () => navigate(path) }) : navigate(path); return () => { leaveRef.current = null; }; }, [dirty, leaveRef, navigate, shell]);
   const cancel = async () => {
     const controller = lifetime.current; if (working.current || !controller || controller.signal.aborted) return;
     if (!transaction.current) { onClose(); return; }
@@ -74,7 +80,7 @@ export function ImportUpload({ access, initialGroupId, initialGradeLevel, destin
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
-  const close = () => dirty ? setConfirm({ title: 'Cancel this upload?', description: 'This clears selected files and removes any reserved private import. No notes will be added.', label: 'Cancel upload', action: cancel }) : onClose();
+  const close = () => shell ? requestAction(cancel, { id: 'paperwork-upload-close' }) : dirty ? setConfirm({ title: 'Cancel this upload?', description: 'This clears selected files and removes any reserved private import. No notes will be added.', label: 'Cancel upload', action: cancel }) : onClose();
   const choose = event => { const selected = [...files, ...Array.from(event.target.files || [])]; event.target.value = ''; const problem = validateImportFiles(selected); if (problem) setError(problem); else { setFiles(selected); setError(''); } };
   const start = async () => {
     const controller = lifetime.current; if (working.current || !controller || controller.signal.aborted) return;
@@ -93,7 +99,7 @@ export function ImportUpload({ access, initialGroupId, initialGradeLevel, destin
         await api.uploadImportAsset(tx.batch.id, entry.asset.id, entry.file); entry.uploaded = true;
       }
       if (!tx.process) { const fresh = (await api.import(tx.batch.id)).import; tx.process = { requestId: crypto.randomUUID(), revision: fresh.revision }; }
-      setProgress('Preparing your private drafts…'); const result = await api.processImport(tx.batch.id, tx.process); controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); onStarted(result.import);
+      setProgress('Preparing your private drafts…'); const result = await api.processImport(tx.batch.id, tx.process); controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); await onStarted(result.import, committedNavigation.navigateAfterCommit);
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };

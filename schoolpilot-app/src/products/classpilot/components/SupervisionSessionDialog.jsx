@@ -6,6 +6,7 @@ import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
+import { useAdminNavigation, useAdminNavigationBlocker } from '../hooks/useAdminNavigation';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 
 const selectClass = 'h-10 w-full rounded-md border bg-background px-3 text-sm';
@@ -42,6 +43,11 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [uncertain, setUncertain] = useState(false);
+  const { requestAction } = useAdminNavigation();
+  const signature = JSON.stringify([groupId, targetId, destinationId, staffId, kind, name, end, selection ? [...selection].sort() : null]);
+  const [baseline] = useState(signature);
+  useAdminNavigationBlocker({ id: 'supervision-session', dirty: !result && (signature !== baseline || Boolean(review) || uncertain), busy, onDiscard: () => onOpenChange(false) });
+  const close = () => requestAction(() => onOpenChange(false), { id: 'supervision-session-close' });
   const options = useQuery({
     queryKey: ['/api/coverage/session-options', schoolId, actorId, groupId],
     queryFn: ({ signal }) => apiRequest('GET', '/coverage/session-options', undefined, { signal, headers: { 'X-School-Id': schoolId }, params: groupId ? { supervisionGroupId: groupId } : {} }),
@@ -111,7 +117,7 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
   const included = review?.students?.filter(row => row.eligible) || [];
   const label = action === 'send' ? 'Send students' : action === 'end_time' ? 'Change end time' : review?.destination?.purpose === 'testing' || kind === 'state_testing' ? 'Start testing' : 'Start supervision';
   const done = () => { onOpenChange(false); onSuccess?.(result); };
-  return <Dialog open onOpenChange={value => { if (!busy) onOpenChange(value); }}>
+  return <Dialog open onOpenChange={value => { if (!busy && !value) void close(); }}>
     <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto" data-testid="supervision-session-dialog">
       <DialogHeader>
         <DialogTitle>{result ? 'Supervision updated' : action === 'end_time' ? 'Change end time' : action === 'send' ? 'Send students' : 'Start a session'}</DialogTitle>
@@ -136,7 +142,7 @@ function SessionReview({ onOpenChange, action = 'start', group, students, contex
         </fieldset>}
       </fieldset>}
       <DialogFooter className="gap-2">
-        {result ? <Button onClick={done}>Done</Button> : <><Button variant="outline" onClick={() => review && !uncertain ? setReview(null) : onOpenChange(false)} disabled={busy}>{review && !uncertain ? 'Back' : 'Cancel'}</Button>{!uncertain && (review ? <Button disabled={busy || excluded.length > 0 || (action !== 'end_time' && included.length === 0)} onClick={commit} data-testid="confirm-supervision-review">{busy ? 'Saving…' : label}</Button> : <Button onClick={() => getReview()} disabled={busy || action !== 'end_time' && (options.isPending || options.isError || chosen.length === 0) || action === 'send' && !target || (!destinationId && !endValue) || action === 'start' && !name.trim()} data-testid="review-supervision">{busy ? 'Checking…' : 'Review'}</Button>)}</>}
+        {result ? <Button onClick={done}>Done</Button> : <><Button variant="outline" onClick={() => review && !uncertain ? setReview(null) : close()} disabled={busy}>{review && !uncertain ? 'Back' : 'Cancel'}</Button>{!uncertain && (review ? <Button disabled={busy || excluded.length > 0 || (action !== 'end_time' && included.length === 0)} onClick={commit} data-testid="confirm-supervision-review">{busy ? 'Saving…' : label}</Button> : <Button onClick={() => getReview()} disabled={busy || action !== 'end_time' && (options.isPending || options.isError || chosen.length === 0) || action === 'send' && !target || (!destinationId && !endValue) || action === 'start' && !name.trim()} data-testid="review-supervision">{busy ? 'Checking…' : 'Review'}</Button>)}</>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;

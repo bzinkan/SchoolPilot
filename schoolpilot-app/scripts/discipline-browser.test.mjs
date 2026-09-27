@@ -12,7 +12,7 @@ const entry = `
 import React,{useState}from'react';import{createRoot}from'react-dom/client';
 import{MemoryRouter,Routes,Route,useLocation,useParams}from'react-router-dom';
 import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';
-import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';
+import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import AdminNavigationProvider from'/src/products/classpilot/components/admin/AdminNavigationProvider.jsx';import{AdminShellFrame}from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';
 import{DisciplineShell,DisciplineLibrary,RecordLoader}from'/src/products/classpilot/pages/DisciplineRecords.jsx';
 import DisciplineSubmitButton,{SubmissionReview}from'/src/products/classpilot/components/DisciplineSubmitButton.jsx';
 import DisciplineIncidentComposer from'/src/products/classpilot/components/DisciplineIncidentComposer.jsx';
@@ -31,7 +31,7 @@ function Navigation({access}){const route=useLocation();return h(React.Fragment,
 function Harness(){const[viewerId,setViewer]=useState('teacher-a');const identity={schoolId:'school-a',viewerId,enabled:true,eligible:true};const capability=useDisciplineCapabilities(identity);const access={...identity,importsEnabled:true,capabilities:capability.data||{canSubmit:false,canViewSchool:false,canManageAccess:false}};
 const mode=fixtureParams.get('mode');const C=mode==='navigation'?Navigation:mode==='library'||mode==='admin'?DisciplineLibrary:mode==='composer'?DisciplineIncidentComposer:mode==='limit'?SubmissionReview:mode==='record'?RecordLoader:DisciplineSubmitButton;
 return h(React.Fragment,null,h('button',{onClick:()=>{clearMyDeskQueries(queryClient);window.__viewer='teacher-b';setViewer('teacher-b')}},'Switch author'),h('div',{className:'mydesk-page discipline-page'},capability.usable?h(C,{key:viewerId+':'+access.capabilities.canViewSchool,access,onSaved:id=>{window.__saved=id},recordId:'record-a',noteIds:mode==='limit'?Array.from({length:51},(_,i)=>'note-'+i):['note-a','note-b'],onClose:()=>{window.__closed=true}}):h('p',null,'Access unavailable')));}
-createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(MemoryRouter,{initialEntries:[fixtureParams.get('route')||(fixtureParams.get('mode')==='admin'?'/classpilot/discipline-records?entry=admin':'/classpilot/discipline-records')]},h(ThemeProvider,null,h(Harness)))));
+function AdminHarness(){return h(AdminNavigationProvider,{scopeKey:'school-a:teacher-a'},h(AdminShellFrame,{route:{id:'discipline',title:'Discipline logs'},schoolName:'Synthetic School'},h(Harness)));}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(MemoryRouter,{initialEntries:[fixtureParams.get('route')||(fixtureParams.get('mode')==='admin'?'/classpilot/discipline-records?entry=admin':'/classpilot/discipline-records')]},h(ThemeProvider,null,fixtureParams.get('shell')?h(AdminHarness):h(Harness)))));
 `;
 before(async () => {
   vite=await createServer({root,logLevel:'error',cacheDir:`node_modules/.vite-discipline-${process.pid}`,server:{host:'127.0.0.1',port:0},plugins:[{name:'discipline-browser',configureServer(server){server.middlewares.use(async(req,res,next)=>{if(!req.url?.startsWith('/__discipline?'))return next();res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml(req.url,'<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/__discipline-entry.jsx"></script></body></html>'));});},resolveId(id){if(id==='/__discipline-entry.jsx')return '\0discipline-entry';},load(id){if(id==='\0discipline-entry')return entry;}}]});
@@ -65,7 +65,7 @@ async function setup(mode, options = {}) {
     if(url.pathname.endsWith('/students/search'))return json({students:[{id:'student-a',name:'Synthetic Student',status:'active',gradeLevel:'5',referralCount:3,detentionCount:1,latestIncident:'2026-09-26',classes:[{id:'class-a',name:'Grade five'}]},{id:'student-b',name:'Zero Notes',status:'active',gradeLevel:'5',referralCount:0,detentionCount:0,latestIncident:null,classes:[]}],range,nextCursor:null});
     if(url.pathname.endsWith('/students/student-a/history'))return json({student:{id:'student-a',name:'Synthetic Student',status:'active',classes:[{id:'class-a',name:'Grade five'}]},records:[record()],range,nextCursor:null});
     if(url.pathname.endsWith('/drafts')){state.createdDrafts.push(body);if(!state.draft)state.draft={...body,id:'draft-a',revision:1,studentName:'Synthetic Student',className:body.groupId?'Grade five':null,attachments:[]};return json({created:true,draft:state.draft},201);}
-    if(url.pathname.endsWith('/draft-a/draft')){if(method==='PATCH'){state.draft={...state.draft,...body,revision:state.draft.revision+1};}if(method==='DELETE')return json({cancelled:true});return json({draft:state.draft});}
+    if(url.pathname.endsWith('/draft-a/draft')){if(method==='PATCH'){state.draft={...state.draft,...body,revision:state.draft.revision+1};}if(method==='DELETE'){if(state.failCancel){state.failCancel=false;return json({error:'Synthetic cancellation interruption'},503);}return json({cancelled:true});}return json({draft:state.draft});}
     if(url.pathname.endsWith('/draft-a/attachments')){state.draft.revision++;const attachment={id:'draft-form-a',filename:body.filename,contentType:body.contentType,status:'pending'};state.draft.attachments.push(attachment);return json({attachment,revision:state.draft.revision},201);}
     if(url.pathname.endsWith('/duplicates'))return json({candidates:state.duplicates});
     if(url.pathname.endsWith('/finalize')){state.finalizations.push(body);if(state.finalizeStatus!==200){const status=state.finalizeStatus;state.finalizeStatus=200;return json({error:'Synthetic save interruption'},status);}return json({receipt:{recordId:'record-a'},record:record()});}
@@ -74,7 +74,7 @@ async function setup(mode, options = {}) {
     if(url.pathname.endsWith('/record-a')){if(state.recordStatus!==200)return json({error:'Record temporarily unavailable'},state.recordStatus);if(url.searchParams.has('versionsCursor'))return json({record:{...record(state.revision),versions:[version(1,'Earliest submission')],nextVersionsCursor:null}});return json({record:{...record(state.revision),submittedBy:{id:state.recordAuthor,name:'Synthetic Teacher'},...(state.withdrawn?{status:'withdrawn',canWithdraw:false}:{})}});}
     return json({error:'Unexpected synthetic endpoint'},404);
   });
-  await page.goto(`${base}/__discipline?mode=${mode}${options.route ? `&route=${encodeURIComponent(options.route)}` : ''}`, { timeout: 30000 });await page.waitForLoadState('networkidle');assert.deepEqual(errors,[]);return{page,requests,errors,state};
+  await page.goto(`${base}/__discipline?mode=${mode}${options.route ? `&route=${encodeURIComponent(options.route)}` : ''}${options.shell ? '&shell=1' : ''}`, { timeout: 30000 });await page.waitForLoadState('networkidle');assert.deepEqual(errors,[]);return{page,requests,errors,state};
 }
 const noOverflow=async page=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
 
@@ -212,4 +212,47 @@ test('manual duplicate review acknowledges exact revisions and changing fields i
  const {page,state,errors}=await setup('composer',{duplicates:[{id:'record-a',revision:4,entryDate:'2026-09-26',title:'Existing incident',canAddEvidence:true}]});try{
   await page.getByLabel('Student',{exact:true}).selectOption('student-a');await page.getByLabel('Incident date',{exact:true}).fill('2026-09-26');await page.getByLabel('Factual information').fill('Separate synthetic event.');await page.getByRole('button',{name:'Review incident',exact:true}).click();await page.getByRole('heading',{name:'Possible existing incidents'}).waitFor();await page.getByLabel('I reviewed the student, date, factual information, and selected forms.').check();assert.equal(await page.getByRole('button',{name:'Save disciplinary record'}).isDisabled(),true);await page.getByLabel('How should this form be saved?').selectOption('separate');assert.equal(await page.getByLabel('I reviewed the student, date, factual information, and selected forms.').isChecked(),false);await page.getByLabel('I reviewed the student, date, factual information, and selected forms.').check();await page.getByRole('button',{name:'Save disciplinary record'}).click();await page.waitForFunction(()=>window.__saved==='record-a');assert.deepEqual(state.finalizations[0].acknowledgedDuplicates,[{id:'record-a',revision:4}]);assert.deepEqual(errors,[]);
  }finally{await page.close();}
+});
+
+
+test('admin incident composer uses one discard prompt and retains the draft if cleanup fails', async () => {
+  const { page, requests, errors } = await setup('navigation', { shell: true, route: '/classpilot/discipline-records?entry=admin', failCancel: true });
+  try {
+    assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
+    await page.getByRole('button', { name: 'Add incident', exact: true }).click();
+    await page.getByLabel('Student', { exact: true }).selectOption('student-a');
+    await page.getByLabel('Incident date', { exact: true }).fill('2026-09-26');
+    await page.getByLabel('Factual information').fill('Retain this unfinished incident');
+    await page.getByRole('button', { name: 'Review incident', exact: true }).click();
+    await page.getByRole('heading', { name: 'Review the record' }).waitFor();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('alertdialog').waitFor(); assert.equal(await page.getByRole('alertdialog').count(), 1);
+    await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    assert.equal(requests.filter(row => row.method === 'DELETE').length, 0);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard changes and leave' }).click();
+    await page.getByText('Synthetic cancellation interruption', { exact: false }).waitFor();
+    assert.equal(await page.getByRole('dialog', { name: 'Add incident' }).count(), 1);
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await page.getByRole('button', { name: 'Discard changes and leave' }).click();
+    await page.getByRole('dialog', { name: 'Add incident' }).waitFor({ state: 'hidden' });
+    const deletions = requests.filter(row => row.method === 'DELETE'); assert.equal(deletions.length, 2); assert.deepEqual(deletions[0].body, deletions[1].body);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('admin incident save navigates to its record with origin and no stale draft prompt', async () => {
+  const { page, state, errors } = await setup('navigation', { shell: true, route: '/classpilot/discipline-records?entry=admin' });
+  try {
+    await page.getByRole('button', { name: 'Add incident', exact: true }).click();
+    await page.getByLabel('Student', { exact: true }).selectOption('student-a');
+    await page.getByLabel('Incident date', { exact: true }).fill('2026-09-26');
+    await page.getByLabel('Factual information').fill('Reviewed incident');
+    await page.getByRole('button', { name: 'Review incident', exact: true }).click();
+    await page.getByLabel('I reviewed the student, date, factual information, and selected forms.').check();
+    await page.getByRole('button', { name: 'Save disciplinary record' }).click();
+    await page.getByRole('link', { name: 'All discipline records', exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Current route').textContent(), '/classpilot/discipline-records/record-a?entry=admin');
+    assert.equal(await page.getByRole('alertdialog').count(), 0); assert.equal(state.finalizations.length, 1); assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });

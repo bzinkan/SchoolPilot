@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 
@@ -188,6 +189,13 @@ test("school calendar retains drafts and persists only verified school-timezone 
       return;
     }
 
+    if (pathname === "/api/classpilot/admin/scheduling") {
+      await route.fulfill({ json: { revision: 0, schoolTimezone: TIME_ZONE, schoolLocalToday: SCHOOL_LOCAL_TODAY,
+        config: { schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null, cycleAnchorDay: "A", periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {}, scheduleProfiles: [], profileApplications: [] } } }); return;
+    }
+    if (pathname === "/api/classpilot/admin/schedule-profiles") {
+      await route.fulfill({ json: { revision: 0, schoolTimezone: TIME_ZONE, schoolLocalToday: SCHOOL_LOCAL_TODAY, profiles: [], applications: [], classes: [], staff: [], supervisionGroups: [], testingStatuses: [] } }); return;
+    }
     if (pathname === "/api/admin/users") {
       await route.fulfill({ json: { users: [] } });
       return;
@@ -213,20 +221,16 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await configurePage(page);
 
     const appUrl = `http://127.0.0.1:${address.port}/classpilot/admin?tab=calendar`;
-    await page.goto(`http://127.0.0.1:${address.port}/classpilot/admin?tab=staff`);
-    await page.getByRole("tab", { name: "School Calendar" }).waitFor();
+    await page.goto(appUrl);
     await page.clock.setFixedTime(new Date("2026-08-31T12:30:00.000Z"));
-    await page.getByPlaceholder("Search by name or email...").fill("rerender-at-fixed-time");
     const zoneMonths = await page.evaluate(() => ({
       browser: new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit" }).format(new Date()),
       school: new Intl.DateTimeFormat("en-US", { timeZone: "Pacific/Kiritimati", year: "numeric", month: "2-digit" }).format(new Date()),
     }));
     assert.notEqual(zoneMonths.browser, zoneMonths.school, "the timezone probe must straddle a calendar-month boundary");
-    await page.getByRole("tab", { name: "School Calendar" }).click();
 
-    await page.getByTestId("school-calendar-loading").waitFor();
     await page.getByTestId("school-calendar-grid").waitFor();
-    await page.waitForURL(new RegExp(`tab=calendar&month=${SCHOOL_LOCAL_MONTH}`));
+    await page.waitForURL(new RegExp(`section=calendar&month=${SCHOOL_LOCAL_MONTH}`));
     assert.match(
       page.url(),
       new RegExp(`month=${SCHOOL_LOCAL_MONTH}`),
@@ -240,11 +244,11 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await configurePage(page);
     await page.goto(`http://127.0.0.1:${address.port}/classpilot`);
     await page.getByTestId("button-admin").click();
-    await page.getByTestId("tab-school-calendar").waitFor();
+    await page.getByTestId("classpilot-admin-shell").waitFor();
     // Replace the Admin landing entry so the entry immediately behind this
     // calendar is the dashboard. This makes the route-exit POP proof exact.
     await page.evaluate((month) => {
-      const target = `/classpilot/admin?tab=calendar&month=${month}`;
+      const target = `/classpilot/admin/scheduling?section=calendar&month=${month}`;
       window.history.replaceState(window.history.state, "", target);
       window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
     }, WORKFLOW_MONTH);
@@ -329,16 +333,16 @@ test("school calendar retains drafts and persists only verified school-timezone 
     // while a draft is dirty unless the admin explicitly confirms.
     await page.getByTestId("calendar-day-2099-09-09").click();
     await page.evaluate(() => window.history.back());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
-    await page.waitForURL(/\/classpilot\/admin\?tab=calendar&month=2099-09/);
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
+    await page.waitForURL(/\/classpilot\/admin\/scheduling\?section=calendar&month=2099-09/);
     assert.equal(await page.getByTestId("calendar-day-2099-09-09").getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "Keep editing" }).click();
     assert.match(page.url(), /\/classpilot\/admin/, "canceling route-exit Back must retain the Admin route");
 
     await page.evaluate(() => window.history.back());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
-    await page.waitForURL(/\/classpilot\/admin\?tab=calendar&month=2099-09/);
-    await page.getByTestId("button-discard-calendar-navigation").click();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
+    await page.waitForURL(/\/classpilot\/admin\/scheduling\?section=calendar&month=2099-09/);
+    await page.getByRole("button", { name: "Discard changes and leave", exact: true }).click();
     await page.waitForURL(/\/classpilot$/);
     await page.getByTestId("button-admin").waitFor();
     await page.evaluate(() => window.history.forward());
@@ -354,71 +358,46 @@ test("school calendar retains drafts and persists only verified school-timezone 
 
     await page.getByTestId("calendar-day-2099-09-10").click();
     await page.evaluate(() => window.history.back());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
     await page.waitForURL(/month=2099-09/);
     assert.equal(await page.getByTestId("calendar-day-2099-09-10").getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "Keep editing" }).click();
     assert.match(page.url(), /month=2099-09/, "canceling Back must retain the current URL and draft");
 
     await page.evaluate(() => window.history.back());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
     await page.waitForURL(/month=2099-09/);
-    await page.getByTestId("button-discard-calendar-navigation").click();
+    await page.getByRole("button", { name: "Discard changes and leave", exact: true }).click();
     await waitForCalendarMonth(page, NEXT_MONTH);
 
     await page.getByTestId("calendar-day-2099-10-07").click();
     await page.evaluate(() => window.history.forward());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
     await page.waitForURL(/month=2099-10/);
     assert.equal(await page.getByTestId("calendar-day-2099-10-07").getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "Keep editing" }).click();
     assert.match(page.url(), /month=2099-10/, "canceling Forward must retain the current URL and draft");
 
     await page.evaluate(() => window.history.forward());
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
     await page.waitForURL(/month=2099-10/);
-    await page.getByTestId("button-discard-calendar-navigation").click();
+    await page.getByRole("button", { name: "Discard changes and leave", exact: true }).click();
     await waitForCalendarMonth(page, WORKFLOW_MONTH);
 
-    // A multi-entry POP must use the same bounce/replay contract. The target
-    // intentionally renders the same month, proving confirmation resets the
-    // draft rather than relying on a different component key from navigation.
+    // Same-month history entries do not reset the editor. A multi-entry POP
+    // retains the draft without a redundant discard confirmation.
     const multiEntrySourceIndex = await page.evaluate(() => window.history.state?.idx);
-    assert.ok(
-      Number.isInteger(multiEntrySourceIndex) && multiEntrySourceIndex >= 2,
-      `multi-entry source must have a usable Router index: ${multiEntrySourceIndex}`,
-    );
+    assert.ok(Number.isInteger(multiEntrySourceIndex) && multiEntrySourceIndex >= 2);
     const september14 = page.getByTestId("calendar-day-2099-09-14");
     await september14.click();
     await page.evaluate(() => window.history.go(-2));
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
-    await page.waitForFunction(
-      (sourceIndex) => window.history.state?.idx === sourceIndex,
-      multiEntrySourceIndex,
-    );
-    assert.equal(await september14.getAttribute("aria-pressed"), "true", "cancelable multi-entry POP must retain the draft");
-    await page.getByRole("button", { name: "Keep editing" }).click();
-    assert.equal(await page.evaluate(() => window.history.state?.idx), multiEntrySourceIndex);
-
-    await page.evaluate(() => window.history.go(-2));
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
-    await page.waitForFunction(
-      (sourceIndex) => window.history.state?.idx === sourceIndex,
-      multiEntrySourceIndex,
-    );
-    await page.getByTestId("button-discard-calendar-navigation").click();
-    await page.waitForFunction(
-      (targetIndex) => window.history.state?.idx === targetIndex,
-      multiEntrySourceIndex - 2,
-    );
-    assert.equal(
-      await page.evaluate(() => Number.isInteger(window.history.state?.idx)),
-      true,
-      "the replayed target must retain React Router's integer history index",
-    );
-    await page.getByTestId("school-calendar-grid").waitFor();
-    assert.equal(await page.getByTestId("calendar-dirty-bar").count(), 0, "confirmed multi-entry POP must discard the draft");
-    assert.equal(await page.getByTestId("calendar-day-2099-09-14").getAttribute("aria-pressed"), "false");
+    await page.waitForFunction(target => window.history.state?.idx === target, multiEntrySourceIndex - 2);
+    assert.equal(await page.getByRole("alertdialog").count(), 0);
+    assert.equal(await september14.getAttribute("aria-pressed"), "true", "Same-month history traversal preserves the draft");
+    await page.evaluate(() => window.history.go(2));
+    await page.waitForFunction(target => window.history.state?.idx === target, multiEntrySourceIndex);
+    assert.equal(await september14.getAttribute("aria-pressed"), "true");
+    await page.getByTestId("button-discard-calendar").click();
 
     const september10 = page.getByTestId("calendar-day-2099-09-10");
     await september10.click();
@@ -435,10 +414,12 @@ test("school calendar retains drafts and persists only verified school-timezone 
     });
     assert.equal(beforeUnloadPrevented, true, "dirty drafts must install a beforeunload guard");
 
-    await page.getByRole("tab", { name: "Audit Logs" }).click();
-    await page.getByTestId("dialog-calendar-navigation-guard").waitFor();
+    const reports = page.getByRole("navigation", { name: "Admin navigation", exact: true }).getByRole("button", { name: "Reports", exact: true });
+    if (await reports.getAttribute("aria-expanded") === "false") await reports.click();
+    await page.getByRole("navigation", { name: "Admin navigation", exact: true }).getByRole("link", { name: "Audit logs", exact: true }).click();
+    await page.getByRole("alertdialog", { name: "Leave with unsaved changes?" }).waitFor();
     await page.getByRole("button", { name: "Keep editing" }).click();
-    assert.match(page.url(), /tab=calendar/, "canceling tab navigation must retain the calendar draft");
+    assert.match(page.url(), /section=calendar/, "canceling tab navigation must retain the calendar draft");
     assert.equal(await september10.getAttribute("aria-pressed"), "true");
 
     await page.getByTestId("button-calendar-next-month").click();
@@ -516,6 +497,37 @@ test("school calendar retains drafts and persists only verified school-timezone 
     await page.getByTestId("button-retry-calendar-load").click();
     await page.getByTestId("school-calendar-grid").waitFor();
     assert.match(page.url(), /month=2099-10/);
+
+    const adminNav = page.getByRole("navigation", { name: "Admin navigation", exact: true });
+    await page.getByTestId("calendar-day-2099-10-07").click();
+    await adminNav.getByRole("link", { name: "School year", exact: true }).click();
+    await page.getByLabel("School year starts", { exact: true }).waitFor();
+    assert.match(page.url(), /month=2099-10/, "Sidebar sections preserve the selected calendar month");
+    assert.equal(await page.getByRole("alertdialog").count(), 0, "Section changes retain drafts without a discard prompt");
+
+    await page.getByLabel("School year starts", { exact: true }).fill("2026-08-19");
+    await page.getByLabel("School year ends", { exact: true }).fill("2027-05-28");
+    await adminNav.getByRole("link", { name: "Calendar", exact: true }).click();
+    assert.equal(await page.getByTestId("calendar-day-2099-10-07").getAttribute("aria-pressed"), "true");
+    await page.getByTestId("button-calendar-previous-month").click();
+    await page.getByTestId("dialog-calendar-month-guard").waitFor();
+    await page.getByTestId("button-discard-month-draft").click();
+    await waitForCalendarMonth(page, WORKFLOW_MONTH);
+    await adminNav.getByRole("link", { name: "School year", exact: true }).click();
+    assert.equal(await page.getByLabel("School year starts", { exact: true }).inputValue(), "2026-08-19");
+    assert.equal(await page.getByLabel("School year ends", { exact: true }).inputValue(), "2027-05-28", "Discarding a month must retain the school-year draft");
+    await page.getByRole("button", { name: "Discard schedule draft", exact: true }).click();
+    await page.reload();
+    await page.getByLabel("School year starts", { exact: true }).waitFor();
+    const screenshotDir = path.join(APP_ROOT, "artifacts", "scheduling");
+    await mkdir(screenshotDir, { recursive: true });
+    await page.setViewportSize({ width: 1365, height: 950 });
+    await page.screenshot({ path: path.join(screenshotDir, "school-year-admin-desktop.png"), fullPage: true, animations: "disabled" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "School year and task navigation fit a mobile viewport");
+    await page.screenshot({ path: path.join(screenshotDir, "school-year-admin-mobile.png"), fullPage: true, animations: "disabled" });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    assert.equal(await page.getByRole("tablist", { name: "Scheduling tasks" }).count(), 0, "The shared Admin menu is the only task navigation");
   } finally {
     await page?.close().catch(() => {});
     await browser?.close().catch(() => {});

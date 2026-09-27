@@ -1,7 +1,7 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../../lib/queryClient";
-import { useNavigate } from "react-router-dom";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
@@ -26,7 +26,8 @@ function ErrorState({ title, error }) {
 }
 
 export default function AdminAnalytics() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const [summaryPeriod, setSummaryPeriod] = useState("today");
   const [teacherPeriod, setTeacherPeriod] = useState("7d");
   const [groupPeriod, setGroupPeriod] = useState("7d");
@@ -68,7 +69,7 @@ export default function AdminAnalytics() {
 
   return (
     <div className="container mx-auto p-6 max-w-6xl space-y-6">
-      <div className="flex items-center justify-between">
+      {!adminShell && (<div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
             <BarChart3 className="h-6 w-6 text-primary-foreground" />
@@ -88,8 +89,7 @@ export default function AdminAnalytics() {
             Back to Admin
           </Button>
         </div>
-      </div>
-
+      </div>)}
       {/* Summary Cards */}
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Activity Summary</h2>

@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.resolve(root, '../../artifacts');
 const imagePath = path.join(root, 'scripts/fixtures/mydesk-synthetic-slips.png');
 let server, browser, base, sourceBytes;
-const entry = `import'/src/products/classpilot/lib/privateWorkspaceNavigation.js';import React,{StrictMode}from'react';import{createRoot}from'react-dom/client';import{BrowserRouter,Routes,Route}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{AuthProvider,useAuth}from'/src/contexts/AuthContext.jsx';import{LicenseProvider}from'/src/contexts/LicenseContext.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import Imports from'/src/products/classpilot/pages/Imports.jsx';import'/src/index.css';const h=React.createElement;window.importQueries=()=>queryClient.getQueryCache().getAll().map(q=>q.queryKey);function Harness(){const auth=useAuth();return h(React.Fragment,null,h('button',{onClick:()=>auth.refetchUser()},'Refresh account'),h(Routes,null,h(Route,{path:'/classpilot/my-desk/imports',element:h(Imports)}),h(Route,{path:'/classpilot/my-desk/imports/:importId',element:h(Imports)}),h(Route,{path:'*',element:h('h1',null,'Notebook')})));}createRoot(document.getElementById('root')).render(h(StrictMode,null,h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(AuthProvider,null,h(LicenseProvider,null,h(Harness))))))));`;
+const entry = `import'/src/products/classpilot/lib/privateWorkspaceNavigation.js';import React,{StrictMode}from'react';import{createRoot}from'react-dom/client';import{BrowserRouter,Routes,Route}from'react-router-dom';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import{AuthProvider,useAuth}from'/src/contexts/AuthContext.jsx';import{LicenseProvider}from'/src/contexts/LicenseContext.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import Imports from'/src/products/classpilot/pages/Imports.jsx';import AdminNavigationProvider from'/src/products/classpilot/components/admin/AdminNavigationProvider.jsx';import{AdminShellFrame}from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';import'/src/index.css';const h=React.createElement;window.importQueries=()=>queryClient.getQueryCache().getAll().map(q=>q.queryKey);function Harness(){const auth=useAuth();return h(React.Fragment,null,h('button',{onClick:()=>auth.refetchUser()},'Refresh account'),h(Routes,null,h(Route,{path:'/classpilot/my-desk/imports',element:h(Imports)}),h(Route,{path:'/classpilot/my-desk/imports/:importId',element:h(Imports)}),h(Route,{path:'*',element:h('h1',null,'Notebook')})));}function AdminFrame({children}){const auth=useAuth();return window.__adminShell?h(AdminNavigationProvider,{key:auth.user?.id,scopeKey:'school-a:'+auth.user?.id},h(AdminShellFrame,{route:{id:'discipline',title:'Paperwork review'},schoolName:'Synthetic School'},children)):children;}createRoot(document.getElementById('root')).render(h(StrictMode,null,h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(AuthProvider,null,h(LicenseProvider,null,h(AdminFrame,null,h(Harness)))))))));`;
 before(async () => {
   sourceBytes = await readFile(imagePath); await mkdir(artifacts, { recursive: true });
   server = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-import-${process.pid}`, server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'import-test', configureServer(vite) { vite.middlewares.use(async (req, res, next) => { if (!req.url.startsWith('/classpilot/')) return next(); res.setHeader('Content-Type', 'text/html'); res.end(await vite.transformIndexHtml(req.url, '<html><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/__imports.jsx"></script></body></html>')); }); }, resolveId(id) { if (id === '/__imports.jsx') return '\0imports'; }, load(id) { if (id === '\0imports') return entry; } }] });
@@ -22,17 +22,18 @@ const region = (y = .035) => ({ assetId: 'page-a', x: .05, y, width: .9, height:
 const item = (id, ordinal, patch = {}) => ({ id, ordinal, revision: 1, regions: [region(ordinal ? .525 : .035)], subjectNames: [ordinal ? 'Taylor Sample' : 'Jordan Example'], groupId: null, studentId: null, rosterRevision: null, category: 'detention', title: ordinal ? 'Referral' : 'Detention', body: 'Please check these details.', entryDate: null, warnings: ['Check handwriting and distinguish witnesses from subjects.'], reviewed: false, excluded: false, extractionStatus: 'ready', approvedAssetId: `approved-${id}`, ...patch });
 const fixture = (patch = {}) => ({ id: 'import-a', status: 'review', revision: 1, selectedGroupIds: ['class-a', 'class-b'], pageDecisions: [], expiresAt: '2026-10-02T12:00:00Z', pageCount: 1, assets: [{ id: 'page-a', kind: 'page', status: 'ready', contentType: 'image/jpeg', width: 1600, height: 2000, pageNumber: 1 }], items: [item('form-a', 0), item('form-b', 1)], ...patch });
 
-async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
+async function setup({ batch = fixture(), url = '/import-a', viewport, admin = false } = {}) {
   const page = await browser.newPage({ viewport: viewport || { width: 1440, height: 1050 } });
-  const state = { batch: structuredClone(batch), viewer: 'teacher-a', enabled: true, failCommit: false, failureCode: null, held: false, failProcess: false, failCreate: false, failCancel: false }, requests = [], errors = [], receipts = new Map();
+  const state = { admin, batch: structuredClone(batch), viewer: 'teacher-a', enabled: true, failCommit: false, failureCode: null, held: false, failProcess: false, failCreate: false, failCancel: false }, requests = [], errors = [], receipts = new Map();
   page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(value => { window.__adminShell = value; }, admin);
   await page.addInitScript(() => { localStorage.setItem('sp_activeSchoolId', 'school-a'); window.createdUrls = []; window.revokedUrls = []; const create = URL.createObjectURL, revoke = URL.revokeObjectURL; URL.createObjectURL = value => { const url = create(value); window.createdUrls.push(url); return url; }; URL.revokeObjectURL = value => { window.revokedUrls.push(value); revoke(value); }; });
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, method = request.method();
     const body = ['POST', 'PATCH', 'DELETE'].includes(method) ? request.postDataJSON() : null;
     requests.push({ path: pathname, method, body }); const json = (value, status = 200) => route.fulfill({ status, json: value });
     if (pathname.endsWith('/auth/csrf')) return json({ csrfToken: 'test' });
-    if (pathname.endsWith('/auth/me')) return json({ user: { id: state.viewer, firstName: 'Teacher', email: 'teacher@example.school' }, activeSchoolId: 'school-a', memberships: [{ schoolId: 'school-a', schoolName: 'School', schoolTimezone: 'America/New_York', role: 'teacher', roles: ['teacher'] }], licenses: { classPilot: true } });
+    if (pathname.endsWith('/auth/me')) return json({ user: { id: state.viewer, firstName: 'Teacher', email: 'teacher@example.school' }, activeSchoolId: 'school-a', memberships: [{ schoolId: 'school-a', schoolName: 'School', schoolTimezone: 'America/New_York', role: state.admin ? 'admin' : 'teacher', roles: [state.admin ? 'admin' : 'teacher'] }], licenses: { classPilot: true } });
     assert.equal(request.headers()['x-school-id'], 'school-a');
     if (pathname.endsWith('/capabilities')) return json({ enabled: true, aiImportEnabled: state.enabled, importProvider: 'Anthropic', importLimits: { teacherDailyPages: 123, schoolDailyPages: 456 }, schoolDate: '2026-09-25' });
     if (pathname.endsWith('/classes')) return json({ current: [{ id: 'class-a', name: 'Science 5' }, { id: 'class-b', name: 'Math 5' }], past: [] });
@@ -71,7 +72,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport } = {}) {
     if ((action === '/commit' && state.failCommit) || (method === 'DELETE' && state.failCancel)) { state.failCommit = false; state.failCancel = false; return json({ error: 'Response interrupted. Retry safely.' }, 503); }
     return json({ import: state.batch, receipt: state.batch.commitReceipt });
   });
-  await page.goto(`${base}/classpilot/my-desk/imports${url}`); await page.getByRole('heading', { name: url.startsWith('/') ? 'Review your paperwork' : 'Paperwork', exact: true }).waitFor();
+  await page.goto(`${base}/classpilot/my-desk/imports${url}${admin && !url.includes("entry=admin") ? (url.includes("?") ? "&" : "?") + "entry=admin" : ""}`); await page.getByRole('heading', { name: url.startsWith('/') ? 'Review your paperwork' : 'Paperwork', exact: true }).waitFor();
   return { page, state, requests, errors };
 }
 const forms = page => page.getByRole('button', { name: /2\. Review forms/ }).click();
@@ -208,4 +209,50 @@ test('a reopened fully uploaded source manifest needs an explicit start before p
   const { page, requests } = await setup({ batch: fixture({ status: 'uploading', expectedSourceCount: 1, items: [], assets: [{ id: 'source-a', kind: 'source', status: 'ready', contentType: 'application/pdf' }] }) });
   await page.getByRole('heading', { name: 'Your files are ready.' }).waitFor(); assert.equal(requests.filter(request => request.path.endsWith('/process')).length, 0);
   await page.getByRole('button', { name: 'Prepare drafts' }).click(); await page.getByRole('button', { name: /1\. Check pages/ }).waitFor(); assert.equal(requests.filter(request => request.path.endsWith('/process')).length, 1); await page.close();
+});
+
+
+test('admin paperwork uses one navigation prompt and Save for later retains its immutable destination', async () => {
+  const { page, state, errors } = await setup({ admin: true, url: '/import-a?destination=notes&entry=admin', batch: fixture({ destination: 'discipline' }) });
+  try {
+    assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1);
+    await forms(page); await page.getByLabel('Form title').fill('Checked in admin review');
+    await page.getByRole('button', { name: 'Back to ClassPilot', exact: true }).click();
+    await page.getByRole('alertdialog').waitFor(); assert.equal(await page.getByRole('alertdialog').count(), 1);
+    await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    assert.equal(await page.getByLabel('Form title').inputValue(), 'Checked in admin review');
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports?destination=discipline&view=library&entry=admin');
+    assert.equal(state.batch.destination, 'discipline'); assert.equal(state.batch.items[0].title, 'Checked in admin review');
+    assert.equal(await page.getByRole('alertdialog').count(), 0); assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('admin paperwork saving blocks leave without a discard prompt and clears protection after save', async () => {
+  const { page, state, errors } = await setup({ admin: true });
+  try {
+    await forms(page); await page.getByLabel('Form title').fill('Saved while staying'); state.held = true;
+    await page.getByRole('button', { name: 'Save draft changes', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to ClassPilot', exact: true }).click();
+    await page.getByText('Wait for the current operation to finish before leaving.').waitFor();
+    assert.equal(await page.getByRole('alertdialog').count(), 0);
+    const deadline = Date.now() + 5000; while (!state.release && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(typeof state.release, 'function'); state.held = false; state.release();
+    await page.waitForFunction(() => !document.querySelector('button')?.disabled && [...document.querySelectorAll('button')].some(button => button.textContent === 'Save for later' && !button.disabled));
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports?entry=admin'); assert.equal(await page.getByRole('alertdialog').count(), 0); assert.deepEqual(errors, []);
+  } finally { state.release?.(); await page.close(); }
+});
+
+test('admin discipline upload enters its review once without a stale upload guard', async () => {
+  const { page, requests, errors } = await setup({ admin: true, url: '?destination=discipline' });
+  try {
+    await page.getByLabel('Science 5', { exact: true }).check();
+    await page.locator('input[type=file][multiple]').setInputFiles(imagePath);
+    await page.getByRole('button', { name: 'Prepare drafts', exact: true }).click();
+    await page.waitForURL('**/imports/import-a?entry=admin');
+    await page.getByRole('heading', { name: 'Review your paperwork', exact: true }).waitFor();
+    assert.equal(requests.find(request => request.method === 'POST' && request.path.endsWith('/imports')).body.destination, 'discipline');
+    assert.equal(await page.getByRole('alertdialog').count(), 0); assert.deepEqual(errors, []);
+  } finally { await page.close(); }
 });

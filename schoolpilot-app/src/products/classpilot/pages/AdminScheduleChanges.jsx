@@ -1,3 +1,4 @@
+import { useAdminShell, useAdminNavigation } from "../hooks/useAdminNavigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -9,7 +10,6 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
 
 import { Button } from "../../../components/ui/button";
 import {
@@ -181,7 +181,8 @@ function QueryContent({ query, emptyTitle, emptyDescription, onAction, pendingAc
 }
 
 export default function AdminScheduleChanges() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
   const { currentUser, school, isAdmin, isLoading, token } = useClassPilotAuth();
   const [requestOpen, setRequestOpen] = useState(false);
@@ -291,7 +292,7 @@ export default function AdminScheduleChanges() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <SchedulePageHeader
+      {!adminShell && (<SchedulePageHeader
         eyebrow="Class Management"
         title="Schedule Changes"
         description="Approve and coordinate one-day class-time swaps without changing recurring schedules or rosters."
@@ -310,8 +311,8 @@ export default function AdminScheduleChanges() {
         )}
       >
         <AdminClassesTabs canManageClasses={canManage} />
-      </SchedulePageHeader>
-
+      </SchedulePageHeader>)}
+{adminShell && (<div className="flex justify-end">{canManage && <Button onClick={() => setRequestOpen(true)} data-testid="button-admin-create-schedule-change"><CalendarPlus className="mr-2 size-4" />Create schedule change</Button>}</div>)}
       <main className="mx-auto max-w-6xl space-y-10 px-4 py-8 sm:px-6">
         <section aria-labelledby="eligible-pairs-heading" data-testid="schedule-pairs">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3 border-b border-slate-300 pb-2 dark:border-slate-700">

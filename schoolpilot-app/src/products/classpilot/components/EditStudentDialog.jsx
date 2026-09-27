@@ -1,4 +1,5 @@
 import { useForm } from "react-hook-form";
+import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useMutation } from "@tanstack/react-query";
@@ -65,6 +66,13 @@ export function EditStudentDialog({
         variant: "destructive",
       });
     },
+  });
+
+  useAdminNavigationBlocker({
+    id: `student-identity-${student.id}`,
+    dirty: open && form.formState.isDirty,
+    busy: open && editMutation.isPending,
+    onDiscard: () => { form.reset(); onOpenChange(false); },
   });
 
   return (

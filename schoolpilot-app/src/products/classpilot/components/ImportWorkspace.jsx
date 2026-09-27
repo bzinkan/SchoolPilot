@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { withDisciplineEntry } from '../lib/disciplineNavigation';
 import { Check, FileScan, LockKeyhole } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
@@ -8,6 +8,7 @@ import { myDeskError } from '../lib/myDeskModel';
 import { myDeskKeys } from '../lib/myDeskModel';
 import { queryClient } from '../../../lib/queryClient';
 import { importProgress, importExpiry } from '../lib/importReviewModel';
+import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
 import { ImportConfirm } from './ImportShared';
 import ImportPages from './ImportPages';
@@ -17,7 +18,7 @@ import { invalidateDiscipline } from '../lib/discipline';
 import { useMyDeskClasses, useMyDeskStudents } from '../hooks/useMyDesk';
 
 export default function ImportWorkspace({ access, initialImport, Shell }) {
-  const navigate = useNavigate(); const [params] = useSearchParams(); const [batch, setBatch] = useState(initialImport);
+  const { navigate, requestAction } = useAdminNavigation(); const shell = useAdminShell(); const Heading = shell ? 'h2' : 'h1'; const Content = shell ? 'section' : 'main'; const [params] = useSearchParams(); const [batch, setBatch] = useState(initialImport);
   const [step, setStep] = useState('pages'), [itemId, setItemId] = useState(initialImport.items?.[0]?.id || '');
   const [pageSelection, setPageSelection] = useState({}), [editorSession, setEditorSession] = useState(0);
   const [busy, setBusy] = useState(false), [pending, setPending] = useState(null), [error, setError] = useState(''), [conflict, setConflict] = useState(false), [dirty, setDirty] = useState(false), [denied, setDenied] = useState(false), [confirm, setConfirm] = useState(null);
@@ -25,15 +26,17 @@ export default function ImportWorkspace({ access, initialImport, Shell }) {
   const discipline = batch.destination === 'discipline';
   const libraryPath = withDisciplineEntry(discipline ? '/classpilot/my-desk/imports?destination=discipline&view=library' : '/classpilot/my-desk/imports', params);
   const progress = importProgress(batch), locked = busy || Boolean(pending);
+  const committedNavigation = useAdminNavigationBlocker({ id: `paperwork-review:${batch.id}`, dirty: dirty || Boolean(pending), busy,
+    onDiscard: () => { setDirty(false); setPending(null); setEditorSession(value => value + 1); } });
   const uploadedSources = (batch.assets || []).filter(asset => asset.kind === 'source' && asset.status === 'ready').length;
   const sourcesReady = batch.expectedSourceCount > 0 && uploadedSources === batch.expectedSourceCount;
   const classes = useMyDeskClasses(access.schoolId, access.viewerId);
   const active = batch.items?.find(item => item.id === itemId) || batch.items?.[0];
   useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => controller.abort(); }, []);
-  useEffect(() => { if (!dirty && !pending && !busy) return; const warn = event => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty, pending, busy]);
-  useEffect(() => { if (!dirty && !pending && !busy) return; return guardPrivateWorkspaceHistory(path => setConfirm({ title: 'Leave with unsaved changes?', description: 'Your last saved review progress stays private. Changes still on this screen will be discarded.', label: 'Discard changes and leave', action: () => navigate(path) })); }, [dirty, pending, busy, navigate]);
-  const go = path => dirty || pending ? setConfirm({ title: 'Leave with unsaved changes?', description: 'Save this form or crop first to keep your latest changes. Your previously saved progress is retained until expiry.', label: 'Discard changes and leave', action: () => navigate(path) }) : navigate(path);
-  const switchView = action => dirty ? setConfirm({ title: 'Discard these unsaved changes?', description: 'The last saved version is kept. Save this form or crop before switching to keep your changes.', label: 'Discard changes', action: () => { setDirty(false); action(); } }) : action();
+  useEffect(() => { if (shell || (!dirty && !pending && !busy)) return; const warn = event => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn); }, [dirty, pending, busy, shell]);
+  useEffect(() => { if (shell || (!dirty && !pending && !busy)) return; return guardPrivateWorkspaceHistory(path => setConfirm({ title: 'Leave with unsaved changes?', description: 'Your last saved review progress stays private. Changes still on this screen will be discarded.', label: 'Discard changes and leave', action: () => navigate(path) })); }, [dirty, pending, busy, navigate, shell]);
+  const go = path => !shell && (dirty || pending) ? setConfirm({ title: 'Leave with unsaved changes?', description: 'Save this form or crop first to keep your latest changes. Your previously saved progress is retained until expiry.', label: 'Discard changes and leave', action: () => navigate(path) }) : navigate(path);
+  const switchView = action => shell ? requestAction(action, { id: 'paperwork-review-switch' }) : dirty ? setConfirm({ title: 'Discard these unsaved changes?', description: 'The last saved version is kept. Save this form or crop before switching to keep your changes.', label: 'Discard changes', action: () => { setDirty(false); action(); } }) : action();
   const refresh = async () => {
     const controller = lifetime.current; if (working.current || !controller || controller.signal.aborted) return;
     working.current = true; setBusy(true);
@@ -79,11 +82,11 @@ export default function ImportWorkspace({ access, initialImport, Shell }) {
     } }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
-  const saveLater = () => { if (dirty) saveDraftRef.current?.(() => navigate(libraryPath)); else navigate(libraryPath); };
+  const saveLater = () => { if (dirty) saveDraftRef.current?.(() => committedNavigation.navigateAfterCommit(libraryPath)); else navigate(libraryPath); };
   const next = () => { const items = batch.items || [], index = items.findIndex(item => item.id === active?.id); const remaining = items.slice(index + 1).find(item => !item.reviewed && !item.excluded) || items.find(item => !item.reviewed && !item.excluded && item.id !== active?.id); if (remaining) setItemId(remaining.id); else setStep('save'); };
   if (denied) return <Shell><section className="mydesk-access" role="alert"><h1>Import unavailable</h1><p>{error || 'This private import is no longer available for this account.'}</p></section></Shell>;
   const terminal = ['completed', 'expired', 'cancelled'].includes(batch.status);
-  return <Shell onNavigate={go}><main className="mydesk-shell import-workspace"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><h1>Review your paperwork</h1></div><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Private drafts · {terminal ? batch.status : `Review expires ${importExpiry(batch.expiresAt || batch.uploadExpiresAt)}`}</p></div>{!terminal && <Button variant="outline" disabled={locked} onClick={saveLater}>Save for later</Button>}</div>
+  return <Shell onNavigate={go}><Content className="mydesk-shell import-workspace"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><Heading>Review your paperwork</Heading></div><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Private drafts · {terminal ? batch.status : `Review expires ${importExpiry(batch.expiresAt || batch.uploadExpiresAt)}`}</p></div>{!terminal && <Button variant="outline" disabled={locked} onClick={saveLater}>Save for later</Button>}</div>
     {error && <div role="alert" className="import-error"><p>{error}</p>{pending && !conflict && <Button variant="outline" disabled={busy} onClick={() => run(pending.kind, pending.payload, pending.targetId, pending.after, pending)}>Retry last action</Button>}{conflict && <><p>Your changes are still on this screen. Review the saved version before trying again.</p><Button variant="outline" disabled={busy} onClick={() => setConfirm({ title: 'Reload saved review?', description: 'This discards unsaved changes on this screen and opens the latest saved progress.', label: 'Reload saved review', action: refresh })}>Reload saved review</Button></>}</div>}
     {batch.status === 'completed' ? <section className="import-complete"><Check /><h2>{discipline ? 'Your disciplinary records are saved.' : 'Your notes are saved.'}</h2><p>{discipline ? 'The reviewed forms are attached to their students in the school log.' : 'Reviewed forms were added to your private notebook.'}</p><div className="import-actions">{discipline ? batch.commitReceipt?.records?.map((receipt, index) => <Button key={receipt.itemId} variant="outline" onClick={() => navigate(withDisciplineEntry(`/classpilot/discipline-records/${encodeURIComponent(receipt.recordId)}`, params))}>Open disciplinary record {index + 1}</Button>) : batch.commitReceipt?.notes?.map((receipt, index) => <Button key={receipt.noteId} variant="outline" onClick={() => navigate(`/classpilot/my-desk?note=${encodeURIComponent(receipt.noteId)}`)}>Open saved note {index + 1}</Button>)}</div>{!discipline && <DisciplineSubmitButton access={access} noteIds={(batch.commitReceipt?.notes || []).map(receipt => receipt.noteId)} label="Review for school log" />}<Button onClick={() => navigate(discipline ? withDisciplineEntry('/classpilot/discipline-records', params) : '/classpilot/my-desk')}>{discipline ? 'Open discipline logs' : 'Open My Desk notes'}</Button></section> : terminal ? <section className="mydesk-empty"><h2>{batch.status === 'expired' ? 'This review has expired.' : 'This import was cancelled.'}</h2><p>Start a new import to prepare these forms again.</p><Button onClick={() => navigate(libraryPath)}>Back to paperwork</Button></section> : ['uploading', 'queued', 'processing', 'failed'].includes(batch.status) ? <section className="import-wait"><h2>{batch.status === 'failed' ? 'Your forms need another try.' : batch.status === 'uploading' ? sourcesReady ? 'Your files are ready.' : 'This upload was not finished.' : 'Preparing pages and draft forms…'}</h2><p>{batch.status === 'uploading' ? sourcesReady ? 'Prepare private drafts from these uploaded files when you are ready.' : 'If an upload was interrupted, cancel this import and select the source files again.' : 'You can leave and resume here. Nothing is published during preparation.'}</p>{(batch.status === 'failed' || (batch.status === 'uploading' && sourcesReady)) && <><p className="import-notice">We’ll prepare student entries from these forms. Check each student, date, and summary before saving.</p><Button disabled={locked} onClick={() => run('process')}>{batch.status === 'failed' ? 'Retry preparation' : 'Prepare drafts'}</Button></>}<Button variant="ghost" disabled={locked} onClick={() => setConfirm({ title: 'Cancel this import?', description: 'This removes the private review. Nothing will be published.', label: 'Cancel import', action: () => run('cancel') })}>Cancel import</Button></section> : <>
       <details className="import-change-classes"><summary>Selected classes ({batch.selectedGroupIds?.length || 0})</summary><p>Changing classes clears all form review confirmations. Your edited fields are kept.</p><div className="import-class-options">{classes.data?.current?.map(group => <label key={group.id}><input type="checkbox" checked={batch.selectedGroupIds.includes(group.id)} disabled={locked || dirty || (batch.selectedGroupIds.length === 1 && batch.selectedGroupIds.includes(group.id)) || (batch.selectedGroupIds.length >= 20 && !batch.selectedGroupIds.includes(group.id))} onChange={event => { const selectedGroupIds = event.target.checked ? [...batch.selectedGroupIds, group.id] : batch.selectedGroupIds.filter(id => id !== group.id); setConfirm({ title: 'Change selected classes?', description: 'Your edited text stays. Check every form again after changing the selected classes.', label: 'Change classes', action: () => run('batch', { selectedGroupIds }) }); }} />{group.name}</label>)}</div></details><nav className="import-steps" aria-label="Import review steps">{[['pages', '1. Check pages', `${progress.accounted}/${progress.pages} accounted for`], ['forms', '2. Review forms', `${progress.reviewed}/${progress.included} reviewed`], ['save', '3. Save together', `${progress.excluded} excluded`]].map(([key, label, hint]) => <button key={key} disabled={locked} aria-current={step === key ? 'step' : undefined} onClick={() => switchView(() => setStep(key))}><strong>{label}</strong><small>{hint}</small></button>)}</nav>
@@ -94,7 +97,7 @@ export default function ImportWorkspace({ access, initialImport, Shell }) {
       <Button variant="ghost" disabled={locked} onClick={() => setConfirm({ title: 'Cancel this import?', description: 'This removes the private review and its source files. Nothing will be published.', label: 'Cancel import', action: () => run('cancel') })}>Cancel import</Button>
     </>}
     <ImportConfirm request={confirm} onClose={() => setConfirm(null)} />
-  </main></Shell>;
+  </Content></Shell>;
 }
 
 

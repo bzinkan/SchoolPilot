@@ -11,15 +11,16 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
   const entry = `
     import React from 'react';
     import { createRoot } from 'react-dom/client';
-    import { MemoryRouter, useLocation } from 'react-router-dom';
+    import { MemoryRouter, useLocation, Link } from 'react-router-dom';
     import { QueryClientProvider } from '@tanstack/react-query';
     import { AuthProvider } from '/src/contexts/AuthContext.jsx';
     import { queryClient } from '/src/lib/queryClient.js';
     import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';
-    import { AdminClassesTabs } from '/src/products/classpilot/components/ScheduleRouteTabs.jsx';
+    const AdminClassesTabs = () => React.createElement('nav',{'aria-label':'Class Management sections'},React.createElement(Link,{to:'/classpilot/admin/classes'},'Classes'));
+    window.refreshScheduling = () => queryClient.invalidateQueries({queryKey:['classpilot-school-scheduling']});
     import '/src/index.css';
     function RouteProbe(){const route=useLocation();return React.createElement('output',{'aria-label':'Scheduling route'},route.pathname+route.search);}
-    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/classes/scheduling'+location.search]},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(RouteProbe),React.createElement(AdminClassesTabs),React.createElement(Scheduling))))));
+    createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client:queryClient},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/scheduling'+location.search]},React.createElement('main',{className:'mx-auto max-w-6xl space-y-6 p-6'},React.createElement(RouteProbe),React.createElement(AdminClassesTabs),React.createElement(Scheduling))))));
   `;
   const vite = await createServer({ root, logLevel: "error", server: { host: "127.0.0.1", port: 0 }, plugins: [{ name: "scheduling-browser-test",
     configureServer(server) { server.middlewares.use(async (req, res, next) => {
@@ -34,6 +35,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
   let browser;
   let revision = 1;
   let emptyFixture = false;
+  let failScheduleReads = false;
   let calendarState = { nonInstructionalDates: [], revision: 0, updatedAt: null };
   let config = { schemaVersion: 1, yearStart: "2026-09-01", yearEnd: "2027-06-30", cycleAnchorDate: "2026-09-01", cycleAnchorDay: "A", periods: [{ id: "p1", name: "Period 1" }], profiles: [{ id: "regular", name: "Regular", periods: { p1: { startTime: "09:00", endTime: "09:50" } } }], defaultProfileId: "regular", weekdayProfiles: {}, dateOverrides: {} };
   const previews = [], writes = [], calendarPreviews = [], calendarWrites = [], calendarReads = [], errors = [];
@@ -62,9 +64,10 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
       }
       if (url.pathname.endsWith("/admin/scheduling/preview")) {
         const body = request.postDataJSON(); previews.push(body);
-        return route.fulfill({ json: { revision, previewToken: `reviewed-weekend-token-${previews.length}`, schoolTimezone: "America/New_York", fromDate: "2026-09-01", throughDate: "2027-06-30", changedOccurrences: 1, blockers: [], changes: [{ date: "2026-09-05", classId: "class", className: "Monday Math", before: null, after: body.config.profiles[0].periods.p1 }], days: [{ date: "2026-09-05", instructional: true, meetingWeekday: 1, cycleDay: "B", profileId: "regular", overridden: true }] } });
+        return route.fulfill({ json: { revision, previewToken: `reviewed-weekend-token-${previews.length}`, schoolTimezone: "America/New_York", fromDate: "2026-09-01", throughDate: "2027-06-30", changedOccurrences: 1, blockers: [], changes: [{ date: "2026-09-05", classId: "class", className: "Monday Math", before: null, after: body.config.profiles[0]?.periods.p1 || null }], days: [{ date: "2026-09-05", instructional: true, meetingWeekday: 1, cycleDay: "B", profileId: "regular", overridden: true }] } });
       }
       if (url.pathname.endsWith("/admin/scheduling")) {
+        if (request.method() === "GET" && failScheduleReads) return route.fulfill({ status: 503, json: { error: "Saved settings temporarily unavailable" } });
         if (request.method() === "PUT") { const body = request.postDataJSON(); writes.push(body); config = body.config; revision++; }
         return route.fulfill({ json: { revision, config, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01" } });
       }
@@ -73,8 +76,8 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__scheduling-test`);
     await page.getByTestId("classpilot-scheduling-panel").waitFor({ state: "attached" });
     const nav = page.getByRole("navigation", { name: "Class Management sections" });
-    assert.deepEqual(await nav.getByRole("link").allTextContents(), ["Classes", "Scheduling", "Schedule Changes"]);
-    assert.equal(await nav.getByRole("link", { name: "Scheduling", exact: true }).getAttribute("aria-current"), "page");
+    assert.deepEqual(await nav.getByRole("link").allTextContents(), ["Classes"]);
+    const yearTab = page.getByRole("tab", { name: "School year", exact: true });
     const profilesTab = page.getByRole("tab", { name: "Schedule profiles", exact: true });
     const bellsTab = page.getByRole("tab", { name: "Bells & rotation", exact: true });
     const calendarTab = page.getByRole("tab", { name: "Calendar & exceptions", exact: true });
@@ -84,8 +87,10 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     const saveButton = page.getByRole("button", { name: "Save reviewed schedule", exact: true });
     const classesShortcut = page.getByRole("link", { name: "assign periods to classes", exact: true });
     const changesShortcut = page.getByRole("link", { name: "Open Schedule Changes", exact: true });
-    assert.deepEqual(await page.getByRole("tab").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label"))), ["Schedule profiles", "Bells & rotation", "Calendar & exceptions"]);
-    assert.equal(await profilesTab.getAttribute("aria-selected"), "true");
+    assert.deepEqual(await page.getByRole("tab").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label"))), ["School year", "Calendar & exceptions", "Bells & rotation", "Schedule profiles"]);
+    assert.equal(await yearTab.getAttribute("aria-selected"), "true");
+    await page.getByLabel("School year starts", { exact: true }).waitFor();
+    await profilesTab.click();
     await applyProfile.waitFor();
     assert.equal(await createProfile.isEnabled(), true);
     assert.equal(await changesShortcut.getAttribute("href"), "/classpilot/admin/classes/schedule-changes");
@@ -94,6 +99,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     const artifactDir = path.join(root, "artifacts", "scheduling");
     await mkdir(artifactDir, { recursive: true });
     const sections = [
+      { key: "year", name: "School year", tab: yearTab, marker: 'heading "School year"' },
       { key: "profiles", name: "Schedule profiles", tab: profilesTab, marker: 'button "Create Schedule Profile"' },
       { key: "bells", name: "Bells & rotation", tab: bellsTab, marker: 'button "Add period"' },
       { key: "calendar", name: "Calendar & exceptions", tab: calendarTab, marker: 'button "Add date"' },
@@ -101,7 +107,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     const accessibility = { keyboardTransitions: [], focusIndicators: {}, traversal: {}, views: [] };
     const assertAccessibleSection = async (name) => {
       const selected = sections.find(section => section.name === name);
-      assert.equal(await page.locator('[role="tabpanel"]').count(), 3, "All section drafts stay mounted");
+      assert.equal(await page.locator('[role="tabpanel"]').count(), 4, "All section drafts stay mounted");
       assert.equal(await page.getByRole("tabpanel").count(), 1, "Only the active section belongs in the accessibility tree");
       assert.equal(await page.getByRole("tabpanel").getAttribute("id"), await selected.tab.getAttribute("aria-controls"));
       const snapshot = await page.locator("main").ariaSnapshot();
@@ -140,10 +146,10 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
 
     assert.equal(await page.getByRole("tablist", { name: "Scheduling tasks" }).getAttribute("aria-orientation"), "vertical");
     await profilesTab.focus();
-    for (const [key, name] of [["ArrowDown", "Bells & rotation"], ["ArrowDown", "Calendar & exceptions"], ["ArrowDown", "Schedule profiles"], ["ArrowUp", "Calendar & exceptions"], ["Home", "Schedule profiles"], ["End", "Calendar & exceptions"], ["ArrowUp", "Bells & rotation"]]) await pressTabKey(key, name);
+    for (const [key, name] of [["ArrowDown", "School year"], ["ArrowDown", "Calendar & exceptions"], ["ArrowDown", "Bells & rotation"], ["ArrowUp", "Calendar & exceptions"], ["Home", "School year"], ["End", "Schedule profiles"], ["ArrowUp", "Bells & rotation"]]) await pressTabKey(key, name);
     for (const theme of ["light", "dark"]) {
       await page.evaluate(dark => document.documentElement.classList.toggle("dark", dark), theme === "dark");
-      await profilesTab.click();
+      await calendarTab.click();
       const restingShadow = await bellsTab.evaluate(element => { element.getAnimations().forEach(animation => animation.finish()); return getComputedStyle(element).boxShadow; });
       await pressTabKey("ArrowDown", "Bells & rotation");
       await page.screenshot({ path: path.join(artifactDir, `keyboard-focus-desktop-${theme}.png`), fullPage: true, animations: "disabled" });
@@ -177,7 +183,9 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
 
     await bellsTab.click();
     assert.equal(await classesShortcut.getAttribute("href"), "/classpilot/admin/classes");
+    await yearTab.click();
     await page.getByLabel("School year ends", { exact: true }).fill("2027-06-29");
+    await bellsTab.click();
     await page.getByLabel("Regular Period 1 start", { exact: true }).fill("09:05");
     assert.equal(await classesShortcut.count(), 0, "A schedule draft must hide the shortcut out to Classes");
     assert.equal(await changesShortcut.count(), 0, "A schedule draft must hide the shortcut out to Schedule Changes");
@@ -245,12 +253,13 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     assert.equal(previews[0].config.profiles[0].periods.p1.startTime, "09:05");
     assert.equal(await saveButton.isEnabled(), true);
     await calendarTab.focus();
-    await pressTabKey("Home", "Schedule profiles");
+    await pressTabKey("End", "Schedule profiles");
     assert.equal(await saveButton.count(), 0, "The retained preview is hidden with its schedule editor");
-    await pressTabKey("End", "Calendar & exceptions");
+    await pressTabKey("Home", "School year");
+    await pressTabKey("ArrowDown", "Calendar & exceptions");
     assert.equal(await saveButton.isEnabled(), true, "The reviewed preview must survive a keyboard trip through another section");
     assert.equal(previews.length, 1, "Navigation alone must not request a replacement preview");
-    await pressTabKey("ArrowUp", "Bells & rotation");
+    await pressTabKey("ArrowDown", "Bells & rotation");
     assert.equal(await page.getByLabel("School year ends", { exact: true }).inputValue(), "2027-06-29");
     await page.getByLabel("Regular Period 1 end", { exact: true }).fill("09:55");
     assert.equal(await saveButton.count(), 0, "Editing another section after preview must remove approval for the old draft");
@@ -307,6 +316,7 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     config = { ...config, yearStart: null, yearEnd: null, cycleAnchorDate: null, periods: [], profiles: [], defaultProfileId: null, weekdayProfiles: {}, dateOverrides: {} };
     await page.setViewportSize({ width: 1365, height: 950 });
     await page.reload();
+    await profilesTab.click();
     await page.getByText("No profiles yet. Create your first special-day plan, then apply it to the dates you need.", { exact: true }).waitFor().catch(async error => {
       throw new Error(`${error.message}; page errors: ${JSON.stringify(errors)}; rendered page: ${await page.locator('body').innerText()}`);
     });
@@ -331,18 +341,48 @@ test("Scheduling sections preserve drafts, protect profile actions, and save onl
     assert.equal(writes.length, 1, "Adding and discarding an empty-school period must not save it");
     await captureViews("empty");
     const fixtureUrl = page.url().split('?')[0];
-    await page.goto(fixtureUrl + '?section=bells');
+    await page.goto(fixtureUrl + '?section=school-year');
     await page.getByLabel('School year starts', { exact: true }).waitFor();
-    assert.equal(await bellsTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await yearTab.getAttribute('aria-selected'), 'true');
     await page.reload();
     await page.getByLabel('School year starts', { exact: true }).waitFor();
-    assert.equal(await bellsTab.getAttribute('aria-selected'), 'true', 'A refreshed school-year settings link keeps Bells & rotation open');
+    assert.equal(await yearTab.getAttribute('aria-selected'), 'true', 'A refreshed school-year settings link keeps School year open');
     await calendarTab.click();
-    await page.waitForFunction(() => document.querySelector('output[aria-label="Scheduling route"]')?.textContent.endsWith('?section=calendar'));
-    assert.equal(await page.getByLabel('Scheduling route').textContent(), '/classpilot/admin/classes/scheduling?section=calendar');
+    await page.waitForFunction(() => document.querySelector('output[aria-label="Scheduling route"]')?.textContent.endsWith('?section=calendar&month=2026-09'));
+    assert.equal(await page.getByLabel('Scheduling route').textContent(), '/classpilot/admin/scheduling?section=calendar&month=2026-09');
     await page.goto(fixtureUrl + '?section=https%3A%2F%2Fexample.invalid');
-    await createProfile.waitFor();
-    assert.equal(await profilesTab.getAttribute('aria-selected'), 'true', 'Unknown section values use the normal profile landing section');
+    await page.getByLabel("School year starts", { exact: true }).waitFor();
+    assert.equal(await yearTab.getAttribute('aria-selected'), 'true', 'Unknown sections return to School year');
+
+    // School-year-only setup must not invent bells or require an A/B anchor.
+    await page.getByLabel("School year starts", { exact: true }).fill("2026-08-19");
+    await page.getByLabel("School year ends", { exact: true }).fill("2027-05-28");
+    await previewButton.click(); await saveButton.waitFor();
+    failScheduleReads = true;
+    await saveButton.click();
+    await page.getByText("School schedule saved.", { exact: true }).waitFor();
+    await page.getByText(/Could not refresh saved settings/).waitFor();
+    assert.equal(writes.at(-1).config.cycleAnchorDate, null);
+    assert.deepEqual(writes.at(-1).config.periods, []);
+    assert.deepEqual(writes.at(-1).config.profiles, []);
+    assert.equal(writes.at(-1).config.yearStart, "2026-08-19");
+    assert.equal(writes.at(-1).config.yearEnd, "2027-05-28");
+    assert.equal(await page.getByRole("button", { name: "Discard schedule draft", exact: true }).count(), 0, "An acknowledged save clears the draft even if refresh fails");
+    failScheduleReads = false;
+    await page.getByRole("button", { name: "Retry refresh", exact: true }).click();
+    await page.getByText(/Could not refresh saved settings/).waitFor({ state: "hidden" });
+    // A remote revision must preserve the local draft and block stale saves.
+    await page.getByLabel("School year ends", { exact: true }).fill("2027-05-27");
+    config = { ...config, yearEnd: "2027-05-29" }; revision++;
+    await page.evaluate(() => window.refreshScheduling());
+    await page.getByText(/The saved school schedule changed while you were editing/).waitFor();
+    assert.equal(await page.getByLabel("School year ends", { exact: true }).inputValue(), "2027-05-27");
+    assert.equal(await previewButton.isDisabled(), true);
+    await bellsTab.click(); await yearTab.click();
+    assert.equal(await page.getByLabel("School year ends", { exact: true }).inputValue(), "2027-05-27");
+    await page.getByRole("button", { name: "Discard draft and load saved schedule", exact: true }).click();
+    assert.equal(await page.getByLabel("School year ends", { exact: true }).inputValue(), "2027-05-29");
+    assert.equal(await previewButton.isEnabled(), true);
 
     await writeFile(path.join(artifactDir, "accessibility-evidence.json"), JSON.stringify({ ...accessibility, calendarSave: { previews: calendarPreviews.length, writes: calendarWrites.length, verifiedRevision: calendarReads.find(read => read.revision === 1)?.revision, retainedSeparateDraft: true } }, null, 2));
     assert.deepEqual(errors, []);

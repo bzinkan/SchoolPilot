@@ -47,7 +47,7 @@ async function fixture(browser, baseURL, role = "school_admin", roles) {
   await context.addInitScript(id => localStorage.setItem("sp_activeSchoolId", id), SCHOOL_ID);
   const page = await context.newPage();
   const errors = [], requests = [];
-  let current = policyResponse(), nextSave = "success";
+  let current = policyResponse(), nextSave = "success", failReads = false;
   page.on("pageerror", error => errors.push(error.message));
   await page.route("https://fonts.googleapis.com/**", route => route.fulfill({ body: "" }));
   await page.route("https://fonts.gstatic.com/**", route => route.fulfill({ body: "" }));
@@ -57,7 +57,9 @@ async function fixture(browser, baseURL, role = "school_admin", roles) {
     if (url.pathname === "/api/auth/csrf") return route.fulfill({ json: { csrfToken: "portal-fixture-csrf" } });
     if (url.pathname === API_PATH) {
       requests.push({ method: request.method(), schoolId: request.headers()["x-school-id"], body: request.postDataJSON() });
-      if (request.method() === "GET") return route.fulfill({ json: current });
+      if (request.method() === "GET") return failReads
+        ? route.fulfill({ status: 503, json: { error: "Synthetic refresh unavailable" } })
+        : route.fulfill({ json: current });
       if (nextSave === "conflict") {
         nextSave = "success";
         current = { ...current, revision: current.revision + 1,
@@ -75,11 +77,21 @@ async function fixture(browser, baseURL, role = "school_admin", roles) {
       month: url.searchParams.get("month"), revision: 1, schoolTimezone: "America/New_York",
       schoolLocalToday: "2026-09-01", nonInstructionalDates: [], updatedAt: null,
     } });
+    if (url.pathname === "/api/classpilot/admin/scheduling") return route.fulfill({ json: {
+      revision: 1, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01",
+      config: { schemaVersion: 1, yearStart: null, yearEnd: null, cycleAnchorDate: null,
+        cycleAnchorDay: "A", periods: [], profiles: [], defaultProfileId: null,
+        weekdayProfiles: {}, dateOverrides: {}, scheduleProfiles: [], profileApplications: [] },
+    } });
+    if (url.pathname === "/api/classpilot/admin/schedule-profiles") return route.fulfill({ json: {
+      revision: 1, schoolTimezone: "America/New_York", schoolLocalToday: "2026-09-01",
+      profiles: [], applications: [], classes: [], staff: [], supervisionGroups: [], testingStatuses: [],
+    } });
     if (url.pathname === "/api/settings") return route.fulfill({ json: { schoolName: "Portal Test School", retentionDays: 30 } });
     if (["/api/sessions/all", "/api/teacher/groups", "/api/flight-paths"].includes(url.pathname)) return route.fulfill({ json: [] });
     return route.fulfill({ json: {} });
   });
-  return { context, page, errors, requests, current: () => current, nextSave: mode => { nextSave = mode; } };
+  return { context, page, errors, requests, current: () => current, nextSave: mode => { nextSave = mode; }, failReads: value => { failReads = value; } };
 }
 
 test("Student Portal placement, guarded navigation, revisioned save and administrator permissions", { timeout: 120_000 }, async t => {
@@ -97,13 +109,14 @@ test("Student Portal placement, guarded navigation, revisioned save and administ
       try {
         await f.page.goto("/classpilot/admin?tab=calendar&month=2099-09", { waitUntil: "networkidle" });
         await f.page.getByTestId("calendar-day-2099-09-09").click();
-        await f.page.getByRole("tab", { name: "Student Portal", exact: true }).click();
+        await f.page.getByRole("button", { name: "Settings", exact: true }).click();
+        await f.page.getByRole("link", { name: "Student portal", exact: true }).click();
         await f.page.getByRole("button", { name: "Keep editing", exact: true }).waitFor();
         assert.equal(f.requests.length, 0, "the portal must not load before leaving the guarded calendar draft");
         await f.page.getByRole("button", { name: "Keep editing", exact: true }).click();
         assert.equal(await f.page.getByTestId("calendar-day-2099-09-09").getAttribute("aria-pressed"), "true");
-        await f.page.getByRole("tab", { name: "Student Portal", exact: true }).click();
-        await f.page.getByTestId("button-discard-calendar-navigation").click();
+        await f.page.getByRole("link", { name: "Student portal", exact: true }).click();
+        await f.page.getByRole("button", { name: "Discard changes and leave", exact: true }).click();
         await f.page.getByRole("region", { name: "Student Portal & Sign-In", exact: true }).waitFor();
         assert.equal(new URL(f.page.url()).searchParams.get("tab"), "student-portal");
         await f.page.getByText("2 of 4 recent student sign-ins have compatible Student Portal support; 3 have reported support information.", { exact: true }).waitFor();
@@ -158,6 +171,40 @@ test("Student Portal placement, guarded navigation, revisioned save and administ
         await f.page.getByRole("alert").filter({ hasText: "Administrator permission is required" }).waitFor();
         assert.equal(f.current().revision, 10);
         assert.equal(f.current().policy.profiles[0].startUrl, "https://clever.com/in/reviewed-edit");
+        assert.deepEqual(f.errors, []);
+      } finally { await f.context.close(); }
+    });
+    await t.test("a failed background refresh retains the portal draft and its navigation guard", async () => {
+      const f = await fixture(browser, baseURL);
+      try {
+        await f.page.goto("/classpilot/admin?tab=student-portal", { waitUntil: "networkidle" });
+        await f.page.locator("#provider-url-clever").fill("https://clever.com/in/unsaved-work");
+        f.failReads(true);
+        await f.page.evaluate(async () => {
+          const { queryClient } = await import('/src/lib/queryClient.js');
+          await queryClient.invalidateQueries({ queryKey: ['/api/classpilot/admin/sso-policy'] });
+        });
+        await f.page.getByText(/Could not refresh Student Portal settings/).waitFor();
+        assert.equal(await f.page.locator("#provider-url-clever").inputValue(), "https://clever.com/in/unsaved-work");
+        await f.page.getByRole('link', { name: 'Overview', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+        assert.equal(await f.page.locator("#provider-url-clever").inputValue(), "https://clever.com/in/unsaved-work");
+        assert.equal(f.requests.filter(request => request.method === 'PATCH').length, 0);
+        assert.deepEqual(f.errors, []);
+      } finally { await f.context.close(); }
+    });
+    await t.test("monitoring-hours drafts use the same admin navigation guard", async () => {
+      const f = await fixture(browser, baseURL);
+      try {
+        await f.page.goto('/classpilot/settings', { waitUntil: 'networkidle' });
+        const hours = f.page.getByRole('region', { name: 'Monitoring hours', exact: true });
+        await hours.getByLabel('Start', { exact: true }).fill('07:45');
+        await f.page.getByRole('link', { name: 'Overview', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+        assert.equal(await hours.getByLabel('Start', { exact: true }).inputValue(), '07:45');
+        await f.page.getByRole('link', { name: 'Overview', exact: true }).click();
+        await f.page.getByRole('button', { name: 'Discard changes and leave', exact: true }).click();
+        await f.page.getByTestId('admin-overview').waitFor();
         assert.deepEqual(f.errors, []);
       } finally { await f.context.close(); }
     });

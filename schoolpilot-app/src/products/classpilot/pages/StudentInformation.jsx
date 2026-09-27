@@ -4,7 +4,6 @@ import { ArrowLeft } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import {
   Link,
-  useNavigate,
   useParams,
   useSearchParams,
   useLocation,
@@ -22,6 +21,8 @@ import StudentInformationImport, {
 import MyDeskTabs from "../components/MyDeskTabs";
 import MyDeskScopePicker from "../components/MyDeskScopePicker";
 import { myDeskScopeFilters } from "../lib/myDeskScopeModel";
+import { withDisciplineEntry } from "../lib/disciplineNavigation";
+import { useAdminNavigation, useAdminShell } from "../hooks/useAdminNavigation";
 import "../components/studentInformation.css";
 import "../myDesk.css";
 
@@ -31,12 +32,14 @@ export function StudentInformationShell({
   schoolName,
   seatingEnabled = true,
 }) {
+  const shell = useAdminShell();
+  if (shell) return <section className="student-information">{children}</section>;
   return (
     <div className="mydesk-page min-h-screen">
       <header className="mydesk-header">
         <Link
           className="student-info-back"
-          to={adminEntry ? "/classpilot/admin?tab=students" : "/classpilot"}
+          to={adminEntry ? "/classpilot/students" : "/classpilot"}
         >
           <ArrowLeft className="size-4" />
           {adminEntry ? "Back to Students" : "ClassPilot"}
@@ -54,6 +57,7 @@ export function StudentInformationShell({
 }
 
 function Directory({ access }) {
+  const Heading = useAdminShell() ? "h2" : "h1";
   const [search, setSearch] = useState(""),
     [inactive, setInactive] = useState(false),
     [importing, setImporting] = useState(false);
@@ -70,8 +74,8 @@ function Directory({ access }) {
     }
     setParams(updated);
   };
-  const q = useDeferredValue(search),
-    navigate = useNavigate();
+  const q = useDeferredValue(search);
+  const { navigate, requestAction } = useAdminNavigation();
   const classes = useMyDeskClasses(access.schoolId, access.viewerId);
   const filters = {
     q,
@@ -114,13 +118,13 @@ function Directory({ access }) {
     <>
       <div className="student-info-toolbar">
         <div>
-          <h1>Student information</h1>
+          <Heading>Student information</Heading>
           <p>
             Reviewed contact information for the students you currently serve.
           </p>
         </div>
         {access.aiImportEnabled && (
-          <button onClick={() => setImporting((value) => !value)}>
+          <button onClick={() => requestAction(() => setImporting((value) => !value), { id: "contact-upload-toggle" })}>
             {importing ? "Close upload" : "Add from documents"}
           </button>
         )}
@@ -132,8 +136,8 @@ function Directory({ access }) {
       {importing && (
         <StudentInformationUpload
           access={access}
-          onUploaded={(id) =>
-            navigate(`/classpilot/my-desk/student-information/imports/${id}`)
+          onUploaded={(id, committedNavigate) =>
+            (committedNavigate || navigate)(withDisciplineEntry(`/classpilot/my-desk/student-information/imports/${encodeURIComponent(id)}`, params))
           }
         />
       )}
@@ -183,7 +187,7 @@ function Directory({ access }) {
                 <tr key={student.id}>
                   <td>
                     <Link
-                      to={`/classpilot/my-desk/student-information/${encodeURIComponent(student.id)}`}
+                      to={withDisciplineEntry(`/classpilot/my-desk/student-information/${encodeURIComponent(student.id)}`, params)}
                     >
                       {student.name}
                     </Link>
@@ -215,7 +219,7 @@ function Directory({ access }) {
             .map((run) => (
               <p key={run.id}>
                 <Link
-                  to={`/classpilot/my-desk/student-information/imports/${run.id}`}
+                  to={withDisciplineEntry(`/classpilot/my-desk/student-information/imports/${encodeURIComponent(run.id)}`, params)}
                 >
                   {new Date(run.createdAt).toLocaleString()} · {run.status}
                 </Link>
@@ -234,8 +238,10 @@ function Directory({ access }) {
 export default function StudentInformation() {
   const base = useMyDeskAccess(),
     { studentId, importId } = useParams();
-  const location = useLocation(),
-    adminEntry = location.pathname.startsWith("/classpilot/students/");
+  const location = useLocation();
+  const shell = useAdminShell();
+  const [params] = useSearchParams();
+  const adminEntry = Boolean(shell) || location.pathname.startsWith("/classpilot/students/");
   const capabilities = useQuery({
     queryKey: [
       ...studentInformationKeys.root(base.schoolId, base.viewerId),
@@ -295,7 +301,7 @@ export default function StudentInformation() {
       ) : studentId ? (
         <>
           {!adminEntry && (
-            <Link to="/classpilot/my-desk/student-information">
+            <Link to={withDisciplineEntry('/classpilot/my-desk/student-information', params)}>
               Student information
             </Link>
           )}

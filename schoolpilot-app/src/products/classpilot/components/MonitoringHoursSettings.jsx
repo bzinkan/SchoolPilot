@@ -4,28 +4,38 @@ import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { useToast } from "../../../hooks/use-toast";
+import { useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 
 const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const readHours = settings => ({
+  enableTrackingHours: settings?.enableTrackingHours === true,
+  trackingStartTime: settings?.trackingStartTime || "08:00",
+  trackingEndTime: settings?.trackingEndTime || "15:00",
+  schoolTimezone: settings?.schoolTimezone || "America/New_York",
+  trackingDays: settings?.trackingDays || days.slice(0, 5),
+  afterHoursMode: settings?.afterHoursMode || "off",
+});
 export default function MonitoringHoursSettings({ settings }) {
   const { toast } = useToast();
-  const [value, setValue] = useState(() => ({
-    enableTrackingHours: settings?.enableTrackingHours === true,
-    trackingStartTime: settings?.trackingStartTime || "08:00",
-    trackingEndTime: settings?.trackingEndTime || "15:00",
-    schoolTimezone: settings?.schoolTimezone || "America/New_York",
-    trackingDays: settings?.trackingDays || days.slice(0, 5),
-    afterHoursMode: settings?.afterHoursMode || "off",
-  }));
+  const [value, setValue] = useState(() => readHours(settings));
+  const [baseline, setBaseline] = useState(value);
+  const [seenSettings, setSeenSettings] = useState(settings);
+  const dirty = JSON.stringify(value) !== JSON.stringify(baseline);
+  if (settings !== seenSettings) {
+    setSeenSettings(settings);
+    if (!dirty) { const latest = readHours(settings); setValue(latest); setBaseline(latest); }
+  }
   const update = (field, next) => setValue(previous => ({ ...previous, [field]: next }));
   const save = useMutation({
-    mutationFn: () => apiRequest("POST", "/settings", {
-      enableTrackingHours: value.enableTrackingHours, trackingStartTime: value.trackingStartTime,
-      trackingEndTime: value.trackingEndTime, trackingDays: value.trackingDays, afterHoursMode: value.afterHoursMode,
+    mutationFn: submitted => apiRequest("POST", "/settings", {
+      enableTrackingHours: submitted.enableTrackingHours, trackingStartTime: submitted.trackingStartTime,
+      trackingEndTime: submitted.trackingEndTime, trackingDays: submitted.trackingDays, afterHoursMode: submitted.afterHoursMode,
     }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/settings"] }); toast({ title: "Monitoring hours saved" }); },
+    onSuccess: (_saved, submitted) => { setBaseline(submitted); queryClient.invalidateQueries({ queryKey: ["/api/settings"] }); toast({ title: "Monitoring hours saved" }); },
     onError: error => toast({ variant: "destructive", title: "Monitoring hours could not be saved", description: error.response?.data?.error || error.message }),
   });
-  return <section className="space-y-4 rounded-md border p-4" aria-label="Monitoring hours">
+  useAdminNavigationBlocker({ id: "monitoring-hours", dirty, busy: save.isPending, onDiscard: () => setValue(baseline) });
+  return <section aria-label="Monitoring hours"><fieldset className="min-w-0 space-y-4 rounded-md border p-4" disabled={save.isPending}>
     <h3 className="font-medium">Monitoring hours</h3>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.enableTrackingHours} onChange={e => update("enableTrackingHours", e.target.checked)} />Use configured tracking hours</label>
     <div className="grid gap-3 sm:grid-cols-3"><label className="text-sm">Start<Input type="time" value={value.trackingStartTime} onChange={e => update("trackingStartTime", e.target.value)} /></label><label className="text-sm">End<Input type="time" value={value.trackingEndTime} onChange={e => update("trackingEndTime", e.target.value)} /></label><label className="text-sm">School timezone<Input value={value.schoolTimezone} readOnly aria-describedby="monitoring-timezone-note" /></label></div>
@@ -33,6 +43,6 @@ export default function MonitoringHoursSettings({ settings }) {
     <fieldset className="flex flex-wrap gap-3"><legend className="mb-2 text-sm">Tracking days</legend>{days.map(day => <label key={day} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={value.trackingDays.includes(day)} onChange={e => update("trackingDays", e.target.checked ? [...value.trackingDays, day] : value.trackingDays.filter(item => item !== day))} />{day.slice(0, 3)}</label>)}</fieldset>
     <label className="block text-sm">After hours<select className="ml-3 rounded-md border bg-background p-2" value={value.afterHoursMode} onChange={e => update("afterHoursMode", e.target.value)}><option value="off">Off</option><option value="limited">Safety only</option><option value="full">Full monitoring</option></select></label>
     <p className="text-xs text-muted-foreground">Safety only requires configured tracking hours and an updated extension. It checks minimal page data for safety alerts without browsing history, screenshots, teacher presence, Live View, or classroom commands.</p>
-    <Button type="button" variant="outline" disabled={save.isPending || (value.afterHoursMode === "limited" && !value.enableTrackingHours)} onClick={() => save.mutate()}>Save monitoring hours</Button>
-  </section>;
+    <Button type="button" variant="outline" disabled={save.isPending || (value.afterHoursMode === "limited" && !value.enableTrackingHours)} onClick={() => save.mutate(value)}>Save monitoring hours</Button>
+  </fieldset></section>;
 }

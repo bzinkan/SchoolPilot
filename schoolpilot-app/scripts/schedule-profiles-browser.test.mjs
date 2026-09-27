@@ -11,7 +11,7 @@ const DEFAULT_SCHOOL_HOURS = { enableTrackingHours: true, trackingStartTime: '08
 
 async function createProfileFixture(context) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const entry = `import React from 'react';import {createRoot} from 'react-dom/client';import {MemoryRouter,useNavigate} from 'react-router-dom';import {QueryClientProvider} from '@tanstack/react-query';import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';import {queryClient as client} from '/src/lib/queryClient.js';import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';import '/src/index.css';function ScopeBridge(){const auth=useAuth();window.switchFixtureSchool=auth.switchSchool;window.navigateFixture=useNavigate();return null;}createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,null,React.createElement('main',{className:'mx-auto max-w-6xl p-6'},React.createElement(ScopeBridge),React.createElement(Scheduling))))));`;
+  const entry = `import React from 'react';import {createRoot} from 'react-dom/client';import {MemoryRouter,useNavigate} from 'react-router-dom';import {QueryClientProvider} from '@tanstack/react-query';import {AuthProvider,useAuth} from '/src/contexts/AuthContext.jsx';import {queryClient as client} from '/src/lib/queryClient.js';import Scheduling from '/src/products/classpilot/pages/AdminScheduling.jsx';import '/src/index.css';function ScopeBridge(){const auth=useAuth();window.switchFixtureSchool=auth.switchSchool;window.navigateFixture=useNavigate();return null;}createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider,{client},React.createElement(AuthProvider,null,React.createElement(MemoryRouter,{initialEntries:['/classpilot/admin/scheduling?section=profiles']},React.createElement('main',{className:'mx-auto max-w-6xl p-6'},React.createElement(ScopeBridge),React.createElement(Scheduling))))));`;
   const vite = await createServer({ root, cacheDir: path.join(root, 'node_modules', `.vite-schedule-profiles-${process.pid}`), logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'schedule-profile-browser-fixture', configureServer(server) { server.middlewares.use(async (req, res, next) => { if (req.url !== '/__schedule-profiles') return next(); res.setHeader('Content-Type', 'text/html'); res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div><script type="module" src="/__profiles-entry.jsx"></script></body></html>')); }); }, resolveId(id) { if (id === '/__profiles-entry.jsx') return '\0schedule-profiles-entry'; }, load(id) { if (id === '\0schedule-profiles-entry') return entry; } }] });
   await vite.listen();
   const browser = await chromium.launch({ headless: true });
@@ -375,6 +375,7 @@ test('Supervision scheduling shortcut checks identity, preserves an open draft, 
   try {
     await shortcut({ schoolId: 'other-school' });
     assert.equal(await page.getByRole('region', { name: 'Schedule testing from supervision' }).count(), 0);
+    await page.getByRole('tab', { name: 'Schedule profiles', exact: true }).click();
     await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).click();
     const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
     await workspace.getByLabel('Profile name', { exact: true }).fill('Unfinished teacher plan');
@@ -1228,11 +1229,11 @@ test('Schedule Profiles saves drafts, reviews exact dates and temporary testing,
     if (await dialog.evaluate(e => e.scrollWidth > e.clientWidth)) context.diagnostic(JSON.stringify(await dialog.evaluate(e => [...e.querySelectorAll('*')].filter(n => n.getBoundingClientRect().right > e.getBoundingClientRect().right + 1).slice(0,8).map(n => ({ tag:n.tagName, cls:n.className, width:n.getBoundingClientRect().width, text:n.textContent.slice(0,60) })))));
     assert.equal(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth), true);
     page.once('dialog', prompt => prompt.accept()); await dialog.getByRole('button', { name: 'Back to scheduling', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
-    await page.getByRole('tab', { name: 'Bells & rotation', exact: true }).click();
+    await page.getByRole('tab', { name: 'School year', exact: true }).click();
     await page.getByLabel('School year ends', { exact: true }).fill('2027-06-29');
     await page.getByRole('tab', { name: 'Schedule profiles', exact: true }).click();
     await page.getByText('Save or discard the bell, rotation, date-override or calendar draft before changing profiles or their applications.', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Create Schedule Profile', exact: true }).isDisabled(), true);
-    await page.getByRole('tab', { name: 'Bells & rotation', exact: true }).click();
+    await page.getByRole('tab', { name: 'School year', exact: true }).click();
     await page.getByRole('button', { name: 'Preview changes', exact: true }).click(); await page.getByRole('button', { name: 'Save reviewed schedule', exact: true }).waitFor();
     assert.deepEqual(advancedPreviews[0].config.scheduleProfiles, catalog.profiles); assert.deepEqual(advancedPreviews[0].config.profileApplications, catalog.applications);
     await page.getByRole('button', { name: 'Save reviewed schedule', exact: true }).click();
@@ -2236,14 +2237,14 @@ test('Unavailable cancellation cutoffs and a slow status response cannot extend 
     };
     const response = page.waitForResponse(response => response.url().endsWith('/schedule-profiles') && response.request().method() === 'GET');
     const request = page.waitForRequest(request => request.url().endsWith('/schedule-profiles') && request.method() === 'GET');
-    const previousReceivedAt = await page.evaluate(async () => (await import('/src/lib/queryClient.js')).queryClient.getQueryData(['classpilot-schedule-profiles', 'school']).overviewReceivedAt);
+    const previousReceivedAt = await page.evaluate(async () => (await import('/src/lib/queryClient.js')).queryClient.getQueryData(['classpilot-schedule-profiles', 'school', 'admin']).overviewReceivedAt);
     await page.getByRole('button', { name: 'Refresh status', exact: true }).click(); await request;
     await page.clock.fastForward(6_000);
     finishRead(); finishRead = null; await (await response).finished();
     // Response headers and an old enabled button can precede consuming the body.
     // Do not move performance.now() sixteen hours before the new read is anchored.
     await page.waitForFunction(async previous => {
-      const state = (await import('/src/lib/queryClient.js')).queryClient.getQueryState(['classpilot-schedule-profiles', 'school']);
+      const state = (await import('/src/lib/queryClient.js')).queryClient.getQueryState(['classpilot-schedule-profiles', 'school', 'admin']);
       return state?.fetchStatus === 'idle' && state.data.overviewReceivedAt > previous && state.data.overviewReceivedAt - state.data.overviewRequestStartedAt >= 6_000;
     }, previousReceivedAt);
     await page.getByRole('button', { name: 'Refresh status', exact: true, disabled: false }).waitFor();

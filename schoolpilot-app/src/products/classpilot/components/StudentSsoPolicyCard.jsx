@@ -1,4 +1,5 @@
-import { createElement, useMemo, useState } from "react";
+import { useAdminNavigationBlocker, useAdminShell } from "../hooks/useAdminNavigation";
+import { createElement, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -265,11 +266,13 @@ function ProviderEditor({ profile, isDefault, onChange, onRemove }) {
   );
 }
 
-function PolicyEditor({ response, refetch }) {
+function PolicyEditor({ response: incoming, refetch, queryKey }) {
+  const [response, setBaseline] = useState(incoming);
   const { toast } = useToast();
   const [draft, setDraft] = useState(() => clonePolicy(response.policy));
   const [dirty, setDirty] = useState(false);
-  const [conflict, setConflict] = useState(null);
+  const [reportedConflict, setConflict] = useState(null);
+  const conflict = reportedConflict || (incoming.revision !== response.revision ? incoming : null);
   const [serverError, setServerError] = useState("");
 
   const updateDraft = (updater) => {
@@ -285,7 +288,8 @@ function PolicyEditor({ response, refetch }) {
       policy: draft,
     }),
     onSuccess: async (saved) => {
-      queryClient.setQueryData(QUERY_KEY, saved);
+      setBaseline(saved);
+      queryClient.setQueryData(queryKey, saved);
       setDraft(clonePolicy(saved.policy));
       setDirty(false);
       setConflict(null);
@@ -305,6 +309,8 @@ function PolicyEditor({ response, refetch }) {
       setServerError(policyError(error, "Policy was not saved."));
     },
   });
+
+  useAdminNavigationBlocker({ id: "student-portal-policy", dirty, busy: mutation.isPending, onDiscard: () => { setDraft(clonePolicy(response.policy)); setDirty(false); } });
 
   const replaceProfile = (profileIndex, profile) => updateDraft((current) => ({
     ...current,
@@ -334,18 +340,20 @@ function PolicyEditor({ response, refetch }) {
   });
   const loadLatest = async () => {
     if (conflict && conflict !== true) {
-      queryClient.setQueryData(QUERY_KEY, conflict);
+      setBaseline(conflict);
+      queryClient.setQueryData(queryKey, conflict);
       setDraft(clonePolicy(conflict.policy));
       setDirty(false);
       setConflict(null);
       return;
     }
-    await refetch();
+    const latest = await refetch();
+    if (latest.data) { setBaseline(latest.data); setDraft(clonePolicy(latest.data.policy)); setDirty(false); }
     setConflict(null);
   };
 
   return (
-    <div className="space-y-6">
+    <fieldset className="min-w-0 space-y-6" disabled={mutation.isPending}>
       <ReadinessStrip response={response} />
 
       <div className="flex flex-col gap-4 rounded-xl border-2 border-slate-800 bg-slate-950 p-4 text-white sm:flex-row sm:items-center sm:justify-between dark:border-slate-600">
@@ -454,7 +462,7 @@ function PolicyEditor({ response, refetch }) {
           <Button
             type="button"
             onClick={() => mutation.mutate()}
-            disabled={!dirty || mutation.isPending || draft.profiles.length === 0 || !draft.defaultProfileId}
+            disabled={!dirty || Boolean(conflict) || mutation.isPending || draft.profiles.length === 0 || !draft.defaultProfileId}
             data-testid="button-save-sso-policy"
           >
             {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -462,22 +470,22 @@ function PolicyEditor({ response, refetch }) {
           </Button>
         </div>
       </div>
-    </div>
+    </fieldset>
   );
 }
 
 export function StudentSsoPolicyCard({ canManage }) {
+  const adminShell = useAdminShell();
+  const queryKey = [...QUERY_KEY, adminShell?.scopeKey || "standalone"];
   const settingsQuery = useQuery({
-    queryKey: QUERY_KEY,
+    queryKey,
     queryFn: () => apiRequest("GET", "/classpilot/admin/sso-policy"),
     enabled: canManage === true,
   });
 
   const response = settingsQuery.data;
-  const editorKey = useMemo(
-    () => response ? `${response.revision}-${response.policyValid !== false}` : "loading",
-    [response]
-  );
+  const editorKey = adminShell?.scopeKey || "standalone";
+  const accessLost = [401, 403].includes(settingsQuery.error?.response?.status);
 
   if (!canManage) return null;
 
@@ -503,7 +511,7 @@ export function StudentSsoPolicyCard({ canManage }) {
           <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading Student Portal configuration…
           </div>
-        ) : settingsQuery.error ? (
+        ) : settingsQuery.error && (!response || accessLost) ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
             {policyError(settingsQuery.error)}
             <Button type="button" variant="link" className="ml-2 h-auto p-0 text-destructive" onClick={() => settingsQuery.refetch()}>
@@ -511,7 +519,10 @@ export function StudentSsoPolicyCard({ canManage }) {
             </Button>
           </div>
         ) : response ? (
-          <PolicyEditor key={editorKey} response={response} refetch={settingsQuery.refetch} />
+          <>
+            {settingsQuery.error && <p role="alert" className="mb-4 text-sm text-destructive">Could not refresh Student Portal settings. Your draft is still here. <Button variant="link" onClick={() => settingsQuery.refetch()}>Retry refresh</Button></p>}
+            <PolicyEditor key={editorKey} response={response} queryKey={queryKey} refetch={settingsQuery.refetch} />
+          </>
         ) : null}
       </CardContent>
     </Card>

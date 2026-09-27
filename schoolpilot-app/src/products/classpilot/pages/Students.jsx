@@ -1,3 +1,4 @@
+import { useAdminShell, useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdminNavigation";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -9,7 +10,6 @@ import { Label } from "../../../components/ui/label";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown, KeyRound, Printer } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
-import { useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import {
   Table,
@@ -259,7 +259,7 @@ function buildXlsxBlob(rows, sheetName) {
 
 // Admin Guard Wrapper - Only checks auth, doesn't run any queries/mutations
 export default function StudentsPage() {
-  const navigate = useNavigate();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
 
   // Only fetch current user for auth check
@@ -301,7 +301,8 @@ export default function StudentsPage() {
 
 // Content Component - Only runs for confirmed admins
 function StudentsContent() {
-  const navigate = useNavigate();
+  const adminShell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   const { toast } = useToast();
   const { hasGoPilot } = useLicenses();
   const [selectedGrade, setSelectedGrade] = useState("");
@@ -983,6 +984,12 @@ function StudentsContent() {
     URL.revokeObjectURL(url);
   };
 
+  useAdminNavigationBlocker({
+    id: "student-directory-tools", dirty: Boolean((csvFile && !importResults) || (showAddStudentDialog && (newStudentName || newStudentEmail || newStudentGrade)) || (showWorkspaceDialog && !workspaceImportResult && checkedOUs.size)),
+    busy: [syncClassroomMutation, importDirectoryMutation, bulkImportMutation, deleteStudentMutation, bulkDeleteMutation, bulkUpdateGradeMutation, bulkGeneratePinsMutation, addStudentMutation].some(item => item.isPending),
+    onDiscard: () => { setCsvFile(null); setShowAddStudentDialog(false); setNewStudentName(""); setNewStudentEmail(""); setNewStudentGrade(""); setShowWorkspaceDialog(false); setCheckedOUs(new Set()); },
+  });
+
   const handleEditSuccess = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
     queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
@@ -990,7 +997,7 @@ function StudentsContent() {
 
   return (
     <div className="container mx-auto p-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
+      {!adminShell && (<div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Button
             variant="ghost"
@@ -1006,8 +1013,7 @@ function StudentsContent() {
           </div>
         </div>
         <ThemeToggle />
-      </div>
-
+      </div>)}
       {/* CSV Import Card */}
       <Card>
         <CardHeader>
