@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import sharp from 'sharp';
 import { detectionMatches, evaluationMetrics, generateEvaluation, runEvaluationCli, runProviderEvaluation } from '../scripts/evaluate-mydesk-import.mjs';
 
 let directory, template, pages, generated;
@@ -31,7 +32,7 @@ function fakeAi({ failDetectionAt = -1, empty = false } = {}) {
       detectionCalls++;
       if (detectionCalls === failDetectionAt) throw new Error('PRIVATE_PROVIDER request key source content');
       const page = byHash.get(digest(bytes)); assert.ok(page);
-      return empty ? [] : page.forms.map(form => form.region);
+      return empty ? [] : page.forms.map(form => ({ ...form.region, rotation: (360 - page.rotation) % 360 }));
     },
     async extractImportForm(crops) {
       if (crops.length > 1) joined++;
@@ -79,7 +80,7 @@ test('detection scores penalize duplicates, extra forms and omissions separately
   assert.equal(metrics.difficult.recall, 1); assert.equal(metrics.difficult.exactFieldAccuracy.entryDate, 0);
 });
 
-test('checkpointed synthetic run scores typed and difficult subsets but never autoapproves; resume makes zero duplicate calls', async () => {
+test('checkpointed synthetic run corrects detector rotations and scores subsets without autoapproval or duplicate calls', async () => {
   const target = await cloned('complete'), ai = fakeAi();
   const report = await runProviderEvaluation(target, { ...config, ai });
   assert.deepEqual(ai.counts, { detectionCalls: 34, extractionCalls: 62, joined: 2 });
@@ -87,6 +88,33 @@ test('checkpointed synthetic run scores typed and difficult subsets but never au
   assert.equal(report.metrics.difficult.exactFieldAccuracy.subjectNames, 1);
   assert.equal(report.automatedTypedThresholdsMet, true); assert.equal(report.acceptance, 'pending_human_review');
   assert.equal(report.unsupportedStatementReview, 'pending human review');
+  // The current detector returns rotation even for upright pages. Confirm each
+  // correction produces a landscape form with its printed heading at the top,
+  // rather than accepting a sideways/upside-down crop or a changed footprint.
+  const rotationPages = new Map([0, 90, 180, 270].map(rotation => {
+    const page = pages.find(candidate => candidate.rotation === rotation && candidate.forms.length);
+    return [page.id, rotation];
+  }));
+  const verifiedRotations = new Set();
+  for (const result of report.results) {
+    const source = result.sources[0];
+    if (result.sources.length !== 1 || !rotationPages.has(source.pageId)) continue;
+    const { data, info } = await sharp(await readFile(join(target, 'crops', result.crops[0].file)))
+      .greyscale().raw().toBuffer({ resolveWithObject: true });
+    assert.ok(Math.abs(info.width - 1472) <= 1 && Math.abs(info.height - 860) <= 1,
+      `The ${rotationPages.get(source.pageId)}-degree page must yield the original form footprint`);
+    const darkPixels = (start, end) => {
+      let count = 0;
+      for (let y = Math.floor(info.height * start); y < Math.floor(info.height * end); y++) {
+        for (let x = 20; x < info.width - 20; x++) if (data[y * info.width + x] < 128) count++;
+      }
+      return count;
+    };
+    assert.ok(darkPixels(0.15, 0.30) > 100, 'Printed form text must be upright near the top');
+    assert.equal(darkPixels(0.75, 0.90), 0, 'The blank lower form area must remain below its text');
+    verifiedRotations.add(rotationPages.get(source.pageId));
+  }
+  assert.deepEqual([...verifiedRotations].sort((a, b) => a - b), [0, 90, 180, 270]);
   const checkpointCount = (await readdir(join(target, 'checkpoints'))).length; assert.equal(checkpointCount, 96);
   const noCalls = { detectImportForms() { assert.fail('Completed detection repeated'); }, extractImportForm() { assert.fail('Completed extraction repeated'); } };
   const resumed = await runProviderEvaluation(target, { ...config, ai: noCalls });

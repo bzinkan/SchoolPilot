@@ -185,9 +185,10 @@ do not commit generated reports or private approval evidence.
   Retired school allowlists are rejected. Seating remains independent.
 - `MYDESK_AI_IMPORT_MODEL` defaults to `claude-sonnet-5`; changing it requires
   extraction evaluation and recorded model-version review.
-- The workspace extraction prompt is `mydesk-forms-20260926-v2`. Its orientation
-  behavior requires a fresh reviewed evaluation with that exact version; prior
-  prompt evaluation does not authorize activation. Keep AI off until review.
+- The workspace extraction prompt is `mydesk-forms-20260928-v3`. Its orientation
+  and discipline-field extraction require a fresh reviewed evaluation with that
+  exact version; prior prompt evaluation does not authorize activation. Keep AI off
+  until review.
 - `MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES` and `MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES`
   default to 100 and 500. The five-file, 10 MiB/file, 20-page, 50-form bounds remain.
 - Both API and worker retain `MYDESK_ATTACHMENTS_BUCKET` and scoped IAM, and use

@@ -121,7 +121,7 @@ function Directory({ access }) {
         </div>
         {access.aiImportEnabled && (
           <button onClick={() => setImporting((value) => !value)}>
-            {importing ? "Close new import" : "Import contact information"}
+            {importing ? "Close upload" : "Add from documents"}
           </button>
         )}
       </div>
