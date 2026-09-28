@@ -2042,14 +2042,6 @@ function StudentsContent() {
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => navigate(`/classpilot/students/${encodeURIComponent(student.id)}/profile`)}
-                            aria-label={`Student profile for ${student.studentName}`}
-                          >
-                            Student profile
-                          </Button>
-                          <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => setEditingStudent(student)}

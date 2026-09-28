@@ -19,7 +19,6 @@ import { useToast } from "../../../hooks/use-toast";
 import { deriveStudentMonitoringDisplay, deriveUnavailablePreview, formatAbsoluteObservedAt, lastObservedDomain } from "../lib/studentMonitoringDisplay";
 import StudentBrowsingHistory from "./StudentBrowsingHistory";
 import StudentChatTranscript from "./StudentChatTranscript";
-import MyDeskStudentAction from './MyDeskStudentAction';
 import { useResizablePanelWidth } from "../hooks/useResizablePanelWidth";
 
 function StudentDetailDrawer({
@@ -29,8 +28,6 @@ function StudentDetailDrawer({
   flightPaths = [],
   onClose,
   activeClassName,
-  activeGroupId = null,
-  myDeskAccess = null,
   teachingSessionId, supervisionContextId, schoolId, contextAuthorityRevision,
   canViewHistoricalUsage = false,
   canViewChatTranscript = false,
@@ -192,7 +189,6 @@ function StudentDetailDrawer({
           <div className="absolute left-0.5 top-1/2 -translate-y-1/2 w-1 h-12 rounded-full bg-border opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
         <SheetHeader className="px-6 py-4 border-b">
-          {myDeskAccess?.enabled && <MyDeskStudentAction key={`${schoolId}:${myDeskAccess.viewerId}:${student.studentId}`} access={myDeskAccess} student={{ id: student.studentId, name: student.studentName }} groupId={activeGroupId} />}
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <SheetTitle className="text-xl">

@@ -16,13 +16,11 @@ Launch, govern, operate, and support ClassPilot across the complete school admin
 
 Overview is your starting point. One menu organizes school administration on desktop and phone.
 
-1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, Discipline logs, or Calendar. A loading failure is shown separately from missing dates.
-2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes. Discipline logs opens school records organized by student.
+1. **Start at Overview.** Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates.
+2. **Choose an area.** People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes.
 3. **Find operations, reports, and settings.** School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help.
 4. **Use the same menu on a phone.** Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel.
 5. **Finish or discard your draft deliberately.** Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically.
-
-> **Check before continuing:** Administrator navigation does not grant access to another teacher’s private Notes, Seating, packets, or unfinished imports.
 
 [Open Overview](/classpilot/admin)
 
@@ -32,11 +30,11 @@ Overview is your starting point. One menu organizes school administration on des
 
 School-year dates have their own page and do not require an A/B rotation setup.
 
-1. **Review the saved dates.** Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview and discipline’s missing-date notice link here.
+1. **Review the saved dates.** Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview’s missing-date notice links here.
 2. **Enter both dates.** Use School year starts and School year ends. Dates come from your school’s actual calendar; no year boundaries are guessed. Ordinary bell periods are in Bells & rotation, with optional A/B settings in an expandable section.
 3. **Preview and save.** Preview changes shows scheduling impacts and blockers. Save reviewed schedule saves the complete reviewed configuration, including changed year dates, bells, rotation, and date overrides. The editor lists the changed sections. Classes already in progress retain their saved times.
 4. **Keep closures separate.** Calendar manages monthly holidays and closures through its own save and verification process. Special schedules manages reusable testing and dated profiles. Moving between sections keeps drafts; a newer saved revision requires review rather than replacing unsaved work.
-5. **Verify the result.** After saving, check Overview and the discipline period. They refresh from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration.
+5. **Verify the result.** After saving, check Overview. It refreshes from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration.
 
 [Open School year](/classpilot/admin/scheduling?section=school-year)
 

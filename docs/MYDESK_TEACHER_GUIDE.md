@@ -1,5 +1,9 @@
 # My Desk for teachers
 
+> **Shelved (2026-09-28): My Desk is not available until further notice.** Its
+> screens have been removed from ClassPilot, including Discipline logs in the
+> Admin Panel. This guide describes the feature for when it returns.
+
 Open My Desk from the **My Desk** entry in the ClassPilot sidebar, or from the
 labeled phone-header entry, including between teaching sessions. It opens on
 **Notes**, and the tabs at the top switch between its four areas: **Notes**,

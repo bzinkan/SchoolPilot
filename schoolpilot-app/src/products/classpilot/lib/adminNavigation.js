@@ -22,7 +22,7 @@ export const ADMIN_NAVIGATION = [
     { id: 'profiles', label: 'Special schedules', to: `${scheduling}?section=profiles` },
     { id: 'schedule-changes', label: 'Schedule changes', to: `${admin}/classes/schedule-changes` },
   ] },
-  { label: 'Discipline logs', items: [{ id: 'discipline', label: 'Discipline logs', to: '/classpilot/discipline-records?entry=admin' }] },
+  // Discipline logs is shelved with My Desk until further notice.
   { label: 'School operations', items: [
     { id: 'active-classes', label: 'Active classes', to: `${admin}?tab=active-classes` },
     { id: 'coverage', label: 'Coverage', to: '/classpilot/coverage?entry=admin' },
@@ -61,17 +61,10 @@ export function adminRoute(location) {
   else if (pathname === `${admin}/analytics`) id = 'analytics';
   else if (pathname === `${admin}/it-readiness`) id = 'it';
   else if (pathname === `${admin}/safety`) id = 'safety';
-  else if (params.get('entry') === 'admin') {
-    if (isWithin(pathname, '/classpilot/discipline-records')) id = 'discipline';
-    else if (pathname === '/classpilot/coverage') id = 'coverage';
-    else if (isWithin(pathname, '/classpilot/my-desk/student-information')) id = 'students';
-    else if (isWithin(pathname, '/classpilot/my-desk/imports')) id = 'discipline';
-  }
+  else if (params.get('entry') === 'admin' && pathname === '/classpilot/coverage') id = 'coverage';
   const item = ADMIN_NAVIGATION.flatMap(group => group.items).find(row => row.id === id);
   if (!item) return null;
-  const contacts = isWithin(pathname, '/classpilot/my-desk/student-information') || /^\/classpilot\/students\/[^/]+\/profile$/.test(pathname);
-  const imports = isWithin(pathname, '/classpilot/my-desk/imports');
-  return { ...item, title: contacts ? 'Student contacts' : imports ? 'Paperwork review' : item.label };
+  return { ...item, title: item.label };
 }
 
 // Only fixed internal aliases are recognized; query values never become a URL.
