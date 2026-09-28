@@ -13,8 +13,6 @@ import ScheduleProfiles from "../components/ScheduleProfiles";
 import { useAuth } from "../../../contexts/AuthContext";
 import { hasMembershipRole } from "../../../shared/utils/schoolRoles";
 import { useAdminNavigationBlocker, useAdminShell } from "../hooks/useAdminNavigation";
-import { myDeskKeys } from "../lib/myDeskModel";
-import { disciplineKeys } from "../lib/discipline";
 import { readTestingSchedulePrefill } from "../lib/testingSchedulePrefill";
 
 const KEY = ["classpilot-school-scheduling"];
@@ -74,7 +72,7 @@ function SchedulingEditor({ initial, onDirtyChange, section, disabled, calendarM
       setBaseline(committed); setConfig(saved.config); setPreview(null); setError(""); setNotice("School schedule saved.");
       queryClient.setQueryData([...KEY, activeSchoolId, user?.id], committed);
       // The acknowledged write is authoritative even if a subsequent refresh fails.
-      void Promise.all([KEY, ["classpilot-admin-classes"], ["classpilot-schedule-profiles"], myDeskKeys.classes(activeSchoolId, user?.id), disciplineKeys.root(activeSchoolId, user?.id)].map(queryKey => queryClient.invalidateQueries({ queryKey })));
+      void Promise.all([KEY, ["classpilot-admin-classes"], ["classpilot-schedule-profiles"]].map(queryKey => queryClient.invalidateQueries({ queryKey })));
     },
     onError: (err) => { if (mounted.current) { setError(`${message(err)} Your draft is still here.`); setPreview(null); if (err?.response?.status === 409) void onRefresh(); } },
   });
@@ -96,7 +94,7 @@ function SchedulingEditor({ initial, onDirtyChange, section, disabled, calendarM
   return (
     <fieldset className={`min-w-0 space-y-5 ${section === "profiles" ? "hidden" : ""}`} disabled={busy || disabled} data-testid="classpilot-scheduling-panel">
       <TabsContent value="school-year" forceMount className={panelClass}>
-        <div className="space-y-2">{!shell && <h2 className="text-xl font-semibold">School year</h2>}<p className="max-w-2xl text-sm text-muted-foreground">Set the first and last dates of the school year. These dates are shared by school scheduling, My Desk and school-year discipline reports.</p></div>
+        <div className="space-y-2">{!shell && <h2 className="text-xl font-semibold">School year</h2>}<p className="max-w-2xl text-sm text-muted-foreground">Set the first and last dates of the school year. These dates are used by school scheduling.</p></div>
         <Card><CardHeader><CardTitle>School-year dates</CardTitle><CardDescription>Use your school's approved calendar. Closures and individual class dates are managed separately.</CardDescription></CardHeader><CardContent className="space-y-5">
           <p className="text-sm text-muted-foreground">School timezone: {initial.schoolTimezone}. Today at school: <time dateTime={initial.schoolLocalToday}>{initial.schoolLocalToday}</time>.</p>
           <div className="grid max-w-xl gap-4 sm:grid-cols-2">{[["yearStart", "School year starts"], ["yearEnd", "School year ends"]].map(([field, label]) => <div key={field} className="space-y-2"><Label htmlFor={`schedule-${field}`}>{label}</Label><Input id={`schedule-${field}`} type="date" value={config[field] || ""} onChange={event => update({ [field]: event.target.value || null })} /></div>)}</div>

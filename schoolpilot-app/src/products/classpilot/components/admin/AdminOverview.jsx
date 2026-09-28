@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, FileText, GraduationCap, Users } from "lucide-react";
+import { ArrowRight, CalendarDays, CheckCircle2, CircleAlert, GraduationCap, Users } from "lucide-react";
 import { apiRequest } from "../../../../lib/queryClient";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
@@ -10,7 +10,6 @@ const schoolYearPath = "/classpilot/admin/scheduling?section=school-year";
 const shortcuts = [
   { title: "Staff accounts", detail: "Manage staff roles and accounts", path: "/classpilot/admin?tab=staff", Icon: Users },
   { title: "Classes", detail: "Teachers, rosters, and class assignments", path: "/classpilot/admin/classes", Icon: GraduationCap },
-  { title: "Discipline logs", detail: "School records organized by student", path: "/classpilot/discipline-records?entry=admin", Icon: FileText },
   { title: "Calendar", detail: "Holidays and school closures", path: "/classpilot/admin/scheduling?section=calendar", Icon: CalendarDays },
 ];
 

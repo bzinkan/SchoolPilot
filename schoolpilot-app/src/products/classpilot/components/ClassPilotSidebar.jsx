@@ -2,12 +2,11 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import PassPilotMiniView from './sidebar/PassPilotMiniView';
 import GoPilotMiniView from './sidebar/GoPilotMiniView';
-import MyDeskMiniView from './sidebar/MyDeskMiniView';
-import { myDeskSidebarVisible } from '../lib/myDeskModel';
 
-export default function ClassPilotSidebar({ isOpen, onToggle, canUseMyDesk = false }) {
+// My Desk is shelved; its sidebar entry (sidebar/MyDeskMiniView) is not mounted.
+export default function ClassPilotSidebar({ isOpen, onToggle }) {
   const { hasPassPilot, hasGoPilot } = useLicenses();
-  const showSidebar = myDeskSidebarVisible({ hasPassPilot, hasGoPilot, canUseMyDesk });
+  const showSidebar = hasPassPilot || hasGoPilot;
 
   if (!showSidebar) return null;
 
@@ -24,7 +23,6 @@ export default function ClassPilotSidebar({ isOpen, onToggle, canUseMyDesk = fal
           <div className="flex-1 overflow-y-auto w-80">
             {hasPassPilot && <PassPilotMiniView />}
             {hasGoPilot && <GoPilotMiniView />}
-            {canUseMyDesk && <MyDeskMiniView />}
           </div>
         ) : null}
       </aside>

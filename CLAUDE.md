@@ -136,7 +136,23 @@ inventories, migration checksums and the generic 75-table default.
 Teaching tools is personal for both teaching
 administrators and teachers; it does not broaden official class permissions.
 
-### My Desk private notebook
+### My Desk private notebook — SHELVED, not live until further notice
+
+**Status (2026-09-28): shelved by Brian until further notice.** The frontend no
+longer exposes any part of My Desk: the hub, Notes, Discipline logs (teacher tab
+and Admin Panel), Student information (including the Admin Students "Student
+profile" button), Seating, paperwork/contact imports, the sidebar entry, the
+phone-header button and the student-drawer "Add private note" action are all
+unmounted. Saved `/classpilot/my-desk/*` and `/classpilot/discipline-records/*`
+links redirect to `/classpilot`; `/classpilot/students/:id/profile` redirects to
+`/classpilot/students`. The backend is intentionally kept "just in case": routes,
+tables, RLS admission, workers, cleanup, the private bucket and the production
+runtime modes stay as they are, and existing data is retained. Do not delete the
+backend or its data, and do not re-enable, advertise or build on My Desk until
+Brian lifts the shelf. The frontend source stays in the repo, unmounted; to
+restore it, re-add the routes and entry points removed by the "Shelve My Desk"
+change (`git log --grep "Shelve My Desk"`). The notes below describe the shelved
+feature.
 
 Paperwork progress/protocol-2 release and rollback are documented in
 `docs/PAPERWORK_PROGRESS_RELEASE.md`. `MYDESK_IMPORT_PIPELINE_VERSION=1|2` defaults

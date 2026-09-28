@@ -7,13 +7,12 @@ export const adminGuideTopics = [
     keywords: ["overview", "admin menu", "navigation", "students", "staff", "maintenance"],
     role: "Administrator or school administrator", route: "/classpilot/admin", routeLabel: "Open Overview",
     steps: [
-      { title: "Start at Overview", body: "Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, Discipline logs, or Calendar. A loading failure is shown separately from missing dates." },
-      { title: "Choose an area", body: "People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes. Discipline logs opens school records organized by student." },
+      { title: "Start at Overview", body: "Review the saved school-year dates and configuration notices. Common tasks open Staff accounts, Classes, or Calendar. A loading failure is shown separately from missing dates." },
+      { title: "Choose an area", body: "People & classes contains Staff accounts, Students, and Classes. Calendar & schedules contains School year, Calendar, Bells & rotation, Special schedules, and Schedule changes." },
       { title: "Find operations, reports, and settings", body: "School operations contains Active classes, Coverage, Safety Center, and entitled Email monitoring. Reports contains Analytics and Audit logs. Settings contains School details, Browsing & monitoring, Staff notifications, Sign-in & devices, Student portal, Integrations & IT readiness, and Data & maintenance. Admin guide remains available under Help." },
       { title: "Use the same menu on a phone", body: "Open the labeled Admin menu button, expand a section, and choose its destination. Back to ClassPilot returns to the teacher dashboard. Breadcrumbs and local return links keep administrator workflows inside the Admin Panel." },
       { title: "Finish or discard your draft deliberately", body: "Switching scheduling sections retains drafts. Leaving a dirty editor asks once whether to keep editing or discard. Navigation waits for pending saves; the menu never saves a draft automatically." },
     ],
-    warning: "Administrator navigation does not grant access to another teacher’s private Notes, Seating, packets, or unfinished imports.",
   },
   {
     id: "school-year-and-calendar", phase: "Launch", title: "Set the school year and calendar",
@@ -21,11 +20,11 @@ export const adminGuideTopics = [
     keywords: ["year", "start date", "end date", "calendar", "holiday", "closure", "bells", "rotation", "preview"],
     role: "Administrator or school administrator", route: "/classpilot/admin/scheduling?section=school-year", routeLabel: "Open School year",
     steps: [
-      { title: "Review the saved dates", body: "Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview and discipline’s missing-date notice link here." },
+      { title: "Review the saved dates", body: "Calendar & schedules opens to School year. Check the school timezone, saved start and end dates, and whether today falls inside that range. Overview’s missing-date notice links here." },
       { title: "Enter both dates", body: "Use School year starts and School year ends. Dates come from your school’s actual calendar; no year boundaries are guessed. Ordinary bell periods are in Bells & rotation, with optional A/B settings in an expandable section." },
       { title: "Preview and save", body: "Preview changes shows scheduling impacts and blockers. Save reviewed schedule saves the complete reviewed configuration, including changed year dates, bells, rotation, and date overrides. The editor lists the changed sections. Classes already in progress retain their saved times." },
       { title: "Keep closures separate", body: "Calendar manages monthly holidays and closures through its own save and verification process. Special schedules manages reusable testing and dated profiles. Moving between sections keeps drafts; a newer saved revision requires review rather than replacing unsaved work." },
-      { title: "Verify the result", body: "After saving, check Overview and the discipline period. They refresh from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration." },
+      { title: "Verify the result", body: "After saving, check Overview. It refreshes from the same saved dates. If a refresh fails after a successful save, retry loading rather than submitting a second unrelated configuration." },
     ],
   },
   {

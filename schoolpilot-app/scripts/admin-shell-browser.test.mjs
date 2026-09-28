@@ -57,7 +57,7 @@ return h(FixtureAuthContext.Provider,{value},h(Boundary,{scopeKey:adminIdentityK
 h(Route,{path:'/classpilot/admin',element:mode==='overview'?h(Admin):h(Editor)}),
 h(Route,{path:'/classpilot/admin/scheduling',element:mode==='identity'?h(LegacyQuery,{identity}):h(Editor)}),
 h(Route,{path:'/classpilot/admin/classes/scheduling',element:h(Editor)}),h(Route,{path:'/classpilot/admin/classes',element:mode==='classes'?h(AdminClasses):h(Destination)}),
-h(Route,{path:'/classpilot/students',element:h(Destination)}),h(Route,{path:'/classpilot/discipline-records',element:h(Editor)}),
+h(Route,{path:'/classpilot/students',element:h(Destination)}),
 h(Route,{path:'/classpilot/coverage',element:h(Editor)}),h(Route,{path:'/classpilot/settings',element:h(Destination)})),
 h(Route,{path:'/classpilot',element:h('h1',null,'ClassPilot dashboard')}))));}
 createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(BrowserRouter,null,h(ThemeProvider,null,h(Harness)))));
@@ -124,7 +124,9 @@ test('every approved Admin tool is reachable through an expanded group and a reg
   try {
     const nav = page.getByRole('navigation', { name: 'Admin navigation', exact: true });
     await nav.waitFor();
-    assert.deepEqual(ADMIN_NAVIGATION.map(group => group.label), ['Overview', 'People & classes', 'Calendar & schedules', 'Discipline logs', 'School operations', 'Reports', 'Settings', 'Help']);
+    // Discipline logs is shelved with My Desk and has no Admin entry.
+    assert.deepEqual(ADMIN_NAVIGATION.map(group => group.label), ['Overview', 'People & classes', 'Calendar & schedules', 'School operations', 'Reports', 'Settings', 'Help']);
+    assert.equal(adminRoute(new URL('/classpilot/discipline-records?entry=admin', base)), null);
     for (const group of ADMIN_NAVIGATION) {
       if (group.items.length > 1) await nav.getByRole('button', { name: group.label, exact: true }).click();
       for (const item of group.items) {
@@ -399,7 +401,7 @@ test('identity/access changes clear drafts, cancel relevant cache work and retai
     assert.equal(await page.evaluate(() => window.queryClient.getQueryData(['unrelated-fixture'])), 'retain');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
-  const fixture = await open({ route: '/classpilot/discipline-records?entry=admin' });
+  const fixture = await open({ route: '/classpilot/coverage?entry=admin' });
   try {
     await fixture.page.getByLabel('Draft').fill('Private unfinished draft');
     await fixture.page.evaluate(() => { window.staleCommit = window.fixtureOldCommit; window.fixtureRole('teacher'); });
@@ -427,7 +429,7 @@ test('nonadmin route lifetimes stay mounted while identity cache cleanup runs', 
 });
 
 test('admin origin does not add admin chrome to teacher flows and print/download remain native', async () => {
-  const teacher = await open({ role: 'teacher', route: '/classpilot/discipline-records?entry=admin' });
+  const teacher = await open({ role: 'teacher', route: '/classpilot/coverage?entry=admin' });
   try { await teacher.page.getByRole('heading', { name: 'Teacher workspace' }).waitFor(); assert.equal(await teacher.page.getByTestId('classpilot-admin-shell').count(), 0); assert.deepEqual(teacher.errors, []); }
   finally { await teacher.page.close(); }
   const { page, errors } = await open();

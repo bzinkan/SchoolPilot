@@ -20,7 +20,6 @@ import Landing from './pages/Landing';
 import LandingV2 from './pages/LandingV2';
 import AuthCallback from './pages/AuthCallback';
 import GateKioskExitBoundary from './products/passpilot/components/GateKioskExitBoundary';
-import SharedRecordAccessBoundary from './products/classpilot/components/SharedRecordAccessBoundary';
 import AdminQueryBoundary from './products/classpilot/components/admin/AdminQueryBoundary';
 import { adminIdentityKey, adminRoute } from './products/classpilot/lib/adminNavigation';
 import TeachingToolsLayout from './products/classpilot/components/TeachingToolsLayout';
@@ -42,18 +41,6 @@ const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/Em
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
-const CPMyDesk = lazy(() => import('./products/classpilot/pages/MyDesk'));
-const CPSeating = lazy(() => import('./products/classpilot/pages/Seating'));
-const CPImports = lazy(() => import('./products/classpilot/pages/Imports'));
-const CPStudentLogs = lazy(() => import('./products/classpilot/pages/StudentLogs'));
-const CPStudentInformation = lazy(() => import('./products/classpilot/pages/StudentInformation'));
-const CPStudentOverview = lazy(() => import('./products/classpilot/pages/StudentOverview'));
-
-function PrivateHistoryRedirect() {
-  const location = useLocation();
-  return <Navigate replace to={location.pathname.replace('/my-desk/students', '/my-desk/notes/students') + location.search} />;
-}
-const CPDisciplineRecords = lazy(() => import('./products/classpilot/pages/DisciplineRecords'));
 const CPScheduleChanges = lazy(() => import('./products/classpilot/pages/ScheduleChanges'));
 const CPAdminScheduleChanges = lazy(() => import('./products/classpilot/pages/AdminScheduleChanges'));
 const CPTeacherGuide = lazy(() => import('./products/classpilot/pages/TeacherGuide'));
@@ -305,7 +292,6 @@ function AppRoutes() {
             <Route path="/classpilot/admin/email-monitoring" element={<CPEmailMonitoring />} />
             <Route path="/classpilot/admin/email-monitoring/setup" element={<CPEmailMonitoringSetup />} />
             <Route path="/classpilot/students" element={<CPStudents />} />
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/students/:studentId/profile" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings" element={<CPSettings />} />}
             {canManageClassPilotSchool && <Route path="/classpilot/settings/guide" element={<CPAdminGuide />} />}
             <Route element={<TeachingToolsLayout />}>
@@ -313,21 +299,12 @@ function AppRoutes() {
             <Route path="/classpilot/my-settings/schedule-changes" element={<CPScheduleChanges />} />
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-settings/guide" element={<CPTeacherGuide />} />}
             </Route>
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk" element={<CPMyDesk />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students" element={<PrivateHistoryRedirect />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<PrivateHistoryRedirect />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students" element={<CPStudentLogs />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students/:studentId" element={<CPStudentLogs />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-overview/:studentId" element={<SharedRecordAccessBoundary><CPStudentOverview /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/imports/:importId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/:studentId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records" element={<SharedRecordAccessBoundary><CPDisciplineRecords /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/discipline-records/:recordId" element={<SharedRecordAccessBoundary><CPDisciplineRecords /></SharedRecordAccessBoundary>} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating" element={<CPSeating />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/seating/:chartId" element={<CPSeating />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports" element={<CPImports />} />}
-            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/imports/:importId" element={<CPImports />} />}
+            {/* My Desk (notes, discipline logs, student information, seating and paperwork
+                imports) is shelved until further notice. Its backend stays, but no screen is
+                reachable; saved links land on ClassPilot. See CLAUDE.md "My Desk (shelved)". */}
+            <Route path="/classpilot/my-desk/*" element={<Navigate to="/classpilot" replace />} />
+            <Route path="/classpilot/discipline-records/*" element={<Navigate to="/classpilot" replace />} />
+            <Route path="/classpilot/students/:studentId/profile" element={<Navigate to="/classpilot/students" replace />} />
           </Route>
         )}
 
