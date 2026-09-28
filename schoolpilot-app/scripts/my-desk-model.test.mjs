@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { QueryClient } from '@tanstack/react-query';
 import { myDeskKeys, buildMyDeskQuery, targetInput, validateMyDeskAttachment, schoolDate, clearMyDeskQueries, preferredStudentClass } from '../src/products/classpilot/lib/myDeskModel.js';
@@ -70,4 +71,12 @@ test('grade filing clears stale class context and separates caches', () => {
   assert.deepEqual(targetInput('student', '', 'student', '5'), { targetKind: 'student', groupId: null, studentId: 'student', gradeLevel: '5' });
   assert.notDeepEqual(myDeskKeys.notes('school', 'author', { scope: 'grade', gradeLevel: '5' }), myDeskKeys.notes('school', 'author', { scope: 'grade', gradeLevel: '6' }));
   assert.notDeepEqual(myDeskKeys.directory('school', 'author', '', { gradeLevel: '5' }), myDeskKeys.directory('school', 'author', '', { gradeLevel: '6' }));
+});
+
+test('the ClassPilot sidebar opens My Desk from one entry; its areas are the hub tabs', async () => {
+  const source = (await readFile(new URL('../src/products/classpilot/components/sidebar/MyDeskMiniView.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  assert.equal(source.match(/<Link\b/g)?.length, 1, 'one compact entry, not a row per area');
+  assert.match(source, /<Link to="\/classpilot\/my-desk"/);
+  assert.match(source, /\n\s+My Desk\n/);
+  assert.doesNotMatch(source, /myDeskTabList|Discipline logs|Student information|Seating/);
 });

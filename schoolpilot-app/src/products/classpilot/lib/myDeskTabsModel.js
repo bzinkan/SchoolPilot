@@ -1,4 +1,4 @@
-/** The one list of My Desk areas, shared by the tab bar and the ClassPilot sidebar card. */
+/** The one list of My Desk areas, shown as the tab bar at the top of every My Desk page. */
 export function myDeskTabList(seatingEnabled) {
   return [
     { key: 'notes', path: '/classpilot/my-desk', label: 'Notes' },
