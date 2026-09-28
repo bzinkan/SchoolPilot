@@ -12,6 +12,8 @@ import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLo
 import { mydeskNotes, mydeskAttachments } from "../schema/mydesk.js";
 import { mydeskSeatingCharts } from "../schema/mydeskSeating.js";
 import { mydeskPreferences, type MyDeskPreferencesSnapshot } from "../schema/mydeskPreferences.js";
+import { schoolDisciplineRecords, schoolDisciplineVersions } from "../schema/schoolDiscipline.js";
+import { sharedStudentIdWhere } from "./sharedStudentRecords.js";
 import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
 import { logAudit } from "./audit.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
@@ -341,6 +343,24 @@ export function safeMyDeskNoteDto(note: MyDeskNote, attachments: MyDeskAttachmen
         contentType: row.contentType, byteSize: row.byteSize, status: row.status, committedAt: row.committedAt, createdAt: row.createdAt })),
   };
 }
+/**
+ * Which of the author's notes already have a school discipline copy. A copy counts only while the
+ * author can still read that record under its own rule, so a teacher whose class assignment ended
+ * learns nothing new about the student's school records.
+ */
+export async function noteDisciplineCopies(database: MyDeskDatabase, actor: MyDeskActor, noteIds: string[]) {
+  const copies = new Map<string, "submitted" | "withdrawn">();
+  if (!noteIds.length) return copies;
+  const rows = await database.select({ noteId: schoolDisciplineRecords.sourceNoteId, status: schoolDisciplineRecords.status })
+    .from(schoolDisciplineRecords).innerJoin(schoolDisciplineVersions, and(eq(schoolDisciplineVersions.schoolId, schoolDisciplineRecords.schoolId),
+      eq(schoolDisciplineVersions.id, schoolDisciplineRecords.currentVersionId)))
+    .where(and(eq(schoolDisciplineRecords.schoolId, actor.schoolId), eq(schoolDisciplineRecords.submittedBy, actor.authorId),
+      inArray(schoolDisciplineRecords.sourceNoteId, noteIds), inArray(schoolDisciplineRecords.status, ["submitted", "withdrawn"]),
+      eq(schoolDisciplineVersions.state, "published"),
+      actor.manager ? undefined : sharedStudentIdWhere({ ...actor, name: "" }, sql`${schoolDisciplineVersions.snapshot}->>'studentId'`)));
+  for (const row of rows) if (row.noteId && (row.status === "submitted" || !copies.has(row.noteId))) copies.set(row.noteId, row.status === "submitted" ? "submitted" : "withdrawn");
+  return copies;
+}
 async function dto(database: MyDeskDatabase, actor: MyDeskActor, note: MyDeskNote, includeStaged = false) {
   const attachments = await database.select().from(mydeskAttachments).where(attachmentWhere(actor, note.id)).orderBy(mydeskAttachments.createdAt, mydeskAttachments.id);
   return safeMyDeskNoteDto(note, attachments, includeStaged);
@@ -371,7 +391,8 @@ export async function createMyDeskNote(actor: MyDeskActor, input: MyDeskCreateIn
   return result;
 }
 export async function getMyDeskNote(actor: MyDeskActor, id: string) {
-  return withMyDeskNoteLock(actor, id, (database, note) => dto(database, actor, note, true));
+  return withMyDeskNoteLock(actor, id, async (database, note) => ({ ...await dto(database, actor, note, true),
+    disciplineCopy: (await noteDisciplineCopies(database, actor, [note.id])).get(note.id) ?? null }));
 }
 async function patchValues(actor: MyDeskActor, database: MyDeskDatabase, note: MyDeskNote, patch: MyDeskPatch) {
   const values = { category: patch.category ?? note.category, title: patch.title ?? note.title, body: patch.body ?? note.body,
@@ -501,7 +522,8 @@ async function listNotes(database: MyDeskDatabase, actor: MyDeskActor, query: My
     inArray(mydeskAttachments.noteId, page.map(note => note.id)), eq(mydeskAttachments.status, "ready"), isNull(mydeskAttachments.deletedAt), sql`${mydeskAttachments.committedAt} IS NOT NULL`)) : [];
   const last = page[page.length - 1];
   const nextCursor = rows.length > query.limit && last ? Buffer.from(JSON.stringify({ pinned: last.pinned, entryDate: last.entryDate, createdAt: last.createdAtCursor, id: last.id, filter })).toString("base64url") : null;
-  return { notes: page.map(note => safeMyDeskNoteDto(note, photos)), nextCursor };
+  const copies = await noteDisciplineCopies(database, actor, page.map(note => note.id));
+  return { notes: page.map(note => ({ ...safeMyDeskNoteDto(note, photos), disciplineCopy: copies.get(note.id) ?? null })), nextCursor };
 }
 export async function listMyDeskNotes(actor: MyDeskActor, query: MyDeskNotesQuery) { return withActor(actor, (database, current) => listNotes(database, current, query)); }
 export async function exportMyDeskNotes(actor: MyDeskActor, query: MyDeskNotesQuery, historyStudentId?: string) {

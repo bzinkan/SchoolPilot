@@ -285,8 +285,21 @@ function studentSummaryWhere(identity: DisciplineIdentity, query: DisciplineStud
     ${scoped.manager ? sql`` : sql`AND (g.teacher_id=${identity.authorId} OR EXISTS(SELECT 1 FROM group_teachers gt WHERE gt.group_id=g.id AND gt.teacher_id=${identity.authorId} AND gt.role IN ('primary','co-teacher')))`})`);
   return conditions;
 }
+const referralFlag = sql`CASE WHEN ${versions.snapshot} ? 'referralRecorded' THEN ${versions.snapshot}->>'referralRecorded'='true' ELSE ${versions.snapshot}->>'category'='referral' END`;
+const detentionFlag = sql`CASE WHEN ${versions.snapshot} ? 'detentionAssigned' THEN ${versions.snapshot}->>'detentionAssigned'='true' ELSE ${versions.snapshot}->>'category'='detention' END`;
+/** One definition of a counted incident, shared by the per-student totals and the incidents-only filter so they cannot drift. */
+function countedIncidentWhere(identity: DisciplineIdentity, query: DisciplineStudentsQuery, range: { from?: string; to?: string }) {
+  return and(eq(records.schoolId, identity.schoolId), eq(records.status, "submitted"), eq(versions.state, "published"),
+    range.from ? sql`${versions.snapshot}->>'entryDate'>=${range.from}` : undefined, range.to ? sql`${versions.snapshot}->>'entryDate'<=${range.to}` : undefined,
+    query.incidentType ? query.incidentType === "referral" ? referralFlag : detentionFlag : undefined,
+    query.submitterId ? eq(records.submittedBy, query.submitterId) : undefined,
+    query.submitterName ? sql`${records.submittedByName} ILIKE ${`%${query.submitterName.replace(/[\\%_]/g, value => "\\" + value)}%`}` : undefined)!;
+}
 async function summaryPage(tx: MyDeskDatabase, identity: DisciplineIdentity, query: DisciplineStudentsQuery) {
   const range = await summaryRange(tx, identity, query), conditions = studentSummaryWhere(identity, query);
+  // The name-order cursor is unchanged; the flag is part of the fingerprint, so switching it starts a fresh page.
+  if (query.withIncidents) conditions.push(sql`EXISTS (SELECT 1 FROM ${records} INNER JOIN ${versions} ON ${versions.schoolId}=${records.schoolId} AND ${versions.id}=${records.currentVersionId}
+    WHERE ${countedIncidentWhere(identity, query, range)} AND ${versions.snapshot}->>'studentId'=${students.id})`);
   const fingerprint = hash([identity.schoolId, identity.authorId, { ...query, cursor: undefined, limit: undefined }, range]);
   if (query.cursor) {
     try {
@@ -313,15 +326,11 @@ async function summaryPage(tx: MyDeskDatabase, identity: DisciplineIdentity, que
   const selected = page.slice(0, query.limit);
   const classes = await filingClasses(tx, query.scope === "assigned" ? { ...identity, manager: false } : identity, selected.filter(student => student.status === "active").map(student => student.id));
   const counts = selected.length ? await tx.select({ studentId: sql<string>`${versions.snapshot}->>'studentId'`, latestIncident: sql<string | null>`max(${versions.snapshot}->>'entryDate')`, incidents: sql<number>`count(*)::int`,
-    referrals: sql<number>`count(*) FILTER(WHERE CASE WHEN ${versions.snapshot} ? 'referralRecorded' THEN ${versions.snapshot}->>'referralRecorded'='true' ELSE ${versions.snapshot}->>'category'='referral' END)::int`,
-    detentions: sql<number>`count(*) FILTER(WHERE CASE WHEN ${versions.snapshot} ? 'detentionAssigned' THEN ${versions.snapshot}->>'detentionAssigned'='true' ELSE ${versions.snapshot}->>'category'='detention' END)::int` })
+    referrals: sql<number>`count(*) FILTER(WHERE ${referralFlag})::int`,
+    detentions: sql<number>`count(*) FILTER(WHERE ${detentionFlag})::int` })
     .from(records).innerJoin(versions, and(eq(versions.schoolId, records.schoolId), eq(versions.id, records.currentVersionId)))
-    .where(and(eq(records.schoolId, identity.schoolId), eq(records.status, "submitted"), eq(versions.state, "published"),
-      sql`${versions.snapshot}->>'studentId' IN (${sql.join(selected.map(student => sql`${student.id}`), sql`, `)})`,
-      range.from ? sql`${versions.snapshot}->>'entryDate'>=${range.from}` : undefined, range.to ? sql`${versions.snapshot}->>'entryDate'<=${range.to}` : undefined,
-      query.incidentType ? query.incidentType === "referral" ? sql`CASE WHEN ${versions.snapshot} ? 'referralRecorded' THEN ${versions.snapshot}->>'referralRecorded'='true' ELSE ${versions.snapshot}->>'category'='referral' END` : sql`CASE WHEN ${versions.snapshot} ? 'detentionAssigned' THEN ${versions.snapshot}->>'detentionAssigned'='true' ELSE ${versions.snapshot}->>'category'='detention' END` : undefined,
-      query.submitterId ? eq(records.submittedBy, query.submitterId) : undefined,
-      query.submitterName ? sql`${records.submittedByName} ILIKE ${`%${query.submitterName.replace(/[\\%_]/g, value => "\\" + value)}%`}` : undefined))
+    .where(and(countedIncidentWhere(identity, query, range),
+      sql`${versions.snapshot}->>'studentId' IN (${sql.join(selected.map(student => sql`${student.id}`), sql`, `)})`))
     .groupBy(sql`${versions.snapshot}->>'studentId'`) : [];
   const last = selected.at(-1);
   return { students: selected.map(student => { const count = counts.find(value => value.studentId === student.id); return { ...student,
