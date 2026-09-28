@@ -486,11 +486,13 @@ runtime_securestring_preflight
     assert.ok(renderMarkerIndex > 0 && renderScriptEnd > renderScriptStart);
     const renderScript = deploySource.slice(renderScriptStart, renderScriptEnd);
 
-    const emergencyMarker = 'EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e \'';
+    const emergencyMarker =
+      'EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" \\\n' +
+      '    EMERGENCY_CPU="$REVIEWED_API_TASK_CPU" EMERGENCY_MEMORY="$REVIEWED_API_TASK_MEMORY" node -e \'';
     const emergencyMarkerIndex = deploySource.indexOf(emergencyMarker);
     const emergencyScriptStart = emergencyMarkerIndex + emergencyMarker.length;
     const emergencyScriptEnd = deploySource.indexOf(
-      "\n  '\n\n  EMERGENCY_TASK_DEF_ARN=",
+      "\n  '\n  if ! assert_rendered_task_size_not_reduced .taskdef-emergency.json",
       emergencyScriptStart
     );
     assert.ok(emergencyMarkerIndex > 0 && emergencyScriptEnd > emergencyScriptStart);
@@ -554,6 +556,8 @@ runtime_securestring_preflight
         env: {
           ...process.env,
           EMERGENCY_FAMILY: "schoolpilot-production-api-emergency",
+          EMERGENCY_CPU: "1024",
+          EMERGENCY_MEMORY: "2048",
           IMAGE_REF: imageRef,
         },
       });
@@ -561,6 +565,8 @@ runtime_securestring_preflight
       const emergencyTask = JSON.parse(
         readFileSync(join(fixtureDir, ".taskdef-emergency.json"), "utf8")
       );
+      assert.equal(emergencyTask.cpu, "1024");
+      assert.equal(emergencyTask.memory, "2048");
       assert.equal(
         emergencyTask.containerDefinitions[0].secrets.some(
           (item: { name: string }) => item.name === "OPENAI_API_KEY"
