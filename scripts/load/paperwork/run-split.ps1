@@ -24,15 +24,16 @@ $identity = docker image inspect $ImageReference | ConvertFrom-Json -DateKind St
 if ($LASTEXITCODE -ne 0 -or $identity.Count -ne 1 -or $identity.Architecture -cne 'amd64' -or $identity.Os -cne 'linux' -or $identity.RepoDigests -cnotcontains $ImageReference) { throw 'Pinned Linux amd64 image is unavailable.' }
 $imageRevision = $identity.Config.Labels.'org.opencontainers.image.revision'
 if ($imageRevision -and $imageRevision -cne $ExpectedRevision) { throw 'Pinned image revision differs from the expected reviewed commit.' }
-$repositoryRevision = git -C $repository rev-parse HEAD
-if ($LASTEXITCODE -ne 0) { throw 'Repository revision unavailable.' }
-$runnerPath = [IO.Path]::GetFullPath($PSCommandPath)
-$canonicalRunnerPath = [IO.Path]::GetFullPath((Join-Path $repository 'scripts/load/paperwork/run-split.ps1'))
-$pathComparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-$canonicalHarness = $runnerPath.Equals($canonicalRunnerPath, $pathComparison)
-$harnessRevision = if ($canonicalHarness) { $repositoryRevision } else { $null }
-$harnessSource = if ($canonicalHarness) { 'reviewed_repository' } else { 'external_diagnostic' }
-$runnerSourceSha256 = (Get-FileHash -LiteralPath $runnerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sourceProof = & node (Join-Path $PSScriptRoot 'runner-provenance.mjs') capture $repository $ExpectedRevision $PSCommandPath | ConvertFrom-Json -DateKind String
+if ($LASTEXITCODE -ne 0) { throw 'Application or harness source identity is unavailable or unclean.' }
+if ($sourceProof.harnessRepositoryRoot) {
+  $toolRepository = [IO.Path]::GetFullPath($sourceProof.harnessRepositoryRoot)
+  if ($root.StartsWith($toolRepository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or $root -eq $toolRepository) { throw 'Evidence must be outside the harness repository.' }
+}
+$repositoryRevision = $sourceProof.repositoryRevision
+$harnessRevision = $sourceProof.harnessRevision
+$harnessSource = $sourceProof.harnessSource
+$runnerSourceSha256 = $sourceProof.runnerSourceSha256
 $sourceIdentity = 'oci_revision_label'
 $compiledHashes = $null
 if (-not $imageRevision) {
@@ -51,8 +52,11 @@ if (-not $imageRevision) {
 }
 New-Item -ItemType Directory -Path $root | Out-Null
 [ordered]@{expectedRevision=$ExpectedRevision;identityMethod=$sourceIdentity;imageDigest=$digest;compiledHashes=$compiledHashes} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'split-source-identity.json') -Encoding utf8
-foreach ($name in @('run-split.ps1', 'split-worker.mjs', 'split.test.mjs', 'split-api-observation.mjs', 'scheduler-overlap.mjs', 'latency-metrics.mjs', 'physical-object-store.mjs', 'split-api-server.mjs', 'api-server-contract.mjs', 'finalize-api-evidence.mjs')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $root $name) }
-if ((Get-FileHash -LiteralPath (Join-Path $root 'run-split.ps1') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $runnerSourceSha256) { throw 'Runner source changed while evidence was frozen.' }
+$sourceProof | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'split-harness-source-before.json') -Encoding utf8
+foreach ($file in $sourceProof.files.PSObject.Properties) {
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file.Name) -Destination (Join-Path $root $file.Name)
+  if ((Get-FileHash -LiteralPath (Join-Path $root $file.Name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.Value.sha256) { throw 'Harness source changed while evidence was frozen.' }
+}
 $runId = [guid]::NewGuid().ToString('N').Substring(0, 12)
 $network = 'sp-paperwork-capacity-' + $runId
 $dbContainer = $network + '-db'; $appContainer = $network + '-api'; $workerContainer = $network + '-worker'
@@ -65,7 +69,7 @@ $names += 'MYDESK_SEATING_MODE'
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
 $exitCode = 1; $networkCreated = $false; $dbCreated = $false; $appCreated = $false; $workerCreated = $false
-$driverCreated = $false; $filesCreated = $false; $volumeCreated = $false; $artifactCopySucceeded = $false
+$driverCreated = $false; $filesCreated = $false; $volumeCreated = $false; $artifactCopySucceeded = $false; $sourceIdentityVerified = $false
 try {
   # Schema only from an explicitly local synthetic database. Never load production data.
   $schemaPath = Join-Path $root 'split-local-schema.sql'
@@ -185,6 +189,8 @@ try {
     node (Join-Path $root 'finalize-api-evidence.mjs') $root $digest $imageRevision ([string]$ApiCpu) ([string]($ApiMemoryMiB * 1048576))
     if ($LASTEXITCODE -eq 0) { $finalApiValidationSucceeded=$true }
   }
+  & node (Join-Path $root 'runner-provenance.mjs') verify (Join-Path $root 'split-harness-source-before.json') (Join-Path $root 'split-harness-source-after.json') | Out-Null
+  if ($LASTEXITCODE -eq 0) { $sourceIdentityVerified=$true }
   foreach ($item in @(@{created=$driverCreated;name=$driverContainer;log='split.tap.log'},@{created=$appCreated;name=$appContainer;log='split-api.log'},@{created=$workerCreated;name=$workerContainer;log='split-worker.log'})) {
     if ($item.created) {
       docker logs $item.name *> (Join-Path $root $item.log)
@@ -206,13 +212,14 @@ try {
   $ownedVolumeRemaining = @(docker volume ls --filter "name=$volume" --format '{{.Name}}')
   if ($LASTEXITCODE -ne 0) { $cleanupSucceeded = $false }
   $cleanupComplete = $cleanupSucceeded -and $ownedRemaining.Count -eq 0 -and $ownedNetworkRemaining.Count -eq 0 -and $ownedVolumeRemaining.Count -eq 0
-  if (-not $cleanupComplete -or -not $artifactCopySucceeded -or -not $finalApiValidationSucceeded) { $exitCode = 1 }
+  if (-not $cleanupComplete -or -not $artifactCopySucceeded -or -not $finalApiValidationSucceeded -or -not $sourceIdentityVerified) { $exitCode = 1 }
   [ordered]@{runId=$runId;containersRemaining=$ownedRemaining;networksRemaining=$ownedNetworkRemaining;volumesRemaining=$ownedVolumeRemaining;artifactCopySucceeded=$artifactCopySucceeded;finalApiValidationSucceeded=$finalApiValidationSucceeded;commandsSucceeded=$cleanupSucceeded;complete=$cleanupComplete} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'split-cleanup.json') -Encoding utf8
   $executionPath = Join-Path $root 'split-execution.json'
   if (Test-Path -LiteralPath $executionPath) {
     $execution = Get-Content -LiteralPath $executionPath -Raw | ConvertFrom-Json -DateKind String
     $execution.exitCode = $exitCode
     $execution | Add-Member -NotePropertyName finalApiValidationSucceeded -NotePropertyValue $finalApiValidationSucceeded
+    $execution | Add-Member -NotePropertyName sourceIdentityVerified -NotePropertyValue $sourceIdentityVerified
     $execution | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $executionPath -Encoding utf8
   }
 }

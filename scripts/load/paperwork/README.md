@@ -10,6 +10,8 @@ Prerequisites:
 - An explicitly local synthetic database bootstrapped through the candidate migrations, with the canonical tenant RLS inventory enabled and forced. Only schema is copied. The new application role neither owns tables nor bypasses RLS.
 - A new evidence directory outside the repository. Existing evidence is never overwritten.
 
+By default, the application and harness use the same checkout. If the application image is unchanged while reviewed tooling advances, pass `-RepositoryRoot <clean application checkout>` and execute the canonical runner from the separate clean tooling checkout. `-ExpectedRevision` still identifies the application image. The runner independently discovers and verifies the harness's tracked Git root, so the two commits are never substituted for one another. Final release admission requires separate green-main CI evidence for both frozen identities, and uses the unchanged stock runtime tool from reviewed current main.
+
 ```powershell
 ./scripts/load/paperwork/run-split.ps1 `
   -ImageReference '<registry>/<repository>@sha256:<candidate digest>' `
@@ -40,7 +42,8 @@ The immutable `measurementPlan` is written before collection. `measurementObserv
 
 Evidence files:
 
-- `split-execution.json` version 3: pinned image IDs, source binding, processing version/width, separate API/worker/driver exit states, and declared resources. `repositoryRevision` identifies the image-build checkout. `harnessRevision` is populated only when the executing script is that checkout's canonical runner; external scripts are labeled `external_diagnostic`. `runnerSourceSha256` binds the runner copied before measurement. Release admission requires the canonical reviewed runner and matching frozen source hashes.
+- `split-execution.json` version 3: pinned image IDs, source binding, processing version/width, separate API/worker/driver exit states, and declared resources. `repositoryRevision` identifies the clean image-build checkout. `harnessRevision` independently identifies the clean Git checkout containing the canonical tracked runner; external scripts remain `external_diagnostic` with no harness revision. `runnerSourceSha256` binds the runner copied before measurement. Release admission requires the canonical reviewed runner and matching frozen source hashes.
+- `split-harness-source-before.json` and `split-harness-source-after.json`: application/harness roots and commits plus every copied source hash. The frozen provenance helper rechecks both clean checkouts, tracked source files, and bytes after measurement; a moved commit or edited source makes `sourceIdentityVerified` false and fails the run.
 - `split-source-identity.json`: expected commit and compiled-image comparison where required. `split-topology-inspection.json`: distinct inspected container IDs, actual Docker limits, user, and volume mounts.
 - `split-metrics.json`: driver-observed raw request timings, workload/cleanup results, snapshots of API/worker metrics, and separate driver observations.
 - `split-api-server-metrics.json`: authoritative API report written after shutdown, including final kernel peak, actual pool readiness, server probe IDs, and measurement-source hashes. `split-worker-metrics.json`: worker observations.
