@@ -265,6 +265,31 @@ const preparingFixture = () => fixture({ status: 'processing', processingVersion
   progress: { phase: 'checking_forms', pagesTotal: 15, pagesChecked: 3, formsReady: 1, formsFound: 2, detectionComplete: false, actions: { reviewFields: true, editGeometry: false, publish: false } },
   items: [item('form-a', 0), item('form-b', 1, { extractionStatus: 'pending', approvedAssetId: null })] });
 
+test('legacy preparation keeps progress and admin resume available without promising or allowing early review', async () => {
+  const batch = preparingFixture(); batch.processingVersion = 1; batch.destination = 'discipline'; batch.progress.actions.reviewFields = false;
+  const { page, state, requests, errors } = await setup({ batch, url: '?destination=discipline&view=library&entry=admin' });
+  try {
+    await page.getByRole('button', { name: 'Open progress', exact: true }).click();
+    await page.waitForURL('**/imports/import-a?entry=admin');
+    await page.getByText('3 of 15 pages checked · 1 form ready', { exact: true }).waitFor();
+    await page.getByText('Preparation is still running. Use Save for later to leave and return when it finishes.', { exact: false }).waitFor();
+    assert.equal(await page.getByText('You can review finished forms while preparation continues.', { exact: false }).count(), 0);
+    assert.equal(await page.getByLabel('Form note text').count(), 0);
+    assert.equal(await page.getByRole('button', { name: /2\. Review forms/ }).count(), 0);
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports?destination=discipline&view=library&entry=admin');
+    await page.getByRole('button', { name: 'Open progress', exact: true }).click();
+    await page.getByRole('heading', { name: 'Preparing pages and draft forms…', exact: true }).waitFor();
+    state.batch.status = 'review'; state.batch.revision++; state.batch.progress.actions.reviewFields = true;
+    state.batch.items = state.batch.items.filter(item => item.extractionStatus === 'ready');
+    await page.getByLabel('Form note text').waitFor();
+    assert.equal(requests.some(request => request.method === 'PATCH'), false);
+    await page.getByRole('button', { name: 'Admin Panel', exact: true }).click();
+    await page.waitForURL('**/classpilot/admin');
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
 test('preparation progress advances during a dirty early review without replacing corrections or selected form', async () => {
   const { page, state, requests, errors } = await setup({ batch: preparingFixture() });
   try {
