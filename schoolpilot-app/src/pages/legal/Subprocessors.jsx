@@ -23,7 +23,7 @@ export default function Subprocessors() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-4">Subprocessors</h1>
-        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -159,15 +159,16 @@ export default function Subprocessors() {
                   </tr>
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; independently enabled, staff-started paperwork and student-contact imports</td>
-                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. Paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. It does not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
+                    <td className="px-4 py-3 text-slate-700">MailPilot email safety classification; optional staff assistant; staff-started paperwork and student-contact imports (paused with My Desk and not currently available)</td>
+                    <td className="px-4 py-3 text-slate-700">For enabled MailPilot, student Gmail text may be processed for safety classification. The optional assistant processes staff prompts and authorized, minimized tool results. When available, paperwork import processes selected images or a saved photo/PDF attachment, potentially containing student names and conduct details, for review before private-note or school-incident saving. Separately enabled contact import processes selected PDF/photo/DOCX/XLSX/CSV images or extracted text, potentially containing student/adult names, relationships, phones and emails. It does not send current profiles, note text, unselected files, rosters or seating, or automatically scan existing content. Human review precedes shared writes.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
               Schoolpilot uses Google's Gemini API for ClassPilot URL/title classification and Anthropic's
-              API for limited MailPilot, assistant, and teacher-started paperwork-import workflows. MailPilot email safety classification may
+              API for limited MailPilot and assistant workflows, and for teacher-started paperwork-import
+              workflows when My Desk is available (it is currently paused). MailPilot email safety classification may
               process student Gmail message text only when a school has separately enabled MailPilot.
               The optional AI assistant is disabled by default, limited by school role and product license,
               and designed to avoid model-bound sensitive fields such as attendance reasons and individual
@@ -182,8 +183,9 @@ export default function Subprocessors() {
               explain Anthropic's training-use limits for customer API inputs and outputs. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
             </p>
             <p className="text-slate-600 text-sm mt-2">
-              My Desk AI imports require separate operational activation and an explicit author upload
-              or saved-attachment selection.
+              My Desk AI imports are paused with My Desk and cannot be started in ClassPilot until
+              further notice. When available, they require separate operational activation and an
+              explicit author upload or saved-attachment selection.
               Provider account retention and access terms are reviewed before activation. Deleting
               Schoolpilot's temporary source files does not itself delete provider-retained data.
             </p>

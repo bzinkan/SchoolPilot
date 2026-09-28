@@ -28,7 +28,7 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: June 27, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -137,6 +137,12 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Teacher-Started Paperwork and Contact Imports</h2>
             <p className="text-slate-700 leading-relaxed">
+              <strong>Paused:</strong> these imports are part of My Desk, which is paused and not available
+              in ClassPilot until further notice. Teachers and administrators cannot start paperwork or
+              contact imports while it is paused. The rest of this section explains how the imports work
+              if the feature returns.
+            </p>
+            <p className="text-slate-700 leading-relaxed mt-4">
               When this separately controlled feature is available, a teacher or school administrator can
               deliberately upload paperwork or select a saved photo/PDF attachment for Anthropic-assisted
               extraction into their own private My Desk drafts. Selected page images may contain student
