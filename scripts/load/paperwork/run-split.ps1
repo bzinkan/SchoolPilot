@@ -19,7 +19,7 @@ $root = [IO.Path]::GetFullPath($EvidenceDirectory)
 if ($root.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or $root -eq $repository) { throw 'Evidence must be outside the repository.' }
 if (Test-Path -LiteralPath $root) { throw 'Choose a new evidence directory; existing evidence is never overwritten.' }
 $digest = $ImageReference.Split('@')[-1]
-$identity = docker image inspect $ImageReference | ConvertFrom-Json
+$identity = docker image inspect $ImageReference | ConvertFrom-Json -DateKind String
 if ($LASTEXITCODE -ne 0 -or $identity.Count -ne 1 -or $identity.Architecture -cne 'amd64' -or $identity.Os -cne 'linux' -or $identity.RepoDigests -cnotcontains $ImageReference) { throw 'Pinned Linux amd64 image is unavailable.' }
 $imageRevision = $identity.Config.Labels.'org.opencontainers.image.revision'
 if ($imageRevision -and $imageRevision -cne $ExpectedRevision) { throw 'Pinned image revision differs from the expected reviewed commit.' }
@@ -35,7 +35,7 @@ if (-not $imageRevision) {
   $compiledHashes = @{}
   foreach ($file in $files) { $compiledHashes[$file] = (Get-FileHash -LiteralPath (Join-Path $compiledRoot $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
   $hashScript = 'const fs=require("node:fs"),c=require("node:crypto");const files=JSON.parse(process.argv[1]);console.log(JSON.stringify(Object.fromEntries(files.map(f=>[f,c.createHash("sha256").update(fs.readFileSync("/app/dist/"+f)).digest("hex")]))));'
-  $imageHashes = docker run --rm --network none --read-only $ImageReference node -e $hashScript (ConvertTo-Json -InputObject $files -Compress) | ConvertFrom-Json -AsHashtable
+  $imageHashes = docker run --rm --network none --read-only $ImageReference node -e $hashScript (ConvertTo-Json -InputObject $files -Compress) | ConvertFrom-Json -DateKind String -AsHashtable
   if ($LASTEXITCODE -ne 0) { throw 'Pinned image compiled-source verification failed.' }
   foreach ($file in $files) { if ($imageHashes[$file] -cne $compiledHashes[$file]) { throw 'Pinned image differs from the reviewed compiled build.' } }
   $sourceIdentity = 'reviewed_local_build_compiled_hashes_and_deployment_receipt'
@@ -65,7 +65,7 @@ try {
   $env:ADMIN_DATABASE_URL = "postgresql://postgres:$($env:POSTGRES_PASSWORD)@127.0.0.1:5432/$database"
   $env:JWT_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
   $env:SESSION_SECRET = [guid]::NewGuid().ToString('N')
-  $registry = Get-Content (Join-Path $repository 'src/config/rlsRegistry.json') -Raw | ConvertFrom-Json
+  $registry = Get-Content (Join-Path $repository 'src/config/rlsRegistry.json') -Raw | ConvertFrom-Json -DateKind String
   $tables = @($registry.inventories.importProcessingStagesPostExpand.tables)
   if ($tables -cnotcontains 'import_processing_stages' -or ($tables | Select-Object -Unique).Count -ne $tables.Count) { throw 'Current stage-ledger RLS inventory is invalid.' }
   $env:RLS_ENABLED_TABLES = $tables -join ','
@@ -99,9 +99,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Exact-image API start failed.' }
   $controllerAbort = $null
   while ($true) {
-    $apiState = docker inspect $appContainer --format '{{json .State}}' | ConvertFrom-Json
+    $apiState = docker inspect $appContainer --format '{{json .State}}' | ConvertFrom-Json -DateKind String
     if (-not $apiState.Running) { break }
-    $workerProgress = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json
+    $workerProgress = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json -DateKind String
     if (-not $workerProgress.Running -and $workerProgress.ExitCode -ne 0) { $controllerAbort='WORKER_EXIT_NONZERO'; docker stop --time 2 $appContainer | Out-Null; break }
     if ([DateTimeOffset]::UtcNow -ge $deadline) { $controllerAbort='CONTROLLER_15_MINUTE_DEADLINE'; docker stop --time 2 $appContainer | Out-Null; break }
     Start-Sleep -Milliseconds 1000
@@ -109,10 +109,10 @@ try {
   docker logs $appContainer *> (Join-Path $root 'split.tap.log')
   $apiImage = docker inspect $appContainer --format '{{.Image}}'; $workerImage = docker inspect $workerContainer --format '{{.Image}}'
   if ($apiImage -cne $identity.Id -or $workerImage -cne $identity.Id) { throw 'Running containers differ from the pinned image ID.' }
-  $result = docker inspect $appContainer --format '{{json .State}}' | ConvertFrom-Json
+  $result = docker inspect $appContainer --format '{{json .State}}' | ConvertFrom-Json -DateKind String
   $exitCode = [int]$result.ExitCode
-  $workerState = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json
-  if ($workerState.Running) { docker stop --time 2 $workerContainer | Out-Null; $workerState = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json }
+  $workerState = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json -DateKind String
+  if ($workerState.Running) { docker stop --time 2 $workerContainer | Out-Null; $workerState = docker inspect $workerContainer --format '{{json .State}}' | ConvertFrom-Json -DateKind String }
   docker logs $workerContainer *> (Join-Path $root 'split-worker.log')
   if ($result.OOMKilled -or $workerState.OOMKilled -or $controllerAbort -or $workerState.ExitCode -ne 0) { $exitCode = 1 }
   [ordered]@{version=2;processingVersion=2;pipelineWidth=2;sourceIdentity=$sourceIdentity;runId=$runId;startedAt=$started;finishedAt=[DateTimeOffset]::UtcNow.ToString('o');imageDigest=$digest;imageRevision=$imageRevision;harnessRevision=$harnessRevision;apiInspectedImageId=$apiImage;workerInspectedImageId=$workerImage;apiCpu=$ApiCpu;apiMemoryMiB=$ApiMemoryMiB;workerCpu=$WorkerCpu;workerMemoryMiB=$WorkerMemoryMiB;apiState=$result;workerState=$workerState;controllerAbort=$controllerAbort;exitCode=$exitCode;storage='physical_local_files';provider='synthetic_transport';network='internal_no_external_access';database='schema_only_fresh_tmpfs';productionMutations=0;description='Separate pinned-image API and worker; actual v2 claims; ordinary HTTP uploads; no exposed ports or serving task changes'} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $root 'split-execution.json') -Encoding utf8
