@@ -2,6 +2,30 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { QueryClient } from '@tanstack/react-query';
 import { myDeskKeys, buildMyDeskQuery, targetInput, validateMyDeskAttachment, schoolDate, clearMyDeskQueries, preferredStudentClass } from '../src/products/classpilot/lib/myDeskModel.js';
+import { formatDeskDate } from '../src/products/classpilot/lib/myDeskDates.js';
+import { activeMyDeskTab, myDeskTabList } from '../src/products/classpilot/lib/myDeskTabsModel.js';
+
+test('My Desk dates use one style and never shift calendar days across time zones', () => {
+  const now = new Date('2026-09-27T16:00:00Z');
+  assert.equal(formatDeskDate('2026-09-26', { now }), 'Sep 26');
+  assert.equal(formatDeskDate('2025-05-14', { now }), 'May 14, 2025');
+  assert.equal(formatDeskDate('2026-09-26', { now, withYear: true }), 'Sep 26, 2026');
+  assert.equal(formatDeskDate('2026-09-01', { timeZone: 'America/Los_Angeles', now }), 'Sep 1');
+  assert.equal(formatDeskDate('2026-09-26T03:30:00Z', { timeZone: 'America/New_York', now }), 'Sep 25');
+  assert.equal(formatDeskDate('', { now }), '');
+  assert.equal(formatDeskDate('not a date', { now }), 'not a date');
+});
+
+test('the tab bar and sidebar share one list and sub-pages keep their tab highlighted', () => {
+  assert.deepEqual(myDeskTabList(false).map(tab => tab.label), ['Notes', 'Discipline logs', 'Student information']);
+  assert.deepEqual(myDeskTabList(true).map(tab => tab.key), ['notes', 'discipline', 'student-information', 'seating']);
+  assert.equal(activeMyDeskTab('/classpilot/my-desk'), 'notes');
+  assert.equal(activeMyDeskTab('/classpilot/my-desk/notes/students/student-a'), 'notes');
+  assert.equal(activeMyDeskTab('/classpilot/discipline-records/record-a'), 'discipline');
+  assert.equal(activeMyDeskTab('/classpilot/my-desk/student-information/student-a'), 'student-information');
+  assert.equal(activeMyDeskTab('/classpilot/my-desk/seating/chart-a'), 'seating');
+  assert.equal(activeMyDeskTab('/classpilot/my-desk/imports'), '');
+});
 
 test('private notebook cache separates schools, authors and attachment bytes', () => {
   assert.notDeepEqual(myDeskKeys.notes('school', 'alice', {}), myDeskKeys.notes('school', 'bob', {}));

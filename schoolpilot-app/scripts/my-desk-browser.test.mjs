@@ -95,7 +95,7 @@ async function setup({ initial = [], failCreate = false, failUpload = false, del
     return json({ error: `Unexpected route ${method} ${url.pathname}` }, 404);
   });
   await page.goto(`${base}/${auth ? '__mydesk-auth' : '__mydesk'}`);
-  try { await page.getByRole('heading', { name: 'My Desk', exact: true }).waitFor({ timeout: 12000 }); }
+  try { await page.getByRole('heading', { name: 'Notes', exact: true }).waitFor({ timeout: 12000 }); }
   catch (failure) { throw new Error(`${failure.message}\nPage errors: ${errors.join('\n')}\n${await page.locator('body').innerText()}`); }
   return { page, state, errors, requests, creates, uploadBodies, completeBodies, revoked };
 }
@@ -106,6 +106,40 @@ async function screenshot(page, name) {
   const target = await page.getByRole('dialog').count() ? page.getByRole('dialog') : page.locator('.mydesk-page');
   await target.screenshot({ path: path.join(process.env.MYDESK_SCREENSHOT_DIR, name) });
 }
+
+test('private detention and referral notes say whether a readable school copy exists', async () => {
+  const student = { targetKind: 'student', category: 'detention', studentName: 'Avery Lee', filingStudentId: 'student-a' };
+  const t = await setup({ initial: [fixtureNote({ ...student, id: 'unlogged', title: 'Kept in at recess', disciplineCopy: null }),
+    fixtureNote({ ...student, id: 'logged', title: 'Detention assigned', entryDate: '2026-09-24', disciplineCopy: 'submitted' }), fixtureNote({ id: 'plain', title: 'Tray reminder', entryDate: '2026-09-23' })] });
+  try {
+    const unlogged = t.page.getByRole('article', { name: 'Kept in at recess' });
+    await unlogged.getByText('Not in discipline logs', { exact: true }).waitFor();
+    assert.equal(await t.page.getByRole('article', { name: 'Detention assigned' }).getByText('In discipline logs', { exact: true }).count(), 1);
+    assert.equal(await t.page.getByRole('article', { name: 'Tray reminder' }).getByText(/discipline logs/).count(), 0);
+    assert.equal(await unlogged.getByRole('link', { name: 'Avery Lee' }).getAttribute('href'), '/classpilot/my-desk/student-overview/student-a?from=notes');
+    assert.match(await unlogged.locator('time').first().textContent(), /^Sep 25/);
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
+test('notebook sections replace the rail and the scope bar pauses for general notes', async () => {
+  const t = await setup();
+  try {
+    await t.page.getByLabel('Class filter').selectOption('class-a');
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'Science 5');
+    assert.equal(await t.page.getByRole('link', { name: 'By student', exact: true }).getAttribute('href'), '/classpilot/my-desk/notes/students?classId=class-a');
+    assert.equal(await t.page.getByRole('button', { name: 'All notes', exact: true }).getAttribute('aria-pressed'), 'true');
+    await t.page.getByRole('button', { name: 'General', exact: true }).click();
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'General notes');
+    assert.equal(await t.page.getByLabel('Class filter').isDisabled(), true);
+    await t.page.getByText('General notes are not filed to a grade or class.', { exact: true }).waitFor();
+    assert.ok(t.requests.some(item => item.path.endsWith('/notes/search') && item.query.scope === 'general'));
+    await t.page.getByRole('button', { name: 'All notes', exact: true }).click();
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'All notes');
+    assert.equal(await t.page.getByLabel('Class filter').isDisabled(), false);
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
 
 test('private photo-only save survives uncertain reservation and upload retries without duplication', { timeout: 60_000 }, async () => {
   const t = await setup({ failCreate: true, failUpload: true });
@@ -305,7 +339,7 @@ test('real auth transitions purge private caches, revoke blobs and gate imperson
     await t.page.getByRole('heading', { name: 'My Desk is unavailable' }).waitFor(); assert.equal(await t.page.getByRole('dialog').count(), 0);
     t.state.impersonating = false; await t.page.getByRole('button', { name: 'Refresh account' }).click(); await t.page.getByRole('button', { name: 'New note', exact: true }).click(); assert.equal(await t.page.getByLabel('Title optional', { exact: true }).inputValue(), '');
     await t.page.getByRole('button', { name: 'Cancel', exact: true }).click(); await t.page.getByRole('button', { name: 'Change school' }).click();
-    await t.page.getByRole('heading', { name: 'My Desk', exact: true }).waitFor(); assert(t.requests.some(item => item.path.endsWith('/capabilities') && item.school === 'school-b'));
+    await t.page.getByRole('heading', { name: 'Notes', exact: true }).waitFor(); assert(t.requests.some(item => item.path.endsWith('/capabilities') && item.school === 'school-b'));
     assert.equal(await t.page.evaluate(() => window.notebookCache().some(([key]) => key[1] === 'school-a')), false);
     await t.page.getByRole('button', { name: 'Sign out' }).click(); await t.page.getByRole('heading', { name: 'My Desk is unavailable' }).waitFor(); assert.equal(await t.page.evaluate(() => window.notebookCache().filter(([,data])=>data !== undefined).length), 0); assert.deepEqual(t.errors, []);
   } finally { await t.page.close(); }

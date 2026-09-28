@@ -18,6 +18,8 @@ import { MYDESK_SQL } from "../src/db/mydeskMigration.js";
 import { createSchoolDisciplineRouter } from "../src/routes/schoolDiscipline.js";
 import { cleanupSchoolDiscipline } from "../src/services/schoolDisciplineCleanup.js";
 import { listDisciplineStudents } from "../src/services/schoolDisciplineWorkspace.js";
+import { listMyDeskNotes, listMyDeskStudentHistory } from "../src/services/mydesk.js";
+import { myDeskNotesQuery } from "../src/services/mydeskValidation.js";
 import { datePlusDays, emptySchoolSchedulingConfig } from "../src/services/classpilotSchedulingRules.js";
 import { signUserToken } from "../src/services/jwt.js";
 import { errorHandler } from "../src/middleware/errorHandler.js";
@@ -210,6 +212,36 @@ test("direct reviewed saves need no notebook, one detention assignment counts on
   assert.deepEqual(rows.find((row:any)=>row.id===f.studentId).referralCount,3);assert.equal(rows.find((row:any)=>row.id===f.studentId).detentionCount,1);assert.equal(rows.find((row:any)=>row.id===noNotes).incidentCount,0);
   const csv=await request(f,"/students/export","POST",{scope:"assigned",period:"all"});assert.equal(csv.status,200);assert.equal(csv.headers.get("x-discipline-row-count"),"2");
   const count=await fixturePool.query("SELECT count(*)::int n FROM mydesk_notes WHERE school_id=$1",[f.schoolId]);assert.equal(count.rows[0].n,1,"Only fixture note exists; direct incident creates no notebook note");
+});
+
+test("incidents-only summaries share the totals' predicate, page by name and export the same rows",async()=>{
+  const f=await fixture(),second=randomUUID(),quiet=randomUUID();
+  for(const [id,first,last] of [[second,'Beta','Incident'],[quiet,'Quiet','Zeta']]){
+    await fixturePool.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,$3,$4,'active')",[id,f.schoolId,first,last]);
+    await fixturePool.query("INSERT INTO group_students(group_id,student_id) VALUES($1,$2)",[f.groupId,id]);
+  }
+  await submit(f);await finish(f,await draft(f,{studentId:second,entryDate:'2026-09-24',referralRecorded:false,detentionAssigned:true}));
+  const all=await request(f,"/students/search","POST",{scope:"assigned",period:"all"});assert.equal(all.status,200,all.text);assert.equal(all.data.students.length,3);
+  const first=await request(f,"/students/search","POST",{scope:"assigned",period:"all",withIncidents:true,limit:1});assert.equal(first.status,200,first.text);
+  const rest=await request(f,"/students/search","POST",{scope:"assigned",period:"all",withIncidents:true,limit:1,cursor:first.data.nextCursor});assert.equal(rest.status,200,rest.text);
+  assert.deepEqual([...first.data.students,...rest.data.students].map((row:any)=>row.id),[second,f.studentId]);assert.equal(rest.data.nextCursor,null);
+  const detentions=await request(f,"/students/search","POST",{scope:"assigned",period:"all",withIncidents:true,incidentType:"detention"});assert.equal(detentions.status,200,detentions.text);
+  assert.deepEqual(detentions.data.students.map((row:any)=>[row.id,row.detentionCount]),[[second,1]]);
+  const switched=await request(f,"/students/search","POST",{scope:"assigned",period:"all",limit:1,cursor:first.data.nextCursor});assert.equal(switched.status,400,"a cursor from the incidents-only list cannot page the full roster");
+  const csv=await request(f,"/students/export","POST",{scope:"assigned",period:"all",withIncidents:true});assert.equal(csv.status,200,csv.text);assert.equal(csv.headers.get("x-discipline-row-count"),"2");
+});
+
+test("private notes show only school copies the author can still read",async()=>{
+  const f=await fixture(),actor={schoolId:f.schoolId,authorId:f.teacher,manager:false};
+  const copyOf=async()=>(await listMyDeskStudentHistory(actor,f.studentId,myDeskNotesQuery.parse({}))).notes.find((note:any)=>note.id===f.noteId)?.disciplineCopy;
+  assert.equal(await copyOf(),null);
+  const record=await submit(f);
+  assert.equal(await copyOf(),"submitted");
+  assert.equal((await listMyDeskNotes(actor,myDeskNotesQuery.parse({}))).notes.find((note:any)=>note.id===f.noteId)?.disciplineCopy,"submitted");
+  const withdrawn=await request(f,`/${record.id}/withdraw`,"POST",{clientRequestId:randomUUID(),revision:record.revision,reason:"Entered for the wrong day"});assert.equal(withdrawn.status,200,withdrawn.text);
+  assert.equal(await copyOf(),"withdrawn");
+  await fixturePool.query("UPDATE groups SET status='archived' WHERE id=$1",[f.groupId]);
+  assert.equal(await copyOf(),null,"a teacher who no longer teaches the student learns nothing about the school copy");
 });
 
 test("same private-note source and lost-response requests cannot create duplicate records",async()=>{

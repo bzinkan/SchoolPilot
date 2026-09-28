@@ -76,7 +76,15 @@
 .discipline-summary th, .discipline-summary td { padding: 1rem; border-bottom: 1px solid hsl(var(--border)); }
 .discipline-summary th { font-size: .85rem; font-weight: 600; }
 .discipline-summary td:not(:first-child) { font-variant-numeric: tabular-nums; }
-.discipline-summary button { text-align: left; color: hsl(var(--primary)); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.discipline-summary button, .discipline-summary a { text-align: left; color: hsl(var(--primary)); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.discipline-list-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem; margin-top: .5rem; }
+.discipline-list-heading h2, .discipline-list-heading h3 { font-size: 1.1rem; font-weight: 600; }
+.discipline-switch { display: inline-flex; align-items: center; gap: .6rem; min-height: 44px; font-size: .9rem; cursor: pointer; }
+.discipline-switch input { appearance: none; position: relative; flex-shrink: 0; width: 2.5rem; height: 1.4rem; margin: 0; border-radius: 999px; background: hsl(var(--input)); transition: background .15s; cursor: pointer; }
+.discipline-switch input::after { content: ''; position: absolute; top: .2rem; left: .2rem; width: 1rem; height: 1rem; border-radius: 50%; background: #fff; transition: transform .15s; }
+.discipline-switch input:checked { background: hsl(var(--primary)); }
+.discipline-switch input:checked::after { transform: translateX(1.1rem); }
+.discipline-switch input:focus-visible { outline: 2px solid #627ecd; outline-offset: 2px; }
 .discipline-summary small { display: block; margin-top: .35rem; color: hsl(var(--muted-foreground)); }
 .discipline-composer { max-width: 720px; max-height: 90dvh; overflow-y: auto; }
 .discipline-composer fieldset { display: grid; gap: 1rem; min-width: 0; }

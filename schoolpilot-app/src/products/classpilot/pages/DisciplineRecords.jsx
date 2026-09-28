@@ -1,10 +1,9 @@
 import { useDeferredValue, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FileText, Printer, Plus, FileScan } from 'lucide-react';
+import { Download, FileText, Printer, Plus, FileScan } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
-import { ThemeToggle } from '../../../components/ThemeToggle';
 import { queryClient } from '../../../lib/queryClient';
 import { useDisciplineAccess, useDisciplineLifetime } from '../hooks/useDiscipline';
 import { disciplineApi, disciplineKeys, disciplineCategory, disciplineStatus, downloadDisciplineExport, invalidateDiscipline } from '../lib/discipline';
@@ -13,17 +12,22 @@ import DisciplineAttachment from '../components/DisciplineAttachment';
 import DisciplineCorrection from '../components/DisciplineCorrection';
 import DisciplineIncidentComposer from '../components/DisciplineIncidentComposer';
 import MyDeskTabs from '../components/MyDeskTabs';
+import MyDeskHeader from '../components/MyDeskHeader';
+import MyDeskVisibility from '../components/MyDeskVisibility';
 import MyDeskScopePicker from '../components/MyDeskScopePicker';
 import { useMyDeskAccess, useMyDeskClasses } from '../hooks/useMyDesk';
 import { disciplineParent, withDisciplineEntry } from '../lib/disciplineNavigation';
+import { formatDeskDate } from '../lib/myDeskDates';
 import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import '../myDesk.css';
 import '../discipline.css';
 
 export function DisciplineShell({ children }) {
-  const { navigate } = useAdminNavigation(); const shell = useAdminShell(); const [params] = useSearchParams(); const parent = disciplineParent(params);
+  const { navigate } = useAdminNavigation(); const shell = useAdminShell(); const [params] = useSearchParams();
+  // Discipline logs is a My Desk tab, so teachers leave to ClassPilot like every other tab.
+  const adminOrigin = params.get('entry') === 'admin'; const parent = adminOrigin ? disciplineParent(params) : { path: '/classpilot', label: 'ClassPilot' };
   if (shell) return <div className="discipline-page">{children}</div>;
-  return <div className="mydesk-page discipline-page min-h-screen bg-background text-foreground"><header className="mydesk-header discipline-no-print"><Button variant="ghost" onClick={() => navigate(parent.path)}><ArrowLeft className="size-4" />{parent.label}</Button><Link to="/classpilot">ClassPilot</Link><ThemeToggle /></header>{children}</div>;
+  return <div className="mydesk-page discipline-page min-h-screen bg-background text-foreground"><MyDeskHeader className="discipline-no-print" backLabel={parent.label} onBack={() => navigate(parent.path)} title={adminOrigin ? null : 'My Desk'} />{children}</div>;
 }
 
 export default function DisciplineRecords() {
@@ -40,13 +44,15 @@ const compact = value => Object.fromEntries(Object.entries(value).filter(([, ite
 
 function DisciplineLibrarySession({ access }) {
   const { schoolId, viewerId } = access; const [params, setParams] = useSearchParams(); const { navigate } = useAdminNavigation(); const shell = useAdminShell();
-  const Heading = shell ? 'h2' : 'h1';
+  const Heading = shell ? 'h2' : 'h1', ListHeading = shell ? 'h3' : 'h2';
   const Content = shell ? 'section' : 'main';
   const adminEntry = access.capabilities.canViewSchool && params.get('entry') === 'admin';
   const scope = adminEntry ? 'school' : 'assigned';
   const studentId = params.get('studentId') || '';
   const classes = useMyDeskClasses(schoolId, viewerId);
-  const [filters, setFilters] = useState({ gradeLevel: params.get('gradeLevel') || '', groupId: params.get('classId') || '', q: '', period: 'school_year', from: '', to: '', includeInactive: false, incidentType: '', submitterName: '' });
+  const [filters, setFilters] = useState({ gradeLevel: params.get('gradeLevel') || '', groupId: params.get('classId') || '', q: '', period: 'school_year', from: '', to: '', includeInactive: false, incidentType: '', submitterId: '', submitterName: '', withIncidents: true });
+  const [recorder, setRecorder] = useState('');
+  const chooseRecorder = mode => { setRecorder(mode); setFilters(previous => ({ ...previous, submitterId: mode === 'me' ? viewerId : '', submitterName: mode === 'other' ? previous.submitterName : '' })); };
   const [composer, setComposer] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const working = useRef(false), lifetime = useDisciplineLifetime(schoolId, viewerId);
   const deferred = useDeferredValue(filters);
@@ -70,21 +76,24 @@ function DisciplineLibrarySession({ access }) {
     try {
       const api = disciplineApi(schoolId, controller.signal);
       const exportRange = range?.period === 'all' ? { period: 'all', from: '', to: '' } : range?.from && range?.to ? { period: 'custom', from: range.from, to: range.to } : {};
-      const blob = studentId ? await api.export(compact({ scope, studentId, from: range?.from, to: range?.to, status: 'submitted', incidentType: request.incidentType, submitterName: request.submitterName })) : await api.exportStudents(compact({ ...request, ...exportRange }));
+      const blob = studentId ? await api.export(compact({ scope, studentId, from: range?.from, to: range?.to, status: 'submitted', incidentType: request.incidentType, submitterId: request.submitterId, submitterName: request.submitterName })) : await api.exportStudents(compact({ ...request, ...exportRange }));
       controller.signal.throwIfAborted(); downloadDisciplineExport(blob);
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
   };
   const gradeOptions = adminEntry ? [...new Set((classes.data?.current || []).map(group => group.gradeLevel || 'unrecorded'))].sort((a,b) => String(a).localeCompare(String(b), undefined, { numeric: true })) : [];
-  return <Content className="mydesk-shell discipline-library">
-    {!shell && (adminEntry ? <Link to="/classpilot/admin">Admin Panel</Link> : <MyDeskTabs seatingEnabled={access.seatingEnabled} />)}
-    <div className="mydesk-intro"><div><div className="mydesk-title-line"><FileText /><Heading>{student?.name || 'Discipline logs'}</Heading></div><p>{adminEntry ? 'School records, organized by student.' : 'School-recorded incidents for students you currently teach.'}</p><p className="mydesk-privacy">Private notes and unfinished drafts are never included.</p></div><div className="discipline-actions"><Button onClick={() => setComposer(crypto.randomUUID())}><Plus className="size-4" />Add incident</Button><Button variant="outline" disabled={!access.importsEnabled} title={!access.importsEnabled ? 'Paperwork processing is not enabled yet.' : undefined} onClick={() => navigate(withDisciplineEntry('/classpilot/my-desk/imports?destination=discipline', params), { state: { destination: 'discipline', groupId: filters.groupId, gradeLevel: filters.gradeLevel } })}><FileScan className="size-4" />Add from paperwork</Button></div></div>
+  const scopePicker = !adminEntry && !studentId ? <MyDeskScopePicker layout={shell ? 'stack' : 'bar'} classes={classes} schoolId={schoolId} viewerId={viewerId} value={{ gradeLevel: filters.gradeLevel, classId: filters.groupId }} onChange={changeScope} /> : null;
+  return <>{!shell && !adminEntry && <MyDeskTabs seatingEnabled={access.seatingEnabled} />}{!shell && scopePicker}<Content className="mydesk-shell discipline-library">
+    {!shell && adminEntry && <Link to="/classpilot/admin">Admin Panel</Link>}
+    <div className="mydesk-intro"><div><div className="mydesk-title-line"><FileText /><Heading>{student?.name || 'Discipline logs'}</Heading></div><p>{adminEntry ? 'School records, organized by student.' : 'School-recorded incidents for students you currently teach.'}</p><MyDeskVisibility kind="school">Visible to school administrators and teachers currently assigned to each student. Private notes and unfinished drafts are never included.</MyDeskVisibility></div><div className="discipline-actions"><Button variant="outline" disabled={!access.importsEnabled} title={!access.importsEnabled ? 'Paperwork processing is not enabled yet.' : undefined} onClick={() => navigate(withDisciplineEntry('/classpilot/my-desk/imports?destination=discipline', params), { state: { destination: 'discipline', groupId: filters.groupId, gradeLevel: filters.gradeLevel } })}><FileScan className="size-4" />Add from paperwork</Button><Button onClick={() => setComposer(crypto.randomUUID())}><Plus className="size-4" />Add incident</Button></div></div>
     {studentId && <Button variant="ghost" onClick={() => chooseStudent('')}>All students</Button>}
-    {!studentId && (adminEntry ? <label>Grade<select aria-label="Grade filter" value={filters.gradeLevel} onChange={event => changeScope({ gradeLevel: event.target.value, classId: '' })}><option value="">All grades</option>{gradeOptions.map(grade => <option key={grade} value={grade}>{grade === 'unrecorded' ? 'Grade not recorded' : `Grade ${grade}`}</option>)}</select></label> : <MyDeskScopePicker classes={classes} schoolId={schoolId} viewerId={viewerId} value={{ gradeLevel: filters.gradeLevel, classId: filters.groupId }} onChange={changeScope} />)}
+    {!studentId && adminEntry && <label>Grade<select aria-label="Grade filter" value={filters.gradeLevel} onChange={event => changeScope({ gradeLevel: event.target.value, classId: '' })}><option value="">All grades</option>{gradeOptions.map(grade => <option key={grade} value={grade}>{grade === 'unrecorded' ? 'Grade not recorded' : `Grade ${grade}`}</option>)}</select></label>}
+    {shell && scopePicker}
     <div className="discipline-filters">{!studentId && <label>Student search<Input value={filters.q} onChange={event => change('q', event.target.value)} placeholder="Find a student" /></label>}<label>Period<select aria-label="Period" value={effectivePeriod} onChange={event => change('period', event.target.value)}><option value="school_year">This school year</option><option value="all">All dates</option><option value="custom">Custom range</option></select></label>
       {filters.period === 'custom' && <><label>From<Input type="date" value={filters.from} onChange={event => change('from', event.target.value)} /></label><label>To<Input type="date" value={filters.to} onChange={event => change('to', event.target.value)} /></label></>}
       <label>Incident type<select aria-label="Incident type" value={filters.incidentType} onChange={event => change('incidentType', event.target.value)}><option value="">All incidents</option><option value="referral">Referrals</option><option value="detention">Detentions assigned</option></select></label>
-      <label>Recording teacher<Input value={filters.submitterName} onChange={event => change('submitterName', event.target.value)} /></label>
+      <label>Recording teacher<select aria-label="Recording teacher" value={recorder} onChange={event => chooseRecorder(event.target.value)}><option value="">Anyone</option><option value="me">You</option><option value="other">Someone else…</option></select></label>
+      {recorder === 'other' && <label>Teacher name<Input value={filters.submitterName} onChange={event => change('submitterName', event.target.value)} placeholder="Type part of a name" /></label>}
     </div>
     {adminEntry && <details className="discipline-additional-filters"><summary>Additional filters</summary><label>Class<select value={filters.groupId} onChange={event => changeScope({ gradeLevel: filters.gradeLevel, classId: event.target.value })}><option value="">All classes</option>{(classes.data?.current || []).map(group => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="discipline-check"><input type="checkbox" checked={filters.includeInactive} onChange={event => change('includeInactive', event.target.checked)} />Include former students with retained records</label></details>}
     {range?.notice && <div role="status" className="discipline-notice"><p>{range.notice}</p>{schoolYearIssue && <>
@@ -93,12 +102,13 @@ function DisciplineLibrarySession({ access }) {
     </>}</div>}
     <div className="discipline-actions"><Button variant="outline" disabled={busy || query.isPending || query.isError || !readyRange} onClick={exportRows}><Download className="size-4" />{busy ? 'Exporting…' : studentId ? 'Export incidents CSV' : 'Export student summary CSV'}</Button></div>
     {error && <p role="alert">{error}</p>}
+    {!studentId && <div className="discipline-list-heading"><ListHeading>{filters.withIncidents ? 'Students with incidents' : 'All students'}</ListHeading><label className="discipline-switch"><input type="checkbox" role="switch" checked={!filters.withIncidents} onChange={event => change('withIncidents', !event.target.checked)} />Show all students</label></div>}
     {!readyRange ? <p>Choose both dates to view this period.</p> : query.isPending ? <p role="status">Loading students and incident totals…</p> : query.isError ? <p role="alert">{myDeskError(query.error)} <Button onClick={() => query.refetch()}>Retry</Button></p> : studentId ? <>
-      {!records.length ? <section className="discipline-empty"><h2>No incidents in this period</h2><p>Use Add incident to record reviewed information.</p></section> : <ol className="discipline-record-list">{records.map(record => <li key={record.id}><Link to={withDisciplineEntry(`/classpilot/discipline-records/${encodeURIComponent(record.id)}`, params)}><div><h2>{record.currentVersion.title || disciplineCategory(record.currentVersion.category)}</h2><p>{record.currentVersion.entryDate} · {record.currentVersion.className || (record.currentVersion.gradeLevel ? `Grade ${record.currentVersion.gradeLevel}` : 'Grade not recorded')}</p><p>Recorded by {record.submittedBy.name}</p></div><span>View information and forms</span></Link></li>)}</ol>}
-    </> : !rows.length ? <section className="discipline-empty"><h2>No students match</h2><p>Adjust the filters or check your school-managed teaching assignments.</p></section> : <div className="discipline-summary-scroll"><table className="discipline-summary"><thead><tr><th>Student</th><th>Referrals</th><th>Detentions assigned</th><th>Latest incident</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td><button onClick={() => chooseStudent(row.id)}>{row.name}</button><small>{row.gradeLevel ? `Grade ${row.gradeLevel}` : 'Grade not recorded'}{row.status !== 'active' ? ' · Former student' : ''}</small></td><td>{row.referralCount}</td><td>{row.detentionCount}</td><td>{row.latestIncident || 'No incidents'}</td></tr>)}</tbody></table></div>}
+      {!records.length ? <section className="discipline-empty"><h2>No incidents in this period</h2><p>Use Add incident to record reviewed information.</p></section> : <ol className="discipline-record-list">{records.map(record => <li key={record.id}><Link to={withDisciplineEntry(`/classpilot/discipline-records/${encodeURIComponent(record.id)}`, params)}><div><h2>{record.currentVersion.title || disciplineCategory(record.currentVersion.category)}</h2><p>{formatDeskDate(record.currentVersion.entryDate)} · {record.currentVersion.className || (record.currentVersion.gradeLevel ? `Grade ${record.currentVersion.gradeLevel}` : 'Grade not recorded')}</p><p>Recorded by {record.submittedBy.name}</p></div><span>View information and forms</span></Link></li>)}</ol>}
+    </> : !rows.length ? <section className="discipline-empty">{filters.withIncidents ? <><h2>No students with incidents</h2><p>No recorded incidents match these filters.</p><Button variant="outline" onClick={() => change('withIncidents', false)}>Show all students</Button></> : <><h2>No students match</h2><p>Adjust the filters or check your school-managed teaching assignments.</p></>}</section> : <div className="discipline-summary-scroll"><table className="discipline-summary"><thead><tr><th>Student</th><th>Referrals</th><th>Detentions assigned</th><th>Latest incident</th></tr></thead><tbody>{rows.map(row => <tr key={row.id}><td>{adminEntry || shell ? <button onClick={() => chooseStudent(row.id)}>{row.name}</button> : <Link to={`/classpilot/my-desk/student-overview/${encodeURIComponent(row.id)}?from=discipline`}>{row.name}</Link>}<small>{row.gradeLevel ? `Grade ${row.gradeLevel}` : 'Grade not recorded'}{row.status !== 'active' ? ' · Former student' : ''}</small></td><td>{row.referralCount}</td><td>{row.detentionCount}</td><td>{row.latestIncident ? formatDeskDate(row.latestIncident) : 'No incidents'}</td></tr>)}</tbody></table></div>}
     {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>{query.isFetchingNextPage ? 'Loading…' : studentId ? 'More incidents' : 'More students'}</Button>}
     {composer && <DisciplineIncidentComposer key={`${schoolId}:${viewerId}:${scope}:${composer}`} access={access} scope={scope} selectedStudent={student} onClose={() => setComposer(null)} onSaved={async (id, committedNavigate) => { const accepted = await (committedNavigate || navigate)(withDisciplineEntry(`/classpilot/discipline-records/${encodeURIComponent(id)}`, params)); if (accepted !== false) setComposer(null); }} />}
-  </Content>;
+  </Content></>;
 }
 
 export function RecordLoader({ access, recordId }) {
@@ -169,7 +179,7 @@ function RecordVersion({ access, record, version }) {
   const [showForms, setShowForms] = useState(false);
   const current = record.currentVersion.id === version.id;
   return <article className="discipline-version"><div className="discipline-version-title"><h2>{version.title || disciplineCategory(version.category)}</h2><span>{current ? disciplineStatus(record.status) : 'Superseded'} · Version {version.number}</span></div>
-    <dl className="discipline-facts"><div><dt>Student</dt><dd>{version.studentName}</dd></div><div><dt>Class</dt><dd>{version.className || (version.gradeLevel ? `Grade ${version.gradeLevel}` : 'Grade not recorded')}</dd></div><div><dt>Incident date</dt><dd>{version.entryDate}</dd></div><div><dt>Category</dt><dd>{disciplineCategory(version.category)}</dd></div><div><dt>Recorded</dt><dd>{new Date(version.createdAt).toLocaleString()}</dd></div></dl>
+    <dl className="discipline-facts"><div><dt>Student</dt><dd>{version.studentName}</dd></div><div><dt>Class</dt><dd>{version.className || (version.gradeLevel ? `Grade ${version.gradeLevel}` : 'Grade not recorded')}</dd></div><div><dt>Incident date</dt><dd>{formatDeskDate(version.entryDate, { withYear: true })}</dd></div><div><dt>Category</dt><dd>{disciplineCategory(version.category)}</dd></div><div><dt>Recorded</dt><dd>{new Date(version.createdAt).toLocaleString()}</dd></div></dl>
     {version.reason && <p className="discipline-notice"><strong>{version.kind === 'withdrawal' ? 'Withdrawal reason' : 'Correction reason'}:</strong> {version.reason}</p>}
     <p className="discipline-body">{version.body}</p>{version.schemaVersion === 2 && <p>{version.referralRecorded ? 'One referral recorded. ' : ''}{version.detentionAssigned ? `One detention assignment${version.detentionDates?.length ? `: ${version.detentionDates.join(', ')}` : ''}.` : ''}</p>}
     {version.attachments?.length > 0 && <><Button className="discipline-no-print" variant="outline" onClick={() => setShowForms(value => !value)}>{showForms ? 'Hide submitted forms' : `View submitted forms (${version.attachments.length})`}</Button>{showForms && <div className="discipline-evidence">{version.attachments.map(attachment => <DisciplineAttachment key={attachment.id} access={access} recordId={record.id} versionId={version.id} attachment={attachment} />)}</div>}<p className="discipline-print-only">{version.attachments.length} submitted forms retained with this version. Open the record to view or download them.</p></>}

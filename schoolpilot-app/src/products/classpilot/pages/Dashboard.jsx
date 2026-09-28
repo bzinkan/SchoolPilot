@@ -5999,7 +5999,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       ) : null}
 
       {/* Sidebar + Main Content */}
-      <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} canUseMyDesk={myDeskAccess.enabled} />
+      <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} canUseMyDesk={myDeskAccess.enabled} myDeskSeatingEnabled={myDeskAccess.seatingEnabled} />
       <main className={showSidebar ? 'lg:ml-80' : ''}>
         <div className="max-w-screen-2xl mx-auto px-6 py-8">
         {scheduledClassEnabled ? (() => {

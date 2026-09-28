@@ -47,6 +47,7 @@ const CPSeating = lazy(() => import('./products/classpilot/pages/Seating'));
 const CPImports = lazy(() => import('./products/classpilot/pages/Imports'));
 const CPStudentLogs = lazy(() => import('./products/classpilot/pages/StudentLogs'));
 const CPStudentInformation = lazy(() => import('./products/classpilot/pages/StudentInformation'));
+const CPStudentOverview = lazy(() => import('./products/classpilot/pages/StudentOverview'));
 
 function PrivateHistoryRedirect() {
   const location = useLocation();
@@ -317,6 +318,7 @@ function AppRoutes() {
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/students/:studentId" element={<PrivateHistoryRedirect />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students" element={<CPStudentLogs />} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/notes/students/:studentId" element={<CPStudentLogs />} />}
+            {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-overview/:studentId" element={<SharedRecordAccessBoundary><CPStudentOverview /></SharedRecordAccessBoundary>} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/imports/:importId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}
             {canReadClassPilotTeacherGuide && <Route path="/classpilot/my-desk/student-information/:studentId" element={<SharedRecordAccessBoundary><CPStudentInformation /></SharedRecordAccessBoundary>} />}

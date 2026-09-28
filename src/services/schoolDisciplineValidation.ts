@@ -49,6 +49,6 @@ export const disciplineStudentsInput = z.object({ scope: z.enum(["assigned", "sc
   from: myDeskDate.optional(), to: myDeskDate.optional(), period: z.enum(["school_year", "all", "custom"]).default("school_year"),
   cursor: z.string().max(2048).optional(), limit: z.coerce.number().int().min(1).max(100).default(30),
   incidentType: z.enum(["referral", "detention"]).optional(), submitterId: disciplineId.optional(), submitterName: z.string().trim().max(200).optional(),
-  includeInactive: z.boolean().default(false) }).strict().refine(input => !input.from || !input.to || input.from <= input.to, "End date precedes start date");
+  includeInactive: z.boolean().default(false), withIncidents: z.boolean().default(false) }).strict().refine(input => !input.from || !input.to || input.from <= input.to, "End date precedes start date");
 export type DisciplineDraft = z.infer<typeof disciplineDraftInput>;
 export type DisciplineStudentsQuery = z.infer<typeof disciplineStudentsInput>;

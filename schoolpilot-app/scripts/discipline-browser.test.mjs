@@ -24,6 +24,7 @@ function RoutedRecord({access}){const {recordId}=useParams();return h(Discipline
 function Navigation({access}){const route=useLocation();return h(React.Fragment,null,h('output',{'aria-label':'Current route'},route.pathname+route.search),h(Routes,null,
   h(Route,{path:'/classpilot/discipline-records',element:h(DisciplineShell,null,h(DisciplineLibrary,{access}))}),
   h(Route,{path:'/classpilot/discipline-records/:recordId',element:h(RoutedRecord,{access})}),
+  h(Route,{path:'/classpilot',element:h('h1',null,'ClassPilot destination')}),
   h(Route,{path:'/classpilot/admin',element:h('h1',null,'Admin destination')}),
   h(Route,{path:'/classpilot/my-desk',element:h('h1',null,'My Desk destination')}),
   h(Route,{path:'/classpilot/my-desk/imports',element:h('h1',null,'Paperwork destination')})
@@ -77,6 +78,7 @@ async function setup(mode, options = {}) {
   await page.goto(`${base}/__discipline?mode=${mode}${options.route ? `&route=${encodeURIComponent(options.route)}` : ''}${options.shell ? '&shell=1' : ''}`, { timeout: 30000 });await page.waitForLoadState('networkidle');assert.deepEqual(errors,[]);return{page,requests,errors,state};
 }
 const noOverflow=async page=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+const until=async predicate=>{for(let tries=0;tries<150&&!predicate();tries++)await new Promise(resolve=>setTimeout(resolve,20));assert.ok(predicate());};
 
 test('admin origin survives student and record drilldowns, errors and return to the Admin Panel',async()=>{
  const {page,state,errors}=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin'});try{
@@ -109,16 +111,30 @@ test('manual composer links and saved records retain admin origin and paperwork 
  }finally{await page.close();}
 });
 
-test('teacher and unknown origins return to My Desk; an admin marker never grants school scope',async()=>{
+test('teacher and unknown origins return to ClassPilot; an admin marker never grants school scope',async()=>{
  for(const route of ['/classpilot/discipline-records','/classpilot/discipline-records?entry=https%3A%2F%2Fexample.invalid&returnTo=https%3A%2F%2Fexample.invalid']){
   const {page,requests,errors}=await setup('navigation',{route,canViewSchool:false});try{
-   await page.getByRole('button',{name:'My Desk',exact:true}).waitFor();await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
-   assert.equal(await page.getByRole('link',{name:'All discipline records',exact:true}).getAttribute('href'),'/classpilot/discipline-records');
-   assert.ok(requests.filter(row=>row.path.endsWith('/students/search')).every(row=>row.body.scope==='assigned'));
-   await page.getByRole('button',{name:'My Desk',exact:true}).click();await page.getByRole('heading',{name:'My Desk destination'}).waitFor();assert.deepEqual(errors,[]);
+   await page.getByRole('button',{name:'ClassPilot',exact:true}).waitFor();assert.equal(await page.getByText('My Desk',{exact:true}).count(),1);
+   assert.equal(await page.getByRole('link',{name:'Synthetic Student',exact:true}).getAttribute('href'),'/classpilot/my-desk/student-overview/student-a?from=discipline');
+   assert.ok(requests.filter(row=>row.path.endsWith('/students/search')).every(row=>row.body.scope==='assigned'&&row.body.withIncidents===true));
+   await page.getByRole('button',{name:'ClassPilot',exact:true}).click();await page.getByRole('heading',{name:'ClassPilot destination'}).waitFor();assert.deepEqual(errors,[]);
   }finally{await page.close();}
+  const drilled=await setup('navigation',{route:`${route}${route.includes('?')?'&':'?'}studentId=student-a`,canViewSchool:false});try{
+   await drilled.page.getByRole('link').filter({has:drilled.page.getByRole('heading',{name:'Version 3'})}).click();
+   assert.equal(await drilled.page.getByRole('link',{name:'All discipline records',exact:true}).getAttribute('href'),'/classpilot/discipline-records');assert.deepEqual(drilled.errors,[]);
+  }finally{await drilled.page.close();}
  }
  const forged=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin',canViewSchool:false});try{assert.equal(forged.requests.find(row=>row.path.endsWith('/students/search')).body.scope,'assigned');assert.equal(await forged.page.getByRole('option',{name:'All my grades',exact:true}).count(),1);}finally{await forged.page.close();}
+});
+
+test('the grade chosen in the scope bar travels with every My Desk tab link',async()=>{
+ const {page,errors}=await setup('navigation',{canViewSchool:false});try{
+  await page.getByText('Kept when you switch tabs',{exact:true}).waitFor();
+  await page.getByLabel('Grade filter').selectOption('5');
+  await page.waitForFunction(()=>document.querySelector('output[aria-label="Current route"]')?.textContent.includes('gradeLevel=5'));
+  assert.equal(await page.getByRole('link',{name:'Notes',exact:true}).getAttribute('href'),'/classpilot/my-desk?gradeLevel=5');
+  assert.equal(await page.getByRole('link',{name:'Discipline logs',exact:true}).getAttribute('aria-current'),'page');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
 });
 
 test('school-year fallbacks show effective all dates with accurate admin settings actions and matched exports',async()=>{
@@ -139,7 +155,7 @@ test('teachers get school-year guidance and custom ranges remain explicit; valid
  const {page,requests,errors}=await setup('library',{canViewSchool:false});try{
   await page.getByText('Ask a school administrator to set the school year dates.',{exact:true}).waitFor();assert.equal(await page.getByRole('link',{name:'Set school year dates'}).count(),0);
   const before=requests.filter(row=>row.path.endsWith('/students/search')).length;await page.getByLabel('Period',{exact:true}).selectOption('custom');await page.getByLabel('From',{exact:true}).fill('2026-09-01');await page.waitForTimeout(100);assert.equal(requests.filter(row=>row.path.endsWith('/students/search')).length,before);
-  await page.getByLabel('To',{exact:true}).fill('2026-09-30');await page.getByRole('button',{name:'Synthetic Student',exact:true}).waitFor();assert.equal(await page.getByLabel('Period',{exact:true}).inputValue(),'custom');await page.getByRole('button',{name:'Export student summary CSV'}).click();await page.waitForTimeout(100);
+  await page.getByLabel('To',{exact:true}).fill('2026-09-30');await page.getByRole('link',{name:'Synthetic Student',exact:true}).waitFor();assert.equal(await page.getByLabel('Period',{exact:true}).inputValue(),'custom');await page.getByRole('button',{name:'Export student summary CSV'}).click();await page.waitForTimeout(100);
   const exported=requests.find(row=>row.path.endsWith('/students/export'));assert.equal(exported.body.period,'custom');assert.equal(exported.body.from,'2026-09-01');assert.equal(exported.body.to,'2026-09-30');assert.deepEqual(errors,[]);
  }finally{await page.close();}
  const active=await setup('library',{range:{period:'school_year',from:'2026-08-01',to:'2027-06-30'}});try{
@@ -163,13 +179,22 @@ test('capability refresh503 preserves reviewed selections,403 removes private re
   const {page,state,errors}=await setup('submit');try{await page.getByRole('button',{name:'Add to discipline log',exact:true}).click();await page.getByLabel('I reviewed the selected entries and forms for submission.').check();state.capabilityStatus=503;await page.evaluate(()=>window.refreshDiscipline());assert.equal(await page.getByLabel('I reviewed the selected entries and forms for submission.').isChecked(),true);state.capabilityStatus=403;await page.evaluate(()=>window.refreshDiscipline());await page.getByRole('heading',{name:'Review school log submission'}).waitFor({state:'hidden'});assert.deepEqual(errors,[]);}finally{await page.close();}
   const limited=await setup('limit');try{await limited.page.getByText(/None of these 51 notes were submitted/).waitFor();assert.equal(limited.requests.filter(row=>row.path.includes('/mydesk/notes/')).length,0);assert.equal(limited.state.submissions.length,0);}finally{await limited.page.close();}
 });
-test('student-first directory displays complete totals and zero-note students with matched private POST exports',async()=>{
- const {page,requests,errors}=await setup('library');try{
-  await page.getByRole('heading',{name:'Discipline logs',exact:true}).waitFor();const row=page.getByRole('row').filter({has:page.getByRole('button',{name:'Synthetic Student',exact:true})});assert.match(await row.innerText(),/3\s+1/);await page.getByRole('button',{name:'Zero Notes'}).waitFor();
-  await page.getByLabel('Incident type',{exact:true}).selectOption('detention');await page.getByLabel('Recording teacher').fill('Synthetic');await page.waitForTimeout(150);await page.getByRole('button',{name:'Export student summary CSV'}).click();await page.waitForTimeout(100);
-  const exported=requests.find(row=>row.path.endsWith('/students/export'));assert.equal(exported.body.incidentType,'detention');assert.equal(exported.body.submitterName,'Synthetic');assert.equal(exported.body.scope,'assigned');assert.equal(exported.query,'');
-  await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();await page.getByRole('heading',{name:'Version 3'}).waitFor();await page.getByRole('button',{name:'Export incidents CSV'}).click();await page.waitForTimeout(100);const incident=requests.filter(row=>row.path.endsWith('/export')&&!row.path.endsWith('/students/export')).at(-1);assert.equal(incident.body.studentId,'student-a');assert.equal(incident.body.incidentType,'detention');await noOverflow(page);assert.deepEqual(errors,[]);
+test('incident-first directory switches to the full roster, filters by recorder and matches private POST exports',async()=>{
+ const {page,requests,errors}=await setup('library');const searches=()=>requests.filter(row=>row.path.endsWith('/students/search'));const exports=()=>requests.filter(row=>row.path.endsWith('/students/export'));try{
+  await page.getByRole('heading',{name:'Discipline logs',exact:true}).waitFor();await page.getByRole('heading',{name:'Students with incidents',exact:true}).waitFor();assert.equal(searches().at(-1).body.withIncidents,true);
+  const row=page.getByRole('row').filter({has:page.getByRole('link',{name:'Synthetic Student',exact:true})});assert.match(await row.innerText(),/3\s+1/);
+  await page.getByRole('switch',{name:'Show all students'}).check();await page.getByRole('heading',{name:'All students',exact:true}).waitFor();await until(()=>searches().at(-1)?.body.withIncidents===false);await page.getByRole('link',{name:'Zero Notes'}).waitFor();
+  await page.getByLabel('Incident type',{exact:true}).selectOption('detention');await page.getByLabel('Recording teacher',{exact:true}).selectOption('other');await page.getByLabel('Teacher name',{exact:true}).fill('Synthetic');await page.waitForTimeout(150);await page.getByRole('button',{name:'Export student summary CSV'}).click();await until(()=>exports().length===1);
+  const exported=exports()[0];assert.equal(exported.body.incidentType,'detention');assert.equal(exported.body.submitterName,'Synthetic');assert.equal(exported.body.withIncidents,false);assert.equal(exported.body.scope,'assigned');assert.equal(exported.query,'');
+  await page.getByLabel('Recording teacher',{exact:true}).selectOption('me');await page.waitForTimeout(150);await page.getByRole('button',{name:'Export student summary CSV'}).click();await until(()=>exports().length===2);
+  assert.equal(exports()[1].body.submitterId,'teacher-a');assert.equal(exports()[1].body.submitterName,undefined);await noOverflow(page);assert.deepEqual(errors,[]);
  }finally{await page.close();}
+ const student=await setup('library',{route:'/classpilot/discipline-records?studentId=student-a'});try{
+  await student.page.getByRole('heading',{name:'Version 3'}).waitFor();assert.equal(await student.page.getByRole('switch').count(),0);
+  await student.page.getByLabel('Incident type',{exact:true}).selectOption('detention');await student.page.getByLabel('Recording teacher',{exact:true}).selectOption('me');await student.page.waitForTimeout(150);
+  await student.page.getByRole('button',{name:'Export incidents CSV'}).click();await until(()=>student.requests.some(row=>row.path.endsWith('/export')&&!row.path.endsWith('/students/export')));
+  const incident=student.requests.filter(row=>row.path.endsWith('/export')&&!row.path.endsWith('/students/export')).at(-1);assert.equal(incident.body.studentId,'student-a');assert.equal(incident.body.incidentType,'detention');assert.equal(incident.body.submitterId,'teacher-a');await noOverflow(student.page);assert.deepEqual(student.errors,[]);
+ }finally{await student.page.close();}
 });
 
 test('correction conflict retains draft, requires latest-version review, and hides unsaved text when printing',async()=>{

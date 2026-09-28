@@ -1,12 +1,17 @@
 # My Desk for teachers
 
-Open My Desk from the ClassPilot sidebar or labeled phone-header entry, including
-between teaching sessions. Its four areas are **Notes**, **Discipline logs**,
-**Student information**, and **Seating**. Eligible staff in newly entitled schools
-receive released features automatically; there is no school-admin enable switch.
+Open My Desk from the ClassPilot sidebar, whose My Desk card links straight to
+each area, or from the labeled phone-header entry, including between teaching
+sessions. Its four areas are **Notes**, **Discipline logs**, **Student
+information**, and **Seating**. They share one header, which returns to
+ClassPilot, and one tab bar. A badge under each title says who can see that area:
+**Private** (only you) or **School record**. Eligible staff in newly entitled
+schools receive released features automatically; there is no school-admin enable
+switch.
 
-Choose **Grades** or **Classes** to browse. The view preference is remembered for
-your account in this school. Grade directories combine current teaching rosters
+Choose **Grades** or **Classes** in the bar under the tabs to browse. The chosen
+grade or class stays selected when you switch tabs, and the view preference is
+remembered for your account in this school. Grade directories combine current teaching rosters
 without repeating students from several classes. Teaching administrators see
 personal assignments first, with other authorized classes separate. Choosing a
 view never changes rosters or moves old notes.
@@ -30,10 +35,13 @@ storage allows 1,000 pages; AI processing has smaller limits. Unsupported,
 encrypted or unreadable files need conversion.
 
 Pin, edit, refile or delete whenever needed. Categories remain private labels:
-referral or detention does not create a shared incident. Search and CSV export
+referral or detention does not create a shared incident, and such a note says
+whether it is in the discipline log (only while you can still see that record).
+Search and CSV export
 follow your filters; attachment links require sign-in. Past classes/grades retain
-historical filing. **Private notes by student**, within Notes, shows only your
-notes across years. This history never grants current roster or contact access.
+historical filing. Notes are grouped as **All notes**, **General**, **By student**
+and **Past grades and classes**. **By student** shows only your notes across
+years. This history never grants current roster or contact access.
 
 Keep a failed save open and retry the same save, finish with uploaded files when
 offered, or cancel. Unfinished saves expire after 24 hours. Deletion removes app
@@ -42,8 +50,12 @@ student note to Discipline logs requires a separate school-record confirmation.
 
 ## Discipline logs: shared student incidents
 
-Open a student to see dated incidents, typed information and corresponding forms.
-Directory totals follow the displayed school-year/date filter. One incident may
+The list starts with students who have incidents; switch on **Show all students**
+to see the whole roster. **Recording teacher** filters to anyone, you, or a name
+you type. Choose a student to open one student page with their incidents, your
+private notes and their contacts, each labeled **Private** or **School record**;
+from there, **All incidents** shows dated incidents, typed information and
+corresponding forms. Directory totals follow the displayed school-year/date filter. One incident may
 record both a referral and an assigned detention. One detention assignment counts
 once even with several scheduled dates. Withdrawn/superseded versions do not
 inflate active totals. These are recorded events, not student ratings.

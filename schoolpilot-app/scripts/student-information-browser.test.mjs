@@ -215,6 +215,17 @@ test('admin contact save blocks leaving while busy and successful save clears th
   } finally { state.releaseSave?.(); await page.close(); }
 });
 
+test('teacher directory names open the combined student page under the shared scope bar', async () => {
+  const { page, errors } = await setup('directory');
+  try {
+    const link = page.getByRole('link', { name: 'Synthetic Student', exact: true }); await link.waitFor();
+    assert.equal(await link.getAttribute('href'), '/classpilot/my-desk/student-overview/student-a?from=student-information');
+    assert.equal(await page.getByText('Kept when you switch tabs', { exact: true }).count(), 1);
+    assert.equal(await page.getByText('School record', { exact: true }).count(), 1);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
 test('admin student directory and completed contact import retain admin entry in profile links', async () => {
   const directory = await setup('directory', { admin: true });
   try {
