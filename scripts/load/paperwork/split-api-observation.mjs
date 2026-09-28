@@ -3,7 +3,7 @@ import { readFileSync,writeFileSync } from 'node:fs';
 import { pool,sessionPool,apiPoolReadiness,startApiPoolReadiness,stopApiPoolReadiness,drainApiPoolReadiness,prewarmMainPool } from '/app/dist/db.js';
 import { databasePoolLimits } from '/app/dist/config/databasePools.js';
 import { nearestRankPercentile } from './latency-metrics.mjs';
-export async function startApiObservation(metrics){
+export async function startApiObservation(metrics,{failureFile='/app/evidence/split-metrics.json'}={}){
   const profile=databasePoolLimits();assert.deepEqual(profile,{role:'api',main:16,session:2,scheduler:0,schedulerLock:0});
   assert.equal(pool.options.max,16);assert.equal(sessionPool.options.max,2);metrics.observedPoolCaps={main:pool.options.max,session:sessionPool.options.max};
   metrics.actualCgroupLimits={memoryBytes:Number(readFileSync('/sys/fs/cgroup/memory.max','utf8')),cpuMax:readFileSync('/sys/fs/cgroup/cpu.max','utf8').trim()};
@@ -13,7 +13,7 @@ export async function startApiObservation(metrics){
   startApiPoolReadiness(); assert.equal(apiPoolReadiness.status().ready,true);
   const samples=[],errors=[];let pending=null;
   const timer=setInterval(()=>{
-    if(!apiPoolReadiness.status().ready){metrics.failure='API_READINESS_LOSS';metrics.apiPoolState=apiPoolReadiness.status();writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));process.exit(87);}
+    if(!apiPoolReadiness.status().ready){metrics.failure='API_READINESS_LOSS';metrics.apiPoolState=apiPoolReadiness.status();writeFileSync(failureFile,JSON.stringify(metrics,null,2));process.exit(87);}
     if(pending)return;
     const at=performance.now(),waiting=pool.waitingCount;
     pending=(async()=>{const client=await pool.connect();const acquired=performance.now();try{await client.query({text:'SELECT 1',query_timeout:2000});}finally{client.release();}samples.push({acquireMs:acquired-at,queryMs:performance.now()-acquired,waiting,ready:apiPoolReadiness.status().ready});})().catch(error=>errors.push(error.code||error.name)).finally(()=>{pending=null;});

@@ -4,8 +4,6 @@ import { createImportAiProcessor, MYDESK_IMPORT_PROMPT_VERSION } from '/app/dist
 import { after, before, test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
-import { createServer } from "node:http";
-import { createApp } from "/app/dist/app.js";
 import pg from "pg";
 import { z } from "zod";
 import { pool, sessionPool } from "/app/dist/db.js";
@@ -20,6 +18,7 @@ import { importRegion } from "/app/dist/services/mydeskImportsValidation.js";
 import { signUserToken } from "/app/dist/services/jwt.js";
 import { CAPACITY_MEASUREMENT_PLAN, CAPACITY_READ_PATHS, createReadProbeEvidence, loadedProbesWithinWork, measureReadProbe, nearestRankPercentile, samplingPhaseComplete } from './latency-metrics.mjs';
 import { createPhysicalObjectStore, createStorageEvidence } from './physical-object-store.mjs';
+import { assertApiServerMetrics, matchServerReadProbes } from './api-server-contract.mjs';
 const schoolIds = [];
 // Fixtures and DDL use the administrator connection; real HTTP handlers keep the restricted application pool.
 const fixturePool = process.env.ADMIN_DATABASE_URL
@@ -39,26 +38,33 @@ const metrics = { imageDigest: process.env.EVIDENCE_IMAGE_DIGEST, testSourceSha2
     measurementPlan: CAPACITY_MEASUREMENT_PLAN, measurementObservation: {},
     storageIo: createStorageEvidence(),
     providerRequests: 0, workerRuns: 0, maxClaimedPerRunner: 0, maxQueueObserved: 0, cpu: null,
-    limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.', 'Inherited Docker localhost:4000 healthchecks do not apply to this ephemeral-port API/3999 worker harness; actual API pool/readiness and worker scheduler probes are evaluated separately.'] };
+    limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.', 'Inherited Docker localhost:4000 healthchecks do not apply to this API3998/worker3999 harness; actual API pool/readiness and worker scheduler probes are evaluated separately.'] };
 const metricStart = performance.now(), cpuStart = process.cpuUsage();
+const driverMetrics = { role:'load_driver', limits:{cpu:Number(process.env.DRIVER_CPU),memoryBytes:Number(process.env.DRIVER_MEMORY)}, memorySamples:0,peakCgroupMemoryBytes:0,peakRssBytes:0 };
+driverMetrics.actualCgroupLimits={memoryBytes:Number(readFileSync('/sys/fs/cgroup/memory.max','utf8')),cpuMax:readFileSync('/sys/fs/cgroup/cpu.max','utf8').trim()};
+assert.equal(driverMetrics.actualCgroupLimits.memoryBytes,driverMetrics.limits.memoryBytes);
+const [driverQuota,driverPeriod]=driverMetrics.actualCgroupLimits.cpuMax.split(' ').map(Number);
+assert.equal(driverQuota/driverPeriod,driverMetrics.limits.cpu);
+metrics.driverObservation=driverMetrics;
+metrics.topologyVersion=3; metrics.measurementHost='separate_load_driver';
 // Preserve the prospective plan even if startup or collection fails.
 writeFileSync('/app/evidence/split-metrics.json', JSON.stringify(metrics, null, 2));
 const objects = await createPhysicalObjectStore('/app/evidence/split-objects', metrics.storageIo, metricStart);
 const sample = () => {
-    metrics.memorySamples++;
-    metrics.peakRssBytes = Math.max(metrics.peakRssBytes, process.memoryUsage().rss);
+    driverMetrics.memorySamples++;
+    driverMetrics.peakRssBytes = Math.max(driverMetrics.peakRssBytes, process.memoryUsage().rss);
     try {
         const current = Number(readFileSync('/sys/fs/cgroup/memory.current', 'utf8'));
         if (!Number.isFinite(current) || current <= 0) throw Error('MEMORY_UNAVAILABLE');
-        metrics.peakCgroupMemoryBytes = Math.max(metrics.peakCgroupMemoryBytes, current);
+        driverMetrics.peakCgroupMemoryBytes = Math.max(driverMetrics.peakCgroupMemoryBytes, current);
     }
     catch {
-        metrics.splitAbort = { code: 'MEMORY_UNAVAILABLE' };
+        metrics.splitAbort = { code: 'DRIVER_MEMORY_UNAVAILABLE' };
         writeFileSync('/app/evidence/split-metrics.json', JSON.stringify(metrics, null, 2));
         process.exit(86);
     }
 };
-const sampler = setInterval(() => { sample(); if(metrics.peakCgroupMemoryBytes >= Number(process.env.EVIDENCE_MEMORY)*.85) { metrics.capacity={status:'aborted',failure:'MEMORY_85_PERCENT'}; writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2)); process.exit(86); } }, 100);
+const sampler = setInterval(() => { sample(); if(driverMetrics.peakCgroupMemoryBytes >= driverMetrics.limits.memoryBytes*.85) { metrics.capacity={status:'aborted',failure:'DRIVER_MEMORY_85_PERCENT'}; writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2)); process.exit(86); } }, 100);
 sampler.unref();
 sample();
 const realFetch = globalThis.fetch;
@@ -130,7 +136,9 @@ const runSchema = z.object({
 });
 const runEnvelope = z.object({ import: runSchema });
 let photo;
-let server, baseUrl;
+let baseUrl = "http://127.0.0.1:3998", apiServerId;
+const apiControl = async (action) => { const response=await realFetch(baseUrl+"/__capacity/"+action,{method:action==='ready'?'GET':'POST'}); const result=await response.json(); assert.equal(response.status,200); return result; };
+const acceptApiMetrics = (value) => { assertApiServerMetrics(value,{imageDigest:metrics.imageDigest,cpu:metrics.limits.cpu,memoryBytes:metrics.limits.memoryBytes,serverId:apiServerId}); metrics.apiServerMetrics=value; for(const key of ['memorySamples','peakCgroupMemoryBytes','peakRssBytes','kernelPeakMemoryBytes','cpu','apiPoolObservation','observedPoolCaps','actualCgroupLimits']) metrics[key]=value[key]; return value; };
 before(async () => {
     process.env.MYDESK_MODE = "on";
     process.env.MYDESK_SEATING_MODE = "on";
@@ -174,16 +182,9 @@ before(async () => {
         assert.equal(policies.rows.length, 4);
         assert.ok(policies.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity && !row.owns_table));
     }
-    const app = createApp();
-    server = createServer(app);
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    assert.ok(address && typeof address === "object");
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    const ready = await apiControl('ready'); assert.equal(ready.role,'api'); assert.equal(ready.ready,true); apiServerId=ready.serverId;
 });
 after(async () => {
-    if (server)
-        await new Promise((resolve) => server.close(() => resolve()));
     const client = await fixturePool.connect();
     try {
         await client.query("BEGIN");
@@ -228,13 +229,17 @@ after(async () => {
         clearInterval(sampler);
         sample();
         metrics.durationMs = performance.now() - metricStart;
-        metrics.cpu = process.cpuUsage(cpuStart);
+        driverMetrics.cpu = process.cpuUsage(cpuStart);
+        driverMetrics.kernelPeakMemoryBytes = Number(readFileSync('/sys/fs/cgroup/memory.peak','utf8'));
+        driverMetrics.durationMs = metrics.durationMs;
+        try { acceptApiMetrics((await apiControl('metrics')).metrics); } catch { metrics.apiMetricsUnavailable=true; }
         const sorted = metrics.apiTimingsMs.sort((a, b) => a - b);
         metrics.api = { sampleCount: sorted.length, p50Ms: nearestRankPercentile(sorted, .5), p95Ms: nearestRankPercentile(sorted, .95), maxMs: sorted.at(-1) ?? null };
         delete metrics.apiTimingsMs;
         metrics.remainingPhysicalObjects = readdirSync('/app/evidence/split-objects').length;
         writeFileSync('/app/evidence/' + process.env.PAPERWORK_SCENARIO + '-metrics.json', JSON.stringify(metrics, null, 2));
         client.release();
+        try { await apiControl('shutdown'); } catch { /* Controller records API failure and retains its evidence. */ }
         await Promise.all([
             pool.end(),
             sessionPool.end(), schedulerPool.end(), schedulerLockPool.end(),
@@ -293,7 +298,7 @@ async function fixture() {
     });
     return f;
 }
-async function request(f, path, method = "GET", body, authorId = f.teacherId, cookie) {
+async function request(f, path, method = "GET", body, authorId = f.teacherId, cookie, probeId) {
     const headers = {
         "x-school-id": f.schoolId,
         "content-type": "application/json",
@@ -301,6 +306,7 @@ async function request(f, path, method = "GET", body, authorId = f.teacherId, co
     };
     if (cookie)
         headers.cookie = cookie;
+    if (probeId !== undefined) headers['x-capacity-probe-id'] = String(probeId);
     const response = await fetch(baseUrl + (path.startsWith("/api/") ? path : "/api/mydesk" + path), {
         method,
         headers,
@@ -368,8 +374,9 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const sources=[{bytes:padSyntheticPdf(multi,10485760),type:'application/pdf'},...Array.from({length:3},()=>({bytes:padSyntheticPdf(single,10485760),type:'application/pdf'})),{bytes:Buffer.concat([photo24,Buffer.alloc(10485760-photo24.length)]),type:'image/jpeg'}];
   const actors=await Promise.all([disciplineFixture(),disciplineFixture()]);
   const rpc=async(path,body={})=>{const response=await realFetch('http://127.0.0.1:3999'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const data=await response.json();assert.equal(response.status,200,JSON.stringify(data));return data;};
-  const { startApiObservation }=await import('/app/evidence/split-api-observation.mjs');
-  const apiObservation=await startApiObservation(metrics);
+  const apiStarted=await apiControl('start'); assert.equal(apiStarted.serverId,apiServerId);
+  let lastApiReady=true;
+  const apiObservation={assertReady(){assert.equal(lastApiReady,true,'API_READINESS_LOSS');},async stop(){acceptApiMetrics((await apiControl('stop')).metrics);}};
   await rpc('/observe/start',{actor:actors[0]});
   const endpointPaths=CAPACITY_READ_PATHS,plan=CAPACITY_MEASUREMENT_PLAN;
   const phaseObservation=()=>({startedAtMs:performance.now()-metricStart,finishedAtMs:null,observedThroughMs:null,
@@ -379,15 +386,16 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const warmupByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   const baseline=[],baselineByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   const loadedByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
-  let probePhase='warmup';
+  let probePhase='warmup', probeSequence=0;
   const probe=async(index,buckets)=>{
     apiObservation.assertReady();
-    const path=endpointPaths[index%endpointPaths.length];
+    const path=endpointPaths[index%endpointPaths.length], probeId=++probeSequence;
     const observation=metrics.measurementObservation[probePhase==='warmup'||probePhase==='baseline'?probePhase:'loaded'];
     try {
-      const {response,durationMs}=await measureReadProbe(metrics.readProbeEvidence,{path,phase:probePhase},
-        ()=>request(actors[0],path),{now:()=>performance.now(),originMs:metricStart});
-      assert.equal(response.status,200);buckets[path].push(durationMs);return durationMs;
+      const {response,durationMs}=await measureReadProbe(metrics.readProbeEvidence,{id:probeId,path,phase:probePhase},
+        ()=>request(actors[0],path,'GET',undefined,actors[0].teacherId,undefined,probeId),{now:()=>performance.now(),originMs:metricStart});
+      assert.equal(response.status,200);assert.equal(response.headers.get('x-capacity-server-id'),apiServerId);
+      lastApiReady=response.headers.get('x-capacity-api-ready')==='1';apiObservation.assertReady();buckets[path].push(durationMs);return durationMs;
     } finally { observation.countsByEndpoint[path]++;observation.observedThroughMs=performance.now()-metricStart; }
   };
   metrics.measurementObservation.warmup=phaseObservation();const warmupStarted=metrics.measurementObservation.warmup.startedAtMs+metricStart;let warmupCount=0;
@@ -463,7 +471,7 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const p95=samples=>nearestRankPercentile(samples,.95);
   const baselineP95=p95(baseline), loadedP95=p95(loaded);
   const endpointTimings=endpointPaths.map(path=>({path,baselineCount:baselineByEndpoint[path].length,loadedCount:loadedByEndpoint[path].length,baselineP95Ms:p95(baselineByEndpoint[path]),loadedP95Ms:p95(loadedByEndpoint[path])}));
-  metrics.capacity={status:operationFailure?'failed':'completed',processingMs:performance.now()-started,packets:finalRuns.length,sourceFiles:10,inputBytes:104857600,pages:40,forms:100,continuationRegions:40,ordinaryUploads:4,provider:'synthetic transport through real image preparation/parser',routing:'actual createApp middleware/auth/routing; ephemeral bearer tokens',endpointTimings,baselineApi:{count:baseline.length,p95Ms:baselineP95},loadedApi:{count:loaded.length,p95Ms:loadedP95},apiP95ChangeFraction:loadedP95/baselineP95-1,topology:'Separate exact-image API and worker with inspected CPU/memory limits; disposable isolated Postgres',claimSetup:'actual global claim transactions for initial work and continuation rebuilds',productionReadiness:false};
+  metrics.capacity={status:operationFailure?'failed':'completed',processingMs:performance.now()-started,packets:finalRuns.length,sourceFiles:10,inputBytes:104857600,pages:40,forms:100,continuationRegions:40,ordinaryUploads:4,provider:'synthetic transport through real image preparation/parser',routing:'separate exact-image API createApp middleware/auth/routing; ephemeral bearer tokens',endpointTimings,baselineApi:{count:baseline.length,p95Ms:baselineP95},loadedApi:{count:loaded.length,p95Ms:loadedP95},apiP95ChangeFraction:loadedP95/baselineP95-1,topology:'Separate driver, exact-image API and worker with inspected CPU/memory limits; shared Linux volume; disposable isolated Postgres',claimSetup:'actual global claim transactions for initial work and continuation rebuilds',productionReadiness:false};
   if(operationFailure) throw operationFailure;
   probePhase='cleanup';
   for(let i=0;i<finalRuns.length;i++) { const response=await request(actors[i],`/imports/${finalRuns[i].id}`,'DELETE',{requestId:randomUUID(),revision:finalRuns[i].revision,protocolVersion:2}); assert.equal(response.status,200); }
@@ -472,9 +480,11 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const remaining=await fixturePool.query("SELECT count(*)::int n FROM mydesk_imports WHERE status IN ('queued','processing')"); assert.equal(remaining.rows[0].n,0);
   metrics.capacity.queueDrained=true; metrics.capacity.latencyWindows=windows; metrics.workerMetrics=await rpc('/metrics'); await rpc('/shutdown');
   const validPeak=(peak,limit)=>Number.isFinite(peak)&&peak>0&&Number.isFinite(limit)&&limit>0&&peak<limit*.70;
-  metrics.kernelPeakMemoryBytes=Number(readFileSync('/sys/fs/cgroup/memory.peak','utf8'));
+  acceptApiMetrics((await apiControl('metrics')).metrics);
+  const matchedServerProbes=matchServerReadProbes(metrics.readProbeEvidence.samples,metrics.apiServerMetrics.serverProbeEvidence);
+  metrics.serverProbeMatching=matchedServerProbes;
   const observations=metrics.measurementObservation;
-  metrics.releaseCriteria={latencyWithin20Percent:loadedP95<=baselineP95*plan.p95Multiplier&&endpointTimings.every(row=>row.loadedP95Ms<=row.baselineP95Ms*plan.p95Multiplier),adequateSamples:
+  metrics.releaseCriteria={serverProbesMatched:true,latencyWithin20Percent:loadedP95<=baselineP95*plan.p95Multiplier&&endpointTimings.every(row=>row.loadedP95Ms<=row.baselineP95Ms*plan.p95Multiplier),adequateSamples:
     samplingPhaseComplete('warmup',observations.warmup.finishedAtMs-observations.warmup.startedAtMs,counts(warmupByEndpoint))&&
     samplingPhaseComplete('baseline',observations.baseline.finishedAtMs-observations.baseline.startedAtMs,counts(baselineByEndpoint))&&
     samplingPhaseComplete('loaded',observations.loaded.workCompletedAtMs-observations.loaded.startedAtMs,counts(loadedByEndpoint)),
