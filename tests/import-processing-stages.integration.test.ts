@@ -132,6 +132,25 @@ test("completed checkpoints skip work and failed stages retain independent bound
   assert.ok((metrics.timings.importExtractionMs?.totalMs ?? 0)>0);
 });
 
+test("retryable extraction validation retains three attempts despite HTTP 422",async()=>{
+  const options=await run();let calls=0;
+  const work=async()=>{calls++;throw Object.assign(new Error("synthetic incomplete response"),{
+    code:"MYDESK_IMPORT_AI_INCOMPLETE",status:422,retryable:true,
+  });};
+  for(let attempt=1;attempt<=3;attempt++) {
+    const result=await withDurableImportStage(actor,options,work);
+    assert.equal(result.status,attempt===3?"failed":"retry");
+    assert.equal(calls,attempt);
+    await pool.query("UPDATE import_processing_stages SET next_attempt_at=now()-interval '1 second' WHERE import_id=$1",[options.runId]);
+  }
+  assert.equal((await withDurableImportStage(actor,options,work)).status,"failed");
+  assert.equal(calls,3);
+  const invalid=await withDurableImportStage(actor,{...options,stageKey:"extract:invalid"},async()=>{
+    throw Object.assign(new Error("synthetic invalid input"),{status:422});
+  });
+  assert.equal(invalid.status,"failed");
+});
+
 test("cancellation fences evidence writes and holds provider ownership until the transport settles",async()=>{
   const options=await run();const entered=latch(),finish=latch();
   const pending=withDurableImportStage(actor,options,async(_signal,fence)=>{entered.release();await finish.promise;await database.transaction(tx=>fence(tx));return "late";});

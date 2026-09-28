@@ -220,7 +220,10 @@ export async function withDurableImportStage<T>(actor: Actor, options: ImportSta
     const code = safeCode(error);
     // Shutdown aborts are resumable. Explicit cancellation/expiry and access loss are not.
     const accessLost = /NOT_ENABLED|FORBIDDEN|NOT_AUTHORIZED|ACCESS|MEMBERSHIP|ENTITLEMENT|SCHOOL_UNAVAILABLE/.test(code);
-    const nonRetryable = error && typeof error === "object" && (("retryable" in error && error.retryable === false) || ("status" in error && error.status === 422));
+    // Extraction validation errors deliberately carry retryable=true with HTTP 422.
+    // Honor the processing contract before falling back to a generic input status.
+    const nonRetryable = error && typeof error === "object" && ("retryable" in error && typeof error.retryable === "boolean"
+      ? !error.retryable : "status" in error && error.status === 422);
     const result = await database.transaction(async tx => {
       // Match claim/result transaction lock order: parent before stage, including cancellation settlement.
       const parent = await tx.execute<{ status: string; expired: boolean }>(sql`SELECT status,expires_at<=clock_timestamp() AS expired FROM ${parentTable(options.kind)} WHERE id=${options.runId} AND school_id=${actor.schoolId} AND author_id=${actor.authorId} FOR UPDATE`);
