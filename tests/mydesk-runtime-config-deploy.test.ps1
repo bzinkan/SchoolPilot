@@ -471,6 +471,17 @@ try {
     $pipelineConfig | Add-Member pipelineWidth 1
     $pipelineRuntime = ConvertTo-MyDeskRuntime $pipelineConfig
     Assert-Condition ($pipelineRuntime.Environment.MYDESK_IMPORT_PIPELINE_VERSION -ceq '2' -and $pipelineRuntime.Environment.MYDESK_IMPORT_PIPELINE_WIDTH -ceq '1') 'Serial rollback must retain the v2 protocol.'
+    $pipelineEvidence = New-TestAiEvidence
+    Assert-Throws { Assert-ImportCapacityConfiguration $pipelineConfig $pipelineEvidence } 'Old capacity proof cannot enable the new engine.'
+    $pipelineEvidence | Add-Member pipelineVersion 1
+    $pipelineEvidence | Add-Member pipelineWidth 2
+    Assert-Throws { Assert-ImportCapacityConfiguration $pipelineConfig $pipelineEvidence } 'Serial protocol capacity is not pipeline evidence.'
+    $pipelineEvidence.pipelineVersion = 2; $pipelineEvidence.pipelineWidth = 1; $pipelineConfig.pipelineWidth = 2
+    Assert-Throws { Assert-ImportCapacityConfiguration $pipelineConfig $pipelineEvidence } 'One-slot proof cannot authorize two-slot processing.'
+    $pipelineEvidence.pipelineWidth = 2
+    Assert-ImportCapacityConfiguration $pipelineConfig $pipelineEvidence
+    $pipelineConfig.pipelineWidth = 1
+    Assert-ImportCapacityConfiguration $pipelineConfig $pipelineEvidence
     $pipelineSnapshot = [pscustomobject]@{ Environments = @(@{ RLS_ENABLED_TABLES = 'mydesk_imports' }, @{ RLS_ENABLED_TABLES = 'mydesk_imports' }) }
     Assert-Throws { Assert-PaperworkPipelineAdmission $pipelineRuntime $pipelineSnapshot } 'Activation requires the exact processing-stage RLS admission.'
     $pipelineSnapshot.Environments[0].RLS_ENABLED_TABLES += ',import_processing_stages'
@@ -494,6 +505,21 @@ try {
         $container = if ($role -ceq 'Api') { 'api' } else { 'scheduler-worker' }
         $runtime = Get-MyDeskEnvironment $response.taskDefinition $container
         Assert-Condition ($runtime['MYDESK_IMPORT_PIPELINE_VERSION'] -ceq '2' -and $runtime['MYDESK_IMPORT_PIPELINE_WIDTH'] -ceq '1') 'Rollback must preserve the ledger protocol and serialize both services.'
+    }
+    Reset-MyDeskMock
+    foreach ($arn in @($script:TestApiArn,$script:TestWorkerArn)) {
+        Set-TestEnvironment $script:Mock.Tasks[$arn] 'RLS_ENABLED_TABLES' ('students,' + ($script:MyDeskTables -join ',') + ',import_processing_stages')
+    }
+    $pipelinePlan = New-MyDeskPlan $pipelineConfig $script:TestDirectory $script:TestApiArn $script:TestWorkerArn $script:TestDigest $script:TestSha $null $null
+    $script:Mock.FailWorkerOnce = $true
+    Assert-Throws { Invoke-MyDeskApply $pipelinePlan.plan $pipelinePlan.sha256 $script:TestDirectory } 'Interrupted pipeline apply must run bounded recovery.'
+    $pipelineReceipt = (Read-StrictJsonSnapshot (Join-Path $script:TestDirectory "$($pipelinePlan.plan.runId)-result.json")).Value
+    Assert-Condition ($pipelineReceipt.status -ceq 'rolled_back') 'Pipeline recovery must converge before releasing its operation fence.'
+    foreach ($role in @('Api','Worker')) {
+        $response = $script:Mock.Tasks[$script:Mock.Services.$role.taskDefinition]
+        $container = if ($role -ceq 'Api') { 'api' } else { 'scheduler-worker' }
+        $runtime = Get-MyDeskEnvironment $response.taskDefinition $container
+        Assert-Condition ($runtime['MYDESK_IMPORT_PIPELINE_VERSION'] -ceq '2' -and $runtime['MYDESK_IMPORT_PIPELINE_WIDTH'] -ceq '1') 'Automatic failure recovery must serialize ledger-aware processing.'
     }
     Write-Host "My Desk runtime configuration tests passed ($script:Assertions assertions)."
 } finally {

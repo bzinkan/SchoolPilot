@@ -218,6 +218,21 @@ function Assert-MyDeskStorageRoles {
     }
 }
 
+function Assert-ImportCapacityConfiguration {
+    param($Config, $Evidence)
+    $version = if ($null -ne $Config.PSObject.Properties['pipelineVersion']) { $Config.pipelineVersion } else { 1 }
+    $width = if ($null -ne $Config.PSObject.Properties['pipelineWidth']) { $Config.pipelineWidth } else { 2 }
+    $hasVersion = $null -ne $Evidence.PSObject.Properties['pipelineVersion']
+    $hasWidth = $null -ne $Evidence.PSObject.Properties['pipelineWidth']
+    if ($version -eq 2 -or $hasVersion -or $hasWidth) {
+        if (-not $hasVersion -or -not $hasWidth -or
+            -not (Test-IsJsonInteger $Evidence.pipelineVersion) -or -not (Test-IsJsonInteger $Evidence.pipelineWidth) -or
+            $Evidence.pipelineVersion -ne $version -or $Evidence.pipelineWidth -notin @(1,2) -or $Evidence.pipelineWidth -lt $width) {
+            throw 'Capacity evidence must bind the requested processing protocol and width.'
+        }
+    }
+}
+
 function Assert-MyDeskAiReadiness {
     param($Config, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot)
     if ($Config.aiImportMode -ceq 'off') { return $null }
@@ -229,8 +244,9 @@ function Assert-MyDeskAiReadiness {
         'qualityReportSha256', 'capacityReportSha256', 'typedPrecision', 'typedRecall', 'typedFieldAccuracy', 'criticalFailures',
         'pageCount', 'formCount', 'correctionTimingRecorded', 'workerCpu', 'workerMemory', 'peakMemoryFraction', 'apiP95Ratio',
         'noServiceDisruption', 'reviewAndRecoveryPassed')
-    Assert-ExactProperties -Value $e -Allowed $fields -Trail 'AI readiness'
-    if (@($e.PSObject.Properties.Name).Count -ne $fields.Count -or $e.schemaVersion -ne 1) { throw 'Incomplete AI readiness evidence.' }
+    Assert-ExactProperties -Value $e -Allowed ($fields + @('pipelineVersion','pipelineWidth')) -Trail 'AI readiness'
+    if (@($fields | Where-Object { $null -eq $e.PSObject.Properties[$_] }).Count -or $e.schemaVersion -ne 1) { throw 'Incomplete AI readiness evidence.' }
+    Assert-ImportCapacityConfiguration $Config $e
     [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'AI readiness' -Now ([DateTimeOffset]::UtcNow))
     $processing = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'src/services/mydeskImportProcessing.ts'))
     $prompt = [regex]::Match($processing, 'MYDESK_IMPORT_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
@@ -275,8 +291,9 @@ function Assert-StudentInformationAiReadiness {
         'providerContactReviewApproved', 'qualityReportSha256', 'capacityReportSha256', 'profileCount', 'sourceFormats',
         'typedPhoneEmailAccuracy', 'difficultCasesReported', 'criticalFailures', 'correctionTimingRecorded',
         'workerCpu', 'workerMemory', 'peakMemoryFraction', 'apiP95Ratio', 'noServiceDisruption', 'reviewAndRecoveryPassed')
-    Assert-ExactProperties -Value $e -Allowed $fields -Trail 'Contact AI readiness'
-    if (@($e.PSObject.Properties.Name).Count -ne $fields.Count -or $e.schemaVersion -ne 1) { throw 'Incomplete contact AI readiness evidence.' }
+    Assert-ExactProperties -Value $e -Allowed ($fields + @('pipelineVersion','pipelineWidth')) -Trail 'Contact AI readiness'
+    if (@($fields | Where-Object { $null -eq $e.PSObject.Properties[$_] }).Count -or $e.schemaVersion -ne 1) { throw 'Incomplete contact AI readiness evidence.' }
+    Assert-ImportCapacityConfiguration $Config $e
     [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'Contact AI readiness' -Now ([DateTimeOffset]::UtcNow))
     $validation = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'src/services/studentInformationValidation.ts'))
     $prompt = [regex]::Match($validation, 'INFORMATION_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
@@ -465,6 +482,7 @@ function Invoke-MyDeskApply {
                 [void](Assert-ScalingHoldExact)
                 $recoveryConfig = $Plan.config | ConvertTo-Json | ConvertFrom-Json
                 foreach ($name in $script:MyDeskModeNames) { $recoveryConfig.$name = $Plan.priorModes.$name }
+                if ($null -ne $recoveryConfig.PSObject.Properties['pipelineVersion'] -and $recoveryConfig.pipelineVersion -eq 2) { $recoveryConfig.pipelineWidth = 1 }
                 # An off-plan can change model/budgets without activation
                 # evidence. Never restore prior AI=on under those new values.
                 # Restore the frozen source configuration; only keep the newly
