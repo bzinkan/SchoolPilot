@@ -107,6 +107,21 @@ async function screenshot(page, name) {
   await target.screenshot({ path: path.join(process.env.MYDESK_SCREENSHOT_DIR, name) });
 }
 
+test('private detention and referral notes say whether a readable school copy exists', async () => {
+  const student = { targetKind: 'student', category: 'detention', studentName: 'Avery Lee', filingStudentId: 'student-a' };
+  const t = await setup({ initial: [fixtureNote({ ...student, id: 'unlogged', title: 'Kept in at recess', disciplineCopy: null }),
+    fixtureNote({ ...student, id: 'logged', title: 'Detention assigned', entryDate: '2026-09-24', disciplineCopy: 'submitted' }), fixtureNote({ id: 'plain', title: 'Tray reminder', entryDate: '2026-09-23' })] });
+  try {
+    const unlogged = t.page.getByRole('article', { name: 'Kept in at recess' });
+    await unlogged.getByText('Not in discipline logs', { exact: true }).waitFor();
+    assert.equal(await t.page.getByRole('article', { name: 'Detention assigned' }).getByText('In discipline logs', { exact: true }).count(), 1);
+    assert.equal(await t.page.getByRole('article', { name: 'Tray reminder' }).getByText(/discipline logs/).count(), 0);
+    assert.equal(await unlogged.getByRole('link', { name: 'Avery Lee' }).getAttribute('href'), '/classpilot/my-desk/student-overview/student-a?from=notes');
+    assert.match(await unlogged.locator('time').first().textContent(), /^Sep 25/);
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
 test('notebook sections replace the rail and the scope bar pauses for general notes', async () => {
   const t = await setup();
   try {

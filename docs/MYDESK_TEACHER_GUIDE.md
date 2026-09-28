@@ -35,7 +35,9 @@ storage allows 1,000 pages; AI processing has smaller limits. Unsupported,
 encrypted or unreadable files need conversion.
 
 Pin, edit, refile or delete whenever needed. Categories remain private labels:
-referral or detention does not create a shared incident. Search and CSV export
+referral or detention does not create a shared incident, and such a note says
+whether it is in the discipline log (only while you can still see that record).
+Search and CSV export
 follow your filters; attachment links require sign-in. Past classes/grades retain
 historical filing. Notes are grouped as **All notes**, **General**, **By student**
 and **Past grades and classes**. **By student** shows only your notes across
@@ -48,8 +50,12 @@ student note to Discipline logs requires a separate school-record confirmation.
 
 ## Discipline logs: shared student incidents
 
-Open a student to see dated incidents, typed information and corresponding forms.
-Directory totals follow the displayed school-year/date filter. One incident may
+The list starts with students who have incidents; switch on **Show all students**
+to see the whole roster. **Recording teacher** filters to anyone, you, or a name
+you type. Choose a student to open one student page with their incidents, your
+private notes and their contacts, each labeled **Private** or **School record**;
+from there, **All incidents** shows dated incidents, typed information and
+corresponding forms. Directory totals follow the displayed school-year/date filter. One incident may
 record both a referral and an assigned detention. One detention assignment counts
 once even with several scheduled dates. Withdrawn/superseded versions do not
 inflate active totals. These are recorded events, not student ratings.

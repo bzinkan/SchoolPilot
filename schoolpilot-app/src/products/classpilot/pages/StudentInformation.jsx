@@ -73,7 +73,7 @@ function DirectoryScopeBar({ access }) {
   );
 }
 
-function Directory({ access, inlineScope }) {
+function Directory({ access, adminEntry }) {
   const Heading = useAdminShell() ? "h2" : "h1";
   const [search, setSearch] = useState(""),
     [inactive, setInactive] = useState(false),
@@ -147,7 +147,7 @@ function Directory({ access, inlineScope }) {
           }
         />
       )}
-      {inlineScope && (
+      {adminEntry && (
         <MyDeskScopePicker
           classes={classes}
           schoolId={access.schoolId}
@@ -195,7 +195,11 @@ function Directory({ access, inlineScope }) {
                 <tr key={student.id}>
                   <td>
                     <Link
-                      to={withDisciplineEntry(`/classpilot/my-desk/student-information/${encodeURIComponent(student.id)}`, params)}
+                      to={
+                        adminEntry
+                          ? withDisciplineEntry(`/classpilot/my-desk/student-information/${encodeURIComponent(student.id)}`, params)
+                          : `/classpilot/my-desk/student-overview/${encodeURIComponent(student.id)}?from=student-information`
+                      }
                     >
                       {student.name}
                     </Link>
@@ -321,7 +325,7 @@ export default function StudentInformation() {
           />
         </>
       ) : (
-        <Directory access={access} inlineScope={adminEntry} />
+        <Directory access={access} adminEntry={adminEntry} />
       )}
     </StudentInformationShell>
   );

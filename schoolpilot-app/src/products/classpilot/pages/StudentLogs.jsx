@@ -44,7 +44,7 @@ export function StudentDirectory({ access }) {
     <label className="mydesk-search">Find a student<Input maxLength={200} value={search} onChange={event => setSearch(event.target.value)} placeholder="Student name" /></label>
     {query.isPending ? <p role="status">Loading students…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <p className="mydesk-empty">No current roster students match.</p> :
       <div className="mydesk-note-list">{rows.map(student => <article className="mydesk-note" key={student.id}>
-        <h2><Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(student.id)}`}>{student.name}</Link></h2>
+        <h2><Link to={`/classpilot/my-desk/student-overview/${encodeURIComponent(student.id)}?from=notes`}>{student.name}</Link></h2>
         <p>{student.classes.map(group => group.name).join(' · ')}</p><p>{student.noteCount} private {student.noteCount === 1 ? 'note' : 'notes'} across all years</p>
         <div className="mydesk-note-actions"><Button asChild variant="outline"><Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(student.id)}`}>Open private history</Link></Button><MyDeskStudentAction access={access} student={student} /></div>
       </article>)}</div>}
