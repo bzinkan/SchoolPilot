@@ -201,6 +201,32 @@ describe("SOC 2 governance evidence checker", () => {
     assert.match(result.errors[0], /overstated SOC 2 readiness/);
   });
 
+  it("fails when public pages call Schoolpilot SOC 2 compliant or OneRoster certified", () => {
+    const root = tempRoot();
+    write(
+      root,
+      "schoolpilot-app/src/pages/legal/securityPosture.js",
+      "export const a = 'SOC 2 Type II compliant';\nexport const b = 'OneRoster-certified import';\n",
+    );
+
+    const result = scanPublicClaimFiles(root);
+
+    assert.equal(result.errors.length, 2);
+    assert.match(result.errors[0], /securityPosture\.js:1 calls Schoolpilot SOC 2 compliant/);
+    assert.match(result.errors[1], /securityPosture\.js:2 claims OneRoster certification/);
+  });
+
+  it("accepts the readiness and import wording the claim register allows", () => {
+    const root = tempRoot();
+    write(
+      root,
+      "schoolpilot-app/src/pages/legal/securityPosture.js",
+      "detail: 'Working toward SOC 2 Type II readiness'\ndetail: 'Bulk CSV roster import from OneRoster 1.2 exports'\n",
+    );
+
+    assert.deepEqual(scanPublicClaimFiles(root).errors, []);
+  });
+
   it("builds a passing packet when only human approvals are pending", () => {
     const root = tempRoot();
     const doc = validGovernanceDoc();

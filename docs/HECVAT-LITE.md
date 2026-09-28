@@ -3,7 +3,7 @@
 **Vendor:** Schoolpilot LLC
 **Product:** Schoolpilot (ClassPilot, PassPilot, GoPilot)
 **Website:** https://school-pilot.net
-**Assessment Date:** April 19, 2026
+**Assessment Date:** September 28, 2026
 **Assessor:** Internal self-assessment
 **Contact:** security@school-pilot.net
 
@@ -14,6 +14,8 @@
 This is a completed HECVAT Lite (Higher Education Community Vendor Assessment Toolkit) self-assessment provided to school districts and higher-ed institutions to support procurement and security review.
 
 The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-ISAC. It is the industry-standard security questionnaire for EdTech vendors. Schoolpilot provides this self-assessment to streamline procurement — contact security@school-pilot.net if you require the full HECVAT or additional documentation under NDA.
+
+The current version is published at https://school-pilot.net/security/hecvat-lite, alongside a one-page summary at https://school-pilot.net/security/summary.
 
 **Response legend:**
 - **Yes** — Requirement is fully met
@@ -75,8 +77,8 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 |---|----------|----------|-------|
 | 4.1 | Where is production data stored? | **Yes** | Amazon Web Services, us-east-1 (United States) |
 | 4.2 | Is data stored outside the United States? | **No** | All production data stays in us-east-1 |
-| 4.3 | Is data segregated from other customers? | **Yes** | Multi-tenant database with row-level `school_id` scoping enforced at application layer |
-| 4.4 | Is customer data commingled with other customers? | **Partial** | Multi-tenant schema with per-row tenant isolation; physical DB shared, logical rows isolated |
+| 4.3 | Is data segregated from other customers? | **Yes** | Multi-tenant database; every tenant row is scoped by `school_id` in the application and by PostgreSQL row-level security (RLS) on tenant tables in production |
+| 4.4 | Is customer data commingled with other customers? | **Partial** | Multi-tenant schema; physical database shared, rows isolated per school by application scoping and PostgreSQL RLS |
 | 4.5 | Backups encrypted? | **Yes** | RDS automated backups inherit encryption-at-rest |
 | 4.6 | Backup retention period? | **Yes** | 7-day automated snapshots + on-demand manual snapshots |
 | 4.7 | Data center certifications (SOC, ISO)? | **Yes** | AWS maintains SOC 1/2/3 Type II, ISO 27001, ISO 27017, ISO 27018, FedRAMP Moderate |
@@ -105,7 +107,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 
 | # | Question | Response | Notes |
 |---|----------|----------|-------|
-| 6.1 | Does the product support SSO? | **Partial** | Google OAuth supported for teacher/admin login. SAML 2.0 on the roadmap. |
+| 6.1 | Does the product support SSO? | **Partial** | Google OAuth supported for teacher/admin login. Microsoft Entra ID sign-in and SAML 2.0 are on the roadmap. |
 | 6.2 | Does the product support SAML 2.0? | **No** | Roadmap item — contact for ETA |
 | 6.3 | Does the product support OAuth / OIDC? | **Yes** | Google OAuth for authentication |
 | 6.4 | Does the product support ADFS? | **No** | SAML (future) will enable ADFS compatibility |
@@ -121,9 +123,9 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 | 7.1 | Secure development lifecycle (SDLC) documented? | **Yes** | WISP Section 5.5: PR review, CI security audit, no prod data in dev |
 | 7.2 | Code review on all changes? | **Yes** | PR-based review required before merge to main |
 | 7.3 | Dependency vulnerability scanning? | **Yes** | Every CI build blocks high/critical production-dependency findings unless a narrowly scoped, time-bound, evidence-backed disposition passes validation; the complete production and development dependency tree is scanned, with normalized findings and dependency counts retained and reviewed |
-| 7.4 | Static application security testing (SAST)? | **Partial** | TypeScript type checker + ESLint in CI; dedicated SAST tooling on roadmap |
+| 7.4 | Static application security testing (SAST)? | **Yes** | GitHub CodeQL runs on every push and pull request to main and weekly, and fails on any error- or warning-severity finding; Gitleaks secret scanning runs on every push and pull request |
 | 7.5 | Dynamic application security testing (DAST)? | **No** | Planned with third-party pentest |
-| 7.6 | Input validation framework? | **Yes** | Zod schema validation on all API inputs; Drizzle ORM parameterized queries prevent SQL injection |
+| 7.6 | Input validation framework? | **Partial** | Zod schema validation on many, but not yet all, API inputs; Drizzle ORM parameterized queries prevent SQL injection |
 | 7.7 | Content Security Policy (CSP) headers? | **Yes** | Helmet default CSP enabled |
 | 7.8 | Rate limiting on authentication endpoints? | **Yes** | IP-based (15 attempts / 15 min) + per-account lockout (10 attempts → 30 min) |
 | 7.9 | Third-party penetration test conducted? | **No** | Planned for next funding cycle |
@@ -199,10 +201,10 @@ Under NDA, the following documents are provided to schools and qualified assesso
 
 The following items are not yet met and are documented in our security roadmap:
 
-1. **SOC 2 Type II certification** — planned post-funding (cost: ~$20K, 12-month observation)
+1. **SOC 2 Type II** — working toward readiness; audit planned post-funding (cost: ~$20K, 12-month observation)
 2. **Third-party penetration test** — planned post-funding (~$10-15K)
 3. **In-app MFA for school admins and super_admins** — deferred and tracked in the SOC 2 remediation register
-4. **SAML 2.0 SSO** — on roadmap (Google OAuth currently supported)
+4. **SAML 2.0 and Microsoft Entra ID SSO** — on roadmap (Google OAuth currently supported)
 5. **Cyber liability insurance** — in procurement
 6. **AWS WAF** — deployed on the CloudFront distribution (managed rule groups plus per-IP rate limiting on device ingest and the API, with CloudWatch alarms on blocks); remaining hardening (custom rate keys per device) is tracked in the roadmap
 

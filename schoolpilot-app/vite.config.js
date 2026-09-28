@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -35,6 +36,13 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    fs: {
+      // The public HECVAT page imports this single repo doc as raw text.
+      allow: [
+        searchForWorkspaceRoot(fileURLToPath(new URL('.', import.meta.url))),
+        fileURLToPath(new URL('../docs/HECVAT-LITE.md', import.meta.url)),
+      ],
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
