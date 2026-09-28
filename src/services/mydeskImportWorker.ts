@@ -166,6 +166,7 @@ export async function putDerived(
       422,
     );
   const sha256 = myDeskSha256(bytes);
+  const requestFingerprint = importHash([descriptor, sha256]);
   const asset = await withLease(actor, runId, leaseId, async (database) => {
     await assertStage?.(database);
     const [existing] = await database
@@ -174,6 +175,10 @@ export async function putDerived(
       .where(importAssetOwn(actor, runId, descriptor.id))
       .for("update");
     if (existing) {
+      // An earlier PUT may still finish after its lease is replaced. Every writer
+      // to this immutable key must therefore use identical bytes and metadata.
+      if (existing.inputSha256 !== sha256 || existing.requestFingerprint !== requestFingerprint || existing.contentType !== contentType)
+        throw importError("DERIVED_CONTENT_CHANGED", "The prepared file changed during retry. Rebuild this form or start a new import", 422);
       if (existing.status === "ready" && existing.sha256 === sha256)
         return existing;
       if (!["pending", "uploading"].includes(existing.status))
@@ -198,7 +203,7 @@ export async function putDerived(
         authorId: actor.authorId,
         importId: runId,
         clientRequestId: descriptor.id,
-        requestFingerprint: importHash([descriptor, sha256]),
+        requestFingerprint,
         storageKey: `mydesk/${actor.schoolId}/${actor.authorId}/imports/${runId}/${descriptor.id}`,
         contentType,
         byteSize: bytes.length,

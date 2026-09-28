@@ -3,6 +3,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { importProcessingStages as stages, type ImportProcessingKind, type ImportProcessingStage } from "../schema/importProcessingStages.js";
 import { schedulerDb } from "./schedulerDb.js";
 import type { MyDeskDatabase } from "./mydesk.js";
+import { recordRuntimePerformanceCounter, recordRuntimePerformanceTiming, type RuntimePerformanceTiming } from "./runtimePerformanceMetrics.js";
 
 export const IMPORT_PROVIDER_CONCURRENCY = 2;
 export const IMPORT_STAGE_ATTEMPTS = 3;
@@ -158,6 +159,7 @@ function pause(ms: number, signal?: AbortSignal) {
 export async function withDurableImportStage<T>(actor: Actor, options: ImportStageOptions,
   work: (signal: AbortSignal, assertCurrent: (tx: MyDeskDatabase) => Promise<void>) => Promise<T>,
 ): Promise<ImportStageResult<T>> {
+  const admissionStarted = performance.now();
   let claim: Claim;
   for (;;) {
     if (options.signal?.aborted) throw cancelled();
@@ -167,6 +169,11 @@ export async function withDurableImportStage<T>(actor: Actor, options: ImportSta
     await pause(250, options.signal);
   }
   if (claim.status !== "claimed") return claim;
+  recordRuntimePerformanceTiming("importStageAdmissionMs", performance.now() - admissionStarted);
+  const operationStarted = performance.now();
+  const stageTiming: Record<string, RuntimePerformanceTiming> = {
+    render: "importRenderMs", detect: "importDetectionMs", extract: "importExtractionMs", build: "importEvidenceMs",
+  };
   const { row, token } = claim;
   const database = options.database ?? schedulerDb;
   const controller = new AbortController();
@@ -207,6 +214,7 @@ export async function withDurableImportStage<T>(actor: Actor, options: ImportSta
       await tx.update(stages).set({ status:"completed", leaseId:null, leaseUntil:null, requestDeadline:null, parentLeaseId:null, lastErrorCode:null, updatedAt:new Date() }).where(eq(stages.id,row.id));
       await bumpProgress(tx,actor,options);
     });
+    recordRuntimePerformanceCounter("importStageCompleted");
     return { status:"completed", value };
   } catch (error) {
     const code = safeCode(error);
@@ -228,8 +236,11 @@ export async function withDurableImportStage<T>(actor: Actor, options: ImportSta
       return {state,nextAttemptAt};
     });
     if (!result || result.state === "cancelled" || (code === "MYDESK_IMPORT_JOB_CANCELLED" && !options.signal?.aborted)) throw error;
+    recordRuntimePerformanceCounter(result.state === "failed" ? "importStageFailed" : "importStageRetry");
     return { status: result.state === "failed" ? "failed" : "retry", errorCode:code, ...(result.nextAttemptAt ? {nextAttemptAt:result.nextAttemptAt}: {}) };
   } finally {
+    const timing = stageTiming[options.stageKey.split(":")[0]!];
+    if (timing) recordRuntimePerformanceTiming(timing, performance.now() - operationStarted);
     clearTimeout(timeout); clearTimeout(authorityTimer);
     controller.abort();
     options.signal?.removeEventListener("abort",abort);

@@ -1611,6 +1611,56 @@ test("v2 derived asset PUT completion cannot publish after its stage fence expir
   }
 });
 
+test("a derived reservation permits only identical retry bytes when an earlier PUT finishes late", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const putting = new Promise<void>(resolve => { entered = resolve; });
+  let id: string | undefined, pending: Promise<unknown> | undefined;
+  try {
+    const f = await fixture();
+    let run = await createRun(f);
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run); id = run.id;
+    const [claim] = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(claim?.id, id);
+    const actor = { schoolId: claim!.schoolId, authorId: claim!.authorId, manager: false };
+    const descriptor = { id: randomUUID(), kind: "page" as const,
+      parentAssetId: run.assets.find(asset => asset.kind === "source")!.id,
+      pageNumber: 1, width: 800, height: 1000, pageCount: 1 };
+    let puts = 0;
+    pending = putDerived(actor, id, claim!.leaseId!, descriptor, photo, "image/jpeg", {
+      ...myDeskObjectStore,
+      async put(key, bytes) { puts++; entered(); await gate; objects.set(key, Buffer.from(bytes)); },
+    });
+    await putting;
+    const replacementLease = randomUUID();
+    await fixturePool.query("UPDATE mydesk_imports SET lease_id=$2,lease_until=clock_timestamp()+interval '5 minutes' WHERE id=$1", [id, replacementLease]);
+    const retryStore = { ...myDeskObjectStore,
+      async put(key: string, bytes: Buffer) { puts++; objects.set(key, Buffer.from(bytes)); },
+    };
+    await assert.rejects(putDerived(actor, id, replacementLease, descriptor,
+      Buffer.concat([photo, Buffer.from("changed")]), "image/jpeg", retryStore), { code: "MYDESK_IMPORT_DERIVED_CONTENT_CHANGED" });
+    await assert.rejects(putDerived(actor, id, replacementLease, { ...descriptor, width: 801 },
+      photo, "image/jpeg", retryStore), { code: "MYDESK_IMPORT_DERIVED_CONTENT_CHANGED" });
+    assert.equal(puts, 1, "Conflicting retries never write to the reserved object key");
+    const ready = await putDerived(actor, id, replacementLease, descriptor, photo, "image/jpeg", retryStore);
+    assert.equal(ready.status, "ready");
+    assert.equal(puts, 2);
+    release();
+    await assert.rejects(pending, { code: "MYDESK_IMPORT_JOB_CANCELLED" });
+    pending = undefined;
+    const stored = (await fixturePool.query("SELECT status,sha256,storage_key FROM mydesk_import_assets WHERE id=$1", [descriptor.id])).rows[0];
+    assert.equal(stored.status, "ready");
+    assert.equal(stored.sha256, myDeskSha256(photo));
+    assert.deepEqual(objects.get(stored.storage_key), photo, "The late old writer can only reproduce the approved bytes");
+  } finally {
+    release?.(); await pending?.catch(() => undefined);
+    if (id) await fixturePool.query("UPDATE mydesk_imports SET status='cancelled',lease_id=NULL,lease_until=NULL WHERE id=$1", [id]);
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
+  }
+});
+
 test("durable stage retries avoid repeated detection/extraction and stop after three failed attempts", async () => {
   const f = await fixture();
   let renderCalls = 0,

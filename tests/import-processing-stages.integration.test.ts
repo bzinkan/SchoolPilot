@@ -9,6 +9,7 @@ import { IMPORT_PROCESSING_STAGES_SQL, importProcessingStagesMigration } from ".
 import { schoolPilot27ExpandMigrations } from "../src/db/migrations27.js";
 import { runSchoolPilotMigrationLedger } from "../src/db/migrationLedger.js";
 import { withDurableImportStage, cancelImportProcessingStages, invalidateImportItemStages, reconcileImportStageCheckpoint, type ImportStageOptions } from "../src/services/importProcessingStages.js";
+import { snapshotRuntimePerformanceMetrics } from "../src/services/runtimePerformanceMetrics.js";
 
 const suffix = `${process.pid}_${randomUUID().replaceAll("-", "")}`;
 const fixture = `stages_${suffix}`, role = `stages_rls_${suffix}`;
@@ -104,6 +105,7 @@ test("a draining legacy worker reserves a global provider slot during the rollin
 });
 
 test("completed checkpoints skip work and failed stages retain independent bounded retry attempts",async()=>{
+  snapshotRuntimePerformanceMetrics({reset:true});
   const options=await run();let calls=0;
   const work=async()=>{calls++;return "done";};
   assert.equal((await withDurableImportStage(actor,options,work)).status,"completed");
@@ -120,6 +122,14 @@ test("completed checkpoints skip work and failed stages retain independent bound
   assert.equal(exhausted.status,"failed");assert.equal(calls,1);
   const legacy=await withDurableImportStage(actor,{...options,stageKey:"detect:legacy",initialAttempts:3},work);
   assert.equal(legacy.status,"failed");assert.equal(calls,1);
+  const metrics=snapshotRuntimePerformanceMetrics({reset:true});
+  assert.equal(metrics.counters.importStageCompleted,1);
+  assert.equal(metrics.counters.importStageRetry,2);
+  assert.equal(metrics.counters.importStageFailed,1);
+  assert.equal(metrics.timings.importStageAdmissionMs?.count,4);
+  assert.equal(metrics.timings.importDetectionMs?.count,1);
+  assert.equal(metrics.timings.importExtractionMs?.count,3);
+  assert.ok((metrics.timings.importExtractionMs?.totalMs ?? 0)>0);
 });
 
 test("cancellation fences evidence writes and holds provider ownership until the transport settles",async()=>{
