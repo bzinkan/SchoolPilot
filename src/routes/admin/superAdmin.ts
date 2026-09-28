@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
+import { z } from "zod";
 import { authenticate } from "../../middleware/authenticate.js";
 import { bindTenantContext } from "../../middleware/tenantContext.js";
 import {
@@ -32,6 +33,7 @@ import {
   sendStaffIdentityError,
 } from "../../services/staffIdentity.js";
 import { stopMailpilotMonitoringForSchool } from "../../services/mailpilotProvisioning.js";
+import { isValidMicrosoftTenantId } from "../../services/microsoftSignIn.js";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import multer from "multer";
@@ -805,6 +807,66 @@ router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => 
       entityId: schoolId,
       entityName: school.name,
       metadata: stopped === undefined ? undefined : { watchesStopped: stopped },
+    });
+
+    return res.json({ school: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const signInMethodsSchema = z.object({
+  microsoftSignInEnabled: z.boolean(),
+  microsoftTenantId: z.string().trim().toLowerCase().nullable(),
+}).strict();
+
+// PUT /api/super-admin/schools/:id/sign-in-methods - Microsoft Entra ID sign-in for one school
+router.put("/schools/:id/sign-in-methods", ...auth, async (req, res, next) => {
+  try {
+    const parsed = signInMethodsSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Send microsoftSignInEnabled (boolean) and microsoftTenantId (string or null)",
+        code: "INVALID_SIGN_IN_METHODS",
+      });
+    }
+    const microsoftTenantId = parsed.data.microsoftTenantId || null;
+    if (microsoftTenantId && !isValidMicrosoftTenantId(microsoftTenantId)) {
+      return res.status(400).json({
+        error: "The Microsoft tenant ID must be the directory (tenant) ID GUID from Microsoft Entra",
+        code: "INVALID_MICROSOFT_TENANT_ID",
+      });
+    }
+    if (parsed.data.microsoftSignInEnabled && !microsoftTenantId) {
+      return res.status(400).json({
+        error: "Enter the school's Microsoft tenant ID before turning on Microsoft sign-in",
+        code: "MICROSOFT_TENANT_ID_REQUIRED",
+      });
+    }
+
+    const schoolId = param(req, "id");
+    const school = await getSchoolById(schoolId);
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    const updated = await updateSchool(schoolId, {
+      microsoftSignInEnabled: parsed.data.microsoftSignInEnabled,
+      microsoftTenantId,
+    });
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: "school.sign_in_methods_updated",
+      entityType: "school",
+      entityId: schoolId,
+      entityName: school.name,
+      changes: {
+        microsoftSignInEnabled: {
+          from: school.microsoftSignInEnabled,
+          to: parsed.data.microsoftSignInEnabled,
+        },
+        microsoftTenantId: { from: school.microsoftTenantId, to: microsoftTenantId },
+      },
     });
 
     return res.json({ school: updated });

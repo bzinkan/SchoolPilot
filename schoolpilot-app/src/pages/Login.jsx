@@ -15,6 +15,16 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [microsoftAvailable, setMicrosoftAvailable] = useState(false);
+
+  useEffect(() => {
+    if (isNative) return undefined;
+    let cancelled = false;
+    api.get('/auth/providers')
+      .then(res => { if (!cancelled) setMicrosoftAvailable(res.data?.microsoft === true); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isNative]);
 
   // Handle OAuth one-time-code redirect — exchange for JWT (web only)
   // Code is single-use, 60s TTL. JWT comes back in response body, never in URL.
@@ -55,6 +65,18 @@ export default function Login() {
       setError('Your account does not have access to an active school. Please contact your school administrator.');
     } else if (oauthError === 'native_oauth_disabled') {
       setError('Google sign-in is not available in the GoPilot Android app. Use your school-issued staff email and password.');
+    } else if (oauthError === 'microsoft_no_account') {
+      setError('No SchoolPilot account matches that Microsoft account. Please contact your school administrator.');
+    } else if (oauthError === 'microsoft_not_enabled') {
+      setError('Microsoft sign-in is not turned on for your school. Use Continue with Google or sign in with email.');
+    } else if (oauthError === 'microsoft_consent_required') {
+      setError("Your school's Microsoft administrator needs to approve SchoolPilot before staff can sign in with Microsoft.");
+    } else if (oauthError === 'microsoft_failed') {
+      setError('Microsoft sign-in failed. Please try again.');
+    } else if (oauthError === 'microsoft_unavailable') {
+      setError('Microsoft sign-in is not available right now. Use another sign-in option.');
+    } else if (oauthError === 'identity_conflict') {
+      setError('That sign-in matches more than one SchoolPilot account. Please contact your school administrator.');
     }
   }, [searchParams, refetchUser, acceptToken, isGoPilotApp]);
 
@@ -476,8 +498,41 @@ export default function Login() {
             </svg>
             Continue with Google
           </button>
+          {microsoftAvailable && (
+            <button
+              onClick={() => { window.location.href = '/api/auth/microsoft'; }}
+              style={{
+                width: '100%',
+                padding: '14px',
+                fontSize: '15px',
+                fontWeight: 600,
+                borderRadius: '12px',
+                border: '1px solid rgba(148, 163, 184, 0.35)',
+                background: 'rgba(255, 255, 255, 0.06)',
+                color: '#e2e8f0',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '12px',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
+              onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)'; }}
+            >
+              <svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+              </svg>
+              Continue with Microsoft
+            </button>
+          )}
           <p style={{ fontSize: '12px', color: '#94a3b8', textAlign: 'center', lineHeight: 1.5, margin: '-6px 0 0' }}>
-            This sign-in only verifies your Google identity. It does not grant SchoolPilot access to Gmail, Drive, Classroom, or Directory.
+            {microsoftAvailable
+              ? 'These options only verify your identity. They do not grant SchoolPilot access to your email, files, Classroom, or Directory.'
+              : 'This sign-in only verifies your Google identity. It does not grant SchoolPilot access to Gmail, Drive, Classroom, or Directory.'}
           </p>
 
           {/* Email login toggle */}

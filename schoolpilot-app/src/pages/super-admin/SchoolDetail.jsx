@@ -37,6 +37,10 @@ export default function SchoolDetail() {
   // Reset login
   const [resetResult, setResetResult] = useState(null);
 
+  // Sign-in methods
+  const [microsoftTenantDraft, setMicrosoftTenantDraft] = useState('');
+  const [signInSaving, setSignInSaving] = useState(false);
+
   // School Hours
   const [hoursForm, setHoursForm] = useState({
     enabled: false,
@@ -78,6 +82,7 @@ export default function SchoolDetail() {
         maxLicenses: data.maxLicenses ?? 100,
         billingEmail: data.billingEmail || '',
       });
+      setMicrosoftTenantDraft(data.microsoftTenantId || '');
       if (data.schoolHours) {
         setHoursForm({
           enabled: data.schoolHours.enabled ?? false,
@@ -249,6 +254,22 @@ export default function SchoolDetail() {
       loadSchool();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to toggle email monitoring');
+    }
+  };
+
+  const handleSaveSignInMethods = async (microsoftSignInEnabled) => {
+    try {
+      setError(null);
+      setSignInSaving(true);
+      await api.put(`/super-admin/schools/${id}/sign-in-methods`, {
+        microsoftSignInEnabled,
+        microsoftTenantId: microsoftTenantDraft.trim() || null,
+      });
+      loadSchool();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update sign-in methods');
+    } finally {
+      setSignInSaving(false);
     }
   };
 
@@ -476,6 +497,58 @@ export default function SchoolDetail() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Sign-in methods */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
+        <h2 className="font-semibold text-slate-900 mb-1">Sign-in methods</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Continue with Google stays available. School admins control email and password sign-in in ClassPilot Settings.
+        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="font-medium text-slate-900 text-sm">Microsoft sign-in (Entra ID)</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Staff whose SchoolPilot email matches their Microsoft account can use Continue with Microsoft. Only accounts from this tenant are accepted.
+            </p>
+          </div>
+          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${school.microsoftSignInEnabled ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+            {school.microsoftSignInEnabled ? 'On' : 'Off'}
+          </span>
+        </div>
+        <label htmlFor="microsoft-tenant-id" className="block mt-4 text-xs font-medium text-slate-700">
+          Microsoft tenant ID
+        </label>
+        <input
+          id="microsoft-tenant-id"
+          value={microsoftTenantDraft}
+          onChange={(e) => setMicrosoftTenantDraft(e.target.value)}
+          placeholder="00000000-0000-0000-0000-000000000000"
+          spellCheck={false}
+          autoComplete="off"
+          className="mt-1 w-full max-w-md px-3 py-1.5 border border-slate-300 rounded text-sm font-mono"
+        />
+        <p className="text-xs text-slate-400 mt-1">
+          In the school&apos;s Microsoft Entra admin center: Overview, then Tenant ID.
+        </p>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button
+            onClick={() => handleSaveSignInMethods(true)}
+            disabled={signInSaving}
+            className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-60"
+          >
+            {school.microsoftSignInEnabled ? 'Save tenant ID' : 'Turn on Microsoft sign-in'}
+          </button>
+          {school.microsoftSignInEnabled && (
+            <button
+              onClick={() => handleSaveSignInMethods(false)}
+              disabled={signInSaving}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 disabled:opacity-60"
+            >
+              Turn off
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Billing & Invoicing */}

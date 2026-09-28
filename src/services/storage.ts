@@ -371,6 +371,17 @@ export class GoogleIdentityConflictError extends Error {
   }
 }
 
+export class MicrosoftIdentityConflictError extends Error {
+  readonly code = "MICROSOFT_IDENTITY_CONFLICT";
+  readonly status = 409;
+  readonly expose = true;
+
+  constructor() {
+    super("Microsoft identity and email resolve to different accounts. Central review is required before sign-in can continue.");
+    this.name = "MicrosoftIdentityConflictError";
+  }
+}
+
 export function staffIdentityUserLockKey(userId: string): string {
   return `3:user:${userId}`;
 }
@@ -381,6 +392,10 @@ export function staffIdentityEmailLockKey(email: string): string {
 
 export function staffIdentityGoogleLockKey(googleId: string): string {
   return `2:google:${googleId.trim()}`;
+}
+
+export function staffIdentityMicrosoftLockKey(microsoftId: string): string {
+  return `2:microsoft:${microsoftId.trim()}`;
 }
 
 export function staffIdentityNameLockKey(schoolId: string, normalizedName: string): string {
@@ -501,6 +516,90 @@ export async function resolveGoogleLoginIdentity(options: {
       .where(eq(users.id, lockedUser.id))
       .returning();
     return updated;
+  });
+}
+
+export async function getUserByMicrosoftId(
+  microsoftId: string,
+  dbInstance: typeof db = db
+): Promise<User | undefined> {
+  const [user] = await dbInstance
+    .select()
+    .from(users)
+    .where(eq(users.microsoftId, microsoftId))
+    .limit(1);
+  return user;
+}
+
+export type MicrosoftLoginResolution =
+  | { status: "no_account" }
+  | { status: "not_allowed"; user: User }
+  | { status: "ok"; user: User };
+
+/**
+ * Resolve and first-bind a Microsoft login under the canonical identity locks.
+ * `isAllowed` runs before anything is written, so a token from a tenant that
+ * none of the user's schools trusts can never bind or refresh an identity.
+ */
+export async function resolveMicrosoftLoginIdentity(options: {
+  email: string | null;
+  microsoftId: string;
+  isAllowed: (user: User) => Promise<boolean>;
+}): Promise<MicrosoftLoginResolution> {
+  const normalizedEmail = options.email?.trim().toLowerCase() || null;
+  const microsoftId = options.microsoftId.trim();
+  if (!microsoftId) return { status: "no_account" };
+
+  return db.transaction(async (tx): Promise<MicrosoftLoginResolution> => {
+    const transactionDb = tx as unknown as typeof db;
+    await takeStaffIdentityLocks(transactionDb, [
+      ...(normalizedEmail ? [staffIdentityEmailLockKey(normalizedEmail)] : []),
+      staffIdentityMicrosoftLockKey(microsoftId),
+    ]);
+    const lookup = async () => Promise.all([
+      getUserByMicrosoftId(microsoftId, transactionDb),
+      normalizedEmail ? getUserByEmail(normalizedEmail, transactionDb) : Promise.resolve(undefined),
+    ]);
+    const [byMicrosoftId, byEmail] = await lookup();
+    if (byMicrosoftId && byEmail && byMicrosoftId.id !== byEmail.id) {
+      throw new MicrosoftIdentityConflictError();
+    }
+    const candidate = byMicrosoftId ?? byEmail;
+    if (!candidate) return { status: "no_account" };
+
+    await takeStaffIdentityLocks(transactionDb, [staffIdentityUserLockKey(candidate.id)]);
+    const [lockedUser] = await tx
+      .select()
+      .from(users)
+      .where(eq(users.id, candidate.id))
+      .limit(1)
+      .for("update");
+    if (!lockedUser) return { status: "no_account" };
+
+    const [currentByMicrosoftId, currentByEmail] = await lookup();
+    if (
+      (currentByMicrosoftId && currentByEmail && currentByMicrosoftId.id !== currentByEmail.id)
+      || (currentByMicrosoftId && currentByMicrosoftId.id !== lockedUser.id)
+      || (!currentByMicrosoftId && currentByEmail?.id !== lockedUser.id)
+      || (!currentByMicrosoftId && lockedUser.microsoftId && lockedUser.microsoftId !== microsoftId)
+    ) {
+      throw new MicrosoftIdentityConflictError();
+    }
+
+    if (!(await options.isAllowed(lockedUser))) {
+      return { status: "not_allowed", user: lockedUser };
+    }
+
+    const [updated] = await tx
+      .update(users)
+      .set({
+        lastLoginAt: new Date(),
+        ...(!lockedUser.microsoftId ? { microsoftId } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, lockedUser.id))
+      .returning();
+    return { status: "ok", user: updated! };
   });
 }
 

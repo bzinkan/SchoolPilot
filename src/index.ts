@@ -10,6 +10,7 @@ import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "./db/classpilotTeacherPreferencesMigration.js";
 import { IMPORT_PROCESSING_STAGES_SQL } from "./db/importProcessingStagesMigration.js";
+import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
 import { MYDESK_SQL } from "./db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "./db/mydeskSeatingMigration.js";
@@ -1249,6 +1250,7 @@ export async function runStartupMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS kiosk_style TEXT NOT NULL DEFAULT 'simple',
       ADD COLUMN IF NOT EXISTS staff_password_login_enabled BOOLEAN NOT NULL DEFAULT true
   `);
+  await pool.query(MICROSOFT_SIGN_IN_EXPAND_SQL);
   await pool.query(`
     ALTER TABLE grades
       ADD COLUMN IF NOT EXISTS classpilot_group_id TEXT,
