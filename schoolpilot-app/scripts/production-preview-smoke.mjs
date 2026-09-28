@@ -313,6 +313,16 @@ function requestHeaders(request) {
   );
 }
 
+// The login page asks which sign-in buttons to show before anyone is signed in;
+// this public call carries no credential and is not a protected request.
+async function fulfillPublicAuthProviders(route) {
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ google: true, microsoft: false }),
+  });
+}
+
 function assertExactQuery(requestUrl, expectedEntries) {
   const actualEntries = [...requestUrl.searchParams.entries()].sort();
   const normalizedExpected = [...expectedEntries].sort();
@@ -642,6 +652,11 @@ async function verifyPasswordLoginHandoff(browser) {
     const requestUrl = new URL(request.url());
     const authorization = requestHeaders(request).authorization;
 
+    if (requestUrl.pathname === '/api/auth/providers') {
+      await fulfillPublicAuthProviders(route);
+      return;
+    }
+
     if (requestUrl.pathname === '/api/auth/login') {
       loginRequests += 1;
       loginComplete = true;
@@ -799,6 +814,11 @@ async function verifyOAuthCodeHandoff(browser) {
     const request = route.request();
     const requestUrl = new URL(request.url());
     const authorization = requestHeaders(request).authorization;
+
+    if (requestUrl.pathname === '/api/auth/providers') {
+      await fulfillPublicAuthProviders(route);
+      return;
+    }
 
     if (requestUrl.pathname === '/api/auth/csrf') {
       csrfBootstrapRequests += 1;
