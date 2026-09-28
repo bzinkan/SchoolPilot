@@ -47,6 +47,7 @@ export const SECURITY_POSTURE = [
       { status: 'in_place', label: 'Passwords', detail: 'bcrypt hashing, 10+ character complexity, lockout after 10 failed attempts' },
       { status: 'in_place', label: 'Sessions', detail: 'Secure httpOnly cookies, CSRF protection, 1-hour idle timeout for admins' },
       { status: 'in_place', label: 'Google sign-in', detail: 'Staff sign in with their school Google account' },
+      { status: 'in_place', label: 'Google-only staff sign-in', detail: 'Schools can turn off staff password sign-in on the web so staff must use Google' },
       { status: 'planned', label: 'Microsoft and SAML 2.0 sign-in', detail: 'Microsoft Entra ID and SAML 2.0 single sign-on are on the roadmap' },
       { status: 'planned', label: 'In-app MFA for administrators', detail: 'Deferred and tracked in our SOC 2 remediation register' },
     ],

@@ -112,7 +112,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | 6.3 | Does the product support OAuth / OIDC? | **Yes** | Google OAuth for authentication |
 | 6.4 | Does the product support ADFS? | **No** | SAML (future) will enable ADFS compatibility |
 | 6.5 | Does the product support local authentication (username/password)? | **Yes** | bcrypt (12 rounds), complexity-enforced |
-| 6.6 | Can local auth be disabled in favor of SSO? | **N/A** | Not yet — to be added with SAML support |
+| 6.6 | Can local auth be disabled in favor of SSO? | **Partial** | School admins can turn off staff email/password sign-in for the web app so staff use Google sign-in; the GoPilot staff app keeps password access while the school holds a GoPilot license |
 
 ---
 
