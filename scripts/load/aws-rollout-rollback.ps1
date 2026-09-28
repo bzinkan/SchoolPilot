@@ -628,10 +628,13 @@ function Assert-EmergencyTaskDefinition {
         $current = $currentResponse.taskDefinition
         $emergency = $emergencyResponse.taskDefinition
     }
+    # The emergency target must be the reviewed production API size (1 vCPU /
+    # 2 GiB, see scripts/deploy.sh) and never smaller than the serving API.
     if ($null -eq $current -or $null -eq $emergency -or [string]$emergency.status -ne "ACTIVE" -or
         [string]$emergency.family -ne [string]$Config.emergencyApiTaskDefinitionFamily -or
         [string]$emergency.taskDefinitionArn -ne [string]$Config.emergencyApiTaskDefinition -or
-        [int]$emergency.cpu -ne 512 -or [int]$emergency.memory -ne 2048 -or
+        [int]$emergency.cpu -ne 1024 -or [int]$emergency.memory -ne 2048 -or
+        [int]$emergency.cpu -lt [int]$current.cpu -or [int]$emergency.memory -lt [int]$current.memory -or
         [string]$emergency.networkMode -ne "awsvpc" -or "FARGATE" -notin @($emergency.requiresCompatibilities) -or
         [string]$emergency.executionRoleArn -ne [string]$current.executionRoleArn -or
         [string]$emergency.taskRoleArn -ne [string]$current.taskRoleArn) {

@@ -121,13 +121,15 @@ The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:
 
 - API: ordinary minimum 1, weekday 05:45–16:00 school-day floor 3, and
-  autoscaling maximum 6 at `512 CPU / 2048 MB`, with a 70% CPU target. Each
+  autoscaling maximum 6 at the reviewed `1024 CPU / 2048 MB` (raised from
+  `512 CPU` on 2026-09-27 for My Desk paperwork processing), with a 70% CPU target. Each
   API task uses `main=16` and `session=2`; with the worker ceiling of 16, the
   normal database connection ceiling is `6 × 18 + 16 = 124`. Re-enabling
   eight tasks requires a separately reviewed RDS Proxy or database-capacity
   decision. The higher memory revision is retained because launch performance
   takes priority over the original 1024 MB cost model.
-- Scheduler: exactly one task at `256 CPU / 512 MB`.
+- Scheduler: exactly one task at the reviewed `512 CPU / 1024 MB` (raised from
+  `256 CPU / 512 MB` on 2026-09-27 for paperwork processing).
 - ECS application tasks: the medium engineering acceptance retains the current
   private subnets and NAT egress. A later, separately reviewed cost stage may
   move tasks to public subnets; the ALB remains the only inbound application
@@ -384,7 +386,7 @@ networking and Redis failures use only their corresponding reviewed actions.
 RDS CPU, memory/swap, connection, credit, latency, queue, or IOPS failures stop
 traffic and preserve evidence without mutating unrelated infrastructure. PI is
 corroboration only and cannot excuse a failed non-RDS gate. An API OOM uses the
-bound pre-registered `512 CPU / 2048 MB` revision only when that revision is not
+bound pre-registered reviewed-size `1024 CPU / 2048 MB` revision only when that revision is not
 already active; OOM on the active emergency revision is a hard stop.
 
 ## Deferred 2,000-device HA gate

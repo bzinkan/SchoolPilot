@@ -897,9 +897,9 @@ Do not add CloudFront `/livez` or `/readyz` behaviors; public synthetic checks s
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path follows the separately verified readiness activation baseline; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses 512 CPU / 2048 MiB and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
-| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Launch sizing: 1 desired singleton scheduler worker at 256 CPU / 512 MiB, staged to the same public-task egress posture as the API; no ALB target registration. |
-| **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at 512 CPU / 2048 MiB and **is the family production actually serves** — the launch-safe posture prescribed below uses `--activate-emergency`, so `schoolpilot-production-api` is the family name of the *service*, not of the task definition behind it. Always read the live task definition from `describe-services`, never by assuming the family. |
+| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses the reviewed 1024 CPU / 2048 MiB (1 vCPU / 2 GiB, the size that passed the My Desk paperwork capacity tests on 2026-09-27) and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
+| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | 1 desired singleton scheduler worker at the reviewed 512 CPU / 1024 MiB (0.5 vCPU / 1 GiB, sized for paperwork processing), staged to the same public-task egress posture as the API; no ALB target registration. |
+| **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at the reviewed 1024 CPU / 2048 MiB and **is the family production actually serves** — the launch-safe posture prescribed below uses `--activate-emergency`, so `schoolpilot-production-api` is the family name of the *service*, not of the task definition behind it. Always read the live task definition from `describe-services`, never by assuming the family. |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
 | **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
 | **RDS** | PostgreSQL in private VPC | Pilot sizing is `db.t4g.medium`, Single-AZ, 100 GB allocated with 1000 GB max autoscaling |
@@ -955,12 +955,26 @@ Preferred path:
 ./scripts/deploy.sh --backend
 ```
 
-When production is intentionally retained on the launch-safe 512 CPU / 2048
-MiB API posture, use the reviewed backend-only mode instead:
+When production is intentionally retained on the launch-safe reviewed-size API
+posture (1024 CPU / 2048 MiB), use the reviewed backend-only mode instead:
 
 ```bash
 ./scripts/deploy.sh production --backend --activate-emergency
 ```
+
+**Reviewed task sizes.** Production runs the API at 1024 CPU / 2048 MiB and the
+scheduler worker at 512 CPU / 1024 MiB, the configuration that passed the My
+Desk paperwork capacity tests. The sizes are recorded in `REVIEWED_*_TASK_*`
+(`scripts/deploy.sh`), `$script:ApiTaskCpu` and friends
+(`scripts/deploy-classpilot-runtime-config.ps1`, shared by the My Desk tool),
+the rollback and load tools under `scripts/load/`, `ecs_cpu`/`worker_cpu` in
+`infra/production.tfvars`, and the ECS module's production floor.
+`tests/deploy-production-task-sizing.test.ts` keeps them identical.
+`--activate-emergency` refuses unless the serving API and worker are exactly
+these sizes, and every rendered API, emergency, and worker revision is refused
+if it is smaller than the revision it replaces. To resize, change all of these
+in one reviewed PR with the new capacity evidence; a live resize made first
+blocks every deploy until the tooling records it.
 
 The August 24, 2026 protected-window exception is explicit and narrow. It is
 not a new ordinary deploy mode:
@@ -1154,10 +1168,10 @@ Apply the same rule after a deliberate per-table kill-switch removal. Once live
 catalog verification has succeeded and all three tables remain enabled, omit the
 one-shot flag on later releases as usual.
 
-That mode keeps the prior 2048 MiB API serving while the deploy script builds
-and registers the new image. It then uses the newly registered, digest-matched
-2048 MiB revision for the migration task, API service update, and strict
-stability check. The default backend deploy remains unchanged and selects the
+That mode keeps the prior reviewed-size API serving while the deploy script
+builds and registers the new image. It then uses the newly registered,
+digest-matched reviewed-size revision for the migration task, API service
+update, and strict stability check. The default backend deploy remains unchanged and selects the
 standard API family.
 
 The deploy script requires a clean local `main` equal to `origin/main`, green
@@ -1181,7 +1195,7 @@ digest-pinned API and scheduler-worker task definitions, and also pre-registers
 an unused digest-pinned API OOM target in the
 `schoolpilot-<environment>-api-emergency` family. The emergency target clones
 the newly rendered API definition, including its environment and secrets, but
-uses 512 CPU / 2048 MiB. The script prints its exact ARN and revision without
+uses the reviewed 1024 CPU / 2048 MiB. The script prints its exact ARN and revision without
 changing either active service. It then runs the explicit
 `RUN_MIGRATIONS_ONLY=true` ECS migration task, updates both ECS services, waits
 for service stability, and cleans temporary task-definition files. After the
@@ -1253,8 +1267,8 @@ MSYS_NO_PATHCONV=1 aws ecs wait services-stable \
 ```
 
 Verify `/health`, target health, and ECS task restart/OOM counters immediately
-after using the emergency target. The standard 512 CPU / 1024 MiB API revision
-is not an OOM recovery target because it retains the failed memory ceiling.
+after using the emergency target. The standard API revision keeps the serving
+task size, so it is not an OOM recovery target.
 
 ### Launch cost rollout
 

@@ -3482,8 +3482,8 @@ function Get-AwsPosture {
     $caller = Invoke-AwsJson @("sts","get-caller-identity","--region",$r.region)
     if ([string]$caller.Account -ne $script:ExpectedAccountId) { throw "AWS CLI is not authenticated to the reviewed production account." }
     $services = Get-ServicePosture $Config
-    $apiTask = Get-TaskDefinitionPosture $Config.ApiTaskDefinitionArn "api" $Config.ImageDigest "512" "2048"
-    $workerTask = Get-TaskDefinitionPosture $Config.WorkerTaskDefinitionArn "scheduler-worker" $Config.ImageDigest "256" "512"
+    $apiTask = Get-TaskDefinitionPosture $Config.ApiTaskDefinitionArn "api" $Config.ImageDigest "1024" "2048"
+    $workerTask = Get-TaskDefinitionPosture $Config.WorkerTaskDefinitionArn "scheduler-worker" $Config.ImageDigest "512" "1024"
     $healthyTargets = Get-HealthyTargetCount $Config
     if ($healthyTargets -ne [int]$services.api.desired) { throw "Every and only desired API target must be healthy." }
 

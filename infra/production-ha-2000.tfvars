@@ -27,14 +27,16 @@ db_username              = "schoolpilot"
 redis_node_type     = "cache.t4g.small"
 redis_replica_count = 1
 
-# ECS — scheduler work runs in the singleton worker, so the API can scale out safely
+# ECS — scheduler work runs in the singleton worker, so the API can scale out safely.
+# Never below the reviewed production sizes in production.tfvars (API 1 vCPU /
+# 2 GiB, worker 0.5 vCPU / 1 GiB); a scale-up profile must not shrink tasks.
 ecs_desired_count           = 2
 enable_api_arrival_capacity = false
-ecs_cpu                     = 512
-ecs_memory                  = 1024
+ecs_cpu                     = 1024
+ecs_memory                  = 2048
 worker_desired_count        = 1
-worker_cpu                  = 256
-worker_memory               = 512
+worker_cpu                  = 512
+worker_memory               = 1024
 db_pool_max                 = 20
 scheduler_db_pool_max       = 5
 enable_container_insights   = true

@@ -48,8 +48,9 @@ function New-TestTaskResponse {
     $isApi = $Role -ceq "api"
     $containerName = if ($isApi) { "api" } else { "scheduler-worker" }
     $family = [string]$Arn.Split("/")[-1].Split(":")[0]
-    $cpu = if ($isApi) { "512" } else { "256" }
-    $memory = if ($isApi) { "2048" } else { "512" }
+    # Reviewed production sizes: API 1 vCPU / 2 GiB, worker 0.5 vCPU / 1 GiB.
+    $cpu = if ($isApi) { "1024" } else { "512" }
+    $memory = if ($isApi) { "2048" } else { "1024" }
     $environment = @([pscustomobject]@{ name = "NODE_ENV"; value = "production" }) + @($ManagedEnvironment)
     $secrets = @([pscustomobject]@{
         name = "REDIS_URL"
@@ -1673,9 +1674,12 @@ try {
     $apiSourceArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:68"
     $workerSourceArn = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:83"
     $apiSource = New-TestTaskResponse -Role api -Arn $apiSourceArn -Digest $digest
+    Assert-Condition ($script:ApiTaskCpu -ceq "1024" -and $script:ApiTaskMemory -ceq "2048" -and
+        $script:WorkerTaskCpu -ceq "512" -and $script:WorkerTaskMemory -ceq "1024") `
+        "The runtime tool must require the reviewed API 1024/2048 and worker 512/1024 task sizes."
     $apiRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $apiSource -RuntimeConfiguration $globalRuntime `
         -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
-        -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ContainerName "api" -ExpectedCpu "1024" -ExpectedMemory "2048"
     $apiContainer = @($apiRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($apiContainer.environment | Where-Object name -CEQ "NODE_ENV").Count -eq 1) "Unrelated environment must survive the clone."
     Assert-Condition (@($apiContainer.secrets | Where-Object name -CEQ "REDIS_URL").Count -eq 1) "Unrelated secrets must survive the clone."
@@ -1689,7 +1693,7 @@ try {
         ) -ManagedSecrets @([pscustomobject]@{ name = "CLASSPILOT_TURN_REST_SECRET"; valueFrom = $turnSecretArn })
     $offRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $turnWiredSource -RuntimeConfiguration $offRuntime `
         -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
-        -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ContainerName "api" -ExpectedCpu "1024" -ExpectedMemory "2048"
     $offContainer = @($offRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($offContainer.environment | Where-Object name -CEQ "CLASSPILOT_TURN_HOSTS").Count -eq 1) "Off mode must preserve provisioned TURN hosts."
     Assert-Condition (@($offContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET").Count -eq 1) "Off mode must preserve the provisioned TURN secret reference."
@@ -1698,7 +1702,7 @@ try {
         -ManagedSecrets @([pscustomobject]@{ name = "classpilot_turn_rest_secret"; valueFrom = "arn:example:unrelated" })
     $caseVariantRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $caseVariantSource -RuntimeConfiguration $globalRuntime `
         -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
-        -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ContainerName "api" -ExpectedCpu "1024" -ExpectedMemory "2048"
     $caseVariantContainer = @($caseVariantRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($caseVariantContainer.environment | Where-Object name -CEQ "classpilot_cap_exact_tab_close_v2").Count -eq 1) "Lowercase unrelated environment names must survive the case-sensitive allowlist."
     Assert-Condition (@($caseVariantContainer.secrets | Where-Object name -CEQ "classpilot_turn_rest_secret").Count -eq 1) "Lowercase unrelated secret names must survive the case-sensitive allowlist."
@@ -1710,8 +1714,23 @@ try {
     Assert-Throws {
         New-RuntimeTaskDefinitionRequest -SourceResponse $badSource -RuntimeConfiguration $globalRuntime `
             -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
-            -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+            -ContainerName "api" -ExpectedCpu "1024" -ExpectedMemory "2048"
     } "Lower API memory must fail closed."
+    $oldSizeSource = New-TestTaskResponse -Role api -Arn $apiSourceArn -Digest $digest
+    $oldSizeSource.taskDefinition.cpu = "512"
+    Assert-Throws {
+        New-RuntimeTaskDefinitionRequest -SourceResponse $oldSizeSource -RuntimeConfiguration $globalRuntime `
+            -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
+            -ContainerName "api" -ExpectedCpu $script:ApiTaskCpu -ExpectedMemory $script:ApiTaskMemory
+    } "An API below the reviewed 1024 CPU must fail closed."
+    $smallWorkerSource = New-TestTaskResponse -Role worker -Arn $workerSourceArn -Digest $digest
+    $smallWorkerSource.taskDefinition.cpu = "256"
+    $smallWorkerSource.taskDefinition.memory = "512"
+    Assert-Throws {
+        New-RuntimeTaskDefinitionRequest -SourceResponse $smallWorkerSource -RuntimeConfiguration $globalRuntime `
+            -ExpectedDigest $digest -ExpectedArn $workerSourceArn -ExpectedFamily "schoolpilot-production-scheduler-worker" `
+            -ContainerName "scheduler-worker" -ExpectedCpu $script:WorkerTaskCpu -ExpectedMemory $script:WorkerTaskMemory
+    } "A scheduler worker below the reviewed 512 CPU / 1024 MiB must fail closed."
 
     Assert-Throws {
         Assert-ProductionDeploymentWindow -NowEastern ([DateTimeOffset]::Parse("2026-08-24T05:00:00-04:00"))

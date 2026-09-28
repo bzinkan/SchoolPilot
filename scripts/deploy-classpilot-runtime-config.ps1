@@ -35,6 +35,15 @@ $script:WorkerService = "schoolpilot-production-scheduler-worker"
 $script:AllowedApiFamilies = @("schoolpilot-production-api", "schoolpilot-production-api-emergency")
 $script:WorkerFamily = "schoolpilot-production-scheduler-worker"
 $script:EcrRepository = "schoolpilot-production-api"
+# Reviewed production Fargate sizes (API 1 vCPU / 2 GiB, worker 0.5 vCPU / 1 GiB)
+# that passed the My Desk paperwork capacity tests. Sources, candidates and
+# rollback targets must match exactly, so this tool can never shrink a task.
+# tests/deploy-production-task-sizing.test.ts keeps these equal to scripts/deploy.sh
+# and infra/production.tfvars.
+$script:ApiTaskCpu = "1024"
+$script:ApiTaskMemory = "2048"
+$script:WorkerTaskCpu = "512"
+$script:WorkerTaskMemory = "1024"
 $script:OperationLockTable = "schoolpilot-terraform-locks"
 $script:OperationLockId = "schoolpilot/production/classpilot-runtime-config-v1"
 $script:Utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -3749,8 +3758,8 @@ function Get-ValidatedProductionSnapshot {
     $apiResponse = Get-TaskDefinitionResponse -TaskDefinitionArn $ApiTaskDefinitionArn
     $workerResponse = Get-TaskDefinitionResponse -TaskDefinitionArn $WorkerTaskDefinitionArn
     $apiFamily = Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn $ApiTaskDefinitionArn
-    [void](Assert-TaskDefinitionContract -Response $apiResponse -ExpectedArn $ApiTaskDefinitionArn -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedDigest $ImageDigest -ExpectedCpu "512" -ExpectedMemory "2048")
-    [void](Assert-TaskDefinitionContract -Response $workerResponse -ExpectedArn $WorkerTaskDefinitionArn -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedDigest $ImageDigest -ExpectedCpu "256" -ExpectedMemory "512")
+    [void](Assert-TaskDefinitionContract -Response $apiResponse -ExpectedArn $ApiTaskDefinitionArn -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedDigest $ImageDigest -ExpectedCpu $script:ApiTaskCpu -ExpectedMemory $script:ApiTaskMemory)
+    [void](Assert-TaskDefinitionContract -Response $workerResponse -ExpectedArn $WorkerTaskDefinitionArn -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedDigest $ImageDigest -ExpectedCpu $script:WorkerTaskCpu -ExpectedMemory $script:WorkerTaskMemory)
     $apiManagedFingerprint = Get-ManagedRuntimeFingerprint -TaskDefinition $apiResponse.taskDefinition -ContainerName "api"
     $workerManagedFingerprint = Get-ManagedRuntimeFingerprint -TaskDefinition $workerResponse.taskDefinition -ContainerName "scheduler-worker"
     if ($apiManagedFingerprint -cne $workerManagedFingerprint) {
@@ -4550,21 +4559,21 @@ function Invoke-RuntimeConfigApply {
     $apiFamily = Get-ApiFamilyFromTaskDefinitionArn -TaskDefinitionArn ([string]$Plan.priorApiTaskDefinitionArn)
     $apiRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $snapshot.ApiTask -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -ExpectedArn ([string]$Plan.priorApiTaskDefinitionArn) `
-        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu $script:ApiTaskCpu -ExpectedMemory $script:ApiTaskMemory
     $workerRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $snapshot.WorkerTask -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -ExpectedArn ([string]$Plan.priorWorkerTaskDefinitionArn) `
-        -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedCpu "256" -ExpectedMemory "512"
+        -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedCpu $script:WorkerTaskCpu -ExpectedMemory $script:WorkerTaskMemory
     Acquire-OperationLock -RunId ([string]$Plan.runId) -PlanSha256 $PlanSha256
     Start-OperationMutationWindow
     $runDirectory = Split-Path -Parent ([string]$Plan.resultPath)
     $candidateApiArn = Register-RuntimeTaskDefinition -Request $apiRequest -Directory $runDirectory -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -SourceFingerprint $apiSourceFingerprint `
         -SourceTagsFingerprint $apiSourceTagsFingerprint `
-        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu "512" -ExpectedMemory "2048"
+        -ExpectedFamily $apiFamily -ContainerName "api" -ExpectedCpu $script:ApiTaskCpu -ExpectedMemory $script:ApiTaskMemory
     $candidateWorkerArn = Register-RuntimeTaskDefinition -Request $workerRequest -Directory $runDirectory -RuntimeConfiguration $runtime `
         -ExpectedDigest ([string]$Plan.imageDigest) -SourceFingerprint $workerSourceFingerprint `
         -SourceTagsFingerprint $workerSourceTagsFingerprint `
-        -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedCpu "256" -ExpectedMemory "512"
+        -ExpectedFamily $script:WorkerFamily -ContainerName "scheduler-worker" -ExpectedCpu $script:WorkerTaskCpu -ExpectedMemory $script:WorkerTaskMemory
     Write-OperationCheckpoint -Plan $Plan -PlanSha256 $PlanSha256 -Stage "apply_candidates_registered" `
         -CandidateApiArn $candidateApiArn -CandidateWorkerArn $candidateWorkerArn
     $rollbackSucceeded = $false
@@ -4850,10 +4859,10 @@ function Invoke-RuntimeConfigRollback {
     $identity = Invoke-AwsJson -Arguments @("sts", "get-caller-identity", "--output", "json", "--no-cli-pager")
     if ([string]$identity.Account -cne $script:AccountId) { throw "AWS identity is outside the production account." }
     foreach ($contract in @(
-        [pscustomobject]@{ Arn = [string]$Plan.priorApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
-        [pscustomobject]@{ Arn = [string]$Plan.priorWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = "256"; Memory = "512" },
-        [pscustomobject]@{ Arn = [string]$result.candidateApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = "512"; Memory = "2048" },
-        [pscustomobject]@{ Arn = [string]$result.candidateWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = "256"; Memory = "512" }
+        [pscustomobject]@{ Arn = [string]$Plan.priorApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = $script:ApiTaskCpu; Memory = $script:ApiTaskMemory },
+        [pscustomobject]@{ Arn = [string]$Plan.priorWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = $script:WorkerTaskCpu; Memory = $script:WorkerTaskMemory },
+        [pscustomobject]@{ Arn = [string]$result.candidateApiTaskDefinitionArn; Family = $apiFamily; Container = "api"; Cpu = $script:ApiTaskCpu; Memory = $script:ApiTaskMemory },
+        [pscustomobject]@{ Arn = [string]$result.candidateWorkerTaskDefinitionArn; Family = $script:WorkerFamily; Container = "scheduler-worker"; Cpu = $script:WorkerTaskCpu; Memory = $script:WorkerTaskMemory }
     )) {
         $response = Get-TaskDefinitionResponse -TaskDefinitionArn $contract.Arn
         [void](Assert-TaskDefinitionContract -Response $response -ExpectedArn $contract.Arn -ExpectedFamily $contract.Family `

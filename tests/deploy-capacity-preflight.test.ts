@@ -319,44 +319,135 @@ describe("production backend deployment capacity guard", () => {
     }
   });
 
-  it("requires the currently serving API to retain the reviewed 512/2048 posture", () => {
-    const taskDefinition = (memory: string, hardMemory?: number) => JSON.stringify({
-      cpu: "512",
-      memory,
-      containers: [{
-        name: "api",
-        ...(hardMemory === undefined ? {} : { memory: hardMemory }),
-      }],
-    });
+  it("requires the serving API and worker to keep the reviewed 1024/2048 and 512/1024 sizes", () => {
+    const taskDefinition = (container: string, cpu: string, memory: string, hardMemory?: number) =>
+      JSON.stringify({
+        cpu,
+        memory,
+        containers: [{
+          name: container,
+          ...(hardMemory === undefined ? {} : { memory: hardMemory }),
+        }],
+      });
+    const api = (cpu = "1024", memory = "2048", hardMemory?: number) =>
+      taskDefinition("api", cpu, memory, hardMemory);
+    const worker = (cpu = "512", memory = "1024", hardMemory?: number) =>
+      taskDefinition("scheduler-worker", cpu, memory, hardMemory);
     const body = `
 PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="schoolpilot-production-api-emergency:10"
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION="schoolpilot-production-scheduler-worker:20"
 launch_safe_active_api_preflight
 `;
 
     const accepted = runLibrary(body, {
       activateEmergency: true,
-      taskDefinitionSnapshots: [taskDefinition("2048")],
+      taskDefinitionSnapshots: [api(), worker()],
     });
     assert.equal(accepted.status, 0, accepted.stderr);
-    assert.match(accepted.stdout, /Active API launch-safe posture verified/);
-    assert.equal(accepted.commands.length, 1);
-    assert.match(accepted.commands[0], /ecs describe-task-definition/);
+    assert.match(
+      accepted.stdout,
+      /Active API launch-safe posture verified: .*\(1024 CPU \/ 2048 MiB\); scheduler worker .*\(512 CPU \/ 1024 MiB\)/
+    );
+    assert.equal(accepted.commands.length, 2);
+    const [apiRead = "", workerRead = ""] = accepted.commands;
+    assert.match(apiRead, /ecs describe-task-definition --task-definition schoolpilot-production-api-emergency:10 /);
+    assert.match(workerRead, /ecs describe-task-definition --task-definition schoolpilot-production-scheduler-worker:20 /);
 
-    for (const unsafe of [taskDefinition("1024"), taskDefinition("2048", 1024)]) {
+    // The pre-resize 512 CPU API, less memory, a low container cap, and a
+    // larger unrecorded resize are all refused before anything is built.
+    for (const unsafe of [api("512"), api("1024", "1024"), api("1024", "2048", 1024), api("2048", "4096")]) {
       const rejected = runLibrary(body, {
         activateEmergency: true,
-        taskDefinitionSnapshots: [unsafe],
+        taskDefinitionSnapshots: [unsafe, worker()],
       });
       assert.notEqual(rejected.status, 0);
-      assert.match(rejected.stderr, /currently serving API.*512 CPU \/ 2048 MiB/);
+      assert.match(rejected.stderr, /currently serving API to be exactly 1024 CPU \/ 2048 MiB/);
       assert.equal(rejected.commands.length, 1);
     }
+    const larger = runLibrary(body, {
+      activateEmergency: true,
+      taskDefinitionSnapshots: [api("2048", "4096"), worker()],
+    });
+    assert.match(larger.stderr, /serving: 2048 CPU \/ 4096 MiB; that is larger than the reviewed size, so this rollout would shrink it/);
+
+    for (const unsafe of [worker("256", "512"), worker("512", "512"), worker("512", "1024", 512), worker("1024", "2048")]) {
+      const rejected = runLibrary(body, {
+        activateEmergency: true,
+        taskDefinitionSnapshots: [api(), unsafe],
+      });
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /currently serving scheduler worker to be exactly 512 CPU \/ 1024 MiB/);
+      assert.equal(rejected.commands.length, 2);
+    }
+
+    const missingWorker = runLibrary(`
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="schoolpilot-production-api-emergency:10"
+launch_safe_active_api_preflight
+`, { activateEmergency: true, taskDefinitionSnapshots: [api(), worker()] });
+    assert.notEqual(missingWorker.status, 0);
+    assert.match(missingWorker.stderr, /no bound active API and worker task-definition references/);
+    assert.deepEqual(missingWorker.commands, []);
 
     const defaultMode = runLibrary(body, {
       activateEmergency: false,
     });
     assert.equal(defaultMode.status, 0, defaultMode.stderr);
     assert.deepEqual(defaultMode.commands, []);
+  });
+
+  it("refuses to register a rendered API or worker revision smaller than the serving one", () => {
+    type Task = { cpu: string; memory: string; containerMemory?: number };
+    const guard = (environment: string, container: string, rendered: Task, source: Task) => {
+      const renderedDefinition = {
+        cpu: rendered.cpu,
+        memory: rendered.memory,
+        containerDefinitions: [{
+          name: container,
+          ...(rendered.containerMemory === undefined ? {} : { memory: rendered.containerMemory }),
+        }],
+      };
+      return runLibrary(`
+cat > "$TEST_FIXTURE_DIR/rendered.json" <<'JSON'
+${JSON.stringify(renderedDefinition)}
+JSON
+cat > "$TEST_FIXTURE_DIR/source.json" <<'JSON'
+${JSON.stringify({ cpu: source.cpu, memory: source.memory })}
+JSON
+assert_rendered_task_size_not_reduced "$TEST_FIXTURE_DIR/rendered.json" "$TEST_FIXTURE_DIR/source.json" ${container} "test candidate"
+`, { environment });
+    };
+    const reviewedApi = { cpu: "1024", memory: "2048" };
+    const reviewedWorker = { cpu: "512", memory: "1024" };
+
+    const allowed: Array<[string, string, Task, Task]> = [
+      ["production", "api", reviewedApi, reviewedApi],
+      ["production", "api", { cpu: "2048", memory: "4096" }, reviewedApi],
+      ["production", "scheduler-worker", reviewedWorker, reviewedWorker],
+      ["staging", "api", reviewedApi, { cpu: "256", memory: "512" }],
+      ["staging", "scheduler-worker", { cpu: "256", memory: "512" }, { cpu: "256", memory: "512" }],
+    ];
+    for (const [environment, container, rendered, source] of allowed) {
+      const result = guard(environment, container, rendered, source);
+      assert.equal(result.status, 0, `${environment} ${container}: ${result.stderr}`);
+      assert.deepEqual(result.commands, []);
+    }
+
+    const refused: Array<[string, string, Task, Task, RegExp]> = [
+      ["production", "api", { cpu: "512", memory: "2048" }, reviewedApi,
+        /rendered 512 CPU \/ 2048 MiB, serving 1024 CPU \/ 2048 MiB, reviewed 1024 CPU \/ 2048 MiB/],
+      ["production", "api", reviewedApi, { cpu: "2048", memory: "4096" }, /serving 2048 CPU \/ 4096 MiB/],
+      ["production", "api", { ...reviewedApi, containerMemory: 1024 }, reviewedApi, /container cap 1024 MiB/],
+      ["production", "scheduler-worker", { cpu: "256", memory: "512" }, { cpu: "256", memory: "512" },
+        /reviewed 512 CPU \/ 1024 MiB/],
+      ["staging", "api", { cpu: "256", memory: "512" }, reviewedApi, /serving 1024 CPU \/ 2048 MiB\)/],
+      ["production", "api", { cpu: "1 vCPU", memory: "2048" }, reviewedApi, /rendered 1 vCPU CPU/],
+    ];
+    for (const [environment, container, rendered, source, detail] of refused) {
+      const result = guard(environment, container, rendered, source);
+      assert.notEqual(result.status, 0, `${environment} ${container} should be refused`);
+      assert.match(result.stderr, /Refusing to register the test candidate: it must not be smaller than the serving revision or the reviewed production size/);
+      assert.match(result.stderr, detail);
+    }
   });
 
   it("runs the initial preflight before every Docker, ECR, migration, and ECS mutation", () => {
