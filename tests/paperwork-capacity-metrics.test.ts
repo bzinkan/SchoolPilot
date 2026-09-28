@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createReadProbeEvidence, measureReadProbe, nearestRankPercentile, recordReadProbe } from '../scripts/load/paperwork/latency-metrics.mjs';
+import { CAPACITY_MEASUREMENT_PLAN, CAPACITY_READ_PATHS, createReadProbeEvidence, loadedProbesWithinWork, measureReadProbe, nearestRankPercentile, recordReadProbe, samplingPhaseComplete } from '../scripts/load/paperwork/latency-metrics.mjs';
 
 test('capacity p95 uses the same nearest-rank estimator for baseline, windows and endpoints', () => {
   const window = [...Array.from({ length: 19 }, () => 20), 80];
@@ -47,4 +47,29 @@ test('capacity timing includes the awaited body operation and persists failed re
     { now: () => clock, originMs: 90 }), /synthetic read failure/);
   assert.deepEqual(evidence.samples[1], { path: '/api/classpilot/groups', phase: 'continuations', startedAtMs: 90, durationMs: 15, status: null });
   assert.doesNotMatch(JSON.stringify(evidence), /not retained|synthetic read failure/);
+});
+
+test('prospective capacity sampling requires elapsed warmup/baseline and every endpoint count', () => {
+  assert.ok(Object.isFrozen(CAPACITY_MEASUREMENT_PLAN));
+  const counts = (n: number) => Object.fromEntries(CAPACITY_READ_PATHS.map(path => [path, n]));
+  assert.equal(CAPACITY_MEASUREMENT_PLAN.sampleCadenceMs, 500);
+  assert.equal(CAPACITY_MEASUREMENT_PLAN.p95Multiplier, 1.2);
+  assert.equal(CAPACITY_MEASUREMENT_PLAN.stopConsecutiveWindows, 3);
+  assert.equal(samplingPhaseComplete('warmup', 29_999, counts(10)), false);
+  assert.equal(samplingPhaseComplete('warmup', 30_000, counts(9)), false);
+  assert.equal(samplingPhaseComplete('warmup', 30_000, counts(10)), true);
+  assert.equal(samplingPhaseComplete('baseline', 179_999, counts(100)), false);
+  assert.equal(samplingPhaseComplete('baseline', 180_000, counts(99)), false);
+  assert.equal(samplingPhaseComplete('baseline', 180_000, { ...counts(100), '/api/classpilot/groups': 99 }), false);
+  assert.equal(samplingPhaseComplete('baseline', 180_000, counts(100)), true);
+  assert.equal(samplingPhaseComplete('loaded', 900_000, counts(99)), false);
+  assert.equal(samplingPhaseComplete('loaded', 10_000, counts(100)), true);
+});
+
+test('loaded observation rejects idle padding but permits a final in-flight body read', () => {
+  const evidence = createReadProbeEvidence();
+  recordReadProbe(evidence, { path: '/api/classpilot/groups', phase: 'preparing', startedAtMs: 100, durationMs: 150, status: 200 });
+  assert.equal(loadedProbesWithinWork(evidence.samples, 100, 200), true);
+  recordReadProbe(evidence, { path: '/api/classpilot/groups', phase: 'continuations', startedAtMs: 201, durationMs: 1, status: 200 });
+  assert.equal(loadedProbesWithinWork(evidence.samples, 100, 200), false);
 });

@@ -1,4 +1,14 @@
 export type ReadProbePhase = 'warmup' | 'baseline' | 'uploading' | 'preparing' | 'continuations' | 'cleanup';
+export const CAPACITY_READ_PATHS: readonly string[];
+export const CAPACITY_MEASUREMENT_PLAN: Readonly<{
+  warmupMinimumMs: number; warmupSamplesPerEndpoint: number;
+  baselineMinimumMs: number; baselineSamplesPerEndpoint: number;
+  loadedSamplesPerEndpoint: number; sampleCadenceMs: number;
+  p95Multiplier: number; stopWindowSamples: number; stopConsecutiveWindows: number; postWorkPadding: boolean;
+}>;
+export function samplingPhaseComplete(phase: 'warmup' | 'baseline' | 'loaded', elapsedMs: number,
+  countsByEndpoint: Record<string, number>): boolean;
+export function loadedProbesWithinWork(samples: ReadProbeSample[], startedAtMs: number, completedAtMs: number): boolean;
 export interface ReadProbeSample {
   path: string;
   phase: ReadProbePhase;

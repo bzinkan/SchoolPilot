@@ -18,7 +18,7 @@ import { cleanupMyDeskImports } from "/app/dist/services/mydeskImportCleanup.js"
 import { renderImportSource, cropImportRegion, buildImportAttachment, MyDeskImportProcessingError, } from "/app/dist/services/mydeskImportProcessing.js";
 import { importRegion } from "/app/dist/services/mydeskImportsValidation.js";
 import { signUserToken } from "/app/dist/services/jwt.js";
-import { createReadProbeEvidence, measureReadProbe, nearestRankPercentile } from './latency-metrics.mjs';
+import { CAPACITY_MEASUREMENT_PLAN, CAPACITY_READ_PATHS, createReadProbeEvidence, loadedProbesWithinWork, measureReadProbe, nearestRankPercentile, samplingPhaseComplete } from './latency-metrics.mjs';
 import { createPhysicalObjectStore, createStorageEvidence } from './physical-object-store.mjs';
 const schoolIds = [];
 // Fixtures and DDL use the administrator connection; real HTTP handlers keep the restricted application pool.
@@ -36,10 +36,13 @@ const metrics = { imageDigest: process.env.EVIDENCE_IMAGE_DIGEST, testSourceSha2
     limits: { cpu: Number(process.env.EVIDENCE_CPU), memoryBytes: Number(process.env.EVIDENCE_MEMORY) },
     memorySamples: 0, peakCgroupMemoryBytes: 0, peakRssBytes: 0, apiTimingsMs: [], statusCounts: {},
     readProbeEvidence: createReadProbeEvidence(),
+    measurementPlan: CAPACITY_MEASUREMENT_PLAN, measurementObservation: {},
     storageIo: createStorageEvidence(),
     providerRequests: 0, workerRuns: 0, maxClaimedPerRunner: 0, maxQueueObserved: 0, cpu: null,
     limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.', 'Inherited Docker localhost:4000 healthchecks do not apply to this ephemeral-port API/3999 worker harness; actual API pool/readiness and worker scheduler probes are evaluated separately.'] };
 const metricStart = performance.now(), cpuStart = process.cpuUsage();
+// Preserve the prospective plan even if startup or collection fails.
+writeFileSync('/app/evidence/split-metrics.json', JSON.stringify(metrics, null, 2));
 const objects = await createPhysicalObjectStore('/app/evidence/split-objects', metrics.storageIo, metricStart);
 const sample = () => {
     metrics.memorySamples++;
@@ -368,21 +371,36 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const { startApiObservation }=await import('/app/evidence/split-api-observation.mjs');
   const apiObservation=await startApiObservation(metrics);
   await rpc('/observe/start',{actor:actors[0]});
-  const endpointPaths=['/api/mydesk/capabilities','/api/classpilot/groups','/api/classpilot/teacher/settings'];
+  const endpointPaths=CAPACITY_READ_PATHS,plan=CAPACITY_MEASUREMENT_PLAN;
+  const phaseObservation=()=>({startedAtMs:performance.now()-metricStart,finishedAtMs:null,observedThroughMs:null,
+    countsByEndpoint:Object.fromEntries(endpointPaths.map(path=>[path,0]))});
+  const counts=buckets=>Object.fromEntries(endpointPaths.map(path=>[path,buckets[path].length]));
+  const cadence=()=>new Promise(resolve=>setTimeout(resolve,plan.sampleCadenceMs));
+  const warmupByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   const baseline=[],baselineByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   const loadedByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   let probePhase='warmup';
   const probe=async(index,buckets)=>{
     apiObservation.assertReady();
     const path=endpointPaths[index%endpointPaths.length];
-    const {response,durationMs}=await measureReadProbe(metrics.readProbeEvidence,{path,phase:probePhase},
-      ()=>request(actors[0],path),{now:()=>performance.now(),originMs:metricStart});
-    assert.equal(response.status,200);buckets[path].push(durationMs);return durationMs;
+    const observation=metrics.measurementObservation[probePhase==='warmup'||probePhase==='baseline'?probePhase:'loaded'];
+    try {
+      const {response,durationMs}=await measureReadProbe(metrics.readProbeEvidence,{path,phase:probePhase},
+        ()=>request(actors[0],path),{now:()=>performance.now(),originMs:metricStart});
+      assert.equal(response.status,200);buckets[path].push(durationMs);return durationMs;
+    } finally { observation.countsByEndpoint[path]++;observation.observedThroughMs=performance.now()-metricStart; }
   };
-  for(let i=0;i<6;i++) await probe(i,Object.fromEntries(endpointPaths.map(path=>[path,[]])));
+  metrics.measurementObservation.warmup=phaseObservation();const warmupStarted=metrics.measurementObservation.warmup.startedAtMs+metricStart;let warmupCount=0;
+  while(!samplingPhaseComplete('warmup',performance.now()-warmupStarted,counts(warmupByEndpoint))) {
+    await probe(warmupCount++,warmupByEndpoint);await cadence();
+  }
+  metrics.measurementObservation.warmup.finishedAtMs=performance.now()-metricStart;
   probePhase='baseline';
-  const baselineStarted=performance.now();
-  while(performance.now()-baselineStarted<60000) {baseline.push(await probe(baseline.length,baselineByEndpoint));await new Promise(resolve=>setTimeout(resolve,500));}
+  metrics.measurementObservation.baseline=phaseObservation();const baselineStarted=metrics.measurementObservation.baseline.startedAtMs+metricStart;
+  while(!samplingPhaseComplete('baseline',performance.now()-baselineStarted,counts(baselineByEndpoint))) {
+    baseline.push(await probe(baseline.length,baselineByEndpoint));await cadence();
+  }
+  metrics.measurementObservation.baseline.finishedAtMs=performance.now()-metricStart;
   await rpc('/observe/loaded');
   const baseline95=nearestRankPercentile(baseline,.95);
   assert.notEqual(baseline95,null);
@@ -391,9 +409,10 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const uploadPacket=async f=>{ let run=await createRun(f,[f.groupId],5,'discipline'); for(const source of sources) { const reservation=await request(f,`/imports/${run.id}/assets`,'POST',{clientRequestId:randomUUID(),filename:'synthetic-capacity',contentType:source.type,size:source.bytes.length,sha256:myDeskSha256(source.bytes)}); assert.equal(reservation.status,201); await uploadBytes(f,`/imports/${run.id}/assets/${reservation.data.asset.id}/content`,source.bytes,source.type); } run=await getRun(f,run.id); assert.equal(run.pageCount,20); return start(f,run); };
   const loaded=[]; let complete=false, operationFailure=null;
   const sampleApi=async()=>{ while(!complete) { loaded.push(await probe(loaded.length,loadedByEndpoint)); apiObservation.assertReady();
-      if(loaded.length%20===0){const p95=nearestRankPercentile(loaded.slice(-20),.95);const exceeded=p95>baseline95*1.2;failingWindows=exceeded?failingWindows+1:0;windows.push({throughSample:loaded.length,p95Ms:p95,exceeded});if(failingWindows>=3){metrics.splitAbort={code:'SUSTAINED_API_P95_REGRESSION',baselineP95Ms:baseline95,thresholdMultiplier:1.2,windowSize:20,consecutiveWindows:3,windows};writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));process.exit(88);}}
-      await new Promise(resolve=>setTimeout(resolve,500)); } };
+      if(loaded.length%plan.stopWindowSamples===0){const p95=nearestRankPercentile(loaded.slice(-plan.stopWindowSamples),.95);const exceeded=p95>baseline95*plan.p95Multiplier;failingWindows=exceeded?failingWindows+1:0;windows.push({throughSample:loaded.length,p95Ms:p95,exceeded});if(failingWindows>=plan.stopConsecutiveWindows){metrics.splitAbort={code:'SUSTAINED_API_P95_REGRESSION',baselineP95Ms:baseline95,thresholdMultiplier:plan.p95Multiplier,windowSize:plan.stopWindowSamples,consecutiveWindows:plan.stopConsecutiveWindows,windows};writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));process.exit(88);}}
+      await cadence(); } };
   probePhase='uploading';
+  metrics.measurementObservation.loaded=phaseObservation();
   const health=sampleApi().catch(()=>{
     metrics.splitAbort={code:'API_OBSERVATION_FAILED'};
     writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));
@@ -436,8 +455,9 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
     assert.equal(pendingStages.rows[0].count,0);
   } catch(error) { operationFailure=error; }
   finally {
+    metrics.measurementObservation.loaded.workCompletedAtMs=performance.now()-metricStart;
     complete=true;
-    try { await health; metrics.workerObservation=await rpc('/observe/stop'); }
+    try { await health; metrics.measurementObservation.loaded.finishedAtMs=performance.now()-metricStart;metrics.workerObservation=await rpc('/observe/stop'); }
     finally { await apiObservation.stop(); }
   }
   const p95=samples=>nearestRankPercentile(samples,.95);
@@ -453,7 +473,13 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   metrics.capacity.queueDrained=true; metrics.capacity.latencyWindows=windows; metrics.workerMetrics=await rpc('/metrics'); await rpc('/shutdown');
   const validPeak=(peak,limit)=>Number.isFinite(peak)&&peak>0&&Number.isFinite(limit)&&limit>0&&peak<limit*.70;
   metrics.kernelPeakMemoryBytes=Number(readFileSync('/sys/fs/cgroup/memory.peak','utf8'));
-  metrics.releaseCriteria={latencyWithin20Percent:loadedP95<=baselineP95*1.2&&endpointTimings.every(row=>row.loadedP95Ms<=row.baselineP95Ms*1.2),adequateSamples:baseline.length>=100&&loaded.length>=100&&endpointTimings.every(row=>row.baselineCount>=30&&row.loadedCount>=30),apiMemoryBelow70Percent:validPeak(metrics.kernelPeakMemoryBytes,metrics.limits.memoryBytes),workerMemoryBelow70Percent:validPeak(metrics.workerMetrics.kernelPeakMemoryBytes,metrics.workerMetrics.limits.memoryBytes),providerWithinTwo:metrics.workerMetrics.providerPeak<=2,ledgerUsed:metrics.workerMetrics.completedStages>0,completeCleanup:readdirSync('/app/evidence/split-objects').length===0};
+  const observations=metrics.measurementObservation;
+  metrics.releaseCriteria={latencyWithin20Percent:loadedP95<=baselineP95*plan.p95Multiplier&&endpointTimings.every(row=>row.loadedP95Ms<=row.baselineP95Ms*plan.p95Multiplier),adequateSamples:
+    samplingPhaseComplete('warmup',observations.warmup.finishedAtMs-observations.warmup.startedAtMs,counts(warmupByEndpoint))&&
+    samplingPhaseComplete('baseline',observations.baseline.finishedAtMs-observations.baseline.startedAtMs,counts(baselineByEndpoint))&&
+    samplingPhaseComplete('loaded',observations.loaded.workCompletedAtMs-observations.loaded.startedAtMs,counts(loadedByEndpoint)),
+    noPostWorkSamples:loadedProbesWithinWork(metrics.readProbeEvidence.samples,observations.loaded.startedAtMs,observations.loaded.workCompletedAtMs),
+    apiMemoryBelow70Percent:validPeak(metrics.kernelPeakMemoryBytes,metrics.limits.memoryBytes),workerMemoryBelow70Percent:validPeak(metrics.workerMetrics.kernelPeakMemoryBytes,metrics.workerMetrics.limits.memoryBytes),providerWithinTwo:metrics.workerMetrics.providerPeak<=2,ledgerUsed:metrics.workerMetrics.completedStages>0,completeCleanup:readdirSync('/app/evidence/split-objects').length===0};
   metrics.releaseCriteria.accepted=Object.values(metrics.releaseCriteria).every(Boolean);
   assert.equal(metrics.releaseCriteria.accepted,true,JSON.stringify(metrics.releaseCriteria));
 });
