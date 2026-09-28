@@ -28,7 +28,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: August 23, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: September 28, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -68,8 +68,8 @@ export default function PrivacyPolicy() {
               <li>Device connection status</li>
               <li>Hall pass records including destinations and timestamps (PassPilot)</li>
               <li>Staff-entered arrival, release, and dismissal records (GoPilot)</li>
-              <li>Private notes, filing preferences, seating layouts, attachments, and separately enabled My Desk paperwork import sources and drafts deliberately uploaded or selected by their author</li>
-              <li>School discipline records explicitly submitted by a teacher, with selected evidence copies and correction/withdrawal history; these are separate from private notebook content</li>
+              <li>Private notes, filing preferences, seating layouts, and attachments that authors saved in My Desk before it was paused. My Desk, including its AI paperwork and contact imports, is paused and not available in ClassPilot until further notice, so no new My Desk content is collected through ClassPilot while it is paused</li>
+              <li>School discipline records explicitly submitted by a teacher before My Desk was paused, with selected evidence copies and correction/withdrawal history; these are separate from private notebook content</li>
             </ul>
 
             <h3 className="text-xl font-medium text-slate-800 mb-3">2.3 Technical Data</h3>
@@ -99,9 +99,7 @@ export default function PrivacyPolicy() {
               <li>Display student screens to authorized teachers during class sessions</li>
               <li>Generate usage reports for teachers and administrators</li>
               <li>Classify monitored URL/domain signals and generate automated safety alerts for authorized human review</li>
-              <li>When separately enabled and deliberately started by an author, extract uploaded paperwork or a selected saved attachment into private My Desk drafts for that author's review and approval; existing notes are not scanned automatically</li>
-              <li>Provide teachers access to deliberately saved school discipline records for students in their current official teaching assignments and active school administrators school-wide access. Administrators may append reasoned corrections or withdrawals; private notebooks remain author-only. Authorship and historical permission grants do not bypass current access checks</li>
-              <li>Maintain reviewed shared student contact profiles and version history under current teaching-assignment or school-administrator access. Separately enabled, staff-started contact extraction reads only explicitly selected PDF/photo/DOCX/XLSX/CSV sections for review; it does not modify parent accounts or pickup authorization</li>
+              <li>My Desk (private notes, school discipline records, student contact profiles, seating charts, and AI-assisted paperwork and contact imports) is paused and not available in ClassPilot until further notice. No paperwork or contact documents can be submitted for AI extraction through ClassPilot while it is paused. My Desk content saved before the pause is retained and deleted as described in Section 4</li>
               <li>Maintain and improve our service</li>
               <li>Communicate important updates about the service</li>
               <li>Ensure compliance with school policies and legal requirements</li>
@@ -121,7 +119,7 @@ export default function PrivacyPolicy() {
               <li><strong>Dismissal records:</strong> Retained for the current school year for safety audits</li>
               <li><strong>My Desk private notes and approved attachments:</strong> Retained until author deletion or the agreed account-destruction process</li>
               <li><strong>Submitted school discipline records:</strong> Independent school-owned snapshots, selected evidence copies and version history remain under the executed agreement and verified school destruction process. Private-source deletion or staff departure does not erase them; correction and withdrawal preserve earlier versions. Abandoned evidence preparations expire after 24 hours and enter durable cleanup</li>
-              <li><strong>My Desk AI paperwork imports:</strong> Incomplete uploads expire after 24 hours, and review expires seven days after upload completion. Completion, cancellation, or expiry scrubs drafts and queues temporary source files for deletion. Minimal operational retry and cleanup records remain. Local deletion does not establish deletion of provider-retained data; reviewed provider/account terms apply</li>
+              <li><strong>My Desk AI paperwork imports (not available while My Desk is paused):</strong> Incomplete uploads expire after 24 hours, and review expires seven days after upload completion. Completion, cancellation, or expiry scrubs drafts and queues temporary source files for deletion. Minimal operational retry and cleanup records remain. Local deletion does not establish deletion of provider-retained data; reviewed provider/account terms apply</li>
               <li><strong>Reviewed contact profiles:</strong> Approved values and immutable version history remain school-owned under the executed agreement and verified destruction process. Contact import sources, previews and unapproved suggestions are temporary: unfinished uploads expire after 24 hours, review expires after seven days, and completion/cancellation/expiry queues durable cleanup. These sources are not retained as permanent student attachments</li>
               <li><strong>Account, audit, communication, and teacher-downloaded files:</strong> Follow separate documented or contractual policies and are not governed by the ClassPilot heartbeat-retention setting</li>
             </ul>
