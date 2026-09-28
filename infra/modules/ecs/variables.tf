@@ -155,6 +155,28 @@ variable "mydesk_ai_import_model" {
   type    = string
   default = "claude-opus-5-5"
 }
+variable "mydesk_import_pipeline_version" {
+  description = "Internal paperwork protocol for new processing; version 2 requires the reviewed stage-ledger admission"
+  type        = number
+  default     = 1
+  validation {
+    condition     = contains([1, 2], var.mydesk_import_pipeline_version)
+    error_message = "mydesk_import_pipeline_version must be exactly 1 or 2."
+  }
+  validation {
+    condition     = var.mydesk_import_pipeline_version != 2 || contains([for table in split(",", var.rls_enabled_tables) : trimspace(table)], "import_processing_stages")
+    error_message = "Pipeline version 2 requires the reviewed import_processing_stages RLS admission."
+  }
+}
+variable "mydesk_import_pipeline_width" {
+  description = "Per-packet processing width; serial rollback retains the version-2 protocol"
+  type        = number
+  default     = 2
+  validation {
+    condition     = contains([1, 2], var.mydesk_import_pipeline_width)
+    error_message = "mydesk_import_pipeline_width must be exactly 1 or 2."
+  }
+}
 variable "mydesk_ai_import_teacher_daily_pages" {
   type    = number
   default = 100

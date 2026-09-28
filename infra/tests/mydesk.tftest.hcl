@@ -82,9 +82,26 @@ run "teacher_preferences_rls_target_is_registry_valid" {
   assert {
     condition = (
       length(local.rls_configured_tables) == 120 &&
-      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The registered preference-table target must be accepted without pre-admitting it in production."
+  }
+}
+
+run "paperwork_processing_rls_target_is_registry_valid" {
+  command = plan
+  variables {
+    environment                    = "test"
+    rls_enabled_tables             = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.importProcessingStagesPostExpand.tables)
+    mydesk_import_pipeline_version = 2
+    mydesk_import_pipeline_width   = 1
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 121 &&
+      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+    )
+    error_message = "The reviewed processing-stage target must be accepted without pre-admitting it in production."
   }
 }
 
@@ -165,6 +182,8 @@ run "disabled_features_retains_bucket_and_narrow_worker_cleanup_permissions" {
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "STUDENT_INFORMATION_AI_IMPORT_MODE"]) == "off" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_MODEL"]) == "claude-opus-5-5" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_IMPORT_PIPELINE_VERSION"]) == "1" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_IMPORT_PIPELINE_WIDTH"]) == "2" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES"]) == "100" &&
       one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES"]) == "500"
     ])
@@ -205,7 +224,7 @@ run "global_features_reach_both_services_without_school_lists" {
     worker_memory                      = 512
     db_pool_max                        = 16
     scheduler_db_pool_max              = 5
-    rls_enabled_tables                 = "students"
+    rls_enabled_tables                 = "students,import_processing_stages"
     redis_url                          = "rediss://test.invalid:6379"
     mydesk_storage_enabled             = true
     mydesk_attachments_bucket_name     = "schoolpilot-test-mydesk-attachments"
@@ -214,16 +233,45 @@ run "global_features_reach_both_services_without_school_lists" {
     mydesk_seating_mode                = "on"
     mydesk_ai_import_mode              = "on"
     student_information_ai_import_mode = "on"
+    mydesk_import_pipeline_version     = 2
+    mydesk_import_pipeline_width       = 1
   }
   assert {
     condition = alltrue([
       for definition in [aws_ecs_task_definition.api, aws_ecs_task_definition.worker] :
       alltrue([for name in ["MYDESK_MODE", "MYDESK_SEATING_MODE", "MYDESK_AI_IMPORT_MODE", "STUDENT_INFORMATION_AI_IMPORT_MODE"] :
         one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == name]) == "on"
-      ]) && length([for entry in jsondecode(definition.container_definitions)[0].environment : entry.name if can(regex("^MYDESK_.*ENABLED_SCHOOL_IDS$", entry.name))]) == 0
+      ]) &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_IMPORT_PIPELINE_VERSION"]) == "2" &&
+      one([for entry in jsondecode(definition.container_definitions)[0].environment : entry.value if entry.name == "MYDESK_IMPORT_PIPELINE_WIDTH"]) == "1" &&
+      length([for entry in jsondecode(definition.container_definitions)[0].environment : entry.name if can(regex("^MYDESK_.*ENABLED_SCHOOL_IDS$", entry.name))]) == 0
     ])
     error_message = "All eligible schools must receive the same feature modes in API and worker with no school allowlists."
   }
+}
+run "paperwork_pipeline_requires_stage_admission" {
+  command = plan
+  variables {
+    environment                    = "test"
+    mydesk_import_pipeline_version = 2
+  }
+  expect_failures = [var.mydesk_import_pipeline_version]
+}
+run "paperwork_pipeline_rejects_unknown_version" {
+  command = plan
+  variables {
+    environment                    = "test"
+    mydesk_import_pipeline_version = 3
+  }
+  expect_failures = [var.mydesk_import_pipeline_version]
+}
+run "paperwork_pipeline_rejects_fractional_width" {
+  command = plan
+  variables {
+    environment                  = "test"
+    mydesk_import_pipeline_width = 1.5
+  }
+  expect_failures = [var.mydesk_import_pipeline_width]
 }
 run "seating_cannot_enable_without_notebook" {
   command = plan
