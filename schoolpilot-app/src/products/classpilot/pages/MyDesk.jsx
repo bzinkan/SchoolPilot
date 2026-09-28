@@ -116,19 +116,22 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
     finally { operations.current.delete('export'); if (!controller.signal.aborted) setExporting(false); }
   };
 
-  return <main className="mydesk-shell">
+  const section = ['general', 'past', 'legacy'].includes(filters.scope) ? filters.scope : 'all';
+  const scopeHint = { general: 'General notes are not filed to a grade or class.', past: 'Use the Past class and Past grade filters below.', legacy: 'These notes have no saved grade.' }[section];
+  const studentScope = filters.scope === 'class' ? `?classId=${encodeURIComponent(filters.classId)}` : filters.scope === 'grade' ? `?gradeLevel=${encodeURIComponent(filters.gradeLevel)}` : '';
+  return <><MyDeskScopePicker layout="bar" classes={classes} schoolId={schoolId} viewerId={viewerId} includeOtherClasses disabled={section !== 'all'} hint={scopeHint}
+      value={section === 'all' ? filters : { gradeLevel: '', classId: '' }}
+      onChange={value => chooseScope(value.classId ? 'class' : value.gradeLevel ? 'grade' : 'all', value.classId, value.gradeLevel)} />
+  <main className="mydesk-shell">
     <div className="mydesk-intro"><div><div className="mydesk-title-line"><NotebookPen aria-hidden="true" /><h1>Notes</h1></div><p>Your notes, right where you left them.</p><MyDeskVisibility kind="private">Only you can see these notes.</MyDeskVisibility></div><div className="import-entry-actions"><Button variant="outline" disabled={!onImport} title={!onImport ? 'Paperwork processing is not enabled yet. Your saved files remain available.' : undefined} onClick={() => onImport?.(filters.scope === 'class' ? filters.classId : undefined)}>Add from paperwork</Button><Button className="mydesk-new" onClick={() => openComposer()}><Plus className="size-4" />New note</Button></div></div>
-    <div className="mydesk-layout">
-      <nav className="mydesk-index" aria-label="Notebook sections">
-        <button aria-current={filters.scope === 'all' ? 'page' : undefined} onClick={() => chooseScope('all')}><BookOpen className="size-4" />All notes</button>
-        <button aria-current={filters.scope === 'general' ? 'page' : undefined} onClick={() => chooseScope('general')}>General</button>
-        <MyDeskScopePicker classes={classes} schoolId={schoolId} viewerId={viewerId} includeOtherClasses value={filters}
-          onChange={value => chooseScope(value.classId ? 'class' : value.gradeLevel ? 'grade' : 'all', value.classId, value.gradeLevel)} />
-        <Link className="mydesk-private-history-link" to="/classpilot/my-desk/notes/students">Private notes by student</Link>
-        <button className="mydesk-past-link" aria-current={filters.scope === 'past' ? 'page' : undefined} onClick={() => chooseScope('past')}>Past grades and classes</button>
-        {!!classes.data?.legacyNoteCount && <button aria-current={filters.scope === 'legacy' ? 'page' : undefined} onClick={() => chooseScope('legacy')}>Grade not recorded ({classes.data.legacyNoteCount})</button>}
-        {filters.scope === 'past' && <p className="text-xs text-muted-foreground px-3">Your notes keep their original filing after a class, grade or roster changes.</p>}
-      </nav>
+    <div className="mydesk-sections" role="group" aria-label="Notebook sections">
+      <button type="button" aria-pressed={section === 'all'} onClick={() => { if (section !== 'all') chooseScope('all'); }}><BookOpen className="size-4" aria-hidden="true" />All notes</button>
+      <button type="button" aria-pressed={section === 'general'} onClick={() => chooseScope('general')}>General</button>
+      <Link to={`/classpilot/my-desk/notes/students${studentScope}`}>By student</Link>
+      <button type="button" aria-pressed={section === 'past'} onClick={() => chooseScope('past')}>Past grades and classes</button>
+      {!!classes.data?.legacyNoteCount && <button type="button" aria-pressed={section === 'legacy'} onClick={() => chooseScope('legacy')}>Grade not recorded ({classes.data.legacyNoteCount})</button>}
+    </div>
+    {section === 'past' && <p className="mydesk-section-note">Your notes keep their original filing after a class, grade or roster changes.</p>}
       <section className="mydesk-notes" aria-label={scopeLabel}>
         <div className="mydesk-section-heading"><h2>{scopeLabel}</h2><Button variant="ghost" disabled={exporting} onClick={exportNotes}><Download className="size-4" />{exporting ? 'Exporting…' : 'Export CSV'}</Button></div>
         <div className="mydesk-filters"><label className="mydesk-search"><span className="sr-only">Search notes</span><Search className="size-4" aria-hidden="true" /><Input maxLength={200} placeholder="Search your notes" value={filters.q} onChange={event => setFilters(previous => ({ ...previous, q: event.target.value }))} /></label>
@@ -143,10 +146,9 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
         {notes.isPending ? <p className="mydesk-empty" role="status">Loading your notes…</p> : notes.isError ? <div className="mydesk-empty" role="alert"><p>{myDeskError(notes.error)}</p><Button variant="outline" onClick={() => notes.refetch()}>Try again</Button></div> : rows.length === 0 ? <div className="mydesk-empty"><NotebookPen className="size-9" aria-hidden="true" /><h3>A little space to remember.</h3><p>{filters.q || filters.category || filters.from || filters.to ? 'No notes match these filters.' : 'Save a reminder, a classroom moment, or a photo of the paper you want to keep.'}</p><Button variant="outline" onClick={() => openComposer()}>Write a note</Button></div> : <div className="mydesk-note-list">{rows.map(note => <NoteCard key={`${schoolId}:${viewerId}:${note.id}`} note={note} access={access} onImport={onImport} schoolId={schoolId} viewerId={viewerId} categories={categoryList} timeZone={timeZone} busy={busyId === note.id} onEdit={() => openComposer(note)} onPin={() => mutate(note, 'pin')} onDelete={() => setDeleteNote(note)} />)}</div>}
         {notes.hasNextPage && <Button className="mydesk-load-more" variant="outline" disabled={notes.isFetchingNextPage} onClick={() => notes.fetchNextPage()}>{notes.isFetchingNextPage ? 'Loading…' : 'Load more notes'}</Button>}
       </section>
-    </div>
     {composer && <NoteComposerDialog key={`${schoolId}:${viewerId}:${composer.sessionId}`} {...composer} open schoolId={schoolId} viewerId={viewerId} today={today} timeZone={timeZone} onOpenChange={open => { if (!open) setComposer(null); }} onSaved={() => setAnnouncement('Private note saved.')} />}
     <AlertDialog open={Boolean(deleteNote)} onOpenChange={open => { if (!open && !busyId) setDeleteNote(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete this private note?</AlertDialogTitle><AlertDialogDescription>The note and its attachments will be removed from your notebook.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={Boolean(busyId)}>Keep note</AlertDialogCancel><AlertDialogAction disabled={Boolean(busyId)} onClick={event => { event.preventDefault(); void mutate(deleteNote, 'delete'); }}>{busyId ? 'Deleting…' : 'Delete note'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-  </main>;
+  </main></>;
 }
 
 export function NoteCard({ note, access, onImport, schoolId, viewerId, categories, timeZone = 'America/New_York', busy, onEdit, onPin, onDelete }) {

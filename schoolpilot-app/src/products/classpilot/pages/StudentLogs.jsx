@@ -12,6 +12,7 @@ import MyDeskHeader from '../components/MyDeskHeader';
 import MyDeskVisibility from '../components/MyDeskVisibility';
 import MyDeskScopePicker from '../components/MyDeskScopePicker';
 import { myDeskScopeFilters } from '../lib/myDeskScopeModel';
+import { useMyDeskScopeParams } from '../hooks/useMyDeskScopeParams';
 import MyDeskStudentAction from '../components/MyDeskStudentAction';
 import NoteComposerDialog from '../components/NoteComposerDialog';
 import DisciplineStudentLinks from '../components/DisciplineStudentLinks';
@@ -31,15 +32,15 @@ export default function StudentLogs() {
 
 export function StudentDirectory({ access }) {
   const [search, setSearch] = useState(''); const q = useDeferredValue(search);
-  const [scope, setScope] = useState({ gradeLevel: '', classId: '' });
+  const [scope, setScope] = useMyDeskScopeParams();
   const classes = useMyDeskClasses(access.schoolId, access.viewerId);
   const scopeFilters = myDeskScopeFilters(scope);
   const query = useInfiniteQuery({ queryKey: myDeskKeys.directory(access.schoolId, access.viewerId, q, scopeFilters), initialPageParam: '',
     queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).students({ ...scopeFilters, personal: true, q, ...(pageParam ? { cursor: pageParam } : {}), limit: 50 }),
     getNextPageParam: page => page.nextCursor || undefined, retry: false });
   const rows = query.data?.pages.flatMap(page => page.students || []) || [];
-  return <main className="mydesk-shell"><div className="mydesk-intro"><div><h1>Private notes by student</h1><p>Your personal notes for students in your current classes. Older notes remain in your notebook.</p><MyDeskVisibility kind="private">Only your own notes appear here.</MyDeskVisibility></div></div>
-    <MyDeskScopePicker classes={classes} schoolId={access.schoolId} viewerId={access.viewerId} value={scope} onChange={setScope} />
+  return <><MyDeskScopePicker layout="bar" classes={classes} schoolId={access.schoolId} viewerId={access.viewerId} value={scope} onChange={setScope} />
+  <main className="mydesk-shell"><div className="mydesk-intro"><div><h1>Private notes by student</h1><p>Your personal notes for students in your current classes. Older notes remain in your notebook.</p><MyDeskVisibility kind="private">Only your own notes appear here.</MyDeskVisibility></div></div>
     <label className="mydesk-search">Find a student<Input maxLength={200} value={search} onChange={event => setSearch(event.target.value)} placeholder="Student name" /></label>
     {query.isPending ? <p role="status">Loading students…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <p className="mydesk-empty">No current roster students match.</p> :
       <div className="mydesk-note-list">{rows.map(student => <article className="mydesk-note" key={student.id}>
@@ -48,7 +49,7 @@ export function StudentDirectory({ access }) {
         <div className="mydesk-note-actions"><Button asChild variant="outline"><Link to={`/classpilot/my-desk/notes/students/${encodeURIComponent(student.id)}`}>Open private history</Link></Button><MyDeskStudentAction access={access} student={student} /></div>
       </article>)}</div>}
     {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>Load more students</Button>}
-  </main>;
+  </main></>;
 }
 
 export function StudentHistory({ access, studentId }) {

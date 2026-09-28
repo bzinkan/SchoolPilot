@@ -122,6 +122,16 @@ test('teacher and unknown origins return to ClassPilot; an admin marker never gr
  const forged=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin',canViewSchool:false});try{assert.equal(forged.requests.find(row=>row.path.endsWith('/students/search')).body.scope,'assigned');assert.equal(await forged.page.getByRole('option',{name:'All my grades',exact:true}).count(),1);}finally{await forged.page.close();}
 });
 
+test('the grade chosen in the scope bar travels with every My Desk tab link',async()=>{
+ const {page,errors}=await setup('navigation',{canViewSchool:false});try{
+  await page.getByText('Kept when you switch tabs',{exact:true}).waitFor();
+  await page.getByLabel('Grade filter').selectOption('5');
+  await page.waitForFunction(()=>document.querySelector('output[aria-label="Current route"]')?.textContent.includes('gradeLevel=5'));
+  assert.equal(await page.getByRole('link',{name:'Notes',exact:true}).getAttribute('href'),'/classpilot/my-desk?gradeLevel=5');
+  assert.equal(await page.getByRole('link',{name:'Discipline logs',exact:true}).getAttribute('aria-current'),'page');assert.deepEqual(errors,[]);
+ }finally{await page.close();}
+});
+
 test('school-year fallbacks show effective all dates with accurate admin settings actions and matched exports',async()=>{
  for(const range of [
   {period:'all',from:null,to:null,noticeCode:'SCHOOL_YEAR_NOT_CONFIGURED',notice:'Showing all dates because school year dates have not been configured.'},

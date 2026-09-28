@@ -13,7 +13,6 @@
 .mydesk-title-line { display:flex; align-items:center; gap:12px; }.mydesk-title-line>svg { width:30px;height:30px;color:var(--desk-blue); }
 .mydesk-intro h1 { font-size:clamp(30px,4vw,40px);font-weight:650;letter-spacing:-.04em; }.mydesk-intro p { color:var(--desk-blue); margin-top:6px; }
 .mydesk-intro .mydesk-privacy { font-size:12px;display:flex;align-items:center;gap:6px;margin-top:14px;opacity:.85; }.mydesk-new { min-height:44px; }
-.mydesk-layout { display:grid; grid-template-columns:190px minmax(0,1fr);gap:32px;align-items:start; }
 .mydesk-index { display:flex;flex-direction:column;gap:5px;position:sticky;top:20px; }.mydesk-index>button { display:flex;align-items:center;gap:9px;text-align:left;padding:11px 12px; border-radius:5px; min-height:44px; font-size:14px; }
 .mydesk-index>button[aria-current=page] { color:var(--desk-blue);background:var(--desk-paper);box-shadow:inset 3px 0 var(--desk-blue);font-weight:600; }.mydesk-index>button:hover { background:var(--desk-paper); }
 .mydesk-index-label { padding:22px 12px 3px;font-size:12px;color:var(--desk-blue); }.mydesk-index .mydesk-past-link { margin-top:18px;border-top:1px solid var(--desk-line);border-radius:0; }
@@ -42,5 +41,19 @@
 .mydesk-view-by button { padding: .45rem .75rem; min-height: 2.75rem; border: 1px solid hsl(var(--border)); border-radius: .4rem; }
 .mydesk-view-by button[aria-pressed="true"] { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
 .mydesk-tabs { overflow-x: auto; }
-.mydesk-private-history-link { padding: .7rem .75rem; min-height: 44px; font-size: .875rem; text-decoration: underline; text-underline-offset: .2rem; }
+.mydesk-scope-slot { max-width:1200px; margin:0 auto; padding:16px 28px 0; }
+.mydesk-scope-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:8px 12px; background:var(--desk-paper); border:1px solid var(--desk-line); border-radius:10px; }
+.mydesk-scope-bar>p[role] { font-size:14px; }
+.mydesk-scope-bar .mydesk-view-by { flex-wrap:nowrap; gap:6px; }.mydesk-scope-bar .mydesk-view-by span { width:auto; margin-right:4px; }.mydesk-scope-bar .mydesk-view-by button { border-color:hsl(var(--input)); }
+.mydesk-scope-bar label { display:flex; align-items:center; gap:8px; font-size:.85rem; }
+.mydesk-scope-bar select { min-height:2.75rem; min-width:13rem; max-width:100%; border:1px solid hsl(var(--input)); border-radius:.4rem; background:hsl(var(--background)); color:inherit; padding:.45rem .6rem; }
+.mydesk-scope-bar select:focus-visible,.mydesk-scope-bar button:focus-visible { outline:2px solid #627ecd; outline-offset:2px; }
+.mydesk-scope-hint { margin-left:auto; font-size:12px; color:var(--desk-blue); }
+.mydesk-sections { display:inline-flex; flex-wrap:wrap; gap:4px; padding:4px; margin-bottom:24px; background:var(--desk-paper); border:1px solid var(--desk-line); border-radius:10px; }
+.mydesk-sections>button,.mydesk-sections>a { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 14px; border-radius:7px; font-size:14px; font-weight:500; color:var(--desk-blue); text-decoration:none; }
+.mydesk-sections>button:hover,.mydesk-sections>a:hover { background:color-mix(in srgb,var(--desk-blue) 10%,transparent); }
+.mydesk-sections>[aria-pressed=true],.mydesk-sections>[aria-pressed=true]:hover { background:var(--desk-blue); color:var(--desk-paper); font-weight:600; }
+.mydesk-sections>button:focus-visible,.mydesk-sections>a:focus-visible { outline:2px solid #627ecd; outline-offset:2px; }
+.mydesk-section-note { margin:-12px 0 20px; font-size:13px; color:var(--desk-blue); }
+@media(max-width:767px) { .mydesk-scope-slot{padding:12px 16px 0}.mydesk-scope-bar label{flex:1 1 100%}.mydesk-scope-bar select{flex:1;min-width:0}.mydesk-scope-hint{margin-left:0}.mydesk-sections{display:flex} }
 @media(max-width:767px) { .mydesk-index .mydesk-scope-picker { flex-basis: 100%; width: 100%; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: end; } }

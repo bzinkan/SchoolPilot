@@ -9,8 +9,9 @@ ClassPilot, and one tab bar. A badge under each title says who can see that area
 schools receive released features automatically; there is no school-admin enable
 switch.
 
-Choose **Grades** or **Classes** to browse. The view preference is remembered for
-your account in this school. Grade directories combine current teaching rosters
+Choose **Grades** or **Classes** in the bar under the tabs to browse. The chosen
+grade or class stays selected when you switch tabs, and the view preference is
+remembered for your account in this school. Grade directories combine current teaching rosters
 without repeating students from several classes. Teaching administrators see
 personal assignments first, with other authorized classes separate. Choosing a
 view never changes rosters or moves old notes.
@@ -36,8 +37,9 @@ encrypted or unreadable files need conversion.
 Pin, edit, refile or delete whenever needed. Categories remain private labels:
 referral or detention does not create a shared incident. Search and CSV export
 follow your filters; attachment links require sign-in. Past classes/grades retain
-historical filing. **Private notes by student**, within Notes, shows only your
-notes across years. This history never grants current roster or contact access.
+historical filing. Notes are grouped as **All notes**, **General**, **By student**
+and **Past grades and classes**. **By student** shows only your notes across
+years. This history never grants current roster or contact access.
 
 Keep a failed save open and retry the same save, finish with uploaded files when
 offered, or cancel. Unfinished saves expire after 24 hours. Deletion removes app

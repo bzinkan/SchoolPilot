@@ -21,6 +21,7 @@ import MyDeskHeader from "../components/MyDeskHeader";
 import MyDeskVisibility from "../components/MyDeskVisibility";
 import MyDeskScopePicker from "../components/MyDeskScopePicker";
 import { myDeskScopeFilters } from "../lib/myDeskScopeModel";
+import { useMyDeskScopeParams } from "../hooks/useMyDeskScopeParams";
 import { withDisciplineEntry } from "../lib/disciplineNavigation";
 import { useAdminNavigation, useAdminShell } from "../hooks/useAdminNavigation";
 import "../components/studentInformation.css";
@@ -31,6 +32,7 @@ export function StudentInformationShell({
   adminEntry = false,
   schoolName,
   seatingEnabled = true,
+  scopeBar = null,
 }) {
   const shell = useAdminShell();
   const { navigate } = useAdminNavigation();
@@ -45,31 +47,39 @@ export function StudentInformationShell({
       {adminEntry ? (
         <p className="student-info-school">{schoolName || "Current school"}</p>
       ) : (
-        <MyDeskTabs seatingEnabled={seatingEnabled} />
+        <>
+          <MyDeskTabs seatingEnabled={seatingEnabled} />
+          {scopeBar}
+        </>
       )}
       <main className="mydesk-shell student-information">{children}</main>
     </div>
   );
 }
 
-function Directory({ access }) {
+function DirectoryScopeBar({ access }) {
+  const [scope, setScope] = useMyDeskScopeParams();
+  const classes = useMyDeskClasses(access.schoolId, access.viewerId);
+  return (
+    <MyDeskScopePicker
+      layout="bar"
+      classes={classes}
+      schoolId={access.schoolId}
+      viewerId={access.viewerId}
+      value={scope}
+      onChange={setScope}
+      includeOtherClasses={access.manager}
+    />
+  );
+}
+
+function Directory({ access, inlineScope }) {
   const Heading = useAdminShell() ? "h2" : "h1";
   const [search, setSearch] = useState(""),
     [inactive, setInactive] = useState(false),
     [importing, setImporting] = useState(false);
-  const [params, setParams] = useSearchParams();
-  const scope = {
-    gradeLevel: params.get("gradeLevel") || "",
-    classId: params.get("classId") || "",
-  };
-  const setScope = (next) => {
-    const updated = new URLSearchParams(params);
-    for (const key of ["gradeLevel", "classId"]) {
-      if (next[key]) updated.set(key, next[key]);
-      else updated.delete(key);
-    }
-    setParams(updated);
-  };
+  const [params] = useSearchParams();
+  const [scope, setScope] = useMyDeskScopeParams();
   const q = useDeferredValue(search);
   const { navigate, requestAction } = useAdminNavigation();
   const classes = useMyDeskClasses(access.schoolId, access.viewerId);
@@ -137,14 +147,16 @@ function Directory({ access }) {
           }
         />
       )}
-      <MyDeskScopePicker
-        classes={classes}
-        schoolId={access.schoolId}
-        viewerId={access.viewerId}
-        value={scope}
-        onChange={setScope}
-        includeOtherClasses={access.manager}
-      />
+      {inlineScope && (
+        <MyDeskScopePicker
+          classes={classes}
+          schoolId={access.schoolId}
+          viewerId={access.viewerId}
+          value={scope}
+          onChange={setScope}
+          includeOtherClasses={access.manager}
+        />
+      )}
       <label>
         Find a student
         <input
@@ -291,6 +303,7 @@ export default function StudentInformation() {
       adminEntry={adminEntry}
       schoolName={base.school?.name}
       seatingEnabled={base.seatingEnabled}
+      scopeBar={!importId && !studentId ? <DirectoryScopeBar access={access} /> : null}
     >
       {importId ? (
         <StudentInformationImport access={access} importId={importId} />
@@ -308,7 +321,7 @@ export default function StudentInformation() {
           />
         </>
       ) : (
-        <Directory access={access} />
+        <Directory access={access} inlineScope={adminEntry} />
       )}
     </StudentInformationShell>
   );

@@ -107,6 +107,25 @@ async function screenshot(page, name) {
   await target.screenshot({ path: path.join(process.env.MYDESK_SCREENSHOT_DIR, name) });
 }
 
+test('notebook sections replace the rail and the scope bar pauses for general notes', async () => {
+  const t = await setup();
+  try {
+    await t.page.getByLabel('Class filter').selectOption('class-a');
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'Science 5');
+    assert.equal(await t.page.getByRole('link', { name: 'By student', exact: true }).getAttribute('href'), '/classpilot/my-desk/notes/students?classId=class-a');
+    assert.equal(await t.page.getByRole('button', { name: 'All notes', exact: true }).getAttribute('aria-pressed'), 'true');
+    await t.page.getByRole('button', { name: 'General', exact: true }).click();
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'General notes');
+    assert.equal(await t.page.getByLabel('Class filter').isDisabled(), true);
+    await t.page.getByText('General notes are not filed to a grade or class.', { exact: true }).waitFor();
+    assert.ok(t.requests.some(item => item.path.endsWith('/notes/search') && item.query.scope === 'general'));
+    await t.page.getByRole('button', { name: 'All notes', exact: true }).click();
+    await t.page.waitForFunction(() => document.querySelector('.mydesk-notes h2')?.textContent === 'All notes');
+    assert.equal(await t.page.getByLabel('Class filter').isDisabled(), false);
+    assert.deepEqual(t.errors, []);
+  } finally { await t.page.close(); }
+});
+
 test('private photo-only save survives uncertain reservation and upload retries without duplication', { timeout: 60_000 }, async () => {
   const t = await setup({ failCreate: true, failUpload: true });
   try {
