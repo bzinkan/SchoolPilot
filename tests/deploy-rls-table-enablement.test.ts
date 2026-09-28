@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -32,6 +32,7 @@ const rlsRegistry = JSON.parse(
     schoolDisciplinePostExpand: { count: number; tables: string[] };
     studentInformationPostExpand: { count: number; tables: string[] };
     classpilotTeacherPreferencesPostExpand: { count: number; tables: string[] };
+    importProcessingStagesPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -63,6 +64,18 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits only the durable import ledger while preserving the verified serving baseline", () => {
+    const previous = rlsRegistry.inventories.classpilotTeacherPreferencesPostExpand.tables;
+    const table = rlsRegistry.reviewedEnablementRequests.importProcessingStages.join(",");
+    assert.equal(table, "import_processing_stages");
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table });
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table, expectedPreviousTables: previous });
+    assert.deepEqual(environmentValue(api, "RLS_ENABLED_TABLES")?.split(","), rlsRegistry.inventories.importProcessingStagesPostExpand.tables);
+    assert.throws(() => verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table }), /already enabled/);
+  });
   it("admits the personal preference table only after a consistent observed baseline", () => {
     const previous = rlsRegistry.inventories.studentInformationPostExpand.tables;
     const bundle = rlsRegistry.reviewedEnablementRequests.classpilotTeacherPreferences.join(",");
@@ -221,6 +234,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.mydeskWorkspaceAndDiscipline,
       ...rlsRegistry.reviewedEnablementRequests.studentInformation,
       ...rlsRegistry.reviewedEnablementRequests.classpilotTeacherPreferences,
+      ...rlsRegistry.reviewedEnablementRequests.importProcessingStages,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

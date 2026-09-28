@@ -54,7 +54,7 @@ export function myDeskImportsEnabledForSchool(schoolId: string) {
 }
 const uuid = z.string().uuid();
 export const importMutation = z
-  .object({ requestId: uuid, revision: z.number().int().positive() })
+  .object({ requestId: uuid, revision: z.number().int().positive(), protocolVersion: z.literal(2).optional() })
   .strict();
 const groups = z
   .array(myDeskId)

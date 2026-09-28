@@ -105,6 +105,8 @@ page/region references, allow uncertainty, and require human review. Test hostil
 instructions, malformed responses, multiple students, ambiguous names, incomplete
 continuations, and incorrect dates against synthetic fixtures.
 
+The permanent Resume paperwork entry, progress API, protocol-2 stage ledger and
+fields-first early review are described in [Paperwork progress release](PAPERWORK_PROGRESS_RELEASE.md).
 Processing is asynchronous and durable, with at most two imports processing
 globally, three attempts per stage, and a 90-second AI call deadline. Daily page
 budgets default to 100 per author per school and 500 per school. Quota counters

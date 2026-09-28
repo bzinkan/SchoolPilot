@@ -1,4 +1,4 @@
-import { runStudentInformationJobs, cleanupStudentInformationImports } from "./studentInformationWorker.js";
+import { claimStudentInformationJobs, processStudentInformationClaim, cleanupStudentInformationImports } from "./studentInformationWorker.js";
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
 import {
@@ -98,11 +98,15 @@ import { isScheduleBoundaryWorkerEnabled } from "../config/classpilotScheduledCl
 import { cleanupMyDesk } from "./mydeskCleanup.js";
 import { cleanupSchoolDiscipline } from "./schoolDisciplineCleanup.js";
 import { cleanupMyDeskImports } from "./mydeskImportCleanup.js";
-import { runMyDeskImportJobs } from "./mydeskImportWorker.js";
+import { claimMyDeskImportJobs, processClaimedMyDeskImport } from "./mydeskImportWorker.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 let boundaryIntervalId: NodeJS.Timeout | null = null;
+let importIntervalId: NodeJS.Timeout | null = null;
+let importDispatching = false;
+let informationFirst = false;
+let importShutdown = new AbortController();
 let schedulerStopping = false;
 const pendingSchedulerJobs = new Set<Promise<void>>();
 let lastRollupHour = -1;
@@ -201,6 +205,36 @@ function scheduleLockedJob(jobName: string, fn: () => Promise<void>) {
   void pending.then(() => pendingSchedulerJobs.delete(pending));
 }
 
+/** Only short database claims are serialized; a sibling packet never owns the refill loop. */
+function dispatchImportJobs() {
+  if (schedulerStopping || importDispatching) return;
+  importDispatching = true;
+  const track = (work: Promise<unknown>) => {
+    const pending = work.then(() => undefined, () => {
+      console.error(JSON.stringify({ event: "import_processing_dispatch_failed" }));
+    }).finally(() => { pendingSchedulerJobs.delete(pending); dispatchImportJobs(); });
+    pendingSchedulerJobs.add(pending);
+  };
+  const options = { signal: importShutdown.signal };
+  const paperwork = async () => {
+    for (const claim of await claimMyDeskImportJobs(options)) track(processClaimedMyDeskImport(claim, options));
+  };
+  const information = async () => {
+    for (const claim of await claimStudentInformationJobs(options)) track(processStudentInformationClaim(claim, options));
+  };
+  informationFirst = !informationFirst;
+  const order = informationFirst ? [information, paperwork] : [paperwork, information];
+  const pending = (async () => {
+    for (const claim of order) {
+      if (schedulerStopping) return;
+      await claim();
+    }
+  })().catch(() => {
+    if (!schedulerStopping) console.error(JSON.stringify({ event: "import_processing_claim_failed" }));
+  }).finally(() => { importDispatching = false; pendingSchedulerJobs.delete(pending); });
+  pendingSchedulerJobs.add(pending);
+}
+
 async function publishGoPilotEvent(room: string, event: string, data: unknown) {
   await broadcastGoPilot(room, event, data);
 }
@@ -239,6 +273,9 @@ let tickCount = 0;
 
 export function startScheduler(socketIo: SocketServer | null = null) {
   schedulerStopping = false;
+  importShutdown = new AbortController();
+  importIntervalId = setInterval(dispatchImportJobs, 5_000);
+  dispatchImportJobs();
   io = socketIo;
   const staffIdentityScanEveryTicks =
     getStaffIdentityIntegrityScanIntervalMinutes();
@@ -261,8 +298,6 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("cleanupMyDesk", async () => { await cleanupMyDesk(); });
     scheduleLockedJob("cleanupSchoolDiscipline", async () => { try { await cleanupSchoolDiscipline(); } catch { console.error(JSON.stringify({event:"school_discipline_cleanup_failed"})); } });
     scheduleLockedJob("cleanupMyDeskImports", async () => { try { await cleanupMyDeskImports(); } catch { console.error(JSON.stringify({event:"mydesk_import_cleanup_failed"})); } });
-    scheduleLockedJob("runMyDeskImportJobs", async () => { try { await runMyDeskImportJobs(); } catch { console.error(JSON.stringify({event:"mydesk_import_worker_failed"})); } });
-    scheduleLockedJob("runStudentInformationJobs", async () => { try { await runStudentInformationJobs(); } catch { console.error(JSON.stringify({event:"student_information_worker_failed"})); } });
     scheduleLockedJob("cleanupStudentInformationImports", async () => { try { await cleanupStudentInformationImports(); } catch { console.error(JSON.stringify({event:"student_information_cleanup_failed"})); } });
     scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
@@ -319,6 +354,8 @@ export function startScheduler(socketIo: SocketServer | null = null) {
 
 export function stopScheduler() {
   schedulerStopping = true;
+  importShutdown.abort();
+  if (importIntervalId) { clearInterval(importIntervalId); importIntervalId = null; }
   if (boundaryIntervalId) {
     clearInterval(boundaryIntervalId);
     boundaryIntervalId = null;

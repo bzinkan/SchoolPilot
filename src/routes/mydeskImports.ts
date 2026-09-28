@@ -13,6 +13,8 @@ import {
   createMyDeskImportFromAttachment,
   listMyDeskImports,
   getMyDeskImport,
+  getMyDeskImportSummary,
+  getMyDeskImportProgress,
   updateMyDeskImport,
   reserveMyDeskImportAsset,
   uploadMyDeskImportAsset,
@@ -83,6 +85,12 @@ mydeskImportsRouter.get(
     res.json(await listMyDeskImports(myDeskActor(req, res), req.query)),
   ),
 );
+mydeskImportsRouter.get("/imports/summary", myDeskEndpoint(async (req, res) =>
+  res.set("Cache-Control", "no-store").json(await getMyDeskImportSummary(myDeskActor(req, res), req.query)),
+));
+mydeskImportsRouter.get("/imports/:id/progress", myDeskEndpoint(async (req, res) =>
+  res.set("Cache-Control", "no-store").json(await getMyDeskImportProgress(myDeskActor(req, res), id.parse(req.params.id))),
+));
 mydeskImportsRouter.post(
   "/imports",
   myDeskEndpoint(async (req, res) => {

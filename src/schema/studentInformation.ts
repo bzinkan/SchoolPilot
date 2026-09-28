@@ -158,6 +158,8 @@ export const studentInformationImports = pgTable(
       .notNull()
       .default("uploading"),
     revision: integer("revision").notNull().default(1),
+    processingVersion: integer("processing_version").notNull().default(1),
+    progressRevision: integer("progress_revision").notNull().default(1),
     selectedSectionIds: jsonb("selected_section_ids")
       .$type<string[]>()
       .notNull()
@@ -200,6 +202,7 @@ export const studentInformationImports = pgTable(
       t.clientRequestId,
     ),
     index("student_information_imports_queue").on(t.status, t.nextAttemptAt),
+    check("student_information_imports_processing_protocol", sql`${t.processingVersion} IN (1,2) AND ${t.progressRevision}>0`),
     check(
       "student_information_imports_bounds",
       sql`${t.expectedSourceCount} BETWEEN 1 AND 5 AND ${t.revision}>0 AND ${t.units} BETWEEN 0 AND 20 AND ${t.attempts} BETWEEN 0 AND 3 AND ${t.status} IN ('uploading','queued','processing','review','failed','completed','cancelled','expired') AND ${t.requestFingerprint} ~ '^[0-9a-f]{64}$' AND ((${t.leaseId} IS NULL)=(${t.leaseUntil} IS NULL)) AND octet_length(${t.selectedSectionIds}::text)<=8192 AND octet_length(${t.mutationReceipts}::text)<=32768 AND octet_length(${t.quotaUsage}::text)<=4096 AND (${t.commitReceipt} IS NULL OR octet_length(${t.commitReceipt}::text)<=131072)`,

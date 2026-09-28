@@ -54,8 +54,12 @@ import db from "../db.js";
 import { schoolMemberships, users } from "../schema/core.js";
 import { readMyDeskModes } from "../config/mydeskModes.js";
 import { classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
+import { paperworkProcessingVersion } from "../config/paperworkProcessing.js";
+import { processPipelinedMyDeskImport } from "./mydeskImportPipeline.js";
+import { lockImportProviderAdmission, availableLegacyImportProviderSlots } from "./importProcessingStages.js";
 
 export type MyDeskImportProcessor = {
+  prepareImportImages?: ReturnType<typeof createImportAiProcessor>["prepareImportImages"];
   renderImportSource: typeof renderImportSource;
   detectImportForms: typeof detectImportForms;
   extractImportForm: typeof extractImportForm;
@@ -69,13 +73,14 @@ const defaultProcessor: MyDeskImportProcessor = {
   buildImportAttachment,
   cropImportRegion,
 };
-type WorkerOptions = {
+export type WorkerOptions = {
   store?: MyDeskObjectStore;
   processor?: MyDeskImportProcessor;
   database?: typeof schedulerDb;
   now?: Date;
+  signal?: AbortSignal;
 };
-async function withLease<T>(
+export async function withLease<T>(
   actor: MyDeskActor,
   id: string,
   leaseId: string,
@@ -105,7 +110,7 @@ async function withLease<T>(
     return fn(database, run, current);
   });
 }
-async function ownedBytes(
+export async function ownedBytes(
   actor: MyDeskActor,
   runId: string,
   leaseId: string,
@@ -136,7 +141,7 @@ async function finishStage(
     .set({ attempts: 0, lastErrorCode: null })
     .where(importOwn(actor, id));
 }
-async function putDerived(
+export async function putDerived(
   actor: MyDeskActor,
   runId: string,
   leaseId: string,
@@ -152,6 +157,7 @@ async function putDerived(
   bytes: Buffer,
   contentType: string,
   store: MyDeskObjectStore,
+  assertStage?: (database: MyDeskDatabase) => Promise<void>,
 ) {
   if (bytes.length < 1 || bytes.length > IMPORT_MAX_BYTES)
     throw importError(
@@ -161,6 +167,7 @@ async function putDerived(
     );
   const sha256 = myDeskSha256(bytes);
   const asset = await withLease(actor, runId, leaseId, async (database) => {
+    await assertStage?.(database);
     const [existing] = await database
       .select()
       .from(assets)
@@ -204,9 +211,10 @@ async function putDerived(
     return reserved!;
   });
   if (asset.status === "ready") return asset;
-  await withLease(actor, runId, leaseId, async () => undefined);
+  await withLease(actor, runId, leaseId, async database => { await assertStage?.(database); });
   await store.put(asset.storageKey, bytes, contentType);
   return withLease(actor, runId, leaseId, async (database) => {
+    await assertStage?.(database);
     const [current] = await database
       .select()
       .from(assets)
@@ -238,6 +246,7 @@ export async function processClaimedMyDeskImport(
   claim: MyDeskImport,
   options: WorkerOptions = {},
 ) {
+  if (claim.processingVersion === 2) return processPipelinedMyDeskImport(claim, options);
   const actor: MyDeskActor = {
       schoolId: claim.schoolId,
       authorId: claim.authorId,
@@ -602,15 +611,19 @@ export async function processClaimedMyDeskImport(
     await renewal;
   }
 }
-/** A global database claim bounds concurrency across worker processes; no provider I/O holds its connection. */
-export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
-  const database = options.database ?? schedulerDb,
-    now = options.now ?? new Date();
+/** Claims are separate from execution so one slow job cannot block refilling another slot. */
+export async function claimMyDeskImportJobs(options: WorkerOptions = {}) {
+  const database = options.database ?? schedulerDb;
   if (readMyDeskModes().aiImportMode !== "on") return [];
+  options.signal?.throwIfAborted();
+  const processingVersion = paperworkProcessingVersion();
   const claims = await database.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended('mydesk-import-global-slots',0))`,
     );
+    await lockImportProviderAdmission(tx);
+    const now = options.now ?? new Date((await tx.execute<{ now: Date }>(sql`SELECT clock_timestamp() AS now`)).rows[0]!.now);
+    let legacySlots = await availableLegacyImportProviderSlots(tx, now);
     const active = await tx
       .select({ id: runs.id })
       .from(runs)
@@ -653,7 +666,9 @@ export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
     for (const run of due) {
       if (!slots) break;
       if (!myDeskImportsEnabledForSchool(run.schoolId)) continue;
-      if (run.attempts >= 3) {
+      const legacy = processingVersion === 1 && run.processingVersion === 1;
+      if (legacy && !legacySlots) continue;
+      if (run.processingVersion === 1 && run.attempts >= 3) {
         await tx
           .update(runs)
           .set({
@@ -672,17 +687,27 @@ export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
           status: "processing",
           leaseId: randomUUID(),
           leaseUntil: new Date(now.getTime() + IMPORT_LEASE_MS),
-          attempts: run.attempts + 1,
-          revision: run.revision + 1,
+          processingVersion: processingVersion === 2 ? 2 : run.processingVersion,
+          attempts: run.processingVersion === 2 || processingVersion === 2 ? run.attempts : run.attempts + 1,
+          ...(run.processingVersion === 2 || processingVersion === 2
+            ? { progressRevision: run.progressRevision + 1 }
+            : { revision: run.revision + 1 }),
           updatedAt: now,
         })
         .where(eq(runs.id, run.id))
         .returning();
       result.push(claimed!);
       slots--;
+      if (legacy) legacySlots--;
     }
     return result;
   });
+  return claims;
+}
+
+/** Compatibility helper used by focused workers/tests; scheduler dispatches individual claims. */
+export async function runMyDeskImportJobs(options: WorkerOptions = {}) {
+  const claims = await claimMyDeskImportJobs(options);
   return Promise.all(
     claims.map((claim) => processClaimedMyDeskImport(claim, options)),
   );

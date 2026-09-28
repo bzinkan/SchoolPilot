@@ -17,6 +17,8 @@ export const mydeskImports = pgTable("mydesk_imports", {
   ...owner(), ...times(), clientRequestId: uuid("client_request_id").notNull(), requestFingerprint: text("request_fingerprint").notNull(),
   status: text("status").$type<ImportStatus>().notNull().default("uploading"), revision: integer("revision").notNull().default(1),
   destination: text("destination").$type<"notes" | "discipline">().notNull().default("notes"),
+  processingVersion: integer("processing_version").notNull().default(1),
+  progressRevision: integer("progress_revision").notNull().default(1),
   expectedSourceCount: integer("expected_source_count").notNull(),
   selectedGroupIds: jsonb("selected_group_ids").$type<string[]>().notNull().default([]),
   preferencesSnapshot: jsonb("preferences_snapshot").$type<MyDeskPreferencesSnapshot>().notNull().default({ revision: 0, preferredClasses: {} }),
@@ -30,6 +32,7 @@ export const mydeskImports = pgTable("mydesk_imports", {
 }, t => [unique("mydesk_imports_owner_id").on(t.schoolId,t.authorId,t.id), uniqueIndex("mydesk_imports_request").on(t.schoolId,t.authorId,t.clientRequestId),
   index("mydesk_imports_queue").on(t.status,t.nextAttemptAt,t.leaseUntil), index("mydesk_imports_owner").on(t.schoolId,t.authorId,t.createdAt), index("mydesk_imports_quota").on(t.schoolId,t.quotaDate),
   check("mydesk_imports_state", sql`${t.status} IN ('uploading','queued','processing','review','failed','completed','cancelled','expired')`),
+  check("mydesk_imports_processing_protocol", sql`${t.processingVersion} IN (1,2) AND ${t.progressRevision}>0`),
   check("mydesk_imports_workspace_snapshot", sql`jsonb_typeof(${t.preferencesSnapshot})='object' AND octet_length(${t.preferencesSnapshot}::text)<=12288 AND ((${t.sourceNoteId} IS NULL)=(${t.sourceAttachmentId} IS NULL)) AND (${t.sourceNoteId} IS NULL OR char_length(${t.sourceNoteId}) BETWEEN 1 AND 128) AND (${t.sourceAttachmentId} IS NULL OR char_length(${t.sourceAttachmentId}) BETWEEN 1 AND 128)`),
   check("mydesk_imports_bounds", sql`${t.revision}>0 AND ${t.expectedSourceCount} BETWEEN 1 AND 5 AND ${t.attempts}>=0 AND ${t.pageCount} BETWEEN 0 AND 20 AND ${t.requestFingerprint} ~ '^[0-9a-f]{64}$' AND (${t.lastErrorCode} IS NULL OR ${t.lastErrorCode} ~ '^[A-Za-z0-9_]{1,64}$') AND ((${t.leaseId} IS NULL)=(${t.leaseUntil} IS NULL))`),
   check("mydesk_imports_provenance", sql`(${t.modelVersion} IS NULL OR ${t.modelVersion} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$') AND (${t.promptVersion} IS NULL OR ${t.promptVersion} ~ '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$')`),
@@ -41,6 +44,7 @@ export const mydeskImports = pgTable("mydesk_imports", {
     AND (${t.commitReceipt} IS NULL OR (jsonb_typeof(${t.commitReceipt})='object' AND octet_length(${t.commitReceipt}::text)<=16384))`),
 ]);
 export const mydeskImportItems = pgTable("mydesk_import_items", {
+  documentOrder: integer("document_order"),
   ...owner(), ...times(), importId: varchar("import_id").notNull(), clientRequestId: uuid("client_request_id").notNull(), ordinal: integer("ordinal").notNull(), revision: integer("revision").notNull().default(1),
   regions: jsonb("regions").$type<ImportRegion[]>().notNull().default([]), subjectNames: jsonb("subject_names").$type<string[]>().notNull().default([]),
   disciplineFields: jsonb("discipline_fields").$type<ImportDisciplineFields>(), duplicateDecision: jsonb("duplicate_decision").$type<ImportDuplicateDecision>(), disciplineRecordId: varchar("discipline_record_id"),
@@ -48,6 +52,7 @@ export const mydeskImportItems = pgTable("mydesk_import_items", {
   warnings: jsonb("warnings").$type<string[]>().notNull().default([]), reviewed: boolean("reviewed").notNull().default(false), excluded: boolean("excluded").notNull().default(false), reviewFingerprint: text("review_fingerprint"),
   approvedAssetId: varchar("approved_asset_id"), extractionStatus: text("extraction_status").$type<"pending"|"ready"|"failed">().notNull().default("pending"), extractRequested: boolean("extract_requested").notNull().default(true), noteId: varchar("note_id"),
 },t=>[unique("mydesk_import_items_owner_id").on(t.schoolId,t.authorId,t.importId,t.id), uniqueIndex("mydesk_import_items_request").on(t.schoolId,t.authorId,t.importId,t.clientRequestId),
+  check("mydesk_import_items_document_order", sql`${t.documentOrder} IS NULL OR ${t.documentOrder} BETWEEN 0 AND 999`),
   foreignKey({name:"mydesk_import_items_run_fk",columns:[t.schoolId,t.authorId,t.importId],foreignColumns:[mydeskImports.schoolId,mydeskImports.authorId,mydeskImports.id]}),
   foreignKey({name:"mydesk_import_items_approved_fk",columns:[t.schoolId,t.authorId,t.importId,t.approvedAssetId],foreignColumns:[mydeskImportAssets.schoolId,mydeskImportAssets.authorId,mydeskImportAssets.importId,mydeskImportAssets.id]}),
   index("mydesk_import_items_run").on(t.schoolId,t.authorId,t.importId,t.ordinal),

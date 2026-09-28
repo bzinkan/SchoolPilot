@@ -466,6 +466,35 @@ try {
     Assert-Throws { Invoke-MyDeskReadinessTask $script:TestWorkerArn $script:TestDigest $script:TestSha $script:TestDirectory } 'Unexpected stdout must not be copied into private evidence.'
     Reset-ReadinessMock; $script:Mock.ReadinessExitCode = 1
     Assert-Throws { Invoke-MyDeskReadinessTask $script:TestWorkerArn $script:TestDigest $script:TestSha $script:TestDirectory } 'A failed inventory task must not report success.'
+    $pipelineConfig = Copy-TestValue $script:TestConfig
+    $pipelineConfig | Add-Member pipelineVersion 2
+    $pipelineConfig | Add-Member pipelineWidth 1
+    $pipelineRuntime = ConvertTo-MyDeskRuntime $pipelineConfig
+    Assert-Condition ($pipelineRuntime.Environment.MYDESK_IMPORT_PIPELINE_VERSION -ceq '2' -and $pipelineRuntime.Environment.MYDESK_IMPORT_PIPELINE_WIDTH -ceq '1') 'Serial rollback must retain the v2 protocol.'
+    $pipelineSnapshot = [pscustomobject]@{ Environments = @(@{ RLS_ENABLED_TABLES = 'mydesk_imports' }, @{ RLS_ENABLED_TABLES = 'mydesk_imports' }) }
+    Assert-Throws { Assert-PaperworkPipelineAdmission $pipelineRuntime $pipelineSnapshot } 'Activation requires the exact processing-stage RLS admission.'
+    $pipelineSnapshot.Environments[0].RLS_ENABLED_TABLES += ',import_processing_stages'
+    Assert-Throws { Assert-PaperworkPipelineAdmission $pipelineRuntime $pipelineSnapshot } 'API-only admission is insufficient.'
+    $pipelineSnapshot.Environments[1].RLS_ENABLED_TABLES += ',import_processing_stages'
+    Assert-PaperworkPipelineAdmission $pipelineRuntime $pipelineSnapshot
+    $pipelineConfig.pipelineVersion = 3
+    Assert-Throws { ConvertTo-MyDeskRuntime $pipelineConfig } 'Unknown pipeline versions must fail closed.'
+    Reset-MyDeskMock
+    foreach ($arn in @($script:TestApiArn,$script:TestWorkerArn)) {
+        Set-TestEnvironment $script:Mock.Tasks[$arn] 'RLS_ENABLED_TABLES' ('students,' + ($script:MyDeskTables -join ',') + ',import_processing_stages')
+    }
+    $pipelineConfig.pipelineVersion = 2; $pipelineConfig.pipelineWidth = 2
+    $pipelinePlan = New-MyDeskPlan $pipelineConfig $script:TestDirectory $script:TestApiArn $script:TestWorkerArn $script:TestDigest $script:TestSha $null $null
+    [void](Invoke-MyDeskApply $pipelinePlan.plan $pipelinePlan.sha256 $script:TestDirectory)
+    $script:Action = 'Rollback'; $script:Execute = $true; $script:ManifestPath = $pipelinePlan.path; $script:ManifestHash = $pipelinePlan.sha256
+    $script:AiReadinessPath = $null; $script:StudentInformationReadinessPath = $null
+    Invoke-MyDeskMain
+    foreach ($role in @('Api','Worker')) {
+        $response = $script:Mock.Tasks[$script:Mock.Services.$role.taskDefinition]
+        $container = if ($role -ceq 'Api') { 'api' } else { 'scheduler-worker' }
+        $runtime = Get-MyDeskEnvironment $response.taskDefinition $container
+        Assert-Condition ($runtime['MYDESK_IMPORT_PIPELINE_VERSION'] -ceq '2' -and $runtime['MYDESK_IMPORT_PIPELINE_WIDTH'] -ceq '1') 'Rollback must preserve the ledger protocol and serialize both services.'
+    }
     Write-Host "My Desk runtime configuration tests passed ($script:Assertions assertions)."
 } finally {
     $resolved = [IO.Path]::GetFullPath($script:TestDirectory)

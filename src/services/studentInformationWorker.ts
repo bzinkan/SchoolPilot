@@ -44,11 +44,15 @@ import {
   type MyDeskObjectStore,
 } from "./mydeskFiles.js";
 import { informationHash } from "./studentInformation.js";
+import { paperworkProcessingVersion } from "../config/paperworkProcessing.js";
+import { withDurableImportStage, reconcileImportStageCheckpoint, lockImportProviderAdmission, availableLegacyImportProviderSlots } from "./importProcessingStages.js";
+import type { MyDeskDatabase } from "./mydesk.js";
 type Options = {
   database?: typeof schedulerDb;
   store?: MyDeskObjectStore;
   extractor?: InformationExtractor;
   now?: Date;
+  signal?: AbortSignal;
 };
 const normalized = (name: string) =>
   name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
@@ -141,16 +145,21 @@ export async function processStudentInformationClaim(
       if (group) group.push(section);
       else stages.push([section]);
     }
+    let initialAttempts = claim.attempts;
     for (const stage of stages) {
       const section = stage[0]!;
-      if (stage.every((part) => part.processedAt)) continue;
+      if (stage.every((part) => part.processedAt)) {
+        if (claim.processingVersion === 2) await fenced(tx => reconcileImportStageCheckpoint(tx, actor,
+          { runId: claim.id, kind: "student-information", parentLeaseId: leaseId!, stageKey: `extract:${section.id}`, maxGeneration: 1 }));
+        continue;
+      }
       if (stage.some((part) => part.processedAt))
         throw informationError(
           409,
           "SOURCE_CHANGED",
           "A source stage was only partially completed",
         );
-      await fenced(async (tx, run) => {
+      if (claim.processingVersion !== 2) await fenced(async (tx, run) => {
         if (run.attempts >= 3)
           throw informationError(
             409,
@@ -162,6 +171,8 @@ export async function processStudentInformationClaim(
           .set({ attempts: run.attempts + 1 })
           .where(informationRunOwn(actor, claim.id));
       });
+      const prepareStage = async (signal?: AbortSignal, assertCurrent?: (database: MyDeskDatabase) => Promise<void>) => {
+      signal?.throwIfAborted();
       const buffers: Buffer[] = [];
       for (const part of stage) {
         const data = await store.get(part.storageKey);
@@ -192,9 +203,10 @@ export async function processStudentInformationClaim(
         );
       await fenced(async () => {}); // No provider stage starts after cancellation or membership loss.
       const extracted = extractionSchema.parse(
-        await extract({ bytes, contentType: section.contentType }),
+        await extract({ bytes, contentType: section.contentType }, { signal }),
       );
       await fenced(async (tx, run, identity) => {
+        await assertCurrent?.(tx);
         const existing = await tx
           .select({ id: items.id })
           .from(items)
@@ -279,6 +291,22 @@ export async function processStudentInformationClaim(
           .set({ attempts: 0, updatedAt: new Date() })
           .where(informationRunOwn(actor, run.id));
       });
+      };
+      if (claim.processingVersion === 2) {
+        const result = await withDurableImportStage(actor, { runId: claim.id, kind: "student-information", stageKey: `extract:${section.id}`,
+          generation: 1, provider: true, parentLeaseId: leaseId!, signal: options.signal, database: options.database,
+          initialAttempts,
+          assertAuthority: () => fenced(async () => undefined) }, prepareStage);
+        initialAttempts = 0;
+        if (result.status === "retry" || result.status === "failed") {
+          await fenced(async tx => {
+            await tx.update(runs).set({ status: result.status === "retry" ? "queued" : "failed", leaseId: null, leaseUntil: null,
+              nextAttemptAt: result.nextAttemptAt ?? null, lastErrorCode: result.errorCode,
+              progressRevision: sql`${runs.progressRevision}+1`, updatedAt: new Date() }).where(informationRunOwn(actor, claim.id));
+          });
+          return { id: claim.id, status: result.status };
+        }
+      } else await prepareStage(options.signal);
     }
     await fenced(async (tx, run) => {
       await tx
@@ -335,14 +363,18 @@ export async function processStudentInformationClaim(
     return { id: claim.id, status: "failed", code };
   }
 }
-export async function runStudentInformationJobs(options: Options = {}) {
+export async function claimStudentInformationJobs(options: Options = {}) {
   if (!studentInformationImportEnabled()) return [];
-  const database = options.database ?? schedulerDb,
-    now = options.now ?? new Date();
+  const database = options.database ?? schedulerDb;
+  options.signal?.throwIfAborted();
+  const version = paperworkProcessingVersion();
   const claims = await database.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended('mydesk-import-global-slots',0))`,
     );
+    await lockImportProviderAdmission(tx);
+    const now = options.now ?? new Date((await tx.execute<{ now: Date }>(sql`SELECT clock_timestamp() AS now`)).rows[0]!.now);
+    let legacySlots = await availableLegacyImportProviderSlots(tx, now);
     const ownActive = await tx
       .select({ id: runs.id })
       .from(runs)
@@ -380,21 +412,29 @@ export async function runStudentInformationJobs(options: Options = {}) {
       .for("update", { skipLocked: true });
     const claimed = [];
     for (const run of due) {
+      const legacy = version === 1 && run.processingVersion === 1;
+      if (legacy && !legacySlots) continue;
       const [updated] = await tx
         .update(runs)
         .set({
           status: "processing",
           leaseId: randomUUID(),
           leaseUntil: new Date(Date.now() + INFORMATION_LEASE_MS),
+          processingVersion: version === 2 ? 2 : run.processingVersion,
           revision: run.revision + 1,
           updatedAt: now,
         })
         .where(eq(runs.id, run.id))
         .returning();
       claimed.push(updated!);
+      if (legacy) legacySlots--;
     }
     return claimed;
   });
+  return claims;
+}
+export async function runStudentInformationJobs(options: Options = {}) {
+  const claims = await claimStudentInformationJobs(options);
   return Promise.all(
     claims.map((claim) => processStudentInformationClaim(claim, options)),
   );

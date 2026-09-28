@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { PDFDocument, rgb } from "pdf-lib";
 import {
-  buildImportAttachment, createImportAiProcessor, createImportProviderTransport, cropImportRegion, detectedRegionToCrop, importExtractionSchema,
+  buildImportAttachment, buildImportAttachmentFromCrops, createImportAiProcessor, createImportProviderTransport, cropImportRegion, detectedRegionToCrop, importExtractionSchema,
   MyDeskImportProcessingError, prepareImportSource, renderImportSource, type ImportAiTransport,
   MYDESK_IMPORT_LEGACY_PROMPT_VERSION, MYDESK_IMPORT_PROMPT_VERSION, supportedImportPromptVersion,
   myDeskImportModel,
@@ -18,6 +18,35 @@ const full = { x: 0, y: 0, width: 1, height: 1 };
 const extraction = { subjectNames: ["Jordan Example"], entryDate: "2026-09-25", category: "detention", title: "Detention form",
   body: "The form reports a classroom disruption. A detention was assigned.", warnings: [] };
 const response = (value: unknown) => ({ content: [{ type: "text", text: JSON.stringify(value) }], stop_reason: "end_turn" });
+
+test("reusing normalized crops produces the same private single and continuation evidence bytes", async () => {
+  const bytes = await photo();
+  const region = { bytes, region: { x: 0, y: 0, width: .5, height: 1 }, rotation: 0 as const };
+  const crop = await cropImportRegion(region);
+  for (const count of [1, 2]) {
+    const original = await buildImportAttachment(Array.from({ length: count }, () => region));
+    const reused = await buildImportAttachmentFromCrops(Array.from({ length: count }, () => crop));
+    assert.deepEqual(reused, original);
+  }
+  await assert.rejects(buildImportAttachmentFromCrops([Buffer.alloc(10 * 1024 * 1024 + 1)]), MyDeskImportProcessingError);
+});
+
+test("prepared provider images preserve request bytes and need no native permit during extraction", async () => {
+  const bytes = await photo(), calls: Parameters<ImportAiTransport>[0][] = [];
+  const transport: ImportAiTransport = async request => { calls.push(request); return response(extraction); };
+  await createImportAiProcessor(transport).extractImportForm([bytes]);
+  const prepared = createImportAiProcessor(transport);
+  await prepared.prepareImportImages([bytes]);
+  const release = await privateNativeProcessing.acquire();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      prepared.extractImportForm([bytes]),
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Prepared extraction tried to reacquire native capacity")), 1000); }),
+    ]);
+    assert.deepEqual(calls[1], calls[0]);
+  } finally { clearTimeout(timer); release(); }
+});
 
 test("stored v1 imports retain their exact detection contract and zero rotation without changing provider provenance", async () => {
   const calls: Parameters<ImportAiTransport>[0][] = [];

@@ -16,6 +16,7 @@ import { SCHOOL_DISCIPLINE_SQL } from "../src/db/schoolDisciplineMigration.js";
 import { SCHOOL_DISCIPLINE_REDESIGN_SQL } from "../src/db/schoolDisciplineRedesignMigration.js";
 import { MYDESK_IMPORT_DESTINATION_SQL } from "../src/db/mydeskImportDestinationMigration.js";
 import { STUDENT_INFORMATION_REDESIGN_SQL } from "../src/db/studentInformationRedesignMigration.js";
+import { IMPORT_PROCESSING_STAGES_SQL } from "../src/db/importProcessingStagesMigration.js";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "../src/schema/index.js";
 import sharp from "sharp";
@@ -25,9 +26,13 @@ import {
 } from "../src/services/mydeskFiles.js";
 import {
   runMyDeskImportJobs,
+  claimMyDeskImportJobs,
+  processClaimedMyDeskImport,
+  putDerived,
   type MyDeskImportProcessor,
 } from "../src/services/mydeskImportWorker.js";
 import { cleanupMyDeskImports } from "../src/services/mydeskImportCleanup.js";
+import { withDurableImportStage } from "../src/services/importProcessingStages.js";
 import {
   renderImportSource,
   cropImportRegion,
@@ -130,7 +135,7 @@ before(async () => {
   await fixturePool.query(MYDESK_IMPORTS_SQL);
   await fixturePool.query(MYDESK_WORKSPACE_SQL);
   for (const migration of [SCHOOL_DISCIPLINE_SQL, MYDESK_GRADE_FILING_SQL, SCHOOL_DISCIPLINE_REDESIGN_SQL,
-    MYDESK_IMPORT_DESTINATION_SQL, STUDENT_INFORMATION_REDESIGN_SQL]) await fixturePool.query(migration);
+    MYDESK_IMPORT_DESTINATION_SQL, STUDENT_INFORMATION_REDESIGN_SQL, IMPORT_PROCESSING_STAGES_SQL]) await fixturePool.query(migration);
   photo = await sharp({
     create: { width: 800, height: 1000, channels: 3, background: "white" },
   })
@@ -154,7 +159,7 @@ before(async () => {
       /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/,
     );
     await fixturePool.query(
-      `GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_preferences TO "${process.env.RLS_TEST_ROLE}"`,
+      `GRANT SELECT,INSERT,UPDATE,DELETE ON mydesk_imports,mydesk_import_items,mydesk_import_assets,mydesk_preferences,import_processing_stages TO "${process.env.RLS_TEST_ROLE}"`,
     );
     const role = await pool.query<{
       current_user: string;
@@ -236,6 +241,7 @@ after(async () => {
       [schoolIds],
     );
     for (const table of [
+      "import_processing_stages",
       "school_discipline_attachments",
       "school_discipline_versions",
       "school_discipline_records",
@@ -464,6 +470,7 @@ async function start(f: Fixture, run: ImportRun) {
   const r = await request(f, `/imports/${run.id}/process`, "POST", {
     requestId: randomUUID(),
     revision: run.revision,
+    ...(process.env.MYDESK_IMPORT_PIPELINE_VERSION === "2" ? { protocolVersion: 2 } : {}),
   });
   assert.equal(r.status, 200, r.text);
   return runEnvelope.parse(r.data).import;
@@ -496,6 +503,7 @@ async function changeItem(
     requestId: randomUUID(),
     revision: run.revision,
     itemRevision: item.revision,
+    ...(process.env.MYDESK_IMPORT_PIPELINE_VERSION === "2" ? { protocolVersion: 2 } : {}),
     ...patch,
   });
   assert.equal(r.status, 200, r.text);
@@ -1313,6 +1321,293 @@ test("daily quotas charge explicit rereads once, retain history through cancella
     );
   } finally {
     delete process.env.MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES;
+  }
+});
+
+test("v2 prepares a form before later-page detection completes and keeps early edits", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  const f = await fixture();
+  let release!: () => void;
+  let started!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const detectingSecond = new Promise<void>(resolve => { started = resolve; });
+  let working: Promise<unknown> | undefined;
+  try {
+    let run = await createRun(f, [f.groupId], 2);
+    ({ run } = await uploadSource(f, run));
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run);
+    let detections = 0, extractions = 0;
+    working = work(processor({
+      detectImportForms: async () => {
+        if (++detections === 2) { started(); await blocked; }
+        return [{ x: 0, y: 0, width: 1, height: 1 }];
+      },
+      extractImportForm: async () => extraction(++extractions === 1 ? "First Student" : "Unmatched student"),
+    }));
+    await detectingSecond;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      run = await getRun(f, run.id);
+      if (run.items.some(item => item.extractionStatus === "ready")) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(run.status, "processing");
+    const ready = run.items.find(item => item.extractionStatus === "ready");
+    assert.ok(ready, "first form should become reviewable while the second page remains blocked");
+    const exclusion = await request(f, `/imports/${run.id}/items/${ready.id}`, "PATCH", {
+      requestId: randomUUID(), revision: run.revision, itemRevision: ready.revision,
+      protocolVersion: 2, excluded: true,
+    });
+    assert.equal(exclusion.status, 409, "inclusion decisions wait until preparation finishes");
+    run = await changeItem(f, run, ready.id, { body: "Teacher corrected the first form." });
+    run = await approve(f, run, ready.id);
+    const earlyRevision = run.revision;
+    release();
+    await working;
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "review");
+    assert.equal(run.revision, earlyRevision, "background completion is not a content edit");
+    assert.equal(run.items.length, 2);
+    assert.equal(run.items.find(item => item.id === ready.id)?.body, "Teacher corrected the first form.");
+    assert.equal(run.items.find(item => item.id === ready.id)?.reviewed, true);
+    const order = await fixturePool.query<{ document_order: number }>("SELECT document_order FROM mydesk_import_items WHERE import_id=$1 ORDER BY document_order", [run.id]);
+    assert.deepEqual(order.rows.map(item => item.document_order), [0, 50]);
+  } finally {
+    release();
+    await working;
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
+  }
+});
+
+test("v2 retries only the failed extraction and retains successful sibling evidence", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  try {
+    const f = await fixture();
+    let run = await createRun(f);
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run);
+    let detections = 0, extractions = 0;
+    const p = processor({
+      detectImportForms: async () => { detections++; return [{ x: 0, y: 0, width: .5, height: 1 }, { x: .5, y: 0, width: .5, height: 1 }]; },
+      extractImportForm: async () => {
+        if (++extractions === 1) throw new MyDeskImportProcessingError("MYDESK_IMPORT_AI_TIMEOUT", "synthetic transient failure", true, 503);
+        return extraction();
+      },
+    });
+    await work(p);
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "queued");
+    const ready = run.items.find(item => item.extractionStatus === "ready");
+    assert.ok(ready);
+    const evidenceId = ready.approvedAssetId;
+    await fixturePool.query("UPDATE mydesk_imports SET next_attempt_at=now()-interval '1 second' WHERE id=$1", [run.id]);
+    await fixturePool.query("UPDATE import_processing_stages SET next_attempt_at=now()-interval '1 second' WHERE import_id=$1 AND status='retry'", [run.id]);
+    await work(p);
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "review");
+    assert.equal(detections, 1);
+    assert.equal(extractions, 3);
+    assert.equal(run.items.find(item => item.id === ready.id)?.approvedAssetId, evidenceId);
+    assert.equal(run.items.every(item => item.extractionStatus === "ready"), true);
+  } finally { delete process.env.MYDESK_IMPORT_PIPELINE_VERSION; }
+});
+
+test("v2 adopts a legacy checkpoint without changing IDs, model, quota or completed evidence", async () => {
+  const f = await fixture();
+  let run = await createRun(f);
+  ({ run } = await uploadSource(f, run));
+  run = await start(f, run);
+  let detections = 0, extractions = 0;
+  const p = processor({
+    detectImportForms: async () => { detections++; return [{ x: 0, y: 0, width: .5, height: 1 }, { x: .5, y: 0, width: .5, height: 1 }]; },
+    extractImportForm: async () => {
+      if (++extractions === 2) throw new MyDeskImportProcessingError("MYDESK_IMPORT_AI_TIMEOUT", "synthetic interrupted legacy stage", true, 503);
+      return extraction();
+    },
+  });
+  await work(p);
+  run = await getRun(f, run.id);
+  const ready = run.items.find(item => item.extractionStatus === "ready");
+  assert.ok(ready);
+  const before = (await fixturePool.query("SELECT id,model_version,prompt_version,quota_usage,page_count FROM mydesk_imports WHERE id=$1", [run.id])).rows[0];
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  try {
+    await fixturePool.query("UPDATE mydesk_imports SET next_attempt_at=now()-interval '1 second' WHERE id=$1", [run.id]);
+    await work(p);
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "review");
+    assert.equal(detections, 1);
+    assert.equal(extractions, 3);
+    assert.equal(run.items.find(item => item.id === ready.id)?.approvedAssetId, ready.approvedAssetId);
+    const after = (await fixturePool.query("SELECT id,model_version,prompt_version,quota_usage,page_count FROM mydesk_imports WHERE id=$1", [run.id])).rows[0];
+    assert.deepEqual(after, before);
+  } finally { delete process.env.MYDESK_IMPORT_PIPELINE_VERSION; }
+});
+
+test("v2 reports exhausted forms and permits manual recovery without repeating extraction", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  try {
+    const f = await fixture();
+    let run = await createRun(f);
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run);
+    let calls = 0;
+    const p = processor({ extractImportForm: async () => {
+      calls++;
+      throw new MyDeskImportProcessingError("MYDESK_IMPORT_AI_TIMEOUT", "synthetic timeout", true, 503);
+    } });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await fixturePool.query("UPDATE mydesk_imports SET next_attempt_at=now()-interval '1 second' WHERE id=$1", [run.id]);
+      await fixturePool.query("UPDATE import_processing_stages SET next_attempt_at=now()-interval '1 second' WHERE import_id=$1 AND status='retry'", [run.id]);
+      await work(p);
+    }
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "failed");
+    assert.equal(run.items[0]?.extractionStatus, "failed");
+    assert.equal(calls, 3);
+    run = await changeItem(f, run, run.items[0]!.id, { body: "Teacher manually transcribed the form.", entryDate: "2026-09-20" });
+    await work(p);
+    run = await getRun(f, run.id);
+    assert.equal(run.status, "review");
+    assert.equal(run.items[0]?.body, "Teacher manually transcribed the form.");
+    assert.equal(calls, 3);
+  } finally { delete process.env.MYDESK_IMPORT_PIPELINE_VERSION; }
+});
+
+test("v2 refills an import job slot while an earlier sibling is still processing", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  let release!: () => void;
+  let entered!: () => void;
+  let slow: Promise<unknown> | undefined;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const f = await fixture();
+    const ids: string[] = [];
+    for (let n = 0; n < 3; n++) {
+      let run = await createRun(f);
+      ({ run } = await uploadSource(f, run));
+      ids.push((await start(f, run)).id);
+    }
+    const initial = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(initial.length, 2);
+    slow = processClaimedMyDeskImport(initial[0]!, { database: fixtureDb, processor: processor({ detectImportForms: async () => {
+      entered(); await blocked; return [{ x: 0, y: 0, width: 1, height: 1 }];
+    } }) });
+    await started;
+    await processClaimedMyDeskImport(initial[1]!, { database: fixtureDb, processor: processor() });
+    const refill = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(refill.length, 1);
+    assert.equal(refill[0]!.id, ids[2]);
+    assert.equal((await getRun(f, initial[0]!.id)).status, "processing");
+    await processClaimedMyDeskImport(refill[0]!, { database: fixtureDb, processor: processor() });
+  } finally {
+    release();
+    await slow;
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
+  }
+});
+
+test("v2 provider permits block a competing legacy parent claim until one permit is free", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  let releaseFirst!: () => void, releaseSecond!: () => void;
+  const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
+  const stages: Promise<unknown>[] = [];
+  let modernId: string | undefined, legacyId: string | undefined;
+  try {
+    const f = await fixture();
+    let modern = await createRun(f);
+    ({ run: modern } = await uploadSource(f, modern));
+    modernId = (await start(f, modern)).id;
+    const [claim] = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(claim?.id, modernId);
+    let started = 0;
+    const options = { runId: modernId, kind: "paperwork" as const, parentLeaseId: claim!.leaseId!, generation: 1, provider: true, database: fixtureDb };
+    stages.push(withDurableImportStage({ schoolId: claim!.schoolId, authorId: claim!.authorId }, { ...options, stageKey: "detect:held-one" }, async () => { started++; await firstGate; }));
+    stages.push(withDurableImportStage({ schoolId: claim!.schoolId, authorId: claim!.authorId }, { ...options, stageKey: "detect:held-two" }, async () => { started++; await secondGate; }));
+    while (started < 2) await new Promise(resolve => setTimeout(resolve, 10));
+    process.env.MYDESK_IMPORT_PIPELINE_VERSION = "1";
+    let legacy = await createRun(f);
+    ({ run: legacy } = await uploadSource(f, legacy));
+    legacyId = (await start(f, legacy)).id;
+    assert.deepEqual(await claimMyDeskImportJobs({ database: fixtureDb }), [], "A second durable job cannot introduce a third provider call");
+    releaseFirst();
+    await stages[0];
+    const claimed = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0]?.id, legacyId);
+    assert.equal(claimed[0]?.processingVersion, 1);
+  } finally {
+    releaseFirst?.(); releaseSecond?.();
+    await Promise.all(stages);
+    for (const id of [modernId, legacyId].filter(Boolean)) await fixturePool.query("UPDATE mydesk_imports SET status='cancelled',lease_id=NULL,lease_until=NULL WHERE id=$1", [id]);
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
+  }
+});
+
+test("v2 native cropping waits outside provider leases and reuses the prepared crop", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const cropping = new Promise<void>(resolve => { entered = resolve; });
+  let processing: Promise<unknown> | undefined, crops = 0, imagePreparations = 0;
+  try {
+    const f = await fixture();
+    let run = await createRun(f);
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run);
+    processing = work(processor({
+      prepareImportImages: async () => {
+        imagePreparations++;
+        const occupied = await fixturePool.query("SELECT count(*)::int AS count FROM import_processing_stages WHERE import_id=$1 AND provider AND lease_until>clock_timestamp()", [run.id]);
+        assert.equal(occupied.rows[0].count, 0);
+      },
+      cropImportRegion: async (...args) => { crops++; entered(); await gate; return cropImportRegion(...args); },
+    }));
+    await cropping;
+    const active = await fixturePool.query("SELECT count(*)::int AS count FROM import_processing_stages WHERE import_id=$1 AND provider AND lease_until>clock_timestamp()", [run.id]);
+    assert.equal(active.rows[0].count, 0, "Native crop time cannot occupy a provider slot or request timeout");
+    release(); await processing;
+    assert.equal((await getRun(f, run.id)).status, "review");
+    assert.equal(crops, 1, "Extraction and approved evidence reuse the exact normalized crop");
+    assert.equal(imagePreparations, 2, "Both detection and extraction prepare provider images before admission");
+  } finally {
+    release?.(); await processing;
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
+  }
+});
+
+test("v2 derived asset PUT completion cannot publish after its stage fence expires", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  let id: string | undefined;
+  try {
+    const f = await fixture();
+    let run = await createRun(f);
+    ({ run } = await uploadSource(f, run));
+    run = await start(f, run); id = run.id;
+    const [claim] = await claimMyDeskImportJobs({ database: fixtureDb });
+    assert.equal(claim?.id, id);
+    const assetId = randomUUID(), sourceId = run.assets.find(asset => asset.kind === "source")!.id;
+    const actor = { schoolId: claim!.schoolId, authorId: claim!.authorId, manager: false };
+    const pending = withDurableImportStage(actor, { runId: id, kind: "paperwork", stageKey: "render:late-put", generation: 1,
+      provider: false, parentLeaseId: claim!.leaseId!, database: fixtureDb }, async (_signal, fence) => {
+      return putDerived(actor, id!, claim!.leaseId!, { id: assetId, kind: "page", parentAssetId: sourceId, pageNumber: 1,
+        width: 800, height: 1000, pageCount: 1 }, photo, "image/jpeg", {
+        ...myDeskObjectStore,
+        async put(key, bytes) {
+          objects.set(key, Buffer.from(bytes));
+          await fixturePool.query("UPDATE import_processing_stages SET request_deadline=clock_timestamp()-interval '1 second' WHERE import_id=$1", [id]);
+        },
+      }, fence);
+    });
+    await assert.rejects(pending, { code: "MYDESK_IMPORT_JOB_CANCELLED" });
+    const row = (await fixturePool.query("SELECT status,storage_key FROM mydesk_import_assets WHERE id=$1", [assetId])).rows[0];
+    assert.equal(row.status, "uploading");
+    assert.equal(objects.has(row.storage_key), true, "The reserved parent-owned key remains discoverable for cleanup");
+  } finally {
+    if (id) await fixturePool.query("UPDATE mydesk_imports SET status='cancelled',lease_id=NULL,lease_until=NULL WHERE id=$1", [id]);
+    delete process.env.MYDESK_IMPORT_PIPELINE_VERSION;
   }
 });
 

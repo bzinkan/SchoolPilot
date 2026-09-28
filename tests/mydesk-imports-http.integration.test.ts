@@ -131,7 +131,7 @@ test("HTTP IDs never grant another teacher, administrator, super administrator, 
     await fixturePool.query("INSERT INTO mydesk_import_items(id,school_id,author_id,import_id,client_request_id,ordinal,body) VALUES($1,$2,$3,$4,$5,$6,'Synthetic private form')", [id, f.schoolId, f.teacherId, run.id, randomUUID(), index]);
   const mutation = { requestId: randomUUID(), revision: run.revision };
   const cases: Array<[string, string, unknown?]> = [
-    [`/imports/${run.id}`, "GET"], [`/imports/${run.id}`, "PATCH", mutation], [`/imports/${run.id}`, "DELETE", mutation],
+    [`/imports/${run.id}`, "GET"], [`/imports/${run.id}/progress`, "GET"], [`/imports/${run.id}`, "PATCH", mutation], [`/imports/${run.id}`, "DELETE", mutation],
     [`/imports/${run.id}/process`, "POST", mutation], [`/imports/${run.id}/assets/${file.asset.id}/content`, "GET"],
     [`/imports/${run.id}/assets`, "POST", { ...file.reservation, clientRequestId: randomUUID() }],
     [`/imports/${run.id}/items`, "POST", { ...mutation, regions: [{ assetId: file.asset.id, x: 0, y: 0, width: 1, height: 1, rotation: 0 }] }],
@@ -222,4 +222,32 @@ test("HTTP parsing and strict ownership fields cannot expose document text", asy
   assert.equal(malformed.status, 400); assert.ok(!(await malformed.text()).includes("SENSITIVE"));
   const injected = await api(f, "/imports", "POST", { clientRequestId: randomUUID(), selectedGroupIds: [f.groupId], expectedSourceCount: 1, authorId: f.colleagueId, schoolId: f.schoolId });
   assert.equal(injected.response.status, 400);
+});
+
+test("HTTP resume summaries count all unfinished packets by destination and never another author's work", async () => {
+  const f = await fixture(), first = await create(f);
+  const client = await fixturePool.connect();
+  try {
+    await client.query("BEGIN"); await client.query("SET LOCAL app.is_super='on'");
+    for (let i = 0; i < 34; i++) await client.query(`INSERT INTO mydesk_imports(school_id,author_id,client_request_id,request_fingerprint,expected_source_count,expires_at,upload_expires_at,destination,status)
+      VALUES($1,$2,$3,repeat('a',64),1,now()+interval '7 days',now()+interval '24 hours','discipline',$4)`, [f.schoolId, f.teacherId, randomUUID(), i % 2 ? "processing" : "review"]);
+    await client.query(`INSERT INTO mydesk_imports(school_id,author_id,client_request_id,request_fingerprint,expected_source_count,expires_at,upload_expires_at,destination,status)
+      VALUES($1,$2,$3,repeat('b',64),1,now()+interval '7 days',now()+interval '24 hours','discipline','failed')`, [f.schoolId, f.colleagueId, randomUUID()]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  const summaryShape = z.object({ summary: z.object({ total: z.number(), processing: z.number(), readyToReview: z.number(), needsAttention: z.number() }) });
+  const summary = await api(f, "/imports/summary?destination=discipline");
+  assert.equal(summary.response.status, 200); assert.match(summary.response.headers.get("cache-control") || "", /no-store/);
+  assert.deepEqual(summaryShape.parse(summary.body).summary, { total: 34, processing: 17, readyToReview: 17, needsAttention: 0 });
+  const listing = z.object({ imports: z.array(z.object({ id: z.string(), destination: z.string() })), nextCursor: z.string().nullable() });
+  const page = listing.parse((await api(f, "/imports?destination=discipline&limit=30")).body);
+  assert.equal(page.imports.length, 30); assert.ok(page.nextCursor); assert.ok(page.imports.every(row => row.destination === "discipline"));
+  const finalPage = listing.parse((await api(f, `/imports?destination=discipline&cursor=${encodeURIComponent(page.nextCursor)}`)).body);
+  assert.equal(finalPage.imports.length, 4);
+  assert.equal((await api(f, `/imports?destination=notes&cursor=${encodeURIComponent(page.nextCursor)}`)).response.status, 400);
+  assert.deepEqual(listing.parse((await api(f, "/imports?destination=notes")).body).imports.map(row => row.id), [first.id]);
+  assert.equal(summaryShape.parse((await api(f, "/imports/summary?destination=discipline", "GET", undefined, f.adminId)).body).summary.total, 0);
+  const progress = await api(f, `/imports/${first.id}/progress`);
+  assert.equal(progress.response.status, 200); assert.ok(!JSON.stringify(progress.body).includes("storageKey"));
+  assert.ok(!JSON.stringify(progress.body).includes("filename"));
 });

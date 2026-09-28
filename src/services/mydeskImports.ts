@@ -1,4 +1,8 @@
 import { informationQuotaTotals } from "./studentInformationImports.js";
+import { importProgress, importProgressCounts, emptyImportProgressCounts } from "./mydeskImportProgress.js";
+import { importProcessingStages as processingStages } from "../schema/importProcessingStages.js";
+import { cancelImportProcessingStages, invalidateImportItemStages } from "./importProcessingStages.js";
+import { paperworkProcessingVersion } from "../config/paperworkProcessing.js";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -209,10 +213,19 @@ export async function importDto(
         .select()
         .from(items)
         .where(importItemOwn(actor, run.id))
-        .orderBy(items.ordinal, items.id);
+        .orderBy(sql`coalesce(${items.documentOrder},${items.ordinal})`, items.id);
   return {
     id: run.id,
     destination: run.destination,
+    processingVersion: run.processingVersion,
+    progressRevision: run.progressRevision,
+    progress: importProgress(run, terminal ? emptyImportProgressCounts : {
+      pagesPrepared: a.filter(asset => asset.kind === "page" && asset.status === "ready").length,
+      pagesChecked: a.filter(asset => asset.kind === "page" && asset.status === "ready" && asset.processedAt).length,
+      formsFound: i.length,
+      formsReady: i.filter(item => !item.excluded && item.extractionStatus === "ready" && item.approvedAssetId).length,
+      formsReviewed: i.filter(item => !item.excluded && item.reviewed).length,
+    }),
     status: expired ? "expired" : run.status,
     revision: run.revision,
     selectedGroupIds: terminal ? [] : run.selectedGroupIds,
@@ -414,12 +427,42 @@ export async function getMyDeskImport(actor: MyDeskActor, id: string) {
     importDto(database, actor, await lockImport(database, actor, id)),
   );
 }
+const importDestinationQuery = z.object({ destination: z.enum(["notes", "discipline"]).optional() }).strict();
+export async function getMyDeskImportSummary(actor: MyDeskActor, raw: unknown = {}) {
+  const query = importDestinationQuery.parse(raw);
+  return withImportActor(actor, async database => {
+    const [summary] = await database.select({
+      total: sql<number>`count(*)::int`,
+      processing: sql<number>`count(*) filter (where ${runs.status} in ('queued','processing'))::int`,
+      readyToReview: sql<number>`count(*) filter (where ${runs.status}='review')::int`,
+      needsAttention: sql<number>`count(*) filter (where ${runs.status} in ('failed','uploading'))::int`,
+      uploading: sql<number>`count(*) filter (where ${runs.status}='uploading')::int`,
+    }).from(runs).where(and(importOwn(actor), query.destination ? eq(runs.destination, query.destination) : undefined,
+      inArray(runs.status, ["uploading", "queued", "processing", "review", "failed"]), sql`${runs.expiresAt}>now()`));
+    return { summary: summary! };
+  });
+}
+
+export async function getMyDeskImportProgress(actor: MyDeskActor, id: string) {
+  return withImportActor(actor, async database => {
+    const run = await lockImport(database, actor, id);
+    const terminal = importTerminal(run.status) || run.expiresAt <= new Date();
+    const counts = terminal ? emptyImportProgressCounts : (await importProgressCounts(database, actor, [id])).get(id)!;
+    const itemVersions = terminal ? [] : await database.select({ id: items.id, revision: items.revision, extractionStatus: items.extractionStatus })
+      .from(items).where(importItemOwn(actor, id)).orderBy(sql`coalesce(${items.documentOrder},${items.ordinal})`, items.id);
+    return { id, status: !importTerminal(run.status) && terminal ? "expired" : run.status,
+      revision: run.revision, processingVersion: run.processingVersion, progressRevision: run.progressRevision,
+      progress: importProgress(run, counts), itemVersions };
+  });
+}
+
 export async function listMyDeskImports(actor: MyDeskActor, raw: unknown = {}) {
   return withImportActor(actor, async (database) => {
     const query = z
       .object({
         cursor: z.string().max(2048).optional(),
         limit: z.coerce.number().int().min(1).max(100).default(30),
+        destination: z.enum(["notes", "discipline"]).optional(),
       })
       .strict()
       .parse(raw);
@@ -436,18 +479,24 @@ export async function listMyDeskImports(actor: MyDeskActor, raw: unknown = {}) {
       } catch {
         throw importError("CURSOR_INVALID", "Reload the import list", 400);
       }
-      if (cursor.owner !== importHash([actor.schoolId, actor.authorId]))
+      if (cursor.owner !== importHash(query.destination ? [actor.schoolId, actor.authorId, query.destination] : [actor.schoolId, actor.authorId]))
         throw importError("CURSOR_INVALID", "Reload the import list", 400);
     }
     const rows = await database
       .select({
         id: runs.id,
+        destination: runs.destination,
         status: runs.status,
         revision: runs.revision,
+        processingVersion: runs.processingVersion,
+        progressRevision: runs.progressRevision,
+        attempts: runs.attempts,
+        nextAttemptAt: runs.nextAttemptAt,
         pageCount: runs.pageCount,
         createdAt: runs.createdAt,
         updatedAt: runs.updatedAt,
         expiresAt: runs.expiresAt,
+        uploadExpiresAt: runs.uploadExpiresAt,
         lastErrorCode: runs.lastErrorCode,
         exactTime: sql<string>`to_char(${runs.createdAt} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
@@ -455,6 +504,7 @@ export async function listMyDeskImports(actor: MyDeskActor, raw: unknown = {}) {
       .where(
         and(
           importOwn(actor),
+          query.destination ? eq(runs.destination, query.destination) : undefined,
           inArray(runs.status, [
             "uploading",
             "queued",
@@ -472,15 +522,16 @@ export async function listMyDeskImports(actor: MyDeskActor, raw: unknown = {}) {
       .limit(query.limit + 1);
     const page = rows.slice(0, query.limit),
       last = page.at(-1);
+    const counts = await importProgressCounts(database, actor, page.map(row => row.id));
     return {
-      imports: page.map(({ exactTime: _exactTime, ...row }) => row),
+      imports: page.map(({ exactTime: _exactTime, ...row }) => ({ ...row, progress: importProgress(row, counts.get(row.id)!) })),
       nextCursor:
         rows.length > query.limit && last
           ? Buffer.from(
               JSON.stringify({
                 time: last.exactTime,
                 id: last.id,
-                owner: importHash([actor.schoolId, actor.authorId]),
+                owner: importHash(query.destination ? [actor.schoolId, actor.authorId, query.destination] : [actor.schoolId, actor.authorId]),
               }),
             ).toString("base64url")
           : null,
@@ -488,6 +539,22 @@ export async function listMyDeskImports(actor: MyDeskActor, raw: unknown = {}) {
   });
 }
 type Mutation = z.infer<typeof importMutation>;
+const mutationFingerprint = (input: Mutation) => {
+  const { protocolVersion: _protocolVersion, ...content } = input;
+  return content;
+};
+function assertImportProtocol(run: MyDeskImport, input: Mutation) {
+  if (run.processingVersion >= 2 && input.protocolVersion !== 2)
+    throw importError("REFRESH_REQUIRED", "Refresh this page to continue reviewing your paperwork");
+}
+async function assertImportStagesSettled(database: MyDeskDatabase, actor: MyDeskActor, id: string) {
+  const [pending] = await database.select({ id: processingStages.id }).from(processingStages).where(and(
+    eq(processingStages.schoolId, actor.schoolId), eq(processingStages.authorId, actor.authorId),
+    eq(processingStages.importId, id), eq(processingStages.kind, "paperwork"),
+    inArray(processingStages.status, ["queued", "running", "retry"]),
+  )).limit(1);
+  if (pending) throw importError("PROCESSING_PENDING", "Wait for the remaining forms to finish before saving together");
+}
 export async function mutateImport(
   actor: MyDeskActor,
   id: string,
@@ -501,7 +568,7 @@ export async function mutateImport(
 ) {
   return withImportActor(actor, async (database, current) => {
     const run = await lockImport(database, actor, id),
-      hash = importHash([kind, input]);
+      hash = importHash([kind, mutationFingerprint(input)]);
     const receipt = run.mutationReceipts.find((r) => r.id === input.requestId);
     if (receipt) {
       if (receipt.fingerprint !== hash || receipt.kind !== kind)
@@ -511,6 +578,7 @@ export async function mutateImport(
         );
       return importDto(database, actor, run);
     }
+    if (kind !== "cancel") assertImportProtocol(run, input);
     if (run.revision !== input.revision)
       throw importError(
         "REVISION_CONFLICT",
@@ -1002,6 +1070,9 @@ export async function processMyDeskImport(
         ? {}
         : await chargeQuota(database, actor, run, run.pageCount);
       const modelVersion = run.modelVersion ?? myDeskImportModel();
+      const processingVersion = run.status === "uploading" ? paperworkProcessingVersion() : run.processingVersion;
+      if (processingVersion === 2 && input.protocolVersion !== 2)
+        throw importError("REFRESH_REQUIRED", "Refresh this page to prepare your paperwork");
       if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(modelVersion))
         throw importError(
           "CONFIGURATION",
@@ -1010,6 +1081,7 @@ export async function processMyDeskImport(
         );
       return {
         status: "queued",
+        processingVersion,
         ...quota,
         modelVersion,
         promptVersion: run.promptVersion ?? MYDESK_IMPORT_PROMPT_VERSION,
@@ -1085,6 +1157,27 @@ const reviewHash = (item: MyDeskImportItem, asset: MyDeskImportAsset) =>
     asset.id,
     asset.sha256,
   ]);
+async function packetDuplicateCandidates(database: MyDeskDatabase, actor: MyDeskActor, run: MyDeskImport,
+  itemId: string, studentId: string, entryDate: string) {
+  if (run.processingVersion !== 2) return [];
+  return database.select({ itemId: items.id, ordinal: items.ordinal, entryDate: items.entryDate, category: items.category,
+    disciplineFields: items.disciplineFields, evidenceHash: assets.sha256 })
+    .from(items).leftJoin(assets, and(eq(assets.id, items.approvedAssetId), eq(assets.schoolId, items.schoolId), eq(assets.authorId, items.authorId), eq(assets.importId, items.importId)))
+    .where(and(importItemOwn(actor, run.id), ne(items.id, itemId), eq(items.studentId, studentId), eq(items.entryDate, entryDate), eq(items.excluded, false)))
+    .orderBy(items.id);
+}
+const duplicateReviewFingerprint = (candidates: unknown[], packetCandidates: unknown[]) =>
+  importHash(packetCandidates.length ? { candidates, packetCandidates } : candidates);
+
+/** A newly available match invalidates only affected confirmations, never their corrected fields. */
+export async function invalidatePeerImportReviews(database: MyDeskDatabase, actor: MyDeskActor, id: string, itemId: string,
+  subject?: { studentId: string | null; entryDate: string | null }) {
+  const [current] = subject ? [subject] : await database.select({ studentId: items.studentId, entryDate: items.entryDate }).from(items).where(importItemOwn(actor, id, itemId));
+  if (!current?.studentId || !current.entryDate) return;
+  await database.update(items).set({ reviewed: false, reviewFingerprint: null, duplicateDecision: null,
+    revision: sql`${items.revision}+1`, updatedAt: new Date() }).where(and(importItemOwn(actor, id), ne(items.id, itemId),
+    eq(items.studentId, current.studentId), eq(items.entryDate, current.entryDate), eq(items.reviewed, true), eq(items.excluded, false)));
+}
 async function verifyReview(
   database: MyDeskDatabase,
   actor: MyDeskActor,
@@ -1113,7 +1206,8 @@ async function verifyReview(
       throw importError("REVIEW_REQUIRED", "Confirm referral/detention information and the factual summary");
     const [evidence] = await database.select({ sha256: assets.sha256 }).from(assets).where(importAssetOwn(actor, run.id, item.approvedAssetId));
     const duplicates = await duplicateCandidates(database, identity, item.studentId, item.entryDate, { evidenceHashes: evidence?.sha256 ? [evidence.sha256] : [] });
-    const candidatesFingerprint = importHash(duplicates);
+    const packetCandidates = await packetDuplicateCandidates(database, actor, run, item.id, item.studentId, item.entryDate);
+    const candidatesFingerprint = duplicateReviewFingerprint(duplicates, packetCandidates);
     if (!item.duplicateDecision || item.duplicateDecision.candidatesFingerprint !== candidatesFingerprint)
       throw importError("DUPLICATE_REVIEW_REQUIRED", "Review possible duplicates before confirming this form");
   }
@@ -1149,7 +1243,7 @@ async function verifyReview(
 export async function getMyDeskImportDuplicates(actor: MyDeskActor, id: string, itemId: string, input: { studentId: string; entryDate: string }) {
   return withImportActor(actor, async (database, current) => {
     const run = await lockImport(database, actor, id);
-    assertImportOpen(run, ["review", "failed"]);
+    assertImportOpen(run, run.processingVersion === 2 ? ["review", "failed", "queued", "processing"] : ["review", "failed"]);
     if (run.destination !== "discipline") throw importError("NOT_FOUND", "Form not found", 404);
     const [item] = await database.select().from(items).where(importItemOwn(actor, id, itemId));
     if (!item) throw importError("NOT_FOUND", "Form not found", 404);
@@ -1157,7 +1251,9 @@ export async function getMyDeskImportDuplicates(actor: MyDeskActor, id: string, 
     await assertSharedStudentAccess(database, identity, input.studentId);
     const [evidence] = item.approvedAssetId ? await database.select({ sha256: assets.sha256 }).from(assets).where(importAssetOwn(actor, id, item.approvedAssetId)) : [];
     const candidates = await duplicateCandidates(database, identity, input.studentId, input.entryDate, { evidenceHashes: evidence?.sha256 ? [evidence.sha256] : [] });
-    return { candidates, candidatesFingerprint: importHash(candidates) };
+    const packetCandidates = await packetDuplicateCandidates(database, actor, run, itemId, input.studentId, input.entryDate);
+    return { candidates, packetCandidates: packetCandidates.map(({ evidenceHash: _hash, disciplineFields: _fields, ...candidate }) => candidate),
+      candidatesFingerprint: duplicateReviewFingerprint(candidates, packetCandidates) };
   });
 }
 export async function createMyDeskImportItem(
@@ -1234,7 +1330,8 @@ export async function updateMyDeskImportItem(
     input,
     `item.update:${itemId}`,
     async (database, current, run) => {
-      assertImportOpen(run, ["review", "failed"]);
+      const preparing = ["queued", "processing"].includes(run.status);
+      assertImportOpen(run, run.processingVersion === 2 ? ["review", "failed", "queued", "processing"] : ["review", "failed"]);
       const [item] = await database
         .select()
         .from(items)
@@ -1246,10 +1343,13 @@ export async function updateMyDeskImportItem(
           "REVISION_CONFLICT",
           "This form changed. Reload it before saving",
         );
+      if (preparing && (input.regions !== undefined || input.excluded !== undefined || item.extractionStatus !== "ready" || !item.approvedAssetId))
+        throw importError("BUSY", "Only finished form fields can change while preparation continues");
       const {
         requestId: _requestId,
         revision: _revision,
         itemRevision: _itemRevision,
+        protocolVersion: _protocolVersion,
         reviewed,
         ...patch
       } = input;
@@ -1269,6 +1369,8 @@ export async function updateMyDeskImportItem(
       const rebuild =
         changedRegions ||
         (!item.approvedAssetId && (manualText || patch.excluded === false));
+      if (rebuild || patch.excluded === true)
+        await invalidateImportItemStages(database, actor, id, itemId);
       if (rebuild && reviewed)
         throw importError(
           "PREVIEW_NOT_READY",
@@ -1338,6 +1440,11 @@ export async function updateMyDeskImportItem(
           updatedAt: updated.updatedAt,
         })
         .where(importItemOwn(actor, id, itemId));
+      if (run.processingVersion === 2 && importHash([item.studentId, item.entryDate, item.disciplineFields, item.category, item.regions, item.excluded]) !== importHash([updated.studentId, updated.entryDate, updated.disciplineFields, updated.category, updated.regions, updated.excluded])) {
+        await invalidatePeerImportReviews(database, actor, id, itemId, item);
+        if (updated.studentId !== item.studentId || updated.entryDate !== item.entryDate)
+          await invalidatePeerImportReviews(database, actor, id, itemId, updated);
+      }
       const affected =
         changedRegions || patch.excluded !== undefined
           ? [...item.regions, ...updated.regions].map((r) => r.assetId)
@@ -1539,6 +1646,7 @@ export async function scrubMyDeskImport(
   actor: MyDeskActor,
   id: string,
 ) {
+  await cancelImportProcessingStages(database, actor, id);
   await database.update(runs).set({ preferencesSnapshot: { revision: 0, preferredClasses: {} },
     sourceNoteId: null, sourceAttachmentId: null }).where(importOwn(actor, id));
   await database
@@ -1622,6 +1730,8 @@ async function prepareRetainedDisciplineEvidence(actor: MyDeskActor, id: string,
   const selected = await withImportActor(actor, async database => {
     const run = await lockImport(database, actor, id);
     if (run.destination !== "discipline" || run.commitReceipt) return [];
+    assertImportProtocol(run, input);
+    await assertImportStagesSettled(database, actor, id);
     assertImportOpen(run, ["review"]);
     if (run.revision !== input.revision) throw importError("REVISION_CONFLICT", "This import changed. Reload before saving");
     return database.select().from(items).where(and(importItemOwn(actor, id), inArray(items.id, input.itemIds))).orderBy(items.id);
@@ -1689,7 +1799,7 @@ export async function commitMyDeskImport(
   const retainedEvidence = await prepareRetainedDisciplineEvidence(actor, id, input, options.store ?? myDeskObjectStore);
   return withImportActor(actor, async (database, current) => {
     const run = await lockImport(database, actor, id),
-      hash = importHash(input);
+      hash = importHash(mutationFingerprint(input));
     if (run.commitReceipt) {
       if (
         run.commitReceipt.requestId !== input.requestId ||
@@ -1704,12 +1814,14 @@ export async function commitMyDeskImport(
         receipt: await authorizedImportReceipt(database, actor, run),
       };
     }
+    assertImportProtocol(run, input);
     if (run.revision !== input.revision)
       throw importError(
         "REVISION_CONFLICT",
         "This import changed. Reload it before saving",
       );
     assertImportOpen(run, ["review"]);
+    await assertImportStagesSettled(database, actor, id);
     const forms = await database
       .select()
       .from(items)

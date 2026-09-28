@@ -63,11 +63,12 @@ export const STUDENT_INFORMATION_OUTPUT_SCHEMA = {
 };
 export type InformationExtractor = (
   source: Source,
+  stage?: { signal?: AbortSignal },
 ) => Promise<ReturnType<typeof extractionSchema.parse>>;
 export function createInformationExtractor(options: {
   model: string;
   promptVersion: string;
-  transport?: (input: Anthropic.MessageCreateParamsNonStreaming) => Promise<{
+  transport?: (input: Anthropic.MessageCreateParamsNonStreaming, signal?: AbortSignal) => Promise<{
     content: unknown;
     stop_reason: string | null;
   }>;
@@ -78,7 +79,8 @@ export function createInformationExtractor(options: {
       "PROMPT_UNAVAILABLE",
       "This import version is not available",
     );
-  return async (source) => {
+  return async (source, stage = {}) => {
+    stage.signal?.throwIfAborted();
     const content: Anthropic.ContentBlockParam[] =
       source.contentType === "text/plain"
         ? [
@@ -115,12 +117,12 @@ export function createInformationExtractor(options: {
     };
     try {
       const response = options.transport
-        ? await options.transport(input)
+        ? await options.transport(input, stage.signal)
         : await new Anthropic({
             timeout: 90_000,
             maxRetries: 0,
             logLevel: "off",
-          }).messages.create(input, { signal: AbortSignal.timeout(90_000) });
+          }).messages.create(input, { signal: stage.signal ? AbortSignal.any([stage.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000) });
       if (response.stop_reason !== "end_turn") throw Error();
       const text = privateImportResponseText(response.content);
       if (text === null || Buffer.byteLength(text) > 1024 * 1024)

@@ -7,6 +7,7 @@ import { mydeskImports, mydeskImportAssets, mydeskImportItems } from "../src/sch
 import { MYDESK_IMPORTS_SQL, mydeskImportsMigration } from "../src/db/mydeskImportsMigration.js";
 import { MYDESK_WORKSPACE_SQL } from "../src/db/mydeskWorkspaceMigration.js";
 import { MYDESK_IMPORT_DESTINATION_SQL } from "../src/db/mydeskImportDestinationMigration.js";
+import { IMPORT_PROCESSING_STAGES_SQL } from "../src/db/importProcessingStagesMigration.js";
 
 const suffix = `${process.pid}_${randomUUID().replaceAll("-", "")}`;
 const schema = `import_fixture_${suffix}`, role = `import_probe_${suffix}`;
@@ -20,6 +21,8 @@ before(async () => {
   await client.query(MYDESK_IMPORTS_SQL);
   await client.query(MYDESK_WORKSPACE_SQL);
   await client.query(MYDESK_IMPORT_DESTINATION_SQL);
+  await client.query("CREATE TABLE student_information_imports(id VARCHAR PRIMARY KEY,school_id TEXT NOT NULL,author_id VARCHAR NOT NULL,UNIQUE(school_id,author_id,id))");
+  await client.query(IMPORT_PROCESSING_STAGES_SQL);
   await client.query(`CREATE ROLE ${role} NOSUPERUSER NOBYPASSRLS; GRANT USAGE ON SCHEMA ${schema} TO ${role};
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA ${schema} TO ${role}`);
 });

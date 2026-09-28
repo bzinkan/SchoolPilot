@@ -37,6 +37,7 @@ const DB_SERIAL = new Set([
   "mydesk-workspace-schema.integration.test.ts",
   "rls-enforcement.integration.test.ts",
   "mydesk-imports-schema.integration.test.ts",
+  "import-processing-stages.integration.test.ts",
   "mydesk-seating-schema.integration.test.ts",
   "mydesk-attachments.integration.test.ts",
   "mydesk-schema.integration.test.ts",

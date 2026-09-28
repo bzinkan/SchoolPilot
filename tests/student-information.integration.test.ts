@@ -11,6 +11,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { pool, sessionPool } from "../src/db.js";
 import * as schema from "../src/schema/index.js";
 import { STUDENT_INFORMATION_REDESIGN_SQL } from "../src/db/studentInformationRedesignMigration.js";
+import { IMPORT_PROCESSING_STAGES_SQL } from "../src/db/importProcessingStagesMigration.js";
 import { createStudentInformationRouter } from "../src/routes/studentInformation.js";
 import { myDeskUpstreamErrorBoundary } from "../src/middleware/mydeskUpstreamErrorBoundary.js";
 import { signUserToken } from "../src/services/jwt.js";
@@ -72,10 +73,11 @@ before(async () => {
   process.env.MYDESK_MODE = "on";
   process.env.STUDENT_INFORMATION_AI_IMPORT_MODE = "on";
   await fixturePool.query(STUDENT_INFORMATION_REDESIGN_SQL);
+  await fixturePool.query(IMPORT_PROCESSING_STAGES_SQL);
   if (process.env.RLS_TEST_ROLE) {
     assert.match(process.env.RLS_TEST_ROLE, /^[a-z_][a-z0-9_]+$/);
     await fixturePool.query(
-      `GRANT SELECT,INSERT,UPDATE,DELETE ON student_contact_profiles,student_contact_profile_versions,student_information_imports,student_information_import_items,student_information_import_assets TO "${process.env.RLS_TEST_ROLE}"`,
+      `GRANT SELECT,INSERT,UPDATE,DELETE ON student_contact_profiles,student_contact_profile_versions,student_information_imports,student_information_import_items,student_information_import_assets,import_processing_stages TO "${process.env.RLS_TEST_ROLE}"`,
     );
     const roles = await pool.query(
       "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",
@@ -421,6 +423,19 @@ async function reviewAll(
   }
   return run;
 }
+test("contact extraction joins the shared provider ledger when the v2 worker is enabled", async () => {
+  process.env.MYDESK_IMPORT_PIPELINE_VERSION = "2";
+  try {
+    const f = await fixture();
+    const run = await processRun(f, await readyRun(f));
+    assert.equal(run.status, "review");
+    assert.equal(run.items.length, 1);
+    const stages = await fixturePool.query<{ kind: string; status: string; attempts: number; lease_id: string | null }>(
+      "SELECT kind,status,attempts,lease_id FROM import_processing_stages WHERE import_id=$1", [run.id]);
+    assert.deepEqual(stages.rows, [{ kind: "student-information", status: "completed", attempts: 1, lease_id: null }]);
+  } finally { delete process.env.MYDESK_IMPORT_PIPELINE_VERSION; }
+});
+
 test("selected-source import reviews typed proposals, commits atomically, replays lost responses and purges every source", async () => {
   const f = await fixture();
   let run = await processRun(

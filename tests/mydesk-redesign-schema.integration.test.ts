@@ -11,6 +11,7 @@ import { MYDESK_GRADE_FILING_SQL, mydeskGradeFilingMigration } from "../src/db/m
 import { MYDESK_IMPORT_DESTINATION_SQL, mydeskImportDestinationMigration } from "../src/db/mydeskImportDestinationMigration.js";
 import { SCHOOL_DISCIPLINE_REDESIGN_SQL, schoolDisciplineRedesignMigration } from "../src/db/schoolDisciplineRedesignMigration.js";
 import { STUDENT_INFORMATION_REDESIGN_SQL, studentInformationRedesignMigration } from "../src/db/studentInformationRedesignMigration.js";
+import { IMPORT_PROCESSING_STAGES_SQL, importProcessingStagesMigration } from "../src/db/importProcessingStagesMigration.js";
 import { mydeskNotes, mydeskAttachments } from "../src/schema/mydesk.js";
 import { mydeskPreferences } from "../src/schema/mydeskPreferences.js";
 import { mydeskImports, mydeskImportItems, mydeskImportAssets } from "../src/schema/mydeskImports.js";
@@ -20,7 +21,7 @@ import { studentContactProfiles, studentContactProfileVersions, studentInformati
 const name = `redesign_fixture_${process.pid}_${randomUUID().replaceAll("-", "")}`;
 const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
 const changes = [[mydeskGradeFilingMigration, MYDESK_GRADE_FILING_SQL], [mydeskImportDestinationMigration, MYDESK_IMPORT_DESTINATION_SQL],
-  [schoolDisciplineRedesignMigration, SCHOOL_DISCIPLINE_REDESIGN_SQL], [studentInformationRedesignMigration, STUDENT_INFORMATION_REDESIGN_SQL]] as const;
+  [schoolDisciplineRedesignMigration, SCHOOL_DISCIPLINE_REDESIGN_SQL], [studentInformationRedesignMigration, STUDENT_INFORMATION_REDESIGN_SQL], [importProcessingStagesMigration, IMPORT_PROCESSING_STAGES_SQL]] as const;
 before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
   await client.connect(); await client.query(`CREATE SCHEMA ${name}; SET search_path TO ${name}; SET app.is_super='on';
