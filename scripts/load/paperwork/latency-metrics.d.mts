@@ -10,6 +10,7 @@ export function samplingPhaseComplete(phase: 'warmup' | 'baseline' | 'loaded', e
   countsByEndpoint: Record<string, number>): boolean;
 export function loadedProbesWithinWork(samples: ReadProbeSample[], startedAtMs: number, completedAtMs: number): boolean;
 export interface ReadProbeSample {
+  id?: number;
   path: string;
   phase: ReadProbePhase;
   startedAtMs: number;
@@ -27,5 +28,5 @@ export function nearestRankPercentile(values: number[], quantile: number): numbe
 export function createReadProbeEvidence(): ReadProbeEvidence;
 export function recordReadProbe(evidence: ReadProbeEvidence, sample: ReadProbeSample): void;
 export function measureReadProbe<T extends { status: number }>(evidence: ReadProbeEvidence,
-  context: { path: string; phase: ReadProbePhase }, operation: () => Promise<T>,
+  context: { id?: number; path: string; phase: ReadProbePhase }, operation: () => Promise<T>,
   clock?: { now: () => number; originMs: number }): Promise<{ response: T; durationMs: number }>;

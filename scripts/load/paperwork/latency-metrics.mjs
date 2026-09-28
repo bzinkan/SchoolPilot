@@ -40,7 +40,8 @@ export function createReadProbeEvidence() {
 
 export function recordReadProbe(evidence, sample) {
   if (evidence.samples.length >= evidence.maxSamples) throw new Error('LATENCY_SAMPLE_LIMIT');
-  if (!CAPACITY_READ_PATHS.includes(sample.path) ||
+  if ((sample.id !== undefined && (!Number.isSafeInteger(sample.id) || sample.id < 1 || sample.id > evidence.maxSamples)) ||
+      !CAPACITY_READ_PATHS.includes(sample.path) ||
       !['warmup', 'baseline', 'uploading', 'preparing', 'continuations', 'cleanup'].includes(sample.phase) ||
       !Number.isFinite(sample.startedAtMs) || sample.startedAtMs < 0 ||
       !Number.isFinite(sample.durationMs) || sample.durationMs < 0 ||
@@ -48,11 +49,11 @@ export function recordReadProbe(evidence, sample) {
     throw new Error('INVALID_LATENCY_SAMPLE');
   }
   // Only fixed paths and measurement metadata enter the evidence, never request/response content.
-  evidence.samples.push({ path: sample.path, phase: sample.phase, startedAtMs: sample.startedAtMs,
+  evidence.samples.push({ ...(sample.id === undefined ? {} : { id: sample.id }), path: sample.path, phase: sample.phase, startedAtMs: sample.startedAtMs,
     durationMs: sample.durationMs, status: sample.status });
 }
 
-export async function measureReadProbe(evidence, { path, phase }, operation,
+export async function measureReadProbe(evidence, { id, path, phase }, operation,
   { now = () => performance.now(), originMs = 0 } = {}) {
   const started = now();
   let status = null, durationMs;
@@ -63,7 +64,7 @@ export async function measureReadProbe(evidence, { path, phase }, operation,
     durationMs = now() - started;
     return { response, durationMs };
   } finally {
-    recordReadProbe(evidence, { path, phase, startedAtMs: started - originMs,
+    recordReadProbe(evidence, { id, path, phase, startedAtMs: started - originMs,
       durationMs: durationMs ?? now() - started, status });
   }
 }
