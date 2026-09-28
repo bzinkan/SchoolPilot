@@ -51,9 +51,9 @@
     "test": "node --env-file-if-exists=.env --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 \"tests/**/*.test.ts\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.125.0",
-    "@aws-sdk/client-s3": "^3.1132.0",
-    "@aws-sdk/s3-request-presigner": "^3.1132.0",
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@aws-sdk/client-s3": "^3.1140.0",
+    "@aws-sdk/s3-request-presigner": "^3.1140.0",
     "@sendgrid/mail": "^8.1.6",
     "@sentry/node": "^10.74.0",
     "bcryptjs": "^3.0.3",
@@ -62,7 +62,7 @@
     "cors": "^2.8.5",
     "csv-parse": "^7.0.2",
     "dotenv": "^17.4.2",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.3",
     "drizzle-zod": "^0.8.3",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
@@ -80,9 +80,9 @@
     "rate-limit-redis": "^4.3.1",
     "redis": "^6.2.1",
     "sharp": "^0.35.4",
-    "socket.io": "^4.7.4",
+    "socket.io": "^4.8.4",
     "stripe": "^22.6.2",
-    "tldts": "^7.4.13",
+    "tldts": "^7.4.15",
     "ws": "^8.21.3",
     "yauzl": "^3.4.0",
     "zod": "^3.24.2"
