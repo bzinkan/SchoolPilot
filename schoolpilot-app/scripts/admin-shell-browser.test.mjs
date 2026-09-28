@@ -371,6 +371,9 @@ test('mobile menu links respect dirty confirmation and Escape keeps the draft', 
     const menu = page.getByRole('dialog', { name: 'Admin Panel' });
     await menu.getByRole('link', { name: 'Overview', exact: true }).click();
     await page.getByRole('alertdialog').waitFor();
+    // Test Escape after the confirmation is interactive and owns keyboard focus.
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Keep editing', exact: true }).click({ trial: true });
+    await page.waitForFunction(() => document.activeElement?.closest('[role="alertdialog"]') && document.activeElement?.textContent?.trim() === 'Keep editing');
     await page.keyboard.press('Escape');
     await page.getByRole('alertdialog').waitFor({ state: 'hidden' });
     assert.equal(await page.getByRole('alertdialog').count(), 0);
