@@ -1,10 +1,10 @@
 # My Desk for teachers
 
-Open My Desk from the ClassPilot sidebar, whose My Desk card links straight to
-each area, or from the labeled phone-header entry, including between teaching
-sessions. Its four areas are **Notes**, **Discipline logs**, **Student
-information**, and **Seating**. They share one header, which returns to
-ClassPilot, and one tab bar. A badge under each title says who can see that area:
+Open My Desk from the **My Desk** entry in the ClassPilot sidebar, or from the
+labeled phone-header entry, including between teaching sessions. It opens on
+**Notes**, and the tabs at the top switch between its four areas: **Notes**,
+**Discipline logs**, **Student information**, and **Seating**. They share one
+header, which returns to ClassPilot. A badge under each title says who can see that area:
 **Private** (only you) or **School record**. Eligible staff in newly entitled
 schools receive released features automatically; there is no school-admin enable
 switch.
