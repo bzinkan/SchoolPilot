@@ -43,7 +43,7 @@ if (-not $imageRevision) {
 }
 New-Item -ItemType Directory -Path $root | Out-Null
 [ordered]@{expectedRevision=$ExpectedRevision;identityMethod=$sourceIdentity;imageDigest=$digest;compiledHashes=$compiledHashes} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'split-source-identity.json') -Encoding utf8
-foreach ($name in @('split-worker.mjs', 'split.test.mjs', 'split-api-observation.mjs', 'scheduler-overlap.mjs', 'latency-metrics.mjs')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $root $name) }
+foreach ($name in @('split-worker.mjs', 'split.test.mjs', 'split-api-observation.mjs', 'scheduler-overlap.mjs', 'latency-metrics.mjs', 'physical-object-store.mjs')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $root $name) }
 $runId = [guid]::NewGuid().ToString('N').Substring(0, 12)
 $network = 'sp-paperwork-capacity-' + $runId
 $dbContainer = $network + '-db'; $appContainer = $network + '-api'; $workerContainer = $network + '-worker'

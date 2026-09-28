@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { myDeskObjectStore } from '/app/dist/services/mydeskFiles.js';
 import { renderImportSource, cropImportRegion, buildImportAttachment, createImportAiProcessor } from '/app/dist/services/mydeskImportProcessing.js';
@@ -9,18 +9,13 @@ import { schedulerPool, schedulerLockPool } from '/app/dist/services/schedulerDb
 import { pool, sessionPool } from '/app/dist/db.js';
 import { startSchedulerOverlap } from './scheduler-overlap.mjs';
 import { databasePoolLimits } from '/app/dist/config/databasePools.js';
+import { createPhysicalObjectStore, createStorageEvidence } from './physical-object-store.mjs';
 
 if (new URL(process.env.DATABASE_URL).hostname !== '127.0.0.1' || process.env.ANTHROPIC_API_KEY)
   throw Error('Disposable local database and synthetic provider required');
 assert.equal(process.env.MYDESK_IMPORT_PIPELINE_VERSION, '2');
 assert.equal(process.env.MYDESK_IMPORT_PIPELINE_WIDTH, '2');
 assert.equal(process.env.STUDENT_INFORMATION_AI_IMPORT_MODE, 'off');
-const directory = '/app/evidence/split-objects';
-mkdirSync(directory, { recursive: true });
-const filename = key => directory + '/' + createHash('sha256').update(key).digest('hex');
-myDeskObjectStore.put = async (key, bytes) => { writeFileSync(filename(key), Buffer.from(bytes)); };
-myDeskObjectStore.get = async key => readFileSync(filename(key));
-myDeskObjectStore.delete = async key => { if (existsSync(filename(key))) unlinkSync(filename(key)); };
 const metrics = {
   imageDigest: process.env.EVIDENCE_IMAGE_DIGEST,
   limits: { cpu: Number(process.env.EVIDENCE_CPU), memoryBytes: Number(process.env.EVIDENCE_MEMORY) },
@@ -28,6 +23,8 @@ const metrics = {
   providerRequests: 0, providerActive: 0, providerPeak: 0, initialClaims: 0,
   globalQueueRuns: 0, maxGlobalClaimed: 0, completedStages: 0,
   peakCgroupMemoryBytes: 0, memorySamples: 0, failure: null,
+  storageSourceSha256: createHash('sha256').update(readFileSync(new URL('./physical-object-store.mjs', import.meta.url))).digest('hex'),
+  storageIo: createStorageEvidence(),
 };
 metrics.poolProfile = databasePoolLimits();
 assert.deepEqual(metrics.poolProfile, { role: 'worker', main: 2, session: 1, scheduler: 5, schedulerLock: 8 });
@@ -38,6 +35,7 @@ assert.equal(metrics.actualCgroupLimits.memoryBytes, metrics.limits.memoryBytes)
 const [quota, period] = metrics.actualCgroupLimits.cpuMax.split(' ').map(Number);
 assert.equal(quota / period, metrics.limits.cpu);
 const started = performance.now(), cpuStart = process.cpuUsage();
+Object.assign(myDeskObjectStore, await createPhysicalObjectStore('/app/evidence/split-objects', metrics.storageIo, started));
 const save = () => {
   metrics.durationMs = performance.now() - started;
   metrics.cpu = process.cpuUsage(cpuStart);

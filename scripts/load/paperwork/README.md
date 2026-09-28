@@ -25,6 +25,8 @@ Default limits match the reviewed split profiles: API 1 CPU/2 GiB; worker 0.5 CP
 
 The HTTP scenario uploads two maximum packets, each containing five 10-MiB source files and twenty pages/images, including a 24-megapixel photo. Deterministic provider responses yield fifty forms per packet. The actual worker claim transactions and protocol-2 stage pipeline prepare both packets; the test then rebuilds a twenty-region continuation form in each. Four ordinary note attachments upload through the API while processing runs. Source, preview, and evidence bytes use physical local files shared only by these containers.
 
+Both processes await asynchronous filesystem writes, reads, and idempotent deletion, preserving the production object-store's asynchronous contract without using production storage. Each report's `storageIo` records at most 4,096 operation timings, byte counts, and safe success/error codes, never storage keys, filenames, or contents. A slot is reserved before each operation to enforce the bound under concurrency; exceeding it fails the run. The test retains the same file bytes, native processing, quotas, and resource limits. Local storage latency still does not model S3 network latency.
+
 The provider transport is deliberately synthetic, with short bounded occupancy, so this measures native work, database contention, durable permits, HTTP upload behavior, and process isolation without external latency. Use `benchmarkPaperworkPreparation` separately for the three paired live-model timing comparisons. This test does not substitute for extraction-quality evaluation or the user's real-paperwork walkthrough.
 
 Acceptance checks include:

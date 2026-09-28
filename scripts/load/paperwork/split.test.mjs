@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { schedulerPool, schedulerLockPool } from '/app/dist/services/schedulerDb.js';
 import { createImportAiProcessor, MYDESK_IMPORT_PROMPT_VERSION } from '/app/dist/services/mydeskImportProcessing.js';
 import { after, before, test, mock } from "node:test";
@@ -19,34 +19,28 @@ import { renderImportSource, cropImportRegion, buildImportAttachment, MyDeskImpo
 import { importRegion } from "/app/dist/services/mydeskImportsValidation.js";
 import { signUserToken } from "/app/dist/services/jwt.js";
 import { createReadProbeEvidence, measureReadProbe, nearestRankPercentile } from './latency-metrics.mjs';
+import { createPhysicalObjectStore, createStorageEvidence } from './physical-object-store.mjs';
 const schoolIds = [];
 // Fixtures and DDL use the administrator connection; real HTTP handlers keep the restricted application pool.
 const fixturePool = process.env.ADMIN_DATABASE_URL
     ? new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2 })
     : pool;
 const fixtureDb = drizzle(fixturePool, { schema });
-class PhysicalObjects extends Map {
-    filename(key) { return '/app/evidence/split-objects/' + createHash('sha256').update(key).digest('hex'); }
-    set(key, bytes) { writeFileSync(this.filename(key), bytes); return super.set(key, bytes.length); }
-    get(key) { return this.has(key) ? readFileSync(this.filename(key)) : undefined; }
-    has(key) { return existsSync(this.filename(key)); }
-    delete(key) { if (existsSync(this.filename(key)))
-        unlinkSync(this.filename(key)); return super.delete(key); }
-}
-mkdirSync('/app/evidence/split-objects', { recursive: true });
-const objects = new PhysicalObjects();
 const originalObjectStore = { ...myDeskObjectStore };
 const metrics = { imageDigest: process.env.EVIDENCE_IMAGE_DIGEST, testSourceSha256: createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex'),
     measurementSourceSha256: createHash('sha256').update(readFileSync(new URL('./latency-metrics.mjs', import.meta.url))).digest('hex'),
+    storageSourceSha256: createHash('sha256').update(readFileSync(new URL('./physical-object-store.mjs', import.meta.url))).digest('hex'),
     sourceRevision: process.env.EVIDENCE_SOURCE_REVISION, formatVersion: 2,
     providerMode: 'synthetic_transport', storageMode: 'physical_local_files', auth: 'ephemeral_local_jwt',
     database: 'disposable_local_postgres_restricted_rls', humanAcceptance: 'not_performed',
     limits: { cpu: Number(process.env.EVIDENCE_CPU), memoryBytes: Number(process.env.EVIDENCE_MEMORY) },
     memorySamples: 0, peakCgroupMemoryBytes: 0, peakRssBytes: 0, apiTimingsMs: [], statusCounts: {},
     readProbeEvidence: createReadProbeEvidence(),
+    storageIo: createStorageEvidence(),
     providerRequests: 0, workerRuns: 0, maxClaimedPerRunner: 0, maxQueueObserved: 0, cpu: null,
     limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.', 'Inherited Docker localhost:4000 healthchecks do not apply to this ephemeral-port API/3999 worker harness; actual API pool/readiness and worker scheduler probes are evaluated separately.'] };
 const metricStart = performance.now(), cpuStart = process.cpuUsage();
+const objects = await createPhysicalObjectStore('/app/evidence/split-objects', metrics.storageIo, metricStart);
 const sample = () => {
     metrics.memorySamples++;
     metrics.peakRssBytes = Math.max(metrics.peakRssBytes, process.memoryUsage().rss);
@@ -152,17 +146,17 @@ before(async () => {
         .jpeg()
         .toBuffer();
     mock.method(myDeskObjectStore, "put", async (key, bytes) => {
-        objects.set(key, Buffer.from(bytes));
+        await objects.put(key, bytes);
     });
     mock.method(myDeskObjectStore, "get", async (key) => {
-        const bytes = objects.get(key);
+        const bytes = await objects.get(key);
         if (!bytes)
             throw new Error("fixture object missing");
         return Buffer.from(bytes);
     });
     mock.method(myDeskObjectStore, "delete", async (key) => {
         deletedKeys.push(key);
-        objects.delete(key);
+        await objects.delete(key);
     });
     if (process.env.RLS_GUC_ENABLED === "true") {
         assert.match(process.env.RLS_TEST_ROLE || "", /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/);
