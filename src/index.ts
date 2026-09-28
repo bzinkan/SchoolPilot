@@ -9,6 +9,7 @@ import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "./db/classpilotTeacherPreferencesMigration.js";
+import { IMPORT_PROCESSING_STAGES_SQL } from "./db/importProcessingStagesMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
 import { MYDESK_SQL } from "./db/mydeskMigration.js";
 import { MYDESK_SEATING_SQL } from "./db/mydeskSeatingMigration.js";
@@ -4967,6 +4968,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(MYDESK_IMPORT_DESTINATION_SQL);
   await pool.query(STUDENT_INFORMATION_REDESIGN_SQL);
   await pool.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
+  await pool.query(IMPORT_PROCESSING_STAGES_SQL);
 
 }
 

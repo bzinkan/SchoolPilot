@@ -22,16 +22,17 @@ const region = (y = .035) => ({ assetId: 'page-a', x: .05, y, width: .9, height:
 const item = (id, ordinal, patch = {}) => ({ id, ordinal, revision: 1, regions: [region(ordinal ? .525 : .035)], subjectNames: [ordinal ? 'Taylor Sample' : 'Jordan Example'], groupId: null, studentId: null, rosterRevision: null, category: 'detention', title: ordinal ? 'Referral' : 'Detention', body: 'Please check these details.', entryDate: null, warnings: ['Check handwriting and distinguish witnesses from subjects.'], reviewed: false, excluded: false, extractionStatus: 'ready', approvedAssetId: `approved-${id}`, ...patch });
 const fixture = (patch = {}) => ({ id: 'import-a', status: 'review', revision: 1, selectedGroupIds: ['class-a', 'class-b'], pageDecisions: [], expiresAt: '2026-10-02T12:00:00Z', pageCount: 1, assets: [{ id: 'page-a', kind: 'page', status: 'ready', contentType: 'image/jpeg', width: 1600, height: 2000, pageNumber: 1 }], items: [item('form-a', 0), item('form-b', 1)], ...patch });
 
-async function setup({ batch = fixture(), url = '/import-a', viewport, admin = false } = {}) {
+async function setup({ batch = fixture(), url = '/import-a', viewport, admin = false, routeState } = {}) {
   const page = await browser.newPage({ viewport: viewport || { width: 1440, height: 1050 } });
   const state = { admin, batch: structuredClone(batch), viewer: 'teacher-a', enabled: true, failCommit: false, failureCode: null, held: false, failProcess: false, failCreate: false, failCancel: false }, requests = [], errors = [], receipts = new Map();
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(value => { window.__adminShell = value; }, admin);
+  if (routeState) await page.addInitScript(value => history.replaceState({ ...history.state, usr: value }, ''), routeState);
   await page.addInitScript(() => { localStorage.setItem('sp_activeSchoolId', 'school-a'); window.createdUrls = []; window.revokedUrls = []; const create = URL.createObjectURL, revoke = URL.revokeObjectURL; URL.createObjectURL = value => { const url = create(value); window.createdUrls.push(url); return url; }; URL.revokeObjectURL = value => { window.revokedUrls.push(value); revoke(value); }; });
   await page.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname, method = request.method();
     const body = ['POST', 'PATCH', 'DELETE'].includes(method) ? request.postDataJSON() : null;
-    requests.push({ path: pathname, method, body }); const json = (value, status = 200) => route.fulfill({ status, json: value });
+    requests.push({ path: pathname, query: new URL(request.url()).search, method, body }); const json = (value, status = 200) => route.fulfill({ status, json: value });
     if (pathname.endsWith('/auth/csrf')) return json({ csrfToken: 'test' });
     if (pathname.endsWith('/auth/me')) return json({ user: { id: state.viewer, firstName: 'Teacher', email: 'teacher@example.school' }, activeSchoolId: 'school-a', memberships: [{ schoolId: 'school-a', schoolName: 'School', schoolTimezone: 'America/New_York', role: state.admin ? 'admin' : 'teacher', roles: [state.admin ? 'admin' : 'teacher'] }], licenses: { classPilot: true } });
     assert.equal(request.headers()['x-school-id'], 'school-a');
@@ -39,7 +40,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport, admin = f
     if (pathname.endsWith('/classes')) return json({ current: [{ id: 'class-a', name: 'Science 5' }, { id: 'class-b', name: 'Math 5' }], past: [] });
     if (pathname.endsWith('/students')) return json({ students: roster, rosterRevision: 'a'.repeat(64) });
     if (pathname.endsWith('/categories')) return json({ categories: [{ key: 'note', label: 'Note' }, { key: 'detention', label: 'Detention' }, { key: 'behavior', label: 'Behavior' }] });
-    if (pathname.endsWith('/imports') && method === 'GET') return json({ imports: state.viewer === 'teacher-a' ? [state.batch] : [], nextCursor: null });
+    if (pathname.endsWith('/imports') && method === 'GET') return state.failLibrary ? json({ error: 'Connection interrupted' }, 503) : json({ imports: state.viewer === 'teacher-a' && !state.emptyLibrary ? [state.batch] : [], nextCursor: null });
     if (pathname.endsWith('/imports') && method === 'POST') {
       assert.equal(body.expectedSourceCount, 1);
       if (!receipts.has(body.clientRequestId)) { state.batch = fixture({ status: 'uploading', revision: 1, selectedGroupIds: body.selectedGroupIds, destination: body.destination, assets: [], items: [] }); receipts.set(body.clientRequestId, true); }
@@ -48,12 +49,14 @@ async function setup({ batch = fixture(), url = '/import-a', viewport, admin = f
     const match = pathname.match(/\/imports\/([^/]+)(.*)$/); if (!match) return json({});
     if (state.viewer !== 'teacher-a') return json({ error: 'Import not found', code: 'MYDESK_IMPORT_NOT_FOUND' }, 404);
     const action = match[2];
-    if (action.endsWith('/duplicates') && method === 'POST') return json({ candidates: [], candidatesFingerprint: 'b'.repeat(64) });
+    if (action === '/progress') return state.denyProgress ? json({ error: 'Current school access was removed' }, 403) : json({ id: state.batch.id, status: state.batch.status, revision: state.batch.revision, processingVersion: state.batch.processingVersion, progressRevision: state.batch.progressRevision, progress: state.batch.progress, itemVersions: state.batch.items.map(({ id, revision, extractionStatus }) => ({ id, revision, extractionStatus })) });
+    if (action.endsWith('/duplicates') && method === 'POST') return json({ candidates: [], packetCandidates: state.packetCandidates || [], candidatesFingerprint: (state.packetCandidates?.length ? 'c' : 'b').repeat(64) });
     if (action.endsWith('/content') && method === 'GET') return route.fulfill({ contentType: 'image/png', body: sourceBytes });
     if (action.endsWith('/content') && method === 'PUT') { state.batch.revision++; return json({ asset: { id: 'source-a', status: 'ready' } }); }
     if (action === '/assets') { assert.match(body.sha256, /^[a-f0-9]{64}$/); state.batch.revision++; return json({ asset: { id: 'source-a' } }); }
     if (method === 'GET') return json({ import: state.batch });
     if (state.held && method === 'PATCH') await new Promise(resolve => { state.release = resolve; });
+    if (state.failSave && method === 'PATCH') { state.failSave = false; return json({ error: 'Save connection interrupted' }, 503); }
     if (receipts.has(body.requestId)) return json({ import: state.batch, receipt: state.batch.commitReceipt });
     if (state.failureCode) { const code = state.failureCode; state.failureCode = null; return json({ error: code === 'MYDESK_IMPORT_ROSTER_CHANGED' ? 'Roster changed. Check the subject again.' : 'This import changed in another tab.', code }, 409); }
     assert.equal(body.revision, state.batch.revision);
@@ -63,6 +66,7 @@ async function setup({ batch = fixture(), url = '/import-a', viewport, admin = f
     else if (method === 'DELETE') { state.batch.status = 'cancelled'; }
     else if (action.startsWith('/items/')) {
       const parts = action.split('/'), current = state.batch.items.find(item => item.id === parts[2]); assert.equal(body.itemRevision, current.revision); current.revision++;
+      if (state.packetCandidates?.length && body.reviewed) assert.equal(body.duplicateDecision?.candidatesFingerprint, 'c'.repeat(64));
       if (parts[3] === 'reread') { current.title = 'New AI reading'; current.reviewed = false; }
       else if (parts[3] === 'join') { const source = state.batch.items.find(item => item.id === body.sourceItemId); assert.equal(body.sourceItemRevision, source.revision); current.regions.push(...source.regions); source.excluded = true; source.reviewed = false; source.revision++; current.reviewed = false; state.batch.pageDecisions = []; }
       else { Object.assign(current, body); current.reviewed = body.reviewed || false; if (body.regions || Object.hasOwn(body, 'excluded')) state.batch.pageDecisions = []; }
@@ -255,4 +259,155 @@ test('admin discipline upload enters its review once without a stale upload guar
     assert.equal(requests.find(request => request.method === 'POST' && request.path.endsWith('/imports')).body.destination, 'discipline');
     assert.equal(await page.getByRole('alertdialog').count(), 0); assert.deepEqual(errors, []);
   } finally { await page.close(); }
+});
+
+const preparingFixture = () => fixture({ status: 'processing', processingVersion: 2, progressRevision: 1, pageCount: 15,
+  progress: { phase: 'checking_forms', pagesTotal: 15, pagesChecked: 3, formsReady: 1, formsFound: 2, detectionComplete: false, actions: { reviewFields: true, editGeometry: false, publish: false } },
+  items: [item('form-a', 0), item('form-b', 1, { extractionStatus: 'pending', approvedAssetId: null })] });
+
+test('legacy preparation keeps progress and admin resume available without promising or allowing early review', async () => {
+  const batch = preparingFixture(); batch.processingVersion = 1; batch.destination = 'discipline'; batch.progress.actions.reviewFields = false;
+  const { page, state, requests, errors } = await setup({ batch, url: '?destination=discipline&view=library&entry=admin' });
+  try {
+    await page.getByRole('button', { name: 'Open progress', exact: true }).click();
+    await page.waitForURL('**/imports/import-a?entry=admin');
+    await page.getByText('3 of 15 pages checked · 1 form ready', { exact: true }).waitFor();
+    await page.getByText('Preparation is still running. Use Save for later to leave and return when it finishes.', { exact: false }).waitFor();
+    assert.equal(await page.getByText('You can review finished forms while preparation continues.', { exact: false }).count(), 0);
+    assert.equal(await page.getByLabel('Form note text').count(), 0);
+    assert.equal(await page.getByRole('button', { name: /2\. Review forms/ }).count(), 0);
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports?destination=discipline&view=library&entry=admin');
+    await page.getByRole('button', { name: 'Open progress', exact: true }).click();
+    await page.getByRole('heading', { name: 'Preparing pages and draft forms…', exact: true }).waitFor();
+    state.batch.status = 'review'; state.batch.revision++; state.batch.progress.actions.reviewFields = true;
+    state.batch.items = state.batch.items.filter(item => item.extractionStatus === 'ready');
+    await page.getByLabel('Form note text').waitFor();
+    assert.equal(requests.some(request => request.method === 'PATCH'), false);
+    await page.getByRole('button', { name: 'Admin Panel', exact: true }).click();
+    await page.waitForURL('**/classpilot/admin');
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('preparation progress advances during a dirty early review without replacing corrections or selected form', async () => {
+  const { page, state, requests, errors } = await setup({ batch: preparingFixture() });
+  try {
+    await page.getByText('3 of 15 pages checked · 1 form ready', { exact: true }).waitFor();
+    await page.getByLabel('Form note text').fill('Keep this teacher correction');
+    assert.equal(await page.getByRole('button', { name: /1\. Check pages/ }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: /3\. Save together/ }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Re-read corrected form' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'Exclude form' }).isDisabled(), true);
+    state.batch.progressRevision++; state.batch.progress.pagesChecked = 12; state.batch.progress.formsReady = 2;
+    Object.assign(state.batch.items[1], { revision: 2, extractionStatus: 'ready', approvedAssetId: 'approved-b' });
+    await page.getByText('12 of 15 pages checked · 2 forms ready', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Form note text').inputValue(), 'Keep this teacher correction');
+    assert.equal(await page.getByLabel('Choose form').inputValue(), 'form-a');
+    assert.equal(await page.getByLabel('Choose form').locator('option').count(), 2);
+    assert.ok(requests.some(request => request.path.endsWith('/progress')));
+    await page.screenshot({ path: path.join(artifacts, 'paperwork-progress-early-review-desktop.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.waitForURL('**/imports'); assert.equal(state.batch.items[0].body, 'Keep this teacher correction');
+    assert.equal(requests.find(request => request.method === 'PATCH').body.protocolVersion, 2); assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('early review keeps the first available form selected as earlier pending forms become ready', async () => {
+  const batch = preparingFixture(); batch.items[0].extractionStatus = 'pending'; batch.items[0].approvedAssetId = null; Object.assign(batch.items[1], { extractionStatus: 'ready', approvedAssetId: 'approved-b' });
+  const { page, state } = await setup({ batch, viewport: { width: 390, height: 844 } });
+  try {
+    await page.getByRole('heading', { name: 'Form 2', exact: true }).waitFor();
+    Object.assign(state.batch.items[0], { extractionStatus: 'ready', approvedAssetId: 'approved-a', revision: 2 }); state.batch.progress.formsReady = 2; state.batch.progressRevision++;
+    await page.getByText('3 of 15 pages checked · 2 forms ready', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('Choose form').inputValue(), 'form-b');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+    await page.screenshot({ path: path.join(artifacts, 'paperwork-progress-early-review-phone.png'), fullPage: true });
+  } finally { await page.close(); }
+});
+
+test('a selected form revision change preserves dirty fields and requires explicit conflict review', async () => {
+  const { page, state } = await setup({ batch: preparingFixture() });
+  try {
+    await page.getByLabel('Form note text').fill('Local correction survives');
+    state.batch.items[0].body = 'Updated elsewhere'; state.batch.items[0].revision++; state.batch.progressRevision++;
+    await page.getByText('This form changed while you were editing. Your changes are still on this screen.').waitFor();
+    assert.equal(await page.getByLabel('Form note text').inputValue(), 'Local correction survives');
+    assert.equal(await page.getByRole('button', { name: 'Save draft changes' }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Reload saved review', exact: true }).click();
+    await page.getByRole('button', { name: 'Keep reviewing' }).click();
+    assert.equal(await page.getByLabel('Form note text').inputValue(), 'Local correction survives');
+  } finally { await page.close(); }
+});
+
+test('failed Save for later stays in the early editor and safe retry returns to its private library', async () => {
+  const { page, state } = await setup({ batch: preparingFixture() });
+  try {
+    await page.getByLabel('Form note text').fill('Retain through network failure'); state.failSave = true;
+    await page.getByRole('button', { name: 'Save for later', exact: true }).click();
+    await page.getByText('Save connection interrupted', { exact: true }).waitFor();
+    assert.ok(page.url().endsWith('/imports/import-a')); assert.equal(await page.getByLabel('Form note text').inputValue(), 'Retain through network failure');
+    await page.getByRole('button', { name: 'Retry last action' }).click();
+    await page.waitForURL('**/imports'); assert.equal(state.batch.items[0].body, 'Retain through network failure');
+  } finally { await page.close(); }
+});
+
+test('library has destination-scoped progress and exhausted failures offer no misleading retry', async () => {
+  const { page, state, requests } = await setup({ batch: { ...preparingFixture(), destination: 'discipline' }, url: '?destination=discipline&view=library&entry=admin' });
+  try {
+    await page.getByRole('button', { name: 'Resume review', exact: true }).waitFor();
+    assert.match(requests.find(request => request.path.endsWith('/imports')).query, /destination=discipline/);
+    assert.equal(await page.getByRole('heading', { name: 'Gather your paperwork' }).count(), 0);
+    state.batch.status = 'failed'; state.batch.items = []; state.batch.progress = { ...state.batch.progress, phase: 'needs_attention', canRetry: false };
+    await page.getByRole('button', { name: 'Resume review', exact: true }).click();
+    await page.getByRole('heading', { name: 'Your forms need another try.' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Retry preparation' }).count(), 0);
+  } finally { await page.close(); }
+});
+
+test('processing access loss clears an unsaved early-review editor and revokes its previews', async()=>{
+ const {page,state}=await setup({batch:preparingFixture()});
+ try{
+  await page.getByRole('img',{name:'Form 1, part 1',exact:true}).waitFor();
+  await page.getByLabel('Form note text').fill('Private unfinished correction');state.denyProgress=true;
+  await page.getByRole('heading',{name:'Import unavailable',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Form note text').count(),0);
+  const blobs=await page.evaluate(()=>({created:window.createdUrls,revoked:window.revokedUrls}));
+  assert.ok(blobs.created.length);assert.ok(blobs.created.every(url=>blobs.revoked.includes(url)));
+ }finally{await page.close();}
+});
+test('Resume library preserves the teacher workspace return and does not accept an external return path',async()=>{
+ const resumed=await setup({batch:preparingFixture(),routeState:{returnTo:'/classpilot/discipline-records?gradeLevel=5'}});
+ try{
+  await resumed.page.getByRole('button',{name:'Save for later',exact:true}).click();
+  await resumed.page.getByRole('button',{name:'Discipline logs',exact:true}).click();
+  await resumed.page.waitForURL('**/classpilot/discipline-records?gradeLevel=5');
+ }finally{await resumed.page.close();}
+ const unsafe=await setup({routeState:{returnTo:'https://external.invalid/'}});
+ try{await unsafe.page.getByRole('button',{name:'My Desk',exact:true}).click();await unsafe.page.waitForURL('**/classpilot/my-desk');}finally{await unsafe.page.close();}
+});
+
+test('new packet peers refresh duplicate choices during dirty early review without requiring window focus',async()=>{
+ const {page,state,requests}=await setup({batch:{...preparingFixture(),destination:'discipline'}});
+ try{
+  await chooseSubject(page);
+  await page.getByLabel('Form note text').fill('Keep this checked account');
+  await page.getByLabel('Referral recorded',{exact:true}).check();
+  await page.getByText('No similar published incident was found.',{exact:true}).waitFor();
+  await page.getByLabel('Save this form as').selectOption('separate');
+  const originalItemRevision=state.batch.items[0].revision;
+  state.packetCandidates=[{itemId:'form-b',ordinal:1,entryDate:'2026-09-24',category:'behavior'}];
+  Object.assign(state.batch.items[1],{revision:2,studentId:'student-a',entryDate:'2026-09-24',extractionStatus:'ready',approvedAssetId:'approved-b'});
+  state.batch.progressRevision++;state.batch.progress.formsReady=2;
+  await page.getByText('The packet or school records changed. Check the current matches and choose again.',{exact:true}).waitFor();
+  assert.equal(state.batch.items[0].revision,originalItemRevision);
+  assert.equal(await page.getByLabel('Save this form as').inputValue(),'');
+  assert.equal(await page.getByLabel('Form note text').inputValue(),'Keep this checked account');
+  await page.getByLabel('Save this form as').selectOption('separate');
+  await page.getByRole('button',{name:'Reviewed → Next',exact:true}).click();
+  await page.getByRole('heading',{name:'Form 2',exact:true}).waitFor();
+  assert.equal(state.batch.items[0].reviewed,true);
+  const review=requests.find(request=>request.method==='PATCH'&&request.body.reviewed);
+  assert.equal(review.body.duplicateDecision.candidatesFingerprint,'c'.repeat(64));
+ }finally{await page.close();}
 });

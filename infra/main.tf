@@ -68,7 +68,7 @@ locals {
   alb_access_logs_bucket = "${local.name}-alb-access-logs-${data.aws_caller_identity.current.account_id}"
   database_capacity      = jsondecode(file("${path.module}/../src/config/databaseCapacity.json"))
   rls_registry           = jsondecode(file("${path.module}/../src/config/rlsRegistry.json"))
-  rls_post_expand_tables = local.rls_registry.inventories.classpilotTeacherPreferencesPostExpand.tables
+  rls_post_expand_tables = local.rls_registry.inventories.importProcessingStagesPostExpand.tables
   rls_configured_tables  = [for table in split(",", var.rls_enabled_tables) : trimspace(table) if trimspace(table) != ""]
 }
 
@@ -106,7 +106,7 @@ check "rls_registry_contract" {
       length(local.rls_registry.inventories.historicalObservedProduction.tables) == 72 &&
       local.rls_registry.inventories.schoolPilot270PostExpand.count == 75 &&
       length(local.rls_registry.inventories.schoolPilot270PostExpand.tables) == 75 &&
-      length(local.rls_post_expand_tables) == local.rls_registry.inventories.classpilotTeacherPreferencesPostExpand.count &&
+      length(local.rls_post_expand_tables) == local.rls_registry.inventories.importProcessingStagesPostExpand.count &&
       length(local.rls_configured_tables) > 0 &&
       length(local.rls_configured_tables) == length(toset(local.rls_configured_tables)) &&
       length(setsubtract(
@@ -351,6 +351,8 @@ module "ecs" {
   mydesk_ai_import_mode                = var.mydesk_ai_import_mode
   student_information_ai_import_mode   = var.student_information_ai_import_mode
   mydesk_ai_import_model               = var.mydesk_ai_import_model
+  mydesk_import_pipeline_version       = var.mydesk_import_pipeline_version
+  mydesk_import_pipeline_width         = var.mydesk_import_pipeline_width
   mydesk_ai_import_teacher_daily_pages = var.mydesk_ai_import_teacher_daily_pages
   mydesk_ai_import_school_daily_pages  = var.mydesk_ai_import_school_daily_pages
 

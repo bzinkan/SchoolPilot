@@ -15,6 +15,7 @@ import MyDeskHeader from '../components/MyDeskHeader';
 import MyDeskVisibility from '../components/MyDeskVisibility';
 import MyDeskScopePicker from '../components/MyDeskScopePicker';
 import DisciplineSubmitButton from '../components/DisciplineSubmitButton';
+import ResumePaperwork from '../components/ResumePaperwork';
 import { formatDeskDate } from '../lib/myDeskDates';
 import '../myDesk.css';
 
@@ -123,7 +124,7 @@ export function MyDeskNotebook({ schoolId, viewerId, today, timeZone, onImport, 
       value={section === 'all' ? filters : { gradeLevel: '', classId: '' }}
       onChange={value => chooseScope(value.classId ? 'class' : value.gradeLevel ? 'grade' : 'all', value.classId, value.gradeLevel)} />
   <main className="mydesk-shell">
-    <div className="mydesk-intro"><div><div className="mydesk-title-line"><NotebookPen aria-hidden="true" /><h1>Notes</h1></div><p>Your notes, right where you left them.</p><MyDeskVisibility kind="private">Only you can see these notes.</MyDeskVisibility></div><div className="import-entry-actions"><Button variant="outline" disabled={!onImport} title={!onImport ? 'Paperwork processing is not enabled yet. Your saved files remain available.' : undefined} onClick={() => onImport?.(filters.scope === 'class' ? filters.classId : undefined)}>Add from paperwork</Button><Button className="mydesk-new" onClick={() => openComposer()}><Plus className="size-4" />New note</Button></div></div>
+    <div className="mydesk-intro"><div><div className="mydesk-title-line"><NotebookPen aria-hidden="true" /><h1>Notes</h1></div><p>Your notes, right where you left them.</p><MyDeskVisibility kind="private">Only you can see these notes.</MyDeskVisibility></div><div className="import-entry-actions"><Button variant="outline" disabled={!onImport} title={!onImport ? 'Paperwork processing is not enabled yet. Your saved files remain available.' : undefined} onClick={() => onImport?.(filters.scope === 'class' ? filters.classId : undefined)}>Add from paperwork</Button><ResumePaperwork access={access || { schoolId, viewerId, importsEnabled: Boolean(onImport) }} destination="notes" /><Button className="mydesk-new" onClick={() => openComposer()}><Plus className="size-4" />New note</Button></div></div>
     <div className="mydesk-sections" role="group" aria-label="Notebook sections">
       <button type="button" aria-pressed={section === 'all'} onClick={() => { if (section !== 'all') chooseScope('all'); }}><BookOpen className="size-4" aria-hidden="true" />All notes</button>
       <button type="button" aria-pressed={section === 'general'} onClick={() => chooseScope('general')}>General</button>

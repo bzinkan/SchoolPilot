@@ -62,6 +62,8 @@ locals {
     { name = "MYDESK_AI_IMPORT_MODE", value = var.mydesk_ai_import_mode },
     { name = "STUDENT_INFORMATION_AI_IMPORT_MODE", value = var.student_information_ai_import_mode },
     { name = "MYDESK_AI_IMPORT_MODEL", value = var.mydesk_ai_import_model },
+    { name = "MYDESK_IMPORT_PIPELINE_VERSION", value = tostring(var.mydesk_import_pipeline_version) },
+    { name = "MYDESK_IMPORT_PIPELINE_WIDTH", value = tostring(var.mydesk_import_pipeline_width) },
     { name = "MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES", value = tostring(var.mydesk_ai_import_teacher_daily_pages) },
     { name = "MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES", value = tostring(var.mydesk_ai_import_school_daily_pages) },
   ] : []

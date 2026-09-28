@@ -60,7 +60,7 @@ record both a referral and an assigned detention. One detention assignment count
 once even with several scheduled dates. Withdrawn/superseded versions do not
 inflate active totals. These are recorded events, not student ratings.
 
-Use **Add incident** or AI paperwork import when enabled. Review student, date,
+Use **Add incident** or **Add from paperwork** when enabled. Review student, date,
 factual description, referral/detention flags, scheduled dates and evidence before
 saving. The school-record confirmation explains visibility; saving here does not
 first create a private note. Nothing publishes automatically or sends a parent/
@@ -103,10 +103,33 @@ establish the provider's deletion.
 
 ## Paperwork imports
 
+**Resume paperwork** is always beside **Add from paperwork** in Notes and
+Discipline logs. Its status shows your processing packets, reviews ready to open,
+or packets needing attention. It opens your unfinished paperwork directly, even
+when the current grade, class, student or date filter is different. The Notes
+and Discipline libraries are separate; an administrator sees only their own
+unfinished packets. No unfinished paperwork means that library is empty; a
+connection error is shown separately.
+
 When enabled, upload five PDF/photos at most, 10 MiB each, 20 pages/images and 50
 forms. Selecting an existing attachment copies it independently and preserves the
 original. Rosters, note text, current contact profiles and unrelated files are
 not sent to the provider.
+
+Preparation shows pages checked and forms ready, with separate waiting,
+processing and retry states. Until all pages have been checked, forms are counted
+as **found so far**. These are completed-work counts, not a countdown. You can
+start reviewing a form when both its fields and preview are ready while the
+remaining packet continues. Correct the student, date, incident type and text;
+crop, rotation, joining, rereading, selected classes and page accounting become
+available when preparation finishes. New forms do not replace your unsaved edits.
+
+**Save for later** saves the current form before returning to the paperwork
+library. If that save fails, stay on the page and retry; your edits remain on
+screen. Completed private review progress stays available until its displayed
+expiry. Leaving does not cancel processing and you do not need to upload again.
+Use **Open progress**, **Resume review**, or **View issue** on the saved packet.
+Retry is offered only when another attempt is available.
 
 Check boundaries, rotations, missed forms and continuations. Account for every
 page and review the form beside suggested fields. Resolve ambiguous students and
@@ -116,6 +139,10 @@ must not become subjects. Separate incidents remain separate.
 The destination stays clear: private notes remain author-only; Discipline logs
 creates shared incidents after its final confirmation. Review included entries
 and exclude the rest. Failed atomic saves preserve review and reuse retry IDs.
+The final Save remains unavailable until preparation is resolved, every page is
+accounted for and every included form is reviewed. Nothing is published by early
+review or Save for later. New possible duplicates can require another review of
+the affected forms; your corrected text is kept.
 
 ## Seating
 

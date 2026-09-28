@@ -81,6 +81,8 @@ test('Nested admin connector and staff operations protect drafts and veto naviga
     await email.fill('another@example.edu');await page.evaluate(() => window.leaveFixture());
     await page.getByRole('button', { name: 'Discard changes and leave', exact: true }).click();
     await page.waitForFunction(() => window.navigationResult === true);
+    // Acceptance precedes the router's asynchronous render of the destination.
+    await page.waitForFunction(() => document.querySelector('[aria-label="Current route"]')?.textContent === '/classpilot/admin?tab=audit');
     assert.equal(await email.inputValue(), '');
     assert.equal(await page.getByLabel('Current route').textContent(), '/classpilot/admin?tab=audit');
     await page.goto(`http://127.0.0.1:${vite.httpServer.address().port}/__nested-guards?outside=1`);

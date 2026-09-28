@@ -13,7 +13,7 @@ param(
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
 $script:RuntimeEnvironmentNames = @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE', 'STUDENT_INFORMATION_AI_IMPORT_MODE',
     'MYDESK_ATTACHMENTS_BUCKET', 'MYDESK_AI_IMPORT_MODEL', 'MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES',
-    'MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES')
+    'MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES', 'MYDESK_IMPORT_PIPELINE_VERSION', 'MYDESK_IMPORT_PIPELINE_WIDTH')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
 $script:AllowedSecretNames = @()
 $script:MyDeskLegacyNames = @('MYDESK_ENABLED_SCHOOL_IDS', 'MYDESK_SEATING_ENABLED_SCHOOL_IDS', 'MYDESK_AI_IMPORT_ENABLED_SCHOOL_IDS')
@@ -28,9 +28,14 @@ $script:EvidenceRootMarkerBytes = [Text.Encoding]::UTF8.GetBytes("schoolpilot-my
 function ConvertTo-MyDeskRuntime {
     param([Parameter(Mandatory)]$Config)
     $names = @('mode', 'seatingMode', 'aiImportMode', 'bucket', 'model', 'teacherDailyPages', 'schoolDailyPages')
-    Assert-ExactProperties -Value $Config -Allowed ($names + @('studentInformationAiImportMode')) -Trail 'My Desk configuration'
+    Assert-ExactProperties -Value $Config -Allowed ($names + @('studentInformationAiImportMode', 'pipelineVersion', 'pipelineWidth')) -Trail 'My Desk configuration'
     if (@($names | Where-Object { $null -eq $Config.PSObject.Properties[$_] }).Count) { throw 'My Desk configuration is incomplete.' }
     $contactMode = if ($null -ne $Config.PSObject.Properties['studentInformationAiImportMode']) { $Config.studentInformationAiImportMode } else { 'off' }
+    $pipelineVersion = if ($null -ne $Config.PSObject.Properties['pipelineVersion']) { $Config.pipelineVersion } else { 1 }
+    $pipelineWidth = if ($null -ne $Config.PSObject.Properties['pipelineWidth']) { $Config.pipelineWidth } else { 2 }
+    foreach ($value in @($pipelineVersion, $pipelineWidth)) {
+        if (-not (Test-IsJsonInteger $value) -or $value -notin @(1, 2)) { throw 'Paperwork pipeline version and width must be 1 or 2.' }
+    }
     if ($contactMode -isnot [string] -or $contactMode -cnotin @('off', 'on')) { throw 'Student information mode must be exactly off or on.' }
     foreach ($name in @('mode', 'seatingMode', 'aiImportMode')) {
         if ($Config.$name -isnot [string] -or $Config.$name -cnotin @('off', 'on')) { throw 'My Desk modes must be exactly off or on.' }
@@ -51,6 +56,8 @@ function ConvertTo-MyDeskRuntime {
         MYDESK_ATTACHMENTS_BUCKET = $Config.bucket; MYDESK_AI_IMPORT_MODEL = $Config.model
         MYDESK_AI_IMPORT_TEACHER_DAILY_PAGES = [string]$Config.teacherDailyPages
         MYDESK_AI_IMPORT_SCHOOL_DAILY_PAGES = [string]$Config.schoolDailyPages
+        MYDESK_IMPORT_PIPELINE_VERSION = [string]$pipelineVersion
+        MYDESK_IMPORT_PIPELINE_WIDTH = [string]$pipelineWidth
     } }
 }
 
@@ -72,6 +79,9 @@ function Get-MyDeskEnvironment {
     }
     foreach ($secret in @($containers[0].secrets)) {
         if ($secret.name -cin @($script:AllowedEnvironmentNames + $script:MyDeskLegacyNames)) { throw 'My Desk configuration uses an unexpected secret channel.' }
+    }
+    foreach ($key in @('MYDESK_IMPORT_PIPELINE_VERSION', 'MYDESK_IMPORT_PIPELINE_WIDTH')) {
+        if ($environment.ContainsKey($key) -and $environment[$key] -cnotin @('1', '2')) { throw 'Invalid source paperwork processing configuration.' }
     }
     $modes = @{}
     foreach ($key in @('MYDESK_MODE', 'MYDESK_SEATING_MODE', 'MYDESK_AI_IMPORT_MODE', 'STUDENT_INFORMATION_AI_IMPORT_MODE')) {
@@ -120,6 +130,17 @@ function Get-MyDeskSnapshot {
         '--image-ids', "imageTag=$($ReleaseSha.Substring(0,12))", '--region', $script:Region, '--output', 'json')
     if (@($ecr.imageDetails).Count -ne 1 -or $ecr.imageDetails[0].imageDigest -cne $Digest) { throw 'Release tag does not match the serving image.' }
     return [pscustomobject]@{ Services = $services; ApiTask = $api; WorkerTask = $worker; Environments = $environments }
+}
+
+function Assert-PaperworkPipelineAdmission {
+    param($Runtime, $Snapshot)
+    if ($Runtime.Environment.MYDESK_IMPORT_PIPELINE_VERSION -ceq '2') {
+        foreach ($environment in $Snapshot.Environments) {
+            if ('import_processing_stages' -cnotin $environment['RLS_ENABLED_TABLES'].Split(',')) {
+                throw 'Admit the paperwork processing-stage table before activating pipeline version 2.'
+            }
+        }
+    }
 }
 
 function Assert-MyDeskStorage {
@@ -197,6 +218,21 @@ function Assert-MyDeskStorageRoles {
     }
 }
 
+function Assert-ImportCapacityConfiguration {
+    param($Config, $Evidence)
+    $version = if ($null -ne $Config.PSObject.Properties['pipelineVersion']) { $Config.pipelineVersion } else { 1 }
+    $width = if ($null -ne $Config.PSObject.Properties['pipelineWidth']) { $Config.pipelineWidth } else { 2 }
+    $hasVersion = $null -ne $Evidence.PSObject.Properties['pipelineVersion']
+    $hasWidth = $null -ne $Evidence.PSObject.Properties['pipelineWidth']
+    if ($version -eq 2 -or $hasVersion -or $hasWidth) {
+        if (-not $hasVersion -or -not $hasWidth -or
+            -not (Test-IsJsonInteger $Evidence.pipelineVersion) -or -not (Test-IsJsonInteger $Evidence.pipelineWidth) -or
+            $Evidence.pipelineVersion -ne $version -or $Evidence.pipelineWidth -notin @(1,2) -or $Evidence.pipelineWidth -lt $width) {
+            throw 'Capacity evidence must bind the requested processing protocol and width.'
+        }
+    }
+}
+
 function Assert-MyDeskAiReadiness {
     param($Config, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot)
     if ($Config.aiImportMode -ceq 'off') { return $null }
@@ -208,8 +244,9 @@ function Assert-MyDeskAiReadiness {
         'qualityReportSha256', 'capacityReportSha256', 'typedPrecision', 'typedRecall', 'typedFieldAccuracy', 'criticalFailures',
         'pageCount', 'formCount', 'correctionTimingRecorded', 'workerCpu', 'workerMemory', 'peakMemoryFraction', 'apiP95Ratio',
         'noServiceDisruption', 'reviewAndRecoveryPassed')
-    Assert-ExactProperties -Value $e -Allowed $fields -Trail 'AI readiness'
-    if (@($e.PSObject.Properties.Name).Count -ne $fields.Count -or $e.schemaVersion -ne 1) { throw 'Incomplete AI readiness evidence.' }
+    Assert-ExactProperties -Value $e -Allowed ($fields + @('pipelineVersion','pipelineWidth')) -Trail 'AI readiness'
+    if (@($fields | Where-Object { $null -eq $e.PSObject.Properties[$_] }).Count -or $e.schemaVersion -ne 1) { throw 'Incomplete AI readiness evidence.' }
+    Assert-ImportCapacityConfiguration $Config $e
     [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'AI readiness' -Now ([DateTimeOffset]::UtcNow))
     $processing = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'src/services/mydeskImportProcessing.ts'))
     $prompt = [regex]::Match($processing, 'MYDESK_IMPORT_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
@@ -254,8 +291,9 @@ function Assert-StudentInformationAiReadiness {
         'providerContactReviewApproved', 'qualityReportSha256', 'capacityReportSha256', 'profileCount', 'sourceFormats',
         'typedPhoneEmailAccuracy', 'difficultCasesReported', 'criticalFailures', 'correctionTimingRecorded',
         'workerCpu', 'workerMemory', 'peakMemoryFraction', 'apiP95Ratio', 'noServiceDisruption', 'reviewAndRecoveryPassed')
-    Assert-ExactProperties -Value $e -Allowed $fields -Trail 'Contact AI readiness'
-    if (@($e.PSObject.Properties.Name).Count -ne $fields.Count -or $e.schemaVersion -ne 1) { throw 'Incomplete contact AI readiness evidence.' }
+    Assert-ExactProperties -Value $e -Allowed ($fields + @('pipelineVersion','pipelineWidth')) -Trail 'Contact AI readiness'
+    if (@($fields | Where-Object { $null -eq $e.PSObject.Properties[$_] }).Count -or $e.schemaVersion -ne 1) { throw 'Incomplete contact AI readiness evidence.' }
+    Assert-ImportCapacityConfiguration $Config $e
     [void](Get-FreshEvidenceTimestamp -Value $e.reviewedAt -Label 'Contact AI readiness' -Now ([DateTimeOffset]::UtcNow))
     $validation = [IO.File]::ReadAllText((Join-Path $RepositoryRoot 'src/services/studentInformationValidation.ts'))
     $prompt = [regex]::Match($validation, 'INFORMATION_PROMPT_VERSION\s*=\s*"([a-zA-Z0-9-]+)"').Groups[1].Value
@@ -291,6 +329,7 @@ function New-MyDeskPlan {
     $toolSha = Assert-RepositoryIdentity -RepositoryRoot $repo
     $runtime = ConvertTo-MyDeskRuntime $Config
     $snapshot = Get-MyDeskSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha
+    Assert-PaperworkPipelineAdmission $runtime $snapshot
     # Old configuration files remain usable only when they cannot silently turn
     # off a live contact release. Every new plan freezes the explicit fourth mode.
     $Config = $Config | ConvertTo-Json | ConvertFrom-Json
@@ -298,6 +337,14 @@ function New-MyDeskPlan {
         if ($snapshot.Environments[0].ContainsKey('STUDENT_INFORMATION_AI_IMPORT_MODE') -and
             $snapshot.Environments[0]['STUDENT_INFORMATION_AI_IMPORT_MODE'] -ceq 'on') { throw 'Specify studentInformationAiImportMode explicitly when contact imports are already enabled.' }
         $Config | Add-Member studentInformationAiImportMode 'off'
+    }
+    foreach ($entry in @(@('pipelineVersion', 'MYDESK_IMPORT_PIPELINE_VERSION', 1), @('pipelineWidth', 'MYDESK_IMPORT_PIPELINE_WIDTH', 2))) {
+        if ($null -eq $Config.PSObject.Properties[$entry[0]]) {
+            if ($snapshot.Environments[0].ContainsKey($entry[1]) -and $snapshot.Environments[0][$entry[1]] -cne [string]$entry[2]) {
+                throw 'Specify pipelineVersion and pipelineWidth explicitly when changing an existing pipeline configuration.'
+            }
+            $Config | Add-Member $entry[0] $entry[2]
+        }
     }
     Assert-MyDeskStorage $Config.bucket
     Assert-MyDeskStorageRoles $snapshot $Config.bucket
@@ -352,6 +399,7 @@ function Invoke-MyDeskApply {
     Assert-RuntimeConfigMutationWindow
     $runtime = ConvertTo-MyDeskRuntime $Plan.config
     $snapshot = Get-MyDeskSnapshot $Plan.apiArn $Plan.workerArn $Plan.imageDigest $Plan.appSha
+    Assert-PaperworkPipelineAdmission $runtime $snapshot
     Assert-MyDeskStorage $Plan.config.bucket
     Assert-MyDeskStorageRoles $snapshot $Plan.config.bucket
     $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -434,6 +482,7 @@ function Invoke-MyDeskApply {
                 [void](Assert-ScalingHoldExact)
                 $recoveryConfig = $Plan.config | ConvertTo-Json | ConvertFrom-Json
                 foreach ($name in $script:MyDeskModeNames) { $recoveryConfig.$name = $Plan.priorModes.$name }
+                if ($null -ne $recoveryConfig.PSObject.Properties['pipelineVersion'] -and $recoveryConfig.pipelineVersion -eq 2) { $recoveryConfig.pipelineWidth = 1 }
                 # An off-plan can change model/budgets without activation
                 # evidence. Never restore prior AI=on under those new values.
                 # Restore the frozen source configuration; only keep the newly
@@ -502,6 +551,11 @@ function Invoke-MyDeskMain {
         foreach ($name in $script:MyDeskModeNames) {
             if ($plan.priorModes.$name -ceq 'on' -and $rollbackConfig.$name -ceq 'off') { throw 'Rollback cannot activate a previously disabled feature; create a reviewed new plan.' }
             $rollbackConfig.$name = $plan.priorModes.$name
+        }
+        # Existing v2 packets require ledger-aware processing even during rollback.
+        # Serialize new and resumed v2 packets instead of selecting an older engine.
+        if ($null -ne $rollbackConfig.PSObject.Properties['pipelineVersion'] -and $rollbackConfig.pipelineVersion -eq 2) {
+            $rollbackConfig.pipelineWidth = 1
         }
         # Configuration-only rollback retains the current bucket/model/limits,
         # image, admission, IAM, and every unrelated field on the current pair.

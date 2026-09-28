@@ -59,6 +59,28 @@ variable "mydesk_ai_import_model" {
     error_message = "AI import model must be a nonempty bounded model identifier."
   }
 }
+variable "mydesk_import_pipeline_version" {
+  description = "Internal paperwork protocol for new processing; admit the stage ledger before enabling version 2"
+  type        = number
+  default     = 1
+  validation {
+    condition     = contains([1, 2], var.mydesk_import_pipeline_version)
+    error_message = "mydesk_import_pipeline_version must be exactly 1 or 2."
+  }
+  validation {
+    condition     = var.mydesk_import_pipeline_version != 2 || contains([for table in split(",", var.rls_enabled_tables) : trimspace(table)], "import_processing_stages")
+    error_message = "Pipeline version 2 requires the reviewed import_processing_stages RLS admission."
+  }
+}
+variable "mydesk_import_pipeline_width" {
+  description = "Per-packet processing width; use 1 for serial rollback while retaining the version-2 protocol"
+  type        = number
+  default     = 2
+  validation {
+    condition     = contains([1, 2], var.mydesk_import_pipeline_width)
+    error_message = "mydesk_import_pipeline_width must be exactly 1 or 2."
+  }
+}
 variable "student_information_ai_import_mode" {
   description = "Separate contact extraction release; requires base My Desk but not discipline AI"
   type        = string

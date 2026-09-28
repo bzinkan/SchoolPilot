@@ -7,7 +7,8 @@ import { ThemeToggle } from '../../../components/ThemeToggle';
 import { useMyDeskAccess, useMyDeskClasses } from '../hooks/useMyDesk';
 import { myDeskApi, attachmentDigest, invalidateMyDesk } from '../lib/myDesk';
 import { myDeskKeys, myDeskError } from '../lib/myDeskModel';
-import { validateImportFiles, importExpiry } from '../lib/importReviewModel';
+import { validateImportFiles, importExpiry, paperworkProgress, paperworkReturn } from '../lib/importReviewModel';
+import PaperworkProgress from '../components/PaperworkProgress';
 import { useAdminNavigation, useAdminNavigationBlocker, useAdminShell } from '../hooks/useAdminNavigation';
 import { guardPrivateWorkspaceHistory } from '../lib/privateWorkspaceNavigation';
 import { disciplineParent, withDisciplineEntry } from '../lib/disciplineNavigation';
@@ -18,9 +19,9 @@ import '../myDesk.css';
 import '../imports.css';
 
 export function ImportShell({ children, onNavigate }) {
-  const { navigate } = useAdminNavigation(); const shell = useAdminShell(); const [params] = useSearchParams(); const parent = disciplineParent(params);
+  const { navigate } = useAdminNavigation(); const shell = useAdminShell(); const [params] = useSearchParams(); const location = useLocation(); const parent = params.get('entry') === 'admin' ? disciplineParent(params) : paperworkReturn(location.state) || disciplineParent(params);
   if (shell) return <div className="import-page">{children}</div>;
-  return <div className="mydesk-page import-page min-h-screen"><header className="mydesk-header"><Button variant="ghost" onClick={() => (onNavigate || navigate)(parent.path)}><ArrowLeft className="size-4" />{parent.label}</Button><ThemeToggle /></header>{children}</div>;
+  return <div className="mydesk-page import-page min-h-screen"><header className="mydesk-header"><Button variant="ghost" onClick={() => (onNavigate || navigate)(parent.path, { state: parent.state })}><ArrowLeft className="size-4" />{parent.label}</Button><ThemeToggle /></header>{children}</div>;
 }
 
 export default function Imports() {
@@ -41,12 +42,15 @@ export function ImportLibrary({ access }) {
   const { navigate } = useAdminNavigation(); const location = useLocation(); const [params] = useSearchParams(); const destination = location.state?.destination || (params.get('destination') === 'discipline' ? 'discipline' : 'notes'); const [source, setSource] = useState(location.state?.source || null); const [creating, setCreating] = useState(Boolean(location.state?.source) || (destination === 'discipline' && params.get('view') !== 'library'));
   const leaveRef = useRef(null);
   const shell = useAdminShell(); const Heading = shell ? 'h2' : 'h1'; const Content = shell ? 'section' : 'main';
-  const query = useInfiniteQuery({ queryKey: myDeskKeys.imports(access.schoolId, access.viewerId), initialPageParam: '', queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).imports(pageParam), getNextPageParam: page => page.nextCursor || undefined, retry: false });
-  const rows = query.data?.pages.flatMap(page => page.imports) || [];
-  return <ImportShell onNavigate={path => leaveRef.current ? leaveRef.current(path) : navigate(path)}><Content className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><Heading>Paperwork</Heading></div><p>{destination === 'discipline' ? 'Prepare student disciplinary records for your review.' : 'Turn paper forms into notes you have checked.'}</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see unfinished drafts.</p></div><Button disabled={creating} onClick={() => { setSource(null); setCreating(true); }}><Plus className="size-4" />Add from paperwork</Button></div>
-    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} initialGradeLevel={location.state?.gradeLevel} destination={destination} source={source} onClose={() => { setCreating(false); setSource(null); }} onStarted={(batch, committedNavigate) => (committedNavigate || navigate)(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params))} /> : <>
-      <div className="import-explainer"><span>1. Upload your forms</span><span>2. Check pages and students</span><span>3. Save your notes together</span></div>
-      {query.isPending ? <p role="status">Loading saved progress…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <section className="mydesk-empty"><FileScan /><h2>A little less retyping.</h2><p>Import detention or referral forms, including several forms on one page. You decide what becomes a note.</p></section> : <div className="import-list">{rows.map(batch => <article key={batch.id}><div><h2>Paperwork import</h2><p>{batch.pageCount || 0} pages · {batch.status}</p><p className="import-muted">{batch.status === 'completed' ? batch.destination === 'discipline' ? 'Saved to the school discipline log' : 'Saved to your private notes' : `Review expires ${importExpiry(batch.expiresAt || batch.uploadExpiresAt)}`}</p></div><Button variant="outline" onClick={() => navigate(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params))}>{batch.status === 'completed' ? 'View saved entries' : 'Resume review'}</Button></article>)}</div>}
+  const query = useInfiniteQuery({ queryKey: myDeskKeys.imports(access.schoolId, access.viewerId, destination), initialPageParam: '', queryFn: ({ signal, pageParam }) => myDeskApi(access.schoolId, signal).imports(pageParam, destination), getNextPageParam: page => page.nextCursor || undefined, retry: false, staleTime: 0, gcTime: 0, refetchOnWindowFocus: 'always', refetchInterval: query => query.state.data?.pages.some(page => page.imports.some(batch => ['uploading', 'queued', 'processing'].includes(batch.status))) ? 15_000 : 60_000 });
+  const rows = query.data?.pages.flatMap(page => page.imports).filter(batch => (batch.destination || 'notes') === destination && !['cancelled', 'expired', 'completed'].includes(batch.status)) || [];
+  return <ImportShell onNavigate={(path, options) => leaveRef.current ? leaveRef.current(path) : navigate(path, options)}><Content className="mydesk-shell import-library"><div className="mydesk-intro"><div><div className="mydesk-title-line"><FileScan /><Heading>Paperwork</Heading></div><p>{destination === 'discipline' ? 'Prepare student disciplinary records for your review.' : 'Turn paper forms into notes you have checked.'}</p><p className="mydesk-privacy"><LockKeyhole className="size-3.5" />Only you can see unfinished drafts.</p></div><Button disabled={creating} onClick={() => { setSource(null); setCreating(true); }}><Plus className="size-4" />Add from paperwork</Button></div>
+    {creating ? <ImportUpload key="new" leaveRef={leaveRef} access={access} initialGroupId={location.state?.groupId} initialGradeLevel={location.state?.gradeLevel} destination={destination} source={source} onClose={() => { setCreating(false); setSource(null); }} onStarted={(batch, committedNavigate) => (committedNavigate || navigate)(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params), { state: location.state?.returnTo ? { returnTo: location.state.returnTo, returnState: location.state.returnState } : undefined })} /> : <>
+      <div className="import-explainer"><span>1. Upload your forms</span><span>2. Check pages and students</span><span>3. Save reviewed entries together</span></div>
+      {query.isPending ? <p role="status">Loading saved progress…</p> : query.isError ? <div role="alert"><p>{myDeskError(query.error)}</p><Button onClick={() => query.refetch()}>Try again</Button></div> : !rows.length ? <section className="mydesk-empty"><FileScan /><h2>No unfinished paperwork</h2><p>New packets and saved reviews will appear here. Start with Add from paperwork above.</p></section> : <div className="import-list">{rows.map(batch => <article key={batch.id}>
+        <div><h2>Paperwork packet</h2><p>{batch.pageCount || 0} pages · Uploaded {batch.createdAt ? importExpiry(batch.createdAt) : 'previously'}</p><PaperworkProgress batch={batch} compact /><p className="import-muted">Review expires {importExpiry(batch.expiresAt || batch.uploadExpiresAt)}</p></div>
+        <Button variant="outline" onClick={() => navigate(withDisciplineEntry(`/classpilot/my-desk/imports/${encodeURIComponent(batch.id)}`, params), { state: location.state?.returnTo ? { returnTo: location.state.returnTo, returnState: location.state.returnState } : undefined })}>{paperworkProgress(batch).action}</Button>
+      </article>)}</div>}
       {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>Load more imports</Button>}
     </>}
   </Content></ImportShell>;
@@ -75,7 +79,7 @@ export function ImportUpload({ access, initialGroupId, initialGradeLevel, destin
       const tx = transaction.current, api = myDeskApi(schoolId, controller.signal);
       // A lost create response still resolves through the same idempotent key.
       if (!tx.batch) tx.batch = (await (source ? api.importFromAttachment(tx.create) : api.createImport(tx.create))).import;
-      if (!tx.cancel) { const fresh = (await api.import(tx.batch.id)).import; tx.cancel = { requestId: crypto.randomUUID(), revision: fresh.revision }; }
+      if (!tx.cancel) { const fresh = (await api.import(tx.batch.id)).import; tx.cancel = { requestId: crypto.randomUUID(), revision: fresh.revision, protocolVersion: 2 }; }
       await api.cancelImport(tx.batch.id, tx.cancel); controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); onClose();
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }
@@ -98,7 +102,7 @@ export function ImportUpload({ access, initialGroupId, initialGradeLevel, destin
         if (!entry.asset) entry.asset = (await api.reserveImportAsset(tx.batch.id, { clientRequestId: entry.clientRequestId, filename: entry.file.name, contentType: entry.file.type, size: entry.file.size, sha256: entry.digest })).asset;
         await api.uploadImportAsset(tx.batch.id, entry.asset.id, entry.file); entry.uploaded = true;
       }
-      if (!tx.process) { const fresh = (await api.import(tx.batch.id)).import; tx.process = { requestId: crypto.randomUUID(), revision: fresh.revision }; }
+      if (!tx.process) { const fresh = (await api.import(tx.batch.id)).import; tx.process = { requestId: crypto.randomUUID(), revision: fresh.revision, protocolVersion: 2 }; }
       setProgress('Preparing your private drafts…'); const result = await api.processImport(tx.batch.id, tx.process); controller.signal.throwIfAborted(); await invalidateMyDesk(schoolId, viewerId); controller.signal.throwIfAborted(); await onStarted(result.import, committedNavigation.navigateAfterCommit);
     } catch (failure) { if (!controller.signal.aborted) setError(myDeskError(failure)); }
     finally { working.current = false; if (!controller.signal.aborted) setBusy(false); }

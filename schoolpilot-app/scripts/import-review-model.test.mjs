@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clipRegion, regionOnPage, regionFromPage, rotateRegion, importPages, importProgress, formDraft, formPatch, reviewProblem, validateImportFiles } from '../src/products/classpilot/lib/importReviewModel.js';
+import { clipRegion, regionOnPage, regionFromPage, rotateRegion, importPages, importProgress, formDraft, formPatch, reviewProblem, validateImportFiles, mergeImportProgress, paperworkProgress, paperworkSummaryLabels } from '../src/products/classpilot/lib/importReviewModel.js';
 import { myDeskKeys, clearMyDeskQueries } from '../src/products/classpilot/lib/myDeskModel.js';
 import { QueryClient } from '@tanstack/react-query';
 
@@ -40,4 +40,22 @@ test('source limits and private import caches match existing identity cleanup', 
   assert.match(validateImportFiles([{ type: 'application/pdf', size: 10485761 }]), /10 MiB/);
   assert.notDeepEqual(myDeskKeys.import('school', 'a', 'run'), myDeskKeys.import('school', 'b', 'run'));
   const client = new QueryClient(); client.setQueryData(myDeskKeys.importAsset('school', 'a', 'run', 'page'), new Blob(['private'])); clearMyDeskQueries(client); assert.equal(client.getQueryCache().getAll().length, 0);
+});
+
+test('processing snapshots keep dirty fields while exposing new ready forms and selected-form conflicts', () => {
+  const current = { progressRevision: 1, items: [{ id: 'a', revision: 1, body: 'Original' }] };
+  const incoming = { progressRevision: 2, items: [{ id: 'a', revision: 2, body: 'Server correction' }, { id: 'b', revision: 1 }] };
+  const result = mergeImportProgress(current, incoming, 'a');
+  assert.equal(result.batch.progressRevision, 2); assert.equal(result.batch.items.length, 2);
+  assert.equal(result.batch.items[0].body, 'Original'); assert.equal(result.conflict, true);
+  assert.equal(mergeImportProgress(current, incoming).batch.items[0].body, 'Server correction');
+  assert.equal(mergeImportProgress(current, { items: [] }, 'a').batch.items[0].id, 'a');
+});
+test('progress reports discovery as incomplete and summary cache keys isolate destination and identity', () => {
+  const progress = paperworkProgress({ status: 'processing', processingVersion: 2, pageCount: 15, progress: { pagesChecked: 12, formsFound: 8, formsReady: 6 } });
+  assert.equal(progress.description, '12 of 15 pages checked · 6 forms ready'); assert.equal(progress.detectionComplete, false);
+  assert.equal(progress.action, 'Resume review');
+  assert.deepEqual(paperworkSummaryLabels({ processing: 1, readyToReview: 2 }), ['1 processing', '2 ready to review']);
+  assert.notDeepEqual(myDeskKeys.imports('school', 'teacher', 'notes'), myDeskKeys.imports('school', 'teacher', 'discipline'));
+  assert.notDeepEqual(myDeskKeys.importSummary('school', 'teacher', 'notes'), myDeskKeys.importSummary('other-school', 'teacher', 'notes'));
 });

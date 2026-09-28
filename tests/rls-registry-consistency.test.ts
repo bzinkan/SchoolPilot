@@ -36,6 +36,7 @@ type Registry = {
     schoolDisciplinePostExpand: RegistryInventory;
     studentInformationPostExpand: RegistryInventory;
     classpilotTeacherPreferencesPostExpand: RegistryInventory;
+    importProcessingStagesPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -87,6 +88,15 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("adds only the durable import stage ledger without replacing the verified preference baseline", () => {
+    const previous = registry.inventories.classpilotTeacherPreferencesPostExpand;
+    const next = registry.inventories.importProcessingStagesPostExpand;
+    assert.deepEqual(registry.reviewedEnablementRequests.importProcessingStages, ["import_processing_stages"]);
+    assert.deepEqual(next.tables, [...previous.tables, "import_processing_stages"]);
+    assert.equal(next.count, previous.count + 1);
+    assert.equal(next.sha256, sha256(next.tables));
+    assert.equal(isReviewedRlsEnforcementRequest(["import_processing_stages"]), true);
+  });
   it("adds only the school-specific personal preference table to the preserved contact inventory", () => {
     const previous = registry.inventories.studentInformationPostExpand;
     const target = registry.inventories.classpilotTeacherPreferencesPostExpand;
@@ -179,7 +189,7 @@ describe("semantic RLS registry", () => {
     assert.deepEqual(new Set(production), new Set(expected));
     assert.equal(sha256(production), "09d3fd8a4aa6579dbb08f73f951d4bf1a2fe8b8a1cb93e2f4e607e6efb39c0c2",
       "Production CSV must retain the exact 2026-09-27 API153/worker168 settings observation order");
-    assert.deepEqual(ciAllowlist(), registry.inventories.classpilotTeacherPreferencesPostExpand.tables);
+    assert.deepEqual(ciAllowlist(), registry.inventories.importProcessingStagesPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

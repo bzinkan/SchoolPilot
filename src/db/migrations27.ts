@@ -3,6 +3,7 @@ import { schoolDisciplineRedesignMigration } from "./schoolDisciplineRedesignMig
 import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigration.js";
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
 import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
+import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -515,6 +516,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   mydeskImportDestinationMigration,
   studentInformationRedesignMigration,
   classpilotTeacherPreferencesMigration,
+  importProcessingStagesMigration,
   staffIdentityIntegrityMigration,
 ];
 

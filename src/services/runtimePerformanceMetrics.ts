@@ -6,6 +6,7 @@ const COUNTER_NAMES = [
   "tenantCheckouts", "poolAcquisitionSuccess", "poolAcquisitionFailure", "auditWriteFailure",
   "apiPoolReadinessStalled", "apiPoolReadinessRecovered", "apiPoolReadinessProbeDeferred",
   "aiProviderCalls", "aiProviderFailures", "aiProviderTimeouts", "aiProviderSaturated",
+  "importStageCompleted", "importStageRetry", "importStageFailed",
   "dailyRollupSchools", "studentWebSocketAuthAttempt", "studentWebSocketAuthSuccess",
   "studentWebSocketAuthDenied", "studentWebSocketAuthServiceFailure", "studentWebSocketAuthSocketClosed",
   "studentWebSocketRevalidationFailure",
@@ -26,6 +27,11 @@ export type RuntimePerformanceCounter = typeof COUNTER_NAMES[number];
 export type RuntimePerformanceTiming =
   | "poolAcquisitionMs"
   | "aiProviderMs"
+  | "importStageAdmissionMs"
+  | "importRenderMs"
+  | "importDetectionMs"
+  | "importExtractionMs"
+  | "importEvidenceMs"
   | "dailyRollupMs"
   | "studentWebSocketAuthMs";
 

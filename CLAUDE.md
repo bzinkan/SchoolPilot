@@ -133,6 +133,14 @@ administrators and teachers; it does not broaden official class permissions.
 
 ### My Desk private notebook
 
+Paperwork progress/protocol-2 release and rollback are documented in
+`docs/PAPERWORK_PROGRESS_RELEASE.md`. `MYDESK_IMPORT_PIPELINE_VERSION=1|2` defaults
+to 1 for compatible rollout; `MYDESK_IMPORT_PIPELINE_WIDTH=1|2` defaults to 2 and
+provides a serial fallback without downgrading the stored protocol. Admit the
+`import_processing_stages` tenant table before v2 activation. Provider capacity is
+two requests across the deployment; native work retains one permit per process.
+Never let progress polling or background extraction overwrite an author's draft.
+
 My Desk is included with ClassPilot for all active qualifying teacher/admin
 memberships, including schools added after activation. Notes, attachments, charts
 and imports remain author-only; administrators have their own notebooks and
