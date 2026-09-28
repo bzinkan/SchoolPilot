@@ -121,7 +121,7 @@ The current version is published at https://school-pilot.net/security/hecvat-lit
 | # | Question | Response | Notes |
 |---|----------|----------|-------|
 | 7.1 | Secure development lifecycle (SDLC) documented? | **Yes** | WISP Section 5.5: PR review, CI security audit, no prod data in dev |
-| 7.2 | Code review on all changes? | **Yes** | PR-based review required before merge to main |
+| 7.2 | Code review on all changes? | **Partial** | Changes are normally merged through pull requests that must pass automated checks (build, tests, CodeQL, secret scanning), and production deploys require a green CI run on the exact commit; independent human review is not technically enforced |
 | 7.3 | Dependency vulnerability scanning? | **Yes** | Every CI build blocks high/critical production-dependency findings unless a narrowly scoped, time-bound, evidence-backed disposition passes validation; the complete production and development dependency tree is scanned, with normalized findings and dependency counts retained and reviewed |
 | 7.4 | Static application security testing (SAST)? | **Yes** | GitHub CodeQL runs on every push and pull request to main and weekly, and fails on any error- or warning-severity finding; Gitleaks secret scanning runs on every push and pull request |
 | 7.5 | Dynamic application security testing (DAST)? | **No** | Planned with third-party pentest |
