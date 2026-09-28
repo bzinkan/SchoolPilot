@@ -42,11 +42,32 @@ by this release. The shared stage budget also applies when contacts are enabled 
 
 ## Deployment and rollback
 
+The compatible backend release `cbb0166790ace8846a187121fb620330ea0ff08c`, image
+`sha256:78f5bdab6be709be40f54c67535098c3d8515eb7b0131e953d440e46af761e48`,
+was verified on API emergency 157 and worker 172 at
+`2026-09-28T18:27:19.9525541Z`. Both services have the same exact 121-table runtime
+CSV, SHA-256 `0e24d7a703856e5038fc13d43c1b8eccaf0632d293aa314635ac4a5164490946`.
+Private `runtime-postflight.json` and
+`552b4731ea284147b95812df779536f4-production-preflight.json` receipts confirm strict
+service stability, three healthy API targets, all 121 enabled/forced canonical
+tenant policies, a non-bypass application role, and completed migration
+`20260928_import_processing_stages` with checksum
+`16a1499823c645fa5ab175f56adae9da066ecfebd85e6f24230252f1524d4d8b`.
+No queued/processing imports or held stage permits were present at verification.
+
+This separate Terraform baseline adoption preserves the observed CSV order and
+performs no Terraform apply. Historical inventories, migration checksums, and the
+generic 75-table default remain unchanged. Paperwork AI remains on, Student
+information AI remains off, and the absent pipeline-version override continues
+to use compatible serial protocol 1. These receipts do not establish protocol 2
+activation, performance/capacity acceptance, or authenticated teacher acceptance.
+
 1. Verify the serving image, API/worker resources, RLS allowlists, migration ledger,
    and active legacy-claim count using identifiers/counts only. Preserve the observed
    configuration and store the release evidence outside the checkout.
-2. Run CI against the final commit. Deploy the compatible backend with the reviewed
-   singleton admission `--enable-rls-table import_processing_stages`. The additive
+2. Run CI against the final commit. The initial compatible backend deployment used
+   the reviewed singleton admission `--enable-rls-table import_processing_stages`;
+   omit this already-admitted flag on subsequent deployments. The additive
    migration installs and verifies forced tenant RLS; existing checksums and historical
    inventories remain untouched. The former verified 120-table baseline plus this
    table is represented by the new forward registry inventory, not by changing history.

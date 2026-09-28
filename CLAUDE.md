@@ -123,10 +123,15 @@ fields. Never repost school settings snapshots from roster grade editors.
 
 See `docs/CLASSPILOT_SETTINGS_ORGANIZATION.md` for explicit save boundaries,
 one-time eligible-membership preference migration, the reviewed one-table RLS
-admission, backend-first deployment and rollback. The 120-table production
+admission, backend-first deployment and rollback. The historical 120-table settings
 baseline was verified at `2026-09-27T19:31:04.9769077Z` on API153/worker168 and
 adopted separately into Terraform configuration without an apply. Omit the
-already-admitted preference table's one-shot deployment flag. Preserve historical
+already-admitted preference table's one-shot deployment flag. The current 121-table
+baseline was verified at `2026-09-28T18:27:19.9525541Z` on API157/worker172 after
+the paperwork stage-ledger admission; see `docs/PAPERWORK_PROGRESS_RELEASE.md`.
+Omit the already-admitted `import_processing_stages` flag on later deploys.
+This separate adoption does not apply Terraform or activate processing protocol 2.
+Preserve historical
 inventories, migration checksums and the generic 75-table default.
 Teaching tools is personal for both teaching
 administrators and teachers; it does not broaden official class permissions.
@@ -197,9 +202,10 @@ observed adoption. Preserve bucket/IAM, cleanup and RLS on rollback.
 The historical workspace expansion has a five-table admission and 114-table target.
 The redesign adds five contact/profile/import tables through `studentInformation`
 admission, reaching 119 tables, verified on API151/worker166 on September 26,
-2026. The later settings release adds the teacher-preference table; the current
-120-table Terraform baseline is documented above. Preserve the historical
-109/114/119-table inventories and original migration checksums.
+2026. The later settings release adds the teacher-preference table, followed by
+the paperwork stage ledger; the current 121-table Terraform baseline is documented
+above. Preserve the historical 109/114/119/120-table inventories and original
+migration checksums.
 Deploy from the actual verified serving admission, never rerun
 an already admitted bundle. Implementation does not authorize AI enablement.
 
@@ -247,7 +253,7 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
 - **Deploy-time allowlist additions**: ordinary backend deploys preserve the live task definition's RLS master switch and per-table allowlist exactly. A reviewed release may use the one-shot `--enable-rls-table <reviewed-table-or-exact-bundle>` flag. That path requires matching live API/worker allowlists with `RLS_GUC_ENABLED=true`, adds only the reviewed table set to the rendered API/emergency/worker definitions, verifies the registered definitions, and makes the migration task fail unless PostgreSQL reports enabled + forced RLS and the `tenant_isolation` policy for every requested table. Omit the flag on later deploys; a deliberate per-table kill-switch removal then remains removed. This path does not require a Terraform apply.
 - **ClassPilot command/FAB state is tenant state**: keep `classpilot_commands`, `classpilot_command_targets`, `classpilot_classroom_states`, `classpilot_student_control_states`, `classpilot_active_hands`, `classpilot_chat_deliveries`, `polls`, `poll_responses`, and `session_settings` school-scoped in production and tests. Startup migrations fail closed on invalid parent bindings and install/verify same-school parent triggers for FAB/chat/poll rows. All five FAB/chat/poll tables are in the adopted production baseline; the reviewed re-admission bundle remains exactly `classpilot_chat_deliveries,poll_responses,polls,session_settings` if a deliberate kill-switch removal must later be reversed.
-- **Semantic RLS registry**: `src/config/rlsRegistry.json` is the machine-readable inventory and rollout-request authority. It preserves the exact observed 72-table production snapshot from August 19, 2026 and separately defines the 75-table SchoolPilot 2.7.0 post-expand target. Production's current 120-table inventory was verified on September 27, 2026 on API153/worker168 after the teacher-preference admission; `infra/production.tfvars` adopts its exact observed CSV order while the generic default remains at the separately staged 75-table target. Compare production and `classpilotTeacherPreferencesPostExpand` semantically; never rewrite historical inventory order or hashes to match a later observation. The earlier 90-table observation and 109/114/119-table inventories remain historical evidence. `classpilot_active_hands` remains part of the full inventory but is deliberately excluded from the four-table FAB re-admission bundle.
+- **Semantic RLS registry**: `src/config/rlsRegistry.json` is the machine-readable inventory and rollout-request authority. It preserves the exact observed 72-table production snapshot from August 19, 2026 and separately defines the 75-table SchoolPilot 2.7.0 post-expand target. Production's current 121-table inventory was verified on September 28, 2026 on API157/worker172 after the paperwork stage-ledger admission; `infra/production.tfvars` adopts its exact observed CSV order while the generic default remains at the separately staged 75-table target. Compare production and `importProcessingStagesPostExpand` semantically; never rewrite historical inventory order or hashes to match a later observation. The earlier 90-table observation and 109/114/119/120-table inventories remain historical evidence. `classpilot_active_hands` remains part of the full inventory but is deliberately excluded from the four-table FAB re-admission bundle.
 
 **THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
 
@@ -1068,8 +1074,8 @@ That activation was verified on August 19, 2026. The semantic RLS registry
 retains its exact observed 72-table live allowlist as an immutable audit
 snapshot. The separate 75-table 2.7.0 post-expand target remains unchanged in
 the registry. The 90-table roadmap allowlist verified on September 6, 2026 is
-also historical; the current production baseline is the 120-table settings
-inventory verified on September 27, 2026. Its recorded runtime order remains
+also historical; the current production baseline is the 121-table paperwork
+inventory verified on September 28, 2026. Its recorded runtime order remains
 distinct from historical target order. Future additions still require
 the reviewed migration/catalog gate before baseline adoption.
 Ordinary later deploys omit the flag. Do not use the Terraform baseline to bypass
@@ -1117,7 +1123,7 @@ For this ClassPilot release family, deploy in compatibility-safe stages:
    Chrome Web Store and Google Admin.
 4. Omit the one-shot RLS flag on later deploys. The 75-table target above is
    retained as versioned history; the current production baseline is the
-   separately verified 120-table settings inventory. Verify the current live
+   separately verified 121-table paperwork inventory. Verify the current live
    catalog before any later Terraform apply. The historical 72-table observation
    and 75-table target remain unchanged in the registry. A
    SchoolPilot backend/frontend deploy never publishes the extension, and

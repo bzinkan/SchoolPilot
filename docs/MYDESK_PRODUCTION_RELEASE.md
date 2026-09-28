@@ -13,7 +13,7 @@ Operational evidence, not this document, establishes actual production status.
 
 ## Workspace redesign release
 
-The Terraform production baseline adopts the exact 119-table runtime CSV verified
+The workspace redesign's historical Terraform baseline adopted the exact 119-table runtime CSV verified
 at `2026-09-26T18:46:05.78359-04:00` on API151/worker166, release
 `9b3cabdf4ca7b40280b9598cc41ab51c3581a178`. The private
 `redesign-live-verification.json` receipt confirms all 119 canonical forced tenant
@@ -23,6 +23,9 @@ This separate baseline adoption does not apply Terraform or establish frontend
 release or AI activation. Keep the prior 109-table observation, historical 114-table
 workspace target and all original migrations immutable. Inspect actual serving
 admission before each release; a registry target is not proof of deployment.
+The later verified 121-table production baseline is documented in
+[PAPERWORK_PROGRESS_RELEASE.md](PAPERWORK_PROGRESS_RELEASE.md#deployment-and-rollback).
+The observation above remains the original workspace redesign receipt.
 
 Additive migrations are `mydesk-grade-filing-20260927`,
 `school-discipline-redesign-20260928`, `mydesk-import-destination-20260928`, and
@@ -46,7 +49,7 @@ student_contact_profiles,student_contact_profile_versions,student_information_im
 If earlier workspace admission is still pending, apply that registered bundle
 first. Never rerun an admitted bundle or concatenate unreviewed bundles. Verify
 all five new forced tenant policies and existing protections before frontend.
-Repair ledger/catalog mismatch additively. The separately reviewed baseline adopts
+Repair ledger/catalog mismatch additively. The original separate baseline adopted
 the verified 119-table allowlist above; never replace serving tasks with bootstrap
 templates or rerun this already admitted bundle.
 

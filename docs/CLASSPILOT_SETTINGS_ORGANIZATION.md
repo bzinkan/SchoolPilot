@@ -70,6 +70,9 @@ SHA-256 `09d3fd8a4aa6579dbb08f73f951d4bf1a2fe8b8a1cb93e2f4e607e6efb39c0c2`.
 This adoption performs no Terraform apply and does not establish frontend or AI
 activation. Historical 119-table inventories and migration checksums remain
 unchanged, as does the generic 75-table default.
+This remains the historical settings release receipt. The later verified 121-table
+production baseline is recorded in
+[PAPERWORK_PROGRESS_RELEASE.md](PAPERWORK_PROGRESS_RELEASE.md#deployment-and-rollback).
 
 1. Verify final PR and main-branch CI, including backend, frontend, database,
    tenant isolation, router/dashboard and governance checks.
