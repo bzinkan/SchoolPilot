@@ -1203,20 +1203,21 @@ function Get-WorkerExecutionPosture {
 
 function Assert-RollbackCompatibility {
     param($Config)
+    # Reviewed production sizes: API 1 vCPU / 2 GiB, worker 0.5 vCPU / 1 GiB.
     $contracts = @(
         [pscustomobject]@{
             Active = $Config.ApiTaskDefinitionArn
             Rollback = $Config.RollbackApiTaskDefinitionArn
             Container = "api"
-            Cpu = "512"
+            Cpu = "1024"
             Memory = "2048"
         },
         [pscustomobject]@{
             Active = $Config.WorkerTaskDefinitionArn
             Rollback = $Config.RollbackWorkerTaskDefinitionArn
             Container = "scheduler-worker"
-            Cpu = "256"
-            Memory = "512"
+            Cpu = "512"
+            Memory = "1024"
         }
     )
     foreach ($contract in $contracts) {
@@ -1385,8 +1386,8 @@ function Get-ProductionPosture {
         throw "AWS CLI is not authenticated to the reviewed production account."
     }
     $services = Get-ServicePosture $Config
-    $apiTask = Get-TaskDefinitionPosture $Config $Config.ApiTaskDefinitionArn "api" "512" "2048"
-    $workerTask = Get-TaskDefinitionPosture $Config $Config.WorkerTaskDefinitionArn "scheduler-worker" "256" "512"
+    $apiTask = Get-TaskDefinitionPosture $Config $Config.ApiTaskDefinitionArn "api" "1024" "2048"
+    $workerTask = Get-TaskDefinitionPosture $Config $Config.WorkerTaskDefinitionArn "scheduler-worker" "512" "1024"
     $workerExecution = Get-WorkerExecutionPosture $Config $workerTask
     $targets = Get-TargetHealthSnapshot $Config
     if ([int]$targets.total -ne [int]$services.api.desired -or

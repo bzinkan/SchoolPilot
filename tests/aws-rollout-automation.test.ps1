@@ -1703,9 +1703,9 @@ exit 42
             privateSubnetIds=@("private-a","private-b");ecsSecurityGroupIds=@("sg-1");privateRouteTableIds=@("rtb-a","rtb-b");
             vpcId="vpc";expectedNatGatewayCount=2;redisReplicationGroupId="redis";
             emergencyTaskDefinitionEvidence=@{
-              currentTaskDefinition=@{executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('a'*64)"})};
+              currentTaskDefinition=@{cpu="1024";memory="2048";executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('a'*64)"})};
               emergencyTaskDefinition=@{status="ACTIVE";family="test-emergency";taskDefinitionArn="arn:aws:ecs:us-east-1:000000000000:task-definition/test-emergency:1";
-                cpu="512";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
+                cpu="1024";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
                 containerDefinitions=@(@{name="api";image="repo@sha256:$('a'*64)";memory=2048})}
             }
         }
@@ -2021,9 +2021,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         emergencyApiTaskDefinitionFamily="test-emergency";emergencyApiContainerName="api";targetGroupArn="target";wafName="acl";wafId="id";wafScope="CLOUDFRONT";
         wafDeviceMetricName="device";wafApiMetricName="api";wafDeviceLimit=100000;wafApiLimit=50000;
         rollbackHeartbeatIntervalSeconds=1;emergencyTaskDefinitionEvidence=@{
-          currentTaskDefinition=@{executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('b'*64)"})};
+          currentTaskDefinition=@{cpu="1024";memory="2048";executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('b'*64)"})};
           emergencyTaskDefinition=@{status="ACTIVE";family="test-emergency";taskDefinitionArn="arn:aws:ecs:us-east-1:000000000000:task-definition/test-emergency:1";
-            cpu="512";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
+            cpu="1024";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
             containerDefinitions=@(@{name="api";image="repo@sha256:$('b'*64)";memory=2048})}
         }
     }
@@ -4243,9 +4243,9 @@ exit 0
         redisReplicationGroupId = "redis"
         rollbackHeartbeatIntervalSeconds = 1
         emergencyTaskDefinitionEvidence = @{
-            currentTaskDefinition = @{executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('c'*64)"})}
+            currentTaskDefinition = @{cpu="1024";memory="2048";executionRoleArn="exec";taskRoleArn="task";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");containerDefinitions=@(@{name="api";image="repo@sha256:$('c'*64)"})}
             emergencyTaskDefinition = @{status="ACTIVE";family="test-emergency";taskDefinitionArn="arn:aws:ecs:us-east-1:000000000000:task-definition/test-emergency:1";
-                cpu="512";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
+                cpu="1024";memory="2048";networkMode="awsvpc";requiresCompatibilities=@("FARGATE");executionRoleArn="exec";taskRoleArn="task";
                 containerDefinitions=@(@{name="api";image="repo@sha256:$('c'*64)";memory=2048})}
         }
     }
@@ -5582,6 +5582,21 @@ exit 0
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Validate | Out-Null }
     catch { $smallHardCapRejected = $_.Exception.Message -match "memory contract" }
     Assert-Condition $smallHardCapRejected "OOM preflight must reject a defined 1024 MiB hard container cap on the 2048 MiB emergency task."
+
+    foreach ($sizeCase in @(
+            @{ runId = "bad-emergency-old-size"; target = "emergencyTaskDefinition"; cpu = "512"; memory = "2048" },
+            @{ runId = "bad-emergency-shrinks-serving-api"; target = "currentTaskDefinition"; cpu = "2048"; memory = "4096" }
+        )) {
+        $sizeConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $sizeConfig.runId = $sizeCase.runId
+        $sizeConfig.emergencyTaskDefinitionEvidence.($sizeCase.target).cpu = $sizeCase.cpu
+        $sizeConfig.emergencyTaskDefinitionEvidence.($sizeCase.target).memory = $sizeCase.memory
+        [IO.File]::WriteAllText($rollbackConfigPath, ($sizeConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $sizeRejected = $false
+        try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Validate | Out-Null }
+        catch { $sizeRejected = $_.Exception.Message -match "identity, size, roles" }
+        Assert-Condition $sizeRejected "OOM preflight must reject $($sizeCase.runId): the emergency target is the reviewed 1024 CPU / 2048 MiB and never smaller than the serving API."
+    }
 
     $misconfiguredCloneConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $misconfiguredCloneConfig.runId = "bad-emergency-clone"

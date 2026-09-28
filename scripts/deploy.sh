@@ -8,7 +8,7 @@
 #   ./scripts/deploy.sh --backend        # Backend only (Docker → ECR → ECS)
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
 #   ./scripts/deploy.sh production --backend --activate-emergency
-#                                       # Backend only; activate the newly registered 512/2048 API revision
+#                                       # Backend only; activate the newly registered reviewed-size (1024/2048) API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --tag <full-40-character-main-sha> \
 #     --confirm-protected-window-production-mutation
@@ -209,6 +209,17 @@ WORKER_SERVICE="${NAME}-scheduler-worker"
 BUCKET="${NAME}-frontend"
 AUTOSCALING_RESOURCE_ID="service/${CLUSTER}/${SERVICE}"
 AUTOSCALING_DIMENSION="ecs:service:DesiredCount"
+
+# Reviewed production Fargate task sizes. The My Desk paperwork capacity tests
+# passed at API 1 vCPU / 2 GiB and scheduler worker 0.5 vCPU / 1 GiB. Every
+# revision this script registers keeps the size of the revision it replaces,
+# and production never goes below these values. tests/deploy-production-task-sizing.test.ts
+# keeps this copy, the runtime-config and load tools, and infra/production.tfvars
+# identical, so a resize changes all of them in one reviewed PR.
+REVIEWED_API_TASK_CPU="1024"
+REVIEWED_API_TASK_MEMORY="2048"
+REVIEWED_WORKER_TASK_CPU="512"
+REVIEWED_WORKER_TASK_MEMORY="1024"
 
 # These values are populated only while a production backend deploy owns the
 # temporary Application Auto Scaling hold. Keeping the prior booleans separate
@@ -1734,7 +1745,7 @@ validate_emergency_activation_mode() {
   fi
 
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ]]; then
-    error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the 2048 MiB cutover."
+    error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the reviewed-size API cutover."
     return 1
   fi
 }
@@ -3744,6 +3755,59 @@ describe_exact_classpilot_candidate_task_definition() {
     --no-cli-pager > "$output_path"
 }
 
+# Refuses to register a rendered revision that is smaller than the serving
+# revision it was cloned from, whose container hard-memory cap sits below its
+# task memory, or that is below the reviewed production size. Deploys may keep
+# or raise a task's size here, never lower it.
+assert_rendered_task_size_not_reduced() {
+  local rendered_path="$1"
+  local source_path="$2"
+  local container_name="$3"
+  local label="$4"
+  local floor_cpu=0
+  local floor_memory=0
+  local diagnosis
+  if [[ "$ENV" == "production" && "$container_name" == "api" ]]; then
+    floor_cpu="$REVIEWED_API_TASK_CPU"
+    floor_memory="$REVIEWED_API_TASK_MEMORY"
+  elif [[ "$ENV" == "production" ]]; then
+    floor_cpu="$REVIEWED_WORKER_TASK_CPU"
+    floor_memory="$REVIEWED_WORKER_TASK_MEMORY"
+  fi
+  if ! diagnosis=$(RENDERED_PATH="$rendered_path" SOURCE_PATH="$source_path" \
+    CONTAINER_NAME="$container_name" FLOOR_CPU="$floor_cpu" FLOOR_MEMORY="$floor_memory" node -e '
+    const fs = require("fs");
+    const rendered = JSON.parse(fs.readFileSync(process.env.RENDERED_PATH, "utf8"));
+    const source = JSON.parse(fs.readFileSync(process.env.SOURCE_PATH, "utf8"));
+    const size = value => /^[1-9][0-9]*$/.test(String(value)) ? Number(value) : NaN;
+    const cpu = size(rendered.cpu);
+    const memory = size(rendered.memory);
+    const sourceCpu = size(source.cpu);
+    const sourceMemory = size(source.memory);
+    const floorCpu = Number(process.env.FLOOR_CPU);
+    const floorMemory = Number(process.env.FLOOR_MEMORY);
+    const containers = (rendered.containerDefinitions || []).filter(
+      c => c.name === process.env.CONTAINER_NAME
+    );
+    const hardMemory = containers[0]?.memory;
+    const hardMemoryTooLow = hardMemory !== undefined && hardMemory !== null &&
+      !(Number(hardMemory) >= memory);
+    const description = `rendered ${rendered.cpu} CPU / ${rendered.memory} MiB` +
+      (hardMemory !== undefined && hardMemory !== null ? ` (container cap ${hardMemory} MiB)` : "") +
+      `, serving ${source.cpu} CPU / ${source.memory} MiB` +
+      (floorCpu > 0 ? `, reviewed ${floorCpu} CPU / ${floorMemory} MiB` : "");
+    if (![cpu, memory, sourceCpu, sourceMemory].every(Number.isFinite) || containers.length !== 1 ||
+        cpu < sourceCpu || memory < sourceMemory || cpu < floorCpu || memory < floorMemory ||
+        hardMemoryTooLow) {
+      process.stdout.write(description);
+      process.exit(1);
+    }
+  '); then
+    error "Refusing to register the ${label}: it must not be smaller than the serving revision or the reviewed production size (${diagnosis:-size unreadable}). Lowering a task size needs a reviewed sizing change first."
+    return 1
+  fi
+}
+
 preflight_rls_table_enablement_sources() {
   if [[ -z "$ENABLE_RLS_TABLE" ]]; then
     return 0
@@ -3847,6 +3911,10 @@ register_classpilot_candidate_worker_task_definition() {
       return 1
     fi
   fi
+  if ! assert_rendered_task_size_not_reduced .worker-taskdef-new.json \
+      .worker-taskdef-current.json scheduler-worker "scheduler-worker candidate"; then
+    return 1
+  fi
 
   local worker_arn
   if ! worker_arn=$(aws ecs register-task-definition \
@@ -3927,6 +3995,10 @@ verify_classpilot_rehearsed_candidates() {
   fi
   if ! EXPECTED_API_ARN="$API_ROLLOUT_TASK_DEF" \
     EXPECTED_WORKER_ARN="$WORKER_CANDIDATE_TASK_DEF" \
+    EXPECTED_API_CPU="$REVIEWED_API_TASK_CPU" \
+    EXPECTED_API_MEMORY="$REVIEWED_API_TASK_MEMORY" \
+    EXPECTED_WORKER_CPU="$REVIEWED_WORKER_TASK_CPU" \
+    EXPECTED_WORKER_MEMORY="$REVIEWED_WORKER_TASK_MEMORY" \
     EXPECTED_IMAGE="${ECR_REPO}@${DIGEST}" node -e '
     const fs = require("fs");
     const api = JSON.parse(fs.readFileSync(".tile-auth-plan-rehearsed-api.json", "utf8"));
@@ -3938,14 +4010,20 @@ verify_classpilot_rehearsed_candidates() {
     const apiContainer = apiContainers[0];
     const workerContainer = workerContainers[0];
     const apiHardMemory = apiContainer?.memory;
+    const workerHardMemory = workerContainer?.memory;
     if (api.taskDefinitionArn !== process.env.EXPECTED_API_ARN ||
         worker.taskDefinitionArn !== process.env.EXPECTED_WORKER_ARN ||
         api.status !== "ACTIVE" || worker.status !== "ACTIVE" ||
         api.family !== "schoolpilot-production-api-emergency" ||
         worker.family !== "schoolpilot-production-scheduler-worker" ||
-        String(api.cpu) !== "512" || String(api.memory) !== "2048" ||
+        String(api.cpu) !== process.env.EXPECTED_API_CPU ||
+        String(api.memory) !== process.env.EXPECTED_API_MEMORY ||
         (apiHardMemory !== undefined && apiHardMemory !== null &&
-          Number(apiHardMemory) < 2048) ||
+          Number(apiHardMemory) < Number(process.env.EXPECTED_API_MEMORY)) ||
+        String(worker.cpu) !== process.env.EXPECTED_WORKER_CPU ||
+        String(worker.memory) !== process.env.EXPECTED_WORKER_MEMORY ||
+        (workerHardMemory !== undefined && workerHardMemory !== null &&
+          Number(workerHardMemory) < Number(process.env.EXPECTED_WORKER_MEMORY)) ||
         apiContainers.length !== 1 || workerContainers.length !== 1 ||
         apiContainer?.image !== process.env.EXPECTED_IMAGE ||
         workerContainer?.image !== process.env.EXPECTED_IMAGE) {
@@ -4636,45 +4714,76 @@ write_classpilot_tile_auth_plan_observation_packet_v1_disabled() {
   return 1
 }
 
+# Prints a serving task's Fargate size for operator messages. Succeeds only
+# when the size is exactly the reviewed one and no container hard-memory cap
+# sits below it. The input is a describe-task-definition query result shaped
+# {cpu, memory, containers: [{name, memory}]} for the service's one container.
+serving_task_size_matches_reviewed() {
+  TASK_POSTURE_JSON="$1" EXPECTED_CPU="$2" EXPECTED_MEMORY="$3" node -e '
+    const task = JSON.parse(process.env.TASK_POSTURE_JSON || "null");
+    const containers = Array.isArray(task?.containers) ? task.containers : [];
+    const hardMemory = containers[0]?.memory;
+    const hasHardMemory = hardMemory !== undefined && hardMemory !== null;
+    const cpu = String(task?.cpu ?? "unknown");
+    const memory = String(task?.memory ?? "unknown");
+    const expectedCpu = process.env.EXPECTED_CPU;
+    const expectedMemory = process.env.EXPECTED_MEMORY;
+    const exact = cpu === expectedCpu && memory === expectedMemory && containers.length === 1 &&
+      (!hasHardMemory || Number(hardMemory) >= Number(expectedMemory));
+    let description = `${cpu} CPU / ${memory} MiB`;
+    if (hasHardMemory) description += ` with a ${hardMemory} MiB container hard-memory ceiling`;
+    if (containers.length !== 1) description += ` and ${containers.length} matching containers`;
+    if (!exact && (Number(cpu) > Number(expectedCpu) || Number(memory) > Number(expectedMemory))) {
+      description += "; that is larger than the reviewed size, so this rollout would shrink it. Record the new size in the reviewed deployment tooling first";
+    }
+    process.stdout.write(description);
+    process.exit(exact ? 0 : 1);
+  '
+}
+
 launch_safe_active_api_preflight() {
   if [[ "$ACTIVATE_EMERGENCY" != true ]]; then
     return 0
   fi
 
-  if [[ -z "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" ]]; then
-    error "The launch-safe API preflight has no bound active task-definition reference."
+  if [[ -z "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" ||
+        -z "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" ]]; then
+    error "The launch-safe preflight has no bound active API and worker task-definition references."
     return 1
   fi
 
-  local active_task_posture_json
+  local active_task_posture_json api_size worker_size
   if ! active_task_posture_json=$(aws ecs describe-task-definition \
     --task-definition "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" \
     --query 'taskDefinition.{cpu:cpu,memory:memory,containers:containerDefinitions[?name==`api`].{name:name,memory:memory}}' \
     --output json \
     --region "$REGION" \
     --no-cli-pager); then
-    error "Could not read the active API task definition for the launch-safe 2048 MiB preflight."
+    error "Could not read the active API task definition for the launch-safe size preflight."
+    return 1
+  fi
+  if ! api_size=$(serving_task_size_matches_reviewed "$active_task_posture_json" \
+      "$REVIEWED_API_TASK_CPU" "$REVIEWED_API_TASK_MEMORY"); then
+    error "--activate-emergency requires the currently serving API to be exactly ${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB with no lower container hard-memory ceiling (serving: ${api_size:-unreadable})."
     return 1
   fi
 
-  if ! ACTIVE_TASK_POSTURE_JSON="$active_task_posture_json" node -e '
-    const task = JSON.parse(process.env.ACTIVE_TASK_POSTURE_JSON || "null");
-    const containers = Array.isArray(task?.containers) ? task.containers : [];
-    const container = containers[0];
-    const hardMemory = container?.memory;
-    const hardMemoryNumber = Number(hardMemory);
-    const hardMemoryInvalid = hardMemory !== undefined && hardMemory !== null &&
-      (!Number.isFinite(hardMemoryNumber) || hardMemoryNumber < 2048);
-    if (String(task?.cpu) !== "512" || String(task?.memory) !== "2048" ||
-        containers.length !== 1 || hardMemoryInvalid) {
-      process.exit(1);
-    }
-  '; then
-    error "--activate-emergency requires the currently serving API to be exactly 512 CPU / 2048 MiB with no lower container hard-memory ceiling."
+  if ! active_task_posture_json=$(aws ecs describe-task-definition \
+    --task-definition "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" \
+    --query 'taskDefinition.{cpu:cpu,memory:memory,containers:containerDefinitions[?name==`scheduler-worker`].{name:name,memory:memory}}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "Could not read the active scheduler-worker task definition for the launch-safe size preflight."
+    return 1
+  fi
+  if ! worker_size=$(serving_task_size_matches_reviewed "$active_task_posture_json" \
+      "$REVIEWED_WORKER_TASK_CPU" "$REVIEWED_WORKER_TASK_MEMORY"); then
+    error "--activate-emergency requires the currently serving scheduler worker to be exactly ${REVIEWED_WORKER_TASK_CPU} CPU / ${REVIEWED_WORKER_TASK_MEMORY} MiB with no lower container hard-memory ceiling (serving: ${worker_size:-unreadable})."
     return 1
   fi
 
-  success "Active API launch-safe posture verified: ${PRODUCTION_PREFLIGHT_API_TASK_DEFINITION} (512 CPU / 2048 MiB)"
+  success "Active API launch-safe posture verified: ${PRODUCTION_PREFLIGHT_API_TASK_DEFINITION} (${api_size}); scheduler worker ${PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION} (${worker_size})"
 }
 
 validate_capacity_acceptance_frontend_mode() {
@@ -5842,7 +5951,8 @@ info "S3:         $BUCKET"
 info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
-info "2048 API:   $ACTIVATE_EMERGENCY"
+info "Emergency API: $ACTIVATE_EMERGENCY (${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB)"
+info "Worker size:   ${REVIEWED_WORKER_TASK_CPU} CPU / ${REVIEWED_WORKER_TASK_MEMORY} MiB"
 info "RLS table:  ${ENABLE_RLS_TABLE:-unchanged}"
 info "Staff identity contracts: $APPLY_STAFF_IDENTITY_CONTRACTS"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
@@ -6221,6 +6331,10 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       exit 1
     fi
   fi
+  if ! assert_rendered_task_size_not_reduced .taskdef-new.json .taskdef-current.json \
+      api "standard API candidate"; then
+    exit 1
+  fi
 
   STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-new.json \
@@ -6239,8 +6353,10 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # from the just-rendered API revision so environment variables, secrets,
   # roles, logging, health checks, and runtime settings stay exactly aligned.
   # Only the family and Fargate task size differ; no service is pointed at it.
-  info "Rendering 512 CPU / 2048 MiB API OOM emergency revision..."
-  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+  # Production serves this family, so it always gets the reviewed API size.
+  info "Rendering ${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB API OOM emergency revision..."
+  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" \
+    EMERGENCY_CPU="$REVIEWED_API_TASK_CPU" EMERGENCY_MEMORY="$REVIEWED_API_TASK_MEMORY" node -e '
     const fs = require("fs");
     const source = JSON.parse(fs.readFileSync(".taskdef-new.json", "utf8"));
     const emergency = structuredClone(source);
@@ -6254,14 +6370,18 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     }
 
     emergency.family = process.env.EMERGENCY_FAMILY;
-    emergency.cpu = "512";
-    emergency.memory = "2048";
+    emergency.cpu = process.env.EMERGENCY_CPU;
+    emergency.memory = process.env.EMERGENCY_MEMORY;
     // The live task currently relies on the task-level ceiling. If a future
     // revision adds a hard container cap, carrying it into the OOM target
     // would silently defeat the 2 GiB recovery posture.
     delete container.memory;
     fs.writeFileSync(".taskdef-emergency.json", JSON.stringify(emergency));
   '
+  if ! assert_rendered_task_size_not_reduced .taskdef-emergency.json .taskdef-current.json \
+      api "API OOM emergency revision"; then
+    exit 1
+  fi
 
   EMERGENCY_TASK_DEF_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-emergency.json \
@@ -6279,17 +6399,19 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --query taskDefinition \
     --output json \
     --region "$REGION" > .taskdef-emergency-registered.json
-  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" \
+    EMERGENCY_CPU="$REVIEWED_API_TASK_CPU" EMERGENCY_MEMORY="$REVIEWED_API_TASK_MEMORY" node -e '
     const fs = require("fs");
     const registered = JSON.parse(fs.readFileSync(".taskdef-emergency-registered.json", "utf8"));
     const container = (registered.containerDefinitions || []).find(c => c.name === "api") || registered.containerDefinitions?.[0];
-    if (registered.family !== process.env.EMERGENCY_FAMILY || registered.cpu !== "512" || registered.memory !== "2048") {
-      throw new Error("Registered emergency task definition does not have the reviewed family and 512/2048 task size");
+    if (registered.family !== process.env.EMERGENCY_FAMILY ||
+        registered.cpu !== process.env.EMERGENCY_CPU || registered.memory !== process.env.EMERGENCY_MEMORY) {
+      throw new Error(`Registered emergency task definition does not have the reviewed family and ${process.env.EMERGENCY_CPU}/${process.env.EMERGENCY_MEMORY} task size`);
     }
     if (!container || container.image !== process.env.IMAGE_REF || !container.image.includes("@sha256:")) {
       throw new Error("Registered emergency task definition is not pinned to the deployed API image digest");
     }
-    if (container.memory !== undefined && Number(container.memory) < 2048) {
+    if (container.memory !== undefined && Number(container.memory) < Number(process.env.EMERGENCY_MEMORY)) {
       throw new Error("Registered emergency container retains a lower hard memory ceiling");
     }
   '
@@ -6301,7 +6423,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   API_ROLLOUT_TASK_DEF="${NAME}-api:${NEW_REV}"
   if [[ "$ACTIVATE_EMERGENCY" == true ]]; then
     API_ROLLOUT_TASK_DEF="$EMERGENCY_TASK_DEF_ARN"
-    success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (512 CPU / 2048 MiB)"
+    success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB)"
   fi
   register_classpilot_candidate_worker_task_definition
   verify_registered_rls_table_enablement_candidates
@@ -6311,7 +6433,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
   fi
 
-  # This opt-in release gate runs the exact digest-pinned 512/2048 revision in
+  # This opt-in release gate runs the exact digest-pinned reviewed-size revision in
   # the service VPC before the autoscaling hold, migration, or service update.
   # It cannot seed certification; it only proves the reviewed authorization
   # SQL plans and teaching-session school integrity for this release.
@@ -6740,9 +6862,9 @@ echo "=========================================="
 [[ "$DEPLOY_BACKEND" == true ]]  && echo "  API:      ECS service updated (image: ${IMAGE_TAG})"
 if [[ "$DEPLOY_BACKEND" == true && -n "$EMERGENCY_TASK_DEF_ARN" ]]; then
   if [[ "$ACTIVATE_EMERGENCY" == true ]]; then
-    echo "  API target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; active)"
+    echo "  API target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, ${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB; active)"
   else
-    echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; not deployed)"
+    echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, ${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB; not deployed)"
   fi
 fi
 [[ "$DEPLOY_FRONTEND" == true ]] && echo "  Frontend: S3 synced, CloudFront invalidated"

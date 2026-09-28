@@ -34,7 +34,7 @@ redis_replica_count = 0
 # docs/API_POOL_READINESS_OPERATIONS.md for activation and rollback.
 api_alb_health_check_path = "/readyz"
 ecs_desired_count         = 1
-# Three 512/2048 live API tasks are pre-warmed at 05:45 and held as the floor
+# Three live API tasks are pre-warmed at 05:45 and held as the floor
 # for the whole weekday school day (measured 2026-09-03: after the former 10:00
 # scale-in a single task saturated at the first period while the sticky ALB
 # cookie kept traffic pinned to it; six morning tasks idled at 1-2% each). The
@@ -48,13 +48,18 @@ api_max_capacity                = 6
 api_arrival_scale_up_schedule   = "cron(45 5 ? * MON-FRI *)"
 api_arrival_scale_down_schedule = "cron(0 16 ? * MON-FRI *)"
 api_arrival_schedule_timezone   = "America/New_York"
-ecs_cpu                         = 512
-ecs_memory                      = 1024
-worker_desired_count            = 1
-worker_cpu                      = 256
-worker_memory                   = 512
-db_pool_max                     = 16
-scheduler_db_pool_max           = 5
+# Reviewed task sizes that passed the My Desk paperwork capacity tests (adopted
+# 2026-09-27): API 1 vCPU / 2 GiB, scheduler worker 0.5 vCPU / 1 GiB. The live
+# revisions come from scripts/deploy.sh, which keeps these sizes and refuses to
+# register anything smaller; the ECS module refuses smaller production values,
+# and tests/deploy-production-task-sizing.test.ts keeps every copy identical.
+ecs_cpu               = 1024
+ecs_memory            = 2048
+worker_desired_count  = 1
+worker_cpu            = 512
+worker_memory         = 1024
+db_pool_max           = 16
+scheduler_db_pool_max = 5
 # Staged value: switch to false only after five stable live school days.
 enable_container_insights = true
 

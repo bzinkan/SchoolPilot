@@ -68,10 +68,10 @@ function Invoke-CertificationAwsJson {
     if ($service -eq "ecs" -and $operation -eq "describe-task-definition") {
         $arn = $Arguments[[Array]::IndexOf($Arguments,"--task-definition") + 1]
         $binding = switch ($arn) {
-            $apiArn { @("api",$activeDigest,512,2048) }
-            $workerArn { @("scheduler-worker",$activeDigest,256,512) }
-            $rollbackApiArn { @("api",$rollbackApiDigest,512,2048) }
-            $rollbackWorkerArn { @("scheduler-worker",$rollbackWorkerDigest,256,512) }
+            $apiArn { @("api",$activeDigest,1024,2048) }
+            $workerArn { @("scheduler-worker",$activeDigest,512,1024) }
+            $rollbackApiArn { @("api",$rollbackApiDigest,1024,2048) }
+            $rollbackWorkerArn { @("scheduler-worker",$rollbackWorkerDigest,512,1024) }
             default { throw "Unexpected task definition $arn" }
         }
         return [pscustomobject]@{taskDefinition=[pscustomobject]@{

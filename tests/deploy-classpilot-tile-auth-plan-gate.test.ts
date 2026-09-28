@@ -1855,6 +1855,7 @@ DIGEST=sha256:${"d".repeat(64)}
 API_ROLLOUT_TASK_DEF=arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:34
 WORKER_CANDIDATE_TASK_DEF=arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:49
 DRIFT_CANDIDATE=false
+WORKER_CPU=512
 aws() {
   if [[ "$1 $2" == "ecr describe-images" ]]; then
     printf '%s\\n' "$DIGEST"
@@ -1876,13 +1877,13 @@ aws() {
     if [[ "$DRIFT_CANDIDATE" == true ]]; then
       drift='[{"name":"IMMUTABLE_DRIFT","value":"true"}]'
     fi
-    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-api-emergency","cpu":"512","memory":"2048","containerDefinitions":[{"name":"api","image":"%s@%s","environment":%s}]}\\n' \
+    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-api-emergency","cpu":"1024","memory":"2048","containerDefinitions":[{"name":"api","image":"%s@%s","environment":%s}]}\\n' \
       "$ref" "$ECR_REPO" "$DIGEST" "$drift"
     return 0
   fi
   if [[ "$ref" == "$WORKER_CANDIDATE_TASK_DEF" ]]; then
-    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-scheduler-worker","containerDefinitions":[{"name":"scheduler-worker","image":"%s@%s"}]}\\n' \
-      "$ref" "$ECR_REPO" "$DIGEST"
+    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-scheduler-worker","cpu":"%s","memory":"1024","containerDefinitions":[{"name":"scheduler-worker","image":"%s@%s"}]}\\n' \
+      "$ref" "$WORKER_CPU" "$ECR_REPO" "$DIGEST"
     return 0
   fi
   return 1
@@ -1895,6 +1896,12 @@ if verify_classpilot_rehearsed_candidates; then
   printf 'candidate_drift_was_accepted\\n' >&2
   exit 99
 fi
+DRIFT_CANDIDATE=false
+WORKER_CPU=256
+if verify_classpilot_rehearsed_candidates; then
+  printf 'undersized_worker_was_accepted\\n' >&2
+  exit 98
+fi
 printf 'apiSha=%s\\nworkerSha=%s\\n' "$first_api_sha" "$first_worker_sha"
 rm -f .tile-auth-plan-rehearsed-api.json .tile-auth-plan-rehearsed-worker.json
 `);
@@ -1904,6 +1911,10 @@ rm -f .tile-auth-plan-rehearsed-api.json .tile-auth-plan-rehearsed-worker.json
     assert.match(
       result.stderr,
       /exact candidate task definitions drifted from their rehearsal receipt/i
+    );
+    assert.match(
+      result.stderr,
+      /drifted from their bound digest, families, or launch-safe posture/
     );
     assert.doesNotMatch(result.stderr, /IMMUTABLE_DRIFT/);
   });

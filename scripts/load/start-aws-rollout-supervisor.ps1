@@ -4440,11 +4440,12 @@ function Get-CertificationTaskPreflight {
         throw "Active ECS services do not match the deployed application task-definition attestations."
     }
     $definitions = [ordered]@{}
+    # Reviewed production sizes: API 1 vCPU / 2 GiB, worker 0.5 vCPU / 1 GiB.
     foreach ($entry in @(
-        @("activeApi",$Contract.ActiveApiArn,"api",$Contract.DeployedImageDigest,512,2048,$Contract.ApplicationGitSha),
-        @("activeWorker",$Contract.ActiveWorkerArn,"scheduler-worker",$Contract.DeployedImageDigest,256,512,$Contract.ApplicationGitSha),
-        @("rollbackApi",$Contract.RollbackApiArn,"api",$Contract.RollbackApiImageDigest,512,2048,$Contract.RollbackApiGitSha),
-        @("rollbackWorker",$Contract.RollbackWorkerArn,"scheduler-worker",$Contract.RollbackWorkerImageDigest,256,512,$Contract.RollbackWorkerGitSha)
+        @("activeApi",$Contract.ActiveApiArn,"api",$Contract.DeployedImageDigest,1024,2048,$Contract.ApplicationGitSha),
+        @("activeWorker",$Contract.ActiveWorkerArn,"scheduler-worker",$Contract.DeployedImageDigest,512,1024,$Contract.ApplicationGitSha),
+        @("rollbackApi",$Contract.RollbackApiArn,"api",$Contract.RollbackApiImageDigest,1024,2048,$Contract.RollbackApiGitSha),
+        @("rollbackWorker",$Contract.RollbackWorkerArn,"scheduler-worker",$Contract.RollbackWorkerImageDigest,512,1024,$Contract.RollbackWorkerGitSha)
     )) {
         $response = Invoke-CertificationAwsJson @("ecs","describe-task-definition","--region",$region,"--task-definition",$entry[1])
         $task = $response.taskDefinition
@@ -4709,10 +4710,10 @@ function Assert-CertificationReceiptLifetime {
 function Assert-CertificationTaskDefinitionAttestations {
     param($TaskDefinitions, $Contract, [string]$Name)
     $expected = @(
-        @("activeApi",$Contract.ActiveApiArn,$Contract.DeployedImageDigest,$Contract.ApplicationGitSha,"api",512,2048),
-        @("activeWorker",$Contract.ActiveWorkerArn,$Contract.DeployedImageDigest,$Contract.ApplicationGitSha,"scheduler-worker",256,512),
-        @("rollbackApi",$Contract.RollbackApiArn,$Contract.RollbackApiImageDigest,$Contract.RollbackApiGitSha,"api",512,2048),
-        @("rollbackWorker",$Contract.RollbackWorkerArn,$Contract.RollbackWorkerImageDigest,$Contract.RollbackWorkerGitSha,"scheduler-worker",256,512)
+        @("activeApi",$Contract.ActiveApiArn,$Contract.DeployedImageDigest,$Contract.ApplicationGitSha,"api",1024,2048),
+        @("activeWorker",$Contract.ActiveWorkerArn,$Contract.DeployedImageDigest,$Contract.ApplicationGitSha,"scheduler-worker",512,1024),
+        @("rollbackApi",$Contract.RollbackApiArn,$Contract.RollbackApiImageDigest,$Contract.RollbackApiGitSha,"api",1024,2048),
+        @("rollbackWorker",$Contract.RollbackWorkerArn,$Contract.RollbackWorkerImageDigest,$Contract.RollbackWorkerGitSha,"scheduler-worker",512,1024)
     )
     foreach ($entry in $expected) {
         $task = Get-CertificationValue $TaskDefinitions ([string]$entry[0])

@@ -226,7 +226,7 @@ rehearsal:
   --classpilot-tile-auth-plan-rehearsal
 ```
 
-After building and registering the new digest-pinned 512/2048 API revision,
+After building and registering the new digest-pinned reviewed-size (1024/2048) API revision,
 the deployer runs the read-only preflight and complete gate using the live
 service VPC/security groups and inherited database secret/container identity.
 It performs no migration, scaling hold, serving-service update, frontend

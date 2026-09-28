@@ -386,12 +386,12 @@ the clean merged checkout, run the one guarded capacity backend deployment:
 ```
 
 The capacity path runs the strict rollback-only authorization SQL plan gate
-before migration, keeps the current 2048 MiB API serving until the new
+before migration, keeps the current reviewed-size API serving until the new
 digest-matched revision is healthy, and reruns the gate from the active
 revision. It requires no observation, reread, supersession, rehearsal receipt,
 offline rehearsal, host smoke, certification receipt, chain root, or
 attestation. The worker is updated to the same image digest at its existing
-256/512 size.
+reviewed 512/1024 size.
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
 is stable at `1/1`, `2/2`, or `3/3` and the worker is stable at `1/1`; a
@@ -420,7 +420,7 @@ Require a successful migration task, the API at `1/1` or `2/2`, the worker at
 restored, a healthy ALB target, public `/health`, a current scheduler heartbeat,
 and clean startup logs. In the reviewed `--activate-emergency` mode, the deploy
 registers and selects a new `schoolpilot-production-api-emergency` revision at
-`512 CPU / 2048 MiB`; the standard 1024 MiB revision remains unused. Record the
+the reviewed `1024 CPU / 2048 MiB`; the standard revision remains unused. Record the
 active emergency ARN and verify that its image digest matches the worker digest
 before publishing the matching frontend or running any load test. Without
 changing the checkout, republish the frontend from the identical SHA:
@@ -604,7 +604,8 @@ stage's 20/20 isolation acceptance, but it is not mislabeled as tenant leakage.
 
 Production keeps the ordinary API autoscaling minimum at one. From 05:45 to
 16:00 America/New_York on weekdays, Application Auto Scaling holds the minimum
-at three measured launch-safe `512 CPU / 2048 MiB` tasks. The floor is raised
+at three launch-safe tasks (measured at `512 CPU / 2048 MiB`; the reviewed size
+since 2026-09-27 is `1024 CPU / 2048 MiB`). The floor is raised
 before the school-arrival reconnect wave and kept for the whole school day
 because the ALB sticky session pins each device to the task it first reached,
 so a scale-out after a period starts cannot shed load from an already
@@ -2068,7 +2069,7 @@ former 10:00 scale-in while six morning tasks idled at 1-2% each). Raising the
 floor again for additional schools requires a new measured decision, not a
 return to the historical six-task arrival minimum. An application regression
 uses the captured previous API/worker task-definition rollback; an API OOM on
-the already-selected 512/2048 emergency revision blocks progression. Never roll
+the already-selected reviewed-size (1024/2048) emergency revision blocks progression. Never roll
 back this phase by changing ECS networking, NAT, Redis, Route 53, or WAF.
 
 ## Current WAF and alarm baseline (already applied; verification only)

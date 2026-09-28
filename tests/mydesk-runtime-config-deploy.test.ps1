@@ -203,7 +203,7 @@ function New-TestContactEvidence {
         model = 'claude-sonnet-5'; promptVersion = $prompt; providerContactReviewApproved = $true
         qualityReportSha256 = ('c' * 64); capacityReportSha256 = ('d' * 64); profileCount = 100; sourceFormats = @('pdf','photo','docx','xlsx','csv')
         typedPhoneEmailAccuracy = 0.99; difficultCasesReported = $true; criticalFailures = 0; correctionTimingRecorded = $true
-        workerCpu = '256'; workerMemory = '512'; peakMemoryFraction = 0.6; apiP95Ratio = 1.1; noServiceDisruption = $true; reviewAndRecoveryPassed = $true
+        workerCpu = '512'; workerMemory = '1024'; peakMemoryFraction = 0.6; apiP95Ratio = 1.1; noServiceDisruption = $true; reviewAndRecoveryPassed = $true
     }
 }
 function Add-TestContactAdmission {
@@ -218,7 +218,7 @@ function New-TestAiEvidence {
         schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'synthetic-review-1'; imageDigest = $script:TestDigest
         model = 'claude-sonnet-5'; promptVersion = $prompt; providerReviewApproved = $true
         qualityReportSha256 = ('c' * 64); capacityReportSha256 = ('d' * 64); typedPrecision = 0.98; typedRecall = 0.97; typedFieldAccuracy = 0.99
-        criticalFailures = 0; pageCount = 30; formCount = 60; correctionTimingRecorded = $true; workerCpu = '256'; workerMemory = '512'
+        criticalFailures = 0; pageCount = 30; formCount = 60; correctionTimingRecorded = $true; workerCpu = '512'; workerMemory = '1024'
         peakMemoryFraction = 0.6; apiP95Ratio = 1.1; noServiceDisruption = $true; reviewAndRecoveryPassed = $true
     }
 }
@@ -376,7 +376,7 @@ try {
     $evidence = New-TestAiEvidence; Write-SanitizedJson $evidencePath $evidence
     $aiPlan = New-TestMyDeskPlan $ai $evidencePath
     Assert-Condition ($null -ne $aiPlan.plan.aiEvidence) 'Passing evidence must bind AI activation to its exact file hash.'
-    foreach ($change in @(@('typedRecall',0.94), @('criticalFailures',1), @('providerReviewApproved',$false), @('workerMemory','1024'), @('peakMemoryFraction','0.6'), @('apiP95Ratio','1.1'), @('promptVersion','old-prompt'))) {
+    foreach ($change in @(@('typedRecall',0.94), @('criticalFailures',1), @('providerReviewApproved',$false), @('workerMemory','2048'), @('workerCpu','256'), @('peakMemoryFraction','0.6'), @('apiP95Ratio','1.1'), @('promptVersion','old-prompt'))) {
         $bad = Copy-TestValue $evidence; $bad.($change[0]) = $change[1]; Write-SanitizedJson $evidencePath $bad
         Assert-Throws { New-TestMyDeskPlan $ai $evidencePath } 'Incomplete or mismatched AI evidence must block activation.'
     }
@@ -389,6 +389,14 @@ try {
     Reset-MyDeskMock
     $script:Mock.Tasks[$script:TestWorkerArn].taskDefinition.containerDefinitions[0].secrets = @()
     Assert-Throws { New-TestMyDeskPlan $ai $evidencePath } 'AI requires a secret reference on both serving roles.'
+    Reset-MyDeskMock
+    $script:Mock.Tasks[$script:TestWorkerArn].taskDefinition.cpu = '256'
+    $script:Mock.Tasks[$script:TestWorkerArn].taskDefinition.memory = '512'
+    Assert-Throws { New-TestMyDeskPlan } 'My Desk changes must refuse a serving worker below the reviewed 512 CPU / 1024 MiB.'
+    Reset-MyDeskMock
+    $script:Mock.Tasks[$script:TestApiArn].taskDefinition.cpu = '512'
+    Assert-Throws { New-TestMyDeskPlan } 'My Desk changes must refuse a serving API below the reviewed 1024 CPU.'
+    Assert-Condition ($script:Mock.Requests.Count -eq 0) 'Rejected task sizes must never register task definitions.'
 
     Reset-MyDeskMock
     $contact = Copy-TestValue $script:TestConfig; $contact | Add-Member studentInformationAiImportMode 'on'
@@ -401,7 +409,7 @@ try {
     $contactPlan = New-TestMyDeskPlan $contact $null $contactEvidencePath
     Assert-Condition ($null -eq $contactPlan.plan.aiEvidence -and $null -ne $contactPlan.plan.contactEvidence) 'Contact AI can be reviewed while discipline AI remains off.'
     foreach ($change in @(@('profileCount',99), @('typedPhoneEmailAccuracy',0.98), @('criticalFailures',1), @('providerContactReviewApproved',$false),
-        @('difficultCasesReported',$false), @('peakMemoryFraction',0.7), @('apiP95Ratio',1.21), @('workerMemory','1024'), @('promptVersion','old-contact-prompt'), @('sourceFormats',@('pdf','photo','docx','csv')))) {
+        @('difficultCasesReported',$false), @('peakMemoryFraction',0.7), @('apiP95Ratio',1.21), @('workerMemory','2048'), @('promptVersion','old-contact-prompt'), @('sourceFormats',@('pdf','photo','docx','csv')))) {
         $bad = Copy-TestValue $contactEvidence; $bad.($change[0]) = $change[1]; Write-SanitizedJson $contactEvidencePath $bad
         Assert-Throws { New-TestMyDeskPlan $contact $null $contactEvidencePath } 'Incomplete contact quality or capacity evidence must block activation.'
     }

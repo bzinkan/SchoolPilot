@@ -728,10 +728,10 @@ try {
     $assertions++
     function New-TaskAttestation($arn,$imageDigest,$gitSha,$container,$cpu,$memory){[ordered]@{taskDefinitionArn=$arn;taskDefinitionJsonSha256="8"*64;image="repo@$imageDigest";imageDigest=$imageDigest;imageManifestSha256="9"*64;gitSha=$gitSha;provenanceTag=$gitSha.Substring(0,12);cpu=$cpu;memory=$memory;containerName=$container}}
     $taskDefinitions=[ordered]@{
-        activeApi=New-TaskAttestation $activeApiArn $digest $appSha "api" 512 2048
-        activeWorker=New-TaskAttestation $activeWorkerArn $digest $appSha "scheduler-worker" 256 512
-        rollbackApi=New-TaskAttestation $rollbackApiArn $rollbackApiDigest $rollbackApiSha "api" 512 2048
-        rollbackWorker=New-TaskAttestation $rollbackWorkerArn $rollbackWorkerDigest $rollbackWorkerSha "scheduler-worker" 256 512
+        activeApi=New-TaskAttestation $activeApiArn $digest $appSha "api" 1024 2048
+        activeWorker=New-TaskAttestation $activeWorkerArn $digest $appSha "scheduler-worker" 512 1024
+        rollbackApi=New-TaskAttestation $rollbackApiArn $rollbackApiDigest $rollbackApiSha "api" 1024 2048
+        rollbackWorker=New-TaskAttestation $rollbackWorkerArn $rollbackWorkerDigest $rollbackWorkerSha "scheduler-worker" 512 1024
     }
     $services=@(
         [ordered]@{name="api";taskDefinitionArn=$activeApiArn;desired=6;running=6;pending=0;subnets=@("subnet-a1","subnet-a2");assignPublicIp="DISABLED"},

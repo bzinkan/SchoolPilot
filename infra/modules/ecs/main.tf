@@ -4,6 +4,13 @@
 
 locals {
   name = "${var.project}-${var.environment}"
+  # Reviewed production task sizes that passed the My Desk paperwork capacity
+  # tests. tests/deploy-production-task-sizing.test.ts keeps these equal to
+  # scripts/deploy.sh and infra/production.tfvars.
+  reviewed_production_api_cpu       = 1024
+  reviewed_production_api_memory    = 2048
+  reviewed_production_worker_cpu    = 512
+  reviewed_production_worker_memory = 1024
   application_secret_parameter_names = [
     "DATABASE_URL",
     "SESSION_SECRET",
@@ -256,6 +263,10 @@ resource "aws_ecs_task_definition" "api" {
       condition     = local.google_oauth_previous_encryption_key_parameter_arn_valid
       error_message = "The previous Google OAuth encryption key ARN must be empty or the exact environment-scoped GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SSM parameter ARN."
     }
+    precondition {
+      condition     = var.environment != "production" || (var.cpu >= local.reviewed_production_api_cpu && var.memory >= local.reviewed_production_api_memory)
+      error_message = "Production API tasks must keep at least the reviewed 1024 CPU / 2048 MiB that passed the paperwork capacity tests."
+    }
   }
 
   tags = { Name = "${local.name}-api" }
@@ -335,6 +346,10 @@ resource "aws_ecs_task_definition" "worker" {
     precondition {
       condition     = local.google_oauth_previous_encryption_key_parameter_arn_valid
       error_message = "The previous Google OAuth encryption key ARN must be empty or the exact environment-scoped GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SSM parameter ARN."
+    }
+    precondition {
+      condition     = var.environment != "production" || (var.worker_cpu >= local.reviewed_production_worker_cpu && var.worker_memory >= local.reviewed_production_worker_memory)
+      error_message = "Production scheduler-worker tasks must keep at least the reviewed 512 CPU / 1024 MiB that passed the paperwork capacity tests."
     }
   }
 

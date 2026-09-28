@@ -98,10 +98,13 @@ function Get-MyDeskSnapshot {
     $api = Get-TaskDefinitionResponse -TaskDefinitionArn $ExpectedApiArn
     $worker = Get-TaskDefinitionResponse -TaskDefinitionArn $ExpectedWorkerArn
     $environments = @()
-    foreach ($entry in @(@($api, $ExpectedApiArn, 'api'), @($worker, $ExpectedWorkerArn, 'scheduler-worker'))) {
+    # Sources must be the reviewed task sizes. Every candidate and recovery
+    # revision below is an exact-size clone of these, so none can shrink a task.
+    foreach ($entry in @(@($api, $ExpectedApiArn, 'api', $script:ApiTaskCpu, $script:ApiTaskMemory),
+            @($worker, $ExpectedWorkerArn, 'scheduler-worker', $script:WorkerTaskCpu, $script:WorkerTaskMemory))) {
         $task = $entry[0].taskDefinition
         [void](Assert-TaskDefinitionContract -Response $entry[0] -ExpectedArn $entry[1] -ExpectedFamily $task.family -ContainerName $entry[2] `
-            -ExpectedDigest $Digest -ExpectedCpu $task.cpu -ExpectedMemory $task.memory)
+            -ExpectedDigest $Digest -ExpectedCpu $entry[3] -ExpectedMemory $entry[4])
         $environment = Get-MyDeskEnvironment -Task $task -ContainerName $entry[2]
         if (-not $environment.ContainsKey('RLS_GUC_ENABLED') -or $environment['RLS_GUC_ENABLED'] -cne 'true' -or
             -not $environment.ContainsKey('RLS_ENABLED_TABLES')) { throw 'My Desk requires the admitted RLS baseline.' }

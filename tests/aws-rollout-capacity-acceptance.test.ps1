@@ -713,14 +713,14 @@ try {
         }
         ApiTask = [pscustomobject]@{
             Arn="arn:aws:ecs:us-east-1:135775632425:task-definition/api:31"
-            ContainerName="api";Cpu="512";Memory="2048"
+            ContainerName="api";Cpu="1024";Memory="2048"
             Logging=[pscustomobject]@{Sanitized=[pscustomobject]@{
                 driver="awslogs";groupSha256=("3" * 64);streamPrefixSha256=("4" * 64)
             }}
         }
         WorkerTask = [pscustomobject]@{
             Arn="arn:aws:ecs:us-east-1:135775632425:task-definition/worker:48"
-            ContainerName="scheduler-worker";Cpu="256";Memory="512"
+            ContainerName="scheduler-worker";Cpu="512";Memory="1024"
             Logging=[pscustomobject]@{Sanitized=[pscustomobject]@{
                 driver="awslogs";groupSha256=("5" * 64);streamPrefixSha256=("6" * 64)
             }}
