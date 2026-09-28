@@ -51,6 +51,7 @@ async function setup(mode, options = {}) {
   await page.route('**/api/**',async route=>{
     const request=route.request(),url=new URL(request.url()),method=request.method(),body=method==='GET'||method==='PUT'&&url.pathname.endsWith('/content')?undefined:request.postDataJSON();requests.push({path:url.pathname,query:url.search,method,body});const json=(value,status=200)=>route.fulfill({json:value,status});
     if(url.pathname.endsWith('/csrf'))return json({csrfToken:'synthetic'});
+    if(url.pathname.endsWith('/imports/summary'))return state.failPaperworkSummary?json({error:'Status unavailable'},503):json({summary:state.paperworkSummary||{total:0,processing:0,readyToReview:0,needsAttention:0,uploading:0}});
     if(url.pathname.endsWith('/capabilities'))return state.capabilityStatus===200?json({canSubmit:true,canViewSchool:state.canViewSchool,canManageAccess:false}):json({error:'Capability temporarily unavailable'},state.capabilityStatus);
     if(method==='PUT'&&url.pathname.includes('/content')){state.draft.attachments[0].status='ready';return json({attachment:state.draft.attachments[0]});}
     if(url.pathname.includes('/content'))return state.blobStatus===200?route.fulfill({contentType:'image/png',body:png}):json({error:'Access revoked'},state.blobStatus);
@@ -280,4 +281,20 @@ test('admin incident save navigates to its record with origin and no stale draft
     assert.equal(await page.getByLabel('Current route').textContent(), '/classpilot/discipline-records/record-a?entry=admin');
     assert.equal(await page.getByRole('alertdialog').count(), 0); assert.equal(state.finalizations.length, 1); assert.deepEqual(errors, []);
   } finally { await page.close(); }
+});
+
+test('Resume paperwork is permanent and its owner summary is independent of discipline cohort filters', async()=>{
+ const {page,requests}=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin&gradeLevel=5',paperworkSummary:{total:3,processing:1,readyToReview:2,needsAttention:0,uploading:0}});
+ try{
+  await page.getByRole('button',{name:'Resume paperwork',exact:true}).waitFor();
+  await page.getByText('1 processing · 2 ready to review',{exact:true}).waitFor();
+  const summary=requests.find(request=>request.path.endsWith('/imports/summary'));
+  assert.equal(summary.query,'?destination=discipline');
+  await page.getByRole('button',{name:'Resume paperwork',exact:true}).click();
+  await page.getByRole('heading',{name:'Paperwork destination'}).waitFor();
+  assert.equal(await page.getByLabel('Current route').textContent(),'/classpilot/my-desk/imports?destination=discipline&view=library&entry=admin');
+  await noOverflow(page);
+ }finally{await page.close();}
+ const empty=await setup('navigation');
+ try{assert.equal(await empty.page.getByRole('button',{name:'Resume paperwork',exact:true}).isEnabled(),true);}finally{await empty.page.close();}
 });

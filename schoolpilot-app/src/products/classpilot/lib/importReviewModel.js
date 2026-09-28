@@ -53,3 +53,43 @@ export function reviewProblem(item, draft, students, rosterRevision) {
 }
 
 export function importExpiry(value) { return value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'after 7 days'; }
+
+export const importIsPreparing = batch => ['queued', 'processing'].includes(batch.status);
+export const importReadyItems = batch => (batch.items || []).filter(item => item.extractionStatus === 'ready' && item.approvedAssetId);
+export function paperworkSummaryLabels(summary = {}) {
+  return [[summary.processing, 'processing'], [summary.readyToReview, 'ready to review'], [summary.needsAttention, 'needs attention'], [summary.needsAttention ? 0 : summary.uploading, 'uploading']]
+    .filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+}
+export function paperworkProgress(batch) {
+  const progress = batch.progress || {};
+  const phases = { waiting: 'Waiting for processing', needs_attention: 'Needs attention', queued: 'Waiting for processing', preparing: 'Preparing pages', preparing_pages: 'Preparing pages', detecting: 'Checking forms', checking_forms: 'Checking forms', extracting: 'Preparing form details', preparing_previews: 'Preparing previews', retrying: 'Retrying preparation', review: 'Ready to review', ready: 'Ready to review', failed: 'Needs attention', uploading: 'Waiting for files' };
+  const phase = phases[progress.phase] || phases[batch.status] || 'Preparing pages and forms';
+  const total = progress.pagesTotal ?? batch.pageCount ?? 0;
+  const checked = progress.pagesChecked ?? (['review', 'completed'].includes(batch.status) ? total : 0);
+  const ready = progress.formsReady ?? importReadyItems(batch).length;
+  const found = progress.formsFound ?? batch.items?.length ?? 0;
+  const detectionComplete = progress.detectionComplete ?? batch.status === 'review';
+  const canReviewEarly = progress.actions?.reviewFields ?? batch.processingVersion >= 2;
+  return { phase, checked, total, ready, found, detectionComplete,
+    description: `${checked} of ${total || '?'} pages checked · ${ready} ${ready === 1 ? 'form' : 'forms'} ready`,
+    action: batch.status === 'completed' ? 'View saved entries' : batch.status === 'failed' || batch.status === 'uploading' ? 'View issue' : ready && canReviewEarly || batch.status === 'review' ? 'Resume review' : 'Open progress' };
+}
+
+// Keep the active editor's source revision stable until it saves or the author
+// explicitly reloads. The rest of the packet can advance independently.
+export function mergeImportProgress(current, incoming, protectedItemId) {
+  if (!protectedItemId) return { batch: incoming, conflict: false };
+  const original = current.items?.find(item => item.id === protectedItemId);
+  const latest = incoming.items?.find(item => item.id === protectedItemId);
+  const conflict = Boolean(original && (!latest || original.revision !== latest.revision));
+  return { batch: { ...incoming, items: [...(incoming.items || []).map(item => item.id === protectedItemId && original ? original : item), ...(original && !latest ? [original] : [])] }, conflict };
+}
+
+export function paperworkReturn(state) {
+  const path = state?.returnTo;
+  if (typeof path !== 'string') return null;
+  // Accept only workspace roots, never arbitrary locations or external URLs.
+  if (/^\/classpilot\/discipline-records(?:\?|$)/.test(path)) return { path, label: 'Discipline logs', state: state.returnState };
+  if (/^\/classpilot\/my-desk(?:\?|$)/.test(path)) return { path, label: 'My Desk', state: state.returnState };
+  return null;
+}

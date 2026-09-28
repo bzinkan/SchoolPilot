@@ -18,7 +18,8 @@ export const myDeskKeys = {
   attachment: (schoolId, viewerId, noteId, attachmentId) => [...myDeskKeys.root(schoolId, viewerId), 'attachment', noteId, attachmentId],
   seatingCharts: (schoolId, viewerId, filters) => [...myDeskKeys.root(schoolId, viewerId), 'seating-charts', JSON.stringify(filters)],
   seatingChart: (schoolId, viewerId, chartId) => [...myDeskKeys.root(schoolId, viewerId), 'seating-chart', chartId],
-  imports: (schoolId, viewerId) => [...myDeskKeys.root(schoolId, viewerId), 'imports'],
+  imports: (schoolId, viewerId, destination = 'notes') => [...myDeskKeys.root(schoolId, viewerId), 'imports', destination],
+  importSummary: (schoolId, viewerId, destination) => [...myDeskKeys.root(schoolId, viewerId), 'import-summary', destination],
   import: (schoolId, viewerId, id) => [...myDeskKeys.root(schoolId, viewerId), 'import', id],
   importAsset: (schoolId, viewerId, id, assetId) => [...myDeskKeys.root(schoolId, viewerId), 'import-asset', id, assetId],
 };
