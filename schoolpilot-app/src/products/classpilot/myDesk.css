@@ -1,6 +1,13 @@
 .mydesk-page { --desk-blue:#344d99; --desk-line:#d8deef; --desk-paper:#fcfdff; --desk-ink:#243352; background:#f0f3f9; color:var(--desk-ink); }
 .dark .mydesk-page { --desk-blue:#aabcf5; --desk-line:#35415b; --desk-paper:#182135; --desk-ink:#e3e9f9; background:#101827; }
 .mydesk-header { display:flex; align-items:center; justify-content:space-between; padding:12px max(16px,calc((100vw - 1280px)/2)); border-bottom:1px solid var(--desk-line); background:var(--desk-paper); }
+.mydesk-hub-header { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:12px; }.mydesk-hub-header>:first-child { justify-self:start; }.mydesk-hub-header>:last-child { justify-self:end; }
+.mydesk-hub-title { font-size:15px; font-weight:600; color:var(--desk-ink); white-space:nowrap; }
+.mydesk-visibility { display:flex; align-items:flex-start; flex-wrap:wrap; gap:6px 10px; margin-top:14px; font-size:12px; line-height:1.6; }
+.mydesk-visibility-badge { display:inline-flex; align-items:center; gap:6px; flex-shrink:0; padding:1px 10px; border:1px solid; border-radius:999px; font-weight:600; }
+.mydesk-visibility-badge.is-private { color:#344d99; background:#e7eefc; border-color:#b9c7ee; }.mydesk-visibility-badge.is-school { color:#7a4a05; background:#fff3dc; border-color:#e7b866; }
+.dark .mydesk-visibility-badge.is-private { color:#c7d3fb; background:rgba(170,188,245,.1); border-color:rgba(170,188,245,.35); }.dark .mydesk-visibility-badge.is-school { color:#f8cc86; background:rgba(245,158,11,.1); border-color:rgba(245,158,11,.45); }
+.mydesk-visibility-note { color:var(--desk-ink); max-width:62ch; }
 .mydesk-shell { max-width:1200px; margin:auto; padding:42px 28px 72px; }
 .mydesk-intro { display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:36px; }
 .mydesk-title-line { display:flex; align-items:center; gap:12px; }.mydesk-title-line>svg { width:30px;height:30px;color:var(--desk-blue); }

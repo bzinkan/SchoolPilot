@@ -95,7 +95,7 @@ async function setup({ initial = [], failCreate = false, failUpload = false, del
     return json({ error: `Unexpected route ${method} ${url.pathname}` }, 404);
   });
   await page.goto(`${base}/${auth ? '__mydesk-auth' : '__mydesk'}`);
-  try { await page.getByRole('heading', { name: 'My Desk', exact: true }).waitFor({ timeout: 12000 }); }
+  try { await page.getByRole('heading', { name: 'Notes', exact: true }).waitFor({ timeout: 12000 }); }
   catch (failure) { throw new Error(`${failure.message}\nPage errors: ${errors.join('\n')}\n${await page.locator('body').innerText()}`); }
   return { page, state, errors, requests, creates, uploadBodies, completeBodies, revoked };
 }
@@ -305,7 +305,7 @@ test('real auth transitions purge private caches, revoke blobs and gate imperson
     await t.page.getByRole('heading', { name: 'My Desk is unavailable' }).waitFor(); assert.equal(await t.page.getByRole('dialog').count(), 0);
     t.state.impersonating = false; await t.page.getByRole('button', { name: 'Refresh account' }).click(); await t.page.getByRole('button', { name: 'New note', exact: true }).click(); assert.equal(await t.page.getByLabel('Title optional', { exact: true }).inputValue(), '');
     await t.page.getByRole('button', { name: 'Cancel', exact: true }).click(); await t.page.getByRole('button', { name: 'Change school' }).click();
-    await t.page.getByRole('heading', { name: 'My Desk', exact: true }).waitFor(); assert(t.requests.some(item => item.path.endsWith('/capabilities') && item.school === 'school-b'));
+    await t.page.getByRole('heading', { name: 'Notes', exact: true }).waitFor(); assert(t.requests.some(item => item.path.endsWith('/capabilities') && item.school === 'school-b'));
     assert.equal(await t.page.evaluate(() => window.notebookCache().some(([key]) => key[1] === 'school-a')), false);
     await t.page.getByRole('button', { name: 'Sign out' }).click(); await t.page.getByRole('heading', { name: 'My Desk is unavailable' }).waitFor(); assert.equal(await t.page.evaluate(() => window.notebookCache().filter(([,data])=>data !== undefined).length), 0); assert.deepEqual(t.errors, []);
   } finally { await t.page.close(); }

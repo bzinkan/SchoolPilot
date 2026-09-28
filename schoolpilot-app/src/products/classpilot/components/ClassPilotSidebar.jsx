@@ -5,7 +5,7 @@ import GoPilotMiniView from './sidebar/GoPilotMiniView';
 import MyDeskMiniView from './sidebar/MyDeskMiniView';
 import { myDeskSidebarVisible } from '../lib/myDeskModel';
 
-export default function ClassPilotSidebar({ isOpen, onToggle, canUseMyDesk = false }) {
+export default function ClassPilotSidebar({ isOpen, onToggle, canUseMyDesk = false, myDeskSeatingEnabled = false }) {
   const { hasPassPilot, hasGoPilot } = useLicenses();
   const showSidebar = myDeskSidebarVisible({ hasPassPilot, hasGoPilot, canUseMyDesk });
 
@@ -24,7 +24,7 @@ export default function ClassPilotSidebar({ isOpen, onToggle, canUseMyDesk = fal
           <div className="flex-1 overflow-y-auto w-80">
             {hasPassPilot && <PassPilotMiniView />}
             {hasGoPilot && <GoPilotMiniView />}
-            {canUseMyDesk && <MyDeskMiniView />}
+            {canUseMyDesk && <MyDeskMiniView seatingEnabled={myDeskSeatingEnabled} />}
           </div>
         ) : null}
       </aside>

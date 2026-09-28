@@ -24,6 +24,7 @@ function RoutedRecord({access}){const {recordId}=useParams();return h(Discipline
 function Navigation({access}){const route=useLocation();return h(React.Fragment,null,h('output',{'aria-label':'Current route'},route.pathname+route.search),h(Routes,null,
   h(Route,{path:'/classpilot/discipline-records',element:h(DisciplineShell,null,h(DisciplineLibrary,{access}))}),
   h(Route,{path:'/classpilot/discipline-records/:recordId',element:h(RoutedRecord,{access})}),
+  h(Route,{path:'/classpilot',element:h('h1',null,'ClassPilot destination')}),
   h(Route,{path:'/classpilot/admin',element:h('h1',null,'Admin destination')}),
   h(Route,{path:'/classpilot/my-desk',element:h('h1',null,'My Desk destination')}),
   h(Route,{path:'/classpilot/my-desk/imports',element:h('h1',null,'Paperwork destination')})
@@ -109,13 +110,13 @@ test('manual composer links and saved records retain admin origin and paperwork 
  }finally{await page.close();}
 });
 
-test('teacher and unknown origins return to My Desk; an admin marker never grants school scope',async()=>{
+test('teacher and unknown origins return to ClassPilot; an admin marker never grants school scope',async()=>{
  for(const route of ['/classpilot/discipline-records','/classpilot/discipline-records?entry=https%3A%2F%2Fexample.invalid&returnTo=https%3A%2F%2Fexample.invalid']){
   const {page,requests,errors}=await setup('navigation',{route,canViewSchool:false});try{
-   await page.getByRole('button',{name:'My Desk',exact:true}).waitFor();await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
+   await page.getByRole('button',{name:'ClassPilot',exact:true}).waitFor();assert.equal(await page.getByText('My Desk',{exact:true}).count(),1);await page.getByRole('button',{name:'Synthetic Student',exact:true}).click();await page.getByRole('link').filter({has:page.getByRole('heading',{name:'Version 3'})}).click();
    assert.equal(await page.getByRole('link',{name:'All discipline records',exact:true}).getAttribute('href'),'/classpilot/discipline-records');
    assert.ok(requests.filter(row=>row.path.endsWith('/students/search')).every(row=>row.body.scope==='assigned'));
-   await page.getByRole('button',{name:'My Desk',exact:true}).click();await page.getByRole('heading',{name:'My Desk destination'}).waitFor();assert.deepEqual(errors,[]);
+   await page.getByRole('button',{name:'ClassPilot',exact:true}).click();await page.getByRole('heading',{name:'ClassPilot destination'}).waitFor();assert.deepEqual(errors,[]);
   }finally{await page.close();}
  }
  const forged=await setup('navigation',{route:'/classpilot/discipline-records?entry=admin',canViewSchool:false});try{assert.equal(forged.requests.find(row=>row.path.endsWith('/students/search')).body.scope,'assigned');assert.equal(await forged.page.getByRole('option',{name:'All my grades',exact:true}).count(),1);}finally{await forged.page.close();}

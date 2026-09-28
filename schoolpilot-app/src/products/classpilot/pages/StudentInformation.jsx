@@ -1,7 +1,5 @@
 import { useDeferredValue, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
-import { ThemeToggle } from "../../../components/ThemeToggle";
 import {
   Link,
   useParams,
@@ -19,6 +17,8 @@ import StudentInformationImport, {
   StudentInformationUpload,
 } from "../components/StudentInformationImport";
 import MyDeskTabs from "../components/MyDeskTabs";
+import MyDeskHeader from "../components/MyDeskHeader";
+import MyDeskVisibility from "../components/MyDeskVisibility";
 import MyDeskScopePicker from "../components/MyDeskScopePicker";
 import { myDeskScopeFilters } from "../lib/myDeskScopeModel";
 import { withDisciplineEntry } from "../lib/disciplineNavigation";
@@ -33,19 +33,15 @@ export function StudentInformationShell({
   seatingEnabled = true,
 }) {
   const shell = useAdminShell();
+  const { navigate } = useAdminNavigation();
   if (shell) return <section className="student-information">{children}</section>;
   return (
     <div className="mydesk-page min-h-screen">
-      <header className="mydesk-header">
-        <Link
-          className="student-info-back"
-          to={adminEntry ? "/classpilot/students" : "/classpilot"}
-        >
-          <ArrowLeft className="size-4" />
-          {adminEntry ? "Back to Students" : "ClassPilot"}
-        </Link>
-        <ThemeToggle />
-      </header>
+      <MyDeskHeader
+        backLabel={adminEntry ? "Back to Students" : "ClassPilot"}
+        onBack={() => navigate(adminEntry ? "/classpilot/students" : "/classpilot")}
+        title={adminEntry ? null : "My Desk"}
+      />
       {adminEntry ? (
         <p className="student-info-school">{schoolName || "Current school"}</p>
       ) : (
@@ -122,6 +118,10 @@ function Directory({ access }) {
           <p>
             Reviewed contact information for the students you currently serve.
           </p>
+          <MyDeskVisibility kind="school">
+            Shared school contact profiles. Access follows official class
+            assignments; private notes and parent accounts stay separate.
+          </MyDeskVisibility>
         </div>
         {access.aiImportEnabled && (
           <button onClick={() => requestAction(() => setImporting((value) => !value), { id: "contact-upload-toggle" })}>
@@ -129,10 +129,6 @@ function Directory({ access }) {
           </button>
         )}
       </div>
-      <p className="student-info-scope">
-        Shared school contact profiles. Access follows official class
-        assignments; private notes and parent accounts stay separate.
-      </p>
       {importing && (
         <StudentInformationUpload
           access={access}
