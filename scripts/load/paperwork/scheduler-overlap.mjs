@@ -5,6 +5,7 @@ import { pool, apiPoolReadiness } from '/app/dist/db.js';
 import { schedulerPool, schedulerLockPool } from '/app/dist/services/schedulerDb.js';
 import { expireClasspilotEvidenceCaptureRequests, runWithSchedulerLock } from '/app/dist/services/scheduler.js';
 import { runStaffIdentityIntegrityScan } from '/app/dist/services/staffIdentityMonitoring.js';
+import { nearestRankPercentile } from './latency-metrics.mjs';
 
 export function startSchedulerOverlap({ fixturePool, actor, metrics }) {
   let phase='baseline', stopped=false, integrityDone=false;
@@ -64,7 +65,7 @@ export function startSchedulerOverlap({ fixturePool, actor, metrics }) {
       stopped=true; clearInterval(probeTimer); clearTimeout(scheduledTimer); await Promise.allSettled([...pending]);
       apiPoolReadiness.stop(); await apiPoolReadiness.drain();
       for(const event of ['acquire','release','remove']) pool.off(event,progress);
-      const summary=values=>{const sorted=[...values].sort((a,b)=>a-b);return {count:sorted.length,p50Ms:sorted[Math.floor(sorted.length*.5)]??null,p95Ms:sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))]??null,maxMs:sorted.at(-1)??null};};
+      const summary=values=>{const sorted=[...values].sort((a,b)=>a-b);return {count:sorted.length,p50Ms:nearestRankPercentile(sorted,.5),p95Ms:nearestRankPercentile(sorted,.95),maxMs:sorted.at(-1)??null};};
       let peak=null; try { peak=Number(readFileSync('/sys/fs/cgroup/memory.peak','utf8').trim()); } catch {}
       metrics.schedulerOverlap={durationMs:performance.now()-observedStart,mode:'actual exported callbacks and advisory locks; bounded harness cadence; no startScheduler/worker/index',jobs,errors,readiness:{samples:probes.length,notReadySamples:probes.filter(x=>!x.readiness.ready).length,method:'actual apiPoolReadiness singleton sampled manually with production progress hooks; worker pool profile; no HTTP readyz'},maxPoolWaiting:{main:Math.max(0,...probes.map(x=>x.counts.main.waiting)),scheduler:Math.max(0,...probes.map(x=>x.counts.scheduler.waiting)),locks:Math.max(0,...probes.map(x=>x.counts.locks.waiting))},heartbeat:{method:'harness one-second timer lag, not worker Heartbeat emission',baseline:summary(heartbeat.filter(x=>x.phase==='baseline').map(x=>x.delayMs)),loaded:summary(heartbeat.filter(x=>x.phase==='loaded').map(x=>x.delayMs))},database:Object.fromEntries(['baseline','loaded'].map(p=>[p,{mainAcquire:summary(probes.filter(x=>x.phase===p).map(x=>x.mainAcquireMs)),mainQuery:summary(probes.filter(x=>x.phase===p).map(x=>x.mainQueryMs)),schedulerQuery:summary(probes.filter(x=>x.phase===p).map(x=>x.schedulerQueryMs))}])),kernelPeakMemoryBytes:peak,limits:['Only evidence-capture expiry and one staff-identity scan are covered; no full scheduler fleet or heavy rollups/email/Google/Redis jobs.','Synthetic due-row volume and two-school database are not production fleet scale.']};
       assert.equal(errors.length,0,JSON.stringify(errors));

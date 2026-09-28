@@ -18,6 +18,7 @@ import { cleanupMyDeskImports } from "/app/dist/services/mydeskImportCleanup.js"
 import { renderImportSource, cropImportRegion, buildImportAttachment, MyDeskImportProcessingError, } from "/app/dist/services/mydeskImportProcessing.js";
 import { importRegion } from "/app/dist/services/mydeskImportsValidation.js";
 import { signUserToken } from "/app/dist/services/jwt.js";
+import { createReadProbeEvidence, measureReadProbe, nearestRankPercentile } from './latency-metrics.mjs';
 const schoolIds = [];
 // Fixtures and DDL use the administrator connection; real HTTP handlers keep the restricted application pool.
 const fixturePool = process.env.ADMIN_DATABASE_URL
@@ -36,13 +37,15 @@ mkdirSync('/app/evidence/split-objects', { recursive: true });
 const objects = new PhysicalObjects();
 const originalObjectStore = { ...myDeskObjectStore };
 const metrics = { imageDigest: process.env.EVIDENCE_IMAGE_DIGEST, testSourceSha256: createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex'),
+    measurementSourceSha256: createHash('sha256').update(readFileSync(new URL('./latency-metrics.mjs', import.meta.url))).digest('hex'),
     sourceRevision: process.env.EVIDENCE_SOURCE_REVISION, formatVersion: 2,
     providerMode: 'synthetic_transport', storageMode: 'physical_local_files', auth: 'ephemeral_local_jwt',
     database: 'disposable_local_postgres_restricted_rls', humanAcceptance: 'not_performed',
     limits: { cpu: Number(process.env.EVIDENCE_CPU), memoryBytes: Number(process.env.EVIDENCE_MEMORY) },
     memorySamples: 0, peakCgroupMemoryBytes: 0, peakRssBytes: 0, apiTimingsMs: [], statusCounts: {},
+    readProbeEvidence: createReadProbeEvidence(),
     providerRequests: 0, workerRuns: 0, maxClaimedPerRunner: 0, maxQueueObserved: 0, cpu: null,
-    limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.'] };
+    limitations: ['Synthetic API behavior is not human acceptance.', 'Local isolated latency is not production API capacity.', 'Provider transport and object storage are synthetic/local; live provider timing and managed storage latency require separate evidence.', 'Inherited Docker localhost:4000 healthchecks do not apply to this ephemeral-port API/3999 worker harness; actual API pool/readiness and worker scheduler probes are evaluated separately.'] };
 const metricStart = performance.now(), cpuStart = process.cpuUsage();
 const sample = () => {
     metrics.memorySamples++;
@@ -66,6 +69,7 @@ globalThis.fetch = async (...args) => {
     const start = performance.now();
     const response = await realFetch(...args);
     if (String(args[0]).startsWith('http://127.0.0.1:')) {
+        if (metrics.apiTimingsMs.length >= 4096) throw new Error('LATENCY_SAMPLE_LIMIT');
         metrics.apiTimingsMs.push(performance.now() - start);
         metrics.statusCounts[response.status] = (metrics.statusCounts[response.status] || 0) + 1;
     }
@@ -229,7 +233,7 @@ after(async () => {
         metrics.durationMs = performance.now() - metricStart;
         metrics.cpu = process.cpuUsage(cpuStart);
         const sorted = metrics.apiTimingsMs.sort((a, b) => a - b);
-        metrics.api = { sampleCount: sorted.length, p50Ms: sorted[Math.floor(sorted.length * .5)] ?? null, p95Ms: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * .95))] ?? null, maxMs: sorted.at(-1) ?? null };
+        metrics.api = { sampleCount: sorted.length, p50Ms: nearestRankPercentile(sorted, .5), p95Ms: nearestRankPercentile(sorted, .95), maxMs: sorted.at(-1) ?? null };
         delete metrics.apiTimingsMs;
         metrics.remainingPhysicalObjects = readdirSync('/app/evidence/split-objects').length;
         writeFileSync('/app/evidence/' + process.env.PAPERWORK_SCENARIO + '-metrics.json', JSON.stringify(metrics, null, 2));
@@ -373,24 +377,29 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   const endpointPaths=['/api/mydesk/capabilities','/api/classpilot/groups','/api/classpilot/teacher/settings'];
   const baseline=[],baselineByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
   const loadedByEndpoint=Object.fromEntries(endpointPaths.map(path=>[path,[]]));
+  let probePhase='warmup';
   const probe=async(index,buckets)=>{
     apiObservation.assertReady();
-    const path=endpointPaths[index%endpointPaths.length],at=performance.now();
-    const response=await request(actors[0],path);assert.equal(response.status,200);
-    const duration=performance.now()-at;buckets[path].push(duration);return duration;
+    const path=endpointPaths[index%endpointPaths.length];
+    const {response,durationMs}=await measureReadProbe(metrics.readProbeEvidence,{path,phase:probePhase},
+      ()=>request(actors[0],path),{now:()=>performance.now(),originMs:metricStart});
+    assert.equal(response.status,200);buckets[path].push(durationMs);return durationMs;
   };
   for(let i=0;i<6;i++) await probe(i,Object.fromEntries(endpointPaths.map(path=>[path,[]])));
+  probePhase='baseline';
   const baselineStarted=performance.now();
   while(performance.now()-baselineStarted<60000) {baseline.push(await probe(baseline.length,baselineByEndpoint));await new Promise(resolve=>setTimeout(resolve,500));}
   await rpc('/observe/loaded');
-  const baseline95=[...baseline].sort((a,b)=>a-b)[Math.floor(baseline.length*.95)];
+  const baseline95=nearestRankPercentile(baseline,.95);
+  assert.notEqual(baseline95,null);
   let failingWindows=0;const windows=[];
   const uploadBytes=async(f,path,bytes,type)=>{ const response=await fetch(baseUrl+'/api/mydesk'+path,{method:'PUT',headers:{'x-school-id':f.schoolId,'content-type':type,authorization:`Bearer ${signUserToken({userId:f.teacherId,email:`${f.teacherId}@example.test`,authVersion:1})}`},body:bytes}); assert.equal(response.status,200); await response.arrayBuffer(); };
   const uploadPacket=async f=>{ let run=await createRun(f,[f.groupId],5,'discipline'); for(const source of sources) { const reservation=await request(f,`/imports/${run.id}/assets`,'POST',{clientRequestId:randomUUID(),filename:'synthetic-capacity',contentType:source.type,size:source.bytes.length,sha256:myDeskSha256(source.bytes)}); assert.equal(reservation.status,201); await uploadBytes(f,`/imports/${run.id}/assets/${reservation.data.asset.id}/content`,source.bytes,source.type); } run=await getRun(f,run.id); assert.equal(run.pageCount,20); return start(f,run); };
   const loaded=[]; let complete=false, operationFailure=null;
   const sampleApi=async()=>{ while(!complete) { loaded.push(await probe(loaded.length,loadedByEndpoint)); apiObservation.assertReady();
-      if(loaded.length%20===0){const recent=loaded.slice(-20).sort((a,b)=>a-b);const p95=recent[19];const exceeded=p95>baseline95*1.2;failingWindows=exceeded?failingWindows+1:0;windows.push({throughSample:loaded.length,p95Ms:p95,exceeded});if(failingWindows>=3){metrics.splitAbort={code:'SUSTAINED_API_P95_REGRESSION',baselineP95Ms:baseline95,thresholdMultiplier:1.2,windowSize:20,consecutiveWindows:3,windows};writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));process.exit(88);}}
+      if(loaded.length%20===0){const p95=nearestRankPercentile(loaded.slice(-20),.95);const exceeded=p95>baseline95*1.2;failingWindows=exceeded?failingWindows+1:0;windows.push({throughSample:loaded.length,p95Ms:p95,exceeded});if(failingWindows>=3){metrics.splitAbort={code:'SUSTAINED_API_P95_REGRESSION',baselineP95Ms:baseline95,thresholdMultiplier:1.2,windowSize:20,consecutiveWindows:3,windows};writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));process.exit(88);}}
       await new Promise(resolve=>setTimeout(resolve,500)); } };
+  probePhase='uploading';
   const health=sampleApi().catch(()=>{
     metrics.splitAbort={code:'API_OBSERVATION_FAILED'};
     writeFileSync('/app/evidence/split-metrics.json',JSON.stringify(metrics,null,2));
@@ -402,6 +411,7 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
   let finalRuns=[];
   try {
     const queued=await Promise.all(actors.map(uploadPacket));
+    probePhase='preparing';
     const processing=(async()=>{
       const results=await rpc('/initial',{runIds:queued.map(run=>run.id)});
       assert.equal(results.length,2);
@@ -417,6 +427,7 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
     const results=await Promise.allSettled([processing,...actors.map(ordinary)]);
     const failed=results.find(result=>result.status==='rejected'); if(failed) throw failed.reason;
     // The queued continuation rebuilds now use the unmodified global claim path.
+    probePhase='continuations';
     await rpc('/queued');
     finalRuns=await Promise.all(actors.map((f,index)=>getRun(f,queued[index].id)));
     for(const run of finalRuns) {
@@ -435,11 +446,12 @@ test('split topology maximum imports ordinary uploads and scheduler overlap', { 
     try { await health; metrics.workerObservation=await rpc('/observe/stop'); }
     finally { await apiObservation.stop(); }
   }
-  const p95=samples=>samples.sort((a,b)=>a-b)[Math.min(samples.length-1,Math.floor(samples.length*.95))];
+  const p95=samples=>nearestRankPercentile(samples,.95);
   const baselineP95=p95(baseline), loadedP95=p95(loaded);
   const endpointTimings=endpointPaths.map(path=>({path,baselineCount:baselineByEndpoint[path].length,loadedCount:loadedByEndpoint[path].length,baselineP95Ms:p95(baselineByEndpoint[path]),loadedP95Ms:p95(loadedByEndpoint[path])}));
   metrics.capacity={status:operationFailure?'failed':'completed',processingMs:performance.now()-started,packets:finalRuns.length,sourceFiles:10,inputBytes:104857600,pages:40,forms:100,continuationRegions:40,ordinaryUploads:4,provider:'synthetic transport through real image preparation/parser',routing:'actual createApp middleware/auth/routing; ephemeral bearer tokens',endpointTimings,baselineApi:{count:baseline.length,p95Ms:baselineP95},loadedApi:{count:loaded.length,p95Ms:loadedP95},apiP95ChangeFraction:loadedP95/baselineP95-1,topology:'Separate exact-image API and worker with inspected CPU/memory limits; disposable isolated Postgres',claimSetup:'actual global claim transactions for initial work and continuation rebuilds',productionReadiness:false};
   if(operationFailure) throw operationFailure;
+  probePhase='cleanup';
   for(let i=0;i<finalRuns.length;i++) { const response=await request(actors[i],`/imports/${finalRuns[i].id}`,'DELETE',{requestId:randomUUID(),revision:finalRuns[i].revision,protocolVersion:2}); assert.equal(response.status,200); }
   for(const {f,note} of ordinaryNotes) { const current=await request(f,`/notes/${note.id}`); const deleted=await request(f,`/notes/${note.id}`,'DELETE',{revision:current.data.note.revision}); assert.equal(deleted.status,200); }
   await cleanupMyDeskImports({database:fixtureDb,limit:200}); await cleanupMyDesk({database:fixtureDb,limit:200});
