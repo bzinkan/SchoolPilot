@@ -22,6 +22,9 @@ infrastructure; it does not mean the service should be running.
 `classpilot_turn_parked = true` keeps both nodes stopped. Status, restart and
 decommission procedures are in `CLASSPILOT_TURN_PARKING.md`. The sections
 below are retained as the historical provisioning and activation record.
+`SCHOOLPILOT_COMPETITIVE_ROADMAP.md` assigns the eventual decommission to Lane D
+(PR 19–21), and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md` lists every TURN resource
+with its protection status.
 
 ## Provisioning and activation boundary
 
