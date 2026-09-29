@@ -40,6 +40,7 @@ import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
+import { purgeExpiredPasspilotPassDenials } from "./passpilotRules.js";
 import {
   getStaffIdentityIntegrityScanIntervalMinutes,
   runStaffIdentityIntegrityScan,
@@ -330,9 +331,16 @@ export function startScheduler(socketIo: SocketServer | null = null) {
         }
       );
     }
+    // PassPilot rule denials: 400-day retention, checked hourly. Kept out of
+    // runHeavyJobsSerially and independent of PASSPILOT_RULES_MODE so rows
+    // written while the mode was on still expire after it is turned off.
+    if (tickCount % 60 === 0) {
+      scheduleLockedJob("purgePasspilotPassDenials", purgePasspilotPassDenials);
+    }
     // Fire and forget — runs through the mutex and dedicated pool
     scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
   }, 60 * 1000);
+  scheduleLockedJob("purgePasspilotPassDenials", purgePasspilotPassDenials);
   scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
@@ -2179,6 +2187,19 @@ async function purgeOldImportRuns() {
   } catch (err) {
     console.error("[ImportRuns] Retention purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldImportRuns" });
+  }
+}
+
+// PassPilot rule denial records are retained for 400 days (docs/PASSPILOT_RULES.md).
+async function purgePasspilotPassDenials() {
+  try {
+    const purged = await purgeExpiredPasspilotPassDenials(schedulerPool);
+    if (purged > 0) {
+      console.log(JSON.stringify({ event: "passpilot_pass_denials_purged", count: purged }));
+    }
+  } catch (err) {
+    console.error("[PassPilotRules] Denial retention purge failed");
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgePasspilotPassDenials" });
   }
 }
 

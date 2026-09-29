@@ -46,6 +46,19 @@ import {
   requirePassPilotRole,
 } from "../../services/passpilotAccess.js";
 import { isDatabaseErrorCode } from "../../util/databaseError.js";
+import { readPasspilotRulesMode } from "../../config/passpilotRulesMode.js";
+import { logAuditStrict } from "../../services/audit.js";
+import {
+  canOverridePasspilotRules,
+  isPasspilotRuleCode,
+  isPasspilotRuleError,
+  passpilotRuleOverrideAuditMetadata,
+  passpilotRuleTeacherResponse,
+  recordPasspilotRuleDenial,
+  withoutNullRuleOverride,
+  type PasspilotRuleCode,
+  type PasspilotRuleOutcome,
+} from "../../services/passpilotRules.js";
 
 const router = Router();
 
@@ -138,7 +151,7 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
       || "Former staff member";
 
     return {
-      ...pass,
+      ...withoutNullRuleOverride(pass),
       classId,
       className,
       class: classId
@@ -385,6 +398,25 @@ router.post("/", async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const role = await getRequestPassPilotRole(req, res);
 
+    // Issuance-rule override: read only while PASSPILOT_RULES_MODE is on, so
+    // the off path ignores the field exactly as the non-strict schema did.
+    let ruleOverride: PasspilotRuleCode | null = null;
+    if (readPasspilotRulesMode() === "on" && body.overrideRuleCode !== undefined) {
+      if (!isPasspilotRuleCode(body.overrideRuleCode)) {
+        return res.status(400).json({
+          error: "Choose a pass rule to override.",
+          code: "PASSPILOT_RULE_OVERRIDE_INVALID",
+        });
+      }
+      if (!canOverridePasspilotRules(role)) {
+        return res.status(403).json({
+          error: "Only administrators can override a pass rule.",
+          code: "PASSPILOT_RULE_OVERRIDE_FORBIDDEN",
+        });
+      }
+      ruleOverride = body.overrideRuleCode;
+    }
+
     // Verify student exists in school
     const student = await getStudentById(studentId);
     if (!student || student.schoolId !== schoolId || student.status !== "active") {
@@ -449,6 +481,7 @@ router.post("/", async (req, res, next) => {
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
     let pass;
+    const ruleOutcome: PasspilotRuleOutcome = {};
     try {
       const commonPass = {
           schoolId,
@@ -468,6 +501,9 @@ router.post("/", async (req, res, next) => {
             {
               actorUserId: req.authUser!.id,
               manager: isPassPilotManager(role),
+              issuanceChannel: "teacher",
+              ruleOverride,
+              ruleOutcome,
             }
           )
         : await createLegacyPass(
@@ -475,6 +511,9 @@ router.post("/", async (req, res, next) => {
             {
               actorUserId: req.authUser!.id,
               manager: isPassPilotManager(role),
+              issuanceChannel: "teacher",
+              ruleOverride,
+              ruleOutcome,
             }
           );
     } catch (err) {
@@ -483,9 +522,27 @@ router.post("/", async (req, res, next) => {
       if (isDatabaseErrorCode(err, "23505")) {
         return res.status(409).json({ error: "Student already has an active pass" });
       }
+      if (isPasspilotRuleError(err)) {
+        // The issuance transaction rolled back; record the denial separately.
+        await recordPasspilotRuleDenial(err.passpilotRule);
+        return res.status(409).json(passpilotRuleTeacherResponse(err, role));
+      }
       throw err;
     }
 
+    if (ruleOutcome.overridden) {
+      await recordPasspilotRuleDenial(ruleOutcome.overridden);
+      await logAuditStrict({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: role ?? undefined,
+        action: "passpilot.rule.override",
+        entityType: "pass",
+        entityId: pass.id,
+        metadata: passpilotRuleOverrideAuditMetadata(ruleOutcome.overridden),
+      });
+    }
     await recordPassTimeline(pass, "issued", req.authUser!.id);
     return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId) });
   } catch (err) {

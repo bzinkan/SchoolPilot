@@ -85,6 +85,12 @@ import {
 } from "../../services/passpilotKioskAuth.js";
 import { isDatabaseErrorCode } from "../../util/databaseError.js";
 import {
+  isPasspilotRuleError,
+  passpilotRuleKioskResponse,
+  recordPasspilotRuleDenial,
+  withoutNullRuleOverride,
+} from "../../services/passpilotRules.js";
+import {
   getPasspilotKioskClassRecord,
   getPasspilotKioskClassSource,
   recordPasspilotKioskQueryStatements,
@@ -983,6 +989,12 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
         return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId) });
       } catch (error) {
         if (isDatabaseErrorCode(error, "23505")) return res.status(409).json({ error: "Student already has an active pass" });
+        if (isPasspilotRuleError(error)) {
+          // Answer directly: a rule denial is an expected outcome, not a
+          // client_error alert, and the student-facing body stays generic.
+          await recordPasspilotRuleDenial(error.passpilotRule);
+          return res.status(409).json(passpilotRuleKioskResponse(error));
+        }
         throw error;
       }
     }
@@ -1111,6 +1123,10 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       // Drizzle may wrap the pg error (DrizzleQueryError with .cause).
       if (isDatabaseErrorCode(err, "23505")) {
         return res.status(409).json({ error: "Student already has an active pass" });
+      }
+      if (isPasspilotRuleError(err)) {
+        await recordPasspilotRuleDenial(err.passpilotRule);
+        return res.status(409).json(passpilotRuleKioskResponse(err));
       }
       throw err;
     }
@@ -1300,7 +1316,7 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
             classId,
             "students"
           );
-        const passMap = new Map(activePasses.map((pass) => [pass.studentId, pass]));
+        const passMap = new Map(activePasses.map((pass) => [pass.studentId, withoutNullRuleOverride(pass)]));
         const result = studentsList.map((student) => ({
           id: student.id,
           firstName: student.firstName,
