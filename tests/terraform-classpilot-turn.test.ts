@@ -407,3 +407,42 @@ test -f "$test_root/active"
     );
   });
 });
+
+describe("Legacy ClassPilot TURN parking contract", () => {
+  const production = readFileSync("infra/production.tfvars", "utf8");
+  const moduleVariables = readFileSync("infra/modules/turn/variables.tf", "utf8");
+  const parking = readFileSync("docs/CLASSPILOT_TURN_PARKING.md", "utf8");
+
+  it("retains the TURN resources while production keeps the legacy nodes parked on a pinned image", () => {
+    // Resource retention, not a running service.
+    assert.match(production, /^enable_classpilot_turn\s*=\s*true\s*$/m);
+    assert.match(production, /^classpilot_turn_parked\s*=\s*true\s*$/m);
+    assert.match(production, /^classpilot_turn_ami_id\s*=\s*"ami-052355af2a014bd2c"\s*$/m);
+    assert.match(root, /parked\s*=\s*var\.classpilot_turn_parked/);
+    assert.match(root, /ami_id\s*=\s*var\.classpilot_turn_ami_id/);
+  });
+
+  it("stops parked nodes through an explicit power-state resource that cannot replace them", () => {
+    assert.match(main, /resource "aws_ec2_instance_state" "turn"/);
+    assert.match(main, /instance_id\s*=\s*aws_instance\.turn\[each\.key\]\.id/);
+    assert.match(main, /state\s*=\s*var\.parked \? "stopped" : "running"/);
+    assert.match(main, /prevent_destroy\s*=\s*true/);
+    assert.doesNotMatch(main, /ignore_changes/);
+    assert.match(main, /ami\s*=\s*var\.ami_id != null \? var\.ami_id : one\(data\.aws_ssm_parameter\.ubuntu_ami\[\*\]\.value\)/);
+    assert.match(main, /count\s*=\s*var\.ami_id == null \? 1 : 0/);
+    assert.match(moduleVariables, /variable "parked"/);
+    assert.match(moduleVariables, /variable "ami_id"/);
+  });
+
+  it("documents parking as retention with a restart runbook and keeps capability activation separate", () => {
+    for (const heading of ["Current status", "Why", "Live View status", "Restart conditions", "Restart procedure", "Future decommission"]) {
+      assert.match(parking, new RegExp(`^## ${heading}`, "m"), `missing section ${heading}`);
+    }
+    assert.match(parking, /Legacy TURN is parked\/stopped/);
+    assert.doesNotMatch(parking, /TURN has been removed/);
+    assert.match(parking, /Never enable\s+`liveViewIceServersV1` because the nodes were restarted/);
+    assert.match(parking, /Stopped does not mean safe to delete/);
+    assert.match(turnOperations, /## Legacy ClassPilot TURN — Parked/);
+    assert.match(turnOperations, /superseded by parking/);
+  });
+});

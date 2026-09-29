@@ -92,12 +92,21 @@ anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter
 gemini_api_key_parameter_arn     = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/GEMINI_API_KEY"
 telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
 
-# ClassPilot TURN is part of the reviewed production baseline. Supply the
-# sensitive Let's Encrypt contact only through the private
+# Legacy ClassPilot TURN (built for the retired Live View architecture) is
+# PARKED. enable_classpilot_turn = true means Terraform retains the TURN
+# infrastructure; it does not mean TURN runs, that Live View is a product
+# feature, or that Present to Class will reuse these nodes. Both nodes are
+# stopped to remove idle EC2 cost; Elastic IPs, DNS, secret, security group and
+# IAM are retained for rollback. See docs/CLASSPILOT_TURN_PARKING.md.
+# Supply the sensitive Let's Encrypt contact only through the private
 # TF_VAR_classpilot_turn_tls_email process environment whenever a new saved
 # plan is created; saved-plan apply does not reread it. Never commit the address
 # to this file.
 enable_classpilot_turn = true
+classpilot_turn_parked = true
+# Verified on both nodes on 2026-09-28: Canonical
+# ubuntu-noble-24.04-amd64-server-20260714 (owner 099720109477).
+classpilot_turn_ami_id = "ami-052355af2a014bd2c"
 
 # Observed 121-table production baseline, verified 2026-09-28T18:27:19.9525541Z.
 # Preserve the exact runtime CSV from runtime-postflight.json, confirmed by

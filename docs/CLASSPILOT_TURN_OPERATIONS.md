@@ -8,6 +8,21 @@ advertised by the current student binding before credentials or telemetry are
 accepted. Chrome Web Store `2.7.1` being live on August 24, 2026 proves none of
 those TURN or managed-device gates by itself.
 
+## Legacy ClassPilot TURN — Parked
+
+Current decision (2026-09-28), superseding the Live View activation goals
+below: these coturn nodes were provisioned for the retired ClassPilot Live View
+architecture. Live View is no longer an active SchoolPilot product feature. Both
+instances are intentionally stopped to remove idle EC2 compute cost, while their
+network identity and configuration are retained for rollback and dependency
+verification. Present to Class will use a separately designed SFU media
+architecture and does not assume these nodes will be reused.
+`enable_classpilot_turn = true` currently means Terraform retains the
+infrastructure; it does not mean the service should be running.
+`classpilot_turn_parked = true` keeps both nodes stopped. Status, restart and
+decommission procedures are in `CLASSPILOT_TURN_PARKING.md`. The sections
+below are retained as the historical provisioning and activation record.
+
 ## Provisioning and activation boundary
 
 `infra/production.tfvars` enables TURN without storing the operator-owned TLS
@@ -31,7 +46,12 @@ gate, TURN module, ECS execution-role secret permission, and TURN outputs. It
 must not deploy an API/worker image, update a live ECS service, or activate a
 ClassPilot runtime profile.
 
-### Authorized one-time node-replacement exception (pending)
+### Authorized one-time node-replacement exception (pending; superseded by parking)
+
+Superseded on 2026-09-28: the nodes are parked and `aws_instance.turn` now has
+`prevent_destroy`. Executing this exception would first require a reviewed PR
+that removes that protection. The authorization record below is retained as
+history.
 
 On August 24, 2026, one narrow targeted repair was authorized for the already
 reviewed TURN module. It is pending execution and does not authorize a general
@@ -141,7 +161,9 @@ confirmations in `CLASSPILOT_2_7_1_RELEASE.md`. The final target has
 all nine repaired capabilities globally on, including
 `scopedAuthorityChecksV1` and its dependent `liveViewIceServersV1`, while
 `kioskLaunchTicketV1` stays off. Leaving Live View dark is temporary deployment
-or incident containment, not the final target.
+or incident containment, not the final target. *(Superseded 2026-09-28: Live
+View is retired as a product feature, so Live View staying dark is the current
+product decision, not temporary containment. See `CLASSPILOT_TURN_PARKING.md`.)*
 
 When the approved activation runs during the weekday 04:45–05:59 Eastern
 protected window, both Plan and Apply require

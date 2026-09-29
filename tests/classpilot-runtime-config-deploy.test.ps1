@@ -4244,8 +4244,15 @@ try {
     $productionVariables = Get-Content -LiteralPath (Join-Path $repositoryRoot "infra/production.tfvars") -Raw
     $terraformVariables = Get-Content -LiteralPath (Join-Path $repositoryRoot "infra/variables.tf") -Raw
     $turnOperations = Get-Content -LiteralPath (Join-Path $repositoryRoot "docs/CLASSPILOT_TURN_OPERATIONS.md") -Raw
+    # Resource retention, not a running service: enable_classpilot_turn=true
+    # keeps Terraform ownership of the legacy TURN infrastructure, while
+    # classpilot_turn_parked=true keeps both nodes stopped (Live View is retired).
     Assert-Condition ($productionVariables -cmatch '(?m)^enable_classpilot_turn\s*=\s*true\s*$') `
-        "The canonical production baseline must keep the reviewed TURN module enabled."
+        "The canonical production baseline must keep Terraform ownership of the legacy TURN resources."
+    Assert-Condition ($productionVariables -cmatch '(?m)^classpilot_turn_parked\s*=\s*true\s*$') `
+        "The canonical production baseline must keep the legacy TURN nodes parked (stopped)."
+    Assert-Condition ($productionVariables -cmatch '(?m)^classpilot_turn_ami_id\s*=\s*"ami-[0-9a-f]{8,17}"\s*$') `
+        "Production must pin the verified deployed TURN image so a moving AMI never replaces a node."
     Assert-Condition ($productionVariables -cnotmatch '(?m)^\s*classpilot_turn_tls_email\s*=') `
         "The operator-owned TURN TLS email must not be committed to production.tfvars."
     Assert-Condition ($terraformVariables -cmatch '(?s)variable\s+"classpilot_turn_tls_email"\s*\{.*?sensitive\s*=\s*true.*?\}') `

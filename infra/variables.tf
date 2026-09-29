@@ -421,6 +421,18 @@ variable "enable_classpilot_turn" {
   default     = false
 }
 
+variable "classpilot_turn_parked" {
+  description = "Keep the legacy coturn nodes stopped. enable_classpilot_turn=true only means Terraform retains the TURN resources; it does not mean TURN runs or that Live View is a product feature."
+  type        = bool
+  default     = false
+}
+
+variable "classpilot_turn_ami_id" {
+  description = "Pinned, verified AMI for the coturn nodes. null reads Canonical's moving Ubuntu parameter, for new environments only."
+  type        = string
+  default     = null
+}
+
 variable "classpilot_turn_tls_email" {
   description = "Operational email supplied to Let's Encrypt for TURN certificate renewal notices"
   type        = string
