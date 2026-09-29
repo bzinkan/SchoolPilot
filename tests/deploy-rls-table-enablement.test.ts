@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -33,6 +33,7 @@ const rlsRegistry = JSON.parse(
     studentInformationPostExpand: { count: number; tables: string[] };
     classpilotTeacherPreferencesPostExpand: { count: number; tables: string[] };
     importProcessingStagesPostExpand: { count: number; tables: string[] };
+    passpilotRulesPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -64,6 +65,27 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits exactly the four PassPilot rule tables on the verified 121-table serving baseline", () => {
+    const tables = rlsRegistry.reviewedEnablementRequests.passpilotRules;
+    assert.deepEqual(tables, ["passpilot_destination_policies", "passpilot_pass_limits", "passpilot_encounter_restrictions", "passpilot_pass_denials"]);
+    const previous = rlsRegistry.inventories.importProcessingStagesPostExpand.tables;
+    assert.equal(previous.length, 121);
+    const bundle = tables.join(",");
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table: bundle });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: structuredClone(api), containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) {
+      addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table: bundle });
+      assert.equal(environmentValue(candidate.taskDefinition, "RLS_ENABLED_TABLES"), [...previous, ...tables].join(","));
+      assert.equal(environmentValue(candidate.taskDefinition, "UNCHANGED"), "preserved");
+    }
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table: bundle, expectedPreviousTables: previous });
+    assert.deepEqual(environmentValue(api, "RLS_ENABLED_TABLES")?.split(","), rlsRegistry.inventories.passpilotRulesPostExpand.tables);
+    for (const invalid of [tables.slice(0, 3).join(","), [...tables].reverse().join(","), `${bundle},passpilot_pass_limits`])
+      assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: invalid }), /reviewed/);
+    for (const present of [tables.slice(0, 1), tables])
+      assert.throws(() => verifyLiveRlsEnablementSources({ apiTaskDefinition: taskDefinition("api", [...previous, ...present]), workerTaskDefinition: taskDefinition("scheduler-worker", [...previous, ...present]), table: bundle }), /already enabled/);
+  });
   it("admits only the durable import ledger while preserving the verified serving baseline", () => {
     const previous = rlsRegistry.inventories.classpilotTeacherPreferencesPostExpand.tables;
     const table = rlsRegistry.reviewedEnablementRequests.importProcessingStages.join(",");
@@ -235,6 +257,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.studentInformation,
       ...rlsRegistry.reviewedEnablementRequests.classpilotTeacherPreferences,
       ...rlsRegistry.reviewedEnablementRequests.importProcessingStages,
+      ...rlsRegistry.reviewedEnablementRequests.passpilotRules,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");

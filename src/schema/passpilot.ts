@@ -12,9 +12,30 @@ import {
   foreignKey,
   primaryKey,
   jsonb,
+  boolean,
 } from "drizzle-orm/pg-core";
 import { schools, users } from "./core.js";
 import { students } from "./students.js";
+
+// PassPilot issuance-rule vocabulary (PASSPILOT_RULES_MODE). The SQL CHECK
+// constraints in src/db/passpilotRulesMigration.ts use the same literals.
+export const PASSPILOT_RULE_CODES = [
+  "PASSPILOT_RULE_DAILY_LIMIT",
+  "PASSPILOT_RULE_PERIOD_LIMIT",
+  "PASSPILOT_RULE_DESTINATION_CAPACITY",
+  "PASSPILOT_RULE_ENCOUNTER",
+] as const;
+export type PasspilotRuleCode = (typeof PASSPILOT_RULE_CODES)[number];
+// Capacity applies to the enumerated destinations only; a free-text custom
+// destination has no shared room to fill.
+export const PASSPILOT_RULE_DESTINATIONS = [
+  "bathroom",
+  "nurse",
+  "office",
+  "counselor",
+  "other_classroom",
+] as const;
+export type PasspilotRuleDestination = (typeof PASSPILOT_RULE_DESTINATIONS)[number];
 
 // ============================================================================
 // Grades (classes / periods) - PassPilot
@@ -157,6 +178,8 @@ export const passes = pgTable(
     returnedAt: timestamp("returned_at"),
     issuedVia: text("issued_via").notNull().default("teacher"), // teacher | kiosk
     notes: text("notes"),
+    // Set only when an administrator overrode exactly one issuance rule.
+    ruleOverrideCode: text("rule_override_code").$type<PasspilotRuleCode>(),
   },
   (table) => [
     index("passes_kiosk_teacher_active_idx").on(table.schoolId, table.teacherId).where(sql`${table.status}='active' AND ${table.issuedVia}='kiosk'`),
@@ -184,6 +207,21 @@ export const passes = pgTable(
     check(
       "passes_single_class_source_check",
       sql`NOT (${table.gradeId} IS NOT NULL AND ${table.classpilotGroupId} IS NOT NULL)`
+    ),
+    // Issuance-rule counting reads: per-student daily/period counts and
+    // per-destination active capacity. Production builds both CONCURRENTLY
+    // (passpilotRulesIndexesMigration); the names must match that migration.
+    index("passes_school_student_issued_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.issuedAt
+    ),
+    index("passes_school_destination_active_idx")
+      .on(table.schoolId, table.destination)
+      .where(sql`${table.status} = 'active'`),
+    check(
+      "passes_rule_override_code_check",
+      sql`${table.ruleOverrideCode} IS NULL OR ${table.ruleOverrideCode} IN ('PASSPILOT_RULE_DAILY_LIMIT','PASSPILOT_RULE_PERIOD_LIMIT','PASSPILOT_RULE_DESTINATION_CAPACITY','PASSPILOT_RULE_ENCOUNTER')`
     ),
   ]
 );
@@ -342,3 +380,232 @@ export const passpilotTeacherKioskSettings = pgTable("passpilot_teacher_kiosk_se
   check("pp_teacher_kiosk_schedule_check", sql`jsonb_typeof(${table.schedule}) = 'object'`),
   check("pp_teacher_kiosk_mode_check", sql`${table.mode} IN ('manual','passpilot','classpilot')`),
   check("pp_teacher_kiosk_revision_check", sql`${table.revision} >= 0`)]);
+
+// ============================================================================
+// Issuance rules - PassPilot (PASSPILOT_RULES_MODE, default off)
+// ============================================================================
+// Tenant tables created by src/db/passpilotRulesMigration.ts. The Drizzle
+// declarations mirror every constraint and index by name because a pushed
+// table turns the migration's CREATE TABLE IF NOT EXISTS into a no-op.
+
+// One capacity policy per school and enumerated destination.
+export const passpilotDestinationPolicies = pgTable(
+  "passpilot_destination_policies",
+  {
+    schoolId: text("school_id").notNull(),
+    destination: text("destination").notNull().$type<PasspilotRuleDestination>(),
+    maxConcurrent: integer("max_concurrent").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [
+    primaryKey({
+      name: "passpilot_destination_policies_pkey",
+      columns: [table.schoolId, table.destination],
+    }),
+    foreignKey({
+      columns: [table.schoolId],
+      foreignColumns: [schools.id],
+      name: "pp_destination_policies_school_fk",
+    }),
+    check(
+      "pp_destination_policies_destination_check",
+      sql`${table.destination} IN ('bathroom','nurse','office','counselor','other_classroom')`
+    ),
+    check(
+      "pp_destination_policies_max_concurrent_check",
+      sql`${table.maxConcurrent} BETWEEN 1 AND 500`
+    ),
+  ]
+);
+
+export type PasspilotDestinationPolicy = typeof passpilotDestinationPolicies.$inferSelect;
+
+// A NULL student_id row is the school default; a student row overrides the
+// default field by field. At most one of each per school.
+export const passpilotPassLimits = pgTable(
+  "passpilot_pass_limits",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id"),
+    dailyLimit: integer("daily_limit"),
+    periodLimit: integer("period_limit"),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.schoolId],
+      foreignColumns: [schools.id],
+      name: "pp_pass_limits_school_fk",
+    }),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "pp_pass_limits_student_school_fk",
+    }).onDelete("cascade"),
+    check(
+      "pp_pass_limits_daily_check",
+      sql`${table.dailyLimit} IS NULL OR ${table.dailyLimit} BETWEEN 0 AND 50`
+    ),
+    check(
+      "pp_pass_limits_period_check",
+      sql`${table.periodLimit} IS NULL OR ${table.periodLimit} BETWEEN 0 AND 50`
+    ),
+    check(
+      "pp_pass_limits_any_limit_check",
+      sql`${table.dailyLimit} IS NOT NULL OR ${table.periodLimit} IS NOT NULL`
+    ),
+    uniqueIndex("pp_pass_limits_school_default_unique")
+      .on(table.schoolId)
+      .where(sql`${table.studentId} IS NULL`),
+    uniqueIndex("pp_pass_limits_school_student_unique")
+      .on(table.schoolId, table.studentId)
+      .where(sql`${table.studentId} IS NOT NULL`),
+  ]
+);
+
+export type PasspilotPassLimit = typeof passpilotPassLimits.$inferSelect;
+
+// Student pairs that may not hold overlapping active passes. The pair is
+// stored canonically (student_a_id < student_b_id under the C collation).
+export const passpilotEncounterRestrictions = pgTable(
+  "passpilot_encounter_restrictions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentAId: text("student_a_id").notNull(),
+    studentBId: text("student_b_id").notNull(),
+    reasonNote: text("reason_note"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by"),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.schoolId],
+      foreignColumns: [schools.id],
+      name: "pp_encounter_restrictions_school_fk",
+    }),
+    foreignKey({
+      columns: [table.schoolId, table.studentAId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "pp_encounter_restrictions_student_a_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.schoolId, table.studentBId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "pp_encounter_restrictions_student_b_fk",
+    }).onDelete("cascade"),
+    unique("pp_encounter_restrictions_pair_unique").on(
+      table.schoolId,
+      table.studentAId,
+      table.studentBId
+    ),
+    index("pp_encounter_restrictions_school_student_b_idx").on(
+      table.schoolId,
+      table.studentBId
+    ),
+    check(
+      "pp_encounter_restrictions_pair_order_check",
+      sql`${table.studentAId} COLLATE "C" < ${table.studentBId} COLLATE "C"`
+    ),
+    check(
+      "pp_encounter_restrictions_note_check",
+      sql`${table.reasonNote} IS NULL OR char_length(${table.reasonNote}) <= 500`
+    ),
+  ]
+);
+
+export type PasspilotEncounterRestriction = typeof passpilotEncounterRestrictions.$inferSelect;
+
+export type PasspilotRuleIssuanceChannel = "teacher" | "kiosk" | "ai";
+export type PasspilotRuleWindowKind = "day" | "bell_period" | "class_window" | "kiosk_block";
+// Counts and window labels only. Encounter denials store the restriction id,
+// never the other student's id or name.
+export type PasspilotRuleDenialDetails = {
+  count?: number;
+  limit?: number;
+  windowLabel?: string | null;
+  windowStartsAt?: string;
+  windowEndsAt?: string;
+  restrictionId?: string;
+};
+
+// Best-effort record of each rule denial (and of each administrator
+// override). Attribution columns mirror passes so later reports can apply the
+// pass-history scope. Purged after 400 days by purgePasspilotPassDenials.
+export const passpilotPassDenials = pgTable(
+  "passpilot_pass_denials",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    destination: text("destination").notNull(),
+    ruleCode: text("rule_code").notNull().$type<PasspilotRuleCode>(),
+    issuedVia: text("issued_via").notNull().$type<PasspilotRuleIssuanceChannel>(),
+    actorUserId: text("actor_user_id"),
+    teacherId: text("teacher_id"),
+    classSource: text("class_source").$type<"legacy_grades" | "classpilot_groups" | null>(),
+    gradeId: text("grade_id"),
+    classpilotGroupId: text("classpilot_group_id"),
+    supervisionContextId: text("supervision_context_id"),
+    issuingKioskSessionId: text("issuing_kiosk_session_id"),
+    windowKind: text("window_kind").$type<PasspilotRuleWindowKind | null>(),
+    details: jsonb("details").notNull().default(sql`'{}'::jsonb`).$type<PasspilotRuleDenialDetails>(),
+    overridden: boolean("overridden").notNull().default(false),
+    deniedAt: timestamp("denied_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.schoolId],
+      foreignColumns: [schools.id],
+      name: "pp_pass_denials_school_fk",
+    }),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "pp_pass_denials_student_school_fk",
+    }).onDelete("cascade"),
+    index("pp_pass_denials_school_denied_idx").on(table.schoolId, table.deniedAt),
+    index("pp_pass_denials_school_student_denied_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.deniedAt
+    ),
+    check(
+      "pp_pass_denials_destination_check",
+      sql`${table.destination} IN ('bathroom','nurse','office','counselor','other_classroom','custom')`
+    ),
+    check(
+      "pp_pass_denials_rule_code_check",
+      sql`${table.ruleCode} IN ('PASSPILOT_RULE_DAILY_LIMIT','PASSPILOT_RULE_PERIOD_LIMIT','PASSPILOT_RULE_DESTINATION_CAPACITY','PASSPILOT_RULE_ENCOUNTER')`
+    ),
+    check(
+      "pp_pass_denials_issued_via_check",
+      sql`${table.issuedVia} IN ('teacher','kiosk','ai')`
+    ),
+    check(
+      "pp_pass_denials_class_source_check",
+      sql`${table.classSource} IS NULL OR ${table.classSource} IN ('legacy_grades','classpilot_groups')`
+    ),
+    check(
+      "pp_pass_denials_single_class_check",
+      sql`NOT (${table.gradeId} IS NOT NULL AND ${table.classpilotGroupId} IS NOT NULL)`
+    ),
+    check(
+      "pp_pass_denials_window_kind_check",
+      sql`${table.windowKind} IS NULL OR ${table.windowKind} IN ('day','bell_period','class_window','kiosk_block')`
+    ),
+    check(
+      "pp_pass_denials_details_check",
+      sql`jsonb_typeof(${table.details}) = 'object'`
+    ),
+  ]
+);
+
+export type PasspilotPassDenial = typeof passpilotPassDenials.$inferSelect;
+export type InsertPasspilotPassDenial = typeof passpilotPassDenials.$inferInsert;

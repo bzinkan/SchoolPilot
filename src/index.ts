@@ -10,6 +10,11 @@ import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL } from "./db/classpilotTeacherPreferencesMigration.js";
 import { IMPORT_PROCESSING_STAGES_SQL } from "./db/importProcessingStagesMigration.js";
+import {
+  PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL,
+  PASSPILOT_RULES_SQL,
+  PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL,
+} from "./db/passpilotRulesMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { SHARED_TEACHING_RESOURCES_EXPAND_SQL } from "./db/sharedTeachingResourcesMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
@@ -4973,6 +4978,11 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_TEACHER_PREFERENCES_SCHEMA_SQL);
   await pool.query(IMPORT_PROCESSING_STAGES_SQL);
   await pool.query(SHARED_TEACHING_RESOURCES_EXPAND_SQL);
+  await pool.query(PASSPILOT_RULES_SQL);
+  // One CONCURRENTLY statement per query: a multi-statement string is a
+  // transaction block, which CREATE INDEX CONCURRENTLY rejects.
+  await pool.query(PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL);
+  await pool.query(PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL);
 
 }
 
