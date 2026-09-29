@@ -136,9 +136,11 @@ before this feature are the one admin-only `GET /api/passpilot/admin/rules` prob
 School Setup (which 404s) and nothing else: pass responses include
 `ruleOverrideCode` only for an overridden pass.
 
-There is no production setter in this release. The mode is changed only through the
-governed runtime-config activation (roadmap PR 1a), never by editing a task
-definition.
+This release adds no production setter. The mode is changed only through the governed
+product runtime tool, `scripts/deploy-product-runtime-config.ps1`
+(`docs/PRODUCT_RUNTIME_CONFIG_OPERATIONS.md`), never by editing a task definition. Its
+`passpilotRules` gate refuses `PASSPILOT_RULES_MODE=on` unless the live API and worker
+both have `RLS_GUC_ENABLED=true` and all four rule tables in `RLS_ENABLED_TABLES`.
 
 ## Release procedure (requires a separate deployment request)
 
@@ -163,9 +165,9 @@ definition.
 
 3. Publish the frontend after the backend is healthy. With the mode off, School Setup
    shows no Rules tab.
-4. A later governed activation sets `PASSPILOT_RULES_MODE=on`. A separate baseline
-   adoption change records the observed 125-table allowlist in
-   `infra/production.tfvars`.
+4. A later, separately approved run of `scripts/deploy-product-runtime-config.ps1`
+   sets `PASSPILOT_RULES_MODE=on` (Plan, then Apply). A separate baseline adoption
+   change records the observed 125-table allowlist in `infra/production.tfvars`.
 
 Rollback is `PASSPILOT_RULES_MODE=off` (or unset): evaluation stops, the router
 404s and the tab disappears. The tables, the column and the indexes stay; the
