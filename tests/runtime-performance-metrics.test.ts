@@ -46,8 +46,14 @@ describe("identifier-free runtime performance instrumentation", () => {
         Object.values(STUDENT_SIGN_IN_REASON_COUNTERS).reduce((sum, name) => sum + row.counters[name], 0),
         row.counters.studentSignInFailure,
       );
-      assert.deepEqual(row._aws.CloudWatchMetrics[0].Dimensions, [["Environment", "Service"]]);
-      assert.ok(row._aws.CloudWatchMetrics[0].Metrics.length <= 100);
+      // Only intervals where a counter moved declare CloudWatch metrics.
+      const moved = Object.values(row.counters as Record<string, number>).some((value) => value > 0);
+      if (moved) {
+        assert.deepEqual(row._aws.CloudWatchMetrics[0].Dimensions, [["Environment", "Service"]]);
+        assert.ok(row._aws.CloudWatchMetrics[0].Metrics.length <= 100);
+      } else {
+        assert.equal(row._aws, undefined);
+      }
     }
   });
 
@@ -87,5 +93,66 @@ describe("identifier-free runtime performance instrumentation", () => {
     now = 60_000;
     metrics.flush();
     assert.doesNotMatch(lines[0]!, /privateStudentCounter/);
+  });
+});
+
+type EmfDirective = {
+  Namespace: string;
+  Dimensions: string[][];
+  Metrics: Array<{ Name: string; Unit: string }>;
+};
+
+type SummaryRecord = {
+  _aws?: { Timestamp: number; CloudWatchMetrics: EmfDirective[] };
+  event: string;
+  counters: Record<string, number>;
+  [field: string]: unknown;
+};
+
+function declarationHarness() {
+  let now = 120_000;
+  const records: SummaryRecord[] = [];
+  const metrics = new RuntimePerformanceMetrics(
+    () => now,
+    (line) => { records.push(JSON.parse(line) as SummaryRecord); },
+  );
+  return { metrics, records, advance(ms: number) { now += ms; } };
+}
+
+describe("runtime performance CloudWatch metric declarations", () => {
+  it("declares only counters that moved and keeps every counter in the log record", () => {
+    const { metrics, records, advance } = declarationHarness();
+    metrics.recordCounter("studentSignInReasonPinMismatch", 2);
+    advance(60_000);
+    metrics.flush();
+
+    assert.equal(records.length, 1);
+    const [record] = records;
+    assert.equal(record?.event, "schoolpilot_runtime_performance_summary");
+    const directives = record?._aws?.CloudWatchMetrics ?? [];
+    assert.equal(directives.length, 1);
+    assert.equal(directives[0]?.Namespace, "SchoolPilot/RuntimePerformance");
+    assert.deepEqual(directives[0]?.Dimensions, [["Environment", "Service"]]);
+    assert.deepEqual(directives[0]?.Metrics, [{ Name: "RuntimeStudentSignInReasonPinMismatch", Unit: "Count" }]);
+    assert.equal(record?.RuntimeStudentSignInReasonPinMismatch, 2);
+    // Quiet counters stay observable in the log record as explicit zeros.
+    assert.equal(record?.counters.studentSignInReasonPinMismatch, 2);
+    assert.equal(record?.counters.poolAcquisitionFailure, 0);
+    assert.equal(record?.RuntimePoolAcquisitionFailure, 0);
+  });
+
+  it("writes a quiet interval as a plain log record with no metric declaration", () => {
+    const { metrics, records, advance } = declarationHarness();
+    metrics.recordCounter("poolAcquisitionSuccess");
+    advance(60_000);
+    metrics.flush();
+    advance(60_000);
+    metrics.flush();
+
+    assert.equal(records.length, 2);
+    assert.ok(records[0]?._aws);
+    assert.equal(records[1]?._aws, undefined);
+    assert.equal(records[1]?.event, "schoolpilot_runtime_performance_summary");
+    assert.equal(records[1]?.counters.poolAcquisitionSuccess, 0);
   });
 });

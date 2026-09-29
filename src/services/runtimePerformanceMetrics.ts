@@ -111,16 +111,22 @@ export class RuntimePerformanceMetrics {
       [`Runtime${name[0]!.toUpperCase()}${name.slice(1)}`, intervalCounters[name]]
     ));
     // Fixed aggregate fields only: no tenant, person, device, URL, token, or prompt labels.
-    // Every minute has zero-valued failure counters, so quiet health remains observable.
+    // Every minute's log record still carries every counter, zeros included, so quiet
+    // health remains observable in CloudWatch Logs. Only counters that moved in the
+    // interval are declared as CloudWatch metrics: an all-zero series is billed like an
+    // active one, and the alarm on this namespace treats missing data as not breaching.
+    const activeMetricNames = Object.keys(metricValues).filter((name) => (metricValues[name] ?? 0) > 0);
     this.sink(JSON.stringify({
-      _aws: {
-        Timestamp: this.intervalStartedAt,
-        CloudWatchMetrics: [{
-          Namespace: "SchoolPilot/RuntimePerformance",
-          Dimensions: [["Environment", "Service"]],
-          Metrics: Object.keys(metricValues).map((Name) => ({ Name, Unit: "Count" })),
-        }],
-      },
+      ...(activeMetricNames.length > 0 ? {
+        _aws: {
+          Timestamp: this.intervalStartedAt,
+          CloudWatchMetrics: [{
+            Namespace: "SchoolPilot/RuntimePerformance",
+            Dimensions: [["Environment", "Service"]],
+            Metrics: activeMetricNames.map((Name) => ({ Name, Unit: "Count" })),
+          }],
+        },
+      } : {}),
       event: "schoolpilot_runtime_performance_summary",
       intervalSeconds: (endedAt - this.intervalStartedAt) / 1_000,
       intervalStartedAtUtc: new Date(this.intervalStartedAt).toISOString(),

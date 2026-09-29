@@ -249,6 +249,11 @@ Counters (same `SchoolPilot/RuntimePerformance` interval record):
 `studentSignInPinVerifyEncrypted`, `studentSignInPinVerifyBcrypt` (legacy
 fallback; should trend to zero), `studentSignInPinBackfillFailed`.
 
+Every interval's `schoolpilot_runtime_performance_summary` log record carries
+every counter, zeros included. A counter becomes a CloudWatch metric datapoint
+only in intervals where it moved, so a missing datapoint means zero; query the
+log record when you need explicit zeros.
+
 Kill switch: `CLASSPILOT_PIN_VERIFY_MODE=bcrypt` on the API task forces the
 legacy bcrypt path for every request without a code change. Remove the variable
 to return to the encrypted path.
