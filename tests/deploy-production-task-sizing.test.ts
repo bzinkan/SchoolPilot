@@ -152,6 +152,14 @@ describe("reviewed production task sizing", () => {
     assert.match(mydesk, /'api', \$script:ApiTaskCpu, \$script:ApiTaskMemory\)/);
     assert.match(mydesk, /'scheduler-worker', \$script:WorkerTaskCpu, \$script:WorkerTaskMemory\)/);
     assert.match(mydesk, /-ExpectedCpu \$entry\[3\] -ExpectedMemory \$entry\[4\]/);
+
+    const product = read("scripts/deploy-product-runtime-config.ps1");
+    assert.match(product, /'api', \$script:ApiTaskCpu, \$script:ApiTaskMemory\)/);
+    assert.match(product, /'scheduler-worker', \$script:WorkerTaskCpu, \$script:WorkerTaskMemory\)/);
+    assert.match(product, /-ExpectedCpu \$entry\[3\] -ExpectedMemory \$entry\[4\]/);
+    // Candidate and recovery revisions are exact-size clones of those sources.
+    assert.equal(count(product, /-ExpectedCpu \$task\.cpu -ExpectedMemory \$task\.memory/), 4);
+    assert.doesNotMatch(product, /-Expected(?:Cpu|Memory) "\d+"/);
   });
 
   it("requires the same sizes in the rollback and load-test tools", () => {
