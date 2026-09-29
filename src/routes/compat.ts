@@ -99,8 +99,10 @@ import {
   type ClasspilotRealtimeStatus,
 } from "../services/classpilotRealtimeStatus.js";
 import {
+  CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON,
   classpilotControlStateHasLateSignInOrigin,
   classpilotControlStateHasAuthRelevantRestriction,
+  classpilotControlStateRequiresPreciseCapability,
   classpilotRestrictionAuthCapabilityRequired,
   classpilotRestrictionAuthProjectionRevision,
   effectiveClasspilotControlEnforcementHealth,
@@ -1342,6 +1344,13 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         : scopedRealtimeClassroomState
           ? visibleRealtime?.enforcementHealth || "unsupported"
           : "unsupported";
+      // Forward-compatibility fence: this image withholds a precise-resource
+      // snapshot from every client, so that reason outranks sign-in-safe support.
+      const preciseRestrictionUpdateRequired = enforcementHealth === "unsupported"
+        && !!visibleOwnedDesiredControlState
+        && classpilotControlStateRequiresPreciseCapability(
+          visibleOwnedDesiredControlState.desiredState
+        );
       const publicExtensionContract = publicClasspilotExtensionContract(capabilityRealtime);
       const publicClassroomControls = normalizeClasspilotPublicClassroomControls(
         scheduledContext && !scopedRealtimeClassroomState ? undefined : visibleRealtime?.classroomControls
@@ -1383,9 +1392,11 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         classroomState: authoritativeClassroomState,
         enforcementHealth,
         appliedFabRevision: visibleRealtime?.appliedFabRevision ?? null,
-        enforcementUnavailableReason: restrictionAuthUpdateRequired
+        enforcementUnavailableReason: restrictionAuthUpdateRequired && !preciseRestrictionUpdateRequired
           ? "Extension update required for sign-in-safe Waypoint or Flight Path"
-          : null,
+          : preciseRestrictionUpdateRequired
+            ? CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON
+            : null,
         restrictionAuthState: visibleRealtime?.restrictionAuthState || "idle",
         realtimeBinding: !delegatedAway
           ? classpilotPublicRealtimeBinding(snapshot?.studentSessionId)

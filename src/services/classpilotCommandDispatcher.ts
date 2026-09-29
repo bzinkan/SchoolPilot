@@ -42,6 +42,9 @@ import {
 } from "./classpilotRealtimeStatus.js";
 import {
   applyClasspilotControlCommand,
+  CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON,
+  classpilotCommandPayloadRequiresPreciseCapability,
+  classpilotControlStateRequiresPreciseCapability,
   classpilotRestrictionAuthPassThroughEnvelope,
   emptyClasspilotRestrictions,
   normalizeClasspilotRestrictions,
@@ -622,6 +625,28 @@ function restrictionsAreEmpty(value: unknown): boolean {
     && restrictions.temporaryAllows.length === 0;
 }
 
+/**
+ * Persist each withheld target's real reason, grouped per reason. The storage
+ * default describes a binding race, which misreports capability and authority
+ * withholds to the teacher.
+ */
+async function markClasspilotCommandTargetsUnavailableWithReasons(
+  commandId: string,
+  studentIds: Iterable<string>,
+  reasons: ReadonlyMap<string, string>
+): Promise<void> {
+  const studentIdsByReason = new Map<string | undefined, string[]>();
+  for (const studentId of studentIds) {
+    const reason = reasons.get(studentId);
+    const group = studentIdsByReason.get(reason);
+    if (group) group.push(studentId);
+    else studentIdsByReason.set(reason, [studentId]);
+  }
+  for (const [reason, groupStudentIds] of studentIdsByReason) {
+    await markClasspilotCommandTargetsUnavailable(commandId, groupStudentIds, reason);
+  }
+}
+
 export function classpilotCommandFrameForTarget(
   schoolId: string,
   commandType: string,
@@ -643,6 +668,17 @@ export function classpilotCommandFrameForTarget(
   classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
   commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
 ) {
+  // Forward-compatibility fence: this image never frames precise restriction
+  // resources. A bare legacy frame would hand ClassPilot 2.9.x `data.url` as a
+  // whole-domain Waypoint (or an empty Flight Path), and a snapshot carrying
+  // them is withheld by the delivery serializer. executeClasspilotCommand marks
+  // such targets unavailable before any frame is requested.
+  if (
+    classpilotCommandPayloadRequiresPreciseCapability(commandType, payload)
+    || classpilotControlStateRequiresPreciseCapability(classroomState)
+  ) {
+    return null;
+  }
   const deliveryEnvelope = {
     deliveryPolicy: delivery.policy,
     expiresAt: delivery.expiresAt?.toISOString() || null,
@@ -1167,6 +1203,21 @@ export async function executeClasspilotCommand(options: {
       }
     }
   }
+  if (classpilotCommandPayloadRequiresPreciseCapability(options.commandType, commandPayload)) {
+    // Forward-compatibility fence: live payloads are strict-validated, so only a
+    // replayed payload written by a newer server can carry precise restriction
+    // resources here. Refuse every target before the command row exists, so no
+    // desired state, legacy projection or bare frame is ever produced from it.
+    for (let index = 0; index < effectiveTargets.length; index++) {
+      effectiveTargets[index] = {
+        ...effectiveTargets[index]!,
+        available: false,
+        stateAuthorized: false,
+        lateSignInEligible: false,
+        unavailableReason: CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON,
+      };
+    }
+  }
   const issuedAt = new Date();
   const currentPageRequested = options.commandType === "lock-screen"
     && commandPayload.url === "CURRENT_URL";
@@ -1549,6 +1600,18 @@ export async function executeClasspilotCommand(options: {
           : "Extension capability status unavailable; reconnect or update before applying this restriction"
       );
     }
+    // A snapshot this image cannot deliver must never leave its live target
+    // "requested": mark it unavailable with the capability it needs.
+    if (
+      delivered.withheldReason === "precise_restriction_capability_required"
+      && target?.studentSessionId
+      && target.deviceId
+    ) {
+      authUnavailableReasons.set(
+        row.studentId,
+        CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON
+      );
+    }
     if (delivered.withheldReason === "late_sign_in_capability_required") {
       recordHeartbeatHotPathCounter("lateSignInDeliveryWithheld");
     } else if (delivered.classroomState?.deliveryContext?.lateSignInRestrictionSso) {
@@ -1591,9 +1654,10 @@ export async function executeClasspilotCommand(options: {
     );
   }
   if (authUnavailableReasons.size > 0) {
-    await markClasspilotCommandTargetsUnavailable(
+    await markClasspilotCommandTargetsUnavailableWithReasons(
       created.id,
-      [...authUnavailableReasons.keys()]
+      authUnavailableReasons.keys(),
+      authUnavailableReasons
     );
     committedTargets = committedTargets.map((target) => (
       authUnavailableReasons.has(target.studentId)
@@ -1718,7 +1782,9 @@ export async function executeClasspilotCommand(options: {
                       ? capabilitySnapshot
                         ? "Extension update required for sign-in-safe Waypoint or Flight Path"
                         : "Extension capability status unavailable; reconnect or update before applying this restriction"
-                      : "Extension update required before applying this restriction",
+                      : delivered.withheldReason === "precise_restriction_capability_required"
+                        ? CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON
+                        : "Extension update required before applying this restriction",
                     authCapabilityMissing:
                       delivered.withheldReason === "restriction_auth_update_required",
                   };
@@ -1913,9 +1979,10 @@ export async function executeClasspilotCommand(options: {
         })
     );
     if (lateAuthUnavailableStudentIds.size > 0) {
-      await markClasspilotCommandTargetsUnavailable(
+      await markClasspilotCommandTargetsUnavailableWithReasons(
         created.id,
-        [...lateAuthUnavailableStudentIds]
+        lateAuthUnavailableStudentIds,
+        authUnavailableReasons
       );
       committedTargets = committedTargets.map((target) => (
         lateAuthUnavailableStudentIds.has(target.studentId)
