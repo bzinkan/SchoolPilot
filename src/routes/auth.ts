@@ -15,6 +15,7 @@ import {
   GoogleIdentityConflictError,
   resolveGoogleLoginIdentity,
   MicrosoftIdentityConflictError,
+  anySchoolUsesMicrosoftSignIn,
   resolveMicrosoftLoginIdentity,
 } from "../services/storage.js";
 import type { User } from "../schema/core.js";
@@ -718,13 +719,18 @@ router.get("/google/callback", async (req, res, next) => {
 // Microsoft Entra ID Login
 // ============================================================================
 
-// GET /api/auth/providers — which OAuth sign-in buttons the login page offers
-router.get("/providers", (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  return res.json({
-    google: Boolean(process.env.GOOGLE_CLIENT_ID),
-    microsoft: getMicrosoftSignInConfig() !== null,
-  });
+// GET /api/auth/providers — which OAuth sign-in buttons the login page offers.
+// Microsoft stays hidden until a school turns it on, so no one sees a dead button.
+router.get("/providers", async (_req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      google: Boolean(process.env.GOOGLE_CLIENT_ID),
+      microsoft: getMicrosoftSignInConfig() !== null && (await anySchoolUsesMicrosoftSignIn()),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // GET /api/auth/microsoft — Initiate Microsoft Entra ID OIDC login (web only)

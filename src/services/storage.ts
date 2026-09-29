@@ -531,6 +531,15 @@ export async function getUserByMicrosoftId(
   return user;
 }
 
+export async function anySchoolUsesMicrosoftSignIn(): Promise<boolean> {
+  const [school] = await db
+    .select({ id: schools.id })
+    .from(schools)
+    .where(and(eq(schools.microsoftSignInEnabled, true), isNull(schools.deletedAt)))
+    .limit(1);
+  return Boolean(school);
+}
+
 export type MicrosoftLoginResolution =
   | { status: "no_account" }
   | { status: "not_allowed"; user: User }

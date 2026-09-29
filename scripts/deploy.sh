@@ -16,6 +16,9 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --enable-rls-table passpilot_grade_students
 #                                       # One reviewed release only; add one tenant table without changing the master switch or existing entries
+#   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --enable-microsoft-sign-in <entra-application-client-id>
+#                                       # One release only; add MICROSOFT_CLIENT_ID and the MICROSOFT_CLIENT_SECRET SSM reference (later deploys carry both)
 #   ./scripts/deploy.sh production --backend --apply-staff-identity-contracts
 #                                       # Stage-five migration-only one-off; reuse the exact serving main image and atomically apply staff contracts
 #   ./scripts/deploy.sh production --backend --activate-emergency \
@@ -62,6 +65,7 @@ SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
 CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION=false
 ENABLE_RLS_TABLE=""
+ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID=""
 APPLY_STAFF_IDENTITY_CONTRACTS=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
@@ -117,6 +121,12 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--enable-rls-table requires a reviewed table name"; exit 1; }
       [[ -z "$ENABLE_RLS_TABLE" ]] || { echo "--enable-rls-table may be specified only once"; exit 1; }
       ENABLE_RLS_TABLE="$2"
+      shift 2
+      ;;
+    --enable-microsoft-sign-in)
+      [[ $# -ge 2 ]] || { echo "--enable-microsoft-sign-in requires the Entra application (client) ID"; exit 1; }
+      [[ -z "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" ]] || { echo "--enable-microsoft-sign-in may be specified only once"; exit 1; }
+      ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID="$2"
       shift 2
       ;;
     --apply-staff-identity-contracts)
@@ -1681,7 +1691,7 @@ runtime_securestring_preflight() {
     const sets = JSON.parse(process.env.PARAMETER_SETS_JSON || "[]");
     if (!Array.isArray(sets) || sets.some((set) => !Array.isArray(set))) process.exit(1);
     const unique = [...new Set(sets.flat())];
-    if (unique.length < 10 || unique.length > 14) process.exit(1);
+    if (unique.length < 10 || unique.length > 15) process.exit(1);
     process.stdout.write(JSON.stringify(unique));
   '); then
     error "The runtime-secret preflight produced an unexpected parameter-name set."
@@ -1951,6 +1961,29 @@ validate_rls_table_enablement_mode() {
         -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
         "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
     error "--enable-rls-table is a one-release production --backend migration flag and cannot be combined with frontend, same-image, capacity, observation, or rehearsal modes."
+    return 1
+  fi
+}
+
+validate_microsoft_sign_in_enablement_mode() {
+  if [[ -z "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" ]]; then
+    return 0
+  fi
+  if ! node "$SCRIPT_DIR/enable-microsoft-sign-in-runtime.mjs" validate-request \
+      --client-id "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID"; then
+    error "--enable-microsoft-sign-in needs the lowercase Entra application (client) ID."
+    return 1
+  fi
+  if [[ "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ||
+        "$CONFIRM_PROTECTED_WINDOW_PRODUCTION_MUTATION" == true ||
+        "$APPLY_STAFF_IDENTITY_CONTRACTS" == true ||
+        -n "$SAME_IMAGE_NETWORKING_STAGE" ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+        "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    error "--enable-microsoft-sign-in is a one-release --backend flag and cannot be combined with frontend, protected-window, staff-identity, same-image, capacity, observation, or rehearsal modes."
     return 1
   fi
 }
@@ -3831,6 +3864,27 @@ preflight_rls_table_enablement_sources() {
   success "Reviewed RLS allowlist delta: +${ENABLE_RLS_TABLE} (master remains true; no existing table changes)"
 }
 
+preflight_microsoft_sign_in_secret() {
+  if [[ -z "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" ]]; then
+    return 0
+  fi
+  local parameter_type
+  if ! parameter_type=$(aws ssm describe-parameters \
+      --parameter-filters "Key=Name,Option=Equals,Values=/${PROJECT}/${ENV}/MICROSOFT_CLIENT_SECRET" \
+      --query 'Parameters[0].Type' \
+      --output text \
+      --region "$REGION" \
+      --no-cli-pager); then
+    error "Could not read the MICROSOFT_CLIENT_SECRET parameter metadata."
+    return 1
+  fi
+  if [[ "${parameter_type%$'\r'}" != "SecureString" ]]; then
+    error "Store /${PROJECT}/${ENV}/MICROSOFT_CLIENT_SECRET as an SSM SecureString before enabling Microsoft sign-in."
+    return 1
+  fi
+  success "Microsoft sign-in delta: client ${ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID} with the /${PROJECT}/${ENV}/MICROSOFT_CLIENT_SECRET SecureString"
+}
+
 register_classpilot_candidate_worker_task_definition() {
   info "Rendering scheduler worker task definition for the inactive candidate..."
   if ! describe_exact_classpilot_candidate_task_definition \
@@ -3963,6 +4017,34 @@ verify_registered_rls_table_enablement_candidates() {
     return 1
   fi
   success "Registered RLS allowlists verified: +${ENABLE_RLS_TABLE} on API, emergency API, and scheduler worker"
+}
+
+verify_registered_microsoft_sign_in_candidates() {
+  if [[ -z "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" ]]; then
+    return 0
+  fi
+  local label arn container registered
+  for label in standard-api emergency-api scheduler-worker; do
+    case "$label" in
+      standard-api) arn="$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN"; container=api ;;
+      emergency-api) arn="$EMERGENCY_TASK_DEF_ARN"; container=api ;;
+      scheduler-worker) arn="$WORKER_CANDIDATE_TASK_DEF"; container=scheduler-worker ;;
+    esac
+    registered=".microsoft-${label}-registered.json"
+    if ! describe_exact_classpilot_candidate_task_definition "$arn" "$registered" ||
+      ! node "$SCRIPT_DIR/enable-microsoft-sign-in-runtime.mjs" verify \
+        --task-definition "$registered" \
+        --container "$container" \
+        --client-id "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" \
+        --region "$REGION" --account-id "$ACCOUNT_ID" \
+        --project "$PROJECT" --environment "$ENV"; then
+      rm -f "$registered"
+      error "The registered ${label} candidate did not carry the reviewed Microsoft sign-in settings."
+      return 1
+    fi
+    rm -f "$registered"
+  done
+  success "Registered Microsoft sign-in settings verified on API, emergency API, and scheduler worker"
 }
 
 verify_classpilot_rehearsed_candidates() {
@@ -5954,6 +6036,7 @@ info "Frontend:   $DEPLOY_FRONTEND"
 info "Emergency API: $ACTIVATE_EMERGENCY (${REVIEWED_API_TASK_CPU} CPU / ${REVIEWED_API_TASK_MEMORY} MiB)"
 info "Worker size:   ${REVIEWED_WORKER_TASK_CPU} CPU / ${REVIEWED_WORKER_TASK_MEMORY} MiB"
 info "RLS table:  ${ENABLE_RLS_TABLE:-unchanged}"
+info "Microsoft sign-in: ${ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID:-unchanged}"
 info "Staff identity contracts: $APPLY_STAFF_IDENTITY_CONTRACTS"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
@@ -5974,6 +6057,9 @@ if ! validate_protected_window_production_mutation_mode; then
   exit 1
 fi
 if ! validate_rls_table_enablement_mode; then
+  exit 1
+fi
+if ! validate_microsoft_sign_in_enablement_mode; then
   exit 1
 fi
 if ! validate_staff_identity_contract_rollout_mode; then
@@ -6169,6 +6255,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   else
   resolve_classpilot_candidate_source_task_definitions
   preflight_rls_table_enablement_sources
+  preflight_microsoft_sign_in_secret
 
   if [[ -n "$IMMUTABLE_IMAGE_DIGEST" ]]; then
     info "Verifying the green CI image tag and digest in ECR..."
@@ -6331,6 +6418,17 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       exit 1
     fi
   fi
+  if [[ -n "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" ]]; then
+    if ! node "$SCRIPT_DIR/enable-microsoft-sign-in-runtime.mjs" add \
+        --task-definition .taskdef-new.json \
+        --container api \
+        --client-id "$ENABLE_MICROSOFT_SIGN_IN_CLIENT_ID" \
+        --region "$REGION" --account-id "$ACCOUNT_ID" \
+        --project "$PROJECT" --environment "$ENV"; then
+      error "The API candidate could not apply the Microsoft sign-in delta."
+      exit 1
+    fi
+  fi
   if ! assert_rendered_task_size_not_reduced .taskdef-new.json .taskdef-current.json \
       api "standard API candidate"; then
     exit 1
@@ -6427,6 +6525,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
   register_classpilot_candidate_worker_task_definition
   verify_registered_rls_table_enablement_candidates
+  verify_registered_microsoft_sign_in_candidates
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
         "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
     verify_classpilot_rehearsed_candidates

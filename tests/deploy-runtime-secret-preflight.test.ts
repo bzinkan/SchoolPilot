@@ -84,17 +84,18 @@ describe("runtime SecureString reference validation", () => {
     assert.equal(OPTIONAL_RUNTIME_PARAMETERS.has("OPENAI_API_KEY"), false);
   });
 
-  it("validates Anthropic, Gemini, Telegram, and the previous encryption key only when configured", () => {
+  it("validates Anthropic, Gemini, Telegram, the previous encryption key, and Microsoft sign-in only when configured", () => {
     const names = validateTaskSecretReferences(taskSecrets({ optional: true }), context);
 
-    assert.equal(names.length, 14);
+    assert.equal(names.length, 15);
     assert.deepEqual(
-      names.slice(-4),
+      names.slice(-5),
       [
         parameterPath("ANTHROPIC_API_KEY"),
         parameterPath("GEMINI_API_KEY"),
         parameterPath("TELEGRAM_BOT_TOKEN"),
         parameterPath("GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS"),
+        parameterPath("MICROSOFT_CLIENT_SECRET"),
       ]
     );
   });
@@ -189,7 +190,7 @@ describe("runtime SecureString reference validation", () => {
 });
 
 describe("redacted SSM metadata validation", () => {
-  it("accepts the exact 14-name metadata set across SSM's ten-name batches", () => {
+  it("accepts the exact 15-name metadata set across SSM's ten-name batches", () => {
     const names = validateTaskSecretReferences(taskSecrets({ optional: true }), context);
     const count = validateSsmMetadataBatches(
       [
@@ -200,7 +201,7 @@ describe("redacted SSM metadata validation", () => {
       context
     );
 
-    assert.equal(count, 14);
+    assert.equal(count, 15);
   });
 
   it("rejects invalid names, types, versions, ARNs, duplicates, and omissions", () => {
@@ -336,7 +337,7 @@ describe("backend deploy integration", () => {
     assert.match(functionBody, /services=\("\$SERVICE" "\$WORKER_SERVICE"\)/);
     assert.match(functionBody, /containers=\("api" "scheduler-worker"\)/);
     assert.match(functionBody, /services\[0\]\.taskDefinition/);
-    assert.match(functionBody, /unique\.length > 14/);
+    assert.match(functionBody, /unique\.length > 15/);
   });
 
   it("executes the active two-service contract successfully against redacted mock metadata", () => {
@@ -430,7 +431,7 @@ runtime_securestring_preflight
           const end = args.findIndex((arg, index) => index >= start && arg.startsWith("--"));
           return args.slice(start, end).length;
         }),
-        [10, 4]
+        [10, 5]
       );
       assert.ok(ssmCalls.every((args) => args.includes("--no-with-decryption")));
       assert.equal(

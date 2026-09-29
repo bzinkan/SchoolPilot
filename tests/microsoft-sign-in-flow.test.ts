@@ -242,14 +242,29 @@ after(async () => {
 });
 
 describe("Microsoft sign-in", () => {
-  it("advertises Microsoft only while the app registration is configured", async () => {
-    assert.deepEqual((await requestJson("GET", "/auth/providers")).body?.microsoft, true);
+  it("advertises Microsoft only while configured and turned on for at least one school", async () => {
+    assert.equal((await requestJson("GET", "/auth/providers")).body?.microsoft, true);
+
     delete process.env.MICROSOFT_CLIENT_SECRET;
     try {
-      assert.deepEqual((await requestJson("GET", "/auth/providers")).body?.microsoft, false);
+      assert.equal((await requestJson("GET", "/auth/providers")).body?.microsoft, false);
       assert.equal((await realFetch(`${baseUrl}/auth/microsoft`, { redirect: "manual" })).status, 503);
     } finally {
       process.env.MICROSOFT_CLIENT_SECRET = "flow-test-client-secret";
+    }
+
+    await db.execute(sql`UPDATE schools SET microsoft_sign_in_enabled = false WHERE id = ${microsoftSchool.id}`);
+    try {
+      const others = await db.execute(sql`
+        SELECT 1 FROM schools WHERE microsoft_sign_in_enabled AND deleted_at IS NULL LIMIT 1
+      `);
+      assert.equal(
+        (await requestJson("GET", "/auth/providers")).body?.microsoft,
+        others.rows.length > 0,
+        "with no school using Microsoft sign-in the login page must not offer it"
+      );
+    } finally {
+      await db.execute(sql`UPDATE schools SET microsoft_sign_in_enabled = true WHERE id = ${microsoftSchool.id}`);
     }
   });
 

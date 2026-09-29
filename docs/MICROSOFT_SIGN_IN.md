@@ -23,19 +23,28 @@ Do this once, in Schoolpilot's own Microsoft tenant (not a school's).
 6. **Token configuration → Add optional claim → ID → email**, so tokens carry the user's email address.
 7. **API permissions**: keep the delegated Microsoft Graph `User.Read` default. The app requests only `openid profile email` at sign-in and never calls Microsoft Graph.
 
-## Production wiring (separate change)
+## Production wiring
 
-The code ships dark: without both variables, `/api/auth/providers` reports `microsoft: false`, the button stays hidden, and `/api/auth/microsoft` answers 503.
+The code ships dark. `/api/auth/providers` reports `microsoft: true` only when both variables are set **and** at least one school has Microsoft sign-in on. Until then the button stays hidden. Without the variables, `/api/auth/microsoft` answers 503.
 
 To turn it on in production:
 
-1. Create the SSM SecureString for the client secret, following the same naming as `GOOGLE_CLIENT_SECRET`.
-2. Add `MICROSOFT_CLIENT_SECRET` to the application secret list and `MICROSOFT_CLIENT_ID` as a plain variable in `infra/modules/ecs/main.tf`, update `infra/tests/secret_state_detachment.tftest.hcl`, and apply through the detached-secret Terraform process in CLAUDE.md.
-3. Deploy the backend.
+1. Store the client secret as the SSM SecureString `/schoolpilot/production/MICROSOFT_CLIENT_SECRET`. Do this yourself, and never paste the secret into a chat, file or commit.
+2. Run the next backend deploy with the one-release flag and the application (client) ID:
 
-Create the parameter **before** the task definition references it: ECS cannot start a task whose secret parameter is missing.
+   ```bash
+   ./scripts/deploy.sh production --backend --activate-emergency --enable-microsoft-sign-in <client-id>
+   ```
 
-Check it worked: `GET https://school-pilot.net/api/auth/providers` returns `"microsoft": true`.
+   The deploy then:
+   - checks, without decrypting, that the parameter is a SecureString;
+   - adds `MICROSOFT_CLIENT_ID` and the `MICROSOFT_CLIENT_SECRET` reference to the rendered API revision (the emergency API and scheduler worker inherit both);
+   - verifies all three registered revisions before any service changes.
+3. Omit the flag on later deploys. They clone the serving revisions, so both settings carry forward, and the runtime-secret preflight validates the secret with the others.
+
+Check it worked: `GET https://school-pilot.net/api/auth/providers` returns `"microsoft": true` once a school has it turned on.
+
+The Terraform ECS module does not declare these two settings yet. Adopting them into the Terraform baseline is a separate, later change, as for the RLS allowlist.
 
 ## Turning it on for a school
 
