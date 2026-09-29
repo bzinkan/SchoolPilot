@@ -17,7 +17,7 @@ describe("canonical production Terraform profile", () => {
       enable_nat_gateway: "true",
       route53_measure_latency: "true",
       db_instance_class: '"db.t4g.medium"',
-      redis_node_type: '"cache.t4g.small"',
+      redis_node_type: '"cache.t4g.micro"',
       waf_rate_rule_action: '"block"',
     } as const;
 

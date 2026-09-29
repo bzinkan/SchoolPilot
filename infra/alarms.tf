@@ -895,3 +895,134 @@ resource "aws_cloudwatch_metric_alarm" "synthetic_public_health" {
     HealthCheckId = aws_route53_health_check.schoolpilot_public_health[0].id
   }
 }
+
+# ----------------------------------------------------------------------------
+# Running-task and service-health alarms without Container Insights
+# ----------------------------------------------------------------------------
+# AWS/ECS publishes one CPUUtilization sample per running task per minute at no
+# charge, so its SampleCount is the running-task count (verified against
+# Container Insights RunningTaskCount on 2026-09-28: 97.9% API and 99.8% worker
+# minute agreement; every difference was an extra task during a deploy overlap,
+# never a missing one).
+resource "aws_cloudwatch_metric_alarm" "api_tasks_running" {
+  alarm_name          = "${local.alarm_prefix}-api-tasks-running"
+  alarm_description   = "No API ECS task is running (AWS/ECS CPUUtilization sample count)."
+  namespace           = "AWS/ECS"
+  metric_name         = "CPUUtilization"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  evaluation_periods  = 2
+  period              = 60
+  statistic           = "SampleCount"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  dimensions = {
+    ClusterName = module.ecs.cluster_name
+    ServiceName = module.ecs.service_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_tasks_running" {
+  alarm_name          = "${local.alarm_prefix}-worker-tasks-running"
+  alarm_description   = "No scheduler worker ECS task is running (AWS/ECS CPUUtilization sample count)."
+  namespace           = "AWS/ECS"
+  metric_name         = "CPUUtilization"
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  evaluation_periods  = 2
+  period              = 60
+  statistic           = "SampleCount"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+
+  dimensions = {
+    ClusterName = module.ecs.cluster_name
+    ServiceName = module.ecs.worker_service_name
+  }
+}
+
+# The API desired-versus-running shortfall has no free metric. ECS reports the
+# failures behind a shortfall as service events: EventBridge copies them into a
+# log group, a metric filter counts them, and a standard alarm notifies the
+# existing alert topic (whose policy is not managed here and is not changed).
+resource "aws_cloudwatch_log_group" "ecs_service_events" {
+  name              = "/aws/events/${local.name}-ecs-service-events"
+  retention_in_days = 30
+}
+
+data "aws_iam_policy_document" "ecs_service_events_delivery" {
+  statement {
+    sid     = "EventBridgeEcsServiceEventsDelivery"
+    actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
+    }
+
+    resources = ["${aws_cloudwatch_log_group.ecs_service_events.arn}:*"]
+  }
+}
+
+resource "aws_cloudwatch_log_resource_policy" "ecs_service_events" {
+  policy_name     = "${local.name}-ecs-service-events"
+  policy_document = data.aws_iam_policy_document.ecs_service_events_delivery.json
+}
+
+resource "aws_cloudwatch_event_rule" "ecs_service_impaired" {
+  name        = "${local.name}-ecs-service-impaired"
+  description = "ECS task start, placement, configuration and deployment failures in the production cluster."
+
+  event_pattern = jsonencode({
+    source        = ["aws.ecs"]
+    "detail-type" = ["ECS Service Action", "ECS Deployment State Change"]
+    resources = [{
+      prefix = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/"
+    }]
+    detail = {
+      eventName = [
+        "SERVICE_TASK_START_IMPAIRED",
+        "SERVICE_TASK_PLACEMENT_FAILURE",
+        "SERVICE_TASK_CONFIGURATION_FAILURE",
+        "SERVICE_DEPLOYMENT_FAILED",
+      ]
+    }
+  })
+}
+
+resource "aws_cloudwatch_event_target" "ecs_service_impaired" {
+  rule = aws_cloudwatch_event_rule.ecs_service_impaired.name
+  arn  = aws_cloudwatch_log_group.ecs_service_events.arn
+
+  depends_on = [aws_cloudwatch_log_resource_policy.ecs_service_events]
+}
+
+resource "aws_cloudwatch_log_metric_filter" "ecs_service_impaired" {
+  name           = "${local.name}-ecs-service-impaired"
+  log_group_name = aws_cloudwatch_log_group.ecs_service_events.name
+  pattern        = "{ ($.detail.eventName = \"SERVICE_TASK_START_IMPAIRED\") || ($.detail.eventName = \"SERVICE_TASK_PLACEMENT_FAILURE\") || ($.detail.eventName = \"SERVICE_TASK_CONFIGURATION_FAILURE\") || ($.detail.eventName = \"SERVICE_DEPLOYMENT_FAILED\") }"
+
+  metric_transformation {
+    name      = "ServiceImpairedEvents"
+    namespace = "SchoolPilot/ECS"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "ecs_service_impaired" {
+  alarm_name          = "${local.alarm_prefix}-ecs-service-impaired"
+  alarm_description   = "ECS reported a task that cannot start, be placed or configured, or a failed deployment, for the API or scheduler worker."
+  namespace           = "SchoolPilot/ECS"
+  metric_name         = "ServiceImpairedEvents"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = 1
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
+}

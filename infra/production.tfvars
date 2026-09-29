@@ -23,9 +23,12 @@ db_max_allocated_storage = 1000
 db_name                  = "schoolpilot"
 db_username              = "schoolpilot"
 
-# Redis — staged value: switch to cache.t4g.micro only after the manual snapshot,
-# 800-device load, endurance, and subsequent automated-snapshot gates pass.
-redis_node_type     = "cache.t4g.small"
+# Redis — cache.t4g.micro since 2026-09-28 on Brian's cost instruction, after a
+# manual snapshot and on live school-year evidence (peak 1.35% memory, 3% engine
+# CPU, 46 connections on cache.t4g.small). The runbook's 800-device load and
+# endurance gates were not run; the capacity campaign that owns them is paused.
+# Rollback: set cache.t4g.small and apply (apply_immediately is true).
+redis_node_type     = "cache.t4g.micro"
 redis_replica_count = 0
 
 # ECS — scheduler work remains isolated; API runs single-task in pilot mode
@@ -60,8 +63,10 @@ worker_cpu            = 512
 worker_memory         = 1024
 db_pool_max           = 16
 scheduler_db_pool_max = 5
-# Staged value: switch to false only after five stable live school days.
-enable_container_insights = true
+# Disabled 2026-09-28, after more than five stable live school days. The free
+# AWS/ECS sample-count alarms and the ECS service-event alarm in alarms.tf
+# replace the Container Insights running-task alarms.
+enable_container_insights = false
 
 # Shared-school-IP WAF capacity: device ingest is isolated from all other API traffic.
 waf_api_rate_limit           = 50000
