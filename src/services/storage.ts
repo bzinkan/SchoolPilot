@@ -73,6 +73,22 @@ import {
   getStaffAssignmentIntegrityIssues,
 } from "./staffAssignmentLifecycle.js";
 import { lockStaffAssignmentLifecycleSchool } from "./staffAssignmentLifecycleLock.js";
+import {
+  canChangeSharedResourceVisibility,
+  canEditSharedResource,
+  canMarkSharedResourceOfficial,
+  canViewSharedResource,
+  cloneBlockListInsert,
+  cloneFlightPathInsert,
+  isTeachingResourceOwner,
+  nextTeachingResourcePublication,
+  teachingResourceChangeRequiresStrictAudit,
+  teachingResourceOwnerName,
+  type TeachingResourceActor,
+  type TeachingResourcePublication,
+  type TeachingResourceViewer,
+  type TeachingResourceVisibility,
+} from "./teachingResourceLibrary.js";
 import { CoverageDeletionError, touchCoverageGroups, assertCoverageAssignmentReview, type CoverageAssignmentReview } from "./classpilotCoverageDeletion.js";
 import { touchCoverageCategories } from "./classpilotCoverageCategoryVersions.js";
 import { preserveManualRosterMemberships } from "./rosterManualOwnership.js";
@@ -18310,10 +18326,16 @@ export async function createFlightPath(
   });
 }
 
+/**
+ * With an actor (the Flight Path and Block List routes), authorization is
+ * re-checked on the locked row and privileged changes are audited in the same
+ * transaction, so an audit failure rolls the change back.
+ */
 export async function updateFlightPath(
   id: string,
   schoolId: string,
-  data: Partial<InsertFlightPath>
+  data: Partial<InsertFlightPath>,
+  actor?: TeachingResourceActor
 ): Promise<FlightPath | undefined> {
   return db.transaction(async (tx) => {
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
@@ -18328,6 +18350,7 @@ export async function updateFlightPath(
       .limit(1)
       .for("update");
     if (!existing) return undefined;
+    if (actor) assertTeachingResourceEditable(existing, actor, "Flight path");
     const nextTeacherId = Object.prototype.hasOwnProperty.call(data, "teacherId")
       ? data.teacherId ?? null
       : existing.teacherId;
@@ -18343,22 +18366,368 @@ export async function updateFlightPath(
       .set({ ...data, schoolId })
       .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
       .returning();
+    if (fp && actor && teachingResourceChangeRequiresStrictAudit(existing, actor.actorId)) {
+      await tx.insert(auditLogs).values(teachingResourceAuditRow({
+        schoolId,
+        actor,
+        action: "classpilot.flight_path.updated",
+        entityType: "flight_path",
+        entityId: fp.id,
+        entityName: fp.flightPathName,
+        changes: {
+          fields: Object.keys(data).sort(),
+          before: { flightPathName: existing.flightPathName, allowedDomainCount: existing.allowedDomains?.length ?? 0 },
+          after: { flightPathName: fp.flightPathName, allowedDomainCount: fp.allowedDomains?.length ?? 0 },
+        },
+        metadata: teachingResourceAuditContext(existing, actor),
+      }));
+    }
     return fp;
   });
 }
 
-export async function deleteFlightPath(id: string, schoolId: string): Promise<boolean> {
+export async function deleteFlightPath(
+  id: string,
+  schoolId: string,
+  actor?: TeachingResourceActor
+): Promise<boolean> {
   return db.transaction(async (tx) => {
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
       tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
       schoolId
     );
     if (!lifecycleLocked) return false;
+    let existing: FlightPath | undefined;
+    if (actor) {
+      [existing] = await tx
+        .select()
+        .from(flightPaths)
+        .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+        .limit(1)
+        .for("update");
+      if (!existing) return false;
+      assertTeachingResourceEditable(existing, actor, "Flight path");
+    }
     const result = await tx
       .delete(flightPaths)
       .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)));
-    return (result.rowCount ?? 0) > 0;
+    const deleted = (result.rowCount ?? 0) > 0;
+    if (deleted && existing && actor && teachingResourceChangeRequiresStrictAudit(existing, actor.actorId)) {
+      await tx.insert(auditLogs).values(teachingResourceAuditRow({
+        schoolId,
+        actor,
+        action: "classpilot.flight_path.deleted",
+        entityType: "flight_path",
+        entityId: existing.id,
+        entityName: existing.flightPathName,
+        changes: { before: { flightPathName: existing.flightPathName, allowedDomainCount: existing.allowedDomains?.length ?? 0 } },
+        metadata: teachingResourceAuditContext(existing, actor),
+      }));
+    }
+    return deleted;
   });
+}
+
+// ============================================================================
+// ClassPilot - School Library (shared and official Flight Paths / Block Lists)
+// ============================================================================
+
+function teachingResourceError(message: string, status: number, code: string): Error {
+  return Object.assign(new Error(message), { status, code, expose: true });
+}
+
+/** 404 for an item the caller may not manage; 403 when an owner edits an official item. */
+function assertTeachingResourceEditable(
+  row: TeachingResourcePublication,
+  actor: TeachingResourceViewer,
+  label: "Flight path" | "Block list"
+): void {
+  if (canEditSharedResource(row, actor)) return;
+  if (isTeachingResourceOwner(row, actor.actorId) && row.official) {
+    throw teachingResourceError(
+      `Official ${label === "Flight path" ? "Flight Paths" : "Block Lists"} are managed by administrators. Copy it to make your own version.`,
+      403,
+      "OFFICIAL_RESOURCE_ADMIN_ONLY"
+    );
+  }
+  throw teachingResourceError(`${label} not found`, 404, "TEACHING_RESOURCE_NOT_FOUND");
+}
+
+function teachingResourceAuditContext(
+  row: TeachingResourcePublication,
+  actor: TeachingResourceViewer
+): Record<string, unknown> {
+  return {
+    ownerId: row.teacherId,
+    visibility: row.visibility,
+    official: row.official,
+    actorIsOwner: isTeachingResourceOwner(row, actor.actorId),
+  };
+}
+
+function teachingResourceAuditRow(entry: {
+  schoolId: string;
+  actor: TeachingResourceActor;
+  action: string;
+  entityType: "flight_path" | "block_list";
+  entityId: string;
+  entityName: string;
+  changes: unknown;
+  metadata?: unknown;
+}): typeof auditLogs.$inferInsert {
+  return {
+    schoolId: entry.schoolId,
+    userId: entry.actor.actorId,
+    userEmail: entry.actor.userEmail ?? null,
+    userRole: entry.actor.userRole ?? null,
+    action: entry.action,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    entityName: entry.entityName,
+    changes: entry.changes,
+    metadata: entry.metadata ?? null,
+  };
+}
+
+function libraryPublishedSql(
+  visibility: typeof flightPaths.visibility | typeof blockLists.visibility,
+  official: typeof flightPaths.official | typeof blockLists.official
+): SQL {
+  // Same predicate as the *_school_library_idx partial indexes.
+  return sql`(${visibility} = 'school' OR ${official})`;
+}
+
+function activeSchoolMemberSql(schoolId: SQLWrapper | string): SQL {
+  return sql`EXISTS (
+    SELECT 1 FROM ${schoolMemberships}
+    WHERE ${schoolMemberships.userId} = ${users.id}
+      AND ${schoolMemberships.schoolId} = ${schoolId}
+      AND ${schoolMemberships.status} = 'active'
+  )`;
+}
+
+export type LibraryFlightPathRow = { flightPath: FlightPath; ownerName: string | null };
+export type LibraryBlockListRow = { blockList: BlockList; ownerName: string | null };
+
+/**
+ * The School Library for one member: shared and official Flight Paths in the
+ * school that the member does not own. The owner's name is resolved only while
+ * the owner is an active member of this school.
+ */
+export async function getLibraryFlightPathsForSchool(
+  schoolId: string,
+  excludeTeacherId: string
+): Promise<LibraryFlightPathRow[]> {
+  const rows = await db
+    .select({
+      flightPath: flightPaths,
+      ownerDisplayName: users.displayName,
+      ownerFirstName: users.firstName,
+      ownerLastName: users.lastName,
+    })
+    .from(flightPaths)
+    .leftJoin(users, and(eq(users.id, flightPaths.teacherId), activeSchoolMemberSql(flightPaths.schoolId)))
+    .where(and(
+      eq(flightPaths.schoolId, schoolId),
+      libraryPublishedSql(flightPaths.visibility, flightPaths.official),
+      sql`${flightPaths.teacherId} IS DISTINCT FROM ${excludeTeacherId}`
+    ))
+    .orderBy(desc(flightPaths.official), asc(flightPaths.flightPathName), asc(flightPaths.id));
+  return rows.map((row) => ({
+    flightPath: row.flightPath,
+    ownerName: teachingResourceOwnerName({
+      displayName: row.ownerDisplayName,
+      firstName: row.ownerFirstName,
+      lastName: row.ownerLastName,
+    }),
+  }));
+}
+
+/**
+ * Apply-time lookup with the School Library on: the caller's own Flight Path,
+ * or any shared or official Flight Path in the same school.
+ */
+export async function getApplicableFlightPathById(
+  flightPathId: string,
+  schoolId: string,
+  actorId: string
+): Promise<FlightPath | undefined> {
+  const [fp] = await db
+    .select()
+    .from(flightPaths)
+    .where(and(
+      eq(flightPaths.id, flightPathId),
+      eq(flightPaths.schoolId, schoolId),
+      or(eq(flightPaths.teacherId, actorId), libraryPublishedSql(flightPaths.visibility, flightPaths.official))
+    ))
+    .limit(1);
+  return fp;
+}
+
+/** Display name of an item owner who is an active member of the school, else null. */
+export async function getTeachingResourceOwnerName(
+  schoolId: string,
+  teacherId: string | null
+): Promise<string | null> {
+  if (!teacherId) return null;
+  const [owner] = await db
+    .select({ displayName: users.displayName, firstName: users.firstName, lastName: users.lastName })
+    .from(users)
+    .where(and(eq(users.id, teacherId), activeSchoolMemberSql(schoolId)))
+    .limit(1);
+  return teachingResourceOwnerName(owner);
+}
+
+async function lockTeachingResourceSchool(
+  tx: unknown,
+  schoolId: string,
+  label: "Flight path" | "Block list"
+): Promise<void> {
+  const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
+    tx as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
+    schoolId
+  );
+  if (!lifecycleLocked) throw teachingResourceError(`${label} not found`, 404, "TEACHING_RESOURCE_NOT_FOUND");
+}
+
+function assertVisibilityChangeAllowed(
+  row: TeachingResourcePublication,
+  actor: TeachingResourceViewer,
+  visibility: TeachingResourceVisibility,
+  label: "Flight path" | "Block list"
+): void {
+  if (!(actor.isAdmin || canViewSharedResource(row, actor.actorId))) {
+    throw teachingResourceError(`${label} not found`, 404, "TEACHING_RESOURCE_NOT_FOUND");
+  }
+  if (canChangeSharedResourceVisibility(row, actor, visibility)) return;
+  const plural = label === "Flight path" ? "Flight Paths" : "Block Lists";
+  if (isTeachingResourceOwner(row, actor.actorId) && row.official) {
+    throw teachingResourceError(`Official ${plural} are managed by administrators.`, 403, "OFFICIAL_RESOURCE_ADMIN_ONLY");
+  }
+  throw teachingResourceError(
+    `Only the owner can share this ${label === "Flight path" ? "Flight Path" : "Block List"} with the school.`,
+    403,
+    "SHARED_RESOURCE_OWNER_REQUIRED"
+  );
+}
+
+function assertOfficialChangeAllowed(
+  row: TeachingResourcePublication,
+  actor: TeachingResourceViewer,
+  official: boolean,
+  label: "Flight path" | "Block list"
+): void {
+  if (!actor.isAdmin) {
+    throw teachingResourceError("Only administrators can mark items official.", 403, "OFFICIAL_RESOURCE_ADMIN_ONLY");
+  }
+  if (canMarkSharedResourceOfficial(row, actor, official)) return;
+  const noun = label === "Flight path" ? "Flight Path" : "Block List";
+  throw teachingResourceError(
+    `This ${noun} is private to its owner. The owner must share it with the school first, or copy it to your own ${noun}s and mark the copy official.`,
+    409,
+    "SHARED_RESOURCE_NOT_SHARED"
+  );
+}
+
+/** Owner shares or unshares a Flight Path; audited in the same transaction. */
+export async function setFlightPathVisibility(
+  id: string,
+  schoolId: string,
+  change: { visibility: TeachingResourceVisibility; actor: TeachingResourceActor }
+): Promise<FlightPath> {
+  return db.transaction(async (tx) => {
+    await lockTeachingResourceSchool(tx, schoolId, "Flight path");
+    const [existing] = await tx
+      .select()
+      .from(flightPaths)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) throw teachingResourceError("Flight path not found", 404, "TEACHING_RESOURCE_NOT_FOUND");
+    assertVisibilityChangeAllowed(existing, change.actor, change.visibility, "Flight path");
+    if (existing.visibility === change.visibility) return existing;
+    const next = nextTeachingResourcePublication(existing, { visibility: change.visibility }, change.actor.actorId, new Date());
+    const [updated] = await tx
+      .update(flightPaths)
+      .set(next)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .returning();
+    await tx.insert(auditLogs).values(teachingResourceAuditRow({
+      schoolId,
+      actor: change.actor,
+      action: "classpilot.flight_path.visibility_changed",
+      entityType: "flight_path",
+      entityId: existing.id,
+      entityName: existing.flightPathName,
+      changes: {
+        before: { visibility: existing.visibility, official: existing.official },
+        after: { visibility: next.visibility, official: next.official },
+      },
+      metadata: teachingResourceAuditContext(existing, change.actor),
+    }));
+    return updated!;
+  });
+}
+
+/** Administrator marks or unmarks a Flight Path official; audited in the same transaction. */
+export async function setFlightPathOfficial(
+  id: string,
+  schoolId: string,
+  change: { official: boolean; actor: TeachingResourceActor }
+): Promise<FlightPath> {
+  return db.transaction(async (tx) => {
+    await lockTeachingResourceSchool(tx, schoolId, "Flight path");
+    const [existing] = await tx
+      .select()
+      .from(flightPaths)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) throw teachingResourceError("Flight path not found", 404, "TEACHING_RESOURCE_NOT_FOUND");
+    assertOfficialChangeAllowed(existing, change.actor, change.official, "Flight path");
+    if (existing.official === change.official) return existing;
+    const next = nextTeachingResourcePublication(existing, { official: change.official }, change.actor.actorId, new Date());
+    const [updated] = await tx
+      .update(flightPaths)
+      .set(next)
+      .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
+      .returning();
+    await tx.insert(auditLogs).values(teachingResourceAuditRow({
+      schoolId,
+      actor: change.actor,
+      action: "classpilot.flight_path.official_changed",
+      entityType: "flight_path",
+      entityId: existing.id,
+      entityName: existing.flightPathName,
+      changes: {
+        before: { visibility: existing.visibility, official: existing.official },
+        after: { visibility: next.visibility, official: next.official },
+      },
+      metadata: teachingResourceAuditContext(existing, change.actor),
+    }));
+    return updated!;
+  });
+}
+
+/**
+ * Copy a Flight Path the caller can see into a new private Flight Path owned
+ * by the caller. Returns undefined when the source is missing or not visible.
+ * createFlightPath re-checks that the caller is active teaching staff here.
+ */
+export async function copyFlightPathToTeacher(
+  sourceId: string,
+  schoolId: string,
+  actor: TeachingResourceViewer
+): Promise<{ source: FlightPath; copy: FlightPath } | undefined> {
+  const source = await getFlightPathById(sourceId, schoolId);
+  if (!source || !(actor.isAdmin || canViewSharedResource(source, actor.actorId))) return undefined;
+  const ownPaths = await getFlightPathsByTeacherAndSchool(actor.actorId, schoolId);
+  const copy = await createFlightPath(cloneFlightPathInsert(source, {
+    schoolId,
+    teacherId: actor.actorId,
+    existingNames: ownPaths.map((path) => path.flightPathName),
+  }));
+  return { source, copy };
 }
 
 // ============================================================================
@@ -18436,7 +18805,8 @@ export async function createBlockList(
 export async function updateBlockList(
   id: string,
   schoolId: string,
-  data: Partial<InsertBlockList>
+  data: Partial<InsertBlockList>,
+  actor?: TeachingResourceActor
 ): Promise<BlockList | undefined> {
   return db.transaction(async (tx) => {
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
@@ -18451,6 +18821,7 @@ export async function updateBlockList(
       .limit(1)
       .for("update");
     if (!existing) return undefined;
+    if (actor) assertTeachingResourceEditable(existing, actor, "Block list");
     const nextTeacherId = data.teacherId ?? existing.teacherId;
     await assertActiveClasspilotTeacherMembership(
       nextTeacherId,
@@ -18462,22 +18833,211 @@ export async function updateBlockList(
       .set({ ...data, schoolId })
       .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
       .returning();
+    if (bl && actor && teachingResourceChangeRequiresStrictAudit(existing, actor.actorId)) {
+      await tx.insert(auditLogs).values(teachingResourceAuditRow({
+        schoolId,
+        actor,
+        action: "classpilot.block_list.updated",
+        entityType: "block_list",
+        entityId: bl.id,
+        entityName: bl.name,
+        changes: {
+          fields: Object.keys(data).sort(),
+          before: { name: existing.name, blockedDomainCount: existing.blockedDomains?.length ?? 0 },
+          after: { name: bl.name, blockedDomainCount: bl.blockedDomains?.length ?? 0 },
+        },
+        metadata: teachingResourceAuditContext(existing, actor),
+      }));
+    }
     return bl;
   });
 }
 
-export async function deleteBlockList(id: string, schoolId: string): Promise<boolean> {
+export async function deleteBlockList(
+  id: string,
+  schoolId: string,
+  actor?: TeachingResourceActor
+): Promise<boolean> {
   return db.transaction(async (tx) => {
     const lifecycleLocked = await lockStaffAssignmentLifecycleSchool(
       tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0],
       schoolId
     );
     if (!lifecycleLocked) return false;
+    let existing: BlockList | undefined;
+    if (actor) {
+      [existing] = await tx
+        .select()
+        .from(blockLists)
+        .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+        .limit(1)
+        .for("update");
+      if (!existing) return false;
+      assertTeachingResourceEditable(existing, actor, "Block list");
+    }
     const result = await tx
       .delete(blockLists)
       .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)));
-    return (result.rowCount ?? 0) > 0;
+    const deleted = (result.rowCount ?? 0) > 0;
+    if (deleted && existing && actor && teachingResourceChangeRequiresStrictAudit(existing, actor.actorId)) {
+      await tx.insert(auditLogs).values(teachingResourceAuditRow({
+        schoolId,
+        actor,
+        action: "classpilot.block_list.deleted",
+        entityType: "block_list",
+        entityId: existing.id,
+        entityName: existing.name,
+        changes: { before: { name: existing.name, blockedDomainCount: existing.blockedDomains?.length ?? 0 } },
+        metadata: teachingResourceAuditContext(existing, actor),
+      }));
+    }
+    return deleted;
   });
+}
+
+/** The School Library's shared and official Block Lists not owned by the member. */
+export async function getLibraryBlockListsForSchool(
+  schoolId: string,
+  excludeTeacherId: string
+): Promise<LibraryBlockListRow[]> {
+  const rows = await db
+    .select({
+      blockList: blockLists,
+      ownerDisplayName: users.displayName,
+      ownerFirstName: users.firstName,
+      ownerLastName: users.lastName,
+    })
+    .from(blockLists)
+    .leftJoin(users, and(eq(users.id, blockLists.teacherId), activeSchoolMemberSql(blockLists.schoolId)))
+    .where(and(
+      eq(blockLists.schoolId, schoolId),
+      libraryPublishedSql(blockLists.visibility, blockLists.official),
+      sql`${blockLists.teacherId} IS DISTINCT FROM ${excludeTeacherId}`
+    ))
+    .orderBy(desc(blockLists.official), asc(blockLists.name), asc(blockLists.id));
+  return rows.map((row) => ({
+    blockList: row.blockList,
+    ownerName: teachingResourceOwnerName({
+      displayName: row.ownerDisplayName,
+      firstName: row.ownerFirstName,
+      lastName: row.ownerLastName,
+    }),
+  }));
+}
+
+/** Apply-time lookup with the School Library on: own, shared or official. */
+export async function getApplicableBlockListById(
+  blockListId: string,
+  schoolId: string,
+  actorId: string
+): Promise<BlockList | undefined> {
+  const [bl] = await db
+    .select()
+    .from(blockLists)
+    .where(and(
+      eq(blockLists.id, blockListId),
+      eq(blockLists.schoolId, schoolId),
+      or(eq(blockLists.teacherId, actorId), libraryPublishedSql(blockLists.visibility, blockLists.official))
+    ))
+    .limit(1);
+  return bl;
+}
+
+/** Owner shares or unshares a Block List; audited in the same transaction. */
+export async function setBlockListVisibility(
+  id: string,
+  schoolId: string,
+  change: { visibility: TeachingResourceVisibility; actor: TeachingResourceActor }
+): Promise<BlockList> {
+  return db.transaction(async (tx) => {
+    await lockTeachingResourceSchool(tx, schoolId, "Block list");
+    const [existing] = await tx
+      .select()
+      .from(blockLists)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) throw teachingResourceError("Block list not found", 404, "TEACHING_RESOURCE_NOT_FOUND");
+    assertVisibilityChangeAllowed(existing, change.actor, change.visibility, "Block list");
+    if (existing.visibility === change.visibility) return existing;
+    const next = nextTeachingResourcePublication(existing, { visibility: change.visibility }, change.actor.actorId, new Date());
+    const [updated] = await tx
+      .update(blockLists)
+      .set(next)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .returning();
+    await tx.insert(auditLogs).values(teachingResourceAuditRow({
+      schoolId,
+      actor: change.actor,
+      action: "classpilot.block_list.visibility_changed",
+      entityType: "block_list",
+      entityId: existing.id,
+      entityName: existing.name,
+      changes: {
+        before: { visibility: existing.visibility, official: existing.official },
+        after: { visibility: next.visibility, official: next.official },
+      },
+      metadata: teachingResourceAuditContext(existing, change.actor),
+    }));
+    return updated!;
+  });
+}
+
+/** Administrator marks or unmarks a Block List official; audited in the same transaction. */
+export async function setBlockListOfficial(
+  id: string,
+  schoolId: string,
+  change: { official: boolean; actor: TeachingResourceActor }
+): Promise<BlockList> {
+  return db.transaction(async (tx) => {
+    await lockTeachingResourceSchool(tx, schoolId, "Block list");
+    const [existing] = await tx
+      .select()
+      .from(blockLists)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .limit(1)
+      .for("update");
+    if (!existing) throw teachingResourceError("Block list not found", 404, "TEACHING_RESOURCE_NOT_FOUND");
+    assertOfficialChangeAllowed(existing, change.actor, change.official, "Block list");
+    if (existing.official === change.official) return existing;
+    const next = nextTeachingResourcePublication(existing, { official: change.official }, change.actor.actorId, new Date());
+    const [updated] = await tx
+      .update(blockLists)
+      .set(next)
+      .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
+      .returning();
+    await tx.insert(auditLogs).values(teachingResourceAuditRow({
+      schoolId,
+      actor: change.actor,
+      action: "classpilot.block_list.official_changed",
+      entityType: "block_list",
+      entityId: existing.id,
+      entityName: existing.name,
+      changes: {
+        before: { visibility: existing.visibility, official: existing.official },
+        after: { visibility: next.visibility, official: next.official },
+      },
+      metadata: teachingResourceAuditContext(existing, change.actor),
+    }));
+    return updated!;
+  });
+}
+
+/** Copy a Block List the caller can see into a new private Block List they own. */
+export async function copyBlockListToTeacher(
+  sourceId: string,
+  schoolId: string,
+  actor: TeachingResourceViewer
+): Promise<{ source: BlockList; copy: BlockList } | undefined> {
+  const source = await getBlockListById(sourceId, schoolId);
+  if (!source || !(actor.isAdmin || canViewSharedResource(source, actor.actorId))) return undefined;
+  const ownLists = await getBlockListsByTeacherAndSchool(actor.actorId, schoolId);
+  const copy = await createBlockList(cloneBlockListInsert(source, {
+    schoolId,
+    teacherId: actor.actorId,
+    existingNames: ownLists.map((list) => list.name),
+  }));
+  return { source, copy };
 }
 
 // ============================================================================

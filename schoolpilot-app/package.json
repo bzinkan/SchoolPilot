@@ -80,7 +80,8 @@
     "test:my-desk": "node --test --test-concurrency=1 scripts/my-desk-model.test.mjs scripts/my-desk-browser.test.mjs scripts/my-desk-workspace-browser.test.mjs scripts/discipline-browser.test.mjs scripts/student-information-browser.test.mjs scripts/student-information-model.test.mjs scripts/shared-record-access-browser.test.mjs scripts/student-overview-browser.test.mjs",
     "test:my-desk-seating": "node --test scripts/seating-model.test.mjs scripts/seating-browser.test.mjs",
     "test:my-desk-imports": "node --test scripts/import-review-model.test.mjs scripts/import-browser.test.mjs",
-    "test:classpilot-settings": "node --test --test-concurrency=1 scripts/admin-settings-browser.test.mjs scripts/teaching-tools-browser.test.mjs"
+    "test:classpilot-settings": "node --test --test-concurrency=1 scripts/admin-settings-browser.test.mjs scripts/teaching-tools-browser.test.mjs",
+    "test:teaching-tools-library": "node --test --test-concurrency=1 scripts/teaching-tools-library.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

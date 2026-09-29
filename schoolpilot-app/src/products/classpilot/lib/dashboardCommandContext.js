@@ -1,5 +1,6 @@
 import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
 import { activityAuthority, activityAuthorityKey } from './dashboardActivity.js';
+import { activeFlightPathAllowedDomains } from './teachingResourceLibrary.js';
 
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
@@ -276,11 +277,9 @@ export function isStudentUrlOffTask({
   if (schoolAllowedDomains.length > 0 && isUrlAllowed(activeTabUrl, schoolAllowedDomains)) return false;
 
   if (student?.aiClassification?.category === 'non-educational') {
-    if (student.flightPathActive && student.activeFlightPathName) {
-      const flightPath = flightPaths.find(
-        (candidate) => candidate.flightPathName === student.activeFlightPathName,
-      );
-      const allowedDomains = flightPath?.allowedDomains || [];
+    if (student.flightPathActive) {
+      // Never matches a School Library item by an ambiguous name.
+      const allowedDomains = activeFlightPathAllowedDomains(student, flightPaths);
       if (allowedDomains.length > 0 && isUrlAllowed(activeTabUrl, allowedDomains)) {
         return false;
       }

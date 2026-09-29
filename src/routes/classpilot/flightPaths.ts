@@ -1,23 +1,42 @@
 import { Router } from "express";
+import { z } from "zod";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
+import { isSharedTeachingResourcesEnabled } from "../../config/sharedTeachingResources.js";
+import { logAudit } from "../../services/audit.js";
 import {
-  getFlightPathsBySchool,
+  canViewSharedResource,
+  libraryBlockListView,
+  libraryFlightPathView,
+  ownedTeachingResourceView,
+  withoutTeachingResourcePublication,
+  type TeachingResourceActor,
+} from "../../services/teachingResourceLibrary.js";
+import {
   getFlightPathsByTeacherAndSchool,
   getFlightPathById,
   createFlightPath,
   updateFlightPath,
   deleteFlightPath,
-  getBlockListsBySchool,
   getBlockListsByTeacherAndSchool,
   getBlockListById,
   createBlockList,
   updateBlockList,
   deleteBlockList,
+  getLibraryFlightPathsForSchool,
+  getLibraryBlockListsForSchool,
+  getTeachingResourceOwnerName,
+  setFlightPathVisibility,
+  setFlightPathOfficial,
+  copyFlightPathToTeacher,
+  setBlockListVisibility,
+  setBlockListOfficial,
+  copyBlockListToTeacher,
 } from "../../services/storage.js";
+import type { BlockList, FlightPath } from "../../schema/classpilot.js";
 
 const router = Router();
 
@@ -39,9 +58,96 @@ const adminAuth = [
   requireRole("admin", "school_admin"),
 ] as const;
 
+function isSchoolAdmin(req: any, res: any): boolean {
+  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"]);
+}
+
 function canManageOwnedResource(req: any, res: any, teacherId: string | null): boolean {
-  return requestHasAnySchoolRole(req, res, ["admin", "school_admin"])
+  return isSchoolAdmin(req, res)
     || teacherId === req.authUser?.id;
+}
+
+// ============================================================================
+// School Library (shared and official items). The school comes from the
+// verified request context, never from the request body.
+// ============================================================================
+
+function schoolLibraryEnabled(res: any): boolean {
+  return isSharedTeachingResourcesEnabled(res.locals.schoolId);
+}
+
+function resourceActor(req: any, res: any): TeachingResourceActor {
+  return {
+    actorId: req.authUser!.id,
+    isAdmin: isSchoolAdmin(req, res),
+    userEmail: req.authUser?.email ?? null,
+    userRole: res.locals.membershipRole ?? null,
+  };
+}
+
+function auditActor(req: any, res: any) {
+  return {
+    schoolId: res.locals.schoolId!,
+    userId: req.authUser?.id ?? null,
+    userEmail: req.authUser?.email ?? undefined,
+    userRole: res.locals.membershipRole,
+  };
+}
+
+/**
+ * The owner's or an administrator's view of an item. With the School Library
+ * off for the school, the response keeps exactly its previous shape.
+ */
+function managedFlightPathView(req: any, res: any, row: FlightPath) {
+  return schoolLibraryEnabled(res)
+    ? ownedTeachingResourceView(row, resourceActor(req, res))
+    : withoutTeachingResourcePublication(row);
+}
+
+function managedBlockListView(req: any, res: any, row: BlockList) {
+  return schoolLibraryEnabled(res)
+    ? ownedTeachingResourceView(row, resourceActor(req, res))
+    : withoutTeachingResourcePublication(row);
+}
+
+function routeError(message: string, status: number, code: string): Error {
+  return Object.assign(new Error(message), { status, code, expose: true });
+}
+
+function requireSchoolLibrary(res: any): void {
+  if (!schoolLibraryEnabled(res)) {
+    throw routeError(
+      "The School Library is not enabled for this school",
+      409,
+      "SHARED_TEACHING_RESOURCES_DISABLED"
+    );
+  }
+}
+
+const visibilityBody = z.object({ visibility: z.enum(["private", "school"]) }).strict();
+const officialBody = z.object({ official: z.boolean() }).strict();
+const copyBody = z.object({}).strict();
+
+function parseBody<Schema extends z.ZodTypeAny>(schema: Schema, body: unknown): z.infer<Schema> {
+  const parsed = schema.safeParse(body ?? {});
+  if (!parsed.success) throw routeError("Invalid request body", 400, "INVALID_REQUEST");
+  return parsed.data;
+}
+
+/**
+ * Copies are owned by the caller, so the caller must be active teaching staff
+ * here (createFlightPath/createBlockList enforce it). Office staff and
+ * super admins without a teaching membership get 403, not a server error.
+ */
+function copyError(err: unknown): unknown {
+  if (err && typeof err === "object" && (err as { code?: unknown }).code === "CLASS_TEACHER_NOT_FOUND") {
+    return routeError(
+      "Only teaching staff can copy items into their own Teaching tools",
+      403,
+      "CLASS_TEACHER_NOT_FOUND"
+    );
+  }
+  return err;
 }
 
 /**
@@ -100,8 +206,18 @@ function validateRuleList(value: unknown, label: string): string[] {
 // GET /api/classpilot/block-lists
 router.get("/block-lists", ...auth, async (req, res, next) => {
   try {
-    const teacherLists = await getBlockListsByTeacherAndSchool(req.authUser!.id, res.locals.schoolId!);
-    return res.json({ blockLists: teacherLists });
+    const schoolId = res.locals.schoolId!;
+    const teacherLists = await getBlockListsByTeacherAndSchool(req.authUser!.id, schoolId);
+    if (!schoolLibraryEnabled(res)) {
+      return res.json({ blockLists: teacherLists.map((row) => withoutTeachingResourcePublication(row)) });
+    }
+    const actor = resourceActor(req, res);
+    const library = await getLibraryBlockListsForSchool(schoolId, actor.actorId);
+    return res.json({
+      blockLists: teacherLists.map((row) => ownedTeachingResourceView(row, actor)),
+      library: library.map(({ blockList, ownerName }) => libraryBlockListView(blockList, ownerName, actor)),
+      features: { sharedTeachingResources: true },
+    });
   } catch (err) {
     next(err);
   }
@@ -110,14 +226,19 @@ router.get("/block-lists", ...auth, async (req, res, next) => {
 // GET /api/classpilot/block-lists/:id
 router.get("/block-lists/:id", ...auth, async (req, res, next) => {
   try {
-    const bl = await getBlockListById(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const bl = await getBlockListById(param(req, "id"), schoolId);
     if (!bl) {
       return res.status(404).json({ error: "Block list not found" });
     }
-    if (!canManageOwnedResource(req, res, bl.teacherId)) {
-      return res.status(404).json({ error: "Block list not found" });
+    if (canManageOwnedResource(req, res, bl.teacherId)) {
+      return res.json({ blockList: managedBlockListView(req, res, bl) });
     }
-    return res.json({ blockList: bl });
+    if (schoolLibraryEnabled(res) && canViewSharedResource(bl, req.authUser!.id)) {
+      const ownerName = await getTeachingResourceOwnerName(schoolId, bl.teacherId);
+      return res.json({ blockList: libraryBlockListView(bl, ownerName, resourceActor(req, res)) });
+    }
+    return res.status(404).json({ error: "Block list not found" });
   } catch (err) {
     next(err);
   }
@@ -140,7 +261,7 @@ router.post("/block-lists", ...auth, async (req, res, next) => {
       isDefault: isDefault || false,
     });
 
-    return res.status(201).json({ blockList: bl });
+    return res.status(201).json({ blockList: managedBlockListView(req, res, bl) });
   } catch (err) {
     next(err);
   }
@@ -162,11 +283,13 @@ router.patch("/block-lists/:id", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = validateRuleList(blockedDomains, "Block List");
     if (isDefault !== undefined) data.isDefault = isDefault;
 
-    const updated = await updateBlockList(id, res.locals.schoolId!, data);
+    // Official items are administrator-only and shared or non-owner edits are
+    // audited; storage re-checks both on the locked row.
+    const updated = await updateBlockList(id, res.locals.schoolId!, data, resourceActor(req, res));
     if (!updated) {
       return res.status(404).json({ error: "Block list not found" });
     }
-    return res.json({ blockList: updated });
+    return res.json({ blockList: managedBlockListView(req, res, updated) });
   } catch (err) {
     next(err);
   }
@@ -182,8 +305,59 @@ router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
     if (!canManageOwnedResource(req, res, existing.teacherId)) {
       return res.status(404).json({ error: "Block list not found" });
     }
-    await deleteBlockList(param(req, "id"), res.locals.schoolId!);
+    await deleteBlockList(param(req, "id"), res.locals.schoolId!, resourceActor(req, res));
     return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/block-lists/:id/visibility - owner shares or unshares
+router.post("/block-lists/:id/visibility", ...auth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    const { visibility } = parseBody(visibilityBody, req.body);
+    const actor = resourceActor(req, res);
+    const updated = await setBlockListVisibility(param(req, "id"), res.locals.schoolId!, { visibility, actor });
+    return res.json({ blockList: ownedTeachingResourceView(updated, actor) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/block-lists/:id/official - administrators only
+router.post("/block-lists/:id/official", ...adminAuth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    const { official } = parseBody(officialBody, req.body);
+    const actor = resourceActor(req, res);
+    const updated = await setBlockListOfficial(param(req, "id"), res.locals.schoolId!, { official, actor });
+    return res.json({ blockList: ownedTeachingResourceView(updated, actor) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/block-lists/:id/copy - copy into the caller's own Block Lists
+router.post("/block-lists/:id/copy", ...auth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    parseBody(copyBody, req.body);
+    const actor = resourceActor(req, res);
+    const copied = await copyBlockListToTeacher(param(req, "id"), res.locals.schoolId!, actor)
+      .catch((err: unknown) => { throw copyError(err); });
+    if (!copied) {
+      return res.status(404).json({ error: "Block list not found" });
+    }
+    await logAudit({
+      ...auditActor(req, res),
+      action: "classpilot.block_list.copied",
+      entityType: "block_list",
+      entityId: copied.copy.id,
+      entityName: copied.copy.name,
+      metadata: { sourceId: copied.source.id, sourceOfficial: copied.source.official },
+    });
+    return res.status(201).json({ blockList: ownedTeachingResourceView(copied.copy, actor) });
   } catch (err) {
     next(err);
   }
@@ -205,8 +379,18 @@ router.post("/block-lists/remove", ...adminAuth, retiredBlockListDeviceTargeting
 // GET /api/classpilot/flight-paths
 router.get("/", ...auth, async (req, res, next) => {
   try {
-    const teacherPaths = await getFlightPathsByTeacherAndSchool(req.authUser!.id, res.locals.schoolId!);
-    return res.json({ flightPaths: teacherPaths });
+    const schoolId = res.locals.schoolId!;
+    const teacherPaths = await getFlightPathsByTeacherAndSchool(req.authUser!.id, schoolId);
+    if (!schoolLibraryEnabled(res)) {
+      return res.json({ flightPaths: teacherPaths.map((row) => withoutTeachingResourcePublication(row)) });
+    }
+    const actor = resourceActor(req, res);
+    const library = await getLibraryFlightPathsForSchool(schoolId, actor.actorId);
+    return res.json({
+      flightPaths: teacherPaths.map((row) => ownedTeachingResourceView(row, actor)),
+      library: library.map(({ flightPath, ownerName }) => libraryFlightPathView(flightPath, ownerName, actor)),
+      features: { sharedTeachingResources: true },
+    });
   } catch (err) {
     next(err);
   }
@@ -230,7 +414,7 @@ router.post("/", ...auth, async (req, res, next) => {
       isDefault: isDefault || false,
     });
 
-    return res.status(201).json({ flightPath: fp });
+    return res.status(201).json({ flightPath: managedFlightPathView(req, res, fp) });
   } catch (err) {
     next(err);
   }
@@ -287,7 +471,7 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
     });
 
     return res.status(201).json({
-      flightPath: fp,
+      flightPath: managedFlightPathView(req, res, fp),
       extracted: {
         allowedDomains,
         domainLevelEntries: allowedDomains,
@@ -304,14 +488,21 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
 // GET /api/classpilot/flight-paths/:id
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
-    const fp = await getFlightPathById(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const fp = await getFlightPathById(param(req, "id"), schoolId);
     if (!fp) {
       return res.status(404).json({ error: "Flight path not found" });
     }
-    if (!canManageOwnedResource(req, res, fp.teacherId)) {
-      return res.status(404).json({ error: "Flight path not found" });
+    if (canManageOwnedResource(req, res, fp.teacherId)) {
+      return res.json({ flightPath: managedFlightPathView(req, res, fp) });
     }
-    return res.json({ flightPath: fp });
+    // A library viewer sees the library projection: no Classroom provenance,
+    // and the owner's name only while the owner is a member of this school.
+    if (schoolLibraryEnabled(res) && canViewSharedResource(fp, req.authUser!.id)) {
+      const ownerName = await getTeachingResourceOwnerName(schoolId, fp.teacherId);
+      return res.json({ flightPath: libraryFlightPathView(fp, ownerName, resourceActor(req, res)) });
+    }
+    return res.status(404).json({ error: "Flight path not found" });
   } catch (err) {
     next(err);
   }
@@ -334,11 +525,13 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = validateRuleList(blockedDomains, "Flight Path block list");
     if (isDefault !== undefined) data.isDefault = isDefault;
 
-    const updated = await updateFlightPath(id, res.locals.schoolId!, data);
+    // Official items are administrator-only and shared or non-owner edits are
+    // audited; storage re-checks both on the locked row.
+    const updated = await updateFlightPath(id, res.locals.schoolId!, data, resourceActor(req, res));
     if (!updated) {
       return res.status(404).json({ error: "Flight path not found" });
     }
-    return res.json({ flightPath: updated });
+    return res.json({ flightPath: managedFlightPathView(req, res, updated) });
   } catch (err) {
     next(err);
   }
@@ -354,8 +547,59 @@ router.delete("/:id", ...auth, async (req, res, next) => {
     if (!canManageOwnedResource(req, res, existing.teacherId)) {
       return res.status(404).json({ error: "Flight path not found" });
     }
-    await deleteFlightPath(param(req, "id"), res.locals.schoolId!);
+    await deleteFlightPath(param(req, "id"), res.locals.schoolId!, resourceActor(req, res));
     return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/flight-paths/:id/visibility - owner shares or unshares
+router.post("/:id/visibility", ...auth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    const { visibility } = parseBody(visibilityBody, req.body);
+    const actor = resourceActor(req, res);
+    const updated = await setFlightPathVisibility(param(req, "id"), res.locals.schoolId!, { visibility, actor });
+    return res.json({ flightPath: ownedTeachingResourceView(updated, actor) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/flight-paths/:id/official - administrators only
+router.post("/:id/official", ...adminAuth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    const { official } = parseBody(officialBody, req.body);
+    const actor = resourceActor(req, res);
+    const updated = await setFlightPathOfficial(param(req, "id"), res.locals.schoolId!, { official, actor });
+    return res.json({ flightPath: ownedTeachingResourceView(updated, actor) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/flight-paths/:id/copy - copy into the caller's own Flight Paths
+router.post("/:id/copy", ...auth, async (req, res, next) => {
+  try {
+    requireSchoolLibrary(res);
+    parseBody(copyBody, req.body);
+    const actor = resourceActor(req, res);
+    const copied = await copyFlightPathToTeacher(param(req, "id"), res.locals.schoolId!, actor)
+      .catch((err: unknown) => { throw copyError(err); });
+    if (!copied) {
+      return res.status(404).json({ error: "Flight path not found" });
+    }
+    await logAudit({
+      ...auditActor(req, res),
+      action: "classpilot.flight_path.copied",
+      entityType: "flight_path",
+      entityId: copied.copy.id,
+      entityName: copied.copy.flightPathName,
+      metadata: { sourceId: copied.source.id, sourceOfficial: copied.source.official },
+    });
+    return res.status(201).json({ flightPath: ownedTeachingResourceView(copied.copy, actor) });
   } catch (err) {
     next(err);
   }

@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, User, Users, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
+import { ArrowLeft, User, Users, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus, Library, Share2, Copy, ShieldCheck } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { TeacherSettingsTabs } from "../components/ScheduleRouteTabs";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
@@ -19,6 +19,22 @@ import { useAdminNavigation, useAdminNavigationBlocker } from "../hooks/useAdmin
 import { teachingToolsSection, teachingToolsShouldBlock } from "../lib/teachingTools";
 import TeachingDefaults from "../components/TeachingDefaults";
 import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
+import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceList } from "../lib/teachingResourceLibrary";
+
+const EMPTY_RESOURCE_LIST = Object.freeze({ own: Object.freeze([]), library: Object.freeze([]), libraryEnabled: false });
+const selectFlightPathList = (data) => teachingResourceList(data, 'flightPaths');
+const selectBlockListList = (data) => teachingResourceList(data, 'blockLists');
+
+// Shared / Official marker; the id keeps own rows and School Library rows distinct.
+function ResourceBadge({ item }) {
+  const badge = teachingResourceBadge(item);
+  if (!badge) return null;
+  return (
+    <Badge variant={badge === 'Official' ? 'default' : 'secondary'} className="text-xs" data-testid={`badge-${badge.toLowerCase()}-${item.id}`}>
+      {badge}
+    </Badge>
+  );
+}
 
 export default function MySettings() {
   const { currentUser, isLoading, logout } = useClassPilotAuth();
@@ -71,17 +87,22 @@ function TeachingToolsContent({ currentUser, logout }) {
   // Co-teachers state
   const [coTeacherToAdd, setCoTeacherToAdd] = useState("");
 
-  const { data: flightPaths = [], isError: flightPathsError, refetch: retryFlightPaths } = useQuery({
+  const { data: flightPathData = EMPTY_RESOURCE_LIST, isError: flightPathsError, refetch: retryFlightPaths } = useQuery({
     queryKey: ['/api/flight-paths', ...scope],
     queryFn: ({ signal }) => request('GET', '/flight-paths', undefined, { signal }),
-    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
+    select: selectFlightPathList,
   });
+  const flightPaths = flightPathData.own;
 
-  const { data: blockLists = [], isError: blockListsError, refetch: retryBlockLists } = useQuery({
+  const { data: blockListData = EMPTY_RESOURCE_LIST, isError: blockListsError, refetch: retryBlockLists } = useQuery({
     queryKey: ['/api/block-lists', ...scope],
     queryFn: ({ signal }) => request('GET', '/block-lists', undefined, { signal }),
-    select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
+    select: selectBlockListList,
   });
+  const blockLists = blockListData.own;
+  // The School Library card and share/official actions exist only while the
+  // server reports the library as on for this school.
+  const schoolLibraryEnabled = flightPathData.libraryEnabled || blockListData.libraryEnabled;
 
   const { data: groups = [] } = useQuery({
     queryKey: ['/api/teacher/groups', ...scope],
@@ -320,6 +341,55 @@ function TeachingToolsContent({ currentUser, logout }) {
     },
   });
 
+  // School Library actions. The server authorizes each one (owner-only sharing,
+  // administrator-only official marking, copy for anyone who can see the item)
+  // and audits it; the buttons below only appear when the list says they apply.
+  const libraryActionMutation = useMutation({
+    mutationFn: async ({ resource, id, action, body }) => request("POST", `/${resource}/${id}/${action}`, body),
+    onSuccess: (_data, variables) => {
+      if (!lifetime.current.alive) return;
+      queryClient.invalidateQueries({ queryKey: [variables.resource === "flight-paths" ? '/api/flight-paths' : '/api/block-lists'] });
+      toast({ title: variables.successTitle, description: variables.successDescription });
+    },
+    onError: (error, variables) => {
+      if (!lifetime.current.alive) return;
+      toast({ variant: "destructive", title: variables.failureTitle, description: teachingResourceErrorMessage(error) });
+    },
+  });
+
+  const shareResource = (resource, item, label) => {
+    const sharing = item.visibility !== "school";
+    libraryActionMutation.mutate({
+      resource, id: item.id, action: "visibility", body: { visibility: sharing ? "school" : "private" },
+      successTitle: sharing ? `${label} shared` : `${label} unshared`,
+      successDescription: sharing
+        ? "Teachers in your school can now apply or copy it from the School Library."
+        : "It is private to you again. Copies other teachers already made are theirs.",
+      failureTitle: `Could not change how this ${label} is shared`,
+    });
+  };
+
+  const markResourceOfficial = (resource, item, label) => {
+    const official = item.official !== true;
+    libraryActionMutation.mutate({
+      resource, id: item.id, action: "official", body: { official },
+      successTitle: official ? `${label} marked official` : `Official mark removed`,
+      successDescription: official
+        ? "Teachers can apply or copy it; only administrators can change it."
+        : "It keeps its current sharing setting.",
+      failureTitle: `Could not change the official mark`,
+    });
+  };
+
+  const copyResource = (resource, item, label, name) => {
+    libraryActionMutation.mutate({
+      resource, id: item.id, action: "copy", body: {},
+      successTitle: `${label} copied`,
+      successDescription: `"${name}" is now in your own ${label}s as a private copy you can edit.`,
+      failureTitle: `Could not copy this ${label}`,
+    });
+  };
+
   const handleEditBlockList = (blockList) => {
     setEditingBlockList(blockList);
     setBlockListName(blockList.name);
@@ -525,7 +595,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     || (showBlockListDialog && JSON.stringify([blockListName, blockListDescription, blockListDomains]) !== JSON.stringify([editingBlockList?.name || '', editingBlockList?.description || '', editingBlockList?.blockedDomains?.join(', ') || '']))
     || (showSubgroupDialog && JSON.stringify([subgroupName, subgroupColor]) !== JSON.stringify([editingSubgroup?.name || '', editingSubgroup?.color || '#9333ea']))
     || Boolean(coTeacherToAdd);
-  const toolBusy = [createFlightPathMutation, updateFlightPathMutation, deleteFlightPathMutation, createBlockListMutation, updateBlockListMutation, deleteBlockListMutation,
+  const toolBusy = [createFlightPathMutation, updateFlightPathMutation, deleteFlightPathMutation, createBlockListMutation, updateBlockListMutation, deleteBlockListMutation, libraryActionMutation,
     createSubgroupMutation, updateSubgroupMutation, deleteSubgroupMutation, addSubgroupMemberMutation, removeSubgroupMemberMutation, addCoTeacherMutation, removeCoTeacherMutation].some(item => item.isPending);
   useAdminNavigationBlocker({ id: 'teaching-tool-editors', dirty: toolDirty, busy: toolBusy,
     shouldBlock: transition => ['teaching-close:editor', 'teaching-class-switch'].includes(transition.actionId) || teachingToolsShouldBlock(transition),
@@ -615,9 +685,10 @@ function TeachingToolsContent({ currentUser, logout }) {
                         className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate"
                         data-testid={`flight-path-${fp.id}`}
                       >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
                             <h3 className="font-semibold">{fp.flightPathName}</h3>
+                            {schoolLibraryEnabled && <ResourceBadge item={fp} />}
                           </div>
                           {fp.description && (
                             <p className="text-sm text-muted-foreground mb-2">{fp.description}</p>
@@ -634,11 +705,39 @@ function TeachingToolsContent({ currentUser, logout }) {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
+                        <div className="flex flex-wrap items-center justify-end gap-2 ml-4">
+                          {schoolLibraryEnabled && fp.canShare && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => shareResource("flight-paths", fp, "Flight Path")}
+                              data-testid={`button-share-flight-path-${fp.id}`}
+                            >
+                              <Share2 className="h-4 w-4 mr-1" />
+                              {fp.visibility === "school" ? "Stop sharing" : "Share with school"}
+                            </Button>
+                          )}
+                          {schoolLibraryEnabled && fp.canMarkOfficial && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => markResourceOfficial("flight-paths", fp, "Flight Path")}
+                              data-testid={`button-official-flight-path-${fp.id}`}
+                            >
+                              <ShieldCheck className="h-4 w-4 mr-1" />
+                              {fp.official ? "Remove official" : "Mark official"}
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
+                            disabled={fp.canEdit === false}
+                            title={fp.canEdit === false ? "Official Flight Paths are managed by administrators" : undefined}
                             onClick={() => handleEditFlightPath(fp)}
                             data-testid={`button-edit-flight-path-${fp.id}`}
                           >
@@ -648,6 +747,8 @@ function TeachingToolsContent({ currentUser, logout }) {
                             type="button"
                             variant="ghost"
                             size="icon"
+                            disabled={fp.canEdit === false}
+                            title={fp.canEdit === false ? "Official Flight Paths are managed by administrators" : undefined}
                             onClick={() => setDeleteFlightPathId(fp.id)}
                             data-testid={`button-delete-flight-path-${fp.id}`}
                           >
@@ -702,12 +803,13 @@ function TeachingToolsContent({ currentUser, logout }) {
                         className="flex items-center justify-between p-4 rounded-lg border bg-card hover-elevate"
                         data-testid={`block-list-${bl.id}`}
                       >
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
                             <h3 className="font-semibold">{bl.name}</h3>
                             {bl.isDefault && (
                               <Badge variant="secondary" className="text-xs">Default</Badge>
                             )}
+                            {schoolLibraryEnabled && <ResourceBadge item={bl} />}
                           </div>
                           {bl.description && (
                             <p className="text-sm text-muted-foreground mb-2">{bl.description}</p>
@@ -724,11 +826,39 @@ function TeachingToolsContent({ currentUser, logout }) {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 ml-4">
+                        <div className="flex flex-wrap items-center justify-end gap-2 ml-4">
+                          {schoolLibraryEnabled && bl.canShare && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => shareResource("block-lists", bl, "Block List")}
+                              data-testid={`button-share-block-list-${bl.id}`}
+                            >
+                              <Share2 className="h-4 w-4 mr-1" />
+                              {bl.visibility === "school" ? "Stop sharing" : "Share with school"}
+                            </Button>
+                          )}
+                          {schoolLibraryEnabled && bl.canMarkOfficial && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => markResourceOfficial("block-lists", bl, "Block List")}
+                              data-testid={`button-official-block-list-${bl.id}`}
+                            >
+                              <ShieldCheck className="h-4 w-4 mr-1" />
+                              {bl.official ? "Remove official" : "Mark official"}
+                            </Button>
+                          )}
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
+                            disabled={bl.canEdit === false}
+                            title={bl.canEdit === false ? "Official Block Lists are managed by administrators" : undefined}
                             onClick={() => handleEditBlockList(bl)}
                             data-testid={`button-edit-block-list-${bl.id}`}
                           >
@@ -738,6 +868,8 @@ function TeachingToolsContent({ currentUser, logout }) {
                             type="button"
                             variant="ghost"
                             size="icon"
+                            disabled={bl.canEdit === false}
+                            title={bl.canEdit === false ? "Official Block Lists are managed by administrators" : undefined}
                             onClick={() => setDeleteBlockListId(bl.id)}
                             data-testid={`button-delete-block-list-${bl.id}`}
                           >
@@ -750,6 +882,125 @@ function TeachingToolsContent({ currentUser, logout }) {
                 )}
               </CardContent>
             </Card>
+
+            {/* School Library: shared and official items from other staff in this school */}
+            {schoolLibraryEnabled && (
+              <Card data-testid="card-school-library">
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Library className="h-5 w-5 text-primary" />
+                    <CardTitle>School Library</CardTitle>
+                  </div>
+                  <CardDescription>
+                    Flight Paths and Block Lists that teachers in your school shared, and Official items your administrators maintain. Apply them from the Dashboard as they are, or copy one into your own tools to make a private version you can edit.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">Flight Paths</h3>
+                    {flightPathData.library.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No shared Flight Paths yet.</p>
+                    ) : flightPathData.library.map((fp) => (
+                      <div
+                        key={fp.id}
+                        className="flex flex-wrap items-start justify-between gap-3 p-4 rounded-lg border bg-card"
+                        data-testid={`library-flight-path-${fp.id}`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <h4 className="font-semibold">{fp.flightPathName}</h4>
+                            <ResourceBadge item={fp} />
+                          </div>
+                          {fp.ownerName && <p className="text-xs text-muted-foreground mb-1">From {fp.ownerName}</p>}
+                          {fp.description && <p className="text-sm text-muted-foreground mb-2">{fp.description}</p>}
+                          <div className="flex flex-wrap gap-1">
+                            {fp.allowedDomains?.length > 0 ? fp.allowedDomains.map((domain, idx) => (
+                              <Badge key={idx} variant="outline" className="text-xs">{domain}</Badge>
+                            )) : <span className="text-xs text-muted-foreground">No domains configured</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {fp.canMarkOfficial && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => markResourceOfficial("flight-paths", fp, "Flight Path")}
+                              data-testid={`button-official-flight-path-${fp.id}`}
+                            >
+                              <ShieldCheck className="h-4 w-4 mr-1" />
+                              {fp.official ? "Remove official" : "Mark official"}
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={libraryActionMutation.isPending}
+                            onClick={() => copyResource("flight-paths", fp, "Flight Path", fp.flightPathName)}
+                            data-testid={`button-copy-flight-path-${fp.id}`}
+                          >
+                            <Copy className="h-4 w-4 mr-1" />
+                            Copy to my Flight Paths
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold">Block Lists</h3>
+                    {blockListData.library.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No shared Block Lists yet.</p>
+                    ) : blockListData.library.map((bl) => (
+                      <div
+                        key={bl.id}
+                        className="flex flex-wrap items-start justify-between gap-3 p-4 rounded-lg border bg-card"
+                        data-testid={`library-block-list-${bl.id}`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <h4 className="font-semibold">{bl.name}</h4>
+                            <ResourceBadge item={bl} />
+                          </div>
+                          {bl.ownerName && <p className="text-xs text-muted-foreground mb-1">From {bl.ownerName}</p>}
+                          {bl.description && <p className="text-sm text-muted-foreground mb-2">{bl.description}</p>}
+                          <div className="flex flex-wrap gap-1">
+                            {bl.blockedDomains?.length > 0 ? bl.blockedDomains.map((domain, idx) => (
+                              <Badge key={idx} variant="destructive" className="text-xs">{domain}</Badge>
+                            )) : <span className="text-xs text-muted-foreground">No domains configured</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {bl.canMarkOfficial && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={libraryActionMutation.isPending}
+                              onClick={() => markResourceOfficial("block-lists", bl, "Block List")}
+                              data-testid={`button-official-block-list-${bl.id}`}
+                            >
+                              <ShieldCheck className="h-4 w-4 mr-1" />
+                              {bl.official ? "Remove official" : "Mark official"}
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={libraryActionMutation.isPending}
+                            onClick={() => copyResource("block-lists", bl, "Block List", bl.name)}
+                            data-testid={`button-copy-block-list-${bl.id}`}
+                          >
+                            <Copy className="h-4 w-4 mr-1" />
+                            Copy to my Block Lists
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
           </section>
           <section hidden={section !== "classes"} className="space-y-6" aria-label="Class setup">

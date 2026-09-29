@@ -20,6 +20,13 @@ import {
   getFlightPathById,
   createBlockList,
   getBlockListById,
+  getLibraryFlightPathsForSchool,
+  getApplicableFlightPathById,
+  copyFlightPathToTeacher,
+  setFlightPathVisibility,
+  getLibraryBlockListsForSchool,
+  getApplicableBlockListById,
+  copyBlockListToTeacher,
   createStudent,
   getStudentByEmail,
   searchStudents,
@@ -387,6 +394,137 @@ describe("cross-school isolation", () => {
     );
     assert.equal((await inSchool(schoolA.id, () => getBlockListById(bl.id, schoolA.id)))?.id, bl.id);
     assert.equal(await inSchool(schoolB.id, () => getBlockListById(bl.id, schoolB.id)), undefined);
+  });
+
+  it("School Library lookups resolve shared and official items only inside their own school", async () => {
+    // `teacher` is a member of schools A and B; `peer` and `libraryAdmin` belong to A only.
+    const [peer, libraryAdmin] = await Promise.all([
+      createUser({ email: `${TAG}-library-peer@${TAG}-a.example.edu`, firstName: "Peer", lastName: "Teacher" }),
+      createUser({ email: `${TAG}-library-admin@${TAG}-a.example.edu`, firstName: "Library", lastName: "Admin" }),
+    ]);
+    await createMembership({ userId: peer.id, schoolId: schoolA.id, role: "teacher", status: "active" });
+    await createMembership({ userId: libraryAdmin.id, schoolId: schoolA.id, role: "admin", status: "active" });
+    const shared = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_library_shared`,
+      allowedDomains: ["shared.example.edu"],
+      visibility: "school",
+      sourceType: "google_classroom",
+      sourceCourseId: `${TAG}-course`,
+      sourceResourceIds: [`${TAG}-resource`],
+      sourceUpdatedAt: new Date(),
+    }));
+    const privatePath = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_library_private`,
+      allowedDomains: ["private.example.edu"],
+    }));
+    const official = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: libraryAdmin.id,
+      flightPathName: `${TAG}_library_official`,
+      allowedDomains: ["official.example.edu"],
+      official: true,
+    }));
+
+    const library = await inSchool(schoolA.id, () => getLibraryFlightPathsForSchool(schoolA.id, peer.id));
+    const libraryIds = library.map((row) => row.flightPath.id);
+    assert.ok(libraryIds.includes(shared.id), "a same-school teacher sees a shared Flight Path");
+    assert.ok(libraryIds.includes(official.id), "an official Flight Path is listed even while private");
+    assert.equal(libraryIds.includes(privatePath.id), false, "a private Flight Path never reaches another teacher");
+    assert.equal(library.find((row) => row.flightPath.id === shared.id)?.ownerName, "T Teacher");
+    assert.equal((await inSchool(schoolA.id, () => getApplicableFlightPathById(shared.id, schoolA.id, peer.id)))?.id, shared.id);
+    assert.equal((await inSchool(schoolA.id, () => getApplicableFlightPathById(official.id, schoolA.id, peer.id)))?.id, official.id);
+    assert.equal(await inSchool(schoolA.id, () => getApplicableFlightPathById(privatePath.id, schoolA.id, peer.id)), undefined);
+    assert.equal((await inSchool(schoolA.id, () => getApplicableFlightPathById(privatePath.id, schoolA.id, teacher.id)))?.id, privatePath.id);
+
+    // The same teacher acting in school B sees none of school A's library.
+    const libraryInB = await inSchool(schoolB.id, () => getLibraryFlightPathsForSchool(schoolB.id, teacher.id));
+    assert.equal(libraryInB.some((row) => [shared.id, official.id, privatePath.id].includes(row.flightPath.id)), false);
+    assert.equal(await inSchool(schoolB.id, () => getApplicableFlightPathById(shared.id, schoolB.id, teacher.id)), undefined);
+    assert.equal(await inSchool(schoolB.id, () => copyFlightPathToTeacher(shared.id, schoolB.id, { actorId: teacher.id, isAdmin: false })), undefined);
+
+    const copied = await inSchool(schoolA.id, () => copyFlightPathToTeacher(shared.id, schoolA.id, { actorId: peer.id, isAdmin: false }));
+    assert.ok(copied);
+    assert.equal(copied.copy.teacherId, peer.id);
+    assert.equal(copied.copy.schoolId, schoolA.id);
+    assert.equal(copied.copy.visibility, "private");
+    assert.equal(copied.copy.official, false);
+    assert.equal(copied.copy.sourceType, null);
+    assert.equal(copied.copy.sourceCourseId, null);
+    assert.deepEqual(copied.copy.sourceResourceIds, []);
+    assert.equal(copied.copy.sourceUpdatedAt, null);
+    assert.deepEqual(copied.copy.allowedDomains, ["shared.example.edu"]);
+    assert.equal(await inSchool(schoolA.id, () => copyFlightPathToTeacher(privatePath.id, schoolA.id, { actorId: peer.id, isAdmin: false })), undefined);
+
+    const sharedList = await inSchool(schoolA.id, () => createBlockList({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      name: `${TAG}_library_shared_list`,
+      blockedDomains: ["games.example.com"],
+      visibility: "school",
+    }));
+    const privateList = await inSchool(schoolA.id, () => createBlockList({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      name: `${TAG}_library_private_list`,
+      blockedDomains: ["video.example.com"],
+    }));
+    const officialList = await inSchool(schoolA.id, () => createBlockList({
+      schoolId: schoolA.id,
+      teacherId: libraryAdmin.id,
+      name: `${TAG}_library_official_list`,
+      blockedDomains: ["chat.example.com"],
+      official: true,
+    }));
+    const listIds = (await inSchool(schoolA.id, () => getLibraryBlockListsForSchool(schoolA.id, peer.id))).map((row) => row.blockList.id);
+    assert.ok(listIds.includes(sharedList.id) && listIds.includes(officialList.id));
+    assert.equal(listIds.includes(privateList.id), false);
+    assert.equal((await inSchool(schoolA.id, () => getApplicableBlockListById(officialList.id, schoolA.id, peer.id)))?.id, officialList.id);
+    assert.equal(await inSchool(schoolA.id, () => getApplicableBlockListById(privateList.id, schoolA.id, peer.id)), undefined);
+    assert.equal(await inSchool(schoolB.id, () => getApplicableBlockListById(sharedList.id, schoolB.id, teacher.id)), undefined);
+    const listCopy = await inSchool(schoolA.id, () => copyBlockListToTeacher(sharedList.id, schoolA.id, { actorId: peer.id, isAdmin: false }));
+    assert.equal(listCopy?.copy.teacherId, peer.id);
+    assert.equal(listCopy?.copy.visibility, "private");
+    assert.equal(listCopy?.copy.official, false);
+  });
+
+  it("RLS hides another school's School Library rows even when that school is named explicitly", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const shared = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_rls_library_shared`,
+      allowedDomains: ["shared.example.edu"],
+      visibility: "school",
+      official: true,
+    }));
+    const sharedList = await inSchool(schoolA.id, () => createBlockList({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      name: `${TAG}_rls_library_list`,
+      blockedDomains: ["games.example.com"],
+      visibility: "school",
+    }));
+    assert.deepEqual(await inSchool(schoolB.id, () => getLibraryFlightPathsForSchool(schoolA.id, `${TAG}-nobody`)), []);
+    assert.deepEqual(await inSchool(schoolB.id, () => getLibraryBlockListsForSchool(schoolA.id, `${TAG}-nobody`)), []);
+    assert.equal(await inSchool(schoolB.id, () => getApplicableFlightPathById(shared.id, schoolA.id, teacher.id)), undefined);
+    assert.equal(await inSchool(schoolB.id, () => getApplicableBlockListById(sharedList.id, schoolA.id, teacher.id)), undefined);
+    assert.equal(
+      await inSchool(schoolB.id, () => copyFlightPathToTeacher(shared.id, schoolA.id, { actorId: teacher.id, isAdmin: true })),
+      undefined
+    );
+    await assert.rejects(
+      inSchool(schoolB.id, () => setFlightPathVisibility(shared.id, schoolA.id, {
+        visibility: "private",
+        actor: { actorId: teacher.id, isAdmin: false },
+      })),
+      (error: unknown) => typeof error === "object" && error !== null && (error as { status?: number }).status === 404
+    );
+    assert.equal((await inSchool(schoolA.id, () => getFlightPathById(shared.id, schoolA.id)))?.visibility, "school");
   });
 
   it("getGradeById exposes the schoolId handlers gate on", async () => {

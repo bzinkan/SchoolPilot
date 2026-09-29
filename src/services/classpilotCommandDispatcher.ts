@@ -1,5 +1,6 @@
 import { frozenToolsTargets, frozenAttentionTargets } from "./classpilotToolsCommands.js";
 import { requireClassToolsPhase } from "../config/classpilotClassTools.js";
+import { isSharedTeachingResourcesEnabled } from "../config/sharedTeachingResources.js";
 import { db } from "../db.js";
 import crypto from "crypto";
 import {
@@ -7,6 +8,8 @@ import {
   createClasspilotCommandWithTargets,
   createMessage,
   endStudentSessionExact,
+  getApplicableBlockListById,
+  getApplicableFlightPathById,
   getBlockListById,
   getClasspilotCommandByIdAndSchool,
   getClasspilotStudentControlState,
@@ -239,8 +242,12 @@ export async function normalizeCommandPayload(
       };
     case "apply-flight-path": {
       const flightPathId = String(validated.flightPathId || "").trim();
+      // With the School Library on for this school, the actor may also apply a
+      // same-school shared or official Flight Path; otherwise only their own.
       const flightPath = flightPathId
-        ? await getFlightPathById(flightPathId, schoolId, teacherId)
+        ? isSharedTeachingResourcesEnabled(schoolId)
+          ? await getApplicableFlightPathById(flightPathId, schoolId, teacherId)
+          : await getFlightPathById(flightPathId, schoolId, teacherId)
         : undefined;
       if (!flightPath) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
       const allowedDomains = requireRuleListWithinExtensionLimit(
@@ -265,7 +272,9 @@ export async function normalizeCommandPayload(
     case "apply-block-list": {
       const blockListId = String(validated.blockListId || "").trim();
       const blockList = blockListId
-        ? await getBlockListById(blockListId, schoolId, teacherId)
+        ? isSharedTeachingResourcesEnabled(schoolId)
+          ? await getApplicableBlockListById(blockListId, schoolId, teacherId)
+          : await getBlockListById(blockListId, schoolId, teacherId)
         : undefined;
       if (!blockList) throw Object.assign(new Error("Block List not found"), { status: 404 });
       const blockedDomains = requireRuleListWithinExtensionLimit(

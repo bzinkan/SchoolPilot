@@ -12,6 +12,7 @@ import {
 } from "./classpilotStudentSessionRecoveryIndexes.js";
 import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigration.js";
 import { microsoftSignInMigration } from "./microsoftSignInMigration.js";
+import { sharedTeachingResourcesMigration } from "./sharedTeachingResourcesMigration.js";
 import { safetyCenterMigration } from "./safetyCenterMigration.js";
 import { mailpilotSafetyDurabilityMigration } from "./mailpilotSafetyDurabilityMigration.js";
 import { classpilotSchedulingMigration } from "./classpilotSchedulingMigration.js";
@@ -519,6 +520,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotTeacherPreferencesMigration,
   importProcessingStagesMigration,
   microsoftSignInMigration,
+  sharedTeachingResourcesMigration,
   staffIdentityIntegrityMigration,
 ];
 
