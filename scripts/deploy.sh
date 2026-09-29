@@ -3869,7 +3869,7 @@ preflight_microsoft_sign_in_secret() {
     return 0
   fi
   local parameter_type
-  if ! parameter_type=$(aws ssm describe-parameters \
+  if ! parameter_type=$(MSYS2_ARG_CONV_EXCL="*" aws ssm describe-parameters \
       --parameter-filters "Key=Name,Option=Equals,Values=/${PROJECT}/${ENV}/MICROSOFT_CLIENT_SECRET" \
       --query 'Parameters[0].Type' \
       --output text \
