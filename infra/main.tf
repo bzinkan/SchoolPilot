@@ -301,6 +301,8 @@ module "turn" {
   relay_port_min       = var.classpilot_turn_relay_port_min
   relay_port_max       = var.classpilot_turn_relay_port_max
   alerts_sns_topic_arn = var.alerts_sns_topic_arn
+  parked               = var.classpilot_turn_parked
+  ami_id               = var.classpilot_turn_ami_id
 
   depends_on = [module.turn_activation_gate]
 }

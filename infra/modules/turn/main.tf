@@ -11,8 +11,12 @@ locals {
   ])
 }
 
+# Canonical's moving Ubuntu parameter is read only when no AMI is pinned. A
+# pinned AMI keeps an existing node from being replaced when Canonical
+# publishes a newer image (production pins the verified deployed image).
 data "aws_ssm_parameter" "ubuntu_ami" {
-  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+  count = var.ami_id == null ? 1 : 0
+  name  = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
 
 data "aws_subnet" "turn" {
@@ -185,7 +189,7 @@ resource "aws_route53_record" "turn" {
 
 resource "aws_instance" "turn" {
   for_each                    = local.nodes
-  ami                         = data.aws_ssm_parameter.ubuntu_ami.value
+  ami                         = var.ami_id != null ? var.ami_id : one(data.aws_ssm_parameter.ubuntu_ami[*].value)
   instance_type               = var.instance_type
   subnet_id                   = var.public_subnet_ids[each.value]
   vpc_security_group_ids      = [aws_security_group.turn.id]
@@ -230,6 +234,12 @@ resource "aws_instance" "turn" {
   })
 
   lifecycle {
+    # Legacy TURN nodes are parked, not disposable. Any change that would
+    # destroy or replace a node (AMI, user data, subnet, root volume, or module
+    # removal) must fail loudly. A reviewed replacement or decommission PR
+    # removes this protection first.
+    prevent_destroy = true
+
     precondition {
       condition     = length(var.public_subnet_ids) >= 2
       error_message = "ClassPilot TURN requires public subnets in at least two availability zones."
@@ -255,6 +265,16 @@ resource "aws_eip_association" "turn" {
   for_each      = local.nodes
   allocation_id = aws_eip.turn[each.key].id
   instance_id   = aws_instance.turn[each.key].id
+}
+
+# Power state is explicit. Parked legacy TURN keeps every resource (instances,
+# Elastic IPs, DNS, secret, security group, IAM, alarms, dashboard) and only
+# stops the nodes. Stopping or starting never replaces an instance, detaches
+# its Elastic IP or changes DNS.
+resource "aws_ec2_instance_state" "turn" {
+  for_each    = local.nodes
+  instance_id = aws_instance.turn[each.key].id
+  state       = var.parked ? "stopped" : "running"
 }
 
 resource "aws_cloudwatch_metric_alarm" "authentication_failures" {
@@ -285,7 +305,8 @@ resource "aws_cloudwatch_metric_alarm" "node_status" {
   datapoints_to_alarm = 2
   period              = 60
   statistic           = "Maximum"
-  treat_missing_data  = "breaching"
+  treat_missing_data  = var.parked ? "notBreaching" : "breaching"
+  actions_enabled     = !var.parked
   alarm_actions       = local.alarm_actions
   ok_actions          = local.alarm_actions
 
@@ -307,7 +328,8 @@ resource "aws_cloudwatch_metric_alarm" "log_storage" {
   datapoints_to_alarm = 2
   period              = 60
   statistic           = "Maximum"
-  treat_missing_data  = "breaching"
+  treat_missing_data  = var.parked ? "notBreaching" : "breaching"
+  actions_enabled     = !var.parked
   alarm_actions       = local.alarm_actions
   ok_actions          = local.alarm_actions
 
