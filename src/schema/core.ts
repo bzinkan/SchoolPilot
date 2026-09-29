@@ -93,6 +93,11 @@ export const schools = pgTable("schools", {
   // every existing school keeps password sign-in. Managed only through
   // PUT /api/schools/:schoolId/staff-password-login (ClassPilot Settings).
   staffPasswordLoginEnabled: boolean("staff_password_login_enabled").notNull().default(true),
+  // Microsoft Entra ID sign-in, set only by a super admin. The tenant ID pins
+  // which Entra directory may vouch for this school's staff: tokens from any
+  // other tenant are refused before an account is looked up or bound.
+  microsoftSignInEnabled: boolean("microsoft_sign_in_enabled").notNull().default(false),
+  microsoftTenantId: text("microsoft_tenant_id"),
   // ClassPilot MailPilot add-on (student Gmail safety monitoring via DWD)
   mailpilotEntitled: boolean("mailpilot_entitled").notNull().default(false),
   classpilotEmailMonitoring: boolean("classpilot_email_monitoring").notNull().default(false),
@@ -123,6 +128,14 @@ export const schools = pgTable("schools", {
   check(
     "schools_gopilot_settings_revision_check",
     sql`${table.gopilotSettingsRevision} >= 0`
+  ),
+  check(
+    "schools_microsoft_tenant_id_check",
+    sql`${table.microsoftTenantId} IS NULL OR ${table.microsoftTenantId} ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'`
+  ),
+  check(
+    "schools_microsoft_sign_in_tenant_check",
+    sql`NOT ${table.microsoftSignInEnabled} OR ${table.microsoftTenantId} IS NOT NULL`
   ),
 ]);
 
@@ -165,6 +178,8 @@ export const users = pgTable(
     email: text("email").notNull().unique(),
     password: text("password"), // Nullable for OAuth users
     googleId: text("google_id").unique(),
+    // "<entra tenant id>:<entra object id>", bound on first Microsoft sign-in.
+    microsoftId: text("microsoft_id").unique(),
     firstName: text("first_name").notNull().default(""),
     lastName: text("last_name").notNull().default(""),
     displayName: text("display_name"),

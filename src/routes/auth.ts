@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import crypto from "crypto";
 import { google } from "googleapis";
 import { loginSchema } from "../schema/validation.js";
@@ -14,7 +14,21 @@ import {
   IdentityEmailConflictError,
   GoogleIdentityConflictError,
   resolveGoogleLoginIdentity,
+  MicrosoftIdentityConflictError,
+  anySchoolUsesMicrosoftSignIn,
+  resolveMicrosoftLoginIdentity,
 } from "../services/storage.js";
+import type { User } from "../schema/core.js";
+import {
+  MicrosoftSignInError,
+  buildMicrosoftAuthorizeUrl,
+  createPkcePair,
+  exchangeMicrosoftAuthCode,
+  getMicrosoftSignInConfig,
+  microsoftIdentityId,
+  microsoftTenantAllowed,
+  verifyMicrosoftIdToken,
+} from "../services/microsoftSignIn.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
@@ -86,6 +100,7 @@ function serializeSchoolIdentity(identity: VerifiedSchoolIdentity) {
     mailpilotEntitled: identity.school.mailpilotEntitled,
     classpilotEmailMonitoring: identity.school.classpilotEmailMonitoring,
     staffPasswordLoginEnabled: identity.school.staffPasswordLoginEnabled !== false,
+    microsoftSignInEnabled: identity.school.microsoftSignInEnabled === true,
     ...(effectiveGoPilotRole !== "parent"
       ? {
           dismissalTime: identity.school.dismissalTime,
@@ -125,6 +140,8 @@ const NO_ACTIVE_SCHOOL_ERROR =
   "Your account does not have access to an active school. Contact your school administrator.";
 const STAFF_PASSWORD_LOGIN_DISABLED_ERROR =
   "Password sign-in is turned off for your school. Use Continue with Google.";
+const STAFF_PASSWORD_LOGIN_DISABLED_MICROSOFT_ERROR =
+  "Password sign-in is turned off for your school. Use Continue with Microsoft or Continue with Google.";
 
 // POST /api/auth/login
 // Returns both session cookie AND JWT for dual-auth compatibility
@@ -224,7 +241,9 @@ router.post("/login", authLimiter, async (req, res, next) => {
           },
         });
         return res.status(403).json({
-          error: STAFF_PASSWORD_LOGIN_DISABLED_ERROR,
+          error: schoolIdentities.some((identity) => identity.school.microsoftSignInEnabled)
+            ? STAFF_PASSWORD_LOGIN_DISABLED_MICROSOFT_ERROR
+            : STAFF_PASSWORD_LOGIN_DISABLED_ERROR,
           code: "STAFF_PASSWORD_LOGIN_DISABLED",
         });
       }
@@ -435,6 +454,43 @@ function getFrontendUrl(): string {
 }
 
 /**
+ * Starts the web session and mints the JWT for an identity an OAuth provider
+ * verified. Callers redirect with a one-time code, never the token itself.
+ */
+async function establishOAuthLogin(
+  req: Request,
+  user: User,
+  schoolIdentities: readonly VerifiedSchoolIdentity[]
+): Promise<string> {
+  const selectedIdentity = schoolIdentities.length === 1 ? schoolIdentities[0] : undefined;
+  await establishWebSession(req, {
+    userId: user.id,
+    email: user.email,
+    role: user.isSuperAdmin
+      ? "super_admin"
+      : selectedIdentity?.primaryRole || schoolIdentities[0]?.primaryRole || "teacher",
+    schoolId: selectedIdentity?.schoolId || null,
+    schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
+    authVersion: user.authVersion,
+  });
+
+  // Generate JWT so the frontend can authenticate immediately
+  // (Session cookies don't work behind CloudFront→ALB HTTP proxy)
+  const token = signUserToken({
+    userId: user.id,
+    email: user.email,
+    isSuperAdmin: user.isSuperAdmin,
+    authVersion: user.authVersion,
+  });
+
+  // Save session best-effort (for cookie-based clients)
+  await new Promise<void>((resolve, reject) => {
+    req.session.save((err) => (err ? reject(err) : resolve()));
+  });
+  return token;
+}
+
+/**
  * The legacy GoPilot Android OAuth callback used an unverified custom URI
  * scheme. Another installed app could claim that scheme and race the
  * single-use code, so native GoPilot OAuth stays disabled until a verified
@@ -604,30 +660,7 @@ router.get("/google/callback", async (req, res, next) => {
       return res.redirect(`${frontendUrl}/login?error=domain_mismatch`);
     }
 
-    await establishWebSession(req, {
-      userId: user.id,
-      email: user.email,
-      role: user.isSuperAdmin
-        ? "super_admin"
-        : selectedIdentity?.primaryRole || firstIdentity?.primaryRole || "teacher",
-      schoolId: selectedIdentity?.schoolId || null,
-      schoolSessionVersion: selectedIdentity?.school.schoolSessionVersion,
-      authVersion: user.authVersion,
-    });
-
-    // Generate JWT so the frontend can authenticate immediately
-    // (Session cookies don't work behind CloudFront→ALB HTTP proxy)
-    const token = signUserToken({
-      userId: user.id,
-      email: user.email,
-      isSuperAdmin: user.isSuperAdmin,
-      authVersion: user.authVersion,
-    });
-
-    // Save session best-effort (for cookie-based clients)
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => (err ? reject(err) : resolve()));
-    });
+    const token = await establishOAuthLogin(req, user, schoolIdentities);
 
     let redirectAfter = savedRedirect;
 
@@ -679,6 +712,147 @@ router.get("/google/callback", async (req, res, next) => {
       return res.redirect(`${frontendUrl}/login?error=identity_conflict`);
     }
     return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+  }
+});
+
+// ============================================================================
+// Microsoft Entra ID Login
+// ============================================================================
+
+// GET /api/auth/providers — which OAuth sign-in buttons the login page offers.
+// Microsoft stays hidden until a school turns it on, so no one sees a dead button.
+router.get("/providers", async (_req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      google: Boolean(process.env.GOOGLE_CLIENT_ID),
+      microsoft: getMicrosoftSignInConfig() !== null && (await anySchoolUsesMicrosoftSignIn()),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/auth/microsoft — Initiate Microsoft Entra ID OIDC login (web only)
+router.get("/microsoft", (req, res, next) => {
+  const config = getMicrosoftSignInConfig();
+  if (!config) {
+    return res.status(503).json({ error: "Microsoft sign-in not configured" });
+  }
+  const state = crypto.randomBytes(32).toString("base64url");
+  const nonce = crypto.randomBytes(32).toString("base64url");
+  const pkce = createPkcePair();
+  req.session.microsoftOAuthState = state;
+  req.session.microsoftOAuthNonce = nonce;
+  req.session.microsoftOAuthCodeVerifier = pkce.verifier;
+  req.session.save((err) => {
+    if (err) return next(err);
+    return res.redirect(
+      buildMicrosoftAuthorizeUrl(config, { state, nonce, codeChallenge: pkce.challenge })
+    );
+  });
+});
+
+// Entra returns these when the school's tenant has not approved the app yet.
+const MICROSOFT_CONSENT_ERRORS = new Set(["consent_required", "interaction_required"]);
+
+// GET /api/auth/microsoft/callback — Handle the Microsoft authorization response
+router.get("/microsoft/callback", async (req, res) => {
+  const frontendUrl = getFrontendUrl();
+  const refuse = async (reason: string, loginError: string, entry: Partial<AuditEntry> = {}) => {
+    await logAudit({
+      ...entry,
+      action: "auth.rejected",
+      metadata: { reason, method: "microsoft", ...(entry.metadata ?? {}) },
+    });
+    return res.redirect(`${frontendUrl}/login?error=${loginError}`);
+  };
+
+  const expectedState = req.session.microsoftOAuthState;
+  const nonce = req.session.microsoftOAuthNonce;
+  const codeVerifier = req.session.microsoftOAuthCodeVerifier;
+  req.session.microsoftOAuthState = undefined;
+  req.session.microsoftOAuthNonce = undefined;
+  req.session.microsoftOAuthCodeVerifier = undefined;
+
+  try {
+    const config = getMicrosoftSignInConfig();
+    if (!config) return res.redirect(`${frontendUrl}/login?error=microsoft_unavailable`);
+
+    const providerError = typeof req.query.error === "string" ? req.query.error : "";
+    if (providerError) {
+      const description =
+        typeof req.query.error_description === "string" ? req.query.error_description : "";
+      const needsConsent =
+        MICROSOFT_CONSENT_ERRORS.has(providerError) || description.includes("AADSTS65001");
+      return refuse("provider_error", needsConsent ? "microsoft_consent_required" : "microsoft_failed", {
+        metadata: { providerError: providerError.slice(0, 64) },
+      });
+    }
+
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    if (!code || !state || state !== expectedState || !nonce || !codeVerifier) {
+      return refuse("invalid_oauth_state", "microsoft_failed");
+    }
+
+    const idToken = await exchangeMicrosoftAuthCode(config, { code, codeVerifier });
+    const identity = await verifyMicrosoftIdToken(idToken, { clientId: config.clientId, nonce });
+    const resolution = await resolveMicrosoftLoginIdentity({
+      email: identity.email,
+      microsoftId: microsoftIdentityId(identity.tenantId, identity.objectId),
+      isAllowed: async (candidate) =>
+        microsoftTenantAllowed(
+          buildVerifiedSchoolIdentities(await getMembershipsWithSchool(candidate.id)),
+          identity.tenantId
+        ),
+    });
+    if (resolution.status === "no_account") {
+      return refuse("no_account", "microsoft_no_account", {
+        userEmail: identity.email ?? undefined,
+        metadata: { tenantId: identity.tenantId },
+      });
+    }
+    if (resolution.status === "not_allowed") {
+      return refuse("microsoft_tenant_not_allowed", "microsoft_not_enabled", {
+        userId: resolution.user.id,
+        userEmail: resolution.user.email,
+        metadata: { tenantId: identity.tenantId },
+      });
+    }
+
+    const user = resolution.user;
+    const schoolIdentities = buildVerifiedSchoolIdentities(await getMembershipsWithSchool(user.id));
+    if (!user.isSuperAdmin && schoolIdentities.length === 0) {
+      return refuse("no_active_school", "no_school", { userId: user.id, userEmail: user.email });
+    }
+    const token = await establishOAuthLogin(req, user, schoolIdentities);
+    const selectedIdentity = schoolIdentities.length === 1 ? schoolIdentities[0] : undefined;
+    await logAudit({
+      schoolId: selectedIdentity?.schoolId ?? null,
+      userId: user.id,
+      userEmail: user.email,
+      userRole: user.isSuperAdmin ? "super_admin" : selectedIdentity?.primaryRole,
+      action: "auth.login.success",
+      metadata: { ip: clientIp(req), method: "microsoft", tenantId: identity.tenantId },
+    });
+
+    const oneTimeCode = await issueAuthCode(token);
+    return res.redirect(`${frontendUrl}/login?code=${encodeURIComponent(oneTimeCode)}`);
+  } catch (err) {
+    if (err instanceof MicrosoftIdentityConflictError || err instanceof IdentityEmailConflictError) {
+      return refuse(
+        err instanceof MicrosoftIdentityConflictError
+          ? "microsoft_identity_conflict"
+          : "identity_email_conflict",
+        "identity_conflict"
+      );
+    }
+    if (err instanceof MicrosoftSignInError) {
+      return refuse(err.reason, "microsoft_failed");
+    }
+    console.error("[auth] Microsoft OAuth callback failed");
+    return res.redirect(`${frontendUrl}/login?error=microsoft_failed`);
   }
 });
 

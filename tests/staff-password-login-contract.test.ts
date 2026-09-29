@@ -112,7 +112,10 @@ test("password login gate runs after credential verification and before the web 
   assert.match(login, /staffPasswordLoginEnabled !== false/);
   assert.match(login, /reason: "password_login_disabled"/);
   assert.match(login, /action: "auth\.login\.password_policy_exempt"/);
-  assert.match(login, /res\.status\(403\)\.json\(\{\s*error: STAFF_PASSWORD_LOGIN_DISABLED_ERROR,\s*code: "STAFF_PASSWORD_LOGIN_DISABLED",/);
+  assert.match(
+    login,
+    /res\.status\(403\)\.json\(\{\s*error: schoolIdentities\.some\(\(identity\) => identity\.school\.microsoftSignInEnabled\)\s*\?\s*STAFF_PASSWORD_LOGIN_DISABLED_MICROSOFT_ERROR\s*:\s*STAFF_PASSWORD_LOGIN_DISABLED_ERROR,\s*code: "STAFF_PASSWORD_LOGIN_DISABLED",/
+  );
 
   const serializer = slice(auth, "function serializeSchoolIdentity", "const router = Router()");
   assert.match(serializer, /staffPasswordLoginEnabled: identity\.school\.staffPasswordLoginEnabled !== false/);
@@ -157,7 +160,10 @@ test("web client sends the client hint, honours the policy code, and manages it 
   const settings = source("schoolpilot-app/src/products/classpilot/pages/Settings.jsx");
   assert.match(settings, /apiRequest\('PUT', `\/schools\/\$\{schoolId\}\/staff-password-login`, \{ enabled: draft\.enabled \}/);
   assert.match(settings, /Allow staff to sign in with email and password/);
-  assert.match(settings, /When off, staff use Google sign-in\. The GoPilot staff app keeps password access while the school has a GoPilot license\./);
+  assert.match(
+    settings,
+    /school\?\.microsoftSignInEnabled \? 'When off, staff use Google or Microsoft sign-in\.' : 'When off, staff use Google sign-in\.'\} The GoPilot staff app keeps password access while the school has a GoPilot license\./
+  );
   assert.match(settings, /saveLabel="Save staff sign-in"/);
   assert.match(settings, /onChange=\{event => editor\.update\('enabled', event\.target\.checked\)\}/, "the switch changes a draft, not the server");
   assert.match(settings, /school\?\.staffPasswordLoginEnabled !== false/);

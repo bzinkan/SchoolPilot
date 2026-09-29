@@ -49,6 +49,7 @@ export function useClassPilotAuth() {
         classpilotEmailMonitoring: activeMembership.classpilotEmailMonitoring === true,
         // Staff sign-in policy; defaults on when the server has not sent it.
         staffPasswordLoginEnabled: activeMembership.staffPasswordLoginEnabled !== false,
+        microsoftSignInEnabled: activeMembership.microsoftSignInEnabled === true,
       }
     : null;
 

@@ -239,6 +239,8 @@ The `authenticate` middleware (`src/middleware/authenticate.ts`) checks two auth
 2. **JWT Bearer tokens** — `Authorization: Bearer <token>`. Used by GoPilot mobile and WebSocket connections.
 3. **Device tokens** — Separate `STUDENT_TOKEN_SECRET` for ClassPilot Chrome extension auth.
 
+**Microsoft sign-in is tenant-pinned.** A super admin turns it on per school with that school's Entra tenant ID (`PUT /api/super-admin/schools/:id/sign-in-methods`). The callback verifies the ID token, then `resolveMicrosoftLoginIdentity` refuses — before writing anything — unless one of the user's active schools has Microsoft on for the token's `tid`. `users.microsoft_id` stores `<tid>:<oid>`; never match a Microsoft login on the email claim alone, because any tenant can assert any email.
+
 ### Authorization Chain
 Routes use a middleware chain: `authenticate` → `requireSchoolContext` → `requireActiveSchool` → `requireProductLicense` → `requireRole`.
 
@@ -479,6 +481,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `DB_POOL_MAX` / `SCHEDULER_DB_POOL_MAX` — Main API and scheduler Postgres pool caps
 - `SESSION_SECRET`, `JWT_SECRET`, `STUDENT_TOKEN_SECRET` — Auth secrets. Kiosk tokens use `KIOSK_TOKEN_SECRET` when configured and otherwise share `JWT_SECRET`; `KIOSK_HEALTH_HMAC_SECRET` may independently rotate the opaque client-health rate-limit keys. `CLASSPILOT_KIOSK_TICKET_HMAC_SECRET` independently rotates launch-ticket keys and purpose-separated managed-device continuity projections/proofs (falling back to the kiosk/JWT secret when omitted). Keep this root secret stable during ordinary deployments: rotating it deliberately resets managed-device continuity and requires a coordinated rollout.
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth
+- `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` (optional `MICROSOFT_CALLBACK_URL`) — Microsoft Entra ID staff sign-in. The login button appears only when both are set and a school has Microsoft on; unset makes `/api/auth/microsoft` answer 503. Production gets them once from `deploy.sh --enable-microsoft-sign-in <client-id>` (SecureString `/schoolpilot/production/MICROSOFT_CLIENT_SECRET` must already exist); later deploys carry them forward. See `docs/MICROSOFT_SIGN_IN.md`
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` — Current AES-256-GCM key for admin-visible ClassPilot student PIN ciphertext (the legacy name is retained for compatibility)
 - `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS` — Optional previous PIN key used only during a staged dual-read/current-write rotation; remove after the counts-only migration and rollback window pass
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges

@@ -21,6 +21,7 @@ export const OPTIONAL_RUNTIME_PARAMETERS = new Map([
     "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS",
     "GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS",
   ],
+  ["MICROSOFT_CLIENT_SECRET", "MICROSOFT_CLIENT_SECRET"],
 ]);
 
 export class RuntimeSecretValidationError extends Error {
