@@ -23,6 +23,9 @@ import {
   getGroupsByTeacherAndSchool,
   getAbsentStudentIds,
   getSettingsForSchool,
+  getFlightPathsBySchool,
+  getFlightPathsByTeacherAndSchool,
+  createFlightPath,
 } from "./storage.js";
 import {
   filterPassesForRole,
@@ -43,21 +46,6 @@ import { getToolsForContext } from "./chatTools.js";
 import { getPasspilotClasses } from "./passpilotClasses.js";
 import { isWithinTrackingWindow } from "./schoolHours.js";
 import { isDatabaseErrorCode } from "../util/databaseError.js";
-
-// Lazy imports to avoid circular deps — flight paths may not exist in all setups
-let _getFlightPathsBySchool: ((schoolId: string) => Promise<any[]>) | null =
-  null;
-let _createFlightPath: ((data: any) => Promise<any>) | null = null;
-
-async function loadFlightPathFns() {
-  if (!_getFlightPathsBySchool) {
-    const storage = await import("./storage.js");
-    _getFlightPathsBySchool =
-      (storage as any).getFlightPathsBySchool ||
-      (storage as any).getFlightPathsByTeacher;
-    _createFlightPath = (storage as any).createFlightPath;
-  }
-}
 
 export interface ToolContext {
   userId: string;
@@ -82,6 +70,22 @@ type ToolExecutor = (
 
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+// Flight Paths are personal: a teacher may list only the paths they own.
+// School administrators keep the school-wide view because they may manage any
+// Flight Path in their school (canManageOwnedResource in
+// routes/classpilot/flightPaths.ts). ctx.userRole is re-derived from the
+// verified membership on every call (executeToolWithFreshTenant), so an
+// administrator who also teaches resolves to the administrator role here.
+const SCHOOL_FLIGHT_PATH_VIEWER_ROLES: ReadonlySet<string> = new Set([
+  "super_admin",
+  "admin",
+  "school_admin",
+]);
+
+export function flightPathListScopeForRole(role: string): "school" | "own" {
+  return SCHOOL_FLIGHT_PATH_VIEWER_ROLES.has(role) ? "school" : "own";
 }
 
 function passpilotRoleForTool(ctx: ToolContext): PassPilotRole | null {
@@ -252,12 +256,10 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   list_flight_paths: async (_args, ctx) => {
-    await loadFlightPathFns();
-    if (!_getFlightPathsBySchool) {
-      return { success: false, error: "Flight path feature not available" };
-    }
-    const fps = await _getFlightPathsBySchool(ctx.schoolId);
-    const summary = fps.map((fp: any) => ({
+    const fps = flightPathListScopeForRole(ctx.userRole) === "school"
+      ? await getFlightPathsBySchool(ctx.schoolId)
+      : await getFlightPathsByTeacherAndSchool(ctx.userId, ctx.schoolId);
+    const summary = fps.map((fp) => ({
       id: fp.id,
       name: fp.flightPathName,
       allowedDomains: fp.allowedDomains,
@@ -270,11 +272,7 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   create_flight_path: async (args, ctx) => {
-    await loadFlightPathFns();
-    if (!_createFlightPath) {
-      return { success: false, error: "Flight path feature not available" };
-    }
-    const fp = await _createFlightPath({
+    const fp = await createFlightPath({
       schoolId: ctx.schoolId,
       teacherId: ctx.userId,
       flightPathName: args.name,

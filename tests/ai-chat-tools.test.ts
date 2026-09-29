@@ -71,6 +71,23 @@ describe("AI chat tool privacy and authorization", () => {
     assert.match(result.error || "", /not authorized/);
   });
 
+  it("scopes list_flight_paths to the caller's own paths unless the caller administers the school", async () => {
+    const { flightPathListScopeForRole } = await import("../dist/services/chatToolExecutor.js");
+
+    assert.equal(flightPathListScopeForRole("teacher"), "own");
+    assert.equal(flightPathListScopeForRole("office_staff"), "own");
+    assert.equal(flightPathListScopeForRole("parent"), "own");
+    assert.equal(flightPathListScopeForRole(""), "own");
+    assert.equal(flightPathListScopeForRole("unknown_role"), "own");
+    assert.equal(flightPathListScopeForRole("admin"), "school");
+    assert.equal(flightPathListScopeForRole("school_admin"), "school");
+    assert.equal(flightPathListScopeForRole("super_admin"), "school");
+
+    assert.equal(getToolsForContext("teacher", ["CLASSPILOT"]).toolMeta.has("list_flight_paths"), true);
+    assert.equal(getToolsForContext("office_staff", ["CLASSPILOT"]).toolMeta.has("list_flight_paths"), false);
+    assert.equal(getToolsForContext("parent", ["CLASSPILOT"]).toolMeta.has("list_flight_paths"), false);
+  });
+
   it("gives PassPilot-only teachers an authorized class inventory for pass issuance", () => {
     const { tools, toolMeta } = getToolsForContext("teacher", ["PASSPILOT"]);
 
