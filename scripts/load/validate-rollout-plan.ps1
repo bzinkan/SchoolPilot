@@ -25,6 +25,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+# Saved plans render with the provider schemas of the initialized infra directory.
+# Naming it keeps the validator independent of the caller's working directory; the
+# NAT rollback helper runs it in-process from wherever the operator stands.
+$terraformDirectory = Join-Path $repositoryRoot "infra"
 
 function Resolve-ExternalFile {
     param([string]$Path, [string]$Name)
@@ -63,7 +67,7 @@ function Assert-FileDigest {
 
 function Invoke-TerraformPlanJson {
     param([string]$Path)
-    $raw = & terraform show -json $Path 2>&1
+    $raw = & terraform "-chdir=$terraformDirectory" show -json $Path 2>&1
     if ($LASTEXITCODE -ne 0) { throw "terraform show -json failed for the saved $Phase plan." }
     try { return (($raw | Out-String).Trim() | ConvertFrom-Json -DateKind String -Depth 60) }
     catch { throw "terraform show -json did not return valid plan JSON." }
@@ -88,14 +92,19 @@ function Get-PlanActionCounts {
 
 function Assert-PlanExecutionMetadata {
     param($Plan, [string]$Contract)
-    foreach ($name in @("errored","complete","applyable","deferred_changes")) {
+    foreach ($name in @("errored","complete","applyable")) {
         if ($null -eq $Plan.PSObject.Properties[$name]) {
             throw "$Contract saved plan lacks required Terraform execution metadata '$name'."
         }
     }
+    # Terraform 1.14 omits deferred_changes when the plan defers nothing, so absence
+    # means none. When the field is present it must be an empty list.
+    $deferred = $Plan.PSObject.Properties["deferred_changes"]
+    $deferredClean = $null -eq $deferred -or
+        ($null -ne $deferred.Value -and $deferred.Value -is [Array] -and @($deferred.Value).Count -eq 0)
     if ($Plan.errored -isnot [bool] -or $Plan.complete -isnot [bool] -or $Plan.applyable -isnot [bool] -or
         $Plan.errored -ne $false -or $Plan.complete -ne $true -or $Plan.applyable -ne $true -or
-        @($Plan.deferred_changes).Count -ne 0) {
+        -not $deferredClean) {
         throw "$Contract saved plan must be non-errored, complete, applyable, and contain no deferred changes."
     }
     if (@(Get-PlanObjectValue $Plan "resource_drift" @()).Count -ne 0) {

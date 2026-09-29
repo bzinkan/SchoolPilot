@@ -2082,7 +2082,49 @@ next authorized traffic is the engineering-capacity Waf/500 -> Waf/800 run
 owned by `start-classpilot-capacity-acceptance.ps1`; historical results and
 drills cannot seed it.
 
-## Deferred phase 2: public ECS while NAT remains (inactive)
+## Medium-path activation of public ECS and NAT removal (2026-09-29)
+
+Brian authorized phases 2 and 3 below for the current medium path on
+2026-09-29, separately from the paused capacity campaign. Everything in those
+sections applies except the load gates, which this section replaces.
+
+- **Load gates.** The 810-socket PublicEcs/800 and NatRemoved/800 gates and the
+  supervisor `MonitorOnly` soak are not required. The supervisor soak depends on
+  capacity-chain predecessor evidence that the paused campaign never produced.
+  NAT removal does not change the inbound CloudFront to ALB path those gates
+  load, and outbound traffic through task public IPs has no NAT port or
+  bandwidth limit. In their place:
+  - **Egress checklist**, after the PublicEcs apply and guarded redeploy, and
+    again after NAT removal: ECR pull, SSM and Secrets Manager injection and
+    CloudWatch Logs at task start; RDS and Redis through the token-gated
+    `/health`; a real teacher Google sign-in and the next roster sync; Gemini
+    classification; a SendGrid test email; the Stripe-backed admin billing page;
+    a Telegram alert or `getMe`; the SOC 2 dashboard's GitHub API read; live
+    tiles, student heartbeats and the worker heartbeat alarm; and a direct
+    request to a task public IP timing out.
+  - **Soak** of at least 24 hours spanning one full school day, with NAT still
+    present. In the final six hours: under 1 MiB of NAT bytes in total (the
+    monitor's `natSixHourMaximumBytes`), zero `ErrorPortAllocation` and
+    `PacketsDropCount` on both NAT gateways, no rise in API 5xx or error-monitor
+    captures against the previous school day, and a public IPv4 address on every
+    running API and worker ENI.
+- **Seed task definitions.** The ECS services ignore `task_definition`, and
+  deploy.sh renders every release from the exact serving revisions, so
+  `module.ecs.aws_ecs_task_definition.api` and `.worker` are seeds that never
+  run. When a PR changes their inputs (the ECS module's environment or secrets,
+  task sizes, `rls_enabled_tables`), apply a saved plan targeting only those two
+  addresses the same evening. The required shape is exactly two create+delete
+  replacements. Otherwise every full plan, including the PublicEcs and
+  NatRemoved plans, carries their drift and fails validation.
+- **Validator.** `scripts/load/validate-rollout-plan.ps1` runs Terraform against
+  the repository's `infra` directory, so it works from any working directory
+  once that directory is initialized
+  (`terraform -chdir=infra init -backend=false -lockfile=readonly`). Terraform
+  1.14 omits `deferred_changes` from plan JSON when nothing is deferred, and the
+  validator treats absence as none. Targeted plans are incomplete and remain
+  invalid for every phase.
+
+## Deferred phase 2: public ECS while NAT remains (authorized 2026-09-29, medium path)
 
 Keep the canonical profile unchanged during this phase. Explicitly override
 only the ECS subnet posture for the reviewed public-task plan; the profile
@@ -2138,7 +2180,7 @@ Run the 810-socket 90-minute gate, then the exact 24-hour `MonitorOnly` soak.
 The final six hours require all 360 fresh one-minute datapoints, under 1 MiB
 total NAT bytes, no drops/allocation errors, and no upward trend.
 
-## Deferred phase 3: NAT removal (inactive)
+## Deferred phase 3: NAT removal (authorized 2026-09-29, medium path)
 
 Only after the soak passes, merge a phase-specific `production.tfvars` PR that
 sets `ecs_tasks_in_public_subnets=true` and `enable_nat_gateway=false`. This
@@ -2212,6 +2254,10 @@ Require every Route 53 checker to report exact HTTP 200 on HTTPS `/health` and
 the replacement alarm to remain `OK` for three one-minute periods.
 
 ## Deferred phase 5: Redis micro and final workload (inactive)
+
+Redis already runs `cache.t4g.micro`. It moved on 2026-09-29 (#540) on live
+evidence after a manual snapshot, without the load runs below. The endurance
+runs remain inactive with the capacity campaign.
 
 Confirm no pending maintenance. Create a uniquely named manual snapshot from
 `schoolpilot-production-redis-001` and wait for `available`. Merge only the
