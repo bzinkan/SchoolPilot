@@ -66,6 +66,7 @@ const DB_SERIAL = new Set([
   "safety-center.integration.test.ts",
   "roster-integrations.integration.test.ts",
   "classpilot-browsing-history.integration.test.ts",
+  "daily-usage-rollup.integration.test.ts",
   "authenticate-operational-failure.test.ts",
   "auth-membership-lifecycle.test.ts",
   "classpilot-2-7-1-command-frame.test.ts",
