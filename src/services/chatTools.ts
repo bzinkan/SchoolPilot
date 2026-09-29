@@ -167,7 +167,7 @@ export const chatTools: ChatTool[] = [
     definition: {
       name: "list_flight_paths",
       description:
-        "List all flight paths (website allowlists) at the school. Shows name, allowed domains, and whether it's a default.",
+        "List flight paths (website allowlists). Teachers see only the flight paths they own; school administrators see every flight path at the school. Shows name, allowed domains, and whether it's a default.",
       input_schema: {
         type: "object" as const,
         properties: {},

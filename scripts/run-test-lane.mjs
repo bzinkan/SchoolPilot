@@ -60,6 +60,7 @@ const DB_SERIAL = new Set([
   "safety-notification-bundling.integration.test.ts",
   "safety-report-pagination.integration.test.ts",
   "mailpilot-safety-durability.integration.test.ts",
+  "ai-chat-flight-path-scope.test.ts",
   "classpilot-scheduling.integration.test.ts",
   "classpilot-monitoring-interruptions.integration.test.ts",
   "safety-center-migration.integration.test.ts",
