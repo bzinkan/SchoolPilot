@@ -9,6 +9,8 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ("schoolpilot-plan-validator-" + [G
 $validator = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\validate-rollout-plan.ps1"))
 $script:Assertions = 0
 $global:SchoolPilotPlanJson = @{}
+# The validator must render plans with the repository's infra directory, not the caller's cwd.
+$global:SchoolPilotTerraformDirectory = Join-Path ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))) "infra"
 
 function Assert-Condition([bool]$Condition,[string]$Message) { $script:Assertions++; if(-not $Condition){throw $Message} }
 function Write-TestFile([string]$Name,[string]$Text="plan") {
@@ -28,8 +30,9 @@ function Register-Plan([string]$Name,[object[]]$Changes,$Configuration=$null) {
 function global:terraform {
     $arguments=@($args|ForEach-Object{[string]$_})
     $global:LASTEXITCODE=0
-    if($arguments[0] -eq "show" -and $arguments[1] -eq "-json") {
-        return ($global:SchoolPilotPlanJson[$arguments[2]]|ConvertTo-Json -Depth 60 -Compress)
+    if($arguments.Count -eq 4 -and $arguments[0] -ceq "-chdir=$global:SchoolPilotTerraformDirectory" -and
+        $arguments[1] -eq "show" -and $arguments[2] -eq "-json") {
+        return ($global:SchoolPilotPlanJson[$arguments[3]]|ConvertTo-Json -Depth 60 -Compress)
     }
     throw "Unexpected terraform mock call: $($arguments -join ' ')"
 }
@@ -213,10 +216,40 @@ try {
     $tamperRejected=$false
     try { & $validator -Phase Redis -PlanPath $redisPlan -PlanSha256 ("0"*64)|Out-Null } catch { $tamperRejected=$_.Exception.Message -match "does not match" }
     Assert-Condition $tamperRejected "Saved-plan digest tampering must be rejected before shape inspection."
+
+    # Terraform 1.14.3 leaves deferred_changes out of plan JSON when nothing is deferred.
+    $omittedDeferredPlan=Register-Plan "redis-omitted-deferred" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$omittedDeferredPlan].PSObject.Properties.Remove("deferred_changes")
+    Assert-Condition ((& $validator -Phase Redis -PlanPath $omittedDeferredPlan -PlanSha256 (Get-Sha $omittedDeferredPlan)|ConvertFrom-Json).valid) "A real Terraform plan that omits the empty deferred_changes list must validate."
+
+    $listedDeferredPlan=Register-Plan "redis-listed-deferred" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$listedDeferredPlan].deferred_changes=@([pscustomobject]@{reason="resource_config_unknown"})
+    $listedDeferredRejected=$false
+    try { & $validator -Phase Redis -PlanPath $listedDeferredPlan -PlanSha256 (Get-Sha $listedDeferredPlan)|Out-Null } catch { $listedDeferredRejected=$_.Exception.Message -match "no deferred changes" }
+    Assert-Condition $listedDeferredRejected "A plan that lists deferred changes must still be rejected."
+
+    $nullDeferredPlan=Register-Plan "redis-null-deferred" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$nullDeferredPlan].deferred_changes=$null
+    $nullDeferredRejected=$false
+    try { & $validator -Phase Redis -PlanPath $nullDeferredPlan -PlanSha256 (Get-Sha $nullDeferredPlan)|Out-Null } catch { $nullDeferredRejected=$_.Exception.Message -match "no deferred changes" }
+    Assert-Condition $nullDeferredRejected "A present but non-list deferred_changes value must be rejected."
+
+    $targetedPlan=Register-Plan "redis-targeted" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$targetedPlan].complete=$false
+    $targetedRejected=$false
+    try { & $validator -Phase Redis -PlanPath $targetedPlan -PlanSha256 (Get-Sha $targetedPlan)|Out-Null } catch { $targetedRejected=$_.Exception.Message -match "complete" }
+    Assert-Condition $targetedRejected "An incomplete plan, such as a targeted plan, must still be rejected."
+
+    Push-Location -LiteralPath $root
+    try {
+        Assert-Condition ((& $validator -Phase Redis -PlanPath $redisPlan -PlanSha256 (Get-Sha $redisPlan)|ConvertFrom-Json).valid) "The validator must give the same answer from a working directory outside the repository."
+    }
+    finally { Pop-Location }
     Write-Host "AWS rollout saved-plan validator tests: PASS ($script:Assertions assertions)"
 }
 finally {
     Remove-Item Function:\terraform -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotPlanJson -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTerraformDirectory -Scope Global -ErrorAction SilentlyContinue
     if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force}
 }
