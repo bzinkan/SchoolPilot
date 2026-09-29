@@ -68,10 +68,16 @@ $script:ActivationOrder = @(
     "studentChatIdempotencyV1",
     "screenshotObservationLeaseV1",
     "safetyEvidenceCaptureV1",
-    "liveViewIceServersV1",
     "kioskLaunchTicketV2"
 )
 $script:RepairedCapabilities = @("scopedAuthorityChecksV1") + $script:ActivationOrder
+# Live View was retired as a product feature on 2026-09-29 and its legacy TURN
+# nodes are parked. The capability keeps its registry entry, flag and position so
+# every runtime stays complete and readable, but no profile turns it on and no
+# profile needs TURN. A runtime written before the retirement may still carry it
+# on; only the live-view-retire profile turns that off. Re-enabling Live View is a
+# new reviewed code change, not a profile.
+$script:RetiredCapability = "liveViewIceServersV1"
 $script:TrackingWindowCapability = "screenshotTrackingWindowLeaseV1"
 $script:FastPreviewCapability = "screenshotActiveObservationCadenceV1"
 $script:ReadOnlyObservationCapability = "screenshotReadOnlyObservationV1"
@@ -108,7 +114,19 @@ $script:AdditiveCapabilities = @(
     $script:RestrictionAuthPassThroughCapability,
     $script:ScheduledClassroomCapability
 ) + @($script:RoadmapCapabilities)
-$script:AllCapabilities = @($script:RepairedCapabilities) + @($script:AdditiveCapabilities) + @(
+# Registry order is fixed: the retired capability keeps the slot it held before
+# kioskLaunchTicketV2, so serialized registries keep their byte order.
+$script:AllCapabilities = @(
+    "scopedAuthorityChecksV1",
+    "exactBindingAckV2",
+    "exactTabCloseV2",
+    "authBoundTelemetryV1",
+    "studentChatIdempotencyV1",
+    "screenshotObservationLeaseV1",
+    "safetyEvidenceCaptureV1",
+    $script:RetiredCapability,
+    "kioskLaunchTicketV2"
+) + @($script:AdditiveCapabilities) + @(
     "kioskLaunchTicketV1"
 )
 $script:CapabilityFlags = [ordered]@{
@@ -459,6 +477,9 @@ function ConvertTo-RuntimeConfiguration {
     # apply. No pilot arm, no evidence, no options: it drops schoolIds from the fixed
     # unpinnable set and changes nothing else.
     $schemaNineModes = @("school-scope-unpin")
+    # Schema 10 retires Live View ICE in place: it turns off only
+    # liveViewIceServersV1 and copies every other control from the source.
+    $schemaTenModes = @("live-view-retire")
     if (($schemaVersion -eq 1 -and $mode -cnotin $schemaOneModes) -or
         ($schemaVersion -eq 2 -and $mode -cnotin $schemaTwoModes) -or
         ($schemaVersion -eq 3 -and $mode -cnotin $schemaThreeModes) -or
@@ -468,7 +489,8 @@ function ConvertTo-RuntimeConfiguration {
         ($schemaVersion -eq 7 -and $mode -cnotin $schemaSevenModes) -or
         ($schemaVersion -eq 8 -and $mode -cnotin $schemaEightModes) -or
         ($schemaVersion -eq 9 -and $mode -cnotin $schemaNineModes) -or
-        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9)) {
+        ($schemaVersion -eq 10 -and $mode -cnotin $schemaTenModes) -or
+        $schemaVersion -notin @(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)) {
         throw "Runtime profile schemaVersion and mode do not match a reviewed profile contract."
     }
 
@@ -516,8 +538,6 @@ function ConvertTo-RuntimeConfiguration {
     }
 
     $turn = $null
-    $turnRequired = $mode -cin @("global-on", "tracking-window-global-on") -or
-        $enabledCapabilities -contains "liveViewIceServersV1"
     if ($mode -ceq "off" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The off profile must not mutate TURN runtime wiring."
     }
@@ -545,39 +565,18 @@ function ConvertTo-RuntimeConfiguration {
     if ($mode -ceq "tracking-window-pilot" -and $Profile.PSObject.Properties.Name -contains "turn") {
         throw "The tracking-window-pilot profile must preserve existing TURN runtime wiring."
     }
-    if ($Profile.PSObject.Properties.Name -contains "turn" -and $null -ne $Profile.turn) {
-        Assert-ExactProperties -Value $Profile.turn -Allowed @("hosts", "secretArn") -Trail "profile.turn"
-        if ($Profile.turn.hosts -isnot [Array]) { throw "TURN hosts must be an array." }
-        $hosts = @($Profile.turn.hosts | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
-        if ($hosts.Count -ne 2 -or @($hosts | Sort-Object -Unique).Count -ne 2) {
-            throw "TURN runtime configuration requires exactly two unique hosts."
-        }
-        foreach ($hostName in $hosts) {
-            if ($hostName -cnotmatch '^turn-[ab]\.school-pilot\.net$') {
-                throw "TURN runtime configuration contains an unexpected host."
-            }
-        }
-        $hosts = @($hosts | Sort-Object)
-        $secretArn = [string]$Profile.turn.secretArn
-        $expectedSecretPattern = '^arn:aws:secretsmanager:us-east-1:135775632425:secret:/schoolpilot/production/CLASSPILOT_TURN_REST_SECRET-[A-Za-z0-9/_+=.@-]+$'
-        if ($secretArn -cnotmatch $expectedSecretPattern) {
-            throw "TURN runtime configuration requires the exact production Secrets Manager ARN shape."
-        }
-        $turn = [pscustomobject]@{
-            Hosts = $hosts
-            SecretArn = $secretArn
-            HostsSha256 = Get-Sha256Text -Value ($hosts -join ",")
-            SecretArnSha256 = Get-Sha256Text -Value $secretArn
-        }
-    }
-    if ($turnRequired -and $null -eq $turn) {
-        throw "The selected profile requires verified TURN inputs."
+    if ($Profile.PSObject.Properties.Name -contains "turn") {
+        # Live View is retired, so no profile manages TURN wiring any more. Every
+        # candidate copies the source's TURN environment and secret unchanged.
+        throw "Live View is retired; runtime profiles must not carry TURN inputs and preserve the existing TURN wiring."
     }
 
-    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes)) {
+    if ($mode -cin @($schemaThreeModes + $schemaFourModes + $schemaFiveModes + $schemaSixModes + $schemaSevenModes + $schemaEightModes + $schemaNineModes + $schemaTenModes)) {
         $isUnpin = $mode -cin $schemaNineModes
         $selectedCapability = if ($isUnpin) {
             $null
+        } elseif ($mode -cin $schemaTenModes) {
+            $script:RetiredCapability
         } elseif ($mode -cin $schemaSevenModes) {
             $script:RoadmapProfileCapabilities[$mode]
         } elseif ($mode -cin $schemaEightModes) {
@@ -595,7 +594,7 @@ function ConvertTo-RuntimeConfiguration {
         ) -or $mode -cin $script:RoadmapPilotModes
         $isOff = $mode -cin @(
             "student-gate-off", "late-signin-off", "fast-preview-off",
-            "restriction-auth-off", "scheduled-classroom-off"
+            "restriction-auth-off", "scheduled-classroom-off", "live-view-retire"
         ) -or $mode -cin $script:RoadmapOffModes
         return [pscustomobject]@{
             Mode = $mode
@@ -633,6 +632,9 @@ function ConvertTo-RuntimeConfiguration {
     if ([string]$rollouts.kioskLaunchTicketV1.mode -cne "off") {
         throw "kioskLaunchTicketV1 must remain off."
     }
+    if ([string]$rollouts.$($script:RetiredCapability).mode -cne "off") {
+        throw "Retired Live View ICE must remain off."
+    }
 
     $environment = [ordered]@{
         CLASSPILOT_PROTOCOL_V3_ENABLED = if ($mode -ceq "off") { "false" } else { "true" }
@@ -643,15 +645,12 @@ function ConvertTo-RuntimeConfiguration {
                 $mode -cin @("tracking-window-pilot", "tracking-window-global-on")
         }
         else {
-            $mode -ne "off" -and $capability -ne "kioskLaunchTicketV1"
+            $mode -ne "off" -and $capability -ne "kioskLaunchTicketV1" -and
+                $capability -cne $script:RetiredCapability
         }
         $environment[$script:CapabilityFlags[$capability]] = if ($enabledKillSwitch) { "true" } else { "false" }
     }
     $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
-    if ($null -ne $turn) {
-        $environment.CLASSPILOT_TURN_HOSTS = $turn.Hosts -join ","
-        $environment.CLASSPILOT_STUN_URLS = @($turn.Hosts | ForEach-Object { "stun:$($_):3478" }) -join ","
-    }
 
     return [pscustomobject]@{
         Mode = $mode
@@ -682,7 +681,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         "fast-preview-pilot", "fast-preview-global-on", "fast-preview-off",
         "restriction-auth-pilot", "restriction-auth-off",
         "scheduled-classroom-global-on", "scheduled-classroom-off",
-        "school-scope-unpin"
+        "school-scope-unpin", "live-view-retire"
     ) -and -not $script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
         throw "The source-preserving runtime intent is unsupported."
     }
@@ -769,7 +768,9 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         $isScheduledClassroomIntent = [string]$RuntimeIntent.Mode -cin @(
             "scheduled-classroom-global-on", "scheduled-classroom-off"
         )
-        $selectedCapability = if ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
+        $selectedCapability = if ([string]$RuntimeIntent.Mode -ceq "live-view-retire") {
+            $script:RetiredCapability
+        } elseif ($script:RoadmapProfileCapabilities.ContainsKey([string]$RuntimeIntent.Mode)) {
             $script:RoadmapProfileCapabilities[[string]$RuntimeIntent.Mode]
         } elseif ($isScheduledClassroomIntent) {
             $script:ScheduledClassroomCapability
@@ -782,7 +783,7 @@ function Resolve-SourcePreservingRuntimeConfiguration {
         } else { $script:StudentGatePresenceCapability }
         $gateOn = [string]$RuntimeIntent.Mode -cnotin @(
             "student-gate-off", "late-signin-off", "fast-preview-off", "restriction-auth-off",
-            "scheduled-classroom-off"
+            "scheduled-classroom-off", "live-view-retire"
         ) -and [string]$RuntimeIntent.Mode -cnotin $script:RoadmapOffModes
         $gateEntry = [ordered]@{ mode = if ($gateOn) { "on" } else { "off" } }
         if ([string]$RuntimeIntent.Mode -cin @(
@@ -2430,6 +2431,7 @@ function Get-RuntimeActivationState {
     if ($managed.Count -eq 0 -and $AllowBaseline) {
         return [pscustomobject]@{
             Mode = "baseline"; SchoolId = $null; PrefixCount = -1
+            LiveViewMode = "off"
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
@@ -2513,6 +2515,7 @@ function Get-RuntimeActivationState {
         }
         return [pscustomobject]@{
             Mode = "off"; SchoolId = $null; PrefixCount = -1
+            LiveViewMode = "off"
             StudentGateMode = "off"; StudentGateSchoolId = $null
             LateSignInMode = "off"; LateSignInSchoolId = $null
             FastPreviewMode = "off"; FastPreviewSchoolId = $null
@@ -2525,6 +2528,19 @@ function Get-RuntimeActivationState {
         if ([string]$values[$script:CapabilityFlags[$capability]] -cne "true") {
             throw "Protocol-on runtime configuration has a disabled repaired kill switch."
         }
+    }
+    $retiredFlagValue = [string]$values[$script:CapabilityFlags[$script:RetiredCapability]]
+    $retiredRollout = $rollouts.$($script:RetiredCapability)
+    $liveViewMode = if ($retiredFlagValue -ceq "false" -and [string]$retiredRollout.mode -ceq "off") {
+        "off"
+    }
+    elseif ($retiredFlagValue -ceq "true" -and [string]$retiredRollout.mode -ceq "on") {
+        # Written before the retirement. It stays readable so live-view-retire, and
+        # Rollback of older plans, can still work from it.
+        "legacy-on"
+    }
+    else {
+        throw "Retired Live View ICE requires both matching activation controls."
     }
     if ([string]$values[$script:CapabilityFlags.kioskLaunchTicketV1] -cne "false" -or
         [string]$rollouts.kioskLaunchTicketV1.mode -cne "off") {
@@ -2731,9 +2747,14 @@ function Get-RuntimeActivationState {
                 throw "Global runtime configuration must enable every repaired capability without school scope."
             }
         }
+        if ($liveViewMode -ceq "legacy-on" -and
+            $retiredRollout.PSObject.Properties.Name -contains "schoolIds") {
+            throw "Global runtime configuration must not school-scope the retired Live View capability."
+        }
         if ($trackingWindowFlagValue -ceq "false") {
             return [pscustomobject]@{
                 Mode = "global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
+                LiveViewMode = $liveViewMode
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
@@ -2744,6 +2765,7 @@ function Get-RuntimeActivationState {
         if (-not ($trackingWindowRollout.PSObject.Properties.Name -contains "schoolIds")) {
             return [pscustomobject]@{
                 Mode = "tracking-window-global-on"; SchoolId = $null; PrefixCount = $script:ActivationOrder.Count
+                LiveViewMode = $liveViewMode
                 StudentGateMode = $studentGateMode; StudentGateSchoolId = $studentGateSchoolId
                 LateSignInMode = $lateSignInMode; LateSignInSchoolId = $lateSignInSchoolId
                 FastPreviewMode = $fastPreviewMode; FastPreviewSchoolId = $fastPreviewSchoolId
@@ -2762,6 +2784,7 @@ function Get-RuntimeActivationState {
         return [pscustomobject]@{
             Mode = "tracking-window-pilot"
             SchoolId = [string]$trackingWindowSchoolIds[0]
+            LiveViewMode = $liveViewMode
             PrefixCount = $script:ActivationOrder.Count
             StudentGateMode = $studentGateMode
             StudentGateSchoolId = $studentGateSchoolId
@@ -2803,8 +2826,20 @@ function Get-RuntimeActivationState {
         }
         else { $encounteredOff = $true }
     }
+    if ($liveViewMode -ceq "legacy-on") {
+        # Before the retirement Live View was the step after safety evidence capture.
+        $liveViewSchoolIds = @()
+        if ($retiredRollout.PSObject.Properties.Name -contains "schoolIds") {
+            $liveViewSchoolIds = @($retiredRollout.schoolIds)
+        }
+        if ($liveViewSchoolIds.Count -ne 1 -or [string]$liveViewSchoolIds[0] -cne $schoolId -or
+            $prefixCount -lt ([array]::IndexOf($script:ActivationOrder, "safetyEvidenceCaptureV1") + 1)) {
+            throw "Test-school runtime configuration carries Live View outside its legacy activation step."
+        }
+    }
     return [pscustomobject]@{
         Mode = "test-school"; SchoolId = $schoolId; PrefixCount = $prefixCount
+        LiveViewMode = $liveViewMode
         StudentGateMode = "off"; StudentGateSchoolId = $null
         LateSignInMode = "off"; LateSignInSchoolId = $null
         FastPreviewMode = "off"; FastPreviewSchoolId = $null
@@ -2857,6 +2892,29 @@ function Assert-AllowedRuntimeTransition {
         }
         elseif ([string]$targetControls[$selectedCapability].mode -cne "off") {
             throw "Roadmap rollback must disable only its selected capability."
+        }
+        return
+    }
+    if ([string]$TargetRuntimeConfiguration.Mode -ceq "live-view-retire") {
+        # Retiring Live View turns off one leaf capability and nothing else. This
+        # block returns before the tracking-window dependency gate below, which would
+        # refuse production's shape while student gate and fast preview are on.
+        if ([string]$source.Mode -cnotin @("global-on", "tracking-window-pilot", "tracking-window-global-on") -or
+            [string]$source.Mode -cne [string]$target.Mode -or
+            [string]$source.SchoolId -cne [string]$target.SchoolId -or
+            [int]$source.PrefixCount -ne [int]$target.PrefixCount -or
+            [string]$source.LiveViewMode -cne "legacy-on" -or
+            [string]$target.LiveViewMode -cne "off" -or
+            ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "SourceMode" -and
+             [string]$TargetRuntimeConfiguration.SourceMode -cne [string]$source.Mode)) {
+            throw "Live View retirement must turn off liveViewIceServersV1 from a global runtime where it is still on."
+        }
+        foreach ($capability in $script:AllCapabilities) {
+            if ($capability -ceq $script:RetiredCapability) { continue }
+            if ((Get-CanonicalJsonSha256 -Value $sourceControls[$capability]) -cne
+                (Get-CanonicalJsonSha256 -Value $targetControls[$capability])) {
+                throw "Live View retirement must preserve every other capability and school scope."
+            }
         }
         return
     }
@@ -3809,6 +3867,14 @@ function New-RuntimeConfigPlan {
         [switch]$ConfirmSyntheticOnlyGlobalActivation,
         [switch]$ConfirmProtectedWindowProductionMutation
     )
+    if (-not [string]::IsNullOrWhiteSpace($PrivateTurnEvidencePath) -or
+        -not [string]::IsNullOrWhiteSpace($PrivateSyntheticValidationPath) -or
+        -not [string]::IsNullOrWhiteSpace($PrivateManagedTestWaiverPath) -or
+        $ConfirmSyntheticOnlyGlobalActivation) {
+        # Both paths proved legacy TURN for Live View. Recover a containment with
+        # -Operation Rollback, or forward through the test-school steps.
+        throw "TURN evidence and synthetic-only global activation were retired with Live View."
+    }
     $hasSyntheticValidation = -not [string]::IsNullOrWhiteSpace($PrivateSyntheticValidationPath)
     $hasManagedTestWaiver = -not [string]::IsNullOrWhiteSpace($PrivateManagedTestWaiverPath)
     if ($hasSyntheticValidation -ne $hasManagedTestWaiver) {

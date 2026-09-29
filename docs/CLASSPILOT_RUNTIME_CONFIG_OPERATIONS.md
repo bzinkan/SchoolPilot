@@ -22,6 +22,46 @@ page covers capacity, the terminal states, and manual recovery.
 - Plan and Apply belong to one sitting: a merge to `main` in between changes the tool
   SHA and forces a new plan.
 
+## Live View ICE is retired
+
+Live View was retired as a product feature on 2026-09-29, and its legacy TURN
+nodes are parked (`CLASSPILOT_TURN_PARKING.md`).
+
+- `liveViewIceServersV1` is no longer an activation step or a repaired
+  capability. Every profile writes its registry entry as `{"mode":"off"}` and its
+  kill switch as `"false"`. The entry keeps its registry slot, so serialized
+  registries keep their byte order.
+- No profile may carry a `turn` object. The TURN environment and the
+  `CLASSPILOT_TURN_REST_SECRET` reference are copied from the serving revisions
+  unchanged.
+- The tool refuses `-TurnEvidencePath`, `-SyntheticValidationPath`,
+  `-ManagedTestWaiverPath` and `-ConfirmSyntheticOnlyGlobalActivation`. Both
+  paths existed only to prove legacy TURN.
+- A runtime written before the retirement, with Live View still on, stays
+  readable. Turn it off once with this private profile, planned and applied like
+  any other copying profile:
+
+  ```json
+  { "schemaVersion": 10, "mode": "live-view-retire" }
+  ```
+
+  The source must be a global runtime (`global-on` or either tracking-window
+  mode) with Live View on. The plan changes only the `liveViewIceServersV1`
+  entry and `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1`; every other capability and
+  school scope must hash-match the source. Roll back with `-Operation Rollback`
+  and the same plan.
+
+## Recovering from a containment `off`
+
+1. Prefer `-Operation Rollback` with the `off` plan. It restores the exact prior
+   pair and needs no TURN. It requires the `off` apply's successful result
+   evidence, services still running the `off` candidates, confirmations that
+   match the plan, and an API desired count of at most 3 (6 if the `off` plan was
+   protected).
+2. Otherwise go forward: `test-school` prefixes 0 through 7, one Plan and Apply
+   each, then `global-on`, then the additive profiles in their documented order.
+   None of these needs TURN.
+
 ## Terminal states (`result.json`)
 
 | Status | Meaning | Next step |
