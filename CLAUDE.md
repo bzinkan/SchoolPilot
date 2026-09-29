@@ -1336,10 +1336,10 @@ non-reusable only after the exact saved-plan apply, node/network/TLS/telemetry
 validation, and a fresh no-op plan all pass. Details are in
 `docs/CLASSPILOT_TURN_OPERATIONS.md`.
 
-Parking supersedes that exception (`docs/CLASSPILOT_TURN_PARKING.md`). The same
-literal `prevent_destroy` that guards the instances and the TURN secret now also
-guards both Elastic IPs, both EIP associations, both Route 53 records, the
-security group, and the IAM role, policy, SSM attachment, and instance profile.
+The same literal `prevent_destroy` that guards the instances and the TURN secret
+now also guards both Elastic IPs, both EIP associations, both Route 53 records,
+the security group, and the IAM role, policy, SSM attachment, and instance
+profile.
 Because the exception replaces the instances and both EIP associations, it
 cannot be executed without the reviewed Lane D decommission PR that removes
 those literals. Deleting the module block would bypass `prevent_destroy`, so

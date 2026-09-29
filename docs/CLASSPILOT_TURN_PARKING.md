@@ -97,14 +97,15 @@ Idle EC2 cost. The cost review of 2026-09-28 found both nodes idle (about
 Stopping them saves about $34 a month in compute and node metrics. The Elastic
 IPs remain billed (about $7 a month) so DNS stays stable.
 
-## Live View status (verified 2026-09-28)
+## Live View status (updated 2026-09-29)
 
 - The teacher dashboard hard-codes `LIVE_VIEW_UI_ENABLED = false`
   (`schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx`), so the UI
   never starts Live View.
-- **Server-side signaling gate:** the backend refuses Live View WebSocket
-  signaling unless `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED` is set, and that
-  flag is local/test only with no production setter. A staff `request-stream`
+- **Server-side signaling gate** (PR 0A, #551; in production once a backend
+  deploy carries it): the backend refuses Live View WebSocket signaling unless
+  `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED` is set, and that flag is local/test
+  only with no production setter. A staff `request-stream`
   gets `live-view-unavailable` with code `LIVE_VIEW_RETIRED`; `offer`, `answer`
   and `ice` frames are dropped before any target resolution, so nothing is
   forwarded to a device. `stop-share` is never gated, because it only ends
@@ -121,12 +122,14 @@ IPs remain billed (about $7 a month) so DNS stays stable.
 - **Capability retirement:** the runtime-config tool retired
   `liveViewIceServersV1` on 2026-09-29. No profile turns it on or carries TURN
   inputs, and recovery after a containment `off` no longer needs TURN running.
-  A production runtime written before the retirement still has it on, with
-  `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1=true`; one reviewed
-  `live-view-retire` Plan and Apply turns off that entry and flag and nothing
-  else. `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_STUN_URLS` and the TURN secret
-  reference stay provisioned until decommission. See "Live View ICE is retired"
-  in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
+  The reviewed `live-view-retire` Plan and Apply ran on 2026-09-29 and turned
+  off that entry and flag and nothing else: the API
+  (`schoolpilot-production-api-emergency:161`) and the worker
+  (`schoolpilot-production-scheduler-worker:177`) carry
+  `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1=false` and the registry entry
+  `{"mode":"off"}`. `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_STUN_URLS` and the TURN
+  secret reference stay provisioned until decommission. See "Live View ICE is
+  retired" in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
 
 ## Restart conditions
 
