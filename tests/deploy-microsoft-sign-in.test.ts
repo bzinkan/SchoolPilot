@@ -124,7 +124,11 @@ describe("deploy.sh Microsoft sign-in flag", () => {
       deploySource.indexOf("preflight_microsoft_sign_in_secret() {"),
       deploySource.indexOf("register_classpilot_candidate_worker_task_definition() {")
     );
-    assert.match(preflight, /aws ssm describe-parameters/);
+    assert.match(
+      preflight,
+      /MSYS2_ARG_CONV_EXCL="\*" aws ssm describe-parameters/,
+      "Git Bash would rewrite the /schoolpilot/... filter into a Windows path without the exclusion"
+    );
     assert.match(preflight, /MICROSOFT_CLIENT_SECRET/);
     assert.match(preflight, /!= "SecureString"/);
     assert.doesNotMatch(preflight, /--with-decryption|get-parameter/);
