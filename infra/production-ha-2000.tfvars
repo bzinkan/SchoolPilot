@@ -60,3 +60,27 @@ alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-productio
 anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"
 gemini_api_key_parameter_arn     = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/GEMINI_API_KEY"
 telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
+
+# Legacy ClassPilot TURN (built for the retired Live View architecture) is
+# PARKED. enable_classpilot_turn = true means Terraform retains the TURN
+# infrastructure; it does not mean TURN runs, that Live View is a product
+# feature, or that Present to Class will reuse these nodes. Both nodes are
+# stopped to remove idle EC2 cost; Elastic IPs, DNS, secret, security group and
+# IAM are retained for rollback. See docs/CLASSPILOT_TURN_PARKING.md.
+# Supply the sensitive Let's Encrypt contact only through the private
+# TF_VAR_classpilot_turn_tls_email process environment whenever a new saved
+# plan is created; saved-plan apply does not reread it. Never commit the address
+# to this file.
+# This profile carries the same three TURN inputs as production.tfvars, and
+# they move together: omitting enable_classpilot_turn plans a destroy of the
+# whole TURN module, and enabling it without the parked flag and pinned image
+# would start both nodes and replace them on a newer image. Because TURN is
+# enabled here, every plan from this profile needs
+# TF_VAR_classpilot_turn_tls_email set to the address already in production
+# state: the turn_activation_gate precondition fails without it, and a
+# different address changes the node user data, which prevent_destroy stops.
+enable_classpilot_turn = true
+classpilot_turn_parked = true
+# Verified on both nodes on 2026-09-28: Canonical
+# ubuntu-noble-24.04-amd64-server-20260714 (owner 099720109477).
+classpilot_turn_ami_id = "ami-052355af2a014bd2c"

@@ -7,6 +7,7 @@ import { students } from "../schema/students.js";
 import { isScheduledClassroomEnabled, scheduledClassroomRoster, scheduledContextHasClassroomTools, scheduledSupervisionSource,
   supervisionActivitySource, type ClasspilotActivityAuthority, type ClasspilotActivitySource } from "./classpilotActivityAuthority.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { classpilotLiveViewSignalingEnabled } from "../config/runtime.js";
 import { supervisionActivityPresentation, type ClasspilotActivityPurpose } from "./classpilotSupervisionPurpose.js";
 
 export const SCHEDULED_CLASSROOM_COMMANDS = ["open-tab", "close-tabs", "lock-screen", "unlock-screen", "teacher-message",
@@ -23,9 +24,12 @@ export type ClasspilotDashboardActivity = {
     liveView: boolean; screenshots: boolean; settings: boolean };
 };
 
-export function classroomActivityCapabilities() {
+// liveView follows the legacy signaling gate, so the feed never advertises a
+// feature the WebSocket layer refuses (off unless the local/test-only
+// CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED is set).
+export function classroomActivityCapabilities(env: NodeJS.ProcessEnv = process.env) {
   return { commands: [...SCHEDULED_CLASSROOM_COMMANDS], fab: true, chat: true, raiseHand: true, polls: true,
-    timers: true, liveView: true, screenshots: true, settings: true };
+    timers: true, liveView: classpilotLiveViewSignalingEnabled(env), screenshots: true, settings: true };
 }
 
 /** Personal assignment only. School-wide Observe access is never a personal activity. */

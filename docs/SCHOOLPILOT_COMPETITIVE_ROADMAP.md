@@ -89,7 +89,7 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 
 | Phase | Master plan name | PRs | Status |
 |---|---|---|---|
-| 0 | Current-state audit + legacy TURN cost reduction | PR 0, PR 0A, operational stop | Parking shipped (#541) and applied; audit in this PR; PR 0A hardening pending |
+| 0 | Current-state audit + legacy TURN cost reduction | PR 0, PR 0A, operational stop | Parking shipped (#541) and applied; audit merged in #549; PR 0A hardening merged in #551, not deployed as of merge |
 | 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Planned (PR 1-pre open as #547) |
 | 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, ClassPilot 2.10.0 | PR 2-pre and PR 2 planned; PR 3–4 next plan cycle |
 | 3 | Focus Tab + Bring Forward | PR 5, ClassPilot 2.10.0 | Extension contract defined; server PR next plan cycle |
@@ -184,8 +184,8 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 
 | PR | Scope | Lane | Status (2026-09-29) |
 |---|---|---|---|
-| PR 0 | Roadmap + legacy media audit (this document and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`) | 0 | IMPLEMENTED (docs) in this PR |
-| PR 0A | Legacy TURN parking Terraform/documentation protections | 0 | Parking shipped in #541; hardening (more `prevent_destroy`, HA profile parity, WebSocket signaling gate) pending in its own PR |
+| PR 0 | Roadmap + legacy media audit (this document and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`) | 0 | IMPLEMENTED (docs), merged in #549 |
+| PR 0A | Legacy TURN parking Terraform/documentation protections | 0 | Parking shipped in #541; hardening (literal `prevent_destroy` on the rest of the retained TURN identity, HA profile parity, default-off WebSocket signaling gate) merged in #551: IMPLEMENTED and AUTOMATED-TEST VERIFIED, not deployed as of merge |
 | Operational | Stop legacy TURN A/B after explicit verification/approval | 0 | Done: stopped 2026-09-28; the saved TURN Terraform plan was applied 2026-09-29 |
 | PR 1a (wave-1 addition) | Governed product runtime activation tool, `scripts/deploy-product-runtime-config.ps1` | 0 | Planned |
 | PR 1-pre (wave-1 addition) | Scope the AI assistant's Flight Path list to the caller's own paths | A | Open (#547) |
@@ -402,8 +402,8 @@ Extension work for Phases 2 and 3 ships as one ClassPilot release, 2.10.0, after
 | Runtime-config tool, #545 (merged 2026-09-29 10:24 ET, `ec1b6ef9`) | `liveViewIceServersV1` retired in the tool; no profile turns it on or carries TURN inputs | Repository |
 | `live-view-retire` Plan and Apply | Ran on the evening of 2026-09-29. API `schoolpilot-production-api-emergency:161`, worker `schoolpilot-production-scheduler-worker:177`, `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1=false`, registry entry `{"mode":"off"}` | Verified by the cost-plan session; confirmed by read-only `aws ecs describe-task-definition` |
 | Legacy TURN runtime wiring | `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_STUN_URLS` and the `CLASSPILOT_TURN_REST_SECRET` reference remain on both live revisions, copied unchanged as designed; they are removed only in Lane D | Read-only `aws ecs describe-task-definition` |
-| PR 0 (this document and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`) | IMPLEMENTED (docs) | This PR |
-| PR 0A | Pending in its own PR: `prevent_destroy` on the Elastic IPs, Route 53 records, Elastic IP associations, security group and IAM resources; TURN parity for `infra/production-ha-2000.tfvars`; the default-off WebSocket signaling gate `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED` | Wave-1 plan |
+| PR 0 (this document and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`) | IMPLEMENTED (docs), merged | #549 |
+| PR 0A | Merged; not deployed as of merge (IMPLEMENTED, AUTOMATED-TEST VERIFIED). Literal `prevent_destroy` on both Elastic IPs, both Elastic IP associations, both Route 53 records, the security group, and the IAM role, inline policy, SSM attachment and instance profile, so with the instances and the secret stack all ten retained identity resources are guarded; TURN parity for `infra/production-ha-2000.tfvars`, so every HA plan needs `TF_VAR_classpilot_turn_tls_email`; the default-off WebSocket signaling gate `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED`, which `classroomActivityCapabilities().liveView` follows. The gate takes effect with the next backend deploy. The Terraform change needs no apply; the next reviewed production plan must show No changes for `module.turn` | #551 |
 
 Both operational applies that gated PR 0A, PR 2 and PR 3 are done. The tool-SHA rule still governs every later runtime-config Plan and Apply.
 

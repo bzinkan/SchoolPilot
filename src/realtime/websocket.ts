@@ -156,6 +156,7 @@ import { classpilotCommandAuthorityEnvelope } from "../services/classpilotComman
 import { stopStaleClasspilotLiveViewsForStudents } from "../services/classpilotLiveViewRevocation.js";
 import { parseClasspilotActivityAuthority, requireScheduledClassroomContext } from "../services/classpilotActivityAuthority.js";
 import { stopActiveClasspilotLiveViewNegotiations } from "../services/classpilotLiveViewStop.js";
+import { classpilotLiveViewSignalingEnabled } from "../config/runtime.js";
 import { resolveClasspilotStaffWebSocketAuthorization } from "../services/classpilotWebSocketAuthorization.js";
 import { registerCacheInvalidationHandler } from "./cacheInvalidation.js";
 import {
@@ -2175,6 +2176,38 @@ export function setupWebSocket(
             ws.send(JSON.stringify({
               type: "command-ack-receipt",
               ...classpilotCommandAckReceipt(ackId, commandId, outcome),
+            }));
+          }
+          return;
+        }
+
+        // --- Legacy Live View signaling gate (default off) ---
+        // Live View is retired, and until this gate a frontend constant was the
+        // only fence. Unless CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED is set (local
+        // and test only; it has no production setter), request-stream, offer,
+        // answer and ice frames stop here: after per-frame revalidation, before
+        // any target resolution, so nothing reaches a device or a requester.
+        // A staff request-stream gets an explicit LIVE_VIEW_RETIRED reply; every
+        // other gated frame, including a student-role request-stream, is dropped
+        // silently. stop-share is deliberately not gated: it only ends capture,
+        // is already exact-bound, and must keep working while old and new tasks
+        // overlap during a rolling deploy.
+        if (
+          (message.type === "request-stream"
+            || message.type === "offer"
+            || message.type === "answer"
+            || message.type === "ice")
+          && !classpilotLiveViewSignalingEnabled()
+        ) {
+          if (
+            message.type === "request-stream"
+            && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")
+            && ws.readyState === WebSocket.OPEN
+          ) {
+            ws.send(JSON.stringify({
+              type: "live-view-unavailable",
+              code: "LIVE_VIEW_RETIRED",
+              studentId: normalizeClasspilotSignalingIdentifier(message.studentId || message.toStudentId),
             }));
           }
           return;

@@ -53,8 +53,12 @@ ClassPilot runtime profile.
 
 Superseded on 2026-09-28: the nodes are parked and `aws_instance.turn` now has
 `prevent_destroy`. Executing this exception would first require a reviewed PR
-that removes that protection. The authorization record below is retained as
-history.
+that removes that protection. The same literal now also protects both Elastic
+IPs, both Elastic IP associations, both Route 53 records, the security group and
+the IAM resources, so this exception (instances plus associations) cannot be
+executed without the reviewed Lane D decommission PR; the HA profile
+(`infra/production-ha-2000.tfvars`) carries the same parked TURN inputs. The
+authorization record below is retained as history.
 
 On August 24, 2026, one narrow targeted repair was authorized for the already
 reviewed TURN module. It is pending execution and does not authorize a general

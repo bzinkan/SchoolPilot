@@ -109,8 +109,10 @@ resource "aws_security_group" "turn" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
   lifecycle {
     create_before_destroy = true
+    prevent_destroy       = true
   }
 }
 
@@ -124,11 +126,21 @@ resource "aws_iam_role" "turn" {
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.turn.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy" "turn" {
@@ -165,17 +177,32 @@ resource "aws_iam_role_policy" "turn" {
       }
     ]
   })
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_instance_profile" "turn" {
   name = local.name
   role = aws_iam_role.turn.name
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_eip" "turn" {
   for_each = local.nodes
   domain   = "vpc"
   tags     = { Name = "${local.name}-${each.key}" }
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_route53_record" "turn" {
@@ -185,6 +212,11 @@ resource "aws_route53_record" "turn" {
   type     = "A"
   ttl      = 60
   records  = [aws_eip.turn[each.key].public_ip]
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_instance" "turn" {
@@ -265,6 +297,11 @@ resource "aws_eip_association" "turn" {
   for_each      = local.nodes
   allocation_id = aws_eip.turn[each.key].id
   instance_id   = aws_instance.turn[each.key].id
+
+  # Terraform requires a literal here; only the reviewed Lane D decommission PR removes it.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Power state is explicit. Parked legacy TURN keeps every resource (instances,
