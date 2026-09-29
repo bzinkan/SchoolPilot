@@ -960,16 +960,19 @@ export class ErrorMonitor {
     const stats = this.getStats();
     const runtime = this.getRuntimeMetadata();
     const metricValues: Record<string, number> = {};
-    const metricDefinitions: Array<{ Name: string; Unit: "Count" }> = [];
     const intervalDefinitions: Array<{ Name: string; Unit: "Count" }> = [];
 
-    const addMetric = (name: string, value: number) => {
+    // Per-process lifetime totals stay in the log record for forensics, but they are
+    // not CloudWatch metrics: a per-task InstanceId dimension added a billed series for
+    // every task instance with each deploy and scale event, and lifetime totals that are
+    // re-emitted every minute cannot be summed across tasks. The fleet interval counts
+    // below, on Environment and Service only, are the published metrics.
+    const addLifetimeValue = (name: string, value: number) => {
       metricValues[name] = value;
-      metricDefinitions.push({ Name: name, Unit: "Count" });
     };
 
     for (const [name, value] of Object.entries(stats.totals) as Array<[keyof MonitorCounterSet, number]>) {
-      addMetric(counterKey(name), value);
+      addLifetimeValue(counterKey(name), value);
       const intervalName = `${counterKey(name)}Interval`;
       metricValues[intervalName] = Math.max(0, value - this.emittedTotals[name]);
       intervalDefinitions.push({ Name: intervalName, Unit: "Count" });
@@ -977,7 +980,7 @@ export class ErrorMonitor {
     for (const [category, counters] of Object.entries(stats.byCategory)) {
       const prefix = categoryMetricPrefix(category as ErrorCategory);
       for (const [name, value] of Object.entries(counters) as Array<[keyof MonitorCounterSet, number]>) {
-        addMetric(`${prefix}${counterKey(name)}`, value);
+        addLifetimeValue(`${prefix}${counterKey(name)}`, value);
       }
     }
     // Stable zero series for every category, including categories that have
@@ -989,23 +992,12 @@ export class ErrorMonitor {
       metricValues[name] = Math.max(0, captured - (this.emittedCategoryCaptured.get(category) ?? 0));
       intervalDefinitions.push({ Name: name, Unit: "Count" });
     }
-    addMetric("ActiveFingerprints", stats.activeFingerprints);
-
-    const legacyDirectives = [];
-    // A metric directive is bounded even if every category becomes active.
-    for (let offset = 0; offset < metricDefinitions.length; offset += 100) {
-      legacyDirectives.push({
-        Namespace: "SchoolPilot/Monitoring",
-        Dimensions: [["Environment", "Service", "InstanceId"]],
-        Metrics: metricDefinitions.slice(offset, offset + 100),
-      });
-    }
+    addLifetimeValue("ActiveFingerprints", stats.activeFingerprints);
 
     const payload = {
       _aws: {
         Timestamp: this.now(),
         CloudWatchMetrics: [
-          ...legacyDirectives,
           {
             Namespace: "SchoolPilot/Monitoring",
             Dimensions: [["Environment", "Service"]],

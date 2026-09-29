@@ -431,6 +431,13 @@ describe("error monitor fingerprints and stats", () => {
     assert.doesNotMatch(emitted[0] ?? "", /student@example\.org|secret-token|10\.0\.0\.1|\/api\/foo|user-1|school-1/);
     const parsed = JSON.parse(emitted[0] ?? "{}");
     assert.equal(parsed._aws.CloudWatchMetrics[0].Namespace, "SchoolPilot/Monitoring");
+    // Fleet interval counts are the only metrics; per-task lifetime totals stay log fields.
+    assert.equal(parsed._aws.CloudWatchMetrics.length, 1);
+    assert.deepEqual(parsed._aws.CloudWatchMetrics[0].Dimensions, [["Environment", "Service"]]);
+    const metricNames = (parsed._aws.CloudWatchMetrics[0].Metrics as Array<{ Name: string }>)
+      .map((metric) => metric.Name);
+    assert.ok(metricNames.includes("MonitorCapturedInterval"));
+    assert.equal(metricNames.includes("MonitorCaptured"), false);
     assert.equal(typeof parsed.MonitorCaptured, "number");
     assert.equal(parsed.Environment, process.env.NODE_ENV || "development");
     monitor.dispose();
