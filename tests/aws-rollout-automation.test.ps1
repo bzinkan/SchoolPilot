@@ -879,6 +879,10 @@ function global:aws {
 
 function global:terraform {
     $arguments = @($args | ForEach-Object { [string]$_ })
+    # The saved-plan validator renders plans against the repository infra directory.
+    if ($arguments.Count -gt 0 -and $arguments[0] -like "-chdir=*") {
+        $arguments = @($arguments | Select-Object -Skip 1)
+    }
     $global:SchoolPilotTestTerraformCalls.Add($arguments -join " ")
     $global:LASTEXITCODE = 0
     if (($arguments -join " ") -eq "state pull") {
