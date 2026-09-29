@@ -41,7 +41,10 @@ not mean TURN should be running, that Live View is enabled, or that TURN is part
 of the active ClassPilot product. `classpilot_turn_parked = true` is the running
 state: the module declares `aws_ec2_instance_state` `stopped` for both nodes.
 Never set `enable_classpilot_turn = false` to pause TURN; that is a destroy plan
-for the whole module.
+for the whole module. `infra/production-ha-2000.tfvars` carries the same three
+TURN inputs, so a plan from the HA profile also retains the parked nodes. Like
+any production plan, it then needs `TF_VAR_classpilot_turn_tls_email`: the
+`turn_activation_gate` precondition fails without it.
 
 ### Terraform safety
 
@@ -49,14 +52,35 @@ for the whole module.
   `aws_ec2_instance_state`. It never replaces a node or detaches its Elastic IP.
 - `classpilot_turn_ami_id` pins the verified deployed image. Canonical's moving
   Ubuntu parameter is read only when no image is pinned (new environments).
-- `aws_instance.turn` has `prevent_destroy = true`. Any plan that would destroy
-  or replace a node fails loudly. Replacement triggers include the image, user
-  data (`user_data_replace_on_change = true`, which embeds the TLS email and the
+- Literal `prevent_destroy = true` protects every retained identity resource:
+  - both nodes (`aws_instance.turn`) and the TURN secret stack
+    (`aws_cloudformation_stack.rest_secret`);
+  - both Elastic IPs (`aws_eip.turn`), both Elastic IP associations
+    (`aws_eip_association.turn`) and both Route 53 records
+    (`aws_route53_record.turn`);
+  - the security group (`aws_security_group.turn`, which keeps
+    `create_before_destroy` in the same block);
+  - the IAM role, its inline policy, the SSM policy attachment and the instance
+    profile (`aws_iam_role.turn`, `aws_iam_role_policy.turn`,
+    `aws_iam_role_policy_attachment.ssm`, `aws_iam_instance_profile.turn`).
+- Any plan that would destroy or replace one of them fails loudly. Node
+  replacement triggers include the image, user data
+  (`user_data_replace_on_change = true`, which embeds the TLS email and the
   certificate-refresh and relay-metrics scripts), subnet, public-IP association
   and root volume encryption. There is no `ignore_changes`.
+- The alarms and the dashboard are not protected because they can be rebuilt.
+  The `aws_ec2_instance_state` power state is not protected because a reviewed
+  restart must be able to change it.
+- The value is a literal because Terraform evaluates `lifecycle` too early for
+  expressions, so it cannot follow `classpilot_turn_parked`. Only the reviewed
+  Lane D decommission PR removes these literals. Removing the module or a
+  resource block from configuration bypasses `prevent_destroy`, so that PR must
+  remove the literals explicitly and have its destroy plan reviewed; never
+  delete the module block to get around them.
 - The August 2026 one-time node-replacement exception in
-  `CLASSPILOT_TURN_OPERATIONS.md` is superseded by parking. Executing it would
-  first require a reviewed PR that removes `prevent_destroy`.
+  `CLASSPILOT_TURN_OPERATIONS.md` is superseded by parking. It replaces both
+  nodes and both Elastic IP associations, and both are now protected, so it
+  cannot be executed without the reviewed Lane D decommission PR.
 - Every production plan that touches the TURN module must set
   `TF_VAR_classpilot_turn_tls_email` to the operator's existing address, as
   `CLASSPILOT_TURN_OPERATIONS.md` describes. Without it the rendered user data
@@ -76,8 +100,19 @@ IPs remain billed (about $7 a month) so DNS stays stable.
 ## Live View status (verified 2026-09-28)
 
 - The teacher dashboard hard-codes `LIVE_VIEW_UI_ENABLED = false`
-  (`schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx`), so no teacher
-  can start Live View.
+  (`schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx`), so the UI
+  never starts Live View.
+- **Server-side signaling gate:** the backend refuses Live View WebSocket
+  signaling unless `CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED` is set, and that
+  flag is local/test only with no production setter. A staff `request-stream`
+  gets `live-view-unavailable` with code `LIVE_VIEW_RETIRED`; `offer`, `answer`
+  and `ice` frames are dropped before any target resolution, so nothing is
+  forwarded to a device. `stop-share` is never gated, because it only ends
+  capture. Before this gate, the frontend constant was the only fence: the
+  server never checked `liveViewNegotiationV1`, and extensions through 2.9.6
+  start capture on any relayed `request-stream`. The classroom activity feed
+  no longer advertises `liveView` either. The HTTP ice-server and telemetry
+  routes stay behind the retired `liveViewIceServersV1` capability.
 - TURN credentials are issued only inside an active Live View negotiation
   (`createClasspilotIceConfiguration` in `src/routes/classpilot/devices.ts`),
   so nothing requests them.
@@ -151,8 +186,8 @@ reviewed change, only after all of the following hold:
 - No backend process consumes their credentials.
 - The Present to Class SFU architecture does not depend on them.
 - Historical evidence requirements are preserved.
-- A reviewed Terraform destroy plan exists, after a PR removes
-  `prevent_destroy`.
+- A reviewed Terraform destroy plan exists, after the Lane D decommission PR
+  removes the `prevent_destroy` literals.
 
 That later work may remove the TURN EC2 instances, Elastic IPs, Route 53 TURN
 records, security group, IAM resources, TURN REST secret, CloudWatch alarms and

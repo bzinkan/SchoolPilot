@@ -34,3 +34,10 @@ export function migrationsOnly(env: NodeJS.ProcessEnv = process.env): boolean {
 export function legacyMigrationsOnly(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlag("RUN_LEGACY_MIGRATIONS_ONLY", false, env);
 }
+
+// Legacy Live View WebSocket signaling (request-stream, offer, answer, ice).
+// Live View is retired, so this defaults off and has no production setter:
+// enable it only in a local or test environment, never in production.
+export function classpilotLiveViewSignalingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlag("CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED", false, env);
+}

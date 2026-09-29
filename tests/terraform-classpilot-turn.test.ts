@@ -408,6 +408,36 @@ test -f "$test_root/active"
   });
 });
 
+// terraform fmt (enforced in CI) closes every top-level block with a column-0
+// brace and indents everything nested, and the TURN module has no heredocs, so
+// the first column-0 brace after a resource header ends that resource.
+function resourceBlock(source: string, type: string, name: string): string {
+  const header = `resource "${type}" "${name}" {`;
+  const start = source.indexOf(header);
+  assert.ok(start >= 0, `missing resource ${type}.${name}`);
+  assert.equal(source.indexOf(header, start + header.length), -1, `duplicate resource ${type}.${name}`);
+  const close = /\r?\n\}(?=\r?\n|$)/g;
+  close.lastIndex = start;
+  const end = close.exec(source);
+  assert.ok(end, `unterminated resource ${type}.${name}`);
+  return source.slice(start, end.index + end[0].length);
+}
+
+// The resource's own lifecycle block: two-space indent under the resource, so
+// its direct attributes sit at four spaces and nested preconditions deeper.
+function lifecycleBlock(resource: string): string | null {
+  const start = resource.search(/\r?\n  lifecycle \{\r?\n/);
+  if (start < 0) return null;
+  const end = resource.indexOf("\n  }", start + 1);
+  return end < 0 ? null : resource.slice(start, end);
+}
+
+function turnAssignments(profile: string): string[] {
+  return [...profile.matchAll(/^[ \t]*(enable_classpilot_turn|classpilot_turn_\w+)[ \t]*=[ \t]*(.+?)[ \t]*$/gm)]
+    .map((match) => `${match[1]} = ${match[2]}`)
+    .sort();
+}
+
 describe("Legacy ClassPilot TURN parking contract", () => {
   const production = readFileSync("infra/production.tfvars", "utf8");
   const moduleVariables = readFileSync("infra/modules/turn/variables.tf", "utf8");
@@ -444,5 +474,101 @@ describe("Legacy ClassPilot TURN parking contract", () => {
     assert.match(parking, /Stopped does not mean safe to delete/);
     assert.match(turnOperations, /## Legacy ClassPilot TURN — Parked/);
     assert.match(turnOperations, /superseded by parking/);
+  });
+
+  it("protects every retained TURN identity resource with a literal prevent_destroy", () => {
+    // terraform test cannot assert prevent_destroy (expect_failures covers only
+    // variables, outputs, checks and conditions), and the mocked infra/tests
+    // plans start from empty state, so they cannot show "no diff" either. This
+    // static contract is the evidence for the literals; only the next reviewed
+    // production plan showing No changes for module.turn proves the no-op.
+    const newlyProtected: Array<[string, string]> = [
+      ["aws_security_group", "turn"],
+      ["aws_iam_role", "turn"],
+      ["aws_iam_role_policy_attachment", "ssm"],
+      ["aws_iam_role_policy", "turn"],
+      ["aws_iam_instance_profile", "turn"],
+      ["aws_eip", "turn"],
+      ["aws_route53_record", "turn"],
+      ["aws_eip_association", "turn"],
+    ];
+    const protectedResources: Array<[string, string]> = [
+      ["aws_cloudformation_stack", "rest_secret"],
+      ["aws_instance", "turn"],
+      ...newlyProtected,
+    ];
+    // Alarms and the dashboard can be rebuilt; the power state must stay
+    // changeable so a reviewed restart can flip it.
+    const unprotectedResources: Array<[string, string]> = [
+      ["aws_ec2_instance_state", "turn"],
+      ["aws_cloudwatch_metric_alarm", "authentication_failures"],
+      ["aws_cloudwatch_metric_alarm", "node_status"],
+      ["aws_cloudwatch_metric_alarm", "log_storage"],
+      ["aws_cloudwatch_metric_alarm", "ice_success_rate"],
+      ["aws_cloudwatch_dashboard", "turn"],
+    ];
+    const address = ([type, name]: [string, string]) => `${type}.${name}`;
+    const declared = [...main.matchAll(/^resource "([^"]+)" "([^"]+)" \{/gm)]
+      .map((match) => `${match[1]}.${match[2]}`)
+      .sort();
+    assert.deepEqual(
+      declared,
+      [...protectedResources, ...unprotectedResources].map(address).sort(),
+      "every TURN resource must be classified as protected or deliberately unprotected"
+    );
+
+    for (const resource of protectedResources) {
+      const lifecycle = lifecycleBlock(resourceBlock(main, ...resource));
+      assert.ok(lifecycle, `${address(resource)} must declare a lifecycle block`);
+      assert.match(
+        lifecycle,
+        /^    prevent_destroy\s*=\s*true\s*$/m,
+        `${address(resource)} must set a literal prevent_destroy = true`
+      );
+    }
+    for (const resource of newlyProtected) {
+      assert.match(
+        resourceBlock(main, ...resource),
+        /# Terraform requires a literal here; only the reviewed Lane D decommission PR removes it\.\r?\n  lifecycle \{/,
+        `${address(resource)} must say who may remove its protection`
+      );
+    }
+    for (const resource of unprotectedResources) {
+      assert.doesNotMatch(
+        resourceBlock(main, ...resource),
+        /prevent_destroy/,
+        `${address(resource)} must stay unprotected`
+      );
+    }
+    assert.match(
+      lifecycleBlock(resourceBlock(main, "aws_security_group", "turn")) ?? "",
+      /^    create_before_destroy\s*=\s*true\s*$/m
+    );
+    // One literal per protected resource and nothing else: Terraform rejects
+    // expressions here, and there is still no ignore_changes anywhere.
+    const settings = main.match(/^[ \t]*prevent_destroy[ \t]*=.*$/gm) ?? [];
+    assert.equal(settings.length, protectedResources.length);
+    for (const setting of settings) assert.match(setting, /^[ \t]*prevent_destroy\s*=\s*true\s*$/);
+    assert.doesNotMatch(main, /ignore_changes/);
+  });
+
+  it("keeps the HA scale-up profile on production's parked TURN inputs without the TLS email", () => {
+    const ha = readFileSync("infra/production-ha-2000.tfvars", "utf8");
+    // The three inputs move together: enabling alone would start both nodes on
+    // a newer image, and omitting enable would plan a destroy of the module.
+    for (const assignment of [
+      "enable_classpilot_turn = true",
+      "classpilot_turn_parked = true",
+      'classpilot_turn_ami_id = "ami-052355af2a014bd2c"',
+    ]) {
+      assert.ok(turnAssignments(production).includes(assignment), `production.tfvars must keep ${assignment}`);
+    }
+    assert.deepEqual(turnAssignments(ha), turnAssignments(production));
+    for (const profile of [production, ha]) {
+      assert.doesNotMatch(profile, /^[ \t]*classpilot_turn_tls_email[ \t]*=/m);
+    }
+    // With TURN enabled the turn_activation_gate precondition applies to every
+    // HA plan, so the profile must say where the private email comes from.
+    assert.match(ha, /TF_VAR_classpilot_turn_tls_email/);
   });
 });
