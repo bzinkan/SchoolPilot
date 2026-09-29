@@ -27,6 +27,8 @@ const PUBLIC_CLAIM_FILES = [
   "docs/HECVAT-LITE.md",
   "docs/v1-SCHOOLPILOT-PRINCIPAL-IT-REVIEW.md",
   "schoolpilot-app/src/pages/legal/Security.jsx",
+  "schoolpilot-app/src/pages/legal/securityPosture.js",
+  "schoolpilot-app/src/pages/legal/SecuritySummary.jsx",
   "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx",
   "schoolpilot-app/src/pages/legal/TermsOfService.jsx",
 ];
@@ -36,6 +38,17 @@ const FORBIDDEN_PUBLIC_PHRASES = [
   /implemented the technical control families a SOC 2 Type II audit would assess/i,
   /implementations below exist today and are continuously enforced/i,
   /SOC 2 controls implemented/i,
+];
+
+const UNSUPPORTED_PUBLIC_CLAIMS = [
+  {
+    pattern: /\bSOC\s*2\b(\s+Type\s+(I{1,2}|[12]))?\s+compliant\b/i,
+    reason: "calls Schoolpilot SOC 2 compliant; use 'working toward SOC 2 Type II readiness' (CLAIM-002)",
+  },
+  {
+    pattern: /\bOneRoster[- ]certified\b/i,
+    reason: "claims OneRoster certification; the importer passes adapter tests only (docs/ROSTER_INTEGRATIONS.md)",
+  },
 ];
 
 function argValue(name, fallback = "") {
@@ -288,6 +301,9 @@ export function scanPublicClaimFiles(rootDir) {
     lines.forEach((line, idx) => {
       if (OVERSTATED_SOC2_RE.test(line) && !NOT_CERTIFIED_RE.test(line)) {
         errors.push(`${relativePath}:${idx + 1} appears to claim completed SOC 2 certification/report.`);
+      }
+      for (const { pattern, reason } of UNSUPPORTED_PUBLIC_CLAIMS) {
+        if (pattern.test(line)) errors.push(`${relativePath}:${idx + 1} ${reason}.`);
       }
     });
 

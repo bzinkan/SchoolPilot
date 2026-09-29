@@ -73,6 +73,8 @@ const DeleteAccount = lazy(() => import('./pages/legal/DeleteAccount'));
 const AITransparency = lazy(() => import('./pages/legal/AITransparency'));
 const Subprocessors = lazy(() => import('./pages/legal/Subprocessors'));
 const Security = lazy(() => import('./pages/legal/Security'));
+const SecuritySummary = lazy(() => import('./pages/legal/SecuritySummary'));
+const HecvatLite = lazy(() => import('./pages/legal/HecvatLite'));
 
 // Super Admin pages (lazy-loaded)
 const SASchoolsList = lazy(() => import('./pages/super-admin/SchoolsList'));
@@ -258,6 +260,8 @@ function AppRoutes() {
             <Route path="/ai-transparency" element={<AITransparency />} />
             <Route path="/subprocessors" element={<Subprocessors />} />
             <Route path="/security" element={<Security />} />
+            <Route path="/security/summary" element={<SecuritySummary />} />
+            <Route path="/security/hecvat-lite" element={<HecvatLite />} />
           </>
         )}
 

@@ -1,3 +1,8 @@
+import SecurityPostureList from './SecurityPostureList';
+import { SECURITY_PAGES_UPDATED } from './securityPosture';
+
+const linkClass = 'text-amber-600 hover:text-amber-700 underline';
+
 export default function Security() {
   return (
     <div className="min-h-screen bg-slate-50">
@@ -23,7 +28,7 @@ export default function Security() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-4">Security at Schoolpilot</h1>
-        <p className="text-slate-600 mb-8">Last updated: April 13, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: {SECURITY_PAGES_UPDATED}</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -33,6 +38,25 @@ export default function Security() {
               privacy laws. This page summarizes our security program and outlines how to report
               security issues.
             </p>
+          </section>
+
+          <section className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <p className="font-semibold text-slate-900 mb-2">For procurement teams</p>
+            <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <a href="/security/summary" className={linkClass}>One-page summary (PDF)</a>
+              <a href="/security/hecvat-lite" className={linkClass}>HECVAT Lite self-assessment</a>
+              <a href="/subprocessors" className={linkClass}>Subprocessors</a>
+              <a href="/privacy" className={linkClass}>Privacy Policy</a>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-2">Security and Privacy at a Glance</h2>
+            <p className="text-slate-700 leading-relaxed mb-6">
+              Where each safeguard stands today. Items marked <strong>Planned</strong> are on our roadmap
+              and are not yet available; <strong>Partial</strong> items are described in the note beside them.
+            </p>
+            <SecurityPostureList />
           </section>
 
           <section>
@@ -76,63 +100,36 @@ export default function Security() {
             </ul>
           </section>
 
-          <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Security Program Summary</h2>
-            <p className="text-slate-700 leading-relaxed mb-4">
-              Schoolpilot maintains a documented Written Information Security Program (WISP) covering:
-            </p>
-            <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li><strong>Encryption in transit</strong> — TLS 1.2+ with HSTS enforced</li>
-              <li><strong>Encryption at rest</strong> — AWS RDS (PostgreSQL) and S3 server-side encryption</li>
-              <li><strong>Access control</strong> — Role-based access with least-privilege defaults</li>
-              <li><strong>Authentication</strong> — bcrypt password hashing (12 rounds), session security with httpOnly + secure cookies, CSRF protection, account lockout after 10 failed attempts</li>
-              <li><strong>Audit logging</strong> — Administrative actions logged to a dedicated audit trail</li>
-              <li><strong>Vulnerability monitoring</strong> — Automated dependency scanning on every release, deterministic breach detection monitor running continuously</li>
-              <li><strong>Incident response</strong> — Documented playbook with 72-hour customer notification SLA</li>
-              <li><strong>Background checks</strong> — Required for all employees with access to production systems</li>
-              <li><strong>Vendor management</strong> — Annual review of all subprocessors (see <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">Subprocessors</a>)</li>
-            </ul>
-            <p className="text-slate-700 leading-relaxed mt-4">
-              The full WISP is available to customers and qualified assessors under NDA. Contact
-              <a href="mailto:security@school-pilot.net" className="text-amber-600 hover:text-amber-700 underline ml-1">security@school-pilot.net</a> to request a copy.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Compliance</h2>
-            <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li><strong>FERPA</strong> — Operates as a "school official" with legitimate educational interest</li>
-              <li><strong>COPPA</strong> — Relies on the school consent exception; no direct collection from children under 13</li>
-              <li><strong>State data privacy laws</strong> — NDPA-compatible; honors state-specific notification requirements</li>
-              <li><strong>Infrastructure certifications (via AWS)</strong> — SOC 2 Type II, ISO 27001, FedRAMP Moderate (AWS-maintained)</li>
-            </ul>
-          </section>
-
           <section className="bg-slate-100 p-6 rounded-lg border border-slate-200">
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">For School Procurement Teams</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              We streamline EdTech procurement by maintaining pre-completed assessment documents.
-              Contact us to receive:
+              We streamline EdTech procurement by publishing pre-completed assessment documents:
             </p>
             <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>
-                <strong>HECVAT Lite Self-Assessment</strong> — The EDUCAUSE-standard security questionnaire,
-                pre-completed for your review
+                <strong>One-page security and privacy summary</strong> — <a href="/security/summary" className={linkClass}>view or save as PDF</a>
               </li>
+              <li>
+                <strong>HECVAT Lite Self-Assessment</strong> — The EDUCAUSE-standard security questionnaire,
+                pre-completed and <a href="/security/hecvat-lite" className={linkClass}>published for your review</a>
+              </li>
+              <li>
+                <strong>Subprocessor list and vendor review/DPA status</strong> — see <a href="/subprocessors" className={linkClass}>public Subprocessors page</a>
+              </li>
+            </ul>
+            <p className="text-slate-700 leading-relaxed mb-4">Available on request:</p>
+            <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
               <li>
                 <strong>Signed NDPA / SDPA / DPA</strong> — We honor the National Data Privacy Agreement
                 (v1.0a and v2.0) and state-specific variants (California CSDPA, Texas TX-NDPA, Illinois SOPPA,
                 New York Ed Law 2-d)
               </li>
               <li>
-                <strong>Written Information Security Program</strong> (WISP) summary — under NDA
-              </li>
-              <li>
-                <strong>Subprocessor list and vendor review/DPA status</strong> — see <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">public Subprocessors page</a>
+                <strong>Written Information Security Program</strong> (WISP) — under NDA
               </li>
             </ul>
             <p className="text-slate-700 leading-relaxed">
-              Request documents: <a href="mailto:privacy@school-pilot.net?subject=Procurement%20%E2%80%94%20Security%20Documents%20Request" className="text-amber-600 hover:text-amber-700 underline">privacy@school-pilot.net</a>
+              Request documents: <a href="mailto:privacy@school-pilot.net?subject=Procurement%20%E2%80%94%20Security%20Documents%20Request" className={linkClass}>privacy@school-pilot.net</a>
             </p>
           </section>
 
