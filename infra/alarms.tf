@@ -6,6 +6,17 @@ locals {
   alarm_prefix     = "${local.name}-scale"
   alarm_actions    = compact([var.alerts_sns_topic_arn])
   alarm_ok_actions = compact([var.alerts_sns_topic_arn])
+
+  # Alarm dimensions and event patterns need only the ECS names, which follow
+  # the ECS module's fixed naming. Reading them from module.ecs outputs made
+  # every alarm depend on the ECS services and, through them, on Terraform's
+  # seed task definitions. deploy.sh supersedes those seeds on every release,
+  # so a targeted alarm plan also proposed replacing both task definitions.
+  # tests/terraform-alarm-ecs-names.test.ts keeps these names in step with the
+  # module.
+  ecs_alarm_cluster_name        = "${local.name}-cluster"
+  ecs_alarm_api_service_name    = "${local.name}-api"
+  ecs_alarm_worker_service_name = "${local.name}-scheduler-worker"
 }
 
 # Preserve the existing alarm instances when Container Insights gating adds count.
@@ -167,8 +178,8 @@ resource "aws_cloudwatch_metric_alarm" "api_cpu" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.service_name
+    ClusterName = local.ecs_alarm_cluster_name
+    ServiceName = local.ecs_alarm_api_service_name
   }
 }
 
@@ -188,8 +199,8 @@ resource "aws_cloudwatch_metric_alarm" "api_memory" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.service_name
+    ClusterName = local.ecs_alarm_cluster_name
+    ServiceName = local.ecs_alarm_api_service_name
   }
 }
 
@@ -244,8 +255,8 @@ resource "aws_cloudwatch_metric_alarm" "api_running_tasks" {
       stat        = "Average"
 
       dimensions = {
-        ClusterName = module.ecs.cluster_name
-        ServiceName = module.ecs.service_name
+        ClusterName = local.ecs_alarm_cluster_name
+        ServiceName = local.ecs_alarm_api_service_name
       }
     }
   }
@@ -261,8 +272,8 @@ resource "aws_cloudwatch_metric_alarm" "api_running_tasks" {
       stat        = "Average"
 
       dimensions = {
-        ClusterName = module.ecs.cluster_name
-        ServiceName = module.ecs.service_name
+        ClusterName = local.ecs_alarm_cluster_name
+        ServiceName = local.ecs_alarm_api_service_name
       }
     }
   }
@@ -285,8 +296,8 @@ resource "aws_cloudwatch_metric_alarm" "worker_running_tasks" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.worker_service_name
+    ClusterName = local.ecs_alarm_cluster_name
+    ServiceName = local.ecs_alarm_worker_service_name
   }
 }
 
@@ -919,8 +930,8 @@ resource "aws_cloudwatch_metric_alarm" "api_tasks_running" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.service_name
+    ClusterName = local.ecs_alarm_cluster_name
+    ServiceName = local.ecs_alarm_api_service_name
   }
 }
 
@@ -939,8 +950,8 @@ resource "aws_cloudwatch_metric_alarm" "worker_tasks_running" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.worker_service_name
+    ClusterName = local.ecs_alarm_cluster_name
+    ServiceName = local.ecs_alarm_worker_service_name
   }
 }
 
@@ -980,7 +991,7 @@ resource "aws_cloudwatch_event_rule" "ecs_service_impaired" {
     source        = ["aws.ecs"]
     "detail-type" = ["ECS Service Action", "ECS Deployment State Change"]
     resources = [{
-      prefix = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/"
+      prefix = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${local.ecs_alarm_cluster_name}/"
     }]
     detail = {
       eventName = [
