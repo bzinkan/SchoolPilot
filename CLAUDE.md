@@ -146,10 +146,13 @@ phone-header button and the student-drawer "Add private note" action are all
 unmounted. Saved `/classpilot/my-desk/*` and `/classpilot/discipline-records/*`
 links redirect to `/classpilot`; `/classpilot/students/:id/profile` redirects to
 `/classpilot/students`. The backend is intentionally kept "just in case": routes,
-tables, RLS admission, workers, cleanup, the private bucket and the production
-runtime modes stay as they are, and existing data is retained. Do not delete the
-backend or its data, and do not re-enable, advertise or build on My Desk until
-Brian lifts the shelf. The frontend source stays in the repo, unmounted; to
+tables, RLS admission, workers, cleanup and the private bucket stay, and existing
+data is retained. `MYDESK_MODE` and `MYDESK_SEATING_MODE` remain on, but AI
+paperwork processing was switched off the same day (`MYDESK_AI_IMPORT_MODE=off`
+through `deploy-mydesk-runtime-config.ps1`; contact AI was already off), so no
+import can start and the legal pages' "paused" wording is strictly true. Do not
+delete the backend or its data, and do not re-enable AI imports, advertise or
+build on My Desk until Brian lifts the shelf. The frontend source stays in the repo, unmounted; to
 restore it, re-add the routes and entry points removed by the "Shelve My Desk"
 change (`git log --grep "Shelve My Desk"`). The notes below describe the shelved
 feature.
