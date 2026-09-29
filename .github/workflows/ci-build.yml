@@ -610,6 +610,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:production-preview
 
+      - name: Test PassPilot rules UI contracts and Chromium flows
+        working-directory: schoolpilot-app
+        run: npm run test:passpilot-rules
+
       - name: Validate standard frontend Router bundle
         working-directory: schoolpilot-app
         run: npm run audit:router:postbuild:standard
