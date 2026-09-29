@@ -90,6 +90,45 @@ function Get-PlanActionCounts {
     return $counts
 }
 
+function Get-RelevantPlanDrift {
+    # Terraform lists every change it saw outside Terraform in resource_drift, but only
+    # the attributes named in relevant_attributes feed the planned changes. That is the
+    # same filter Terraform applies to its "Objects have changed outside of Terraform"
+    # report. Out-of-band churn such as a deploy's task-definition swap or RDS
+    # latest_restorable_time is reported on every real plan yet cannot change what the
+    # plan does, so only drift on a relevant attribute is refused. A resource marked
+    # relevant as a whole, or drift that created or removed an object, always counts.
+    param($Plan)
+    $drift = @(Get-PlanObjectValue $Plan "resource_drift" @())
+    if ($drift.Count -eq 0) { return @() }
+    $relevant = @(Get-PlanObjectValue $Plan "relevant_attributes" @())
+    $findings = @()
+    foreach ($entry in $drift) {
+        $address = [string]$entry.address
+        $resourceAddress = $address -replace '\[[^\]]*\]$', ''
+        $paths = @($relevant | Where-Object {
+            [string]$_.resource -ceq $address -or [string]$_.resource -ceq $resourceAddress
+        })
+        if ($paths.Count -eq 0) { continue }
+        $before = Get-PlanObjectValue $entry.change "before" $null
+        $after = Get-PlanObjectValue $entry.change "after" $null
+        foreach ($path in $paths) {
+            $steps = @(Get-PlanObjectValue $path "attribute" @())
+            if ($steps.Count -eq 0 -or $null -eq $before -or $null -eq $after) {
+                $findings += $address
+                break
+            }
+            $attribute = [string]$steps[0]
+            if ((ConvertTo-PlanComparableJson (Get-PlanObjectValue $before $attribute $null)) -cne
+                (ConvertTo-PlanComparableJson (Get-PlanObjectValue $after $attribute $null))) {
+                $findings += "$address.$attribute"
+                break
+            }
+        }
+    }
+    return $findings
+}
+
 function Assert-PlanExecutionMetadata {
     param($Plan, [string]$Contract)
     foreach ($name in @("errored","complete","applyable")) {
@@ -107,8 +146,9 @@ function Assert-PlanExecutionMetadata {
         -not $deferredClean) {
         throw "$Contract saved plan must be non-errored, complete, applyable, and contain no deferred changes."
     }
-    if (@(Get-PlanObjectValue $Plan "resource_drift" @()).Count -ne 0) {
-        throw "$Contract saved plan contains unreviewed resource drift."
+    $relevantDrift = @(Get-RelevantPlanDrift $Plan)
+    if ($relevantDrift.Count -ne 0) {
+        throw "$Contract saved plan contains unreviewed resource drift: $($relevantDrift -join ', ')."
     }
     $failedChecks = @((Get-PlanObjectValue $Plan "checks" @()) | Where-Object {
         [string](Get-PlanObjectValue $_ "status" "") -in @("fail","error")
