@@ -16,6 +16,11 @@ Legacy TURN is parked/stopped. It is not removed.
 - **Present to Class** will use a separately designed SFU media architecture
   (`teacherPresentationV1`, not `liveViewIceServersV1`) and does not assume these
   nodes will be reused. Keeping them running for it is not a reason to run them.
+- **Roadmap and audit.** `SCHOOLPILOT_COMPETITIVE_ROADMAP.md` tracks the
+  Phase 0/0A status, including the saved TURN Terraform plan and the
+  `live-view-retire` runtime profile (both applied on 2026-09-29), and
+  `CLASSPILOT_LEGACY_MEDIA_AUDIT.md` classifies every Live View and TURN item
+  with its protection status.
 
 | Node | Terraform address | Instance | AZ | Elastic IP | DNS |
 |---|---|---|---|---|---|
@@ -154,3 +159,6 @@ records, security group, IAM resources, TURN REST secret, CloudWatch alarms and
 dashboard, legacy Live View routes, old capabilities, old runtime variables, old
 extension Live View code, and the Terraform TURN module. None of that belongs to
 parking.
+
+That later work is Lane D (PR 19–21) of `SCHOOLPILOT_COMPETITIVE_ROADMAP.md`,
+in the deletion order recorded in `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`.

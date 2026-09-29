@@ -1,5 +1,7 @@
 # ClassPilot roadmap implementation
 
+The forward roadmap is `SCHOOLPILOT_COMPETITIVE_ROADMAP.md`. This file remains the September 6, 2026 release and evidence record and is not superseded by it.
+
 The accepted scope covers Safety Center, review-first notifications, website policy enforcement, after-hours Safety only, screenshot reliability, historical browsing, complete scheduling, monitoring interruptions, OneRoster/Clever reconciliation, and content categories.
 
 ## Confirmed product locations

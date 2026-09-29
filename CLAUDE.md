@@ -349,6 +349,7 @@ Teacher Dashboard actions are student-scoped, exact-binding, and outcome-driven:
 
 ### ClassPilot Realtime and Live View
 
+- **Roadmap status**: Live View is retired as a product feature and its legacy TURN nodes are parked; the bullets below describe code that stays in place until the Lane D removal PRs in `docs/SCHOOLPILOT_COMPETITIVE_ROADMAP.md`. `docs/CLASSPILOT_LEGACY_MEDIA_AUDIT.md` classifies every Live View and TURN item and gives the deletion order.
 - **Teacher-independent Observe**: administrators (including IT with school-admin access) may observe a frozen `scheduled_report` occurrence during its active scheduled window without promoting it to live or taking control. Discovery, roster, leases and subscriptions reauthorize that current occurrence; ordinary teachers remain denied until live supervision begins. Screen retention uses the existing `student_session` wire authority and a server-only reporting target, stored under the exact occurrence/student/session/device/revision V2 key. Active claims and other live classes take precedence. Never fall back to legacy student-only frames for reporting Observe. Updated clients may negotiate `screenshotReadOnlyObservationV1` with scoped authority, tracking leases and active cadence for five-second updates; older clients retain their ordinary background cadence. Observe never grants commands, FAB, private conversations or Live View.
 
 - **Exact downstream binding**: student login/register, settings, heartbeat, and WebSocket `auth-success` expose top-level `schoolId`, `studentId`, `studentSessionId`, and `exactBinding: { studentId, studentSessionId }`; the device ID remains token/config/server-internal. Every student-specific command, FAB, classroom-state, chat, lifecycle, and Live View frame carries `studentId` plus `studentSessionId`. Protocol-3 exact-reference tab closures additionally carry an internal `exactBinding: { bindingVersion: 2, schoolId, deviceId, studentId, studentSessionId, controlRevision }`, frozen and rechecked under the command-authority lock; those internal fields never enter teacher DTOs, URLs, events, reports, or exports. Teacher commands carry session/context authority `{ teachingSessionId, supervisionContextId }`. The only school-policy authority forms are the tightly allowlisted AI-safety `close-tab` and school-settings `limit-tabs` frames, which carry `{ kind: "school_policy", schoolId, source: "ai_safety" | "school_settings" }`. The extension rejects late or mismatched frames before any side effect or ACK.
@@ -1309,6 +1310,10 @@ task size, so it is not an OOM recovery target.
 
 ### Launch cost rollout
 
+The TURN repair exception described next was superseded on 2026-09-28 by
+parking (`docs/CLASSPILOT_TURN_PARKING.md`): executing it would first need a
+reviewed PR that removes `prevent_destroy`, and legacy TURN decommission is
+Lane D of `docs/SCHOOLPILOT_COMPETITIVE_ROADMAP.md`.
 The August 24, 2026 TURN repair has one authorized, still-pending targeted
 Terraform exception. It may replace only
 `module.turn[0].aws_instance.turn["a"]`,

@@ -83,6 +83,8 @@ docs/                User guides and security/compliance docs
 | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | Products, tech stack, data flows, known gaps |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Backend layers, data model, realtime, schedulers |
 | [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) | Local setup, conventions, how to add features/routes |
+| [docs/SCHOOLPILOT_COMPETITIVE_ROADMAP.md](docs/SCHOOLPILOT_COMPETITIVE_ROADMAP.md) | Canonical forward roadmap: product model, PR lanes and order, capabilities, flags and the per-PR safety report |
+| [docs/CLASSPILOT_LEGACY_MEDIA_AUDIT.md](docs/CLASSPILOT_LEGACY_MEDIA_AUDIT.md) | Retired Live View and parked TURN inventory (A–E), protection status and deletion order |
 | [docs/MOBILE_APP_ARCHITECTURE.md](docs/MOBILE_APP_ARCHITECTURE.md) | Capacitor strategy for the GoPilot and PassPilot apps |
 | [docs/MYDESK_TEACHER_GUIDE.md](docs/MYDESK_TEACHER_GUIDE.md) | Personal notes, seating, paperwork review, onboarding and support |
 | [docs/MYDESK_PRODUCTION_RELEASE.md](docs/MYDESK_PRODUCTION_RELEASE.md) | My Desk global availability, production checks and rollback |
