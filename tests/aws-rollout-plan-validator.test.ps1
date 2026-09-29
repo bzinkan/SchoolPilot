@@ -240,6 +240,51 @@ try {
     try { & $validator -Phase Redis -PlanPath $targetedPlan -PlanSha256 (Get-Sha $targetedPlan)|Out-Null } catch { $targetedRejected=$_.Exception.Message -match "complete" }
     Assert-Condition $targetedRejected "An incomplete plan, such as a targeted plan, must still be rejected."
 
+    # Real plans always report out-of-band churn in resource_drift. Only drift on an
+    # attribute Terraform lists in relevant_attributes may block validation.
+    function New-DriftEntry([string]$Address,$Before,$After) {
+        [pscustomobject]@{address=$Address;change=[pscustomobject]@{actions=@("update");before=$Before;after=$After}}
+    }
+    $rdsDriftBefore=[pscustomobject]@{endpoint="db.example:5432";latest_restorable_time="2026-09-29T20:00:00Z"}
+    $rdsDriftAfter=[pscustomobject]@{endpoint="db.example:5432";latest_restorable_time="2026-09-29T21:10:00Z"}
+    $irrelevantDriftPlan=Register-Plan "redis-irrelevant-drift" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$irrelevantDriftPlan].resource_drift=@(
+        (New-DriftEntry "module.rds.aws_db_instance.main" $rdsDriftBefore $rdsDriftAfter),
+        (New-DriftEntry "module.ecs.aws_ecs_service.api" ([pscustomobject]@{name="api";task_definition="api:160"}) ([pscustomobject]@{name="api";task_definition="api:161"})),
+        (New-DriftEntry "aws_cloudwatch_log_group.unreferenced" ([pscustomobject]@{tags=@{}}) ([pscustomobject]@{tags=$null}))
+    )
+    $global:SchoolPilotPlanJson[$irrelevantDriftPlan] | Add-Member -NotePropertyName relevant_attributes -NotePropertyValue @(
+        [pscustomobject]@{resource="module.rds.aws_db_instance.main";attribute=@("endpoint")},
+        [pscustomobject]@{resource="module.ecs.aws_ecs_service.api";attribute=@("name")}
+    )
+    Assert-Condition ((& $validator -Phase Redis -PlanPath $irrelevantDriftPlan -PlanSha256 (Get-Sha $irrelevantDriftPlan)|ConvertFrom-Json).valid) "Drift outside the plan's relevant attributes must not block validation."
+
+    $relevantDriftPlan=Register-Plan "redis-relevant-drift" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $movedEndpoint=$rdsDriftAfter|ConvertTo-Json|ConvertFrom-Json;$movedEndpoint.endpoint="db-moved.example:5432"
+    $global:SchoolPilotPlanJson[$relevantDriftPlan].resource_drift=@((New-DriftEntry "module.rds.aws_db_instance.main" $rdsDriftBefore $movedEndpoint))
+    $global:SchoolPilotPlanJson[$relevantDriftPlan] | Add-Member -NotePropertyName relevant_attributes -NotePropertyValue @(
+        [pscustomobject]@{resource="module.rds.aws_db_instance.main";attribute=@("endpoint")}
+    )
+    $relevantDriftRejected=$false
+    try { & $validator -Phase Redis -PlanPath $relevantDriftPlan -PlanSha256 (Get-Sha $relevantDriftPlan)|Out-Null } catch { $relevantDriftRejected=$_.Exception.Message -match "unreviewed resource drift: module\.rds\.aws_db_instance\.main\.endpoint" }
+    Assert-Condition $relevantDriftRejected "Drift on an attribute the plan depends on must still be rejected and named."
+
+    $wholeResourceDriftPlan=Register-Plan "redis-whole-resource-drift" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$wholeResourceDriftPlan].resource_drift=@((New-DriftEntry 'module.turn[0].aws_eip.turn["a"]' ([pscustomobject]@{tags=@{}}) ([pscustomobject]@{tags=$null})))
+    $global:SchoolPilotPlanJson[$wholeResourceDriftPlan] | Add-Member -NotePropertyName relevant_attributes -NotePropertyValue @(
+        [pscustomobject]@{resource="module.turn[0].aws_eip.turn";attribute=@()}
+    )
+    $wholeResourceDriftRejected=$false
+    try { & $validator -Phase Redis -PlanPath $wholeResourceDriftPlan -PlanSha256 (Get-Sha $wholeResourceDriftPlan)|Out-Null } catch { $wholeResourceDriftRejected=$_.Exception.Message -match "unreviewed resource drift" }
+    Assert-Condition $wholeResourceDriftRejected "Drift on a resource the plan depends on as a whole must be rejected, matching instance keys to the resource."
+
+    $indexedIrrelevantPlan=Register-Plan "redis-indexed-irrelevant-drift" @((New-Change "module.redis.aws_elasticache_replication_group.main" @("update") $redisBefore $redisAfter))
+    $global:SchoolPilotPlanJson[$indexedIrrelevantPlan].resource_drift=@((New-DriftEntry 'module.turn[0].aws_eip.turn["a"]' ([pscustomobject]@{public_ip="3.218.94.198";tags=@{}}) ([pscustomobject]@{public_ip="3.218.94.198";tags=$null})))
+    $global:SchoolPilotPlanJson[$indexedIrrelevantPlan] | Add-Member -NotePropertyName relevant_attributes -NotePropertyValue @(
+        [pscustomobject]@{resource="module.turn[0].aws_eip.turn";attribute=@("public_ip")}
+    )
+    Assert-Condition ((& $validator -Phase Redis -PlanPath $indexedIrrelevantPlan -PlanSha256 (Get-Sha $indexedIrrelevantPlan)|ConvertFrom-Json).valid) "Unchanged relevant attributes on an indexed resource instance must not block validation."
+
     Push-Location -LiteralPath $root
     try {
         Assert-Condition ((& $validator -Phase Redis -PlanPath $redisPlan -PlanSha256 (Get-Sha $redisPlan)|ConvertFrom-Json).valid) "The validator must give the same answer from a working directory outside the repository."

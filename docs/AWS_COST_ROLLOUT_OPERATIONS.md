@@ -2122,7 +2122,10 @@ sections applies except the load gates, which this section replaces.
   (`terraform -chdir=infra init -backend=false -lockfile=readonly`). Terraform
   1.14 omits `deferred_changes` from plan JSON when nothing is deferred, and the
   validator treats absence as none. Targeted plans are incomplete and remain
-  invalid for every phase.
+  invalid for every phase. Resource drift fails validation only when it changes
+  an attribute Terraform lists in `relevant_attributes`; every real plan reports
+  harmless churn such as a deploy's task-definition swap or RDS
+  `latest_restorable_time`.
 
 ## Deferred phase 2: public ECS while NAT remains (authorized 2026-09-29, medium path)
 
