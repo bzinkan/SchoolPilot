@@ -6,6 +6,13 @@ the successful final state has `scopedAuthorityChecksV1` and all eight dependent
 repaired capabilities globally on. `kioskLaunchTicketV1` remains off because V2
 replaces it.
 
+> **Superseded 2026-09-29.** Live View is retired. The runtime-config tool no
+> longer enables `liveViewIceServersV1`, accepts TURN evidence, or runs the
+> synthetic-only activation described below. The final state now has
+> `scopedAuthorityChecksV1` with seven dependent repaired capabilities on and
+> `liveViewIceServersV1` off. See "Live View ICE is retired" in
+> `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
+
 Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` was
 operator-confirmed live at `2.7.1` on August 24, 2026. This is Store-publication
 evidence only. Managed-Chromebook validation was not passed and must not be

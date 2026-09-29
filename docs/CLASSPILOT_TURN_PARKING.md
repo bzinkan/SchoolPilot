@@ -78,14 +78,15 @@ IPs remain billed (about $7 a month) so DNS stays stable.
   so nothing requests them.
 - Screenshots and ordinary student monitoring use the ClassPilot API and
   WebSocket, not TURN. PassPilot and GoPilot have no TURN or ICE dependency.
-- **Open item:** production still lists `liveViewIceServersV1` with mode `on` in
-  `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON`, with `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1=true`
-  and `CLASSPILOT_TURN_HOSTS` set. It is inert while the UI is off. Turning it off
-  is a separate, reviewed runtime-config change and is not part of parking:
-  `CLASSPILOT_TURN_OPERATIONS.md` forbids turning off only Live View through
-  `scripts/deploy-classpilot-runtime-config.ps1`, whose containment mode turns
-  off all nine repaired capabilities together, so retiring the capability needs
-  its own design.
+- **Capability retirement:** the runtime-config tool retired
+  `liveViewIceServersV1` on 2026-09-29. No profile turns it on or carries TURN
+  inputs, and recovery after a containment `off` no longer needs TURN running.
+  A production runtime written before the retirement still has it on, with
+  `CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1=true`; one reviewed
+  `live-view-retire` Plan and Apply turns off that entry and flag and nothing
+  else. `CLASSPILOT_TURN_HOSTS`, `CLASSPILOT_STUN_URLS` and the TURN secret
+  reference stay provisioned until decommission. See "Live View ICE is retired"
+  in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.
 
 ## Restart conditions
 

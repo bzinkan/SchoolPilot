@@ -164,6 +164,9 @@ all nine repaired capabilities globally on, including
 or incident containment, not the final target. *(Superseded 2026-09-28: Live
 View is retired as a product feature, so Live View staying dark is the current
 product decision, not temporary containment. See `CLASSPILOT_TURN_PARKING.md`.)*
+*(Superseded 2026-09-29: the runtime-config tool no longer enables
+`liveViewIceServersV1`, accepts TURN evidence, or runs the synthetic-only path.
+See "Live View ICE is retired" in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.)*
 
 When the approved activation runs during the weekday 04:45–05:59 Eastern
 protected window, both Plan and Apply require
@@ -182,6 +185,10 @@ For containment, use a fresh `mode: "off"` Plan/Apply. It disables protocol-v3
 acceptance and all nine repaired capabilities together while leaving TURN
 infrastructure provisioned. Do not partially turn off only Live View, edit one
 service by hand, or use `-Operation Rollback` as a kill switch.
+*(Superseded 2026-09-29: containment now turns off eight repaired capabilities,
+because `liveViewIceServersV1` is retired and always off. The one-time
+`live-view-retire` profile is the only reviewed way to turn off Live View alone.
+Recovery after `off` needs no TURN; see `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`.)*
 
 ## Telemetry contract
 
@@ -249,7 +256,8 @@ capability containment, pause OU unpinning and create/apply a fresh
 `mode: "off"` runtime profile; do not partially edit rollout entries or ECS task
 definitions. `-Operation Rollback` only restores the exact immediately prior
 API/worker pair recorded by its plan. The additive TURN infrastructure remains
-in place.
+in place. *(Superseded 2026-09-29: there is no Live View canary; the capability
+is retired.)*
 
 ## Node bootstrap contract
 

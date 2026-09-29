@@ -320,11 +320,26 @@ try {
             foreach ($entry in $RuntimeConfiguration.Environment.GetEnumerator()) {
                 $container.environment += [pscustomobject]@{ name = [string]$entry.Key; value = [string]$entry.Value }
             }
+            # Production carries provisioned TURN wiring that no profile manages any
+            # more; every candidate must carry it forward unchanged.
+            if (-not ($RuntimeConfiguration.Environment.Contains("CLASSPILOT_TURN_HOSTS"))) {
+                $container.environment += [pscustomobject]@{
+                    name = "CLASSPILOT_TURN_HOSTS"; value = "turn-a.school-pilot.net,turn-b.school-pilot.net"
+                }
+                $container.environment += [pscustomobject]@{
+                    name = "CLASSPILOT_STUN_URLS"
+                    value = "stun:turn-a.school-pilot.net:3478,stun:turn-b.school-pilot.net:3478"
+                }
+            }
             $container.secrets = @($container.secrets | Where-Object { [string]$_.name -cnotin $script:AllowedSecretNames })
-            if ($null -ne $RuntimeConfiguration.Turn) {
+            $sourceTurnSecretArn = if ($null -ne $RuntimeConfiguration.PSObject.Properties["Turn"] -and
+                $null -ne $RuntimeConfiguration.Turn) {
+                [string]$RuntimeConfiguration.Turn.SecretArn
+            } else { [string]$global:RuntimeConfigTestState.SecretArn }
+            if ($sourceTurnSecretArn) {
                 $container.secrets += [pscustomobject]@{
                     name = "CLASSPILOT_TURN_REST_SECRET"
-                    valueFrom = [string]$RuntimeConfiguration.Turn.SecretArn
+                    valueFrom = $sourceTurnSecretArn
                 }
             }
         }
@@ -397,7 +412,7 @@ try {
 
     $fullTestProfile = [pscustomobject]@{
         schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
-        enabledCapabilities = @($script:ActivationOrder); turn = $turn
+        enabledCapabilities = @($script:ActivationOrder)
     }
     $fullTestRuntime = ConvertTo-RuntimeConfiguration -Profile $fullTestProfile
     $fullTestRollouts = $fullTestRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
@@ -405,10 +420,26 @@ try {
         Assert-Condition ($fullTestRollouts.$capability.mode -ceq "on" -and @($fullTestRollouts.$capability.schoolIds).Count -eq 1) "Full test-school profile must keep $capability scoped to one school."
     }
 
-    $globalProfile = [pscustomobject]@{ schemaVersion = 1; mode = "global-on"; turn = $turn }
+    Assert-Condition ($fullTestRollouts.liveViewIceServersV1.mode -ceq "off" -and
+        $fullTestRuntime.Environment.CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1 -ceq "false") `
+        "The complete test-school prefix must leave retired Live View off."
+    Assert-Condition (-not ($script:ActivationOrder -ccontains "liveViewIceServersV1") -and
+        -not ($script:RepairedCapabilities -ccontains "liveViewIceServersV1") -and
+        $script:ActivationOrder.Count -eq 7) `
+        "Live View must no longer be an activation step or a repaired capability."
+    Assert-Condition (($script:AllCapabilities -join ",") -ceq (@(
+        "scopedAuthorityChecksV1", "exactBindingAckV2", "exactTabCloseV2", "authBoundTelemetryV1",
+        "studentChatIdempotencyV1", "screenshotObservationLeaseV1", "safetyEvidenceCaptureV1",
+        "liveViewIceServersV1", "kioskLaunchTicketV2", "screenshotTrackingWindowLeaseV1",
+        "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
+        "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
+        "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "kioskLaunchTicketV1"
+    ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
+
+    $globalProfile = [pscustomobject]@{ schemaVersion = 1; mode = "global-on" }
     $globalRuntime = ConvertTo-RuntimeConfiguration -Profile $globalProfile
     $globalRollouts = $globalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
-    Assert-Condition (@($globalRuntime.EnabledCapabilities).Count -eq 9) "Global profile must enable all nine repaired capabilities."
+    Assert-Condition (@($globalRuntime.EnabledCapabilities).Count -eq 8) "Global profile must enable all eight repaired capabilities."
     foreach ($capability in $script:RepairedCapabilities) {
         Assert-Condition ($globalRollouts.$capability.mode -ceq "on") "Global profile must enable $capability."
         Assert-Condition (-not ($globalRollouts.$capability.PSObject.Properties.Name -contains "schoolIds")) "Global profile must not retain school identifiers."
@@ -423,7 +454,32 @@ try {
         $globalRollouts.restrictionAuthPassThroughV1.mode -ceq "off") `
         "Existing global-on must explicitly keep restriction auth pass-through disabled."
     Assert-Condition ($globalRollouts.kioskLaunchTicketV1.mode -ceq "off") "Global profile must leave superseded V1 off."
-    Assert-Condition ($globalRuntime.Turn.Hosts.Count -eq 2 -and $globalRuntime.Turn.Hosts[0] -ceq "turn-a.school-pilot.net") "TURN hosts must normalize to the reviewed pair."
+    Assert-Condition ($globalRollouts.liveViewIceServersV1.mode -ceq "off" -and
+        -not ($globalRollouts.liveViewIceServersV1.PSObject.Properties.Name -contains "schoolIds") -and
+        $globalRuntime.Environment.CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1 -ceq "false") `
+        "Global profile must keep retired Live View off with both controls."
+    Assert-Condition ($null -eq $globalRuntime.Turn -and
+        -not $globalRuntime.Environment.Contains("CLASSPILOT_TURN_HOSTS") -and
+        -not $globalRuntime.Environment.Contains("CLASSPILOT_STUN_URLS")) `
+        "Global profile must preserve rather than rewrite the provisioned TURN wiring."
+    foreach ($turnProfile in @(
+        [pscustomobject]@{ schemaVersion = 1; mode = "global-on"; turn = $turn },
+        [pscustomobject]@{ schemaVersion = 2; mode = "tracking-window-global-on"; turn = $turn },
+        [pscustomobject]@{ schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
+            enabledCapabilities = @($script:ActivationOrder); turn = $turn },
+        [pscustomobject]@{ schemaVersion = 10; mode = "live-view-retire"; turn = $turn }
+    )) {
+        Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $turnProfile } `
+            "Profile mode $($turnProfile.mode) must refuse TURN inputs now that Live View is retired."
+    }
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
+            enabledCapabilities = @("exactBindingAckV2", "exactTabCloseV2", "authBoundTelemetryV1",
+                "studentChatIdempotencyV1", "screenshotObservationLeaseV1", "safetyEvidenceCaptureV1",
+                "liveViewIceServersV1")
+        })
+    } "A test-school prefix must not name the retired Live View capability."
 
     $trackingPilotProfile = [pscustomobject]@{
         schemaVersion = 2
@@ -434,7 +490,7 @@ try {
     $trackingPilotRollouts = $trackingPilotRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
     Assert-Condition ($trackingPilotRuntime.Mode -ceq "tracking-window-pilot" -and
         $trackingPilotRuntime.SchoolScopeCount -eq 1 -and
-        @($trackingPilotRuntime.EnabledCapabilities).Count -eq 10) `
+        @($trackingPilotRuntime.EnabledCapabilities).Count -eq 9) `
         "Tracking-window pilot must preserve all repaired capabilities and add one scoped capability."
     foreach ($capability in $script:RepairedCapabilities) {
         Assert-Condition ($trackingPilotRollouts.$capability.mode -ceq "on" -and
@@ -456,19 +512,35 @@ try {
     $trackingGlobalProfile = [pscustomobject]@{
         schemaVersion = 2
         mode = "tracking-window-global-on"
-        turn = $turn
     }
     $trackingGlobalRuntime = ConvertTo-RuntimeConfiguration -Profile $trackingGlobalProfile
     $trackingGlobalRollouts = $trackingGlobalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -Depth 10
     Assert-Condition ($trackingGlobalRuntime.Mode -ceq "tracking-window-global-on" -and
         $trackingGlobalRuntime.SchoolScopeCount -eq 0 -and
-        @($trackingGlobalRuntime.EnabledCapabilities).Count -eq 10) `
-        "Tracking-window global mode must expose all ten accepted repaired capabilities."
+        @($trackingGlobalRuntime.EnabledCapabilities).Count -eq 9) `
+        "Tracking-window global mode must expose the eight repaired capabilities plus tracking."
     Assert-Condition ($trackingGlobalRollouts.screenshotTrackingWindowLeaseV1.mode -ceq "on" -and
         -not ($trackingGlobalRollouts.screenshotTrackingWindowLeaseV1.PSObject.Properties.Name -contains "schoolIds")) `
         "Tracking-window global mode must remove the pilot school scope."
     Assert-Condition ($trackingGlobalRollouts.kioskLaunchTicketV1.mode -ceq "off") `
         "Tracking-window global mode must keep superseded kiosk ticket V1 off."
+
+    function New-LegacyLiveViewRuntime {
+        # A runtime written before Live View was retired: identical controls with
+        # Live View on, scoped like the marker (to one school for test-school).
+        param($RuntimeConfiguration, [string]$SchoolId)
+        $environment = [ordered]@{}
+        foreach ($item in $RuntimeConfiguration.Environment.GetEnumerator()) {
+            $environment[[string]$item.Key] = [string]$item.Value
+        }
+        $environment.CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1 = "true"
+        $rollouts = [string]$environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -AsHashtable -Depth 10
+        $entry = [ordered]@{ mode = "on" }
+        if ($SchoolId) { $entry.schoolIds = @($SchoolId) }
+        $rollouts.liveViewIceServersV1 = $entry
+        $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
+        return [pscustomobject]@{ Mode = [string]$RuntimeConfiguration.Mode; Environment = $environment }
+    }
 
     function New-TransitionSourceTask {
         param($RuntimeConfiguration)
@@ -537,6 +609,111 @@ try {
         Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $fullTestRuntime) `
             -ContainerName "api" -TargetRuntimeConfiguration $trackingPilotRuntime
     } "Tracking-window pilot must start from the completed global repaired-capability profile."
+
+    # --- Live View retirement: read legacy runtimes, turn off one leaf capability ---
+    function ConvertTo-TestEnvironmentList {
+        param($RuntimeConfiguration)
+        return @($RuntimeConfiguration.Environment.GetEnumerator() | ForEach-Object {
+            [pscustomobject]@{ name = [string]$_.Key; value = [string]$_.Value }
+        })
+    }
+    $legacyGlobalRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $globalRuntime
+    $legacyTrackingGlobalRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $trackingGlobalRuntime
+    $legacyGlobalState = Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList $legacyGlobalRuntime)
+    Assert-Condition ($legacyGlobalState.Mode -ceq "global-on" -and $legacyGlobalState.LiveViewMode -ceq "legacy-on" -and
+        $legacyGlobalState.PrefixCount -eq $script:ActivationOrder.Count) `
+        "A pre-retirement global runtime with Live View on must remain readable."
+    $retiredGlobalState = Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList $globalRuntime)
+    Assert-Condition ($retiredGlobalState.Mode -ceq "global-on" -and $retiredGlobalState.LiveViewMode -ceq "off") `
+        "A retired global runtime must read with Live View off."
+    $legacyFullTestRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $fullTestRuntime -SchoolId $testSchoolId
+    $legacyFullTestState = Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList $legacyFullTestRuntime)
+    Assert-Condition ($legacyFullTestState.Mode -ceq "test-school" -and $legacyFullTestState.LiveViewMode -ceq "legacy-on" -and
+        $legacyFullTestState.PrefixCount -eq $script:ActivationOrder.Count) `
+        "A pre-retirement complete test-school runtime must remain readable."
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList (
+            New-LegacyLiveViewRuntime -RuntimeConfiguration $testRuntime -SchoolId $testSchoolId))
+    } "A test-school runtime must not carry Live View before its legacy activation step."
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList (
+            New-LegacyLiveViewRuntime -RuntimeConfiguration $globalRuntime -SchoolId $testSchoolId))
+    } "A global runtime must not school-scope the retired Live View capability."
+    $mismatchedLiveViewRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $globalRuntime
+    $mismatchedLiveViewRuntime.Environment.CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1 = "false"
+    Assert-Throws {
+        Get-RuntimeActivationState -Environment (ConvertTo-TestEnvironmentList $mismatchedLiveViewRuntime)
+    } "Retired Live View with mismatched kill switch and rollout entry must fail closed."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $legacyFullTestRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $globalRuntime
+
+    $retireIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 10; mode = "live-view-retire" })
+    Assert-Condition ($retireIntent.RequiresSourceRuntime -and $retireIntent.Environment.Count -eq 0 -and
+        $null -eq $retireIntent.Turn -and @($retireIntent.EnabledCapabilities).Count -eq 0) `
+        "Live View retirement must be a source-preserving intent that enables nothing."
+    foreach ($badRetireProfile in @(
+        [pscustomobject]@{ schemaVersion = 9; mode = "live-view-retire" },
+        [pscustomobject]@{ schemaVersion = 10; mode = "global-on" },
+        [pscustomobject]@{ schemaVersion = 10; mode = "live-view-retire"; pilotSchoolId = $testSchoolId }
+    )) {
+        Assert-Throws { ConvertTo-RuntimeConfiguration -Profile $badRetireProfile } `
+            "Live View retirement must use exactly schema 10 with no pilot scope."
+    }
+    $retireSource = New-TransitionSourceTask -RuntimeConfiguration $legacyTrackingGlobalRuntime
+    $retireRuntime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+        -SourceTaskDefinition $retireSource -ContainerName "api"
+    Assert-Condition ([string]$retireRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON -ceq
+        [string]$trackingGlobalRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON) `
+        "Retiring Live View from a legacy runtime must produce the exact byte-identical retired registry."
+    foreach ($name in @($retireRuntime.Environment.Keys)) {
+        $expected = if ($name -ceq "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1") { "false" }
+            elseif ($name -ceq "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON") { [string]$retireRuntime.Environment[$name] }
+            else { [string]$legacyTrackingGlobalRuntime.Environment[$name] }
+        Assert-Condition ([string]$retireRuntime.Environment[$name] -ceq $expected) `
+            "Live View retirement must copy $name unchanged from the source."
+    }
+    Assert-Condition ([string]$retireRuntime.SourceMode -ceq "tracking-window-global-on" -and
+        @($retireRuntime.EnabledCapabilities) -notcontains "liveViewIceServersV1" -and
+        @($retireRuntime.EnabledCapabilities).Count -eq 9) `
+        "Live View retirement must keep every other enabled capability."
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $retireSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $retireRuntime
+    $legacyGlobalRetireRuntime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+        -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $legacyGlobalRuntime) -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $legacyGlobalRuntime) `
+        -ContainerName "api" -TargetRuntimeConfiguration $legacyGlobalRetireRuntime
+    Assert-Throws {
+        $alreadyRetired = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime) -ContainerName "api"
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $trackingGlobalRuntime) `
+            -ContainerName "api" -TargetRuntimeConfiguration $alreadyRetired
+    } "Live View retirement must refuse a runtime where Live View is already off."
+    Assert-Throws {
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $legacyFullTestRuntime) -ContainerName "api"
+    } "Live View retirement must start from a global runtime."
+    Assert-Throws {
+        Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+            -SourceTaskDefinition (New-TransitionSourceTask -RuntimeConfiguration $offTransitionRuntime) -ContainerName "api"
+    } "Live View retirement must not start from a contained runtime."
+    $doctoredRetireRuntime = [pscustomobject]@{
+        Mode = "live-view-retire"; SourceMode = "tracking-window-global-on"; Environment = [ordered]@{}
+    }
+    foreach ($item in $retireRuntime.Environment.GetEnumerator()) {
+        $doctoredRetireRuntime.Environment[[string]$item.Key] = [string]$item.Value
+    }
+    $doctoredRollouts = [string]$doctoredRetireRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -AsHashtable -Depth 10
+    $doctoredRollouts.scheduledClassroomV1 = [ordered]@{ mode = "on" }
+    $doctoredRetireRuntime.Environment.CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1 = "true"
+    $doctoredRetireRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $doctoredRollouts | ConvertTo-Json -Depth 8 -Compress
+    $doctoredMessage = ""
+    try {
+        Assert-AllowedRuntimeTransition -SourceTaskDefinition $retireSource -ContainerName "api" `
+            -TargetRuntimeConfiguration $doctoredRetireRuntime
+    }
+    catch { $doctoredMessage = $_.Exception.Message }
+    Assert-Condition ($doctoredMessage -match "preserve every other capability") `
+        "Live View retirement must refuse a target that also changes another capability."
 
     $fastPreviewPilotIntent = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 5; mode = "fast-preview-pilot"; pilotSchoolId = $testSchoolId
@@ -1102,11 +1279,41 @@ try {
         $productionShapeState.RestrictionAuthMode -ceq "pilot" -and
         $productionShapeState.LateSignInMode -ceq "off" -and
         $productionShapeState.ScheduledClassroomMode -ceq "global-on" -and
-        @($productionShapeRuntime.EnabledCapabilities).Count -eq 14) `
+        $productionShapeState.LiveViewMode -ceq "off" -and
+        @($productionShapeRuntime.EnabledCapabilities).Count -eq 13) `
         "The production-shape fixture must classify exactly as the live registry does."
 
     $unpinRuntime = Resolve-SourcePreservingRuntimeConfiguration `
         -RuntimeIntent $unpinIntent -SourceTaskDefinition $productionShapeSource -ContainerName "api"
+
+    # Live production today is the unpinned shape written before the retirement,
+    # with Live View still on. Retiring it must change exactly one entry and one flag.
+    $legacyProductionRuntime = New-LegacyLiveViewRuntime -RuntimeConfiguration $unpinRuntime
+    $legacyProductionSource = New-TransitionSourceTask -RuntimeConfiguration $legacyProductionRuntime
+    $legacyProductionState = Get-RuntimeActivationState `
+        -Environment @($legacyProductionSource.containerDefinitions[0].environment) -AllowBaseline
+    Assert-Condition ($legacyProductionState.Mode -ceq "tracking-window-global-on" -and
+        $legacyProductionState.LiveViewMode -ceq "legacy-on" -and
+        $legacyProductionState.StudentGateMode -ceq "global-on" -and
+        $legacyProductionState.FastPreviewMode -ceq "global-on" -and
+        $legacyProductionState.RestrictionAuthMode -ceq "pilot" -and
+        $legacyProductionState.ScheduledClassroomMode -ceq "global-on") `
+        "Today's pre-retirement production shape must remain readable."
+    $retiredProductionRuntime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $retireIntent `
+        -SourceTaskDefinition $legacyProductionSource -ContainerName "api"
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $legacyProductionSource -ContainerName "api" `
+        -TargetRuntimeConfiguration $retiredProductionRuntime
+    Assert-Condition ([string]$retiredProductionRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON -ceq
+        [string]$unpinRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON -and
+        [string]$retiredProductionRuntime.Environment.CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1 -ceq "false" -and
+        @($retiredProductionRuntime.EnabledCapabilities).Count -eq 13) `
+        "Retiring Live View from production must leave exactly the other thirteen capabilities as they are."
+    $changedNames = @($retiredProductionRuntime.Environment.Keys | Where-Object {
+        [string]$retiredProductionRuntime.Environment[$_] -cne [string]$legacyProductionRuntime.Environment[$_]
+    })
+    Assert-Condition (($changedNames | Sort-Object) -join "," -ceq
+        "CLASSPILOT_CAP_LIVE_VIEW_ICE_SERVERS_V1,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON") `
+        "Retiring Live View from production must change only its kill switch and the registry."
     $productionShapeRollouts = [string]$productionShapeRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
         ConvertFrom-Json -Depth 10
     $unpinRollouts = [string]$unpinRuntime.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON |
@@ -1485,21 +1692,21 @@ try {
             enabledCapabilities = @("exactTabCloseV2")
         })
     } "A skipped test-school activation step must fail closed."
-    Assert-Throws {
-        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = "global-on" })
-    } "Global activation without TURN inputs must fail closed."
+    Assert-Condition ((ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 1; mode = "global-on"
+    })).Mode -ceq "global-on") "Global activation must no longer need TURN inputs now that Live View is retired."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "global-on"
             turn = [pscustomobject]@{ hosts = @("turn-a.school-pilot.net"); secretArn = $turnSecretArn }
         })
-    } "Global activation without exactly two TURN hosts must fail closed."
+    } "Global activation must refuse a partial TURN input."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "global-on"
             turn = [pscustomobject]@{ hosts = @("turn-a.school-pilot.net", "turn-b.school-pilot.net"); secretArn = "arn:aws:secretsmanager:us-east-1:135775632425:secret:wrong" }
         })
-    } "Global activation with the wrong TURN secret shape must fail closed."
+    } "Global activation must refuse a malformed TURN input."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 1; mode = "tracking-window-pilot"; pilotSchoolId = $testSchoolId; turn = $turn
@@ -1530,11 +1737,9 @@ try {
             schemaVersion = 2; mode = "tracking-window-global-on"; pilotSchoolId = $testSchoolId; turn = $turn
         })
     } "Tracking-window global activation must not retain pilot scope."
-    Assert-Throws {
-        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
-            schemaVersion = 2; mode = "tracking-window-global-on"
-        })
-    } "Tracking-window global activation must retain verified TURN inputs."
+    Assert-Condition ((ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 2; mode = "tracking-window-global-on"
+    })).Mode -ceq "tracking-window-global-on") "Tracking-window global activation must no longer need TURN inputs."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 2; mode = "tracking-window-pilot"; pilotSchoolId = $testSchoolId
@@ -1576,12 +1781,10 @@ try {
             schemaVersion = 4; mode = "late-signin-off"; turn = $turn
         })
     } "Late-sign-in rollback must preserve existing TURN wiring."
-    Assert-Throws {
-        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
-            schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
-            enabledCapabilities = @($script:ActivationOrder[0..6])
-        })
-    } "Activation through Live View without TURN inputs must fail closed."
+    Assert-Condition (@((ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
+        enabledCapabilities = @($script:ActivationOrder[0..6])
+    })).EnabledCapabilities).Count -eq 8) "The complete seven-step test-school prefix must no longer need TURN inputs."
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = "off"; turn = $turn })
     } "Off mode must not rewrite TURN wiring."
@@ -1605,12 +1808,25 @@ try {
         } "Runtime profile modes must use the exact reviewed lowercase spelling."
     }
 
+    # No profile manages TURN any more. The evidence and readiness checks stay in
+    # the tool only for plans written before the retirement, so their unit tests
+    # use a legacy TURN-managing runtime built by hand.
+    $legacyTurnHosts = @("turn-a.school-pilot.net", "turn-b.school-pilot.net")
+    $legacyTurnRuntime = [pscustomobject]@{
+        Mode = "global-on"
+        Turn = [pscustomobject]@{
+            Hosts = $legacyTurnHosts
+            SecretArn = $turnSecretArn
+            HostsSha256 = Get-Sha256Text -Value ($legacyTurnHosts -join ",")
+            SecretArnSha256 = Get-Sha256Text -Value $turnSecretArn
+        }
+    }
     $evidencePath = Join-Path $testRoot "turn-evidence.json"
     $evidence = [ordered]@{
         schemaVersion = 2
         validatedAt = [DateTimeOffset]::Parse("2026-08-23T12:00:00Z").ToString("o")
-        hostsSha256 = $globalRuntime.Turn.HostsSha256
-        secretArnSha256 = $globalRuntime.Turn.SecretArnSha256
+        hostsSha256 = $legacyTurnRuntime.Turn.HostsSha256
+        secretArnSha256 = $legacyTurnRuntime.Turn.SecretArnSha256
         checks = [ordered]@{
             twoHealthyNodes = $true; distinctAvailabilityZones = $true; dnsMatchesElasticIps = $true
             turnUdp3478 = $true; turnTcp3478 = $true; turnsTcp443 = $true; tlsCertificatesCurrent = $true
@@ -1619,29 +1835,29 @@ try {
         }
     }
     Write-TestJson -Path $evidencePath -Value $evidence
-    $turnEvidence = Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+    $turnEvidence = Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     Assert-Condition ($turnEvidence.EvidenceSha256 -match '^[0-9a-f]{64}$') "TURN evidence must bind the requested host and secret hashes."
     $completeTurnChecks = $evidence.checks
     $evidence.checks = [ordered]@{}
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "Empty TURN checks must not satisfy the live activation gate."
     $evidence.checks = [ordered]@{ twoHealthyNodes = $true }
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "Partial TURN checks must not satisfy the live activation gate."
     $evidence.checks = $completeTurnChecks
     $evidence.checks.twoHealthyNodes = "true"
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "String TURN checks must not satisfy the live activation gate."
     $evidence.checks.twoHealthyNodes = 1
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "Numeric TURN checks must not satisfy the live activation gate."
     $evidence.checks.twoHealthyNodes = $true
     $validEvidenceText = $evidence | ConvertTo-Json -Depth 30
@@ -1658,14 +1874,14 @@ try {
             $global:SchoolPilotRuntimeConfigSnapshotReadHandler = $null
         }
     }
-    $swappedTurnEvidence = Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+    $swappedTurnEvidence = Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     Assert-Condition ([string]$swappedTurnEvidence.EvidenceSha256 -ceq $validEvidenceSha256) "TURN validation must hash and parse the same captured bytes during path replacement."
     Assert-Condition ((Read-StrictJson -Path $evidencePath).checks.turnsTcp443 -eq $false) "TURN replacement regression must actually exchange the path after the bounded read."
     [IO.File]::WriteAllText($evidencePath, $validEvidenceText, [Text.UTF8Encoding]::new($false))
     $evidence.checks.syntheticUdpBlockedFallbackPassed = $false
     Write-TestJson -Path $evidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $evidencePath -Now ([DateTimeOffset]::Parse("2026-08-23T12:30:00Z"))
     } "Missing UDP-blocked fallback evidence must block activation."
     $evidence.checks.syntheticUdpBlockedFallbackPassed = $true
     Write-TestJson -Path $evidencePath -Value $evidence
@@ -1683,7 +1899,9 @@ try {
     $apiContainer = @($apiRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($apiContainer.environment | Where-Object name -CEQ "NODE_ENV").Count -eq 1) "Unrelated environment must survive the clone."
     Assert-Condition (@($apiContainer.secrets | Where-Object name -CEQ "REDIS_URL").Count -eq 1) "Unrelated secrets must survive the clone."
-    Assert-Condition (@($apiContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET").Count -eq 1) "TURN secret must be a single secret reference."
+    Assert-Condition (@($apiContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET").Count -eq 0 -and
+        @($apiContainer.environment | Where-Object name -CEQ "CLASSPILOT_TURN_HOSTS").Count -eq 0) `
+        "A global runtime must not add TURN wiring the source does not carry."
     Assert-Condition ((Get-TaskFingerprint -TaskDefinition $apiSource.taskDefinition -ContainerName "api") -ceq (Get-TaskFingerprint -TaskDefinition $apiRequest -ContainerName "api")) "Only allowlisted runtime fields may differ."
     $offRuntime = ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 1; mode = "off" })
     $turnWiredSource = New-TestTaskResponse -Role api -Arn $apiSourceArn -Digest $digest `
@@ -1697,6 +1915,17 @@ try {
     $offContainer = @($offRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
     Assert-Condition (@($offContainer.environment | Where-Object name -CEQ "CLASSPILOT_TURN_HOSTS").Count -eq 1) "Off mode must preserve provisioned TURN hosts."
     Assert-Condition (@($offContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET").Count -eq 1) "Off mode must preserve the provisioned TURN secret reference."
+    $globalTurnWiredRequest = New-RuntimeTaskDefinitionRequest -SourceResponse $turnWiredSource -RuntimeConfiguration $globalRuntime `
+        -ExpectedDigest $digest -ExpectedArn $apiSourceArn -ExpectedFamily "schoolpilot-production-api" `
+        -ContainerName "api" -ExpectedCpu "1024" -ExpectedMemory "2048"
+    $globalTurnWiredContainer = @($globalTurnWiredRequest.containerDefinitions | Where-Object name -CEQ "api")[0]
+    Assert-Condition (@($globalTurnWiredContainer.environment | Where-Object {
+            [string]$_.name -ceq "CLASSPILOT_TURN_HOSTS" -and [string]$_.value -ceq "turn-a.school-pilot.net,turn-b.school-pilot.net"
+        }).Count -eq 1 -and
+        @($globalTurnWiredContainer.secrets | Where-Object {
+            [string]$_.name -ceq "CLASSPILOT_TURN_REST_SECRET" -and [string]$_.valueFrom -ceq $turnSecretArn
+        }).Count -eq 1) `
+        "Global activation must preserve the provisioned TURN hosts and secret exactly."
     $caseVariantSource = New-TestTaskResponse -Role api -Arn $apiSourceArn -Digest $digest `
         -ManagedEnvironment @([pscustomobject]@{ name = "classpilot_cap_exact_tab_close_v2"; value = "unrelated-case-sensitive-value" }) `
         -ManagedSecrets @([pscustomobject]@{ name = "classpilot_turn_rest_secret"; valueFrom = "arn:example:unrelated" })
@@ -2322,15 +2551,15 @@ try {
     $waiverTurnEvidence.checks.managedUdpBlockedLiveViewPassed = $false
     Write-TestJson -Path $waiverTurnEvidencePath -Value $waiverTurnEvidence
     $waiverTurnSnapshot = Read-StrictJsonSnapshot -Path $waiverTurnEvidencePath
-    [void](Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidenceSnapshot $waiverTurnSnapshot `
+    [void](Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidenceSnapshot $waiverTurnSnapshot `
         -Now $now -SyntheticOnlyWaiver)
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidenceSnapshot $waiverTurnSnapshot -Now $now
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidenceSnapshot $waiverTurnSnapshot -Now $now
     } "Strict global activation must require managed UDP-blocked Live View evidence."
     $managedTurnEvidencePath = Join-Path $testRoot "turn-evidence-managed-only-for-waiver.json"
     Write-TestJson -Path $managedTurnEvidencePath -Value $evidence
     Assert-Throws {
-        Assert-TurnEvidence -RuntimeConfiguration $globalRuntime -EvidencePath $managedTurnEvidencePath `
+        Assert-TurnEvidence -RuntimeConfiguration $legacyTurnRuntime -EvidencePath $managedTurnEvidencePath `
             -Now $now -SyntheticOnlyWaiver
     } "Synthetic-only activation must explicitly record that managed Live View has not passed."
 
@@ -2443,13 +2672,13 @@ try {
     [IO.File]::WriteAllText($managedTestWaiverPath, $validManagedTestWaiverText, [Text.UTF8Encoding]::new($false))
     Set-PrivatePathPermissions -Path $managedTestWaiverPath
     $global:RuntimeConfigTestState.TurnNodeCount = 1
-    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $globalRuntime } "Fewer than two live TURN nodes must block activation."
+    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $legacyTurnRuntime } "Fewer than two live TURN nodes must block activation."
     $global:RuntimeConfigTestState.TurnNodeCount = 2
     $global:RuntimeConfigTestState.TurnStatusHealthy = $false
-    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $globalRuntime } "An impaired TURN node must block activation."
+    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $legacyTurnRuntime } "An impaired TURN node must block activation."
     $global:RuntimeConfigTestState.TurnStatusHealthy = $true
     $global:RuntimeConfigTestState.TurnSecretDeleted = $true
-    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $globalRuntime } "A TURN secret pending deletion must block activation."
+    Assert-Throws { Assert-TurnAwsReadiness -RuntimeConfiguration $legacyTurnRuntime } "A TURN secret pending deletion must block activation."
     $global:RuntimeConfigTestState.TurnSecretDeleted = $false
     $global:RuntimeConfigTestState.ScheduledActionMaxCapacity = 8
     Assert-Throws { Assert-ScheduledScalingContract } "A scheduled action capable of raising the reviewed six-task ceiling must fail closed."
@@ -2474,7 +2703,6 @@ try {
     $preFullTestProfile = [pscustomobject]@{
         schemaVersion = 1; mode = "test-school"; testSchoolId = $testSchoolId
         enabledCapabilities = @($script:ActivationOrder[0..($script:ActivationOrder.Count - 2)])
-        turn = $turn
     }
     $preFullTestRuntime = ConvertTo-RuntimeConfiguration -Profile $preFullTestProfile
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $preFullTestRuntime
@@ -2482,7 +2710,7 @@ try {
     $testDeployProfilePath = Join-Path $testRoot "test-school-profile-$testSchoolId.json"
     Write-TestJson -Path $testDeployProfilePath -Value $fullTestProfile
     $testDeployPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $testDeployProfilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $originalTestPlanText = [IO.File]::ReadAllText($testDeployPlanResult.PlanPath)
     $replacementTestPlan = $originalTestPlanText | ConvertFrom-Json -Depth 30
@@ -2508,7 +2736,7 @@ try {
     Assert-Condition (-not $testDeployPlanText.Contains($testSchoolId) -and -not $testDeployPlanText.Contains("turn-a.school-pilot.net") -and -not $testDeployPlanText.Contains($turnSecretArn)) "Test-school plan evidence must redact school, TURN host, and secret identifiers."
     Assert-Condition (-not ([string]$testDeployPlanResult.PlanRelativePath).Contains($testSchoolId)) "Operator output must use an identifier-free plan-relative path."
     $testDeployPlanDocument = $testDeployPlanText | ConvertFrom-Json -Depth 30
-    Assert-Condition ([string]$testDeployPlanDocument.profileFile -ceq "profile.json" -and [string]$testDeployPlanDocument.turnEvidenceFile -ceq "turn-evidence.json") "The durable plan must reference only neutral private snapshot names."
+    Assert-Condition ([string]$testDeployPlanDocument.profileFile -ceq "profile.json" -and $null -eq $testDeployPlanDocument.turnEvidenceFile) "The durable plan must reference only neutral private snapshot names and no TURN evidence."
     $global:RuntimeConfigGitState.Sha = "c" * 40
     Assert-Throws {
         Invoke-RuntimeConfigApply -Plan $testDeployPlan -PlanSha256 $testDeployPlanResult.PlanSha256 -Now $now `
@@ -2520,7 +2748,6 @@ try {
     $replacementTestProfile = [pscustomobject]@{
         schemaVersion = 1; mode = "test-school"; testSchoolId = $swappedSchoolId
         enabledCapabilities = @($script:ActivationOrder)
-        turn = [pscustomobject]@{ hosts = @("turn-a.school-pilot.net", "turn-b.school-pilot.net"); secretArn = $swappedTurnSecretArn }
     }
     Write-TestJson -Path $testDeployProfilePath -Value $replacementTestProfile
     $testDeployResult = Invoke-RuntimeConfigApply -Plan $testDeployPlan -PlanSha256 $testDeployPlanResult.PlanSha256 -Now $now `
@@ -2541,7 +2768,8 @@ try {
         Assert-Condition (@($candidateRollouts.exactBindingAckV2.schoolIds).Count -eq 1 -and $candidateRollouts.exactBindingAckV2.schoolIds[0] -ceq $testSchoolId) "Both candidate tasks must contain the exact private test-school scope."
         Assert-Condition (-not $rolloutJson.Contains($swappedSchoolId)) "A swapped test-school profile must not alter the captured deployment authority."
         $candidateTurnSecret = @($candidateContainer.secrets | Where-Object name -CEQ "CLASSPILOT_TURN_REST_SECRET")
-        Assert-Condition ($candidateTurnSecret.Count -eq 1 -and [string]$candidateTurnSecret[0].valueFrom -ceq $turnSecretArn) "A swapped TURN secret must not alter the captured deployment authority."
+        Assert-Condition ($candidateTurnSecret.Count -eq 1 -and [string]$candidateTurnSecret[0].valueFrom -ceq $turnSecretArn -and
+            [string]$candidateTurnSecret[0].valueFrom -cne $swappedTurnSecretArn) "Candidates must carry the source's TURN secret forward unchanged."
         Assert-Condition ($candidateRollouts.kioskLaunchTicketV1.mode -ceq "off") "Both candidate tasks must keep ticket V1 disabled."
     }
     Assert-Condition ((Read-StrictJson -Path $testDeployProfilePath).testSchoolId -ceq $swappedSchoolId) "Changing the source profile after planning must not alter the neutral private snapshot."
@@ -2565,7 +2793,7 @@ try {
         -ExpectedSha256 $trackingPilotPlanResult.PlanSha256
     Assert-Condition ($trackingPilotPlan.profileMode -ceq "tracking-window-pilot" -and
         [int]$trackingPilotPlan.schoolScopeCount -eq 1 -and
-        [int]$trackingPilotPlan.enabledCapabilityCount -eq 10 -and
+        [int]$trackingPilotPlan.enabledCapabilityCount -eq 9 -and
         $null -eq $trackingPilotPlan.turnEvidenceFile -and
         $null -eq $trackingPilotPlan.turnEvidenceSha256 -and
         [string]$trackingPilotPlan.validationLevel -ceq "not_applicable") `
@@ -2631,7 +2859,7 @@ try {
         -ExpectedSha256 $studentGatePilotPlanResult.PlanSha256
     Assert-Condition ($studentGatePilotPlan.profileMode -ceq "student-gate-pilot" -and
         [int]$studentGatePilotPlan.schoolScopeCount -eq 1 -and
-        [int]$studentGatePilotPlan.enabledCapabilityCount -eq 11 -and
+        [int]$studentGatePilotPlan.enabledCapabilityCount -eq 10 -and
         $null -eq $studentGatePilotPlan.turnEvidenceSha256) `
         "Student-gate pilot plan must resolve against and preserve the active full runtime profile."
     Assert-Condition (-not ([IO.File]::ReadAllText($studentGatePilotPlanResult.PlanPath)).Contains($testSchoolId)) `
@@ -3013,14 +3241,14 @@ try {
     Write-TestJson -Path $trackingPilotEvidencePath -Value $trackingPilotEvidence
     Assert-Throws {
         New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
-            -PrivateProfilePath $trackingGlobalProfilePath -PrivateTurnEvidencePath $evidencePath `
+            -PrivateProfilePath $trackingGlobalProfilePath `
             -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
             -WorkerTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateWorkerTaskDefinitionArn) `
             -Now $now -SkipRepositoryCheck
     } "Tracking-window global planning must fail without pilot smoke and soak evidence."
     $trackingGlobalPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
-        -PrivateProfilePath $trackingGlobalProfilePath -PrivateTurnEvidencePath $evidencePath `
+        -PrivateProfilePath $trackingGlobalProfilePath `
         -PrivateTrackingPilotEvidencePath $trackingPilotEvidencePath `
         -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn ([string]$trackingPilotApplyResult.candidateApiTaskDefinitionArn) `
@@ -3030,7 +3258,7 @@ try {
         -ExpectedSha256 $trackingGlobalPlanResult.PlanSha256
     Assert-Condition ($trackingGlobalPlan.profileMode -ceq "tracking-window-global-on" -and
         [int]$trackingGlobalPlan.schoolScopeCount -eq 0 -and
-        [int]$trackingGlobalPlan.enabledCapabilityCount -eq 10 -and
+        [int]$trackingGlobalPlan.enabledCapabilityCount -eq 9 -and
         [string]$trackingGlobalPlan.validationLevel -ceq "managed" -and
         [string]$trackingGlobalPlan.managedValidation -ceq "passed" -and
         [string]$trackingGlobalPlan.trackingPilotEvidenceSha256 -ceq
@@ -3109,7 +3337,7 @@ try {
         -ExpectedSha256 $fastPreviewPilotPlanResult.PlanSha256
     Assert-Condition ($fastPreviewPilotPlan.profileMode -ceq "fast-preview-pilot" -and
         [int]$fastPreviewPilotPlan.schoolScopeCount -eq 1 -and
-        [int]$fastPreviewPilotPlan.enabledCapabilityCount -eq 11 -and
+        [int]$fastPreviewPilotPlan.enabledCapabilityCount -eq 10 -and
         [string]$fastPreviewPilotPlan.fastPreviewCandidateReceiptSha256 -ceq
             (Get-FileSha256 -Path $fastPreviewCandidateReceiptPath) -and
         [string]$fastPreviewPilotPlan.fastPreviewClassPilotTag -ceq "v2.8.2" -and
@@ -3427,18 +3655,9 @@ try {
     }
     # --- School-scope unpin through the guarded mocked plan/apply/rollback path ---
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
-    # Production carries TURN wiring alongside the pinned registry, so the mocked
-    # source layers the production-shape registry onto the TURN-carrying global runtime.
-    $unpinE2eSourceEnvironment = [ordered]@{}
-    foreach ($entry in $productionShapeRuntime.Environment.GetEnumerator()) {
-        $unpinE2eSourceEnvironment[[string]$entry.Key] = [string]$entry.Value
-    }
-    foreach ($name in $script:TurnEnvironmentNames) {
-        $unpinE2eSourceEnvironment[[string]$name] = [string]$globalRuntime.Environment[[string]$name]
-    }
-    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration ([pscustomobject]@{
-        Environment = $unpinE2eSourceEnvironment; Turn = $globalRuntime.Turn
-    })
+    # Production carries provisioned TURN wiring alongside the pinned registry; the
+    # mocked source seeds it and every candidate must carry it forward.
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $productionShapeRuntime
     $unpinProfilePath = Join-Path $testRoot "school-scope-unpin-profile.json"
     Write-TestJson -Path $unpinProfilePath -Value ([pscustomobject]@{ schemaVersion = 9; mode = "school-scope-unpin" })
     $unpinPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
@@ -3447,7 +3666,7 @@ try {
     $unpinPlan = Read-RuntimePlan -Path $unpinPlanResult.PlanPath -ExpectedSha256 $unpinPlanResult.PlanSha256
     Assert-Condition ([string]$unpinPlan.profileMode -ceq "school-scope-unpin" -and
         [int]$unpinPlan.schoolScopeCount -eq 0 -and
-        [int]$unpinPlan.enabledCapabilityCount -eq 14 -and
+        [int]$unpinPlan.enabledCapabilityCount -eq 13 -and
         [string]$unpinPlan.validationLevel -ceq "not_applicable" -and
         [string]$unpinPlan.managedValidation -ceq "not_applicable") `
         "School-scope unpin plan must record an unscoped, evidence-free, count-preserving activation."
@@ -3476,6 +3695,54 @@ try {
         $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
         $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
         "Rollback of the school-scope unpin must restore the exact original API/worker pair."
+
+    # --- Live View retirement through the guarded mocked plan/apply/rollback path ---
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $legacyProductionRuntime
+    $retireProfilePath = Join-Path $testRoot "live-view-retire-profile.json"
+    Write-TestJson -Path $retireProfilePath -Value ([pscustomobject]@{ schemaVersion = 10; mode = "live-view-retire" })
+    $retirePlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
+        -PrivateProfilePath $retireProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha `
+        -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    $retirePlan = Read-RuntimePlan -Path $retirePlanResult.PlanPath -ExpectedSha256 $retirePlanResult.PlanSha256
+    Assert-Condition ([string]$retirePlan.profileMode -ceq "live-view-retire" -and
+        [int]$retirePlan.schoolScopeCount -eq 0 -and
+        [int]$retirePlan.enabledCapabilityCount -eq 13 -and
+        $null -eq $retirePlan.turnEvidenceFile -and
+        [string]$retirePlan.validationLevel -ceq "not_applicable") `
+        "Live View retirement plan must record an evidence-free change that keeps the other thirteen capabilities."
+    Assert-Condition (-not ([IO.File]::ReadAllText($retirePlanResult.PlanPath)).Contains($testSchoolId)) `
+        "Live View retirement public plan evidence must not expose school IDs."
+    $retireApply = Invoke-RuntimeConfigApply -Plan $retirePlan -PlanSha256 $retirePlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($retireApply.status -ceq "applied") "Live View retirement must pass the guarded mocked plan/apply path."
+    foreach ($candidateArn in @([string]$retireApply.candidateApiTaskDefinitionArn,
+        [string]$retireApply.candidateWorkerTaskDefinitionArn)) {
+        $candidateTask = $global:RuntimeConfigTestState.TaskResponses[$candidateArn].taskDefinition
+        $candidateEnvironment = @($candidateTask.containerDefinitions[0].environment)
+        $candidateControls = Get-RuntimeCapabilityControls -Environment $candidateEnvironment
+        $candidateState = Get-RuntimeActivationState -Environment $candidateEnvironment
+        Assert-Condition ([string]$candidateControls["liveViewIceServersV1"].mode -ceq "off" -and
+            [string]$candidateControls["liveViewIceServersV1"].flag -ceq "false" -and
+            $candidateState.LiveViewMode -ceq "off" -and
+            $candidateState.Mode -ceq "tracking-window-global-on" -and
+            $candidateState.RestrictionAuthMode -ceq "pilot") `
+            "Both retired candidates must carry Live View off and the unchanged production runtime."
+        Assert-Condition (@($candidateEnvironment | Where-Object {
+                [string]$_.name -ceq "CLASSPILOT_TURN_HOSTS" -and
+                [string]$_.value -ceq "turn-a.school-pilot.net,turn-b.school-pilot.net"
+            }).Count -eq 1 -and
+            @($candidateTask.containerDefinitions[0].secrets | Where-Object {
+                [string]$_.name -ceq "CLASSPILOT_TURN_REST_SECRET" -and [string]$_.valueFrom -ceq $turnSecretArn
+            }).Count -eq 1) `
+            "Live View retirement must keep the provisioned TURN hosts and secret reference."
+    }
+    $retireRollback = Invoke-RuntimeConfigRollback -Plan $retirePlan -PlanSha256 $retirePlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    Assert-Condition ($retireRollback.status -ceq "rolled_back" -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+        "Rollback of the Live View retirement must restore the exact original API/worker pair."
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
@@ -3873,7 +4140,7 @@ try {
         Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
         $global:RuntimeConfigTestState.ApiDesiredCount = $protectedDesiredCount
         $protectedCountPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-            -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck `
             -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
         $protectedCountPlan = Read-RuntimePlan -Path $protectedCountPlanResult.PlanPath `
@@ -3886,7 +4153,7 @@ try {
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
     $ordinaryFloorPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $ordinaryFloorPlan = Read-RuntimePlan -Path $ordinaryFloorPlanResult.PlanPath -ExpectedSha256 $ordinaryFloorPlanResult.PlanSha256
     Assert-Condition ($ordinaryFloorPlan.protectedWindowProductionMutation -eq $false) `
@@ -3896,7 +4163,7 @@ try {
     $global:RuntimeConfigTestState.ApiDesiredCount = 4
     Assert-Throws {
         New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-            -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
             -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     } "Ordinary strict planning must retain the three-task API ceiling."
 
@@ -3904,111 +4171,66 @@ try {
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $firstCapabilityRuntime
     $global:RuntimeConfigTestState.ApiDesiredCount = 3
     $global:RuntimeConfigTestState.ScalingMin = 3
-    $waiverPlanArguments = @{
-        RepositoryRoot = $repositoryRoot
-        PrivateProfilePath = $profilePath
-        PrivateTurnEvidencePath = $waiverTurnEvidencePath
-        PrivateSyntheticValidationPath = $syntheticValidationPath
-        PrivateManagedTestWaiverPath = $managedTestWaiverPath
-        EvidenceRoot = $evidenceRoot
-        AppSha = $appSha
-        ImageDigest = $digest
-        ApiTaskDefinitionArn = $apiSourceArn
-        WorkerTaskDefinitionArn = $workerSourceArn
-        Now = $now
-        SkipRepositoryCheck = $true
+    # The synthetic-only shortcut from an early test-school step proved legacy TURN
+    # for Live View and was retired with it. Recovery is -Operation Rollback or the
+    # test-school steps, neither of which needs TURN.
+    foreach ($retiredEvidenceArguments in @(
+        @{ PrivateTurnEvidencePath = $waiverTurnEvidencePath },
+        @{ PrivateSyntheticValidationPath = $syntheticValidationPath; PrivateManagedTestWaiverPath = $managedTestWaiverPath },
+        @{ ConfirmSyntheticOnlyGlobalActivation = $true }
+    )) {
+        $retiredMessage = ""
+        $eventsBeforeRetiredPlan = @($global:RuntimeConfigTestState.Events).Count
+        try {
+            New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+                -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+                -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now `
+                -SkipRepositoryCheck -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation `
+                @retiredEvidenceArguments | Out-Null
+        }
+        catch { $retiredMessage = $_.Exception.Message }
+        Assert-Condition ($retiredMessage -match "retired with Live View" -and
+            @($global:RuntimeConfigTestState.Events).Count -eq $eventsBeforeRetiredPlan) `
+            "Retired TURN evidence and synthetic-only inputs must be refused before any production read."
     }
     Assert-Throws {
-        New-RuntimeConfigPlan @waiverPlanArguments `
-            -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
-    } "Synthetic-only plan admission must require the general production mutation confirmation."
-    Assert-Throws {
-        New-RuntimeConfigPlan @waiverPlanArguments `
-            -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
-    } "Synthetic-only plan admission must require its exact waiver confirmation."
-    Assert-Throws {
-        New-RuntimeConfigPlan @waiverPlanArguments `
-            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation
-    } "Synthetic-only plan admission must require protected-window production confirmation."
-    Assert-Throws {
         New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-            -PrivateTurnEvidencePath $waiverTurnEvidencePath -PrivateSyntheticValidationPath $syntheticValidationPath `
-            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn `
-            -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck `
-            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
-    } "Synthetic-only plan admission must reject incomplete waiver evidence paths."
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now `
+            -SkipRepositoryCheck -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
+    } "Global activation must not skip the remaining test-school steps."
 
-    $waiverPlanResult = New-RuntimeConfigPlan @waiverPlanArguments `
-        -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
+    # Protected-window global activation from the completed test-school prefix: the
+    # forward recovery path after a containment, with no TURN evidence at all.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
+    $global:RuntimeConfigTestState.ApiDesiredCount = 3
+    $global:RuntimeConfigTestState.ScalingMin = 3
+    $waiverPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now `
+        -SkipRepositoryCheck -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
     $waiverPlan = Read-RuntimePlan -Path $waiverPlanResult.PlanPath -ExpectedSha256 $waiverPlanResult.PlanSha256
-    Assert-Condition ($waiverPlan.validationLevel -ceq "synthetic_only" -and
-        $waiverPlan.managedValidation -ceq "waived_not_passed" -and
+    Assert-Condition ($waiverPlan.validationLevel -ceq "managed" -and
+        $null -eq $waiverPlan.turnEvidenceFile -and
+        $null -eq $waiverPlan.syntheticValidationSha256 -and
         $waiverPlan.protectedWindowProductionMutation -eq $true) `
-        "Waiver plan must record its exact synthetic-only authority."
-    Assert-Condition ([string]$waiverPlan.syntheticValidationSha256 -ceq [string]$syntheticValidationSnapshot.Sha256 -and
-        [string]$waiverPlan.managedTestWaiverSha256 -ceq (Get-FileSha256 -Path $managedTestWaiverPath)) `
-        "Waiver plan must bind both exact private evidence hashes."
-    $waiverPlanText = [IO.File]::ReadAllText($waiverPlanResult.PlanPath)
-    Assert-Condition (-not $waiverPlanText.Contains("bzinkan@school-pilot.net") -and
-        -not $waiverPlanText.Contains([string]$managedTestWaiver.reason) -and
-        -not $waiverPlanText.Contains($testSchoolId)) `
-        "Waiver plan must not expose private evidence contents or school scope."
+        "Protected global activation must plan without TURN or synthetic evidence."
     Assert-Throws {
         Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
             -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
-            -ConfirmSyntheticOnlyGlobalActivation -ConfirmProtectedWindowProductionMutation
-    } "Synthetic-only apply must re-require the general production mutation confirmation."
-    Assert-Throws {
-        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
-            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
-            -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
-    } "Synthetic-only apply must re-require the exact waiver confirmation."
-    $eventsBeforeStaleWaiverApply = @($global:RuntimeConfigTestState.Events).Count
-    Assert-Throws {
-        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 `
-            -Now $now.AddHours(2).AddMinutes(1) -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 `
-            -SkipRepositoryCheck -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
             -ConfirmProtectedWindowProductionMutation
-    } "Apply must revalidate waiver evidence freshness against its current clock."
-    Assert-Condition (@($global:RuntimeConfigTestState.Events).Count -eq $eventsBeforeStaleWaiverApply) `
-        "Stale waiver evidence must fail before any production lease or service action."
-
-    $capturedSyntheticBytes = [IO.File]::ReadAllBytes([string]$waiverPlan.syntheticValidationPath)
-    $tamperedSyntheticCopy = Read-StrictJson -Path ([string]$waiverPlan.syntheticValidationPath)
-    $tamperedSyntheticCopy.checks.protocol2CompatibilityPassed = $false
-    Write-TestJson -Path ([string]$waiverPlan.syntheticValidationPath) -Value $tamperedSyntheticCopy
-    Assert-Throws {
-        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
-            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
-            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
-            -ConfirmProtectedWindowProductionMutation
-    } "Apply must reject a changed hash-bound synthetic validation snapshot."
-    [IO.File]::WriteAllBytes([string]$waiverPlan.syntheticValidationPath, $capturedSyntheticBytes)
-    Set-PrivatePathPermissions -Path ([string]$waiverPlan.syntheticValidationPath)
-    $capturedWaiverBytes = [IO.File]::ReadAllBytes([string]$waiverPlan.managedTestWaiverPath)
-    $tamperedWaiverCopy = Read-StrictJson -Path ([string]$waiverPlan.managedTestWaiverPath)
-    $tamperedWaiverCopy.reason = "Changed after planning."
-    Write-TestJson -Path ([string]$waiverPlan.managedTestWaiverPath) -Value $tamperedWaiverCopy
-    Assert-Throws {
-        Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
-            -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
-            -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
-            -ConfirmProtectedWindowProductionMutation
-    } "Apply must reject a changed hash-bound managed-test waiver snapshot."
-    [IO.File]::WriteAllBytes([string]$waiverPlan.managedTestWaiverPath, $capturedWaiverBytes)
-    Set-PrivatePathPermissions -Path ([string]$waiverPlan.managedTestWaiverPath)
+    } "Protected apply must re-require the general production mutation confirmation."
 
     1..5 | ForEach-Object {
         $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T05:50:00-04:00"))
     }
     $waiverApplyResult = Invoke-RuntimeConfigApply -Plan $waiverPlan -PlanSha256 $waiverPlanResult.PlanSha256 -Now $now `
         -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -SkipRepositoryCheck `
-        -ConfirmProductionMutation -ConfirmSyntheticOnlyGlobalActivation `
-        -ConfirmProtectedWindowProductionMutation
+        -ConfirmProductionMutation -ConfirmProtectedWindowProductionMutation
     Assert-Condition ($waiverApplyResult.status -ceq "applied" -and
-        $waiverApplyResult.validationLevel -ceq "synthetic_only" -and
-        $waiverApplyResult.managedValidation -ceq "waived_not_passed") `
-        "Synthetic-only protected apply must converge and retain its waiver record."
+        $waiverApplyResult.validationLevel -ceq "managed") `
+        "Protected global activation from the completed test-school prefix must converge."
     $waiverEvents = @($global:RuntimeConfigTestState.Events)
     Assert-Condition ($waiverEvents -contains "bounds:api:66-100" -and
         $waiverEvents -contains "bounds:worker:0-100") `
@@ -4046,7 +4268,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $planResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $plan = Read-RuntimePlan -Path $planResult.PlanPath -ExpectedSha256 $planResult.PlanSha256
     $planText = [IO.File]::ReadAllText($planResult.PlanPath)
@@ -4111,7 +4333,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $applyEvidenceFailurePlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $applyEvidenceFailurePlan = Read-RuntimePlan -Path $applyEvidenceFailurePlanResult.PlanPath -ExpectedSha256 $applyEvidenceFailurePlanResult.PlanSha256
     $global:SchoolPilotRuntimeConfigResultWriteHandler = { throw "Injected final result evidence failure." }
@@ -4131,7 +4353,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $rollbackEvidenceFailurePlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $rollbackEvidenceFailurePlan = Read-RuntimePlan -Path $rollbackEvidenceFailurePlanResult.PlanPath -ExpectedSha256 $rollbackEvidenceFailurePlanResult.PlanSha256
     [void](Invoke-RuntimeConfigApply -Plan $rollbackEvidenceFailurePlan -PlanSha256 $rollbackEvidenceFailurePlanResult.PlanSha256 -Now $now `
@@ -4154,7 +4376,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $failurePlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $failurePlan = Read-RuntimePlan -Path $failurePlanResult.PlanPath -ExpectedSha256 $failurePlanResult.PlanSha256
     $global:RuntimeConfigTestState.FailWorkerCandidateOnce = $true
@@ -4169,7 +4391,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $unsafePlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $unsafePlan = Read-RuntimePlan -Path $unsafePlanResult.PlanPath -ExpectedSha256 $unsafePlanResult.PlanSha256
     $global:RuntimeConfigTestState.FailWorkerCandidateOnce = $true
@@ -4185,7 +4407,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $driftPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $driftPlan = Read-RuntimePlan -Path $driftPlanResult.PlanPath -ExpectedSha256 $driftPlanResult.PlanSha256
     $global:RuntimeConfigTestState.DriftAfterRegistration = $true
@@ -4199,7 +4421,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $boundsDriftPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $boundsDriftPlan = Read-RuntimePlan -Path $boundsDriftPlanResult.PlanPath -ExpectedSha256 $boundsDriftPlanResult.PlanSha256
     $global:RuntimeConfigTestState.BoundsDriftAfterRegistration = $true
@@ -4214,7 +4436,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $scalingPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $scalingPlan = Read-RuntimePlan -Path $scalingPlanResult.PlanPath -ExpectedSha256 $scalingPlanResult.PlanSha256
     $global:RuntimeConfigTestState.FailScalingReadbackOnce = $true
@@ -4229,7 +4451,7 @@ try {
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $fullTestRuntime
     $windowPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $profilePath `
-        -PrivateTurnEvidencePath $evidencePath -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
         -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now -SkipRepositoryCheck
     $windowPlan = Read-RuntimePlan -Path $windowPlanResult.PlanPath -ExpectedSha256 $windowPlanResult.PlanSha256
     $global:RuntimeConfigClockQueue.Enqueue([DateTimeOffset]::Parse("2026-08-24T04:44:59-04:00"))
