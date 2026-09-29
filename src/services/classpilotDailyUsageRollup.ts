@@ -1,6 +1,10 @@
-import type { Pool } from "pg";
+import { coerceSchedulerTimestamp } from "../util/schedulerTimestamp.js";
+import { utcTimestampForSql } from "../util/schoolTime.js";
 
-type Queryable = Pick<Pool, "query">;
+/** pg.Pool, a PoolClient or a test double: these statements only need query(text, values). */
+type Queryable = {
+  query(text: string, values: unknown[]): Promise<{ rows: RawAggregate[] }>;
+};
 
 export type DailyUsageAggregate = {
   studentId: string;
@@ -11,11 +15,15 @@ export type DailyUsageAggregate = {
   lastSeen: Date | string | null;
 };
 
+// Heartbeats without a student never reach daily_usage: student_id is NOT NULL there and the
+// legacy path skips them, so the shadow comparison stays like-for-like. $2/$3 are UTC
+// wall-clock strings compared with heartbeats.timestamp (timestamp without time zone).
 const AGGREGATION_CTES = `
 WITH heartbeat_window AS MATERIALIZED (
   SELECT student_id, timestamp, active_tab_url
   FROM heartbeats
   WHERE school_id = $1
+    AND student_id IS NOT NULL
     AND timestamp >= $2
     AND timestamp < $3
 ),
@@ -65,8 +73,8 @@ SELECT
   totals.total_seconds,
   totals.heartbeat_count,
   COALESCE(domains.domains, '[]'::jsonb) AS top_domains,
-  totals.first_seen,
-  totals.last_seen
+  totals.first_seen::text AS first_seen,
+  totals.last_seen::text AS last_seen
 FROM student_totals AS totals
 LEFT JOIN top_domains AS domains USING (student_id)
 ORDER BY totals.student_id`;
@@ -108,8 +116,8 @@ RETURNING
   total_seconds,
   heartbeat_count,
   top_domains,
-  first_seen,
-  last_seen`;
+  first_seen::text AS first_seen,
+  last_seen::text AS last_seen`;
 
 type RawAggregate = {
   student_id: string;
@@ -126,18 +134,22 @@ function mapAggregate(row: RawAggregate): DailyUsageAggregate {
     totalSeconds: Number(row.total_seconds),
     heartbeatCount: Number(row.heartbeat_count),
     topDomains: Array.isArray(row.top_domains) ? row.top_domains : [],
-    firstSeen: row.first_seen,
-    lastSeen: row.last_seen,
+    // The legacy path's conversion: timestamp-without-time-zone text read as UTC. pg would
+    // otherwise parse these columns in the host's local time.
+    firstSeen: coerceSchedulerTimestamp(row.first_seen),
+    lastSeen: coerceSchedulerTimestamp(row.last_seen),
   };
 }
 
+// Day bounds are bound as UTC wall-clock strings. node-postgres serializes a JS Date in the
+// host's local time with an offset, and a timestamp-without-time-zone comparison drops it.
 export async function readSetBasedDailyUsageCandidate(
   queryable: Queryable,
   options: { schoolId: string; dayStartUtc: Date; dayEndUtc: Date }
 ): Promise<DailyUsageAggregate[]> {
-  const result = await queryable.query<RawAggregate>(
+  const result = await queryable.query(
     CLASSPILOT_DAILY_USAGE_CANDIDATE_SQL,
-    [options.schoolId, options.dayStartUtc, options.dayEndUtc]
+    [options.schoolId, utcTimestampForSql(options.dayStartUtc), utcTimestampForSql(options.dayEndUtc)]
   );
   return result.rows.map(mapAggregate);
 }
@@ -146,9 +158,14 @@ export async function upsertSetBasedDailyUsage(
   queryable: Queryable,
   options: { schoolId: string; date: string; dayStartUtc: Date; dayEndUtc: Date }
 ): Promise<DailyUsageAggregate[]> {
-  const result = await queryable.query<RawAggregate>(
+  const result = await queryable.query(
     CLASSPILOT_DAILY_USAGE_UPSERT_SQL,
-    [options.schoolId, options.dayStartUtc, options.dayEndUtc, options.date]
+    [
+      options.schoolId,
+      utcTimestampForSql(options.dayStartUtc),
+      utcTimestampForSql(options.dayEndUtc),
+      options.date,
+    ]
   );
   return result.rows.map(mapAggregate);
 }
@@ -178,4 +195,65 @@ export function dailyUsageAggregatesEqual(
     }))
     .sort((a, b) => a.studentId.localeCompare(b.studentId));
   return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+}
+
+export type DailyUsageRollupMode = "legacy" | "shadow" | "set_based";
+
+/**
+ * CLASSPILOT_DAILY_USAGE_ROLLUP_MODE. `on` is an alias of `set_based` (the value the governed
+ * product runtime tool writes). Unset, empty and unrecognized values, `off` included, keep the
+ * `shadow` default: legacy rows are written and the set-based result is only compared.
+ */
+export function parseDailyUsageRollupMode(value: string | undefined): DailyUsageRollupMode {
+  const configured = String(value || "shadow").trim().toLowerCase();
+  if (configured === "set_based" || configured === "on") return "set_based";
+  if (configured === "legacy") return "legacy";
+  return "shadow";
+}
+
+const DAILY_USAGE_ROLLUP_METRIC_NAMES = [
+  "DailyUsageRollupShadowMismatch",
+  "DailyUsageRollupFailedSchools",
+] as const;
+
+export type DailyUsageRollupMetricName = typeof DAILY_USAGE_ROLLUP_METRIC_NAMES[number];
+
+export type DailyUsageRollupMetricRecord = {
+  _aws: {
+    Timestamp: number;
+    CloudWatchMetrics: Array<{
+      Namespace: string;
+      Dimensions: string[][];
+      Metrics: Array<{ Name: DailyUsageRollupMetricName; Unit: "Count" }>;
+    }>;
+  };
+  Environment: string;
+} & Partial<Record<DailyUsageRollupMetricName, number>>;
+
+/**
+ * CloudWatch EMF record for one rollup run, or null when there is nothing to publish. Only
+ * nonzero counters are declared as metrics: an all-zero series bills like an active one, and
+ * the run's JSON log line already carries every counter, zeros included (see #539).
+ */
+export function dailyUsageRollupMetricRecord(
+  counts: { shadowMismatches: number; failedSchools: number },
+  options: { environment: string; timestamp: number }
+): DailyUsageRollupMetricRecord | null {
+  const values: Partial<Record<DailyUsageRollupMetricName, number>> = {};
+  if (counts.shadowMismatches > 0) values.DailyUsageRollupShadowMismatch = counts.shadowMismatches;
+  if (counts.failedSchools > 0) values.DailyUsageRollupFailedSchools = counts.failedSchools;
+  const names = DAILY_USAGE_ROLLUP_METRIC_NAMES.filter((name) => values[name] !== undefined);
+  if (names.length === 0) return null;
+  return {
+    _aws: {
+      Timestamp: options.timestamp,
+      CloudWatchMetrics: [{
+        Namespace: "SchoolPilot/ClassPilot",
+        Dimensions: [["Environment"]],
+        Metrics: names.map((name) => ({ Name: name, Unit: "Count" as const })),
+      }],
+    },
+    Environment: options.environment,
+    ...values,
+  };
 }

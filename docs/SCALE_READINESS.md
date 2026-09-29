@@ -165,6 +165,45 @@ idempotent `(student_id, date)` upserts make restart catch-up safe. Raw
 heartbeats remain subject to each school's `retentionHours` setting (720 hours
 by default) and are purged in 5,000-row batches.
 
+### Daily usage rollup mode and promotion
+
+`CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` on the scheduler worker selects the writer.
+Unset, empty, `shadow` or any unrecognized value (`off` included) runs shadow:
+the legacy per-student upserts write `daily_usage`, then the set-based statement
+recomputes the same school-day read-only and the run counts schools whose
+results differ. `set_based`, or its alias `on`, writes with one set-based upsert
+per school-day; `legacy` skips the comparison. Both writers skip heartbeats
+without a `student_id` and bind the day bounds as UTC wall-clock strings, so
+neither depends on the host timezone. Each hourly run logs one
+`classpilot_daily_usage_rollup` JSON line (`mode`, `processedSchools`,
+`failedSchools`, `shadowMismatches`, `durationMs`, zeros included) and publishes
+the `SchoolPilot/ClassPilot` metrics `DailyUsageRollupShadowMismatch` and
+`DailyUsageRollupFailedSchools` (dimension `Environment`) only when they are
+nonzero.
+
+**Promotion.** Production runs the shadow default: the variable was unset on the
+live API and worker task definitions on 2026-09-29. Switch to `on` only through
+the governed product runtime tool (PR 1a, `scripts/deploy-product-runtime-config.ps1`
+Plan then Apply), never by editing a task definition, and only after three
+school days of shadow runs with `shadowMismatches = 0` and `failedSchools = 0`.
+The worker has no log group of its own: it writes to
+`/ecs/schoolpilot-production-api` under the `scheduler-worker/` stream prefix.
+Run this CloudWatch Logs Insights query there over the last seven days and keep
+the result as the Apply's evidence:
+
+```text
+fields datefloor(@timestamp, 1d) as day
+| filter @logStream like /^scheduler-worker\// and event = "classpilot_daily_usage_rollup"
+| stats sum(processedSchools) as processed, sum(shadowMismatches) as mismatches, sum(failedSchools) as failed, count(*) as runs by day, mode
+| sort day desc
+```
+
+A qualifying day is a school day (not a weekend or holiday) whose row shows
+`mode = shadow`, `processed > 0`, `mismatches = 0` and `failed = 0`. Rows
+without `mode` come from builds that predate this check and do not count, and
+any nonzero `mismatches` or `failed` restarts the count. Roll back with the same
+tool by setting the variable back to `shadow`.
+
 ## Engineering capacity workload contract
 
 The historical entry point was the tooling-only capacity runner. Do not invoke

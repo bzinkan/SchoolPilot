@@ -87,9 +87,12 @@ import {
 } from "./gopilotEntitlement.js";
 import {
   dailyUsageAggregatesEqual,
+  dailyUsageRollupMetricRecord,
+  parseDailyUsageRollupMode,
   readSetBasedDailyUsageCandidate,
   upsertSetBasedDailyUsage,
   type DailyUsageAggregate,
+  type DailyUsageRollupMode,
 } from "./classpilotDailyUsageRollup.js";
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
@@ -821,6 +824,8 @@ async function autoEndStaleClassPilotSessions() {
 
 async function rollupDailyUsage() {
   const startedAt = performance.now();
+  // Read once so every school in the run, and the run's log line, share one mode.
+  const mode = dailyUsageRollupMode();
   let processedSchools = 0;
   let failedSchools = 0;
   let shadowMismatches = 0;
@@ -867,7 +872,7 @@ async function rollupDailyUsage() {
               );
               if (!window) continue;
               if (await dailyUsageRollupMarkers.isComplete(school.id, window.date)) continue;
-              const outcome = await rollupSchoolUsage(school.id, window);
+              const outcome = await rollupSchoolUsage(school.id, window, mode);
               processedSchools += 1;
               if (outcome.shadowMismatch) shadowMismatches += 1;
               await dailyUsageRollupMarkers.markComplete(school.id, window.date);
@@ -889,8 +894,11 @@ async function rollupDailyUsage() {
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupDailyUsage" });
     failedSchools += 1;
   } finally {
+    // The log line keeps every counter, zeros included (the promotion evidence query reads
+    // it); only nonzero mismatch and failure counts are published as CloudWatch metrics.
     console.log(JSON.stringify({
       event: "classpilot_daily_usage_rollup",
+      mode,
       processedSchools,
       failedSchools,
       shadowMismatches,
@@ -898,25 +906,26 @@ async function rollupDailyUsage() {
       batchSize: DAILY_USAGE_SCHOOL_BATCH_SIZE,
       concurrency: DAILY_USAGE_SCHOOL_CONCURRENCY,
     }));
+    const metrics = dailyUsageRollupMetricRecord(
+      { shadowMismatches, failedSchools },
+      {
+        environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+        timestamp: Date.now(),
+      }
+    );
+    if (metrics) console.log(JSON.stringify(metrics));
   }
 }
 
-type DailyUsageRollupMode = "legacy" | "shadow" | "set_based";
-
 function dailyUsageRollupMode(): DailyUsageRollupMode {
-  const configured = String(process.env.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE || "shadow")
-    .trim()
-    .toLowerCase();
-  if (configured === "set_based") return "set_based";
-  if (configured === "legacy") return "legacy";
-  return "shadow";
+  return parseDailyUsageRollupMode(process.env.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE);
 }
 
 async function rollupSchoolUsage(
   schoolId: string,
-  window: DailyUsageRollupWindow
+  window: DailyUsageRollupWindow,
+  mode: DailyUsageRollupMode
 ): Promise<{ rowCount: number; shadowMismatch: boolean }> {
-  const mode = dailyUsageRollupMode();
   const parameters = {
     schoolId,
     date: window.date,
