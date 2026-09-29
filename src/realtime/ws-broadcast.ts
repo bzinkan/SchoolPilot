@@ -1,6 +1,10 @@
 import { WebSocket } from "ws";
 import { correlateClasspilotSessionMessage, correlateClasspilotContextMessage } from "../services/classpilotSessionSubscription.js";
 import { classpilotObserverEvent } from "../services/classpilotObserverEvents.js";
+import {
+  classpilotCommandPayloadRequiresPreciseCapability,
+  classpilotControlStateRequiresPreciseCapability,
+} from "../services/classpilotClassroomState.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -49,6 +53,24 @@ function dedupKey(deviceId: string, msgId: string): boolean {
 function extractMsgId(message: unknown): string | null {
   const msg = message as { _msgId?: string };
   return msg?._msgId ?? null;
+}
+
+/**
+ * Forward-compatibility fence (roadmap PR 2-pre). No student socket on this
+ * image ever receives precise restriction resources, whatever capabilities it
+ * negotiated or a relayed envelope requires: neither in an attached classroom
+ * snapshot nor in a bare legacy command frame, whose `data.url` ClassPilot
+ * 2.9.x would apply as a whole-domain Waypoint.
+ */
+export function classpilotStudentFrameCarriesPreciseRestriction(message: unknown): boolean {
+  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
+  const frame = message as { classroomState?: unknown; command?: unknown };
+  if (classpilotControlStateRequiresPreciseCapability(frame.classroomState)) return true;
+  const command = frame.command;
+  if (!command || typeof command !== "object" || Array.isArray(command)) return false;
+  const { type, data } = command as { type?: unknown; data?: unknown };
+  return typeof type === "string"
+    && classpilotCommandPayloadRequiresPreciseCapability(type, data);
 }
 
 function requiredStudentCapabilities(message: unknown): string[] {
@@ -370,6 +392,10 @@ export function broadcastToStudentsLocal(
   if (!sockets) {
     return 0;
   }
+  if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
+    console.log("[WS-Local] Withheld precise restriction broadcast");
+    return 0;
+  }
   const msgId = extractMsgId(message);
   const messageStr = JSON.stringify(message);
   let sentCount = 0;
@@ -400,6 +426,10 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
   const msgType = (message as { type?: string })?.type ?? 'unknown';
   if (!sockets) {
     console.log(`[WS-Local] No exact-bound socket available for ${msgType}`);
+    return false;
+  }
+  if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
+    console.log(`[WS-Local] Withheld precise restriction ${msgType}`);
     return false;
   }
   // Per-device dedup
@@ -461,6 +491,10 @@ export function sendToStudentBindingLocal(
     console.log(`[WS-Local] Invalid exact student binding for ${msgType}`);
     return false;
   }
+  if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
+    console.log(`[WS-Local] Withheld precise restriction ${msgType}`);
+    return false;
+  }
   const sockets = studentSocketsBySchool.get(binding.schoolId);
   if (!sockets) {
     console.log(`[WS-Local] No exact student-binding socket available for ${msgType}`);
@@ -506,6 +540,10 @@ export function sendToStudentBindingLocal(
 export function sendToRoleLocal(schoolId: string, role: WsRole, message: unknown) {
   const sockets = role === "student" ? studentSocketsBySchool.get(schoolId) : teacherSocketsBySchool.get(schoolId);
   if (!sockets) {
+    return;
+  }
+  if (role === "student" && classpilotStudentFrameCarriesPreciseRestriction(message)) {
+    console.log("[WS-Local] Withheld precise restriction role broadcast");
     return;
   }
   const messageStr = JSON.stringify(message);

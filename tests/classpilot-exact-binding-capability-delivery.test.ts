@@ -5,8 +5,12 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import {
   authenticateWsClient,
+  broadcastToStudentsLocal,
+  classpilotStudentFrameCarriesPreciseRestriction,
   registerWsClient,
   removeWsClient,
+  sendToDeviceLocal,
+  sendToRoleLocal,
   sendToStudentBindingLocal,
 } from "../src/realtime/ws-broadcast.js";
 
@@ -165,6 +169,138 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
     authCapable.client.terminate();
     dualCapable.client.terminate();
     previewCapable.client.terminate();
+    for (const socket of server.clients) socket.terminate();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("PR 2-pre fence: precise restriction frames reach no student socket, whatever it negotiated", async () => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const connect = async () => {
+    const accepted = once(server, "connection");
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+    await once(client, "open");
+    const [serverSocket] = await accepted;
+    return { client, serverSocket };
+  };
+  const binding = {
+    schoolId: "precise-fence-school",
+    studentId: "precise-fence-student",
+    studentSessionId: "precise-fence-session",
+    deviceId: "precise-fence-device",
+  };
+  const legacy = await connect();
+  // A socket can only hold names the server registry accepts. Even a spoofed
+  // record of the future capability must not unlock precise delivery here.
+  const spoofed = await connect();
+  for (const [connection, acceptedCapabilities] of [
+    [legacy, []],
+    [spoofed, [
+      "lateSignInRestrictionSsoV1",
+      "restrictionAuthPassThroughV1",
+      "preciseRestrictionResourcesV1",
+      "focusTabV1",
+    ]],
+  ] as const) {
+    registerWsClient(connection.serverSocket);
+    authenticateWsClient(connection.serverSocket, {
+      role: "student",
+      ...binding,
+      acceptedCapabilities: [...acceptedCapabilities],
+    });
+  }
+  const received: string[] = [];
+  for (const connection of [legacy, spoofed]) {
+    connection.client.on("message", (frame: Buffer) => { received.push(frame.toString()); });
+  }
+  const docsResource = {
+    type: "resource",
+    hostname: "docs.google.com",
+    includeSubdomains: false,
+    provider: "google_docs",
+    resourceId: "1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ",
+    canonicalUrl: "https://docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit",
+  };
+  const preciseFrames = [
+    {
+      type: "classroom-state-sync",
+      _msgId: "precise-waypoint-state",
+      classroomState: {
+        revision: 9,
+        restrictions: { screenLock: { active: true, url: docsResource.canonicalUrl, resource: docsResource } },
+      },
+    },
+    {
+      type: "classroom-state",
+      _msgId: "precise-flight-path-state",
+      classroomState: {
+        revision: 10,
+        restrictions: { flightPath: { active: true, allowedDomains: [], resources: [docsResource] } },
+      },
+    },
+    {
+      // Bare legacy frame: ClassPilot 2.9.x would apply data.url as a lock on
+      // all of docs.google.com.
+      type: "remote-control",
+      _msgId: "precise-bare-waypoint",
+      command: { type: "lock-screen", data: { url: docsResource.canonicalUrl, resource: docsResource } },
+    },
+    {
+      type: "remote-control",
+      _msgId: "precise-bare-flight-path",
+      command: { type: "apply-flight-path", data: { allowedDomains: ["khanacademy.org"], resources: "malformed" } },
+    },
+  ];
+
+  try {
+    for (const frame of preciseFrames) {
+      assert.equal(classpilotStudentFrameCarriesPreciseRestriction(frame), true, frame._msgId);
+      assert.equal(sendToStudentBindingLocal(binding, frame), false, frame._msgId);
+      // A relayed envelope names its requirement explicitly; the fence still wins.
+      assert.equal(sendToStudentBindingLocal(binding, frame, {
+        requiredCapabilities: ["preciseRestrictionResourcesV1"],
+      }), false, frame._msgId);
+      assert.equal(sendToDeviceLocal(binding.schoolId, binding.deviceId, frame), false, frame._msgId);
+      assert.equal(broadcastToStudentsLocal(binding.schoolId, frame), 0, frame._msgId);
+      sendToRoleLocal(binding.schoolId, "student", frame);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(received, [], "no precise frame reached any student socket");
+
+    // Ordinary frames, including Lesson Activity resources, are untouched and
+    // byte-identical on the wire.
+    const lesson = {
+      type: "remote-control",
+      _msgId: "lesson-resources-unchanged",
+      command: {
+        type: "lesson-activity",
+        data: { action: "start", title: "Read", resources: [{ url: docsResource.canonicalUrl }] },
+      },
+    };
+    const legacyWaypoint = {
+      type: "remote-control",
+      _msgId: "legacy-waypoint-unchanged",
+      command: { type: "lock-screen", data: { url: "https://www.ixl.com/math" } },
+      classroomState: {
+        revision: 11,
+        restrictions: { screenLock: { active: true, url: "https://www.ixl.com/math" } },
+      },
+    };
+    for (const frame of [lesson, legacyWaypoint]) {
+      assert.equal(classpilotStudentFrameCarriesPreciseRestriction(frame), false, frame._msgId);
+      const delivered = Promise.all([once(legacy.client, "message"), once(spoofed.client, "message")]);
+      assert.equal(sendToStudentBindingLocal(binding, frame), true, frame._msgId);
+      const frames = await delivered;
+      for (const [payload] of frames) assert.equal(String(payload), JSON.stringify(frame));
+    }
+  } finally {
+    removeWsClient(legacy.serverSocket);
+    removeWsClient(spoofed.serverSocket);
+    legacy.client.terminate();
+    spoofed.client.terminate();
     for (const socket of server.clients) socket.terminate();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

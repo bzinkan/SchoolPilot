@@ -43,6 +43,7 @@ export type HeartbeatHotPathCounter =
   | "lateSignInStampedInspection"
   | "restrictionAuthDeliveryWithheld"
   | "restrictionAuthCapableDelivery"
+  | "preciseRestrictionDeliveryWithheld"
   | "restrictionAuthStarted"
   | "restrictionAuthCompleted"
   | "restrictionAuthTimedOut"

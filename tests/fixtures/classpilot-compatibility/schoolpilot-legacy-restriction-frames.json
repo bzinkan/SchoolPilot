@@ -1,0 +1,795 @@
+{
+  "fixtureSchemaVersion": 1,
+  "source": "Generated from SchoolPilot origin/main a811b04d (before the roadmap PR 2-pre fence) by classpilotCommandFrameForTarget",
+  "schoolId": "school-golden",
+  "target": {
+    "studentId": "student-golden",
+    "studentName": "Golden Student",
+    "studentSessionId": "session-golden",
+    "deviceId": "device-golden",
+    "available": true
+  },
+  "commandAuthority": {
+    "teachingSessionId": "teaching-session-golden"
+  },
+  "classroomState": {
+    "schemaVersion": 1,
+    "revision": 41,
+    "teachingSessionId": "teaching-session-golden",
+    "supervisionContextId": null,
+    "receivedAt": "2026-09-29T15:00:00.000Z",
+    "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+    "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+    "restrictions": {
+      "screenLock": {
+        "active": true,
+        "url": "https://www.ixl.com/math"
+      },
+      "flightPath": {
+        "active": true,
+        "allowedDomains": [
+          "khanacademy.org",
+          "ixl.com"
+        ],
+        "name": "Math Practice"
+      },
+      "blockList": {
+        "active": true,
+        "blockedDomains": [
+          "coolmathgames.com",
+          "poki.com"
+        ],
+        "name": "Games"
+      },
+      "attentionMode": {
+        "active": true,
+        "message": "Eyes on the board"
+      },
+      "tabLimit": 3,
+      "temporaryAllows": [
+        {
+          "domain": "youtube.com",
+          "expiresAt": "2026-09-29T15:10:00.000Z"
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "lock-screen:bare",
+      "commandType": "lock-screen",
+      "extensionType": "lock-screen",
+      "payload": {
+        "url": "https://www.ixl.com/math",
+        "commandId": "command-lock-screen"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": false,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-lock-screen",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "lock-screen",
+          "commandId": "command-lock-screen",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "url": "https://www.ixl.com/math",
+            "commandId": "command-lock-screen"
+          }
+        }
+      }
+    },
+    {
+      "name": "lock-screen:state",
+      "commandType": "lock-screen",
+      "extensionType": "lock-screen",
+      "payload": {
+        "url": "https://www.ixl.com/math",
+        "commandId": "command-lock-screen"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-lock-screen",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "lock-screen",
+          "commandId": "command-lock-screen",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "url": "https://www.ixl.com/math",
+            "commandId": "command-lock-screen"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "lock-screen:deferred",
+      "commandType": "lock-screen",
+      "extensionType": "lock-screen",
+      "payload": {
+        "url": "https://www.ixl.com/math",
+        "commandId": "command-lock-screen"
+      },
+      "requiredCapabilities": [
+        "lateSignInRestrictionSsoV1"
+      ],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-lock-screen",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "exactBinding": {
+          "bindingVersion": 2,
+          "schoolId": "school-golden",
+          "deviceId": "device-golden",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "controlRevision": 41
+        },
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "lock-screen",
+          "commandId": "command-lock-screen",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "exactBinding": {
+            "bindingVersion": 2,
+            "schoolId": "school-golden",
+            "deviceId": "device-golden",
+            "studentId": "student-golden",
+            "studentSessionId": "session-golden",
+            "controlRevision": 41
+          },
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "url": "https://www.ixl.com/math",
+            "commandId": "command-lock-screen"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "apply-flight-path:bare",
+      "commandType": "apply-flight-path",
+      "extensionType": "apply-flight-path",
+      "payload": {
+        "flightPathId": "flight-path-golden",
+        "flightPathName": "Math Practice",
+        "allowedDomains": [
+          "khanacademy.org",
+          "ixl.com"
+        ],
+        "commandId": "command-apply-flight-path"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": false,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-apply-flight-path",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "apply-flight-path",
+          "commandId": "command-apply-flight-path",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "flightPathId": "flight-path-golden",
+            "flightPathName": "Math Practice",
+            "allowedDomains": [
+              "khanacademy.org",
+              "ixl.com"
+            ],
+            "commandId": "command-apply-flight-path"
+          }
+        }
+      }
+    },
+    {
+      "name": "apply-flight-path:state",
+      "commandType": "apply-flight-path",
+      "extensionType": "apply-flight-path",
+      "payload": {
+        "flightPathId": "flight-path-golden",
+        "flightPathName": "Math Practice",
+        "allowedDomains": [
+          "khanacademy.org",
+          "ixl.com"
+        ],
+        "commandId": "command-apply-flight-path"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-apply-flight-path",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "apply-flight-path",
+          "commandId": "command-apply-flight-path",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "flightPathId": "flight-path-golden",
+            "flightPathName": "Math Practice",
+            "allowedDomains": [
+              "khanacademy.org",
+              "ixl.com"
+            ],
+            "commandId": "command-apply-flight-path"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "apply-block-list:bare",
+      "commandType": "apply-block-list",
+      "extensionType": "apply-block-list",
+      "payload": {
+        "blockListId": "block-list-golden",
+        "blockListName": "Games",
+        "blockedDomains": [
+          "coolmathgames.com",
+          "poki.com"
+        ],
+        "commandId": "command-apply-block-list"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": false,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-apply-block-list",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "apply-block-list",
+          "commandId": "command-apply-block-list",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "blockListId": "block-list-golden",
+            "blockListName": "Games",
+            "blockedDomains": [
+              "coolmathgames.com",
+              "poki.com"
+            ],
+            "commandId": "command-apply-block-list"
+          }
+        }
+      }
+    },
+    {
+      "name": "apply-block-list:state",
+      "commandType": "apply-block-list",
+      "extensionType": "apply-block-list",
+      "payload": {
+        "blockListId": "block-list-golden",
+        "blockListName": "Games",
+        "blockedDomains": [
+          "coolmathgames.com",
+          "poki.com"
+        ],
+        "commandId": "command-apply-block-list"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-apply-block-list",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "apply-block-list",
+          "commandId": "command-apply-block-list",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "blockListId": "block-list-golden",
+            "blockListName": "Games",
+            "blockedDomains": [
+              "coolmathgames.com",
+              "poki.com"
+            ],
+            "commandId": "command-apply-block-list"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "attention-mode:bare",
+      "commandType": "attention-mode",
+      "extensionType": "attention-mode",
+      "payload": {
+        "active": true,
+        "message": "Eyes on the board",
+        "commandId": "command-attention-mode"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": false,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-attention-mode",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "attention-mode",
+          "commandId": "command-attention-mode",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "active": true,
+            "message": "Eyes on the board",
+            "commandId": "command-attention-mode"
+          }
+        }
+      }
+    },
+    {
+      "name": "attention-mode:state",
+      "commandType": "attention-mode",
+      "extensionType": "attention-mode",
+      "payload": {
+        "active": true,
+        "message": "Eyes on the board",
+        "commandId": "command-attention-mode"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-attention-mode",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "attention-mode",
+          "commandId": "command-attention-mode",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "active": true,
+            "message": "Eyes on the board",
+            "commandId": "command-attention-mode"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "temp-unblock:bare",
+      "commandType": "temp-unblock",
+      "extensionType": "temp-unblock",
+      "payload": {
+        "domain": "youtube.com",
+        "durationMinutes": 10,
+        "commandId": "command-temp-unblock"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": false,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-temp-unblock",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "temp-unblock",
+          "commandId": "command-temp-unblock",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "domain": "youtube.com",
+            "durationMinutes": 10,
+            "commandId": "command-temp-unblock"
+          }
+        }
+      }
+    },
+    {
+      "name": "temp-unblock:state",
+      "commandType": "temp-unblock",
+      "extensionType": "temp-unblock",
+      "payload": {
+        "domain": "youtube.com",
+        "durationMinutes": 10,
+        "commandId": "command-temp-unblock"
+      },
+      "requiredCapabilities": [],
+      "attachClassroomState": true,
+      "frame": {
+        "type": "remote-control",
+        "_msgId": "<opaque-message-id>",
+        "commandId": "command-temp-unblock",
+        "studentId": "student-golden",
+        "studentSessionId": "session-golden",
+        "deliveryPolicy": "persistent_control",
+        "expiresAt": null,
+        "command": {
+          "type": "temp-unblock",
+          "commandId": "command-temp-unblock",
+          "studentId": "student-golden",
+          "studentSessionId": "session-golden",
+          "deliveryPolicy": "persistent_control",
+          "expiresAt": null,
+          "authority": {
+            "teachingSessionId": "teaching-session-golden",
+            "supervisionContextId": null
+          },
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "data": {
+            "domain": "youtube.com",
+            "durationMinutes": 10,
+            "commandId": "command-temp-unblock"
+          }
+        },
+        "classroomState": {
+          "schemaVersion": 1,
+          "revision": 41,
+          "teachingSessionId": "teaching-session-golden",
+          "supervisionContextId": null,
+          "receivedAt": "2026-09-29T15:00:00.000Z",
+          "scheduledEndAt": "2026-09-29T16:00:00.000Z",
+          "hardExpiresAt": "2026-09-30T02:55:00.000Z",
+          "restrictions": {
+            "screenLock": {
+              "active": true,
+              "url": "https://www.ixl.com/math"
+            },
+            "flightPath": {
+              "active": true,
+              "allowedDomains": [
+                "khanacademy.org",
+                "ixl.com"
+              ],
+              "name": "Math Practice"
+            },
+            "blockList": {
+              "active": true,
+              "blockedDomains": [
+                "coolmathgames.com",
+                "poki.com"
+              ],
+              "name": "Games"
+            },
+            "attentionMode": {
+              "active": true,
+              "message": "Eyes on the board"
+            },
+            "tabLimit": 3,
+            "temporaryAllows": [
+              {
+                "domain": "youtube.com",
+                "expiresAt": "2026-09-29T15:10:00.000Z"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
