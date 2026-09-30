@@ -12,8 +12,11 @@ browser-tested, managed-device-tested, load-tested, deployed and activated.
 Use UNKNOWN for unverified serving images, live flags and Store publication.
 Do not turn skipped tests or simulation into managed-device evidence.
 
-The 2026-09-30 source baseline was SchoolPilot `60f33db` and ClassPilot `55bb531`.
-Remote main was reverified during implementation at those same commits. The
+The initial 2026-09-30 source baseline was SchoolPilot `60f33db` and ClassPilot
+`55bb531`. SchoolPilot main subsequently advanced to `d4f3f232` through the
+independently merged deployment-safety #578 and Axios #580 fixes. The common
+corrective foundation incorporates that main; dependent slices must retain the
+new deployment checks when rebased. ClassPilot main remains `55bb531`. The
 [public Store listing](https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca)
 rechecked September 30 showed 2.9.6, updated September 27, superseding the earlier
 2.9.5 observation. The v2.9.6 tag resolves to ClassPilot `55bb531`; GitHub release
@@ -34,13 +37,13 @@ checks before review.
 
 | Stage | SchoolPilot draft PRs | Dependency or evidence |
 |---|---|---|
-| Foundation | [Axios correction #562](https://github.com/bzinkan/SchoolPilot/pull/562), [stacked-branch CI #564](https://github.com/bzinkan/SchoolPilot/pull/564) | Dependency audit and required checks must run on every stack. |
+| Foundation | [merged Axios correction #580](https://github.com/bzinkan/SchoolPilot/pull/580), [stacked-branch CI #564](https://github.com/bzinkan/SchoolPilot/pull/564) | Equivalent duplicate #562 was closed without merging; its retained branch preserves stack history. Required checks must run on every current stack head. |
 | Corrections | [confidentiality #566](https://github.com/bzinkan/SchoolPilot/pull/566), [usage coverage/cutoff #563](https://github.com/bzinkan/SchoolPilot/pull/563) | Public retained overrides and both usage correctness findings have regression coverage; ledger admission and writer fencing remain release preconditions. |
 | Precise authoring | [normalized preview API #567](https://github.com/bzinkan/SchoolPilot/pull/567), [interfaces #571](https://github.com/bzinkan/SchoolPilot/pull/571) | Server normalizer, uncached review, broader-site warnings and explicit Classroom boundaries. |
 | Focus | [contract #565](https://github.com/bzinkan/SchoolPilot/pull/565), [backend #572](https://github.com/bzinkan/SchoolPilot/pull/572), [teacher controls #575](https://github.com/bzinkan/SchoolPilot/pull/575) | Exact student/tab references, current authority, validated Open receipt and cleanup remain one contract. |
 | Classroom | [revision/prerequisite backend #582](https://github.com/bzinkan/SchoolPilot/pull/582), [integrated actions #577](https://github.com/bzinkan/SchoolPilot/pull/577) | Actual interface-to-HTTP/acknowledgement test proves only confirmed students open a lesson; migration is additive and append-only. |
 | Appointments | [API #570](https://github.com/bzinkan/SchoolPilot/pull/570), [eligibility races #573](https://github.com/bzinkan/SchoolPilot/pull/573), [school year #574](https://github.com/bzinkan/SchoolPilot/pull/574), [staff interface #579](https://github.com/bzinkan/SchoolPilot/pull/579) | Admission and source-matched writer v2 before activation; configured calendar, atomic issuance and staff-only reminders. |
-| Reports | [aggregates/audited CSV #583](https://github.com/bzinkan/SchoolPilot/pull/583), [staff interface #584](https://github.com/bzinkan/SchoolPilot/pull/584) | Restricted-role CI and current class/roster authority races must pass; backend owns denominators, historical scope and export audit. |
+| Reports | [aggregates/audited CSV #583](https://github.com/bzinkan/SchoolPilot/pull/583), [staff interface #584](https://github.com/bzinkan/SchoolPilot/pull/584) | Authority-fence v1 is mandatory even on wire-version-2 images; changed class/roster/student/membership snapshots fail before data or export audit. Backend owns denominators and historical scope. |
 | Usage | [administrator page #568](https://github.com/bzinkan/SchoolPilot/pull/568), [initial synthetic load #569](https://github.com/bzinkan/SchoolPilot/pull/569) | Expanded bounded profiles supplement the initial result; record successful school-day capacity and failed stress limits separately. |
 | SFU decision | [dated hosting/privacy/cost ADR #561](https://github.com/bzinkan/SchoolPilot/pull/561) | Proposed managed-service cap is unapproved; no media implementation or provisioning. |
 | Verification fixtures | [browser teardown #576](https://github.com/bzinkan/SchoolPilot/pull/576), [fixed metrics clock #581](https://github.com/bzinkan/SchoolPilot/pull/581) | Drain held requests and avoid minute-boundary counter flush; preserve actual browser/HTTP assertions. |
@@ -59,7 +62,12 @@ query under the 15-second API limit. These results do not establish successful
 stress writing. A separately named one-million-observation school-day fixture
 uses the actual 10-second heartbeat cadence, six lessons, passing windows and
 200 school-wide domains. Its result must be recorded independently, preserving
-all failed evidence and existing resource/timeout/constraint limits.
+all failed evidence and existing resource/timeout/constraint limits. Its first
+bounded run also failed: 84,000 aggregate grains per school exceeded the worker
+timeout; concurrent reporting had seven HTTP failures. Consequently neither
+expanded profile satisfies capacity acceptance. Measured query improvements
+and any later results need their own exact-source evidence; no timeout,
+constraint or infrastructure increase may substitute for this acceptance.
 
 ## Operator preflight for a later authorized release
 
@@ -88,7 +96,7 @@ all failed evidence and existing resource/timeout/constraint limits.
 | Daily usage promotion | Three clean shadow school days on the relevant deployed build, using the documented mismatch query and no substituted legacy rows. |
 | Monitored Browser Time | Corrected aggregate plus completion ledger admission on both services, compatible reader/writer images, synthetic load evidence and one school day of usage-rollup observation before reporting activation. |
 | Appointments | Reviewed appointment admission, atomic activation/concurrency and manager/current-teacher authorization tests; staff reminders only; explicit departure window. |
-| Reports v2 | Governed flag addition, factual denominator/retention behavior, tenant/teacher scope and confidential aggregate/export acceptance. |
+| Reports v2 | Governed flag addition, report contract v2 plus authority-fence v1 on API/worker, factual denominator/retention behavior, tenant/teacher scope and confidential aggregate/export acceptance. |
 | Precise/Focus | Final server contracts, capability/registry parity, exact package tests and two Google Admin-managed Chromebook acceptance records bound to the chosen candidate. |
 
 Page implementation and synthetic fixtures may proceed before operational
