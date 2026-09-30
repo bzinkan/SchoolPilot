@@ -97,3 +97,22 @@ diagnostic fixtures may be held for at most 30 minutes for EXPLAIN work, with
 an external completion marker and exact generated-ownership cleanup. Diagnostic
 INSERTs run only against synthetic data and are rolled back; they cannot establish
 a capacity pass. Original workload and failure records remain immutable.
+
+Insertion-only diagnosis is preserved in
+`scripts/load/usage/evidence-insertion-cost-20260930.json`. After materializing
+the independently checked 500,000 grains, a 100,000-row insert took 12,323 ms:
+3,882 ms in heap/index work, 3,289 ms in student foreign-key checks, 3,234 ms in
+session checks, 1,216 ms in class checks, 613 ms in school checks and 28 ms in
+coverage invalidation. The parent lookups already use appropriate indexes.
+The full isolated 500,000-row insert still timed out at 60 seconds.
+
+Three additional same-transaction diagnostics applied one absolute 60-second
+budget from before the advisory lock and day deletion, including private
+`ON COMMIT DROP` staging, indexing, every insert and completion. The 10,000-row
+batch run completed 470,000 rows before cancellation; the 50,000-row run and a
+transaction-local generic-planning comparison each completed 250,000. Every
+failed transaction independently left zero heavy-day aggregates and ledger
+rows. These comparisons cannot establish successful commit or concurrent
+headroom. No staged writer, planner override, constraint relaxation or cap
+increase was adopted. The dedicated fixture was removed after preserving
+external plans and hashes. The 60-second writer capacity gate remains open.
