@@ -19,6 +19,9 @@ param(
     [string]$ExpectedImageDigest,
     [string]$ExpectedApiTaskDefinitionArn,
     [string]$ExpectedWorkerTaskDefinitionArn,
+    # Plan only: also project the registry onto this older app SHA's capabilities,
+    # so an image revert to it boots with the resulting runtime.
+    [string]$RegistryTargetAppSha,
     [switch]$ConfirmProductionMutation,
     [switch]$ConfirmSyntheticOnlyGlobalActivation,
     [switch]$ConfirmProtectedWindowProductionMutation
@@ -227,25 +230,94 @@ function Get-ServingProtocolCapabilities {
 
 # The serving image's parseCapabilityRollouts rejects ANY unknown key in
 # CLASSPILOT_CAPABILITY_ROLLOUTS_JSON, and its boot check then refuses to start
-# the API. Every candidate registry must therefore name only capabilities the
-# serving app SHA registers: an image older than a capability must never be given
-# its entry, not even {"mode":"off"}.
-function Assert-ServingAppRegistersRuntimeCapabilities {
+# the API. Every produced runtime is therefore PROJECTED onto the capabilities
+# the serving image registers: the registry entry and kill switch of any other
+# capability are omitted, which that image reads exactly as off. Only a profile
+# that would activate (or keep active) such a capability is refused. This keeps
+# the emergency off profile usable while this tool is newer than the serving
+# image, and lets a reviewed plan drop the entries an older target image does not
+# register before that image is restored (-RegistryTargetAppSha).
+function Get-SourceRolloutCapabilities {
+    param([Parameter(Mandatory = $true)]$SourceTaskDefinition)
+    $containers = @($SourceTaskDefinition.containerDefinitions | Where-Object name -CEQ "api")
+    if ($containers.Count -ne 1) { throw "Source runtime container is ambiguous." }
+    $registry = @($containers[0].environment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")
+    if ($registry.Count -eq 0) { return $null }
+    if ($registry.Count -ne 1) { throw "Source runtime rollout registry is duplicated." }
+    return ,@((ConvertFrom-StrictJsonText -Text ([string]$registry[0].value)).PSObject.Properties.Name)
+}
+
+function Get-RuntimeProjectionCapabilities {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$AppSha,
-        [Parameter(Mandatory = $true)]$RuntimeConfiguration
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)]$SourceTaskDefinition,
+        [string]$RegistryTargetAppSha
     )
-    $registryText = [string]$RuntimeConfiguration.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
-    if ([string]::IsNullOrWhiteSpace($registryText)) { throw "The candidate runtime has no capability rollout registry." }
-    $written = @((ConvertFrom-StrictJsonText -Text $registryText).PSObject.Properties.Name)
-    $serving = @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha)
-    $unknown = @($written | Where-Object { $_ -cnotin $serving })
-    if ($unknown.Count -gt 0) {
-        throw ("The serving app " + $AppSha.Substring(0, 12) + " does not register " + ($unknown -join ", ") +
-            "; its boot check would reject this rollout registry. Deploy an image that registers it first, " +
-            "or Rollback the Apply that introduced it before reverting to an older image.")
+    $sourceCapabilities = Get-SourceRolloutCapabilities -SourceTaskDefinition $SourceTaskDefinition
+    $known = if ($Mode -ceq "off" -and $null -ne $sourceCapabilities) {
+        # Emergency containment skips the ECR tag check, so the typed app SHA is
+        # not bound to the serving image there. The serving task definition's own
+        # registry is: the running image parsed every one of its keys at boot, so a
+        # mistyped SHA cannot introduce a key the image would reject.
+        @($sourceCapabilities)
     }
+    else {
+        # Outside containment the ECR check has bound this SHA to the serving digest.
+        @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha)
+    }
+    if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha)) {
+        $target = @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $RegistryTargetAppSha)
+        $known = @($known | Where-Object { $_ -cin $target })
+    }
+    return ,$known
+}
+
+function Select-ServingRuntimeConfiguration {
+    param(
+        [Parameter(Mandatory = $true)]$RuntimeConfiguration,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$KnownCapabilities
+    )
+    $unknown = @($script:AllCapabilities | Where-Object { $_ -cnotin $KnownCapabilities })
+    if ($unknown.Count -eq 0) { return $RuntimeConfiguration }
+    $environment = [ordered]@{}
+    foreach ($item in $RuntimeConfiguration.Environment.GetEnumerator()) {
+        $environment[[string]$item.Key] = [string]$item.Value
+    }
+    $rollouts = ConvertFrom-StrictJsonText -Text ([string]$environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON)
+    $presentEntries = @($rollouts.PSObject.Properties.Name)
+    foreach ($capability in $unknown) {
+        if ($capability -cnotin $script:AdditiveCapabilities) {
+            throw "The serving image does not register the core ClassPilot capability $capability; refusing to plan against it."
+        }
+        $flag = [string]$script:CapabilityFlags[$capability]
+        $entry = if ($presentEntries -ccontains $capability) { $rollouts.$capability } else { $null }
+        $flagValue = if ($environment.Contains($flag)) { [string]$environment[$flag] } else { "false" }
+        if ($flagValue -cne "false" -or ($null -ne $entry -and
+            ([string]$entry.mode -cne "off" -or $entry.PSObject.Properties.Name -contains "schoolIds"))) {
+            throw ("This profile would activate $capability, which the serving image (or the registry target) does not " +
+                "register. Deploy an image that registers it first, or disable it with its own off profile before " +
+                "planning for an older image.")
+        }
+        if ($environment.Contains($flag)) { $environment.Remove($flag) }
+    }
+    $projected = [ordered]@{}
+    foreach ($capability in $script:AllCapabilities) {
+        if ($capability -cin $unknown -or $presentEntries -cnotcontains $capability) { continue }
+        $entry = $rollouts.$capability
+        $copy = [ordered]@{ mode = [string]$entry.mode }
+        if ($entry.PSObject.Properties.Name -contains "schoolIds") {
+            $copy.schoolIds = @($entry.schoolIds | ForEach-Object { [string]$_ })
+        }
+        $projected[$capability] = $copy
+    }
+    $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $projected | ConvertTo-Json -Depth 8 -Compress
+    $projection = [ordered]@{}
+    foreach ($property in $RuntimeConfiguration.PSObject.Properties) { $projection[$property.Name] = $property.Value }
+    $projection.Environment = $environment
+    $projection.ProjectedAbsentCapabilities = @($unknown)
+    return [pscustomobject]$projection
 }
 
 function Assert-LateSignInPilotReleaseEvidenceBound {
@@ -2492,7 +2564,9 @@ function Assert-RoadmapRuntimeControls {
 function Get-RuntimeActivationState {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Environment,
-        [switch]$AllowBaseline
+        [switch]$AllowBaseline,
+        # Additive capabilities a projected target omits entirely (both controls).
+        [string[]]$AbsentAdditiveCapabilities = @()
     )
     $wrongCase = @($Environment | Where-Object {
         [string]$_.name -iin $script:RuntimeEnvironmentNames -and
@@ -2513,7 +2587,8 @@ function Get-RuntimeActivationState {
     }
     $absentAdditiveCapabilities = @($script:AdditiveCapabilities | Where-Object {
         $flagName = [string]$script:CapabilityFlags[$_]
-        $AllowBaseline -and @($managed | Where-Object name -CEQ $flagName).Count -eq 0
+        ($AllowBaseline -or $_ -cin $AbsentAdditiveCapabilities) -and
+            @($managed | Where-Object name -CEQ $flagName).Count -eq 0
     })
     $absentAdditiveFlags = @($absentAdditiveCapabilities | ForEach-Object {
         [string]$script:CapabilityFlags[$_]
@@ -2933,7 +3008,10 @@ function Assert-AllowedRuntimeTransition {
     $targetEnvironment = @($TargetRuntimeConfiguration.Environment.GetEnumerator() | ForEach-Object {
         [pscustomobject]@{ name = [string]$_.Key; value = [string]$_.Value }
     })
-    $target = Get-RuntimeActivationState -Environment $targetEnvironment
+    $projectedAbsent = if ($TargetRuntimeConfiguration.PSObject.Properties.Name -contains "ProjectedAbsentCapabilities") {
+        @($TargetRuntimeConfiguration.ProjectedAbsentCapabilities)
+    } else { @() }
+    $target = Get-RuntimeActivationState -Environment $targetEnvironment -AbsentAdditiveCapabilities $projectedAbsent
     $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
     $targetControls = Get-RuntimeCapabilityControls -Environment $targetEnvironment
     $roadmapMode = [string]$TargetRuntimeConfiguration.Mode
@@ -3934,11 +4012,15 @@ function New-RuntimeConfigPlan {
         [Parameter(Mandatory = $true)][string]$ApiTaskDefinitionArn,
         [Parameter(Mandatory = $true)][string]$WorkerTaskDefinitionArn,
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow,
+        [string]$RegistryTargetAppSha,
         [switch]$SkipRepositoryCheck,
         [switch]$ConfirmProductionMutation,
         [switch]$ConfirmSyntheticOnlyGlobalActivation,
         [switch]$ConfirmProtectedWindowProductionMutation
     )
+    if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha) -and $RegistryTargetAppSha -cnotmatch '^[0-9a-f]{40}$') {
+        throw "The registry target app SHA must be a full lowercase commit SHA."
+    }
     if (-not [string]::IsNullOrWhiteSpace($PrivateTurnEvidencePath) -or
         -not [string]::IsNullOrWhiteSpace($PrivateSyntheticValidationPath) -or
         -not [string]::IsNullOrWhiteSpace($PrivateManagedTestWaiverPath) -or
@@ -4076,8 +4158,10 @@ function New-RuntimeConfigPlan {
         -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 3 })
     $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
-    Assert-ServingAppRegistersRuntimeCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha `
-        -RuntimeConfiguration $runtime
+    $runtime = Select-ServingRuntimeConfiguration -RuntimeConfiguration $runtime -KnownCapabilities (
+        Get-RuntimeProjectionCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha `
+            -Mode ([string]$runtime.Mode) -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
+            -RegistryTargetAppSha $RegistryTargetAppSha)
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
     $fastPreviewCandidateReceipt = $null
@@ -4251,6 +4335,9 @@ function New-RuntimeConfigPlan {
         checkpointFile = "checkpoint.json"
         resultFile = "result.json"
     }
+    if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha)) {
+        $manifest.registryTargetAppSha = $RegistryTargetAppSha
+    }
     $plan = Join-Path $runDirectory "plan.json"
     Write-SanitizedJson -Path $plan -Value $manifest
     return [pscustomobject]@{
@@ -4283,9 +4370,13 @@ function Read-RuntimePlan {
         "protectedWindowProductionMutation",
         "repositoryRoot", "toolSha", "appSha", "imageDigest", "priorApiTaskDefinitionArn",
         "priorWorkerTaskDefinitionArn", "scaling", "deploymentBounds", "deploymentConfigurationSha256",
-        "checkpointFile", "resultFile"
+        "checkpointFile", "resultFile", "registryTargetAppSha"
     ) -Trail "runtime plan"
     if ([int]$plan.schemaVersion -ne 2) { throw "Runtime plan schemaVersion must be 2." }
+    if ($plan.PSObject.Properties.Name -contains "registryTargetAppSha" -and
+        [string]$plan.registryTargetAppSha -cnotmatch '^[0-9a-f]{40}$') {
+        throw "Runtime plan registry target is invalid."
+    }
     if ([string]$plan.toolSha -cnotmatch '^[0-9a-f]{40}$' -or
         [string]$plan.appSha -cnotmatch '^[0-9a-f]{40}$' -or
         [string]$plan.imageDigest -cnotmatch '^sha256:[0-9a-f]{64}$') {
@@ -4619,8 +4710,18 @@ function Invoke-RuntimeConfigApply {
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $maximumApiDesiredCount
     $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
-    Assert-ServingAppRegistersRuntimeCapabilities -RepositoryRoot ([string]$Plan.repositoryRoot) `
-        -AppSha ([string]$Plan.appSha) -RuntimeConfiguration $runtime
+    # Apply re-derives the projection from the pinned serving pair (and the plan's
+    # registry target). It must reproduce the reviewed runtime byte for byte: the
+    # runtime hash check below refuses anything else. The serving image itself
+    # cannot change between Plan and Apply, because both pin its exact task
+    # definitions and image digest.
+    $registryTargetAppSha = if ($Plan.PSObject.Properties.Name -contains "registryTargetAppSha") {
+        [string]$Plan.registryTargetAppSha
+    } else { "" }
+    $runtime = Select-ServingRuntimeConfiguration -RuntimeConfiguration $runtime -KnownCapabilities (
+        Get-RuntimeProjectionCapabilities -RepositoryRoot ([string]$Plan.repositoryRoot) `
+            -AppSha ([string]$Plan.appSha) -Mode ([string]$runtime.Mode) `
+            -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -RegistryTargetAppSha $registryTargetAppSha)
     if (@($runtime.EnabledCapabilities).Count -ne [int]$Plan.enabledCapabilityCount) {
         throw "Runtime profile enabled-capability semantics changed after planning."
     }
@@ -5224,6 +5325,7 @@ function Invoke-Main {
                 -EvidenceRoot $ExternalEvidenceRoot `
                 -AppSha $ExpectedAppSha -ImageDigest $ExpectedImageDigest `
                 -ApiTaskDefinitionArn $ExpectedApiTaskDefinitionArn -WorkerTaskDefinitionArn $ExpectedWorkerTaskDefinitionArn `
+                -RegistryTargetAppSha $RegistryTargetAppSha `
                 -ConfirmProductionMutation:$ConfirmProductionMutation `
                 -ConfirmSyntheticOnlyGlobalActivation:$ConfirmSyntheticOnlyGlobalActivation `
                 -ConfirmProtectedWindowProductionMutation:$ConfirmProtectedWindowProductionMutation
@@ -5231,6 +5333,7 @@ function Invoke-Main {
             Write-Output $result.PlanRelativePath
         }
         "Apply" {
+            if ($RegistryTargetAppSha) { throw "-RegistryTargetAppSha belongs to Plan; Apply reads it from the reviewed plan." }
             if (-not $ConfirmProductionMutation) { throw "Apply requires -ConfirmProductionMutation." }
             if (-not $PlanPath -or -not $ExpectedPlanSha256) { throw "Apply requires -PlanPath and -ExpectedPlanSha256." }
             $plan = Read-RuntimePlan -Path $PlanPath -ExpectedSha256 $ExpectedPlanSha256
