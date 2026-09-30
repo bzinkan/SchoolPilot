@@ -59,7 +59,8 @@ activity was observed; unavailable dates must never appear as measured zeros.
    and canonical package scripts; do not claim a tag is a published version.
 2. Record manifest version, tested commit, package contents and SHA-256. Run
    source and packaged lifecycle/enforcement tests against the pinned resource
-   fixture `4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243`.
+   current #559 fixture `4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243`.
+   Recompute and repin both repositories for any approved fixture successor.
 3. On two managed Chromebooks test sign-in, shared-device transitions, duplicate
    tabs, stale references, precise provider/section navigation, worker wake,
    offline/reconnect, restriction failure and Focus cleanup. Record actual
