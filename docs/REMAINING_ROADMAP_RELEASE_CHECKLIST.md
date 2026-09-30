@@ -15,6 +15,8 @@ Do not turn skipped tests or simulation into managed-device evidence.
 The 2026-09-30 source baseline was SchoolPilot `60f33db` and ClassPilot `55bb531`.
 Recheck remote main before implementation/review. The ClassPilot manifest 2.9.6
 was an unsubmitted repository candidate. The next release version is provisional.
+The public Store listing retrieved on September 30 showed 2.9.5, updated September
+25; repeat that check immediately before a later upload.
 Preserve the existing draft Observe branch and other sessions' checkouts.
 
 ## Operator preflight for a later authorized release

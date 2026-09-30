@@ -8,6 +8,8 @@ The master plan also sets three standing prohibitions: do not implement the road
 
 Historical line references below are to SchoolPilot `a811b04d` and ClassPilot `55bb531`. The continuation baseline was rechecked on 2026-09-30: SchoolPilot `60f33db` and ClassPilot `55bb531` (repository manifest 2.9.6, an unsubmitted candidate). Re-locate anchors by symbol before editing. Repository versions do not establish the live Chrome Web Store version. A PR that changes a status row updates it in this document.
 
+The [public Store listing](https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca) retrieved during this continuation shows 2.9.5, updated September 25, 2026. This is a dated listing observation, not approval to upload a successor; recheck immediately before any later upload.
+
 ## Product model
 
 The intended classroom-control model, from the master plan's "FINAL PRODUCT MODEL":
