@@ -239,7 +239,10 @@ export async function runLocalScale() {
     metrics.concurrentWriters = outcomes.slice(0, 2).filter(result => result.status === 'fulfilled').map(result => result.value);
     metrics.reads = Object.fromEntries([...readTimings].map(([key, timings]) => [key, summarize(timings)]));
     await flushHeartbeatClassificationBatches();
-    const cutoff = new Date(), currentDay = rollup.classpilotUsageRollupDay(today, zone);
+    // The established writer compares UTC wall-clock timestamps at whole-second
+    // precision. Use that same explicit input boundary in the independent raw
+    // oracle rather than granting fractional tail time beyond its actual cutoff.
+    const cutoff = new Date(Math.floor(Date.now() / 1000) * 1000), currentDay = rollup.classpilotUsageRollupDay(today, zone);
     metrics.currentDayWriters = [];
     metrics.heavyDayAtomicity = [];
     for (const school of schools) {
