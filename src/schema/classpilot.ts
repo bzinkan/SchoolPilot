@@ -1824,11 +1824,22 @@ export const flightPaths = pgTable(
       .array()
       .default(sql`'{}'::text[]`),
     sourceUpdatedAt: timestamp("source_updated_at"),
+    // School Library publication state. Every existing row stays private.
+    // published_by mirrors teacher_id (plain text, no FK) so user deletion and
+    // staff lifecycle ownership rules stay unchanged.
+    visibility: text("visibility").$type<"private" | "school">().notNull().default("private"),
+    official: boolean("official").notNull().default(false),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedBy: text("published_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
     index("flight_paths_school_id_idx").on(table.schoolId),
     index("flight_paths_teacher_id_idx").on(table.teacherId),
+    index("flight_paths_school_library_idx")
+      .on(table.schoolId)
+      .where(sql`visibility = 'school' OR official`),
+    check("flight_paths_visibility_check", sql`${table.visibility} IN ('private', 'school')`),
   ]
 );
 
@@ -1850,11 +1861,20 @@ export const blockLists = pgTable(
       .array()
       .default(sql`'{}'::text[]`),
     isDefault: boolean("is_default").default(false),
+    // School Library publication state; same contract as flight_paths.
+    visibility: text("visibility").$type<"private" | "school">().notNull().default("private"),
+    official: boolean("official").notNull().default(false),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedBy: text("published_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
     index("block_lists_school_id_idx").on(table.schoolId),
     index("block_lists_teacher_id_idx").on(table.teacherId),
+    index("block_lists_school_library_idx")
+      .on(table.schoolId)
+      .where(sql`visibility = 'school' OR official`),
+    check("block_lists_visibility_check", sql`${table.visibility} IN ('private', 'school')`),
   ]
 );
 

@@ -193,6 +193,62 @@ describe("AI chat list_flight_paths scope", { concurrency: false }, () => {
     });
   });
 
+  it("adds same-school shared and official Flight Paths for teachers only while the School Library is on", async () => {
+    const inSchool = <T>(schoolId: string, fn: () => Promise<T>) => runWithTenantContext({ schoolId }, fn);
+    const sharedB = await inSchool(school.id, () => storage.createFlightPath({
+      schoolId: school.id,
+      teacherId: teacherB.id,
+      flightPathName: `${TAG} Teacher B shared`,
+      allowedDomains: ["shared-b.example.com"],
+      visibility: "school",
+    }));
+    const officialAdmin = await inSchool(school.id, () => storage.createFlightPath({
+      schoolId: school.id,
+      teacherId: admin.id,
+      flightPathName: `${TAG} Admin official`,
+      allowedDomains: ["official.example.com"],
+      official: true,
+    }));
+    const previousMode = process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+    try {
+      delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+      assert.deepEqual(await listedFlightPathIds(contextFor(teacherA, "teacher")), sortedIds(pathA));
+
+      process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = "on";
+      assert.deepEqual(
+        await listedFlightPathIds(contextFor(teacherA, "teacher")),
+        sortedIds(pathA, sharedB, officialAdmin),
+        "own paths plus the School Library, never Teacher B's private path"
+      );
+      const result = await inSchool(school.id, () => executeTool("list_flight_paths", {}, contextFor(teacherA, "teacher")));
+      const libraryEntry = result.data.flightPaths.find((entry: { id: string }) => entry.id === officialAdmin.id);
+      assert.deepEqual(libraryEntry, {
+        id: officialAdmin.id,
+        name: `${TAG} Admin official`,
+        allowedDomains: ["official.example.com"],
+        isDefault: false,
+        schoolLibrary: true,
+        official: true,
+      });
+      assert.doesNotMatch(JSON.stringify(result.data), /Blake|Alex|teacher-b@|admin@/, "owner identity is not sent to the model");
+      assert.deepEqual(
+        await listedFlightPathIds(contextFor(teacherA, "teacher", otherSchool.id)),
+        sortedIds(otherSchoolPathA),
+        "another school's library stays out"
+      );
+      assert.deepEqual(
+        await listedFlightPathIds(contextFor(admin, "admin")),
+        sortedIds(pathA, pathB, ownerlessPath, sharedB, officialAdmin),
+        "administrators keep the plain school-wide list"
+      );
+    } finally {
+      if (previousMode === undefined) delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+      else process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = previousMode;
+      await inSchool(school.id, () => storage.deleteFlightPath(sharedB.id, school.id));
+      await inSchool(school.id, () => storage.deleteFlightPath(officialAdmin.id, school.id));
+    }
+  });
+
   it("creates assistant Flight Paths owned by the caller, so they list for that caller only", async () => {
     const created = await runWithTenantContext(
       { schoolId: school.id },

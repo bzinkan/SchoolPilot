@@ -452,8 +452,10 @@ async function loadImpactForMembership(
     }))
   );
 
+  // School Library publication state travels with the item on transfer; the
+  // review label says so, and a published transfer is audited in-transaction.
   const ownedFlightPaths = await dbInstance
-    .select({ id: flightPaths.id })
+    .select({ id: flightPaths.id, visibility: flightPaths.visibility, official: flightPaths.official })
     .from(flightPaths)
     .where(and(eq(flightPaths.schoolId, schoolId), eq(flightPaths.teacherId, userId)))
     .orderBy(asc(flightPaths.id));
@@ -462,14 +464,14 @@ async function loadImpactForMembership(
       assignmentType: "flight_path" as const,
       assignmentId: resource.id,
       resourceId: resource.id,
-      label: "Flight path",
+      label: publishedTeachingResourceLabel("Flight path", resource),
       required: false,
       allowedOperations: ["replace" as const, "remove" as const],
     }))
   );
 
   const ownedBlockLists = await dbInstance
-    .select({ id: blockLists.id })
+    .select({ id: blockLists.id, visibility: blockLists.visibility, official: blockLists.official })
     .from(blockLists)
     .where(and(eq(blockLists.schoolId, schoolId), eq(blockLists.teacherId, userId)))
     .orderBy(asc(blockLists.id));
@@ -478,7 +480,7 @@ async function loadImpactForMembership(
       assignmentType: "block_list" as const,
       assignmentId: resource.id,
       resourceId: resource.id,
-      label: "Block list",
+      label: publishedTeachingResourceLabel("Block list", resource),
       required: true,
       allowedOperations: ["replace" as const],
     }))
@@ -1183,6 +1185,54 @@ async function assertReplacementSchedulesDoNotOverlap(options: {
   }
 }
 
+function publishedTeachingResourceLabel(
+  label: "Flight path" | "Block list",
+  resource: { visibility: string; official: boolean }
+): string {
+  if (resource.official) return `${label} (official, in the School Library)`;
+  if (resource.visibility === "school") return `${label} (shared in the School Library)`;
+  return label;
+}
+
+/**
+ * A shared or official Flight Path / Block List keeps its publication state
+ * when its owner changes. That hand-off is recorded in the same transaction as
+ * the transfer, so it can never happen unaudited.
+ */
+async function auditPublishedTeachingResourceTransfer(options: {
+  dbInstance: LifecycleDb;
+  schoolId: string;
+  actorUserId: string;
+  actorRole?: string;
+  entityType: "flight_path" | "block_list";
+  resource: { id: string; name: string; visibility: string; official: boolean };
+  fromTeacherId: string;
+  toTeacherId: string | null;
+}): Promise<void> {
+  if (options.resource.visibility !== "school" && !options.resource.official) return;
+  await options.dbInstance.insert(auditLogs).values({
+    schoolId: options.schoolId,
+    userId: options.actorUserId,
+    userRole: options.actorRole ?? null,
+    action: `classpilot.${options.entityType}.published_owner_transferred`,
+    entityType: options.entityType,
+    entityId: options.resource.id,
+    entityName: options.resource.name,
+    changes: {
+      fromTeacherId: options.fromTeacherId,
+      toTeacherId: options.toTeacherId,
+      visibility: options.resource.visibility,
+      official: options.resource.official,
+    },
+    metadata: {
+      source: "staff_assignment_lifecycle",
+      // An ownerless item stays in the School Library and only administrators
+      // can change it until an administrator copies or deletes it.
+      ownerless: options.toTeacherId === null,
+    },
+  });
+}
+
 async function applyTransitionDecision(options: {
   schoolId: string;
   sourceUserId: string;
@@ -1190,6 +1240,8 @@ async function applyTransitionDecision(options: {
   decision: StaffTransitionDecision;
   replacement?: { membershipId: string; userId: string };
   dbInstance: LifecycleDb;
+  actorUserId: string;
+  actorRole?: string;
 }): Promise<StaffTransitionResult["transferred"][number]> {
   const { assignment, decision, dbInstance } = options;
   const replacementUserId = options.replacement?.userId;
@@ -1420,9 +1472,10 @@ async function applyTransitionDecision(options: {
       }
     }
   } else if (assignment.assignmentType === "flight_path") {
+    const nextTeacherId = decision.operation === "replace" ? replacementUserId! : null;
     const [updated] = await dbInstance
       .update(flightPaths)
-      .set({ teacherId: decision.operation === "replace" ? replacementUserId! : null })
+      .set({ teacherId: nextTeacherId })
       .where(
         and(
           eq(flightPaths.id, assignment.assignmentId),
@@ -1430,8 +1483,23 @@ async function applyTransitionDecision(options: {
           eq(flightPaths.teacherId, options.sourceUserId)
         )
       )
-      .returning({ id: flightPaths.id });
+      .returning({
+        id: flightPaths.id,
+        name: flightPaths.flightPathName,
+        visibility: flightPaths.visibility,
+        official: flightPaths.official,
+      });
     if (!updated) throw lifecycleError(409, "STAFF_ASSIGNMENT_IMPACT_STALE", "Staff assignments changed; review them again.");
+    await auditPublishedTeachingResourceTransfer({
+      dbInstance,
+      schoolId: options.schoolId,
+      actorUserId: options.actorUserId,
+      actorRole: options.actorRole,
+      entityType: "flight_path",
+      resource: updated,
+      fromTeacherId: options.sourceUserId,
+      toTeacherId: nextTeacherId,
+    });
   } else if (assignment.assignmentType === "block_list") {
     if (decision.operation !== "replace") {
       throw lifecycleError(
@@ -1450,8 +1518,23 @@ async function applyTransitionDecision(options: {
           eq(blockLists.teacherId, options.sourceUserId)
         )
       )
-      .returning({ id: blockLists.id });
+      .returning({
+        id: blockLists.id,
+        name: blockLists.name,
+        visibility: blockLists.visibility,
+        official: blockLists.official,
+      });
     if (!updated) throw lifecycleError(409, "STAFF_ASSIGNMENT_IMPACT_STALE", "Staff assignments changed; review them again.");
+    await auditPublishedTeachingResourceTransfer({
+      dbInstance,
+      schoolId: options.schoolId,
+      actorUserId: options.actorUserId,
+      actorRole: options.actorRole,
+      entityType: "block_list",
+      resource: updated,
+      fromTeacherId: options.sourceUserId,
+      toTeacherId: replacementUserId!,
+    });
   } else if (assignment.assignmentType === "student_group") {
     const [updated] = await dbInstance
       .update(studentGroups)
@@ -1905,6 +1988,8 @@ export async function transitionStaffAssignments(options: {
                   ? replacements.get(decision.replacementMembershipId)
                   : undefined,
                 dbInstance: tx,
+                actorUserId: options.actorUserId,
+                actorRole: options.actorRole,
               })
             );
           }

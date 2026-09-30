@@ -164,8 +164,13 @@ import {
 import { useTileViewport } from '../hooks/useTileViewport';
 import { classpilotReconciliationIntervalMs } from '../lib/monitoringReconciliation';
 import { reconcileGraceCohort } from '../lib/graceReconciliation';
+import { mergeTeachingResourceOptions, teachingResourceBadge } from '../lib/teachingResourceLibrary';
 
 const EMPTY_LIST = Object.freeze([]);
+// Own items first, then School Library items (present only while the library
+// is on for the school). Module-level so the query result stays referentially stable.
+const selectFlightPathOptions = (data) => mergeTeachingResourceOptions(data, 'flightPaths');
+const selectBlockListOptions = (data) => mergeTeachingResourceOptions(data, 'blockLists');
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_TILE_MAP = new Map();
 const EMPTY_PICKUP_DATA = Object.freeze({
@@ -762,13 +767,13 @@ export default function Dashboard() {
   const { data: flightPaths = EMPTY_LIST } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
-    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
+    select: selectFlightPathOptions,
   });
 
   const { data: blockLists = EMPTY_LIST } = useQuery({
     queryKey: ['/api/block-lists'],
     queryFn: () => apiRequest('GET', '/block-lists'),
-    select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
+    select: selectBlockListOptions,
   });
 
   const { data: activeSession } = useQuery({
@@ -7332,6 +7337,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <SelectContent>
                   {flightPaths.map((fp) => {
                     const applicability = flightPathApplyCapability(fp);
+                    const badge = teachingResourceBadge(fp);
                     return (
                       <SelectItem
                         key={fp.id}
@@ -7339,7 +7345,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                         disabled={!applicability.enabled}
                         data-testid={`option-flight-path-${fp.id}`}
                       >
-                        {fp.flightPathName}{applicability.enabled ? '' : ' (add an allowed domain)'}
+                        {fp.flightPathName}{badge ? <span className="ml-2 text-xs text-muted-foreground" data-testid={`option-flight-path-badge-${fp.id}`}>{badge}</span> : null}{applicability.enabled ? '' : ' (add an allowed domain)'}
                       </SelectItem>
                     );
                   })}
@@ -7418,7 +7424,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <Select value={selectedBlockListId} onValueChange={setSelectedBlockListId}>
                 <SelectTrigger id="block-list-select" data-testid="select-block-list"><SelectValue placeholder="Choose a block list" /></SelectTrigger>
                 <SelectContent>
-                  {blockLists.map((bl) => (<SelectItem key={bl.id} value={bl.id} data-testid={`option-block-list-${bl.id}`}>{bl.name}</SelectItem>))}
+                  {blockLists.map((bl) => {
+                    const badge = teachingResourceBadge(bl);
+                    return (
+                      <SelectItem key={bl.id} value={bl.id} data-testid={`option-block-list-${bl.id}`}>
+                        {bl.name}{badge ? <span className="ml-2 text-xs text-muted-foreground" data-testid={`option-block-list-badge-${bl.id}`}>{badge}</span> : null}
+                      </SelectItem>
+                    );
+                  })}
                   {blockLists.length === 0 && <div className="p-2 text-sm text-muted-foreground">No block lists available. Create one in Teaching tools.</div>}
                 </SelectContent>
               </Select>
@@ -7451,13 +7464,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <Button variant="outline" size="sm" onClick={handleRemoveBlockList} disabled={removeBlockListMutation.isPending} className="text-destructive hover:text-destructive" data-testid="button-remove-all-block-lists"><X className="h-4 w-4 mr-2" />Remove All</Button>
             </div>
             <div className="border-t pt-4">
-              <p className="text-sm font-medium mb-2">Your Block Lists</p>
+              <p className="text-sm font-medium mb-2">{blockLists.some((bl) => bl.fromSchoolLibrary) ? 'Your Block Lists and School Library' : 'Your Block Lists'}</p>
               {blockLists.length === 0 ? <p className="text-sm text-muted-foreground">No block lists created yet. Create one in Teaching tools.</p> : (
                 <div className="space-y-2 max-h-[250px] overflow-y-auto">
                   {blockLists.map((bl) => (
                     <div key={bl.id} className="flex items-center justify-between p-3 border rounded-md" data-testid={`block-list-item-${bl.id}`}>
                       <div className="flex-1">
-                        <p className="text-sm font-medium">{bl.name}</p>
+                        <p className="text-sm font-medium">{bl.name}{teachingResourceBadge(bl) ? <Badge variant="outline" className="ml-2 text-xs" data-testid={`block-list-item-badge-${bl.id}`}>{teachingResourceBadge(bl)}</Badge> : null}</p>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {bl.blockedDomains?.slice(0, 3).map((domain, idx) => (<Badge key={idx} variant="secondary" className="text-xs">{domain}</Badge>))}
                           {(bl.blockedDomains?.length || 0) > 3 && <Badge variant="secondary" className="text-xs">+{(bl.blockedDomains?.length || 0) - 3} more</Badge>}

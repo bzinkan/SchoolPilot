@@ -896,10 +896,28 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       source("src/services/classpilotCommandDispatcher.ts"),
       source("src/services/storage.ts"),
     ]);
-    assert.match(dispatcher, /getFlightPathById\(flightPathId, schoolId, teacherId\)/);
-    assert.match(dispatcher, /getBlockListById\(blockListId, schoolId, teacherId\)/);
+    // Owner-only unless the School Library is on for the command's school;
+    // then the same school's shared or official items also resolve.
+    assert.match(
+      dispatcher,
+      /isSharedTeachingResourcesEnabled\(schoolId\)\s+\? await getApplicableFlightPathById\(flightPathId, schoolId, teacherId\)\s+: await getFlightPathById\(flightPathId, schoolId, teacherId\)/
+    );
+    assert.match(
+      dispatcher,
+      /isSharedTeachingResourcesEnabled\(schoolId\)\s+\? await getApplicableBlockListById\(blockListId, schoolId, teacherId\)\s+: await getBlockListById\(blockListId, schoolId, teacherId\)/
+    );
     assert.match(storage, /if \(teacherId\) conditions\.push\(eq\(flightPaths\.teacherId, teacherId\)\)/);
     assert.match(storage, /if \(teacherId\) conditions\.push\(eq\(blockLists\.teacherId, teacherId\)\)/);
+    for (const [name, table] of [["getApplicableFlightPathById", "flightPaths"], ["getApplicableBlockListById", "blockLists"]] as const) {
+      const body = storage.slice(storage.indexOf(`export async function ${name}(`), storage.indexOf("return", storage.indexOf(`export async function ${name}(`)));
+      assert.match(body, new RegExp(`eq\\(${table}\\.schoolId, schoolId\\)`), `${name} stays school-scoped`);
+      assert.match(
+        body,
+        new RegExp(`or\\(eq\\(${table}\\.teacherId, actorId\\), libraryPublishedSql\\(${table}\\.visibility, ${table}\\.official\\)\\)`),
+        `${name} resolves only own, shared or official items`
+      );
+    }
+    assert.match(storage, /return sql`\(\$\{visibility\} = 'school' OR \$\{official\}\)`;/);
     assert.match(dispatcher, /code: "FLIGHT_PATH_EMPTY"/);
   });
 

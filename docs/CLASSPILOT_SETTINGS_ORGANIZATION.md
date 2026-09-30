@@ -56,6 +56,38 @@ never falls back to account-wide values. The legacy table and unrelated fields,
 including stored Flight Path identifiers, remain untouched. Nonproduction
 bootstrap's repeated schema convergence does not repeat the data backfill.
 
+## School Library (Flight Paths and Block Lists)
+
+Flight Paths and Block Lists stay private to their owner by default. The School
+Library is off unless `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE=on`, optionally
+narrowed by `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` (empty means every
+school; a malformed list turns it off). With it off for a school, the list and
+detail responses keep exactly their previous shape and the publication endpoints
+answer `409 SHARED_TEACHING_RESOURCES_DISABLED`.
+
+With it on, `GET /api/flight-paths` and `GET /api/block-lists` add `library`
+(shared and official items in the same school that the caller does not own,
+without Classroom provenance or owner ids; the owner's name only while the owner
+is an active member) and `features.sharedTeachingResources`. Website tools shows
+them in the School Library card; the Dashboard selectors list them after the
+teacher's own items with a Shared or Official badge.
+
+- `POST .../:id/visibility {visibility: private|school}`: the owner only. An
+  administrator never publishes a teacher's private item; for an ownerless item
+  (staff offboarding) an administrator may only stop sharing it.
+- `POST .../:id/official {official}`: administrators only, and only on items
+  already shared with the school or owned by the acting administrator (`409`
+  otherwise). Official items are administrator-only for edits and deletes.
+- `POST .../:id/copy`: anyone who can see the item gets a new private copy they
+  own, without the source's Classroom course and resource ids. Office staff and
+  other non-teaching accounts get `403`.
+- Sharing and official changes, and edits or deletes of shared, official or
+  another person's items, are audited in the same transaction as the change; an
+  audit failure rolls the change back. Copies are audited best-effort.
+- Applying an item copies its domains into the classroom state as before; later
+  edits never change an active class. Staff transfers keep publication state and
+  audit the hand-off of a published item.
+
 ## Release and compatibility
 
 The production backend admission was verified at

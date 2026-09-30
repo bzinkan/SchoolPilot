@@ -25,8 +25,10 @@ import {
   getSettingsForSchool,
   getFlightPathsBySchool,
   getFlightPathsByTeacherAndSchool,
+  getLibraryFlightPathsForSchool,
   createFlightPath,
 } from "./storage.js";
+import { isSharedTeachingResourcesEnabled } from "../config/sharedTeachingResources.js";
 import {
   filterPassesForRole,
   getPasspilotClassSourceForSchool,
@@ -259,15 +261,34 @@ const executors: Record<string, ToolExecutor> = {
     const fps = flightPathListScopeForRole(ctx.userRole) === "school"
       ? await getFlightPathsBySchool(ctx.schoolId)
       : await getFlightPathsByTeacherAndSchool(ctx.userId, ctx.schoolId);
-    const summary = fps.map((fp) => ({
+    const summary: Array<Record<string, unknown>> = fps.map((fp) => ({
       id: fp.id,
       name: fp.flightPathName,
       allowedDomains: fp.allowedDomains,
       isDefault: fp.isDefault,
     }));
+    // With the School Library on, a teacher may also use the Flight Paths
+    // colleagues shared and the official ones. Owner identity is not sent to
+    // the model.
+    if (
+      flightPathListScopeForRole(ctx.userRole) === "own"
+      && isSharedTeachingResourcesEnabled(ctx.schoolId)
+    ) {
+      const library = await getLibraryFlightPathsForSchool(ctx.schoolId, ctx.userId);
+      for (const { flightPath } of library) {
+        summary.push({
+          id: flightPath.id,
+          name: flightPath.flightPathName,
+          allowedDomains: flightPath.allowedDomains,
+          isDefault: false,
+          schoolLibrary: true,
+          official: flightPath.official,
+        });
+      }
+    }
     return {
       success: true,
-      data: { count: fps.length, flightPaths: summary },
+      data: { count: summary.length, flightPaths: summary },
     };
   },
 

@@ -602,6 +602,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:classpilot-schedule-changes
 
+      - name: Test ClassPilot Teaching tools School Library
+        working-directory: schoolpilot-app
+        run: npm run test:teaching-tools-library
+
       - name: Smoke production preview routes
         working-directory: schoolpilot-app
         run: npm run test:production-preview

@@ -76,6 +76,7 @@ const DB_SERIAL = new Set([
   "classpilot-admin-classes.test.ts",
   "classpilot-ai-decision-route-privacy.test.ts",
   "classpilot-co-teacher-routes.test.ts",
+  "shared-teaching-resources-routes.test.ts",
   "classpilot-coverage-hydration.test.ts",
   "classpilot-coverage.test.ts",
   "classpilot-entitlement.test.ts",

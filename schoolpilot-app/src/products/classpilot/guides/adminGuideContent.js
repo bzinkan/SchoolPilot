@@ -179,7 +179,7 @@ export const adminGuideTopics = [
       { title: "Set workflow policy", body: "Configure schedule-change policy beside the workflow under Calendar & schedules → Schedule changes. Student Portal configuration stays in its own Settings destination." },
       { title: "Respect data boundaries", body: "Data & maintenance contains activity retention and the existing destructive device/history cleanup. Use the separate Save for retention. Cleanup requires confirmation and is not a roster-editing tool." },
     ],
-    tips: ["Personal Flight Paths and Block Lists are in Teaching tools, shared with teachers and scoped to the signed-in educator.", "Staff notifications contains the central email recipient and daily monitoring interruption digest, each with an explicit Save.", "Section navigation preserves drafts. If settings change elsewhere, compare your draft with the latest saved values before choosing what to save."],
+    tips: ["Personal Flight Paths and Block Lists are in Teaching tools and stay private to their owner unless the owner shares them. When the School Library is available for your school, administrators can mark shared items Official there; teachers can apply or copy an Official item, and only administrators can change it.","Staff notifications contains the central email recipient and daily monitoring interruption digest, each with an explicit Save.", "Section navigation preserves drafts. If settings change elsewhere, compare your draft with the latest saved values before choosing what to save."],
   },
   {
     id: "google-workspace-policies",

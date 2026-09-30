@@ -1335,6 +1335,99 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }
   });
 
+  it("applies another teacher's shared or official Flight Path and Block List only while the School Library is on", async () => {
+    const previousMode = process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+    const previousSchools = process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS;
+    const sharedFlightPath = await inSchool(school.id, () => createFlightPath({
+      schoolId: school.id,
+      teacherId: admin.id,
+      flightPathName: `${TAG}_Shared_Flight_Path`,
+      allowedDomains: ["shared.example.edu"],
+      visibility: "school",
+    }));
+    const officialFlightPath = await inSchool(school.id, () => createFlightPath({
+      schoolId: school.id,
+      teacherId: admin.id,
+      flightPathName: `${TAG}_Official_Flight_Path`,
+      allowedDomains: ["official.example.edu"],
+      official: true,
+    }));
+    const privateFlightPath = await inSchool(school.id, () => createFlightPath({
+      schoolId: school.id,
+      teacherId: admin.id,
+      flightPathName: `${TAG}_Private_Admin_Flight_Path`,
+      allowedDomains: ["private.example.edu"],
+    }));
+    const sharedBlockList = await inSchool(school.id, () => createBlockList({
+      schoolId: school.id,
+      teacherId: admin.id,
+      name: `${TAG}_Shared_Block_List`,
+      blockedDomains: ["games.example.com"],
+      visibility: "school",
+    }));
+    const privateBlockList = await inSchool(school.id, () => createBlockList({
+      schoolId: school.id,
+      teacherId: admin.id,
+      name: `${TAG}_Private_Admin_Block_List`,
+      blockedDomains: ["video.example.com"],
+    }));
+    const apply = (commandType: string, payload: Record<string, string>) => inSchool(school.id, () => normalizeCommandPayload(
+      commandType,
+      payload,
+      school.id,
+      teacher.id
+    ));
+    const notFound = (message: string) => (error: any) => error?.status === 404 && error?.message === message;
+    try {
+      // Off (the default): only the teacher's own items resolve, exactly as before.
+      delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+      delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS;
+      await assert.rejects(() => apply("apply-flight-path", { flightPathId: sharedFlightPath.id }), notFound("Flight Path not found"));
+      await assert.rejects(() => apply("apply-block-list", { blockListId: sharedBlockList.id }), notFound("Block List not found"));
+
+      // On for a different school only: still off here.
+      process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = "on";
+      process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS = `${school.id}-other`;
+      await assert.rejects(() => apply("apply-flight-path", { flightPathId: sharedFlightPath.id }), notFound("Flight Path not found"));
+
+      process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS = school.id;
+      const appliedShared = await apply("apply-flight-path", { flightPathId: sharedFlightPath.id });
+      assert.deepEqual(appliedShared, {
+        extensionType: "apply-flight-path",
+        payload: {
+          flightPathId: sharedFlightPath.id,
+          flightPathName: `${TAG}_Shared_Flight_Path`,
+          allowedDomains: ["shared.example.edu"],
+        },
+      });
+      const appliedOfficial = await apply("apply-flight-path", { flightPathId: officialFlightPath.id });
+      assert.equal(appliedOfficial.payload.flightPathId, officialFlightPath.id);
+      const appliedBlockList = await apply("apply-block-list", { blockListId: sharedBlockList.id });
+      assert.deepEqual(appliedBlockList, {
+        extensionType: "apply-block-list",
+        payload: {
+          blockListId: sharedBlockList.id,
+          blockListName: `${TAG}_Shared_Block_List`,
+          blockedDomains: ["games.example.com"],
+        },
+      });
+      // Another teacher's private items stay unreachable with the library on.
+      await assert.rejects(() => apply("apply-flight-path", { flightPathId: privateFlightPath.id }), notFound("Flight Path not found"));
+      await assert.rejects(() => apply("apply-block-list", { blockListId: privateBlockList.id }), notFound("Block List not found"));
+    } finally {
+      if (previousMode === undefined) delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE;
+      else process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = previousMode;
+      if (previousSchools === undefined) delete process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS;
+      else process.env.CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS = previousSchools;
+      for (const flightPath of [sharedFlightPath, officialFlightPath, privateFlightPath]) {
+        await inSchool(school.id, () => deleteFlightPath(flightPath.id, school.id));
+      }
+      for (const blockList of [sharedBlockList, privateBlockList]) {
+        await inSchool(school.id, () => deleteBlockList(blockList.id, school.id));
+      }
+    }
+  });
+
   it("rejects applying an empty draft Flight Path with a stable resource error", async () => {
     const emptyFlightPath = await inSchool(school.id, () => createFlightPath({
       schoolId: school.id,
