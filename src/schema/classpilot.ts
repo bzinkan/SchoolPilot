@@ -1947,6 +1947,7 @@ export const flightPaths = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedBy: text("published_by"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`date_trunc('milliseconds', clock_timestamp())`),
   },
   (table) => [
     check(

@@ -251,6 +251,7 @@ export type LibraryFlightPathView = {
   official: boolean;
   publishedAt: Date | null;
   createdAt: Date;
+  updatedAt: Date;
   ownerName: string | null;
 } & TeachingResourcePermissions;
 
@@ -291,6 +292,7 @@ export function libraryFlightPathView(
     official: row.official === true,
     publishedAt: row.publishedAt ?? null,
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
     ownerName,
     ...teachingResourcePermissions(row, viewer),
   };

@@ -6,6 +6,7 @@ import {
   FLIGHT_PATH_RESOURCES_EXPAND_SQL,
   flightPathResourcesMigration,
 } from "../src/db/flightPathResourcesMigration.js";
+import { flightPathContentRevisionMigration } from "../src/db/flightPathContentRevisionMigration.js";
 import {
   STAFF_IDENTITY_CONTRACT_MIGRATION_IDS,
   schoolPilot27ExpandMigrations,
@@ -15,12 +16,13 @@ import {
 const source = (path: string) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("Flight Path precise resources schema rollout", () => {
-  it("ships as the last expand migration before the deferred staff identity contract", () => {
+  it("ships before the content revision expand and deferred staff identity contract", () => {
     const ids = schoolPilot27Migrations.map((migration) => migration.id);
     const index = ids.indexOf(flightPathResourcesMigration.id);
     const contractIndex = ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]);
     assert.ok(index >= 0);
-    assert.equal(index, contractIndex - 1);
+    assert.equal(ids[index + 1], flightPathContentRevisionMigration.id);
+    assert.equal(index, contractIndex - 2);
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === flightPathResourcesMigration.id));
     assert.equal(new Set(ids).size, ids.length, "migration ids stay unique");
     assert.equal(flightPathResourcesMigration.id, "20260929_flight_path_resources_expand");

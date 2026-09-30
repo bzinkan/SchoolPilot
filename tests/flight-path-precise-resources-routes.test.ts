@@ -29,7 +29,7 @@ delete process.env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON;
 
 const LEGACY_FLIGHT_PATH_KEYS = [
   "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt",
+  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
 ];
 
 const VIDEO = {
