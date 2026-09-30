@@ -70,8 +70,8 @@ function Get-ServingState([string]$Role) {
 function Invoke-GitText {
     param([string[]]$Arguments, [string]$RepositoryRoot)
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotAppointmentsMode.ts') {
-        if ($script:Mock.CompatibleAppointmentWriter) { return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;' }
-        return '// pre-appointment release'
+        if ($script:Mock.CompatibleAppointmentWriter) { return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;' }
+        return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;'
     }
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/rlsRegistry.json') { return $script:AppointmentRegistry }
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/classpilotUsageModes.ts') {
@@ -387,8 +387,8 @@ try {
     $appointmentConfig = New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }
     $appointmentPlan = New-TestProductPlan $appointmentConfig
     $script:Mock.CompatibleAppointmentWriter = $false
-    Assert-ThrowsMatch { New-TestProductPlan $appointmentConfig } 'atomic writer contract version 1' 'Admitted tables cannot enable a pre-atomic serving image.'
-    Assert-ThrowsMatch { Invoke-ProductApply $appointmentPlan.plan $appointmentPlan.sha256 $script:TestDirectory } 'atomic writer contract version 1' 'Apply must recheck atomic compatibility before any mutation.'
+    Assert-ThrowsMatch { New-TestProductPlan $appointmentConfig } 'atomic writer contract version 2' 'Admitted tables cannot enable a pre-eligibility-lock serving image.'
+    Assert-ThrowsMatch { Invoke-ProductApply $appointmentPlan.plan $appointmentPlan.sha256 $script:TestDirectory } 'atomic writer contract version 2' 'Apply must recheck atomic compatibility before any mutation.'
     Assert-NoMutation 'Incompatible appointment image must fail before registration or service mutation.'
     Set-BothEnvironment 'PASSPILOT_APPOINTMENTS_MODE' 'on'
     Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'off' }))) 'Emergency appointment turn-off must remain possible on an older image.'

@@ -29044,6 +29044,16 @@ export async function getAttendanceRecordById(
   return row;
 }
 
+/** Serialize attendance facts with appointment activation and GoPilot movement. */
+async function lockAttendanceStudentRows(tx: PasspilotClassTransaction, schoolId: string, studentIds: string[]) {
+  const ids = [...new Set(studentIds)].sort();
+  if (!ids.length) return;
+  const found = await tx.select({ id: students.id }).from(students)
+    .where(and(eq(students.schoolId, schoolId), inArray(students.id, ids)))
+    .orderBy(students.id).for("update");
+  if (found.length !== ids.length) throw passpilotClassError("STUDENT_NOT_FOUND", "Student not found.", 404);
+}
+
 /** Mark a student absent (upsert — updates if already marked for that date) */
 export async function markStudentAbsent(data: {
   schoolId: string;
@@ -29055,31 +29065,34 @@ export async function markStudentAbsent(data: {
   markedBy: string;
   source?: string;
 }) {
-  const [row] = await db
-    .insert(studentAttendance)
-    .values({
-      schoolId: data.schoolId,
-      studentId: data.studentId,
-      date: data.date,
-      status: data.status,
-      reason: data.reason || null,
-      notes: data.notes || null,
-      markedBy: data.markedBy,
-      source: data.source || "manual",
-    })
-    .onConflictDoUpdate({
-      target: [studentAttendance.studentId, studentAttendance.date],
-      set: {
-        status: sql`EXCLUDED.status`,
-        reason: sql`EXCLUDED.reason`,
-        notes: sql`EXCLUDED.notes`,
-        markedBy: sql`EXCLUDED.marked_by`,
-        source: sql`EXCLUDED.source`,
-        updatedAt: sql`now()`,
-      },
-    })
-    .returning();
-  return row;
+  return db.transaction(async (tx) => {
+    await lockAttendanceStudentRows(tx, data.schoolId, [data.studentId]);
+    const [row] = await tx
+      .insert(studentAttendance)
+      .values({
+        schoolId: data.schoolId,
+        studentId: data.studentId,
+        date: data.date,
+        status: data.status,
+        reason: data.reason || null,
+        notes: data.notes || null,
+        markedBy: data.markedBy,
+        source: data.source || "manual",
+      })
+      .onConflictDoUpdate({
+        target: [studentAttendance.studentId, studentAttendance.date],
+        set: {
+          status: sql`EXCLUDED.status`,
+          reason: sql`EXCLUDED.reason`,
+          notes: sql`EXCLUDED.notes`,
+          markedBy: sql`EXCLUDED.marked_by`,
+          source: sql`EXCLUDED.source`,
+          updatedAt: sql`now()`,
+        },
+      })
+      .returning();
+    return row;
+  });
 }
 
 /** Bulk mark students absent for a given date (atomic transaction) */
@@ -29096,6 +29109,7 @@ export async function markStudentsAbsentBulk(
   }
 ) {
   return await db.transaction(async (tx) => {
+    await lockAttendanceStudentRows(tx, schoolId, studentIds);
     const results: StudentAttendance[] = [];
     for (const studentId of studentIds) {
       const [row] = await tx
@@ -29130,10 +29144,16 @@ export async function markStudentsAbsentBulk(
 
 /** Remove an absence record (student showed up) */
 export async function removeAbsence(id: string, schoolId: string): Promise<boolean> {
-  const result = await db
-    .delete(studentAttendance)
-    .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)));
-  return (result.rowCount ?? 0) > 0;
+  return db.transaction(async (tx) => {
+    const [record] = await tx.select({ studentId: studentAttendance.studentId }).from(studentAttendance)
+      .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId))).limit(1);
+    if (!record) return false;
+    await lockAttendanceStudentRows(tx, schoolId, [record.studentId]);
+    const result = await tx
+      .delete(studentAttendance)
+      .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)));
+    return (result.rowCount ?? 0) > 0;
+  });
 }
 
 /** Attendance stats for a school over a date range */

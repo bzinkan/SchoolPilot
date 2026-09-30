@@ -4,7 +4,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createAppointmentSchema, editAppointmentSchema, activateAppointmentSchema,
   validateAppointmentWindow, appointmentSchoolYearCutoff } from "../src/services/passpilotAppointmentsValidation.js";
-import { parsePasspilotAppointmentsMode, readPasspilotAppointmentsMode, PASSPILOT_APPOINTMENTS_RLS_TABLES } from "../src/config/passpilotAppointmentsMode.js";
+import { parsePasspilotAppointmentsMode, readPasspilotAppointmentsMode, PASSPILOT_APPOINTMENTS_RLS_TABLES, PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION } from "../src/config/passpilotAppointmentsMode.js";
 import { PASSPILOT_APPOINTMENTS_SQL, passpilotAppointmentsMigration } from "../src/db/passpilotAppointmentsMigration.js";
 import { schoolPilot27ExpandMigrations } from "../src/db/migrations27.js";
 
@@ -44,6 +44,7 @@ describe("appointment time and validation contract", () => {
 });
 describe("appointment rollout contract", () => {
   it("fails closed unless the exact mode, GUC and table admission agree", () => {
+    assert.equal(PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION, 2, "Activation requires the corrected eligibility writers");
     assert.equal(parsePasspilotAppointmentsMode({}), "off");
     assert.throws(() => parsePasspilotAppointmentsMode({ PASSPILOT_APPOINTMENTS_MODE: "true" }), { code: "PASSPILOT_APPOINTMENTS_CONFIGURATION" });
     for (const env of [{}, { PASSPILOT_APPOINTMENTS_MODE: "on" }, { PASSPILOT_APPOINTMENTS_MODE: "on", RLS_GUC_ENABLED: "true", RLS_ENABLED_TABLES: "passes" }]) {

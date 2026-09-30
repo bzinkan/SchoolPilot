@@ -272,13 +272,13 @@ function Assert-ProductPreconditions {
     if ($Desired['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on') {
         # Both stable services are bound to AppSha/digest. The singleton table
         # alone cannot make a pre-atomic issuer or older admission image safe.
-        $compatibilityError = 'PASSPILOT_APPOINTMENTS_MODE=on requires RLS_GUC_ENABLED=true and an RLS_ENABLED_TABLES allowlist with the complete preserved 128-table admission, plus atomic writer contract version 1 on both API and worker.'
+        $compatibilityError = 'PASSPILOT_APPOINTMENTS_MODE=on requires RLS_GUC_ENABLED=true and an RLS_ENABLED_TABLES allowlist with the complete preserved 128-table admission, plus atomic writer contract version 2 on both API and worker.'
         try {
             $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotAppointmentsMode.ts") -RepositoryRoot $RepositoryRoot
             $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
             $inventory = $registry.inventories.passpilotAppointmentsPostExpand
         } catch { throw $compatibilityError }
-        if ($source -cnotmatch 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;' -or
+        if ($source -cnotmatch 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;' -or
             $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
             @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or 'passpilot_appointments' -cnotin @($inventory.tables)) { throw $compatibilityError }
         foreach ($environment in $Snapshot.Environments) {

@@ -2,7 +2,7 @@ import { parseRlsEnabledTables } from "../db/rlsPolicies.js";
 import registry from "./rlsRegistry.json" with { type: "json" };
 
 export const PASSPILOT_APPOINTMENTS_MODE_KEY = "PASSPILOT_APPOINTMENTS_MODE";
-export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;
+export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;
 export const PASSPILOT_APPOINTMENTS_RLS_TABLES = Object.freeze([...registry.inventories.passpilotAppointmentsPostExpand.tables]);
 export type PasspilotAppointmentsMode = "off" | "on";
 type Environment = Readonly<Record<string, string | undefined>>;
