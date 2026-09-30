@@ -137,3 +137,19 @@ capacity results or production changes. Full plans and execution/resource
 metadata remain in the external run14 evidence directory; the committed
 result includes the actual accepted attribution plan and all measured API
 families. Dense AI/exclusion, fleet/device and operational gates remain open.
+
+A fresh repeat at `6401cf2256033e0e28a3c8759fc2815686bd9d75` stopped during
+second-school fixture preparation with SQLSTATE `57014`, before any measured
+phase. Its immutable record is
+`scripts/load/usage/evidence-school-day-preparation-failure-20260930.json`.
+It has no worker/query/correctness acceptance measurements; the earlier
+collector does not identify which preparation statement timed out. This is a
+preparation failure, not evidence for or against measured workload headroom.
+The runner cleaned its exact generated container and storage. Subsequent
+preparation labels record the stage and bound the large privileged raw seed to
+50 school-global student ordinals (100,000 observations) per statement. The
+independent window test covers all 500 ordinals once, including partial batches.
+The eventual observation set, timestamps, domain/categories, valid device
+bindings and measured application queries/concurrency remain unchanged; no
+deadline or cap is extended. ANALYZE and complete cardinality/binding checks
+still precede timing. The original preparation failure is never overwritten.

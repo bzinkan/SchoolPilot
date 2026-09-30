@@ -8,6 +8,13 @@ export const SCHOOL_DAY_PROFILE = Object.freeze({
   sourceCadence: 'ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000',
 });
 
+// Bound privileged fixture preparation without changing the observation set or
+// any measured application statement. Ordinals remain school-global.
+export function schoolDaySeedStudentWindows(students = SCHOOL_DAY_PROFILE.students, batchStudents = 50) {
+  if (!Number.isSafeInteger(students) || students < 1 || !Number.isSafeInteger(batchStudents) || batchStudents < 1) throw new RangeError('Positive whole student counts are required.');
+  return Array.from({ length: Math.ceil(students / batchStudents) }, (_, batch) => ({ from: batch * batchStudents + 1, to: Math.min(students, (batch + 1) * batchStudents) }));
+}
+
 export function schoolDayStudentIndices(scope) {
   const indices = Array.from({ length: 500 }, (_, index) => index);
   return indices.filter(index => scope === 'school' || (scope === 'grade' ? index % 5 === 0 : scope === 'student' ? index === 0 : true));

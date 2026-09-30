@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SCHOOL_DAY_PROFILE, schoolDaySessionRoster, schoolDayObservation, schoolDayOracle, schoolDayRangeDomains } from './school-day-profile.mjs';
+import { SCHOOL_DAY_PROFILE, schoolDaySessionRoster, schoolDayObservation, schoolDayOracle, schoolDayRangeDomains, schoolDaySeedStudentWindows } from './school-day-profile.mjs';
+
+test('bounded fixture seed covers every global student ordinal once, including partial final batches', () => {
+  for (const students of [1, 51, 500]) {
+    const batches = schoolDaySeedStudentWindows(students);
+    assert.ok(batches.every(batch => batch.to - batch.from + 1 <= 50));
+    assert.deepEqual(batches.flatMap(batch => Array.from({length:batch.to-batch.from+1},(_,index)=>batch.from+index)), Array.from({length:students},(_,index)=>index+1));
+  }
+  assert.equal(schoolDaySeedStudentWindows().length, 10);
+  for (const invalid of [0,-1,1.5,NaN]) assert.throws(()=>schoolDaySeedStudentWindows(invalid),RangeError);
+});
 
 test('school day matches ten-second cadence and one million unique observations without duplicates', () => {
   assert.equal(SCHOOL_DAY_PROFILE.students * SCHOOL_DAY_PROFILE.observationsPerStudent, 1_000_000);

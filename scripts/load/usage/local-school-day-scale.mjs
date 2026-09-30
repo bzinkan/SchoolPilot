@@ -9,7 +9,7 @@ import pg from 'pg';
 import { summarize } from './local-usage-benchmark.mjs';
 
 import { assertLocalScaleFixture, currentObservationCutoff, usageAttributionDiagnosticSql, apiStatementKind, currentObservationSeconds, measureCall } from './local-usage-scale.mjs';
-import { SCHOOL_DAY_PROFILE, schoolDayOracle, schoolDayRangeDomains, schoolDaySessionRoster } from './school-day-profile.mjs';
+import { SCHOOL_DAY_PROFILE, schoolDayOracle, schoolDayRangeDomains, schoolDaySessionRoster, schoolDaySeedStudentWindows } from './school-day-profile.mjs';
 const wall = value => value.toISOString().replace('T',' ').replace('Z','');
 const sleep = ms => new Promise(done => setTimeout(done,ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -111,6 +111,7 @@ export async function runSchoolDayScale() {
     };
     const seedStarted = performance.now();
     for (const school of schools) {
+      metrics.preparationStage = { schoolIndex: school.index, kind: 'identity-and-current-bindings' };
       await admin.query("INSERT INTO schools(id,name,domain,status,is_active,plan_status,school_timezone) VALUES($1,$2,'example.test','active',true,'active',$3)", [school.id, `Synthetic Scale ${school.index}`, zone]);
       await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [school.id]);
       await admin.query("INSERT INTO settings(school_id,school_name,ws_shared_key,retention_hours,enable_tracking_hours,grade_levels) VALUES($1,'Synthetic Scale','synthetic','8760',false,'{6,7,8,9,10}')", [school.id]);
@@ -127,6 +128,7 @@ export async function runSchoolDayScale() {
       assert.equal((await get(school, 'school')).status, 200);
       await ingestOne(school, 0);
       console.log(JSON.stringify({ event: 'local_school_day_scale_auth_preflight', schoolIndex: school.index }));
+      metrics.preparationStage = { schoolIndex: school.index, kind: 'frozen-sessions' };
       // Six 50-minute lessons with 10-minute passing gaps. Each five-student
       // cohort rotates to the next official class each period. All historical
       // and current scope inventories stay present during the actual workload.
@@ -144,6 +146,7 @@ export async function runSchoolDayScale() {
       }
       // Finished history is a reader-cardinality fixture, not a claim of
       // replaying a full year of raw heartbeats through the writer.
+      metrics.preparationStage = { schoolIndex: school.index, kind: 'historical-aggregates' };
       for (let offset = 0; offset < historyDates.length; offset += 30) {
         await admin.query(`INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,domain,classification,seconds,heartbeat_count)
           SELECT $1,date::date,student.id,($4::text[])[((ordinality-1)/5)::int+1],'history-'||((ordinality-1)%200)||'.example.test',category,30,1
@@ -152,14 +155,19 @@ export async function runSchoolDayScale() {
       const coverageDates = [...historyDates, emptyDate];
       await admin.query(`INSERT INTO classpilot_usage_rollup_days(school_id,usage_date,day_start_at,day_end_at,processed_through,is_final)
         SELECT $1,date::date,date::date::timestamp AT TIME ZONE $3,(date::date+1)::timestamp AT TIME ZONE $3,(date::date+1)::timestamp AT TIME ZONE $3,true FROM unnest($2::text[]) date`, [school.id, coverageDates, zone]);
-      await admin.query(`INSERT INTO heartbeats(id,device_id,student_id,school_id,active_tab_title,active_tab_url,ai_category,teacher_intent_source,timestamp)
+      for (const batch of schoolDaySeedStudentWindows()) {
+        metrics.preparationStage = { schoolIndex: school.index, kind: 'heavy-heartbeats', studentFrom: batch.from, studentTo: batch.to };
+        await admin.query(`INSERT INTO heartbeats(id,device_id,student_id,school_id,active_tab_title,active_tab_url,ai_category,teacher_intent_source,timestamp)
         SELECT 'school-day-'||$4||'-'||lpad(student.ordinality::text,4,'0')||'-'||lpad(sample.n::text,4,'0'),
           ($5::text[])[student.ordinality::int],student.id,$2,'synthetic','https://lesson-'||(((student.ordinality-1)%25)*8+(sample.n/20)%8)||'.example.test/',
           CASE WHEN sample.n%4=0 THEN 'educational' WHEN sample.n%4=2 THEN NULL ELSE 'non-educational' END,CASE WHEN sample.n%4=3 THEN 'flight_path' ELSE NULL END,
           $3::timestamp+interval '8 hours'+sample.n*interval '10 seconds'
-        FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,1999) sample(n)`, [school.students, school.id, wall(day.dayStartUtc), school.index, school.devices]);
+        FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,1999) sample(n)
+        WHERE student.ordinality BETWEEN $6::int AND $7::int`, [school.students, school.id, wall(day.dayStartUtc), school.index, school.devices, batch.from, batch.to]);
+      }
       console.log(JSON.stringify({ event: 'local_school_day_scale_school_seeded', schoolIndex: school.index }));
     }
+    metrics.preparationStage = { kind: 'analyze-and-cardinality-validation' };
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
     metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
     assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_001 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
@@ -178,6 +186,7 @@ export async function runSchoolDayScale() {
       assert.deepEqual(bindings,{pairs:500,devices:500,invalid:0});
       metrics.heavyDeviceBindings.push({schoolIndex:school.index,...bindings});
     }
+    metrics.preparationStage = { kind: 'complete' };
     if (process.env.USAGE_SCALE_PREPARE_ONLY === '1') {
       metrics.fixturePreparationOnly = true; save();
       console.log(JSON.stringify({ event: 'local_school_day_scale_prepared', sourceRevision: metrics.sourceRevision, capacityMeasured: false }));
