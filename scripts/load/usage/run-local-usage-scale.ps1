@@ -3,6 +3,7 @@
 param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
   [Parameter(Mandatory=$true)][string]$OutputDirectory,
+  [ValidateSet('stress','school-day')][string]$Profile = 'stress',
   [switch]$PrepareOnly,
   [switch]$HoldFixtureForDiagnostics
 )
@@ -73,11 +74,12 @@ try {
   # Preserve them as evidence without aborting a successful running process.
   $strictPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   try {
-    node --max-old-space-size=512 --import ./tests/test-environment.mjs scripts/load/usage/local-usage-scale.mjs *> (Join-Path $output 'scale.log')
+    $harness = if ($Profile -eq 'school-day') { 'scripts/load/usage/local-school-day-scale.mjs' } else { 'scripts/load/usage/local-usage-scale.mjs' }
+    node --max-old-space-size=512 --import ./tests/test-environment.mjs $harness *> (Join-Path $output 'scale.log')
     $exitCode = $LASTEXITCODE
   } finally { $ErrorActionPreference = $strictPreference }
-  Get-Content -LiteralPath (Join-Path $output 'scale.log') | Where-Object { $_ -match '"event":"local_usage_scale_' }
-  [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
+  Get-Content -LiteralPath (Join-Path $output 'scale.log') | Where-Object { $_ -match '"event":"local_(?:usage|school_day)_scale_' }
+  [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; workloadProfile=$Profile; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
   if ($HoldFixtureForDiagnostics) {
     # This optional local-only hold permits read-only EXPLAIN work on the same
     # costly synthetic fixture. No credentials are persisted. Signal completion
