@@ -121,7 +121,8 @@ identities contain no student names, email addresses or device IDs.
 
 The implementation must issue short-lived, room-scoped credentials after current
 authority checks. Teacher grants allow only `screen_share` publication; student
-grants allow subscription and prohibit media/data publication. Client grants have
+grants allow subscription and prohibit media publication. Both teacher and student
+credentials explicitly set `canPublishData: false`. Client grants have
 no room-admin, recording, ingress or metadata-update authority. Browser capture
 requires a deliberate user action; camera/microphone/screen audio stay disabled.
 [LiveKit grants](https://docs.livekit.io/frontends/reference/tokens-grants/)
