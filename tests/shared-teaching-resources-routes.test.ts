@@ -26,7 +26,7 @@ process.env.NODE_ENV = "test";
 
 const LEGACY_FLIGHT_PATH_KEYS = [
   "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt",
+  "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
 ];
 const LEGACY_BLOCK_LIST_KEYS = ["id", "schoolId", "teacherId", "name", "description", "blockedDomains", "isDefault", "createdAt"];
 const PROVENANCE_KEYS = ["sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "teacherId", "publishedBy", "schoolId"];
