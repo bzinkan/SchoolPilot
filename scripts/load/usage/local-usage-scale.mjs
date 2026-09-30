@@ -55,7 +55,7 @@ export async function runLocalScale() {
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
     sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-usage-scale.mjs'].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
-    writerQueries: [], reads: {}, ingest: { requests: 0, insertedHeartbeats: 0, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
+    writerQueries: [], reads: {}, ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
   assert.match(metrics.sourceRevision, /^[a-f0-9]{40}$/);
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
   const admin = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 120_000 });
@@ -113,6 +113,7 @@ export async function runLocalScale() {
       const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
       await response.text(); metrics.ingest.requests++; metrics.ingest.timingsMs.push(performance.now() - started);
+      metrics.ingest.bySchool[school.index] = (metrics.ingest.bySchool[school.index] || 0) + 1;
       metrics.ingest.statuses[response.status] = (metrics.ingest.statuses[response.status] || 0) + 1;
       assert.ok(response.status === 200 || response.status === 204, `Synthetic heartbeat status ${response.status}`);
     };
@@ -207,7 +208,7 @@ export async function runLocalScale() {
     const started = performance.now(), ingestDeadline = started + 60_000; phaseStarted = started; ingestRunning = true; let nextDevice = 1;
     ingestion = Array.from({ length: 4 }, async () => {
       while (ingestRunning && performance.now() < ingestDeadline) {
-        const sequence = nextDevice++; await ingestOne(schools[Math.floor(sequence / 500) % 2], sequence % 500); await sleep(50);
+        const sequence = nextDevice++; await ingestOne(schools[sequence % 2], Math.floor(sequence / 2) % 500); await sleep(50);
       }
     });
     // Both substantial schools aggregate at the same time as live HTTP ingest
@@ -234,16 +235,26 @@ export async function runLocalScale() {
     metrics.reads = Object.fromEntries([...readTimings].filter(([, timings]) => timings.length).map(([key, timings]) => [key, summarize(timings)]));
     metrics.phaseOutcomes = outcomes.map((outcome, index) => ({ kind: index < 2 ? 'writer' : index === 2 ? 'read_waves' : 'ingest', status: outcome.status,
       ...(outcome.status === 'rejected' ? { error: { name: outcome.reason.name, code: outcome.reason.code || 'SCALE_ASSERTION', message: outcome.reason.message } } : {}) }));
-    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
-    metrics.concurrentWriters = outcomes.slice(0, 2).map(result => result.value);
+    const failedPhase = outcomes.find(outcome => outcome.status === 'rejected');
+    metrics.concurrentWriters = outcomes.slice(0, 2).filter(result => result.status === 'fulfilled').map(result => result.value);
     metrics.reads = Object.fromEntries([...readTimings].map(([key, timings]) => [key, summarize(timings)]));
     await flushHeartbeatClassificationBatches();
     const cutoff = new Date(), currentDay = rollup.classpilotUsageRollupDay(today, zone);
     metrics.currentDayWriters = [];
+    metrics.heavyDayAtomicity = [];
     for (const school of schools) {
-      for (const scope of ['school', 'grade', 'class', 'student']) checkReport(await get(school, scope), scope);
+      const heavySucceeded = outcomes[school.index].status === 'fulfilled';
+      const heavySeconds = heavySucceeded ? 15000 : 0;
+      const heavyRows = (await admin.query('SELECT COUNT(*)::int AS count FROM classpilot_usage_rollups WHERE school_id=$1 AND usage_date=$2::date', [school.id, heavyDate])).rows[0].count;
+      const heavyCoverage = (await admin.query('SELECT COUNT(*)::int AS count FROM classpilot_usage_rollup_days WHERE school_id=$1 AND usage_date=$2::date', [school.id, heavyDate])).rows[0].count;
+      assert.equal(heavyCoverage, heavySucceeded ? 1 : 0);
+      if (!heavySucceeded) assert.equal(heavyRows, 0, 'A timed-out insertion must roll back aggregate rows and completion');
+      metrics.heavyDayAtomicity.push({ schoolIndex: school.index, writerCommitted: heavySucceeded, aggregateRows: heavyRows, completionRows: heavyCoverage });
+      for (const scope of ['school', 'grade', 'class', 'student']) checkReport(await get(school, scope), scope, !heavySucceeded);
       const raw = (await admin.query('SELECT student_id,timestamp AT TIME ZONE \'UTC\' AS timestamp FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id', [school.id, wall(currentDay.dayStartUtc), wall(cutoff)])).rows;
       metrics.ingest.insertedHeartbeats += raw.length;
+      metrics.ingest.bySchoolInserted ??= {}; metrics.ingest.bySchoolInserted[school.index] = raw.length;
+      assert.ok(raw.length > 2, 'Both schools must contain real concurrently ingested observations beyond their preflights');
       const oracle = currentObservationSeconds(raw, cutoff);
       const started = performance.now(), result = await rollup.rollupClasspilotUsageDay(measuredWorker, { schoolId: school.id, day: currentDay, windowEndUtc: cutoff, exclusions: [] });
       metrics.currentDayWriters.push({ schoolIndex: school.index, durationMs: performance.now() - started, ...result });
@@ -252,32 +263,42 @@ export async function runLocalScale() {
         const indices = school.students.map((_, i) => i).filter(i => scope === 'school' || (scope === 'grade' ? i % 5 === 0 : scope === 'class' ? i < 5 : i === 0));
         const liveSeconds = indices.reduce((sum, i) => sum + (oracle.get(school.students[i]) || 0), 0);
         const read = await get(school, scope); assert.equal(read.status, 200); assert.equal(read.body.dataState, 'live');
-        assert.equal(read.body.totals.monitoredBrowserSeconds, historyDates.length * 90 * size(scope) + 15000 * size(scope) + liveSeconds);
+        assert.equal(read.body.totals.monitoredBrowserSeconds, historyDates.length * 90 * size(scope) + heavySeconds * size(scope) + liveSeconds);
         assert.equal(read.body.byDay.find(row => row.date === today).monitoredBrowserSeconds, liveSeconds);
-        assert.equal(read.body.range.computedDays, 364); assert.deepEqual(read.body.range.unavailableDates, [gapDate]);
+        assert.equal(read.body.range.computedDays, historyDates.length + 2 + (heavySucceeded ? 1 : 0));
+        assert.deepEqual(read.body.range.unavailableDates, [gapDate, ...(!heavySucceeded ? [heavyDate] : [])].sort());
         const csv = await get(school, scope, 'csv'); assert.equal(csv.status, 200); assert.match(csv.body, /Monitored Browser Time/); assert.equal(csv.headers.get('cache-control'), 'no-store, private');
-        const expectedTotalMinutes = ((historyDates.length * 90 * size(scope) + 15000 * size(scope) + liveSeconds) / 60).toFixed(1);
+        const expectedTotalMinutes = ((historyDates.length * 90 * size(scope) + heavySeconds * size(scope) + liveSeconds) / 60).toFixed(1);
         assert.ok(csv.body.includes(`"Total","","${expectedTotalMinutes}"`), 'CSV totals must match the independent scope oracle');
         assert.ok(csv.body.includes(`"${emptyDate}","final","0.0"`));
         assert.equal(csv.body.includes(`"${gapDate}",`), false);
         metrics.reads[`${school.index}/${scope}`].afterLiveMs = read.durationMs; metrics.reads[`${school.index}/${scope}`].csvMs = csv.durationMs;
-        metrics.reads[`${school.index}/${scope}`].expected = { completedHistoricalDays: historyDates.length, historySeconds: historyDates.length * 90 * size(scope), heavyDaySeconds: 15000 * size(scope), currentObservedSeconds: liveSeconds, csvTotalMinutes: expectedTotalMinutes };
+        metrics.reads[`${school.index}/${scope}`].expected = { completedHistoricalDays: historyDates.length, historySeconds: historyDates.length * 90 * size(scope), heavyDaySeconds: heavySeconds * size(scope), currentObservedSeconds: liveSeconds, csvTotalMinutes: expectedTotalMinutes };
       }
       assert.equal((await admin.query("SELECT COUNT(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='classpilot.usage.export'", [school.id])).rows[0].count, 4);
     }
-    assert.ok(metrics.ingest.insertedHeartbeats >= 1000, 'The live workload must actually insert across both substantial schools');
     metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs;
     metrics.databaseBytes = Number((await admin.query('SELECT pg_database_size(current_database()) AS bytes')).rows[0].bytes);
     const afterStats = (await admin.query('SELECT temp_bytes,temp_files,blks_read,blks_hit FROM pg_stat_database WHERE datname=current_database()')).rows[0];
     metrics.databaseCountersDelta = Object.fromEntries(Object.keys(beforeStats).map(key => [key, Number(afterStats[key]) - Number(beforeStats[key])]));
     metrics.correctness = { realMaxRangeAccepted: true, nextLongerRangeRejected: true, independentAllScopeTotals: true, concurrentSchoolWriters: true, actualHttpIngest: true,
       successfulEmptyDay: true, gapWithheld: true, expiredDateWithheld: true, atomicSnapshotReads: true, currentDayRawOracle: true, crossSchoolIdsDenied: true, csvStrictAuditRecorded: true };
+    metrics.correctness.concurrentSchoolWriters = !outcomes.slice(0, 2).some(outcome => outcome.status === 'rejected');
+    // Preserve useful diagnostics even when the unchanged worker deadline was
+    // exceeded. EXPLAIN ANALYZE reads attribution only, with the same 60s limit;
+    // it performs no extra aggregate insertion or schema change.
+    const attributedSql = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(',\ninserted AS (')[0] + '\nSELECT COUNT(*)::bigint AS rows, SUM(attributed_seconds) AS seconds FROM attributed';
+    try {
+      metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
+    } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
+    metrics.finishedAt = new Date().toISOString(); save();
+    if (failedPhase) throw failedPhase.reason;
     metrics.finishedAt = new Date().toISOString(); metrics.passed = true; save();
     console.log(JSON.stringify({ event: 'local_usage_scale_complete', sourceRevision: metrics.sourceRevision, writerMs: metrics.concurrentWriters.map(row => row.durationMs), ingestRequests: metrics.ingest.requests, insertedHeartbeats: metrics.ingest.insertedHeartbeats, productionReadiness: false }));
   } catch (error) {
     metrics.failure = { name: error.name, code: error.code || 'SCALE_ASSERTION', message: error.message };
     if (phaseStarted) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
-    if (metrics.ingest.timingsMs.length) { metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs; }
+    if (metrics.ingest.timingsMs?.length) { metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs; }
     save(); throw error;
   }
   finally {

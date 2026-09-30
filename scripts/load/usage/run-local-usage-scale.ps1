@@ -1,3 +1,5 @@
+#requires -Version 7.5
+[CmdletBinding()]
 param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
   [Parameter(Mandatory=$true)][string]$OutputDirectory
@@ -31,7 +33,7 @@ try {
   docker run --detach --name $container --label "codex.usage-scale=$run" --cpus 4 --memory 4g --memory-swap 4g --publish '127.0.0.1:5437:5432' --env "POSTGRES_DB=$database" --env "POSTGRES_USER=$fixtureRole" --env "POSTGRES_PASSWORD=$fixturePassword" $image *> (Join-Path $output 'container-create.log')
   $createStatus = $LASTEXITCODE
   $creationIdentity = docker inspect $container --format '{{json .Config.Labels}}' 2>$null
-  if ($LASTEXITCODE -eq 0 -and ($creationIdentity | ConvertFrom-Json).'codex.usage-scale' -ceq $run) { $created = $true }
+  if ($LASTEXITCODE -eq 0 -and ($creationIdentity | ConvertFrom-Json -DateKind String).'codex.usage-scale' -ceq $run) { $created = $true }
   if ($createStatus -ne 0 -or -not $created) { throw 'Dedicated local capped container creation failed.' }
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -40,9 +42,9 @@ try {
     Start-Sleep -Milliseconds 500
   }
   if (-not $ready) { throw 'Dedicated local database did not become ready.' }
-  $identity = docker inspect $container --format '{{json .Config.Labels}}' | ConvertFrom-Json
+  $identity = docker inspect $container --format '{{json .Config.Labels}}' | ConvertFrom-Json -DateKind String
   if ($LASTEXITCODE -ne 0 -or $identity.'codex.usage-scale' -cne $run) { throw 'Generated container ownership mismatch.' }
-  $ports = docker inspect $container --format '{{json .NetworkSettings.Ports}}' | ConvertFrom-Json
+  $ports = docker inspect $container --format '{{json .NetworkSettings.Ports}}' | ConvertFrom-Json -DateKind String
   if ($ports.'5432/tcp'[0].HostIp -cne '127.0.0.1' -or $ports.'5432/tcp'[0].HostPort -cne '5437') { throw 'Fixture must publish only the approved loopback port.' }
   docker inspect $container --format '{{json .HostConfig}}' | Set-Content -LiteralPath (Join-Path $output 'resource-caps.json') -Encoding utf8
   if ($LASTEXITCODE -ne 0) { throw 'Resource cap evidence failed.' }
@@ -55,7 +57,7 @@ try {
   $env:DATABASE_URL_PRIVILEGED = $env:DATABASE_URL
   $env:JWT_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $env:SESSION_SECRET = $env:JWT_SECRET; $env:STUDENT_TOKEN_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
   $env:NODE_ENV = 'test'; $env:REDIS_URL = ''; $env:RLS_GUC_ENABLED = 'true'; $env:SCHEDULER_ENABLED = 'false'
-  $registry = Get-Content -LiteralPath src/config/rlsRegistry.json -Raw | ConvertFrom-Json
+  $registry = Get-Content -LiteralPath src/config/rlsRegistry.json -Raw | ConvertFrom-Json -DateKind String
   $env:RLS_ENABLED_TABLES = $registry.inventories.classpilotUsageRollupDaysPostExpand.tables -join ','
   $env:CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; $env:CLASSPILOT_DIGITAL_USAGE_MODE = 'on'
   $env:DB_POOL_MIN = '0'; $env:SESSION_DB_POOL_MIN = '0'
@@ -73,7 +75,7 @@ try {
 } finally {
   if ($created) {
     if ($container -cnotmatch '^schoolpilot-usage-scale-[a-f0-9]{12}$' -or $container.Substring($container.Length-12) -cne $run -or $database -cne ('schoolpilot_redesign_usage_scale_' + $run)) { throw 'Generated cleanup target guard failed.' }
-    $labels = docker inspect $container --format '{{json .Config.Labels}}' | ConvertFrom-Json
+    $labels = docker inspect $container --format '{{json .Config.Labels}}' | ConvertFrom-Json -DateKind String
     if ($LASTEXITCODE -ne 0 -or $labels.'codex.usage-scale' -cne $run) { throw 'Cleanup refused without exact run ownership label.' }
     docker inspect $container --format '{{json .State}}' | Set-Content -LiteralPath (Join-Path $output 'container-final-state.json') -Encoding utf8
     docker stats $container --no-stream --format '{{json .}}' | Set-Content -LiteralPath (Join-Path $output 'container-final-stats.json') -Encoding utf8
