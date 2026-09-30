@@ -29,6 +29,7 @@ const RLS_SERIAL = new Set([
   "passpilot-kiosk-sessions.test.ts",
   "passpilot-report-issuers.test.ts",
   "passpilot-rules-rls.test.ts",
+  "classpilot-usage-rollup-rls.test.ts",
   "rls-tenant-context.test.ts",
 ]);
 
@@ -44,6 +45,7 @@ const DB_SERIAL = new Set([
   "mydesk-schema.integration.test.ts",
   "passpilot-kiosk-schedule.integration.test.ts",
   "passpilot-rules.integration.test.ts",
+  "classpilot-usage-rollup.test.ts",
   "api-pool-readiness.integration.test.ts",
   "classpilot-class-tools.integration.test.ts",
   "classpilot-fab-sync-pending.integration.test.ts",

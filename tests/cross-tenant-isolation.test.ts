@@ -64,6 +64,7 @@ import {
 } from "../dist/services/classpilotDeviceScope.js";
 import { getClasspilotDashboardSnapshot } from "../dist/services/classpilotDashboardSnapshot.js";
 import { getPasspilotRules } from "../dist/services/passpilotRulesAdmin.js";
+import { getClasspilotDigitalUsage } from "../dist/services/classpilotUsageRead.js";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 
@@ -157,7 +158,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
-      for (const table of ["passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies"]) {
+      for (const table of ["classpilot_usage_rollups", "passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies"]) {
         await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       }
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -259,6 +260,36 @@ describe("cross-school isolation", () => {
       inSchool(schoolA.id, () => db.execute(sql`
         INSERT INTO passpilot_destination_policies (school_id, destination, max_concurrent)
         VALUES (${schoolB.id}, 'office', 1)
+      `)),
+      (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
+    );
+  });
+
+  it("RLS partitions Monitored Browser Time rollups and their school-scoped read", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const [studentA, studentB] = await Promise.all([
+      inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Usage", lastName: "A", status: "active" })),
+      inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Usage", lastName: "B", status: "active" })),
+    ]);
+    const day = "2026-09-14";
+    const now = new Date("2026-09-20T12:00:00Z");
+    await asSystem(() => db.execute(sql`
+      INSERT INTO classpilot_usage_rollups (school_id, usage_date, student_id, domain, classification, seconds, heartbeat_count)
+      VALUES (${schoolA.id}, ${day}::date, ${studentA.id}, 'a.example.edu', 'educational', 60, 6),
+             (${schoolB.id}, ${day}::date, ${studentB.id}, 'b.example.edu', 'non-educational', 90, 9)
+    `).then(() => undefined));
+
+    const own = await inSchool(schoolA.id, () => getClasspilotDigitalUsage({ schoolId: schoolA.id, scope: "school", id: null, from: day, to: day, now }));
+    assert.deepEqual([own.totals.monitoredBrowserSeconds, own.totals.offTaskSeconds], [60, 0]);
+    assert.deepEqual(own.topEducationalDomains, [{ domain: "a.example.edu", seconds: 60 }]);
+    const foreign = await inSchool(schoolB.id, () => getClasspilotDigitalUsage({ schoolId: schoolA.id, scope: "school", id: null, from: day, to: day, now }));
+    assert.equal(foreign.totals.monitoredBrowserSeconds, 0,
+      "a request bound to school B cannot read school A's rollups even by naming school A");
+    await assert.rejects(
+      inSchool(schoolA.id, () => db.execute(sql`
+        INSERT INTO classpilot_usage_rollups (school_id, usage_date, student_id, domain, classification, seconds, heartbeat_count)
+        VALUES (${schoolB.id}, ${day}::date, ${studentB.id}, 'x.example.edu', 'educational', 1, 1)
       `)),
       (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
     );
