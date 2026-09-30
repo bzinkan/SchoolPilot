@@ -139,6 +139,10 @@ export async function runLocalScale() {
     const record = (target, durationMs, error) => {
       if (!concurrentMeasurement) return;
       target.count++; target.maxMs = Math.max(target.maxMs, durationMs); if (error) target.failures++;
+      if (error) {
+        const code = /^[A-Z0-9_]{1,64}$/.test(error.code || '') ? error.code : 'UNKNOWN';
+        target.failureCodes ??= {}; target.failureCodes[code] = (target.failureCodes[code] || 0) + 1;
+      }
     };
     measureCall(appPool, 'connect', (durationMs, error) => record(metrics.apiDatabase.acquisitions, durationMs, error));
     appPool.on('connect', client => measureCall(client, 'query', (durationMs, error, input) => {
