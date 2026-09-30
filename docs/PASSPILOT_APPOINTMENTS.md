@@ -18,8 +18,10 @@ While appointments remain on, Plan and Apply also require atomic writer contract
 version 1 at the exact source SHA/digest serving on both API and worker; an older
 writer or partial previous-table admission cannot enable new activation. Turning
 the mode off remains available. PassPilot-only school-year setup is a separate
-required release dependency because the current scheduling configuration route
-requires a ClassPilot license; do not enable for those schools before that slice.
+required release dependency: `/api/passpilot/school-year` permits narrow canonical
+year setup under current administrator authority and PassPilot entitlement even
+while appointments are off. See `docs/PASSPILOT_SCHOOL_YEAR_SETUP.md`; the existing
+ClassPilot scheduling router continues to require its own product license.
 
 ## Authority and private notes
 
