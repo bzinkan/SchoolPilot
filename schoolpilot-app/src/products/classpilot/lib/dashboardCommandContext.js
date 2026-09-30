@@ -1,6 +1,7 @@
 import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
 import { activityAuthority, activityAuthorityKey } from './dashboardActivity.js';
 import { activeFlightPathAllowedDomains } from './teachingResourceLibrary.js';
+import { isUrlAllowedByStudentPreciseRestrictions } from './restrictionResourceMatcher.js';
 
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
@@ -277,6 +278,9 @@ export function isStudentUrlOffTask({
   if (schoolAllowedDomains.length > 0 && isUrlAllowed(activeTabUrl, schoolAllowedDomains)) return false;
 
   if (student?.aiClassification?.category === 'non-educational') {
+    // A video, page or document the teacher allowed precisely (Flight Path
+    // section/resource or a This-resource-only Waypoint) is on-task.
+    if (isUrlAllowedByStudentPreciseRestrictions(activeTabUrl, student)) return false;
     if (student.flightPathActive) {
       // Never matches a School Library item by an ambiguous name.
       const allowedDomains = activeFlightPathAllowedDomains(student, flightPaths);

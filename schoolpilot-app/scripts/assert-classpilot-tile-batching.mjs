@@ -1347,6 +1347,34 @@ assert.doesNotMatch(
   /full URL to lock to that exact page/i,
   'the dashboard must not describe a hostname restriction as an exact-page lock',
 );
+// Roadmap PR 2: "This resource only" is offered only while the server reports
+// preciseRestrictionResourcesV1 active, only for an explicit URL, and the
+// default Entire website payload stays exactly { url }.
+assert.match(
+  dashboardSource,
+  /\{preciseRestrictionResourcesEnabled && \([\s\S]{0,900}data-testid="radio-lock-screen-boundary-website"[\s\S]{0,900}data-testid="radio-lock-screen-boundary-resource"/,
+  'the Waypoint boundary radios must render only with the precise feature',
+);
+assert.match(
+  dashboardSource,
+  /boundary === 'resource' \? \{ url, boundary \} : \{ url \}/,
+  'the Entire website Waypoint payload must stay exactly { url }',
+);
+assert.match(
+  dashboardSource,
+  /boundary: lockScreenMode === "url" && preciseRestrictionResourcesEnabled \? lockScreenBoundary : "website"/,
+  'a current-page Waypoint is never a resource boundary',
+);
+assert.match(
+  dashboardSource,
+  /variables\.url !== 'CURRENT_URL' && variables\.boundary !== 'resource'/,
+  'a This-resource-only Waypoint must never auto-allow its whole domain',
+);
+assert.match(
+  dashboardSource,
+  /data-testid=\{`delivery-unsupported-\$\{studentId\}`\}/,
+  'students who need the ClassPilot update must be listed individually',
+);
 // Supervision opens the canonical dashboard rather than a second command
 // console, so the domain-preservation controls above cover claimed tiles too.
 assert.doesNotMatch(coverageSource, /sendCoverageCommand|coverage-domain-preservation-message/,

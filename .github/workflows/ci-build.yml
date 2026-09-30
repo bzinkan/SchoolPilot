@@ -578,6 +578,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run test:classpilot-tile-batching
 
+      - name: Test ClassPilot precise restriction matcher parity
+        working-directory: schoolpilot-app
+        run: npm run test:restriction-resource-matcher
+
       - name: Test GoPilot staff-only contracts
         working-directory: schoolpilot-app
         run: npm run test:gopilot-staff-contracts
