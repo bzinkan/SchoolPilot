@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Card, CardContent } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "../../../../components/ui/select";
@@ -24,6 +24,9 @@ import {
   getPassStatusLabel,
 } from "../../passData";
 import { encodePassPilotCsv } from "../../passCsv";
+import { useReportCapabilities } from "../../reportData";
+import { reportScope } from "../../reportModel";
+const ReportsV2 = lazy(() => import('./ReportsV2'));
 
 const DEFAULT_REPORT_FILTERS = Object.freeze({
   dateRange: 'today',
@@ -57,7 +60,7 @@ function reportIssuerLabel(issuer) {
   return `${displayName} (Former staff)`;
 }
 
-function ReportsTab() {
+function LegacyReportsTab() {
   const nowMs = usePassNow();
   const { school, isSchoolwideManager } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
@@ -638,4 +641,11 @@ function ReportsTab() {
   );
 }
 
-export default ReportsTab;
+export default function ReportsTab() {
+  const { user, school } = usePassPilotAuth(), capabilities = useReportCapabilities(user, school);
+  if (capabilities.isLoading) return <p role="status" className="p-4">Loading report access…</p>;
+  if (capabilities.isError) return <div className="p-4"><p role="alert">Report access could not be verified.</p><Button variant="outline" onClick={() => capabilities.refetch()}>Retry report access</Button></div>;
+  if (!capabilities.data?.enabled) return <LegacyReportsTab />;
+  if (capabilities.data.version !== 2 || !capabilities.data.schoolTimezone) return <p role="alert" className="p-4">Report capabilities could not be verified.</p>;
+  return <Suspense fallback={<p role="status" className="p-4">Loading reports…</p>}><ReportsV2 key={JSON.stringify([...reportScope(user, school), capabilities.data.schoolTimezone])} user={user} school={school} capabilities={capabilities.data} /></Suspense>;
+}
