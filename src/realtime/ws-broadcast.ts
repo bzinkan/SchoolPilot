@@ -85,18 +85,22 @@ export function classpilotStudentFrameCarriesPreciseRestriction(message: unknown
  * Whether a precise frame may reach any socket at all. It must carry its
  * authoritative classroom snapshot (a bare command frame hands ClassPilot
  * 2.9.x `data.url` as a whole-domain Waypoint), and every precise entry in
- * the snapshot and in the command data must re-validate. The capability
- * itself is enforced per socket by sendToStudentBindingLocal.
+ * the snapshot and in the command data must re-validate. Like the
+ * dispatcher's frame builder, a precise command travels only with a precise
+ * snapshot, never attached to a plain one. The capability itself is enforced
+ * per socket by sendToStudentBindingLocal.
  */
 export function classpilotStudentPreciseFrameDeliverable(message: unknown): boolean {
   if (!plainObject(message) || !plainObject(message.classroomState)) return false;
   const classroomState = message.classroomState;
+  const preciseState = classpilotControlStateRequiresPreciseCapability(classroomState);
   if (
-    classpilotControlStateRequiresPreciseCapability(classroomState)
+    preciseState
     && classpilotPreciseRestrictionPayload(classroomState.restrictions ?? classroomState).state !== "valid"
   ) return false;
   const command = preciseCommand(message);
-  return !command || classpilotPreciseCommandPayloadValid(command.type, command.data);
+  if (!command) return true;
+  return preciseState && classpilotPreciseCommandPayloadValid(command.type, command.data);
 }
 
 function requiredStudentCapabilities(message: unknown): string[] {

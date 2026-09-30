@@ -281,6 +281,17 @@ test("precise restriction frames reach only exact-bound sockets that accepted pr
         restrictions: { screenLock: { active: true, url: "https://docs.google.com/", resource: docsResource } },
       },
     },
+    {
+      // Like the dispatcher's frame builder: a precise command never rides on
+      // a plain snapshot, even one that is itself deliverable.
+      type: "remote-control",
+      _msgId: "precise-command-on-plain-snapshot",
+      command: { type: "lock-screen", data: { url: docsResource.canonicalUrl, resource: docsResource } },
+      classroomState: {
+        revision: 14,
+        restrictions: { screenLock: { active: true, url: "https://www.ixl.com/math" } },
+      },
+    },
   ];
 
   try {
