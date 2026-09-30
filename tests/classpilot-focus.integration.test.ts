@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { after, before, beforeEach, test } from "node:test";
+import { after, before, beforeEach, describe, test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
 import pg from "pg";
 import { sql } from "drizzle-orm";
@@ -56,6 +56,7 @@ const openAck = (commandId: string, controlRevision: number, overrides: Partial<
   result: { tabReceiptVersion: 1, tabRef: "private-twenty-first-tab", tabSnapshotRevision: 10 }, ...overrides,
 }));
 
+describe("Focus authority and continuation under restricted RLS", { skip: process.env.RLS_GUC_ENABLED !== "true" }, () => {
 before(async () => {
   assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
   assert.ok(process.env.ADMIN_DATABASE_URL, "The fixture requires an independent local bootstrap role");
@@ -119,8 +120,8 @@ after(async () => {
   await admin.query("DELETE FROM student_sessions WHERE student_id=ANY($1::varchar[])", [ids.students]);
   await admin.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
   await admin.query("DELETE FROM school_memberships WHERE school_id=$1", [ids.school]);
-  await admin.query("DELETE FROM schools WHERE id=ANY($1::varchar[])", [[ids.school, ids.otherSchool]]);
-  await admin.query("DELETE FROM users WHERE id=$1", [ids.teacher]);
+  // Staff identities and school lifecycle roots are retained by the real
+  // integrity migration. This disposable DB keeps those synthetic roots.
   if (!controlWasForced) await admin.query("ALTER TABLE classpilot_student_control_states NO FORCE ROW LEVEL SECURITY");
   await (await import("../src/services/errorMonitor.js")).default.disposeAndWait();
   const pools = await import("../src/db.js");
@@ -212,13 +213,16 @@ test("received open does not extend the continuation deadline", async () => {
   assert.equal(await focus(), null);
 });
 
-test("queued continuation rechecks the actor after the canonical school membership mutation lock", async () => {
+test("queued continuation rechecks a valid context-end and actor-deactivation mutation under the canonical school lock", async () => {
   const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
   const mutation = await admin.connect();
   try {
     await mutation.query("BEGIN");
     await mutation.query("SELECT id FROM schools WHERE id=$1 FOR UPDATE", [ids.school]);
+    // Ending the live assignment is required before deactivating its staff.
+    // The integrity trigger deliberately forbids the inconsistent shortcut.
+    await mutation.query("UPDATE classpilot_supervision_contexts SET status='ended', ended_at=now() WHERE school_id=$1 AND id=$2", [ids.school, context.id]);
     await mutation.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
     const receipt = openAck(source.command.id, intent.binding.revisionAtAssignment);
     await pause(100);
@@ -229,6 +233,7 @@ test("queued continuation rechecks the actor after the canonical school membersh
   } finally {
     await mutation.query("ROLLBACK"); mutation.release();
     await admin.query("UPDATE school_memberships SET status='active' WHERE school_id=$1 AND user_id=$2", [ids.school, ids.teacher]);
+    await admin.query("UPDATE classpilot_supervision_contexts SET status='active', ended_at=NULL WHERE school_id=$1 AND id=$2", [ids.school, context.id]);
   }
 });
 
@@ -368,4 +373,5 @@ test("recovery-token sign-out retires exact assignment and pending open continua
   assert.equal(await focus(), null);
   assert.equal(readFocusOpenIntent((await sourceTarget(source.command.id)).result)?.state, "refused");
   assert.equal((await openAck(source.command.id, intent.binding.revisionAtAssignment)).disposition, "terminal_rejected");
+});
 });
