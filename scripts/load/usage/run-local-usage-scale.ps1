@@ -61,8 +61,13 @@ try {
   $env:DB_POOL_MIN = '0'; $env:SESSION_DB_POOL_MIN = '0'
   $env:USAGE_LOCAL_SCALE = '1'; $env:USAGE_SCALE_OUTPUT = Join-Path $output 'usage-scale.json'
   $env:USAGE_SCALE_CAPS = Join-Path $output 'resource-caps.json'; $env:USAGE_SCALE_CONTAINER = $container
-  node --max-old-space-size=512 --import ./tests/test-environment.mjs scripts/load/usage/local-usage-scale.mjs *> (Join-Path $output 'scale.log')
-  $exitCode = $LASTEXITCODE
+  # Windows PowerShell5 converts native stderr warnings to ErrorRecords.
+  # Preserve them as evidence without aborting a successful running process.
+  $strictPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    node --max-old-space-size=512 --import ./tests/test-environment.mjs scripts/load/usage/local-usage-scale.mjs *> (Join-Path $output 'scale.log')
+    $exitCode = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $strictPreference }
   Get-Content -LiteralPath (Join-Path $output 'scale.log') | Where-Object { $_ -match '"event":"local_usage_scale_' }
   [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
 } finally {

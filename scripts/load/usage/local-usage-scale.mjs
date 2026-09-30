@@ -60,7 +60,7 @@ export async function runLocalScale() {
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
   const admin = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 120_000 });
   const worker = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 10_000, statement_timeout: 60_000, options: '-c app.is_super=on' });
-  let server, appPool, sessionPool, sampler, ingestRunning = false, ingestion = [];
+  let server, appPool, sessionPool, sampler, ingestRunning = false, ingestion = [], readTimings, phaseStarted;
   const wrapped = new WeakSet(), connect = worker.connect.bind(worker);
   const measuredWorker = { connect: async () => {
     const client = await connect();
@@ -99,6 +99,23 @@ export async function runLocalScale() {
     metrics.dataset = { substantialSchools: 2, studentsPerSchool: 500, rawHeavyDayPerSchool: 1_000_000, uniqueHeavyDayPerSchool: 500_000,
       officialClassesPerSchool: 100, historicalDenseDays: historyDates.length, historicalRowsPerSchool: historyDates.length * 500 * 3,
       requestedInclusiveDays: 366, retainedInclusiveDays: 365, successfulEmptyDate: emptyDate, unavailableDate: gapDate, heavyDate, today, dateRange: range };
+    server = createServer(createApp()); await new Promise(done => server.listen(0, '127.0.0.1', done));
+    const base = `http://127.0.0.1:${server.address().port}/api/classpilot`;
+    const get = async (school, scope, format = 'json', customRange = range, customId) => {
+      const id = customId ?? ({ grade: '6', class: school.groups[0], student: school.students[0] })[scope];
+      const query = new URLSearchParams({ scope, format, ...customRange }); if (id) query.set('id', id);
+      const started = performance.now(), response = await fetch(`${base}/admin/usage?${query}`, { headers: { Authorization: `Bearer ${school.token}`, 'X-School-Id': school.id } });
+      const body = format === 'json' ? await response.json() : await response.text();
+      return { status: response.status, body, durationMs: performance.now() - started, headers: response.headers };
+    };
+    const ingestOne = async (school, index) => {
+      const started = performance.now();
+      const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
+      await response.text(); metrics.ingest.requests++; metrics.ingest.timingsMs.push(performance.now() - started);
+      metrics.ingest.statuses[response.status] = (metrics.ingest.statuses[response.status] || 0) + 1;
+      assert.ok(response.status === 200 || response.status === 204, `Synthetic heartbeat status ${response.status}`);
+    };
     const seedStarted = performance.now();
     for (const school of schools) {
       await admin.query("INSERT INTO schools(id,name,domain,status,is_active,plan_status,school_timezone) VALUES($1,$2,'example.test','active',true,'active',$3)", [school.id, `Synthetic Scale ${school.index}`, zone]);
@@ -110,6 +127,13 @@ export async function runLocalScale() {
       await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level,email) SELECT id,$2,'Synthetic','Scale','active',(6+(ordinality-1)%5)::text,'scale-'||id||'@example.test' FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.id]);
       await admin.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,($3::text[])[ordinality::int],'Synthetic Class '||ordinality,'admin_class' FROM unnest($1::text[]) WITH ORDINALITY class(id,ordinality)", [school.groups, school.id, school.teachers]);
       await admin.query("INSERT INTO group_students(student_id,group_id) SELECT id,($2::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.groups]);
+      await admin.query("INSERT INTO devices(device_id,school_id,class_id) SELECT id,$2,($3::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY device(id,ordinality)", [school.devices, school.id, school.groups]);
+      await admin.query("INSERT INTO student_sessions(id,student_id,device_id,auth_kind,is_active) SELECT id,($2::text[])[ordinality::int],($3::text[])[ordinality::int],'managed_profile',true FROM unnest($1::text[]) WITH ORDINALITY session(id,ordinality)", [school.studentSessions, school.students, school.devices]);
+      school.token = signUserToken({ userId: school.staff, email: school.email, isSuperAdmin: false });
+      school.deviceTokens = school.students.map((studentId, i) => createStudentToken({ studentId, schoolId: school.id, deviceId: school.devices[i], sessionId: school.studentSessions[i], studentEmail: `scale-${studentId}@example.test` }));
+      assert.equal((await get(school, 'school')).status, 200);
+      await ingestOne(school, 0);
+      console.log(JSON.stringify({ event: 'local_usage_scale_auth_preflight', schoolIndex: school.index }));
       // Ten nonoverlapping heavy-day windows per class; each observation has
       // exactly one frozen official class/session. Large historical/current
       // scope inventories remain present while the real writer selects its day.
@@ -140,23 +164,11 @@ export async function runLocalScale() {
           CASE WHEN sample.n%4=0 THEN 'educational' WHEN sample.n%4=2 THEN NULL ELSE 'non-educational' END,CASE WHEN sample.n%4=3 THEN 'flight_path' ELSE NULL END,
           $3::timestamp+interval '8 hours'+sample.n*interval '20 seconds'
         FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,999) sample(n) CROSS JOIN generate_series(0,1) duplicate(n)`, [school.students, school.id, wall(day.dayStartUtc), school.index]);
-      await admin.query("INSERT INTO devices(device_id,school_id,class_id) SELECT id,$2,($3::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY device(id,ordinality)", [school.devices, school.id, school.groups]);
-      await admin.query("INSERT INTO student_sessions(id,student_id,device_id,auth_kind,is_active) SELECT id,($2::text[])[ordinality::int],($3::text[])[ordinality::int],'managed_profile',true FROM unnest($1::text[]) WITH ORDINALITY session(id,ordinality)", [school.studentSessions, school.students, school.devices]);
-      school.token = signUserToken({ userId: school.staff, email: school.email, isSuperAdmin: false });
-      school.deviceTokens = school.students.map((studentId, i) => createStudentToken({ studentId, schoolId: school.id, deviceId: school.devices[i], sessionId: school.studentSessions[i], studentEmail: `scale-${studentId}@example.test` }));
+      console.log(JSON.stringify({ event: 'local_usage_scale_school_seeded', schoolIndex: school.index }));
     }
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
     metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
-    assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_000 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
-    server = createServer(createApp()); await new Promise(done => server.listen(0, '127.0.0.1', done));
-    const base = `http://127.0.0.1:${server.address().port}/api/classpilot`;
-    const get = async (school, scope, format = 'json', customRange = range, customId) => {
-      const id = customId ?? ({ grade: '6', class: school.groups[0], student: school.students[0] })[scope];
-      const query = new URLSearchParams({ scope, format, ...customRange }); if (id) query.set('id', id);
-      const started = performance.now(), response = await fetch(`${base}/admin/usage?${query}`, { headers: { Authorization: `Bearer ${school.token}`, 'X-School-Id': school.id } });
-      const body = format === 'json' ? await response.json() : await response.text();
-      return { status: response.status, body, durationMs: performance.now() - started, headers: response.headers };
-    };
+    assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_001 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
     const size = scope => ({ school: 500, grade: 100, class: 5, student: 1 })[scope];
     const checkReport = (read, scope, allowHeavy = false) => {
       assert.equal(read.status, 200); assert.equal(read.body.range.retentionDays, 365); assert.equal(read.body.range.requestedDays, 365); assert.equal(read.body.range.partiallyExpired, true);
@@ -179,14 +191,6 @@ export async function runLocalScale() {
       assert.equal(read.body.byDay.some(row => row.date === range.from), false);
       return read;
     };
-    const ingestOne = async (school, index) => {
-      const started = performance.now();
-      const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
-      await response.text(); metrics.ingest.requests++; metrics.ingest.timingsMs.push(performance.now() - started);
-      metrics.ingest.statuses[response.status] = (metrics.ingest.statuses[response.status] || 0) + 1;
-      assert.ok(response.status === 200 || response.status === 204, `Synthetic heartbeat status ${response.status}`);
-    };
     // Validate the product's real maximum range and actual device auth before
     // launching expensive writers. A 367-day range must remain rejected.
     for (const school of schools) {
@@ -200,7 +204,7 @@ export async function runLocalScale() {
     metrics.poolMax = { api: appPool.options.max, worker: worker.options.max, apiWaitingPeak: 0, workerWaitingPeak: 0 };
     sampler = setInterval(() => { metrics.peakRssBytes = Math.max(metrics.peakRssBytes, process.memoryUsage().rss); metrics.poolMax.apiWaitingPeak = Math.max(metrics.poolMax.apiWaitingPeak, appPool.waitingCount); metrics.poolMax.workerWaitingPeak = Math.max(metrics.poolMax.workerWaitingPeak, worker.waitingCount); }, 20); sampler.unref();
     const beforeStats = (await admin.query('SELECT temp_bytes,temp_files,blks_read,blks_hit FROM pg_stat_database WHERE datname=current_database()')).rows[0];
-    const started = performance.now(), ingestDeadline = started + 60_000; ingestRunning = true; let nextDevice = 1;
+    const started = performance.now(), ingestDeadline = started + 60_000; phaseStarted = started; ingestRunning = true; let nextDevice = 1;
     ingestion = Array.from({ length: 4 }, async () => {
       while (ingestRunning && performance.now() < ingestDeadline) {
         const sequence = nextDevice++; await ingestOne(schools[Math.floor(sequence / 500) % 2], sequence % 500); await sleep(50);
@@ -215,7 +219,7 @@ export async function runLocalScale() {
       return { schoolIndex: school.index, durationMs: performance.now() - started, ...result };
     });
     const requestScopes = schools.flatMap(school => ['school', 'grade', 'class', 'student'].map(scope => ({ school, scope })));
-    const readTimings = new Map(requestScopes.map(({ school, scope }) => [`${school.index}/${scope}`, []]));
+    readTimings = new Map(requestScopes.map(({ school, scope }) => [`${school.index}/${scope}`, []]));
     const readers = (async () => {
       for (let wave = 0; wave < 4; wave++) {
         await Promise.all(requestScopes.flatMap(({ school, scope }) => Array.from({ length: 2 }, async () => {
@@ -226,8 +230,11 @@ export async function runLocalScale() {
     })();
     const outcomes = await Promise.allSettled([...writes, readers, ...ingestion]);
     ingestRunning = false;
-    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
     metrics.concurrentPhaseMs = performance.now() - started;
+    metrics.reads = Object.fromEntries([...readTimings].filter(([, timings]) => timings.length).map(([key, timings]) => [key, summarize(timings)]));
+    metrics.phaseOutcomes = outcomes.map((outcome, index) => ({ kind: index < 2 ? 'writer' : index === 2 ? 'read_waves' : 'ingest', status: outcome.status,
+      ...(outcome.status === 'rejected' ? { error: { name: outcome.reason.name, code: outcome.reason.code || 'SCALE_ASSERTION', message: outcome.reason.message } } : {}) }));
+    for (const outcome of outcomes) if (outcome.status === 'rejected') throw outcome.reason;
     metrics.concurrentWriters = outcomes.slice(0, 2).map(result => result.value);
     metrics.reads = Object.fromEntries([...readTimings].map(([key, timings]) => [key, summarize(timings)]));
     await flushHeartbeatClassificationBatches();
@@ -267,7 +274,12 @@ export async function runLocalScale() {
       successfulEmptyDay: true, gapWithheld: true, expiredDateWithheld: true, atomicSnapshotReads: true, currentDayRawOracle: true, crossSchoolIdsDenied: true, csvStrictAuditRecorded: true };
     metrics.finishedAt = new Date().toISOString(); metrics.passed = true; save();
     console.log(JSON.stringify({ event: 'local_usage_scale_complete', sourceRevision: metrics.sourceRevision, writerMs: metrics.concurrentWriters.map(row => row.durationMs), ingestRequests: metrics.ingest.requests, insertedHeartbeats: metrics.ingest.insertedHeartbeats, productionReadiness: false }));
-  } catch (error) { metrics.failure = { name: error.name, code: error.code || 'SCALE_ASSERTION', message: error.message }; save(); throw error; }
+  } catch (error) {
+    metrics.failure = { name: error.name, code: error.code || 'SCALE_ASSERTION', message: error.message };
+    if (phaseStarted) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
+    if (metrics.ingest.timingsMs.length) { metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs; }
+    save(); throw error;
+  }
   finally {
     ingestRunning = false; await Promise.allSettled(ingestion); clearInterval(sampler);
     server?.closeAllConnections(); if (server) await new Promise(done => server.close(done));
