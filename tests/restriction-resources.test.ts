@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   MAX_RESTRICTION_RESOURCES,
   MAX_RESTRICTION_RESOURCES_BYTES,
+  RESTRICTION_PATH_TAIL_PATTERN,
   RESTRICTION_RESOURCE_RULE_ID_BUDGET,
   RestrictionResourceError,
   assertRestrictionResourceLimits,
@@ -23,6 +24,8 @@ import {
   restrictionResourcesRuleCount,
   validateAllowedResource,
   validateAllowedResourceList,
+  YOUTUBE_PLAYER_PARAMETERS,
+  YOUTUBE_PLAYER_VALUE_PATTERN,
   type AllowedResource,
 } from "../src/services/restrictionResources.js";
 
@@ -31,7 +34,7 @@ import {
 // docs/CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md; changing a case changes
 // the contract and needs the same change in the extension.
 const RESTRICTION_RESOURCE_MATCHER_CASES_SHA256 =
-  "6a7c050f39959229cafa6667a8aa0ce15dc0cbd7cd614da31b662d4776ab9e5f";
+  "4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243";
 
 const caseFileUrl = new URL("./fixtures/restriction-resource-matcher-cases.json", import.meta.url);
 
@@ -84,6 +87,12 @@ describe("restriction resource matcher case file", () => {
   it("pins the same hash in the ClassPilot 2.10.0 contract document", () => {
     const contract = readFileSync(new URL("../docs/CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md", import.meta.url), "utf8");
     assert.match(contract, new RegExp(RESTRICTION_RESOURCE_MATCHER_CASES_SHA256));
+    // The DNR shapes quote the matcher's own path-tail and player-value rules.
+    assert.ok(contract.includes(RESTRICTION_PATH_TAIL_PATTERN), "the contract quotes R verbatim");
+    assert.ok(
+      contract.includes(`(?:(?:${YOUTUBE_PLAYER_PARAMETERS.join("|")})(?:=${YOUTUBE_PLAYER_VALUE_PATTERN})?)?`),
+      "the contract quotes Q verbatim"
+    );
   });
 
   for (const testCase of cases.identity) {

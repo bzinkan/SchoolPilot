@@ -113,7 +113,7 @@ Follow these steps in order. They end every stored precise restriction explicitl
 
    Exit code 3 means precise rows remain; each affected school is listed. For each school, run the dry run, then execute with the exact proof it printed. Execution has three requirements:
    - The one-off task override `PRECISE_RESTRICTION_CLEAR_EXECUTION_ADMISSION=controlled-ecs-one-off-v1`.
-   - The one-off must run the live API service's current task definition revision. Read it with `aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api --query 'services[0].taskDefinition'` and pass it as `--api-task-definition-arn`. The CLI verifies its own ECS task identity against it, so the capability check reads the live service's registry and kill switch, not another revision's.
+   - The one-off must run the live API service's current task definition revision. Read it with `aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api --query 'services[0].taskDefinition'` and pass it as `--api-task-definition-arn`. The CLI verifies that its own ECS task runs exactly that revision, in a reviewed API family (`schoolpilot-production-api` or `schoolpilot-production-api-emergency`, the runtime tool's list). The capability check therefore reads the live service's registry and kill switch, not another revision's. The API task role has no `ecs:DescribeServices` permission, so the CLI cannot read the service itself: this read-only operator check is the binding, so do it immediately before the run.
    - The capability must be off for the school in that live revision.
 
    ```text

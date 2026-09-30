@@ -10,7 +10,7 @@ const PROVIDERS = new Set(['youtube', 'google_docs', 'google_slides', 'google_sh
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const GOOGLE_FILE_ID = /^[A-Za-z0-9_-]{20,128}$/;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'm.youtube.com', 'youtube-nocookie.com']);
-const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(\/.*)?$/;
 const YOUTUBE_PLAYER_PATH = /^\/(?:embed|v)\/([A-Za-z0-9_-]{11})\/?$/;
 const YOUTU_BE_PATH = /^\/([A-Za-z0-9_-]{11})\/?$/;
 // An embedded player link identifies one video only with these parameters;
@@ -20,11 +20,17 @@ const YOUTUBE_PLAYER_PARAMETERS = new Set([
   'end', 'feature', 'fs', 'hl', 'iv_load_policy', 'loop', 'modestbranding', 'mute', 'origin',
   'playsinline', 'rel', 'si', 'start', 't', 'widget_referrer',
 ]);
+// The raw value of an allowlisted player parameter: no separators or escapes.
+const YOUTUBE_PLAYER_VALUE = /^[A-Za-z0-9._:/-]*$/;
 const YOUTUBE_RESERVED_IDS = new Set(['videoseries', 'live_stream']);
-// Below a section prefix: no ';', encoded separator, encoded dot or malformed escape.
-const SECTION_PATH_ESCAPE = /;|%(?![0-9A-Fa-f]{2})|%2[EeFf5]|%5[Cc]/;
-const DOCS_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
-const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
+// A path tail below a section prefix or after a provider id (the server's
+// RESTRICTION_PATH_TAIL_PATTERN): no ';', encoded separator or dot, overlong
+// UTF-8, fullwidth dot or slash, or malformed escape.
+const RESTRICTION_PATH_TAIL = new RegExp('^(?:/(?:[^?#%;]|%(?:[013-46-9abdfABDF][0-9a-fA-F]|2[0-46-9a-dA-D]|5[0-9abd-fABD-F]|[Cc][2-9a-fA-F]'
+  + '|[Ee][1-9a-eA-E]|[Ee]0%[AaBb][0-9a-fA-F]|[Ee][Ff]%(?:[0-9ac-fAC-F][0-9a-fA-F]|[Bb][0-9abd-fABD-F]'
+  + '|[Bb][Cc]%(?:[0-79ac-fAC-F][0-9a-fA-F]|8[0-9a-dA-D]|[Bb][0-9abd-fABD-F]))))*)?$');
+const DOCS_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(\/.*)?$/;
+const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(\/.*)?$/;
 const DRIVE_ID_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(?:open|uc)$/;
 const HOSTNAME_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DOCS_KIND_PROVIDER = { document: 'google_docs', presentation: 'google_slides', spreadsheets: 'google_sheets', forms: 'google_forms' };
@@ -82,9 +88,14 @@ export function canonicalRestrictionResourceUrl(provider, resourceId) {
   return `https://docs.google.com/${kind}/d/${resourceId}/edit`;
 }
 
+function safePathTail(tail) {
+  return RESTRICTION_PATH_TAIL.test(tail ?? '');
+}
+
 function validSectionPathPrefix(value) {
   if (typeof value !== 'string' || value.length < 2 || value.length > 512) return false;
   if (!value.startsWith('/') || value.endsWith('/') || value.includes('//') || /[?#\\\s]/.test(value)) return false;
+  if (!RESTRICTION_PATH_TAIL.test(value)) return false;
   try {
     return new URL(`https://example.com${value}`).pathname === value;
   } catch {
@@ -120,11 +131,21 @@ function youtubeHostVideoId(parsed) {
     return ids.length === 1 ? youtubeVideoId(ids[0]) : null;
   }
   const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
-  if (player) {
-    const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETERS.has(name));
-    return harmless ? youtubeVideoId(player[1]) : null;
-  }
-  return youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
+  if (player) return youtubePlayerQueryHarmless(parsed.search) ? youtubeVideoId(player[1]) : null;
+  const page = YOUTUBE_PAGE_PATH.exec(parsed.pathname);
+  return page && safePathTail(page[2]) ? youtubeVideoId(page[1]) : null;
+}
+
+// Every raw name[=value] segment of a player link's query is allowlisted.
+function youtubePlayerQueryHarmless(search) {
+  if (search === '') return true;
+  return search.slice(1).split('&').every((segment) => {
+    if (segment === '') return true;
+    const separator = segment.indexOf('=');
+    const name = separator === -1 ? segment : segment.slice(0, separator);
+    const value = separator === -1 ? '' : segment.slice(separator + 1);
+    return YOUTUBE_PLAYER_PARAMETERS.has(name) && YOUTUBE_PLAYER_VALUE.test(value);
+  });
 }
 
 function identityFromParsedUrl(parsed) {
@@ -139,11 +160,13 @@ function identityFromParsedUrl(parsed) {
   }
   if (host === 'docs.google.com') {
     const match = DOCS_PATH.exec(parsed.pathname);
-    return match ? { provider: DOCS_KIND_PROVIDER[match[1]], resourceId: `${match[2] || ''}${match[3]}` } : null;
+    return match && safePathTail(match[4])
+      ? { provider: DOCS_KIND_PROVIDER[match[1]], resourceId: `${match[2] || ''}${match[3]}` }
+      : null;
   }
   if (host === 'drive.google.com') {
     const file = DRIVE_FILE_PATH.exec(parsed.pathname);
-    if (file) return { provider: 'google_drive', resourceId: file[1] };
+    if (file) return safePathTail(file[2]) ? { provider: 'google_drive', resourceId: file[1] } : null;
     if (DRIVE_ID_PATH.test(parsed.pathname)) {
       const ids = parsed.searchParams.getAll('id');
       return ids.length === 1 && GOOGLE_FILE_ID.test(ids[0]) ? { provider: 'google_drive', resourceId: ids[0] } : null;
@@ -182,7 +205,7 @@ export function isUrlAllowedByRestrictionResource(url, resource) {
   if (resource.type === 'section') {
     return host === resource.hostname
       && (parsed.pathname === resource.pathPrefix || parsed.pathname.startsWith(`${resource.pathPrefix}/`))
-      && !SECTION_PATH_ESCAPE.test(parsed.pathname.slice(resource.pathPrefix.length));
+      && safePathTail(parsed.pathname.slice(resource.pathPrefix.length));
   }
   const identity = identityFromParsedUrl(parsed);
   return !!identity && identity.provider === resource.provider && identity.resourceId === resource.resourceId;

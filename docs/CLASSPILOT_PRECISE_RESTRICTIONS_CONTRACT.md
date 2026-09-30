@@ -123,12 +123,12 @@ before anything is stored.
 `.gitattributes`). SHA-256:
 
 ```text
-6a7c050f39959229cafa6667a8aa0ce15dc0cbd7cd614da31b662d4776ab9e5f
+4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243
 ```
 
 Copy the file byte for byte, pin the same SHA-256 in the extension tests, and assert every row in
-`extension-classroom-runtime.test.ts`. Sections: `identity` (55 rows, `extractRestrictionResourceIdentity`), `match` (81 rows,
-`isUrlAllowedByResource` against the named `resources`), `validate` (30 rows; skip the two `serverOnly` public-suffix rows),
+`extension-classroom-runtime.test.ts`. Sections: `identity` (67 rows, `extractRestrictionResourceIdentity`), `match` (96 rows,
+`isUrlAllowedByResource` against the named `resources`), `validate` (39 rows; skip the two `serverOnly` public-suffix rows),
 `normalize` and `legacyHostProjection` (server authoring rules, recorded so the extension knows what it can receive) and
 `ruleCount` (the DNR budget below). A change to any rule changes the file and its hash in both repositories together.
 
@@ -139,32 +139,44 @@ Rules:
 2. **website**: `http:` or `https:`; the host equals `hostname` or ends with `.` + `hostname`.
 3. **section**: `https:` only, default port only, host equal to `hostname` (no subdomains), and `pathname === pathPrefix` or
    `pathname` starts with `pathPrefix + "/"`. Case-sensitive. Query and fragment are ignored. `/class` does not allow
-   `/classified`. The part of `pathname` after the prefix must not contain `;`, `%2F`, `%5C`, `%2E` or `%25` (any case), or a
-   `%` that does not start a two-digit hex escape: `/class/..%2Fadmin`, `/class/..;/admin` and `/class/%252e%252e%252fadmin`
-   are refused, because common servers decode or strip them before resolving `..`. Ordinary escapes such as `%20` stay allowed.
+   `/classified`. The part of `pathname` after the prefix must be a **safe path tail**: it must match `R` (section 5), the
+   normative definition. In words, `;` is refused, and so is every escape except ordinary ones:
+   - `%2E`, `%2F`, `%25` and `%5C`;
+   - the overlong UTF-8 lead bytes `%C0` and `%C1`, and `%E0` followed by `%80` to `%9F`;
+   - the fullwidth forms `%EF%BC%8E`, `%EF%BC%8F` and `%EF%BC%BC`;
+   - a `%` that does not start a two-digit escape, and a `%E0` or `%EF` without a well-formed continuation.
+
+   All of these are refused in any case. So `/class/..%2Fadmin`, `/class/..;/admin`, `/class/%252e%252e%252fadmin`,
+   `/class/%C0%AE%C0%AE/admin` and `/class/%EF%BC%8E%EF%BC%8E%EF%BC%8Fadmin` are refused, because common servers decode, strip
+   or fold them before resolving `..`. Ordinary escapes such as `%20`, `%41`, `%C3%A9`, `%E2%82%AC` and `%F0%9F%98%80` stay
+   allowed.
 4. **resource**: `https:` only, default port only, and the URL's identity equals `(provider, resourceId)`:
    - YouTube hosts `youtube.com`, `m.youtube.com`, `youtube-nocookie.com` (after rule 1):
      - `/watch` with **exactly one** `v` parameter (decoded);
-     - a page path `^/(shorts|live)/<id>(/.*)?$` (moving to another video changes the page URL, which the SPA listeners see);
-     - a player path, exactly `^/(embed|v)/<id>/?$`, whose query parameter names (decoded) are all in
-       `autoplay cc_lang_pref cc_load_policy color controls disablekb enablejsapi end feature fs hl iv_load_policy loop
-       modestbranding mute origin playsinline rel si start t widget_referrer`. Anything else, `list`, `playlist` and
-       `listType` in particular, identifies nothing: an embedded player moves through other videos without changing its URL.
+     - a page path `^/(shorts|live)/<id>(/.*)?$` whose tail after the id is a safe path tail (rule 3) (moving to another video
+       changes the page URL, which the SPA listeners see);
+     - a player path, exactly `^/(embed|v)/<id>/?$`, whose raw query is only `&`-separated `name` or `name=value` segments
+       (empty segments allowed), each `name` exactly one of `autoplay cc_lang_pref cc_load_policy color controls disablekb
+       enablejsapi end feature fs hl iv_load_policy loop modestbranding mute origin playsinline rel si start t widget_referrer`
+       and each raw `value` matching `[A-Za-z0-9._:/-]*`. Anything else identifies nothing: `list`, `playlist` and `listType`,
+       a percent-encoded name, and a value that smuggles a separator (`autoplay=1;playlist=A,B`, `start=1%26list%3DPL...`).
+       An embedded player moves through other videos without changing its URL.
 
      `youtu.be`: path `^/<id>/?$`. A video id matches `^[A-Za-z0-9_-]{11}$` and is never one of the reserved words
      `videoseries` or `live_stream` (playlist and channel-stream embeds). Other videos, the home page, search, channels and
      `music.youtube.com` never match.
    - `docs.google.com`: path
      `^/(u/[0-9]{1,2}/)?(document|presentation|spreadsheets|forms)/(u/[0-9]{1,2}/)?d/(e/)?<id>(/.*)?$`, id
-     `^[A-Za-z0-9_-]{20,128}$`. `?authuser=` is ignored. The published `e/` id is part of `resourceId`, so a Form's edit id and
-     its published id are different resources.
-   - `drive.google.com`: `^/(u/[0-9]{1,2}/)?file/(u/[0-9]{1,2}/)?d/<id>(/.*)?$`, or `/open` / `/uc` (optionally after `/u/N`)
-     with exactly one `id` parameter.
+     `^[A-Za-z0-9_-]{20,128}$`, with a safe path tail after the id (rule 3). `?authuser=` is ignored. The published `e/` id is
+     part of `resourceId`, so a Form's edit id and its published id are different resources.
+   - `drive.google.com`: `^/(u/[0-9]{1,2}/)?file/(u/[0-9]{1,2}/)?d/<id>(/.*)?$` with a safe path tail after the id, or `/open`
+     / `/uc` (optionally after `/u/N`) with exactly one `id` parameter.
    - Resource ids are case-sensitive.
 5. **Validation** of a received entry: exact key sets per type (no extra keys); a syntactically canonical hostname (lower case,
    no `www.`, no trailing dot, at least two labels, no numeric final label); `website` has `includeSubdomains: true`, `section`
    and `resource` have `false`; `pathPrefix` is 2 to 512 characters, starts with `/`, has no trailing `/`, no `//`, no `?`, `#`,
-   `\` or whitespace, and survives URL normalization unchanged; a resource's hostname is its provider's host (`youtube.com`,
+   `\` or whitespace, is itself a safe path tail (rule 3: no `;` and no unsafe escape), and survives URL normalization
+   unchanged; a resource's hostname is its provider's host (`youtube.com`,
    `docs.google.com`, `drive.google.com`), its id matches the provider pattern (Docs family ids may carry the `e/` prefix; a
    YouTube id is never `videoseries` or `live_stream`), and
    `canonicalUrl` equals the recomputed canonical URL:
@@ -210,31 +222,39 @@ sections either: `^` also matches `~`, `!`, `,` and similar characters, so `/cla
 
 ```text
 section   ^https://(?:www\.)?E(hostname)E(pathPrefix)R(?:[?#].*)?$
-docs      ^https://(?:www\.)?docs\.google\.com/(?:u/[0-9]{1,2}/)?<document|presentation|spreadsheets|forms>/(?:u/[0-9]{1,2}/)?d/E(resourceId)(?:[/?#]|$)
-drive     ^https://(?:www\.)?drive\.google\.com/(?:u/[0-9]{1,2}/)?file/(?:u/[0-9]{1,2}/)?d/E(resourceId)(?:[/?#]|$)
-youtube 1 ^https://(?:(?:www\.)?(?:m\.)?youtube\.com|(?:www\.)?youtube-nocookie\.com)/(?:(?:shorts|live)/ID(?:[/?#]|$)|watch\?(?:P&)*v=ID(?:&P)*(?:#.*)?$)
+docs      ^https://(?:www\.)?docs\.google\.com/(?:u/[0-9]{1,2}/)?<document|presentation|spreadsheets|forms>/(?:u/[0-9]{1,2}/)?d/E(resourceId)R(?:[?#].*)?$
+drive     ^https://(?:www\.)?drive\.google\.com/(?:u/[0-9]{1,2}/)?file/(?:u/[0-9]{1,2}/)?d/E(resourceId)R(?:[?#].*)?$
+youtube 1 ^https://(?:(?:www\.)?(?:m\.)?youtube\.com|(?:www\.)?youtube-nocookie\.com)/(?:(?:shorts|live)/IDR(?:[?#].*)?$|watch\?(?:P&)*v=ID(?:&P)*(?:#.*)?$)
 youtube 2 ^https://(?:(?:www\.)?youtu\.be/ID/?(?:[?#].*)?|(?:(?:www\.)?(?:m\.)?youtube\.com|(?:www\.)?youtube-nocookie\.com)/(?:embed|v)/ID/?(?:\?Q(?:&Q)*)?(?:#.*)?)$
 
-R (the path below a section prefix: no ";", no %2F %2E %25 %5C in any case, only well-formed escapes):
-          (?:/(?:[^?#%;]|%(?:[013-46-9a-fA-F][0-9a-fA-F]|2[0-46-9a-dA-D]|5[0-9abd-fABD-F]))*)?
+R (a safe path tail, verbatim from RESTRICTION_PATH_TAIL_PATTERN in src/services/restrictionResources.ts):
+          (?:/(?:[^?#%;]|%(?:[013-46-9abdfABDF][0-9a-fA-F]|2[0-46-9a-dA-D]|5[0-9abd-fABD-F]|[Cc][2-9a-fA-F]|[Ee][1-9a-eA-E]|[Ee]0%[AaBb][0-9a-fA-F]|[Ee][Ff]%(?:[0-9ac-fAC-F][0-9a-fA-F]|[Bb][0-9abd-fABD-F]|[Bb][Cc]%(?:[0-79ac-fAC-F][0-9a-fA-F]|8[0-9a-dA-D]|[Bb][0-9abd-fABD-F]))))*)?
 P (a query parameter whose decoded name is not "v"):
           (?:[^v%&#=][^&#]*|v[^=&#][^&#]*|%(?:[^7&#][^&#]*|7(?:[^6&#][^&#]*)?)?|=[^&#]*)?
-Q (a harmless embedded-player parameter, exact name, optional value):
-          (?:(?:autoplay|cc_lang_pref|cc_load_policy|color|controls|disablekb|enablejsapi|end|feature|fs|hl|iv_load_policy|loop|modestbranding|mute|origin|playsinline|rel|si|start|t|widget_referrer)(?:=[^&#]*)?)?
+Q (a harmless embedded-player parameter: exact raw name, optional plain value):
+          (?:(?:autoplay|cc_lang_pref|cc_load_policy|color|controls|disablekb|enablejsapi|end|feature|fs|hl|iv_load_policy|loop|modestbranding|mute|origin|playsinline|rel|si|start|t|widget_referrer)(?:=[A-Za-z0-9._:/-]*)?)?
 ```
 
+`R` is the matcher's own rule, so section and path-tail shapes match exactly what the matcher accepts. The matcher applies
+the same text to the tail after the prefix or id, and to `pathPrefix` itself.
+
 The DNR layer may be narrower than the matcher, never broader. Checked against every `match` row of the case file plus
-adversarial URLs (`watch?v=OTHER&v=ID`, `watch?v&v=ID`, `watch?%76=OTHER&v=ID`, embed links carrying `list`, `playlist`,
-`listType`, an encoded or unlisted parameter name or a path after the id, section escapes such as `..%2F`, `%2e%2e%2f`, `..;`,
-`%252e`, `%5c`, a malformed `%`, `/solar-system~x`, a longer id, a subdomain, a port, credentials), these patterns allow nothing
-the matcher rejects. They are narrower in a few places, all acceptable because the landing URL stays allowed: Drive
-`open?id=` / `uc?id=` links, percent-encoded video ids or parameter names, and trailing-dot hosts. Run the same comparison in
-the extension's DNR vitest.
+adversarial URLs, these patterns allow nothing the matcher rejects. The adversarial URLs cover:
+- `watch?v=OTHER&v=ID`, `watch?v&v=ID` and `watch?%76=OTHER&v=ID`;
+- embed links carrying `list`, `playlist` or `listType`, an encoded or unlisted parameter name, a separator smuggled into a
+  value (`;`, `%26`, `%3B`) or a path after the id;
+- path escapes below a section prefix or after a Docs, Drive, Shorts or Live id, such as `..%2F`, `%2e%2e%2f`, `..;`, `%252e`,
+  `%5c`, `%C0%AE`, `%E0%80%AE`, `%EF%BC%8F` or a malformed `%`;
+- `/solar-system~x`, a longer id, a subdomain, a port and credentials.
+
+They are narrower in a few places, all acceptable because the landing URL stays allowed: Drive `open?id=` / `uc?id=` links,
+a percent-encoded video id and trailing-dot hosts. Run the same comparison in the extension's DNR vitest.
 
 Chrome compiles `regexFilter` with RE2 under a small memory limit. If `isRegexSupported` rejects a reference shape (the
 YouTube ones are the largest), use a narrower equivalent that still fits the two-rule budget, never a broader one. The first
 fallback is to drop the embedded-player alternative from YouTube rule 2: a `main_frame` navigation to `/embed/<id>` is rare,
-and the canonical `watch?v=<id>` landing URL stays allowed.
+and the canonical `watch?v=<id>` landing URL stays allowed. For a section, Docs, Drive or page shape, the fallback is `R`
+without its escape alternatives, `(?:/[^?#%;]*)?`, which refuses every escape in the tail.
 
 **Regex budget.** Count every regex rule: the auth pass-through (`restrictionSso`, at most 144) plus classroom resources. If the
 total would exceed 800, ACK `failed` with the new code `DNR_REGEX_BUDGET_EXCEEDED` (add it to `COMMAND_DIAGNOSTIC_MESSAGES`) and
@@ -287,6 +307,9 @@ DNR sees only network navigations. Precise restrictions also need the in-page on
   `target` is the Waypoint URL, else the first Flight Path landing target.
 - Loop guard: at most one policy redirect per tab per 1000 ms. Cover YouTube playlist autoplay (`&list=` advancing to another video
   through `pushState`) in the harness.
+- Harness note for embeds: player links may keep `rel`, so the player can show related videos. Clicking one opens
+  `youtube.com/watch?v=OTHER` as a new top-level navigation. DNR and `decideNavigation` must evaluate and block that navigation
+  under a precise restriction; add a harness case for it.
 - Report a block caused by a section or resource entry with `policySource: "resource"`. Add it to `POLICY_SOURCES` (core :63-70).
   The server accepts it from this release on.
 - Startup reconciliation clears stale classroom-range rules (dynamic rules persist across a browser restart). The DNR
