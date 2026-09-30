@@ -12,6 +12,8 @@ if ($PrepareOnly -and -not $HoldFixtureForDiagnostics) { throw 'Preparation-only
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 if ($output.Equals($repository, [StringComparison]::OrdinalIgnoreCase) -or $output.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Choose an external evidence directory.' }
+node (Join-Path $PSScriptRoot 'assert-fresh-evidence-directory.mjs') $output
+if ($LASTEXITCODE -ne 0) { throw 'Choose a fresh empty evidence directory; existing artifacts will not be overwritten.' }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $run = [guid]::NewGuid().ToString('N').Substring(0,12)
 $container = 'schoolpilot-usage-scale-' + $run

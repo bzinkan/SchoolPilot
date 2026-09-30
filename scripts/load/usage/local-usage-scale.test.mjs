@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname, basename } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { assertFreshEvidenceDirectory } from './assert-fresh-evidence-directory.mjs';
 import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql, apiStatementKind } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
@@ -74,4 +79,30 @@ test('API diagnostics retain fixed family labels rather than SQL or parameters',
   assert.equal(apiStatementKind('SELECT * FROM schools JOIN settings ON true WHERE id=$1'), 'settings');
   assert.equal(apiStatementKind('INSERT INTO heartbeats VALUES($1)'), 'heartbeat');
   assert.equal(apiStatementKind('SELECT set_config($1,$2,true)'), 'transaction');
+});
+
+test('fresh output guard preserves existing failure artifacts and refuses files and hidden entries before output writes', () => {
+  const directory = mkdtempSync(join(tmpdir(),'schoolpilot-evidence-guard-'));
+  try {
+    assert.doesNotThrow(() => assertFreshEvidenceDirectory(join(directory,'new')));
+    const empty = join(directory,'empty'); mkdirSync(empty);
+    assert.doesNotThrow(() => assertFreshEvidenceDirectory(empty));
+    const marker = join(directory,'failed-profile.json'), original = '{"passed":false,"immutable":true}\n';
+    writeFileSync(marker,original);
+    assert.throws(() => assertFreshEvidenceDirectory(directory),/fresh empty evidence directory/);
+    assert.throws(() => assertFreshEvidenceDirectory(marker),/fresh empty evidence directory/);
+    writeFileSync(join(empty,'.hidden-artifact'),'preserve');
+    assert.throws(() => assertFreshEvidenceDirectory(empty),/fresh empty evidence directory/);
+    const result = spawnSync(process.execPath,[fileURLToPath(new URL('./assert-fresh-evidence-directory.mjs',import.meta.url)),directory],{encoding:'utf8'});
+    assert.equal(result.status,1); assert.match(result.stderr,/existing artifacts will not be overwritten/);
+    assert.equal(readFileSync(marker,'utf8'),original);
+    assert.deepEqual(readdirSync(directory).sort(),['empty','failed-profile.json']);
+    const script = readFileSync(new URL('./run-local-usage-scale.ps1',import.meta.url),'utf8');
+    assert.ok(script.indexOf('assert-fresh-evidence-directory.mjs') < script.indexOf('New-Item -ItemType Directory'), 'Guard must run before the first output mutation');
+  } finally {
+    const absolute = resolve(directory);
+    assert.equal(dirname(absolute),resolve(tmpdir()));
+    assert.ok(basename(absolute).startsWith('schoolpilot-evidence-guard-'));
+    rmSync(absolute,{recursive:true,force:true});
+  }
 });

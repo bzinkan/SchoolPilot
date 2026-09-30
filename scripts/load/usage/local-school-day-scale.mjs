@@ -154,15 +154,30 @@ export async function runSchoolDayScale() {
         SELECT $1,date::date,date::date::timestamp AT TIME ZONE $3,(date::date+1)::timestamp AT TIME ZONE $3,(date::date+1)::timestamp AT TIME ZONE $3,true FROM unnest($2::text[]) date`, [school.id, coverageDates, zone]);
       await admin.query(`INSERT INTO heartbeats(id,device_id,student_id,school_id,active_tab_title,active_tab_url,ai_category,teacher_intent_source,timestamp)
         SELECT 'school-day-'||$4||'-'||lpad(student.ordinality::text,4,'0')||'-'||lpad(sample.n::text,4,'0'),
-          'synthetic-school-day-'||student.ordinality,student.id,$2,'synthetic','https://lesson-'||(((student.ordinality-1)%25)*8+(sample.n/20)%8)||'.example.test/',
+          ($5::text[])[student.ordinality::int],student.id,$2,'synthetic','https://lesson-'||(((student.ordinality-1)%25)*8+(sample.n/20)%8)||'.example.test/',
           CASE WHEN sample.n%4=0 THEN 'educational' WHEN sample.n%4=2 THEN NULL ELSE 'non-educational' END,CASE WHEN sample.n%4=3 THEN 'flight_path' ELSE NULL END,
           $3::timestamp+interval '8 hours'+sample.n*interval '10 seconds'
-        FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,1999) sample(n)`, [school.students, school.id, wall(day.dayStartUtc), school.index]);
+        FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,1999) sample(n)`, [school.students, school.id, wall(day.dayStartUtc), school.index, school.devices]);
       console.log(JSON.stringify({ event: 'local_school_day_scale_school_seeded', schoolIndex: school.index }));
     }
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
     metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
     assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_001 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
+    metrics.heavyDeviceBindings = [];
+    for (const school of schools) {
+      const bindings = (await admin.query(`WITH bindings AS (
+        SELECT DISTINCT student_id,device_id FROM heartbeats
+        WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp
+      ) SELECT COUNT(*)::int AS pairs,COUNT(DISTINCT binding.device_id)::int AS devices,
+          COUNT(*) FILTER (WHERE device.device_id IS NULL OR session.id IS NULL)::int AS invalid
+        FROM bindings AS binding
+        LEFT JOIN devices AS device ON device.device_id=binding.device_id AND device.school_id=$1
+        LEFT JOIN student_sessions AS session ON session.student_id=binding.student_id AND session.device_id=binding.device_id
+        LEFT JOIN students AS student ON student.id=binding.student_id AND student.school_id=$1
+        WHERE student.id IS NOT NULL`, [school.id,wall(day.dayStartUtc),wall(day.dayEndUtc)])).rows[0];
+      assert.deepEqual(bindings,{pairs:500,devices:500,invalid:0});
+      metrics.heavyDeviceBindings.push({schoolIndex:school.index,...bindings});
+    }
     if (process.env.USAGE_SCALE_PREPARE_ONLY === '1') {
       metrics.fixturePreparationOnly = true; save();
       console.log(JSON.stringify({ event: 'local_school_day_scale_prepared', sourceRevision: metrics.sourceRevision, capacityMeasured: false }));

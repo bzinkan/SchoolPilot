@@ -63,6 +63,8 @@ test('separate harness keeps exact raw/cardinality gates, independent categories
   assert.match(script,/generate_series\(0,1999\)/);
   assert.doesNotMatch(script,/CROSS JOIN generate_series\(0,1\) duplicate/);
   assert.match(script,/schoolDaySessionRoster/);
+  assert.match(script,/school\.index, school\.devices/);
+  assert.match(script,/assert\.deepEqual\(bindings,\{pairs:500,devices:500,invalid:0\}\)/);
   assert.match(script,/result\.rowCount, heavyOracles\.school\.grains/);
   for (const gate of ['367-day','currentDayRawOracle','csvStrictAuditRecorded','crossSchoolIdsDenied','gapWithheld','expiredDateWithheld','Promise.allSettled','actualHttpIngest','successfulEmptyDay','heavyDayAtomicity']) assert.ok(script.includes(gate),gate);
 });

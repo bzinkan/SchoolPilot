@@ -1,5 +1,11 @@
 # Separate school-day load profile
 
+The initial review baseline was `60f33dbcf93b6901ac038c2d0066f79fbd9632a4`;
+the latest observed main head while recording this evidence was
+`d4f3f232be7529ac4d584c2559768e6ad1b5421a`. Every measurement captures its own
+candidate source revision and file hashes. The later main changes contain
+deployment safety/docs and the equivalent dependency lock correction.
+
 This profile measures two schools concurrently, each with 1,000,000 unique raw
 heartbeats, using the corrected usage writer/reader. It does not replace the
 immutable 500,000-grain stress fixture or its failed capacity result. Run it with
@@ -7,6 +13,11 @@ PowerShell 7.5 using `scripts/load/usage/run-local-school-day-scale.ps1` and a
 fresh external `-OutputDirectory`. The shared guarded runner creates only its
 generated loopback fixture, applies the unchanged 4 CPU/4 GiB PostgreSQL caps
 and Node 512 MiB old-space cap, and removes that exact container afterward.
+An existing nonempty output directory or file is rejected before any writes,
+so rerunning a command cannot replace an earlier failure's evidence. The bulk
+seed uses the registered per-student device and verifies exactly 500 valid
+student/device/session bindings per school. Optional `-HoldFixtureForDiagnostics`
+permits bounded local EXPLAIN work and retains the exact ownership cleanup.
 
 The ten-second cadence is the actual ClassPilot source constant
 `extension/service-worker.js:605` (`HEARTBEAT_INTERVAL_MS = 10000`).
@@ -63,3 +74,19 @@ establish RDS I/O, fleet scheduling, Redis distribution, device behavior or
 production rollout readiness. Dense AI-decision and tracking-exclusion capacity
 remains unmeasured. The valid extreme 500,000-grain stress day remains a known
 60-second write limitation even if this separate school-day profile passes.
+
+The first run at `6b797ffa3596f7b046998ff5d5c8fffb1da7c273` failed and is
+preserved in `scripts/load/usage/evidence-school-day-failed-20260930.json`.
+Both 84,000-grain writers reached the 60-second server timeout (63-second
+client wall time), with zero committed heavy aggregates or completion. Seven
+of 64 reports returned 500: three report SQL cancellations and four checkout
+failures; the API collector recorded six checkout failures overall and two
+ingest clients received 500. Report SQL peaked at 22,107 ms. Read-only
+attribution afterward took 15,121 ms. The measured phase wrote 3,660,749,240
+temporary bytes across 162 files, which may contribute to concurrent pressure;
+this does not isolate a single cause. Post-phase raw oracles, all scoped CSVs
+and audits, successful empty/gap/expired semantics and cross-school denials
+passed. Bulk historical device IDs in this first run were synthetic; the
+follow-on fixture binds them to registered student devices without changing
+raw count, schedule, categories, domains or quotas. This initial failure is
+not a school-day capacity pass and remains immutable.
