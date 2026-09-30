@@ -10,8 +10,19 @@ const PROVIDERS = new Set(['youtube', 'google_docs', 'google_slides', 'google_sh
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
 const GOOGLE_FILE_ID = /^[A-Za-z0-9_-]{20,128}$/;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'm.youtube.com', 'youtube-nocookie.com']);
-const YOUTUBE_PATH = /^\/(?:shorts|embed|v|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+const YOUTUBE_PLAYER_PATH = /^\/(?:embed|v)\/([A-Za-z0-9_-]{11})\/?$/;
 const YOUTU_BE_PATH = /^\/([A-Za-z0-9_-]{11})\/?$/;
+// An embedded player link identifies one video only with these parameters;
+// list, playlist and listType (or anything else) let it play other videos.
+const YOUTUBE_PLAYER_PARAMETERS = new Set([
+  'autoplay', 'cc_lang_pref', 'cc_load_policy', 'color', 'controls', 'disablekb', 'enablejsapi',
+  'end', 'feature', 'fs', 'hl', 'iv_load_policy', 'loop', 'modestbranding', 'mute', 'origin',
+  'playsinline', 'rel', 'si', 'start', 't', 'widget_referrer',
+]);
+const YOUTUBE_RESERVED_IDS = new Set(['videoseries', 'live_stream']);
+// Below a section prefix: no ';', encoded separator, encoded dot or malformed escape.
+const SECTION_PATH_ESCAPE = /;|%(?![0-9A-Fa-f]{2})|%2[EeFf5]|%5[Cc]/;
 const DOCS_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
 const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
 const DRIVE_ID_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(?:open|uc)$/;
@@ -49,9 +60,13 @@ function providerHostname(provider) {
   return 'docs.google.com';
 }
 
+function youtubeVideoId(value) {
+  return typeof value === 'string' && YOUTUBE_ID.test(value) && !YOUTUBE_RESERVED_IDS.has(value) ? value : null;
+}
+
 function validResourceId(provider, resourceId) {
   if (typeof resourceId !== 'string') return false;
-  if (provider === 'youtube') return YOUTUBE_ID.test(resourceId);
+  if (provider === 'youtube') return youtubeVideoId(resourceId) !== null;
   if (provider === 'google_drive') return GOOGLE_FILE_ID.test(resourceId);
   return GOOGLE_FILE_ID.test(resourceId.startsWith('e/') ? resourceId.slice(2) : resourceId);
 }
@@ -102,16 +117,24 @@ export function isValidRestrictionResource(value) {
 function identityFromParsedUrl(parsed) {
   const host = restrictionMatchHostname(parsed.hostname);
   if (YOUTUBE_HOSTS.has(host)) {
+    let id = null;
     if (parsed.pathname === '/watch') {
       const ids = parsed.searchParams.getAll('v');
-      return ids.length === 1 && YOUTUBE_ID.test(ids[0]) ? { provider: 'youtube', resourceId: ids[0] } : null;
+      id = ids.length === 1 ? youtubeVideoId(ids[0]) : null;
+    } else {
+      const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
+      if (player) {
+        const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETERS.has(name));
+        id = harmless ? youtubeVideoId(player[1]) : null;
+      } else {
+        id = youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
+      }
     }
-    const match = YOUTUBE_PATH.exec(parsed.pathname);
-    return match ? { provider: 'youtube', resourceId: match[1] } : null;
+    return id ? { provider: 'youtube', resourceId: id } : null;
   }
   if (host === 'youtu.be') {
-    const match = YOUTU_BE_PATH.exec(parsed.pathname);
-    return match ? { provider: 'youtube', resourceId: match[1] } : null;
+    const id = youtubeVideoId(YOUTU_BE_PATH.exec(parsed.pathname)?.[1]);
+    return id ? { provider: 'youtube', resourceId: id } : null;
   }
   if (host === 'docs.google.com') {
     const match = DOCS_PATH.exec(parsed.pathname);
@@ -157,7 +180,8 @@ export function isUrlAllowedByRestrictionResource(url, resource) {
   if (parsed.protocol !== 'https:' || parsed.port) return false;
   if (resource.type === 'section') {
     return host === resource.hostname
-      && (parsed.pathname === resource.pathPrefix || parsed.pathname.startsWith(`${resource.pathPrefix}/`));
+      && (parsed.pathname === resource.pathPrefix || parsed.pathname.startsWith(`${resource.pathPrefix}/`))
+      && !SECTION_PATH_ESCAPE.test(parsed.pathname.slice(resource.pathPrefix.length));
   }
   const identity = identityFromParsedUrl(parsed);
   return !!identity && identity.provider === resource.provider && identity.resourceId === resource.resourceId;

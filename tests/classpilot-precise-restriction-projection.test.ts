@@ -194,6 +194,8 @@ describe("precise restriction projection", () => {
       ["non-canonical hostname", { screenLock: { active: true, url: DOC.type === "resource" ? DOC.canonicalUrl : "", resource: { ...DOC, hostname: "DOCS.google.com" } } }],
       ["client-chosen canonical URL", { screenLock: { active: true, url: "https://evil.example.com/", resource: { ...DOC, canonicalUrl: "https://evil.example.com/" } } }],
       ["url that is not the resource's canonical URL", { screenLock: { active: true, url: "https://docs.google.com/", resource: DOC } }],
+      ["section Waypoint landing on another subdomain", { screenLock: { active: true, url: "https://m.nasa.gov/solar-system", resource: SECTION } }],
+      ["provider resource Waypoint landing on a www. host", { screenLock: { active: true, url: "https://www.docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit", resource: DOC } }],
       ["website entry as a Waypoint resource", { screenLock: { active: true, url: "https://khanacademy.org", resource: { type: "website", hostname: "khanacademy.org", includeSubdomains: true } } }],
       ["resource on an inactive Waypoint", { screenLock: { active: false, resource: DOC } }],
       ["resources on an inactive Flight Path", { flightPath: { active: false, allowedDomains: [], resources: [DOC] } }],
@@ -226,6 +228,16 @@ describe("precise restriction projection", () => {
       }), true, name);
     }
     assert.equal(snapshotHeartbeatHotPathMetrics({ reset: true }).counters.preciseRestrictionDeliveryWithheld, corrupted.length);
+  });
+
+  it("lets a section Waypoint land on the www. host its teacher typed", () => {
+    for (const url of ["https://nasa.gov/solar-system", "https://www.nasa.gov/solar-system"]) {
+      const restrictions = { screenLock: { active: true, url, resource: SECTION } };
+      assert.equal(classpilotPreciseRestrictionPayload(restrictions).state, "valid", url);
+      assert.deepEqual(deliver(restrictions, ACCEPTED_2_10_0).classroomState?.restrictions.screenLock, {
+        active: true, url, resource: SECTION,
+      }, url);
+    }
   });
 
   it("never serializes a resource Waypoint without its resource, whatever else changes", () => {

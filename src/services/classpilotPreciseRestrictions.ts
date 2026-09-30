@@ -3,7 +3,7 @@ import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   RestrictionResourceError,
   assertRestrictionResourceLimits,
-  canonicalUrlForResource,
+  isWaypointLandingUrl,
   legacyHostProjection,
   normalizeAllowedResource,
   normalizeAllowedResourceList,
@@ -117,7 +117,7 @@ export function classpilotPreciseCommandPayloadValid(commandType: string, payloa
     : {};
   if (commandType === "lock-screen") {
     const resource = validateAllowedResource(data.resource);
-    return !!resource && resource.type !== "website" && data.url === canonicalUrlForResource(resource);
+    return !!resource && resource.type !== "website" && isWaypointLandingUrl(data.url, resource);
   }
   if (commandType === "apply-flight-path") {
     const resources = validateAllowedResourceList(data.resources);

@@ -86,18 +86,28 @@ describe("ClassPilot teacher command payload validation", () => {
         canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       },
     });
+    // A section keeps the www. host its teacher typed as the landing URL (some
+    // sites answer only there); the stored entry stays canonical.
+    const moonPhases = {
+      type: "section",
+      hostname: "ixl.com",
+      includeSubdomains: false,
+      pathPrefix: "/science/grade-7/moon-phases",
+    };
     assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
       url: "https://www.ixl.com/science/grade-7/moon-phases",
       boundary: "resource",
-    }), {
-      url: "https://ixl.com/science/grade-7/moon-phases",
-      resource: {
-        type: "section",
-        hostname: "ixl.com",
-        includeSubdomains: false,
-        pathPrefix: "/science/grade-7/moon-phases",
-      },
-    });
+    }), { url: "https://www.ixl.com/science/grade-7/moon-phases", resource: moonPhases });
+    for (const url of ["https://ixl.com/science/grade-7/moon-phases/", "ixl.com/science/grade-7/moon-phases"]) {
+      assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url, boundary: "resource" }), {
+        url: "https://ixl.com/science/grade-7/moon-phases",
+        resource: moonPhases,
+      }, url);
+    }
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      boundary: "resource",
+    }).url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "a provider resource always lands on its canonical URL");
     // The current page is never a resource boundary: it is observed, not chosen.
     invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "CURRENT_URL", boundary: "resource" }), "url");
     invalid(() => validateClasspilotCommandPayload("lock-screen", {

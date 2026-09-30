@@ -185,8 +185,28 @@ const DOCS_HOST = "docs.google.com";
 const DRIVE_HOST = "drive.google.com";
 const CLASSROOM_HOST = "classroom.google.com";
 const FORMS_SHORT_LINK_HOST = "forms.gle";
-const YOUTUBE_PATH = /^\/(?:shorts|embed|v|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+// Page paths: moving to another video changes the page URL, which the
+// extension's navigation and SPA listeners re-check.
+const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+// Player paths: an embedded player can move through other videos without
+// changing its URL, so only exactly `/embed/<id>` or `/v/<id>` with harmless
+// player parameters identifies one video (see YOUTUBE_PLAYER_PARAMETERS).
+const YOUTUBE_PLAYER_PATH = /^\/(?:embed|v)\/([A-Za-z0-9_-]{11})\/?$/;
 const YOUTU_BE_PATH = /^\/([A-Za-z0-9_-]{11})\/?$/;
+/**
+ * The only query parameters an embedded player link may carry and still
+ * identify one video. `list`, `playlist` and `listType` (and anything else)
+ * are refused: they let the player continue into other videos.
+ */
+export const YOUTUBE_PLAYER_PARAMETERS: readonly string[] = [
+  "autoplay", "cc_lang_pref", "cc_load_policy", "color", "controls", "disablekb", "enablejsapi",
+  "end", "feature", "fs", "hl", "iv_load_policy", "loop", "modestbranding", "mute", "origin",
+  "playsinline", "rel", "si", "start", "t", "widget_referrer",
+];
+const YOUTUBE_PLAYER_PARAMETER_SET = new Set(YOUTUBE_PLAYER_PARAMETERS);
+/** Eleven-character path words YouTube uses for playlists and channel streams, never videos. */
+export const YOUTUBE_RESERVED_IDS: readonly string[] = ["videoseries", "live_stream"];
+const YOUTUBE_RESERVED_ID_SET = new Set(YOUTUBE_RESERVED_IDS);
 const DOCS_PATH =
   /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
 const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
@@ -230,9 +250,15 @@ export function restrictionResourceProviderHostname(provider: RestrictionResourc
   return DOCS_HOST;
 }
 
+function youtubeVideoId(value: string | undefined): string | null {
+  return typeof value === "string" && YOUTUBE_ID.test(value) && !YOUTUBE_RESERVED_ID_SET.has(value)
+    ? value
+    : null;
+}
+
 function validResourceId(provider: RestrictionResourceProvider, resourceId: unknown): resourceId is string {
   if (typeof resourceId !== "string") return false;
-  if (provider === "youtube") return YOUTUBE_ID.test(resourceId);
+  if (provider === "youtube") return youtubeVideoId(resourceId) !== null;
   if (provider === "google_drive") return GOOGLE_FILE_ID.test(resourceId);
   const published = resourceId.startsWith("e/");
   return GOOGLE_FILE_ID.test(published ? resourceId.slice(2) : resourceId);
@@ -272,19 +298,25 @@ function parseHttpsUrl(value: unknown): URL | null {
 function identityFromParsedUrl(parsed: URL): RestrictionResourceIdentity | null {
   const host = restrictionMatchHostname(parsed.hostname);
   if (YOUTUBE_HOSTS.has(host)) {
+    let id: string | null = null;
     if (parsed.pathname === "/watch") {
       // Exactly one decoded "v" parameter: an ambiguous query never matches.
       const ids = parsed.searchParams.getAll("v");
-      return ids.length === 1 && YOUTUBE_ID.test(ids[0]!)
-        ? { provider: "youtube", resourceId: ids[0]! }
-        : null;
+      id = ids.length === 1 ? youtubeVideoId(ids[0]) : null;
+    } else {
+      const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
+      if (player) {
+        const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETER_SET.has(name));
+        id = harmless ? youtubeVideoId(player[1]) : null;
+      } else {
+        id = youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
+      }
     }
-    const match = YOUTUBE_PATH.exec(parsed.pathname);
-    return match ? { provider: "youtube", resourceId: match[1]! } : null;
+    return id ? { provider: "youtube", resourceId: id } : null;
   }
   if (host === YOUTUBE_SHORT_HOST) {
-    const match = YOUTU_BE_PATH.exec(parsed.pathname);
-    return match ? { provider: "youtube", resourceId: match[1]! } : null;
+    const id = youtubeVideoId(YOUTU_BE_PATH.exec(parsed.pathname)?.[1]);
+    return id ? { provider: "youtube", resourceId: id } : null;
   }
   if (host === DOCS_HOST) {
     const match = DOCS_PATH.exec(parsed.pathname);
@@ -618,10 +650,20 @@ export function normalizePreciseWaypointResource(url: unknown): PreciseAllowedRe
 // ---------------------------------------------------------------------------
 
 /**
+ * The part of a path below a section prefix may not hide a separator or a
+ * dot segment from the WHATWG parser: servers such as nginx decode `%2F`
+ * before resolving `..`, and Tomcat, Spring and Jetty treat `..;` as `..`.
+ * So below the prefix, `;`, `%2F`, `%5C`, `%2E`, `%25` (any case) and any `%`
+ * that does not start a two-digit escape fail closed.
+ */
+const SECTION_PATH_ESCAPE = /;|%(?![0-9A-Fa-f]{2})|%2[EeFf5]|%5[Cc]/;
+
+/**
  * Normative matcher. `website`: http(s), host equal to or below the hostname.
  * `section`: https, default port, the exact host, and the path equal to the
  * prefix or below it at a "/" boundary (case-sensitive; query and fragment
- * ignored). `resource`: the URL identifies the same provider resource.
+ * ignored), with no `;`, encoded separator, encoded dot or malformed escape
+ * below the prefix. `resource`: the URL identifies the same provider resource.
  * Credentials, unparsable input and out-of-contract entries are never allowed.
  */
 export function isUrlAllowedByResource(url: unknown, resource: unknown): boolean {
@@ -642,7 +684,8 @@ export function isUrlAllowedByResource(url: unknown, resource: unknown): boolean
   if (parsed.protocol !== "https:" || parsed.port) return false;
   if (entry.type === "section") {
     return host === entry.hostname
-      && (parsed.pathname === entry.pathPrefix || parsed.pathname.startsWith(`${entry.pathPrefix}/`));
+      && (parsed.pathname === entry.pathPrefix || parsed.pathname.startsWith(`${entry.pathPrefix}/`))
+      && !SECTION_PATH_ESCAPE.test(parsed.pathname.slice(entry.pathPrefix.length));
   }
   const identity = identityFromParsedUrl(parsed);
   return !!identity && identity.provider === entry.provider && identity.resourceId === entry.resourceId;
@@ -674,4 +717,32 @@ export function canonicalUrlForResource(resource: AllowedResource): string {
   if (resource.type === "resource") return resource.canonicalUrl;
   if (resource.type === "section") return `https://${resource.hostname}${resource.pathPrefix}`;
   return `https://${resource.hostname}`;
+}
+
+function wwwSectionUrl(resource: SectionAllowedResource): string {
+  return `https://www.${resource.hostname}${resource.pathPrefix}`;
+}
+
+/**
+ * The landing URL of a "This resource only" Waypoint. A section keeps the
+ * `www.` host its teacher typed, because some sites answer only there; the
+ * matcher treats both hosts alike. Everything else lands on its canonical URL.
+ */
+export function waypointLandingUrl(authoredUrl: unknown, resource: PreciseAllowedResource): string {
+  if (resource.type !== "section" || typeof authoredUrl !== "string") return canonicalUrlForResource(resource);
+  const raw = authoredUrl.trim();
+  let host: string;
+  try {
+    host = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase();
+  } catch {
+    return canonicalUrlForResource(resource);
+  }
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  return host === `www.${resource.hostname}` ? wwwSectionUrl(resource) : canonicalUrlForResource(resource);
+}
+
+/** Whether `url` is a landing URL a Waypoint may carry for this resource. */
+export function isWaypointLandingUrl(url: unknown, resource: PreciseAllowedResource): boolean {
+  return url === canonicalUrlForResource(resource)
+    || (resource.type === "section" && url === wwwSectionUrl(resource));
 }

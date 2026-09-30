@@ -31,7 +31,7 @@ import {
 // docs/CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md; changing a case changes
 // the contract and needs the same change in the extension.
 const RESTRICTION_RESOURCE_MATCHER_CASES_SHA256 =
-  "b6ca97bae37c7d1fffd11960699e749697a64c74ed5b6db5679d2f2a1bc2372b";
+  "6a7c050f39959229cafa6667a8aa0ce15dc0cbd7cd614da31b662d4776ab9e5f";
 
 const caseFileUrl = new URL("./fixtures/restriction-resource-matcher-cases.json", import.meta.url);
 

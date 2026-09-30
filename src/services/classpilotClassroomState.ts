@@ -6,7 +6,7 @@ import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 import type { ClasspilotSsoPolicy } from "./classpilotSsoPolicy.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
-  canonicalUrlForResource,
+  isWaypointLandingUrl,
   validateAllowedResource,
   validateAllowedResourceList,
   type AllowedResource,
@@ -288,7 +288,7 @@ export function classpilotPreciseRestrictionPayload(restrictions: unknown): Clas
       !resource
       || resource.type === "website"
       || screenLock.active !== true
-      || screenLock.url !== canonicalUrlForResource(resource)
+      || !isWaypointLandingUrl(screenLock.url, resource)
     ) return { state: "invalid" };
     screenLockResource = resource;
   }

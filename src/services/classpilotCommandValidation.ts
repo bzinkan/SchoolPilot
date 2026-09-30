@@ -1,6 +1,6 @@
 import { timerCommand, lessonCommand, promptStart, toolId } from "./classpilotToolsValidation.js";
 import { z } from "zod";
-import { canonicalUrlForResource, normalizePreciseWaypointResource } from "./restrictionResources.js";
+import { normalizePreciseWaypointResource, waypointLandingUrl } from "./restrictionResources.js";
 
 const id = z.string().trim().min(1).max(128);
 const message = z.string().trim().min(1).max(2_000);
@@ -114,7 +114,7 @@ export function validateClasspilotCommandPayload(
             }]);
           }
           const resource = normalizePreciseWaypointResource(value.url);
-          return { url: canonicalUrlForResource(resource), resource };
+          return { url: waypointLandingUrl(value.url, resource), resource };
         }
         // Entire website (the default, byte-for-byte today's output).
         return {
