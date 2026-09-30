@@ -9,6 +9,7 @@ const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
   "classpilot-focus.integration.test.ts",
+  "classpilot-lesson-prerequisites.integration.test.ts",
   "classpilot-settings.test.ts",
   "student-information.integration.test.ts",
   "school-discipline.integration.test.ts",
@@ -35,6 +36,7 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-lesson-prerequisite-frame.test.ts",
   "classpilot-teacher-preferences-schema.integration.test.ts",
   "mydesk-redesign-schema.integration.test.ts",
   "mydesk-workspace-schema.integration.test.ts",
