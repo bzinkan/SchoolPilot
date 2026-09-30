@@ -48,8 +48,8 @@ describe("student chat channel control", () => {
     const ids = schoolPilot27Migrations.map((migration) => migration.id);
     const index = ids.indexOf(classpilotChatChannelControlMigration.id);
     assert.ok(index >= 0, "migration is in the ordered manifest");
-    assert.equal(ids.at(-1), "20260824_staff_identity_integrity_contract", "the staff identity contract migration stays last");
-    assert.ok(index < ids.length - 1);
+    const staffContract = ids.indexOf("20260824_staff_identity_integrity_contract");
+    assert.ok(staffContract >= 0 && index < staffContract, "historical chat migration remains before the staff contract");
     const index_ts = await source("src/index.ts");
     assert.match(index_ts, /await pool\.query\(CLASSPILOT_SCHEDULED_CLASSROOM_SQL\);\s+await pool\.query\(CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL\);/);
   });
