@@ -15,11 +15,14 @@ uses the singleton reviewed `passpilotAppointments` bundle after the immutable
 127-table usage-computation inventory; the new complete target has 128 tables.
 Production's observed allowlist is unchanged in this PR.
 While appointments remain on, Plan and Apply also require atomic writer contract
-version 1 at the exact source SHA/digest serving on both API and worker; an older
+version 2 at the exact source SHA/digest serving on both API and worker; an older
 writer or partial previous-table admission cannot enable new activation. Turning
 the mode off remains available. PassPilot-only school-year setup is a separate
 required release dependency because the current scheduling configuration route
 requires a ClassPilot license; do not enable for those schools before that slice.
+The initial server/API draft (#570) also requires the eligibility-race correction
+before activation: version 2 includes student-lock serialization for attendance
+and preserves GoPilot's session-before-student lock order.
 
 ## Authority and private notes
 
@@ -73,6 +76,14 @@ together. Denied/failed issuance leaves the appointment scheduled. A concurrent
 duplicate activation returns the linked pass; a concurrent edit/cancel wins or
 loses under the same lock and expectedRevision contract.
 
+Activation holds the current student row FOR SHARE through the canonical pass
+insert and commit. Single/bulk attendance upserts and absence removal hold those
+rows FOR UPDATE in sorted order; GoPilot release/dismissal writers already take
+the same student lock. An earlier absence or dismissal writer must finish before
+activation reads eligibility, and a later writer cannot commit between that read
+and pass issuance. The dismissal read does not lock its session after the student:
+GoPilot writers own the session first, so taking it here would reverse lock order.
+
 Lifecycle states are `scheduled`, `activated`, `completed`, `cancelled`, and
 `missed`. Reminder delivery state is separate and is not implemented in this
 slice. Ended pending windows become missed; no pass is issued by a worker.
@@ -111,7 +122,7 @@ new table if the old writer lacks either SELECT or UPDATE privilege. It checks
 these privileges separately. This compatibility branch is permitted only before
 first activation, while the table is empty. It is not a post-activation fallback.
 Before first activation prove all API/worker writers serve atomic writer contract
-v1 with the full admission and SELECT/INSERT/UPDATE appointment grants; the locked
+v2 with the full admission and SELECT/INSERT/UPDATE appointment grants; the locked
 write context also checks those grants and returns `APPOINTMENT_GRANTS_REQUIRED`
 when missing. After activation, preserve the compatible writers and all grants
 even while the feature is off. Never roll back to a no-grant/pre-schema writer.

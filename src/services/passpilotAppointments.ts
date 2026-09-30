@@ -233,7 +233,10 @@ export async function activatePasspilotAppointment(schoolId: string, actor: Appo
     const [dismissed] = await tx.select({ id: dismissalQueue.id }).from(dismissalQueue)
       .innerJoin(dismissalSessions, and(eq(dismissalSessions.id, dismissalQueue.sessionId), eq(dismissalSessions.schoolId, schoolId)))
       .where(and(eq(dismissalQueue.schoolId, schoolId), eq(dismissalQueue.studentId, row.studentId),
-        eq(dismissalSessions.date, localDate), inArray(dismissalQueue.status, ["released", "dismissed"]))).limit(1).for("share");
+        eq(dismissalSessions.date, localDate), inArray(dismissalQueue.status, ["released", "dismissed"]))).limit(1);
+    // The student row is already held FOR SHARE, and every GoPilot release /
+    // dismissal writer holds that same row FOR UPDATE. Do not lock the session
+    // here: GoPilot's order is session then student, so that would reverse it.
     if (dismissed) throw appointmentError(409, "APPOINTMENT_STUDENT_UNAVAILABLE", "A known dismissal prevents pass activation.");
     if (input.overrideRuleCode && !canOverridePasspilotRules(ctx.role)) throw appointmentError(403, "PASSPILOT_RULE_OVERRIDE_FORBIDDEN", "Only administrators can override a pass rule.");
     const outcome: PasspilotRuleOutcome = {};
