@@ -251,6 +251,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install appointment migration-owned test contract
+        run: node --import tsx tests/setup-passpilot-appointments-ci.ts
+
       - name: DB and ordinary cross-tenant tests (serial)
         run: npm run test:db-serial
 

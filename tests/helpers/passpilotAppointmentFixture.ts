@@ -36,7 +36,14 @@ export async function appointmentFixture() {
     const admin = await person("school_admin", "Admin"), teacher = await person("teacher", "Teacher"), office = await person("office_staff", "Office");
     const outsider = await person("teacher", "OtherTeacher"), parent = await person("parent", "GoPilotOffice");
     await sql("UPDATE school_memberships SET gopilot_role='office_staff' WHERE user_id=$1", [parent.id]);
-    if (canonical) await sql("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Appointment Class','admin_class','active')", [classId, schoolId, teacher.id]);
+    if (canonical) {
+      await sql("BEGIN");
+      try {
+        await sql("INSERT INTO groups(id,school_id,teacher_id,name,group_type,status) VALUES($1,$2,$3,'Appointment Class','admin_class','active')", [classId, schoolId, teacher.id]);
+        await sql("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [classId, teacher.id]);
+        await sql("COMMIT");
+      } catch (error) { await sql("ROLLBACK"); throw error; }
+    }
     else {
       await sql("INSERT INTO grades(id,school_id,name) VALUES($1,$2,'Appointment Class')", [classId, schoolId]);
       await sql("INSERT INTO teacher_grades(teacher_id,grade_id) VALUES($1,$2)", [teacher.id, classId]);
@@ -76,6 +83,16 @@ export async function appointmentFixture() {
   }
   const create = (tenant: Tenant, index = 0, patch: Record<string, unknown> = {}, person = tenant.admin) => call(tenant, person, "POST", "/passpilot/appointments", payload(tenant, index, patch));
   const activate = (tenant: Tenant, id: string, patch: Record<string, unknown> = {}, person = tenant.teacher) => call(tenant, person, "POST", `/passpilot/appointments/${id}/activate`, { expectedRevision: 1, classId: tenant.classId, ...patch });
+  async function assignTeacher(tenant: Tenant, person: Person) {
+    assert.ok(tenant.canonical);
+    await sql("BEGIN");
+    try {
+      await sql("UPDATE groups SET teacher_id=$2,status='active' WHERE school_id=$3 AND id=$1", [tenant.classId, person.id, tenant.schoolId]);
+      await sql("DELETE FROM group_teachers WHERE group_id=$1 AND role='primary' AND teacher_id<>$2", [tenant.classId, person.id]);
+      await sql("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary') ON CONFLICT(group_id,teacher_id) DO UPDATE SET role='primary'", [tenant.classId, person.id]);
+      await sql("COMMIT");
+    } catch (error) { await sql("ROLLBACK"); throw error; }
+  }
   async function reset() {
     const ids = tenants.map(t => t.schoolId);
     for (const table of ["passpilot_appointments", "passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies", "student_timeline_events", "passes", "student_attendance", "dismissal_queue", "dismissal_sessions", "audit_logs"]) await sql(`DELETE FROM ${table} WHERE school_id=ANY($1::text[])`, [ids]);
@@ -85,7 +102,7 @@ export async function appointmentFixture() {
     await sql("UPDATE settings SET enable_tracking_hours=false,instructional_calendar='{}',school_timezone='UTC' WHERE school_id=ANY($1::text[])", [ids]);
     for (const t of tenants) {
       await schedule(t);
-      if (t.canonical) await sql("UPDATE groups SET teacher_id=$2,status='active' WHERE id=$1", [t.classId, t.teacher.id]);
+      if (t.canonical) await assignTeacher(t, t.teacher);
       else await sql("INSERT INTO teacher_grades(teacher_id,grade_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [t.teacher.id, t.classId]);
     }
     process.env.PASSPILOT_APPOINTMENTS_MODE = "on";
@@ -97,7 +114,7 @@ export async function appointmentFixture() {
     const { schedulerPool, schedulerLockPool } = await import("../../src/services/schedulerDb.js");
     await Promise.allSettled([system.end(), pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   }
-  return { sql, system, pool, db, runWithTenantContext, createTenant, schedule, headers, call, payload, create, activate, reset, close, tenants, url };
+  return { sql, system, pool, db, runWithTenantContext, createTenant, schedule, assignTeacher, headers, call, payload, create, activate, reset, close, tenants, url };
 }
 export type AppointmentFixture = Awaited<ReturnType<typeof appointmentFixture>>;
 export type AppointmentTenant = Awaited<ReturnType<AppointmentFixture["createTenant"]>>;
