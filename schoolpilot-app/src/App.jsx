@@ -33,6 +33,7 @@ const CPAdminLayout = lazy(() => import('./products/classpilot/components/admin/
 const CPAdminScheduling = lazy(() => import('./products/classpilot/pages/AdminScheduling'));
 const CPAdminClasses = lazy(() => import('./products/classpilot/pages/AdminClasses'));
 const CPAdminAnalytics = lazy(() => import('./products/classpilot/pages/AdminAnalytics'));
+const CPAdminUsage = lazy(() => import('./products/classpilot/pages/AdminUsage'));
 const CPCoverage = lazy(() => import('./products/classpilot/pages/Coverage'));
 const CPITReadiness = lazy(() => import('./products/classpilot/pages/ITReadiness'));
 const CPSafetyCenter = lazy(() => import('./products/classpilot/pages/SafetyCenter'));
@@ -289,6 +290,7 @@ function AppRoutes() {
             <Route path="/classpilot/admin/classes/scheduling" element={<CPAdminClasses />} />
             <Route path="/classpilot/admin/classes/schedule-changes" element={<CPAdminScheduleChanges />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
+            <Route path="/classpilot/admin/usage" element={<CPAdminUsage />} />
             <Route path="/classpilot/admin/attendance" element={<Navigate to="/classpilot/admin" replace />} />
             <Route path="/classpilot/coverage" element={<CPCoverage />} />
             <Route path="/classpilot/admin/it-readiness" element={<CPITReadiness />} />
