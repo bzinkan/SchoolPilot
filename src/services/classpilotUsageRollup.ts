@@ -213,15 +213,38 @@ roster_window AS MATERIALIZED (
     AND session.start_time < $3::timestamp
     AND session.start_time >= $2::timestamp - interval '12 hours'
 ),
+roster_boundaries AS (
+  SELECT student_id, starts_at AS at FROM roster_window WHERE starts_at < ends_at
+  UNION
+  SELECT student_id, ends_at AS at FROM roster_window WHERE starts_at < ends_at
+),
+roster_intervals AS (
+  SELECT student_id, at AS starts_at, LEAD(at) OVER (PARTITION BY student_id ORDER BY at) AS ends_at
+  FROM roster_boundaries
+),
+winning_roster AS MATERIALIZED (
+  -- Resolve overlapping frozen sessions once per roster interval instead of
+  -- sorting every heartbeat by its candidate sessions. Boundaries are disjoint
+  -- for each student; observations can match at most one winning interval.
+  SELECT DISTINCT ON (roster_intervals.student_id, roster_intervals.starts_at)
+    roster_intervals.student_id, roster_intervals.starts_at, roster_intervals.ends_at,
+    roster_window.class_id, roster_window.session_id
+  FROM roster_intervals
+  JOIN roster_window ON roster_window.student_id = roster_intervals.student_id
+    AND roster_intervals.starts_at >= roster_window.starts_at
+    AND roster_intervals.starts_at < roster_window.ends_at
+  WHERE roster_intervals.ends_at IS NOT NULL
+  ORDER BY roster_intervals.student_id, roster_intervals.starts_at,
+    roster_window.start_time DESC, roster_window.session_id DESC
+),
 attributed AS (
-  SELECT DISTINCT ON (classified.id) classified.student_id, classified.attributed_seconds,
-    classified.domain, classified.classification, roster_window.class_id, roster_window.session_id
+  SELECT classified.student_id, classified.attributed_seconds,
+    classified.domain, classified.classification, winning_roster.class_id, winning_roster.session_id
   FROM classified
-  LEFT JOIN roster_window
-    ON roster_window.student_id = classified.student_id
-    AND classified.observed_at >= roster_window.starts_at
-    AND classified.observed_at < roster_window.ends_at
-  ORDER BY classified.id, roster_window.start_time DESC NULLS LAST, roster_window.session_id DESC NULLS LAST
+  LEFT JOIN winning_roster
+    ON winning_roster.student_id = classified.student_id
+    AND classified.observed_at >= winning_roster.starts_at
+    AND classified.observed_at < winning_roster.ends_at
 ),
 inserted AS (
   INSERT INTO classpilot_usage_rollups (

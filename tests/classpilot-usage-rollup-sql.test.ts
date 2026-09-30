@@ -196,7 +196,7 @@ describe("Monitored Browser Time rollup SQL", () => {
     assert.match(roster, /roster\.group_id AS class_id/);
     assert.match(roster, /GREATEST\(session\.start_time, roster\.captured_at AT TIME ZONE 'UTC'\)/);
     assert.match(roster, /session\.start_time \+ interval '12 hours'/);
-    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY classified\.id, roster_window\.start_time DESC NULLS LAST/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY roster_intervals\.student_id, roster_intervals\.starts_at,\s+roster_window\.start_time DESC, roster_window\.session_id DESC/);
     // Supervision contexts are not a class dimension in v1.
     assert.doesNotMatch(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /supervision/i);
   });
