@@ -34,6 +34,7 @@ import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
+import ClassroomActions from '../components/ClassroomActions';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
@@ -6294,6 +6295,21 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {canUseRemoteControls && studentView !== "available" && (
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('open-tab') && <ClassroomActions
+              key={JSON.stringify([focusControlScopeKey, selectedSubgroupId, [...selectedStudentIds].sort()])}
+              schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
+              preciseResourcesEnabled={preciseRestrictionResourcesEnabled}
+              students={getActiveCommandStudents(null, { commandType: 'open-tab' })}
+              disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive}
+              assertCurrent={() => { if (focusControlScopeRef.current !== focusControlScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError'); }}
+              postCommand={(type, payload, studentIds) => postActiveCommand(type, payload, { studentIds })}
+              readCommand={(command, signal) => {
+                const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
+                const context = claimedPreviewContextById.get(authority?.supervisionContextId);
+                return requestActivityApi('GET', `/classpilot/commands/${encodeURIComponent(command.id)}/status?${activityAuthorityQuery(authority)}`, undefined,
+                  { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
+              }}
+            />}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
