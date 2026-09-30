@@ -11,6 +11,7 @@ import {
 } from "./storage.js";
 import {
   classpilotControlStateHasLateSignInOrigin,
+  classpilotControlStateRequiresPreciseCapability,
   serializeClasspilotStudentControlStateForDelivery,
 } from "./classpilotClassroomState.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
@@ -199,6 +200,9 @@ export async function syncClasspilotControlStatesToActiveDevices(
                 ...(requiredCapability ? [requiredCapability] : []),
                 ...(deliveredState.classroomState.authPassThrough
                   ? ["restrictionAuthPassThroughV1" as const]
+                  : []),
+                ...(classpilotControlStateRequiresPreciseCapability(deliveredState.classroomState)
+                  ? ["preciseRestrictionResourcesV1" as const]
                   : []),
               ];
               const classroomRequiredCapability = classroomRequiredCapabilities.at(-1);

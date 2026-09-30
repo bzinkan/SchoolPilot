@@ -4,7 +4,10 @@ import { classpilotObserverEvent } from "../services/classpilotObserverEvents.js
 import {
   classpilotCommandPayloadRequiresPreciseCapability,
   classpilotControlStateRequiresPreciseCapability,
+  classpilotPreciseRestrictionPayload,
 } from "../services/classpilotClassroomState.js";
+import { PRECISE_RESTRICTION_RESOURCES_CAPABILITY } from "../services/restrictionResources.js";
+import { classpilotPreciseCommandPayloadValid } from "../services/classpilotPreciseRestrictions.js";
 
 export type WsRole = "teacher" | "office_staff" | "school_admin" | "super_admin" | "student";
 
@@ -55,31 +58,57 @@ function extractMsgId(message: unknown): string | null {
   return msg?._msgId ?? null;
 }
 
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function preciseCommand(message: unknown): { type: string; data: unknown } | null {
+  if (!plainObject(message) || !plainObject(message.command)) return null;
+  const { type, data } = message.command;
+  return typeof type === "string" && classpilotCommandPayloadRequiresPreciseCapability(type, data)
+    ? { type, data }
+    : null;
+}
+
 /**
- * Forward-compatibility fence (roadmap PR 2-pre). No student socket on this
- * image ever receives precise restriction resources, whatever capabilities it
- * negotiated or a relayed envelope requires: neither in an attached classroom
- * snapshot nor in a bare legacy command frame, whose `data.url` ClassPilot
- * 2.9.x would apply as a whole-domain Waypoint.
+ * Precise restriction resources (roadmap PR 2; fence from PR 2-pre). Presence
+ * of `resource`/`resources` in an attached classroom snapshot, or in a
+ * Waypoint or Flight Path command's data, makes a student frame precise.
  */
 export function classpilotStudentFrameCarriesPreciseRestriction(message: unknown): boolean {
-  if (!message || typeof message !== "object" || Array.isArray(message)) return false;
-  const frame = message as { classroomState?: unknown; command?: unknown };
-  if (classpilotControlStateRequiresPreciseCapability(frame.classroomState)) return true;
-  const command = frame.command;
-  if (!command || typeof command !== "object" || Array.isArray(command)) return false;
-  const { type, data } = command as { type?: unknown; data?: unknown };
-  return typeof type === "string"
-    && classpilotCommandPayloadRequiresPreciseCapability(type, data);
+  if (!plainObject(message)) return false;
+  return classpilotControlStateRequiresPreciseCapability(message.classroomState)
+    || preciseCommand(message) !== null;
+}
+
+/**
+ * Whether a precise frame may reach any socket at all. It must carry its
+ * authoritative classroom snapshot (a bare command frame hands ClassPilot
+ * 2.9.x `data.url` as a whole-domain Waypoint), and every precise entry in
+ * the snapshot and in the command data must re-validate. The capability
+ * itself is enforced per socket by sendToStudentBindingLocal.
+ */
+export function classpilotStudentPreciseFrameDeliverable(message: unknown): boolean {
+  if (!plainObject(message) || !plainObject(message.classroomState)) return false;
+  const classroomState = message.classroomState;
+  if (
+    classpilotControlStateRequiresPreciseCapability(classroomState)
+    && classpilotPreciseRestrictionPayload(classroomState.restrictions ?? classroomState).state !== "valid"
+  ) return false;
+  const command = preciseCommand(message);
+  return !command || classpilotPreciseCommandPayloadValid(command.type, command.data);
 }
 
 function requiredStudentCapabilities(message: unknown): string[] {
   if (!message || typeof message !== "object" || Array.isArray(message)) return [];
+  const precise = classpilotStudentFrameCarriesPreciseRestriction(message)
+    ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY]
+    : [];
   const classroomState = (message as { classroomState?: unknown }).classroomState;
   if (!classroomState || typeof classroomState !== "object" || Array.isArray(classroomState)) {
-    return [];
+    return precise;
   }
-  const required: string[] = [];
+  const required: string[] = [...precise];
   const authPassThrough = (classroomState as { authPassThrough?: unknown }).authPassThrough;
   if (
     authPassThrough
@@ -392,6 +421,8 @@ export function broadcastToStudentsLocal(
   if (!sockets) {
     return 0;
   }
+  // Precise restrictions travel only to exact-bound, capability-checked
+  // sockets (sendToStudentBindingLocal); never through a broadcast.
   if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
     console.log("[WS-Local] Withheld precise restriction broadcast");
     return 0;
@@ -428,6 +459,8 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
     console.log(`[WS-Local] No exact-bound socket available for ${msgType}`);
     return false;
   }
+  // A device-only lookup is not an exact student binding; precise
+  // restrictions never travel this way.
   if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
     console.log(`[WS-Local] Withheld precise restriction ${msgType}`);
     return false;
@@ -491,7 +524,8 @@ export function sendToStudentBindingLocal(
     console.log(`[WS-Local] Invalid exact student binding for ${msgType}`);
     return false;
   }
-  if (classpilotStudentFrameCarriesPreciseRestriction(message)) {
+  const preciseRestriction = classpilotStudentFrameCarriesPreciseRestriction(message);
+  if (preciseRestriction && !classpilotStudentPreciseFrameDeliverable(message)) {
     console.log(`[WS-Local] Withheld precise restriction ${msgType}`);
     return false;
   }
@@ -500,12 +534,16 @@ export function sendToStudentBindingLocal(
     console.log(`[WS-Local] No exact student-binding socket available for ${msgType}`);
     return false;
   }
-  const requiredCapabilities = [...new Set(
-    options.requiredCapabilities
+  // The precise capability is derived from the frame itself and added to any
+  // caller- or relay-supplied requirement: an envelope can narrow delivery,
+  // never waive it.
+  const requiredCapabilities = [...new Set([
+    ...(options.requiredCapabilities
       ?? (options.requiredCapability
         ? [options.requiredCapability]
-        : requiredStudentCapabilities(message))
-  )];
+        : requiredStudentCapabilities(message))),
+    ...(preciseRestriction ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY] : []),
+  ])];
   const matchingSockets = [...sockets].filter((ws) => {
     const client = wsClients.get(ws);
     return client?.authenticated === true
@@ -542,6 +580,7 @@ export function sendToRoleLocal(schoolId: string, role: WsRole, message: unknown
   if (!sockets) {
     return;
   }
+  // Role broadcasts are not exact-bound; precise restrictions never use them.
   if (role === "student" && classpilotStudentFrameCarriesPreciseRestriction(message)) {
     console.log("[WS-Local] Withheld precise restriction role broadcast");
     return;

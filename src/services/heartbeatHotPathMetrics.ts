@@ -44,6 +44,7 @@ export type HeartbeatHotPathCounter =
   | "restrictionAuthDeliveryWithheld"
   | "restrictionAuthCapableDelivery"
   | "preciseRestrictionDeliveryWithheld"
+  | "preciseRestrictionCapableDelivery"
   | "restrictionAuthStarted"
   | "restrictionAuthCompleted"
   | "restrictionAuthTimedOut"
