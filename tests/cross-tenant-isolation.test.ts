@@ -158,7 +158,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
-      for (const table of ["classpilot_usage_rollup_days", "classpilot_usage_rollups", "passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies"]) {
+      for (const table of ["passpilot_appointments", "classpilot_usage_rollup_days", "classpilot_usage_rollups", "passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies"]) {
         await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       }
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -232,6 +232,27 @@ describe("cross-school isolation", () => {
       `)),
       (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
     );
+  });
+
+  it("RLS partitions PassPilot appointments and rejects foreign appointment parents", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const [studentA, studentB] = await Promise.all([
+      inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Appointment", lastName: "A", status: "active" })),
+      inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Appointment", lastName: "B", status: "active" })),
+    ]);
+    await asSystem(() => db.execute(sql`INSERT INTO passpilot_appointments
+      (school_id,student_id,create_request_id,create_fingerprint,destination,starts_at,ends_at,school_timezone,retained_until)
+      VALUES (${schoolA.id},${studentA.id},gen_random_uuid(),repeat('0',64),'nurse',now(),now()+interval '1 hour','UTC',now()+interval '1 day'),
+        (${schoolB.id},${studentB.id},gen_random_uuid(),repeat('0',64),'office',now(),now()+interval '1 hour','UTC',now()+interval '1 day')`).then(() => undefined));
+    const rows = await inSchool(schoolA.id, () => db.execute(sql`SELECT school_id FROM passpilot_appointments WHERE school_id IN (${schoolA.id},${schoolB.id})`));
+    assert.deepEqual(rows.rows.map(row => row.school_id), [schoolA.id]);
+    const foreign = await inSchool(schoolB.id, () => db.execute(sql`SELECT id FROM passpilot_appointments WHERE school_id=${schoolA.id}`));
+    assert.equal(foreign.rowCount, 0);
+    await assert.rejects(inSchool(schoolA.id, () => db.execute(sql`INSERT INTO passpilot_appointments
+      (school_id,student_id,create_request_id,create_fingerprint,destination,starts_at,ends_at,school_timezone,retained_until)
+      VALUES (${schoolB.id},${studentB.id},gen_random_uuid(),repeat('0',64),'nurse',now(),now()+interval '1 hour','UTC',now()+interval '1 day')`)),
+      error => errorChainMatches(error, /row-level security|policy/i));
   });
 
   it("RLS partitions PassPilot issuance rules and their school-scoped read", {
