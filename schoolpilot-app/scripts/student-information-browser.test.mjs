@@ -9,6 +9,16 @@ import { createServer } from 'vite';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.resolve(root, '../../artifacts');
 let vite, browser, base;
+const pageStates = new Map();
+
+async function closePage(page) {
+  const state = pageStates.get(page);
+  state?.releaseSave?.();
+  state?.releaseHistory?.();
+  await page.unrouteAll({ behavior: 'wait' });
+  await page.close();
+  pageStates.delete(page);
+}
 const entry = `import React,{useState}from'react';import{createRoot}from'react-dom/client';import{MemoryRouter,Link,useLocation}from'react-router-dom';import AdminNavigationProvider from'/src/products/classpilot/components/admin/AdminNavigationProvider.jsx';import{AdminShellFrame}from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';import{QueryClientProvider}from'@tanstack/react-query';import{queryClient}from'/src/lib/queryClient.js';import Page,{StudentInformationShell} from'/src/products/classpilot/pages/StudentInformation.jsx';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import Profile from'/src/products/classpilot/components/StudentContactProfileEditor.jsx';import Import from'/src/products/classpilot/components/StudentInformationImport.jsx';import{clearMyDeskQueries}from'/src/products/classpilot/lib/myDeskModel.js';import'/src/index.css';const h=React.createElement;window.refreshInformation=()=>queryClient.invalidateQueries({queryKey:['mydesk-private']});window.informationCache=()=>queryClient.getQueriesData({queryKey:['mydesk-private']});function Harness(){const[who,setWho]=useState({schoolId:'school-a',viewerId:'teacher-a'});const mode=new URLSearchParams(location.search).get('mode');const change=(schoolId,viewerId)=>{clearMyDeskQueries(queryClient);localStorage.setItem('sp_activeSchoolId',schoolId);window.__viewer=viewerId;setWho({schoolId,viewerId});};return h(React.Fragment,null,h('button',{onClick:()=>change('school-b','teacher-a')},'Change school'),h('button',{onClick:()=>change('school-a','teacher-b')},'Change teacher'),mode==='directory'?h(Page):mode==='profile'?h(StudentInformationShell,null,h(Profile,{key:who.schoolId+who.viewerId,...who,studentId:'student-a'})):h(Import,{key:who.schoolId+who.viewerId,access:{...who,aiImportEnabled:true,limits:{teacherDailyUnits:100,schoolDailyUnits:500}},importId:'run-a'}));}function AdminHarness(){const route=useLocation();return h(AdminNavigationProvider,{scopeKey:'school-a:teacher-a'},h(AdminShellFrame,{route:{id:'contacts',title:'Student contacts'},schoolName:'Synthetic School'},h(Link,{to:'/classpilot/admin'},'Leave shared editor'),h('output',{'aria-label':'Current route'},route.pathname+route.search),route.pathname==='/classpilot/admin'?h('h2',null,'Admin destination'):h(Harness)));}createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client:queryClient},h(ThemeProvider,null,h(MemoryRouter,{initialEntries:['/classpilot/my-desk/student-information'+(new URLSearchParams(location.search).get('admin')?'?entry=admin':'')]},new URLSearchParams(location.search).get('admin')?h(AdminHarness):h(Harness)))));`;
 before(async () => {
   await mkdir(artifacts, { recursive: true });
@@ -17,7 +27,14 @@ before(async () => {
   }); }, resolveId(id) { if (id === '/__information-entry.jsx') return '\0information-entry'; }, load(id) { if (id.replace(/\\/g,'/').endsWith('/products/classpilot/hooks/useMyDesk.js')) return `export const useMyDeskAccess=()=>({schoolId:'school-a',viewerId:'teacher-a',eligible:true,enabled:true,seatingEnabled:true,school:{name:'Synthetic School'}}); export const useMyDeskClasses=()=>({data:{current:[],grades:[{gradeLevel:'5',label:'Grade 5'},{gradeLevel:'6',label:'Grade 6'}],preferences:{revision:0,viewBy:'grades',preferredClasses:[]}},isPending:false,isError:false});`; if (id === '\0information-entry') return entry; } }] });
   await vite.listen(); base = `http://127.0.0.1:${vite.httpServer.address().port}`; browser = await chromium.launch({ headless: true });
 });
-after(async () => { await browser?.close(); await vite?.close(); });
+after(async () => {
+  try {
+    for (const page of pageStates.keys()) await closePage(page);
+  } finally {
+    await browser?.close();
+    await vite?.close();
+  }
+});
 
 const contact = (patch = {}) => ({ id: 'contact-a', name: 'Alex Guardian', relationship: 'Guardian', phones: ['555-0100'], emails: ['alex@example.invalid'], preferred: null, emergency: null, preferredMethod: null, language: null, ...patch });
 const profile = (patch = {}) => ({ student: { id: 'student-a', name: 'Synthetic Student', gradeLevel: '5' }, profile: { revision: 1, data: { contacts: [contact()] }, updatedByName: 'Teacher Example', updatedAt: '2026-09-26T12:00:00Z' }, ...patch });
@@ -26,6 +43,7 @@ const run = (patch = {}) => ({ id: 'run-a', revision: 1, status: 'uploading', se
 async function setup(mode, overrides = {}) {
   const page = await browser.newPage({ viewport: { width: 430, height: 932 } });
   const state = { profile: profile(), run: run(), denied: false, failSave: false, ...overrides }, requests = [], errors = [];
+  pageStates.set(page, state);
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => { localStorage.setItem('sp_activeSchoolId', 'school-a'); localStorage.setItem('sp_theme','light'); window.__viewer = 'teacher-a'; window.__revoked = []; const revoke = URL.revokeObjectURL.bind(URL); URL.revokeObjectURL = url => { window.__revoked.push(url); revoke(url); }; });
   await page.route('**/api/**', async route => {
@@ -36,8 +54,16 @@ async function setup(mode, overrides = {}) {
     if (url.pathname.endsWith('/imports')) return json({imports:[],nextCursor:null});
     if (url.pathname.endsWith('/csrf')) return json({ csrfToken: 'synthetic' });
     if (state.denied) return json({ error: 'Current student access has ended.' }, 403);
-    if (url.pathname.endsWith('/history') && (school !== 'school-a' || await page.evaluate(() => window.__viewer) !== 'teacher-a')) return json({ versions: [], nextCursor: null });
-    if (url.pathname.endsWith('/history')) return json({ versions: [{ id: 'version-a', revision: 1, authorName: 'Teacher Example', createdAt: '2026-09-26T12:00:00Z', reason: 'Historical contact reason', data: state.profile.profile.data }], nextCursor: null });
+    if (url.pathname.endsWith('/history')) {
+      if (state.holdHistory) await new Promise(resolve => { state.releaseHistory = resolve; });
+      if (school !== 'school-a' || await page.evaluate(() => window.__viewer) !== 'teacher-a') {
+        await json({ versions: [], nextCursor: null });
+      } else {
+        await json({ versions: [{ id: 'version-a', revision: 1, authorName: 'Teacher Example', createdAt: '2026-09-26T12:00:00Z', reason: 'Historical contact reason', data: state.profile.profile.data }], nextCursor: null });
+      }
+      state.historySettled = true;
+      return;
+    }
     if (url.pathname.endsWith('/students/student-a')) {
       if (method === 'PATCH') {
         if (state.holdSave) await new Promise(resolve => { state.releaseSave = resolve; });
@@ -59,6 +85,23 @@ async function setup(mode, overrides = {}) {
   await page.goto(`${base}/__information?mode=${mode}${overrides.admin ? "&admin=1" : ""}`); return { page, requests, state, errors };
 }
 
+test('teardown completes an in-flight history handler before closing its page', async () => {
+  const { page, state, errors } = await setup('profile', { holdHistory: true });
+  try {
+    await page.getByRole('heading', { name: 'Synthetic Student' }).waitFor();
+    const deadline = Date.now() + 5000;
+    while (!state.releaseHistory && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(typeof state.releaseHistory, 'function');
+    await closePage(page);
+    assert.equal(state.historySettled, true);
+    assert.equal(page.isClosed(), true);
+    assert.deepEqual(errors, []);
+  } finally {
+    state.releaseHistory?.();
+    if (!page.isClosed()) await closePage(page);
+  }
+});
+
 test('manual contact changes require a reason, preserve retry identity, and clear explicit fields only', async () => {
   const { page, state, requests, errors } = await setup('profile', { failSave: true });
   try {
@@ -71,7 +114,7 @@ test('manual contact changes require a reason, preserve retry identity, and clea
     const saves = requests.filter(value => value.method === 'PATCH'); assert.equal(saves.length, 2); assert.deepEqual(saves[0].body, saves[1].body);
     assert.deepEqual(saves[0].body.changes, [{ kind: 'replace', contactId: 'contact-a', fields: {}, clearFields: ['phones'] }]);
     assert.equal(state.profile.profile.data.contacts[0].emails[0], 'alex@example.invalid'); assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 test('denied student access removes cached profile, unsaved contact fields and history', async () => {
@@ -85,7 +128,7 @@ test('denied student access removes cached profile, unsaved contact fields and h
     assert.equal(await page.getByLabel('Contact name', { exact: true }).count(), 0);
     assert.equal(await page.getByText('Historical contact reason').count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Save reviewed changes' }).count(), 0); assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 test('school and same-school teacher changes abort old saves and remove private contact import state', async () => {
@@ -99,7 +142,7 @@ test('school and same-school teacher changes abort old saves and remove private 
     assert.ok(requests.some(value => value.school === 'school-b' && value.path.endsWith('/students/student-a')));
     await page.getByRole('button', { name: 'Change teacher' }).click(); await page.getByRole('heading', { name: 'New scope student' }).waitFor();
     assert.equal(await page.getByText('Pending synthetic name').count(), 0); assert.deepEqual(errors, []);
-  } finally { state.releaseSave?.(); await page.close(); }
+  } finally { state.releaseSave?.(); await closePage(page); }
 });
 
 test('a denied manual save immediately removes profile fields and history without waiting for focus', async () => {
@@ -114,7 +157,7 @@ test('a denied manual save immediately removes profile fields and history withou
     assert.equal(await page.getByLabel('Contact name',{exact:true}).count(),0);
     assert.equal(await page.getByText('Historical contact reason').count(),0);
     assert.deepEqual(errors,[]);
-  } finally {await page.close();}
+  } finally {await closePage(page);}
 });
 
 test('contact processing requires selected source sections, warning acknowledgement and provider confirmation', async () => {
@@ -128,7 +171,7 @@ test('contact processing requires selected source sections, warning acknowledgem
     await process.click(); await page.getByText('Preparing contact suggestions.', { exact: false }).waitFor();
     const request = requests.find(value => value.path.endsWith('/process')); assert.deepEqual(request.body.sectionIds, ['section-a']); assert.equal(request.body.confirmedProvider, true); assert.equal(request.body.acknowledgedWarnings, true);
     assert.equal(requests.some(value => value.path.endsWith('/commit')), false); assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 test('contact suggestions remain drafts until each decision is reviewed and the batch is saved', async () => {
@@ -150,7 +193,7 @@ test('contact suggestions remain drafts until each decision is reviewed and the 
     await page.getByRole('button',{name:'Synthetic Student — Reviewed'}).waitFor();
     assert.equal(requests.some(value => value.path.endsWith('/commit')), false); await commit.click();
     await page.getByText('Reviewed profiles saved.', { exact: false }).waitFor(); assert.equal(requests.filter(value => value.path.endsWith('/commit')).length, 1); assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 
@@ -170,7 +213,7 @@ test('synthetic directory and profile remain usable at desktop and phone widths'
       assert.equal(colors.background,'rgb(16, 24, 39)'); assert.equal(colors.ink,'rgb(227, 233, 249)'); assert.equal(colors.underline,'rgb(170, 188, 245)');
       await page.screenshot({path:path.join(artifacts,`student-information-${mode}-mobile-dark.png`),fullPage:true,animations:'disabled'});
       assert.deepEqual(errors,[]);
-    } finally { await page.close(); }
+    } finally { await closePage(page); }
   }
 });
 
@@ -190,7 +233,7 @@ test('admin contact editor uses one shell guard, retains edits on Stay, and leav
     await page.getByRole('button', { name: 'Discard changes and leave' }).click();
     await page.getByRole('heading', { name: 'Admin destination' }).waitFor();
     assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 test('admin contact save blocks leaving while busy and successful save clears the guard', async () => {
@@ -212,7 +255,7 @@ test('admin contact save blocks leaving while busy and successful save clears th
     await page.getByRole('heading', { name: 'Admin destination' }).waitFor();
     assert.equal(await page.getByRole('alertdialog').count(), 0);
     assert.deepEqual(errors, []);
-  } finally { state.releaseSave?.(); await page.close(); }
+  } finally { state.releaseSave?.(); await closePage(page); }
 });
 
 test('teacher directory names open the combined student page under the shared scope bar', async () => {
@@ -223,7 +266,7 @@ test('teacher directory names open the combined student page under the shared sc
     assert.equal(await page.getByText('Kept when you switch tabs', { exact: true }).count(), 1);
     assert.equal(await page.getByText('School record', { exact: true }).count(), 1);
     assert.deepEqual(errors, []);
-  } finally { await page.close(); }
+  } finally { await closePage(page); }
 });
 
 test('admin student directory and completed contact import retain admin entry in profile links', async () => {
@@ -232,12 +275,12 @@ test('admin student directory and completed contact import retain admin entry in
     const link = directory.page.getByRole('link', { name: 'Synthetic Student', exact: true }); await link.waitFor();
     assert.equal(await link.getAttribute('href'), '/classpilot/my-desk/student-information/student-a?entry=admin');
     assert.equal(await directory.page.getByRole('heading', { level: 1 }).count(), 1);
-  } finally { await directory.page.close(); }
+  } finally { await closePage(directory.page); }
   const completed = await setup('import', { admin: true, run: run({ status: 'completed', receipt: { profiles: [{ itemId: 'item-a', studentId: 'student-a' }] } }) });
   try {
     const link = completed.page.getByRole('link', { name: 'Open saved student profile' }); await link.waitFor();
     assert.equal(await link.getAttribute('href'), '/classpilot/my-desk/student-information/student-a?entry=admin');
     assert.equal(await completed.page.getByRole('link', { name: 'Student information', exact: true }).getAttribute('href'), '/classpilot/my-desk/student-information?entry=admin');
     assert.deepEqual(completed.errors, []);
-  } finally { await completed.page.close(); }
+  } finally { await closePage(completed.page); }
 });
