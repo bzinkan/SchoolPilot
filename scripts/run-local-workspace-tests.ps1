@@ -40,7 +40,7 @@ try {
     "CREATE ROLE $appRole LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT PASSWORD '$appPassword'; GRANT USAGE ON SCHEMA public TO $appRole; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO $appRole; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO $appRole; ALTER DEFAULT PRIVILEGES FOR ROLE $role IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO $appRole;" | docker exec -i schoolpilot-db psql -U schoolpilot -d $Database -v ON_ERROR_STOP=1
     if ($LASTEXITCODE -ne 0) { throw 'Could not create the restricted local application role.' }
     $registry = Get-Content -LiteralPath (Join-Path $workspace 'src/config/rlsRegistry.json') -Raw | ConvertFrom-Json
-    $env:RLS_ENABLED_TABLES = $registry.inventories.passpilotRulesPostExpand.tables -join ','
+    $env:RLS_ENABLED_TABLES = $registry.inventories.classpilotUsageRollupsPostExpand.tables -join ','
     $env:RLS_GUC_ENABLED = 'true'
     $env:RLS_TEST_ROLE = $appRole
     $env:DATABASE_URL = 'postgresql://' + $appRole + ':' + $appPassword + '@127.0.0.1:5435/' + $Database

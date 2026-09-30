@@ -114,9 +114,24 @@ run "passpilot_rules_rls_target_is_registry_valid" {
   assert {
     condition = (
       length(local.rls_configured_tables) == 125 &&
-      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The reviewed PassPilot rules target must be accepted without pre-admitting it in production."
+  }
+}
+
+run "classpilot_usage_rollups_rls_target_is_registry_valid" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupsPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 126 &&
+      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+    )
+    error_message = "The reviewed Monitored Browser Time rollup target must be accepted without pre-admitting it in production."
   }
 }
 

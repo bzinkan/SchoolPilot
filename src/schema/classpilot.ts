@@ -12,6 +12,7 @@ import {
   check,
   jsonb,
   foreignKey,
+  date,
 } from "drizzle-orm/pg-core";
 import { students } from "./students.js";
 import { schools } from "./core.js";
@@ -196,7 +197,8 @@ export type Heartbeat = typeof heartbeats.$inferSelect;
 export type InsertHeartbeat = typeof heartbeats.$inferInsert;
 
 // ============================================================================
-// Daily Usage - Pre-aggregated daily screen time per student
+// Daily Usage - Pre-aggregated daily monitored browser activity per student
+// (heartbeat-derived browser activity only; never full-device time)
 // ============================================================================
 export const dailyUsage = pgTable(
   "daily_usage",
@@ -1046,6 +1048,97 @@ export const classpilotSessionUsage = pgTable(
 
 export type ClasspilotSessionUsage = typeof classpilotSessionUsage.$inferSelect;
 export type InsertClasspilotSessionUsage = typeof classpilotSessionUsage.$inferInsert;
+
+// ============================================================================
+// Monitored Browser Time rollups (Digital Usage)
+// ============================================================================
+// School-local day aggregates of the browser activity ClassPilot observed, by
+// student, class/session attribution, domain and classification. Written by
+// the scheduler worker (CLASSPILOT_USAGE_ROLLUP_MODE) and read by
+// /api/classpilot/admin/usage (CLASSPILOT_DIGITAL_USAGE_MODE); both default
+// off. src/db/classpilotUsageRollupsMigration.ts creates the table with forced
+// RLS. Every constraint and index is mirrored here by name because a pushed
+// table turns the migration's CREATE TABLE IF NOT EXISTS into a no-op. The
+// class and session foreign keys are ON DELETE SET NULL (column) in that
+// migration, which Drizzle cannot express; never db:push them onto a
+// migrated database.
+export const CLASSPILOT_USAGE_CLASSIFICATIONS = [
+  "educational",
+  "non-educational",
+  "unknown",
+] as const;
+export type ClasspilotUsageClassification = (typeof CLASSPILOT_USAGE_CLASSIFICATIONS)[number];
+
+export const classpilotUsageRollups = pgTable(
+  "classpilot_usage_rollups",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    // School-local calendar date (schools.school_timezone).
+    usageDate: date("usage_date", { mode: "string" }).notNull(),
+    studentId: text("student_id").notNull(),
+    // The frozen roster's class and the teaching session whose window held
+    // the observation (newest session wins); NULL outside class sessions.
+    classId: text("class_id"),
+    sessionId: text("session_id"),
+    // Lowercase http(s) hostname without "www."; '' for any other URL.
+    domain: text("domain").notNull().default(""),
+    classification: text("classification").notNull().$type<ClasspilotUsageClassification>(),
+    seconds: integer("seconds").notNull(),
+    heartbeatCount: integer("heartbeat_count").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("cp_usage_rollups_grain_unique").on(
+      table.schoolId,
+      table.usageDate,
+      table.studentId,
+      sql`(COALESCE("class_id", ''))`,
+      sql`(COALESCE("session_id", ''))`,
+      table.domain,
+      table.classification
+    ),
+    index("cp_usage_rollups_school_date_idx").on(table.schoolId, table.usageDate),
+    index("cp_usage_rollups_school_student_date_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.usageDate
+    ),
+    index("cp_usage_rollups_school_class_date_idx")
+      .on(table.schoolId, table.classId, table.usageDate)
+      .where(sql`${table.classId} IS NOT NULL`),
+    foreignKey({
+      columns: [table.schoolId],
+      foreignColumns: [schools.id],
+      name: "cp_usage_rollups_school_fk",
+    }),
+    foreignKey({
+      columns: [table.schoolId, table.studentId],
+      foreignColumns: [students.schoolId, students.id],
+      name: "cp_usage_rollups_student_school_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.schoolId, table.classId],
+      foreignColumns: [groups.schoolId, groups.id],
+      name: "cp_usage_rollups_class_school_fk",
+    }),
+    foreignKey({
+      columns: [table.schoolId, table.sessionId],
+      foreignColumns: [teachingSessions.schoolId, teachingSessions.id],
+      name: "cp_usage_rollups_session_school_fk",
+    }),
+    check("cp_usage_rollups_domain_check", sql`char_length(${table.domain}) <= 253`),
+    check(
+      "cp_usage_rollups_classification_check",
+      sql`${table.classification} IN ('educational','non-educational','unknown')`
+    ),
+    check("cp_usage_rollups_seconds_check", sql`${table.seconds} >= 0`),
+    check("cp_usage_rollups_heartbeat_count_check", sql`${table.heartbeatCount} >= 0`),
+  ]
+);
+
+export type ClasspilotUsageRollup = typeof classpilotUsageRollups.$inferSelect;
+export type InsertClasspilotUsageRollup = typeof classpilotUsageRollups.$inferInsert;
 
 // ============================================================================
 // Scoped classroom monitoring events - privacy-bounded extension telemetry
