@@ -1,3 +1,6 @@
+#requires -Version 7.5
+
+[CmdletBinding()]
 param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
   [Parameter(Mandatory=$true)][string]$OutputDirectory
@@ -35,7 +38,7 @@ try {
   $env:DATABASE_URL_PRIVILEGED = $env:DATABASE_URL
   $env:JWT_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $env:SESSION_SECRET = $env:JWT_SECRET
   $env:NODE_ENV = 'test'; $env:REDIS_URL = ''; $env:RLS_GUC_ENABLED = 'true'; $env:SCHEDULER_ENABLED = 'false'
-  $registry = Get-Content -LiteralPath src/config/rlsRegistry.json -Raw | ConvertFrom-Json
+  $registry = Get-Content -LiteralPath src/config/rlsRegistry.json -Raw | ConvertFrom-Json -DateKind String
   $env:RLS_ENABLED_TABLES = $registry.inventories.classpilotUsageRollupDaysPostExpand.tables -join ','
   $env:CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; $env:CLASSPILOT_DIGITAL_USAGE_MODE = 'on'
   $env:DB_POOL_MIN = '0'; $env:SESSION_DB_POOL_MIN = '0'
