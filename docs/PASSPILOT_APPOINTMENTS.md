@@ -1,9 +1,10 @@
 # PassPilot appointments v1: server contract
 
 Appointments are one-time, staff-managed invitations to activate a normal pass in
-an explicit window. This slice supplies schema, staff API, atomic activation and
-lifecycle maintenance. Staff reminders and the scheduling UI ship separately;
-aggregate reporting also ships separately. No student or kiosk reminder surface,
+an explicit window. The server supplies schema, staff API, atomic activation and
+lifecycle maintenance. The staff interface supplies manager scheduling and
+current-class teacher reminders; aggregate reporting ships separately.
+No student or kiosk reminder surface,
 automatic issuance, recurrence or GoPilot role inheritance is included.
 
 `PASSPILOT_APPOINTMENTS_MODE=off` is the default. The routes step aside to the
@@ -56,6 +57,7 @@ canonical-class capability header where applicable. Responses are `no-store`.
 | --- | --- |
 | `POST /` | Manager; `requestId` UUID, studentId, destination, optional customDestination/staffNotes/duration, startsAt/endsAt. 201 first create, 200 exact replay; changed payload with the same requestId is 409. |
 | `GET /` | Current-access staff; bounded offset-bearing from/through, optional status/studentId, limit 1–100, opaque keyset cursor. Default seven school-local days. |
+| `GET /capabilities` | Current staff authority; enabled, manager, teacherReminders, server schoolTimezone and schoolYearConfigured. Teacher reminders are enabled only for a current teacher role. |
 | `GET /:id` | Current-access staff; confidential notes only for managers. |
 | `PATCH /:id` | Manager; expectedRevision and at least one editable scheduling field. Pending appointments only. |
 | `POST /:id/cancel` | Manager; expectedRevision. Pending cancellation is idempotent; after activation use the existing pass controls. |
@@ -87,12 +89,47 @@ and pass issuance. The dismissal read does not lock its session after the studen
 GoPilot writers own the session first, so taking it here would reverse lock order.
 
 Lifecycle states are `scheduled`, `activated`, `completed`, `cancelled`, and
-`missed`. Reminder delivery state is separate and is not implemented in this
-slice. Ended pending windows become missed; no pass is issued by a worker.
+`missed`. Reminder delivery is separate from this lifecycle. The interface polls
+staff reminders without adding a delivery state to appointment records.
+Ended pending windows become missed; no pass is issued by a worker.
 Explicit pass return completes the linked appointment; explicit pass cancellation
 cancels it. Crossing a pass's overdue deadline leaves both pass and activated
 appointment open. The database invoker trigger covers every existing return and
 cancel path in the same transaction, including kiosk paths and feature-off use.
+
+## Staff interface and reminders
+
+The Appointments navigation entry is shown only after the server confirms current
+manager authority. The manager calendar supports bounded school-local date and
+status filters, paginated records, one-time creation, revision-checked edits and
+pending cancellation. It does not issue passes or add a manager reminder surface.
+Manager notes remain confined to this scheduling interface and API.
+
+The form uses the verified school timezone rather than the workstation timezone.
+A repeated DST wall time requires an explicit offset choice, and a nonexistent
+wall time is rejected before any write. The request sends the chosen absolute
+instant and never sends an authoritative timezone, school ID or role in its body.
+All asynchronous requests pin the explicit authenticated school-context header.
+
+My Class shows reminders only to current teachers for students in the selected
+current class. It polls every 30 seconds and drains the appointment keyset pages.
+The query starts 24 elapsed hours before now, so an already-open maximum-length
+window beginning yesterday is included. Ended windows and students outside the
+current roster are hidden. Opening an appointment pass is an explicit teacher
+action, uses the selected current class and revision, and invokes the atomic
+server activation contract. Existing pass controls handle return/cancellation.
+No private manager notes are displayed or submitted by this surface.
+
+School/class/role switches abort pending requests and remove scoped appointment
+caches. Known authority failures clear visible reminder/editor content and
+controls; server authorization remains authoritative for every action.
+School-year date controls live in Set Up → Settings under current administrator
+authority, work while appointments are off, and require preview before save.
+
+The interface adds no student/kiosk reminders, desktop push, automatic issuance,
+recurrence or GoPilot role inheritance. Its focused browser suite covers manual
+activation, overnight windows, pagination, revision conflicts, private-cache
+cleanup, authority failures, timezone folds/gaps and school-year previews.
 
 ## Retention and rollback
 

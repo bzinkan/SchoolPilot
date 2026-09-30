@@ -65,6 +65,7 @@ import { encodePassPilotCsv } from "../../passCsv";
 import { useKioskSessions } from "../../useKioskSessions";
 import ClaimKioskDialog from "../ClaimKioskDialog";
 import { usePassNow } from "../LivePassDuration";
+const AppointmentReminders = React.lazy(() => import('../AppointmentReminders'));
 
 const DESTINATION_LABELS = {
   bathroom: 'Bathroom',
@@ -977,6 +978,9 @@ function MyClassTab() {
       </div>
 
       {/* Grade Tabs (left) + Action Buttons (right) */}
+      {isTeacher && !isSchoolwideManager && activeGradeId && !studentsError ? <React.Suspense fallback={<p role="status">Loading class appointments…</p>}>
+        <AppointmentReminders key={JSON.stringify([schoolId, userId, activeGradeId])} user={user} school={school} classId={activeGradeId} students={students} />
+      </React.Suspense> : null}
       <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
         {isTeacher || isAdmin ? <Link to="/passpilot/settings" className="text-primary underline">Kiosk schedule</Link> : null}
         {kioskSessions.some(s => s.activity?.mode && s.activity.mode !== 'manual') ? <>

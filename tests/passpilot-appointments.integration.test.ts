@@ -17,6 +17,31 @@ async function created(t = legacy, index = 0, patch: Record<string, unknown> = {
   const result = await f.create(t, index, patch); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body.appointment;
 }
 describe("PassPilot appointments: staff authority, atomic activation and lifecycle", { concurrency: false }, () => {
+  it("derives staff UI capabilities from current PassPilot authority and verified school settings", async () => {
+    const teacher = await f.call(legacy, legacy.teacher, "GET", "/passpilot/appointments/capabilities");
+    assert.equal(teacher.status, 200); assert.equal(teacher.body.teacherReminders, true); assert.equal(teacher.body.manager, false);
+    assert.equal(teacher.body.schoolTimezone, "UTC"); assert.equal(teacher.body.schoolYearConfigured, true);
+    for (const person of [legacy.admin, legacy.office]) {
+      const result = await f.call(legacy, person, "GET", "/passpilot/appointments/capabilities");
+      assert.equal(result.status, 200); assert.equal(result.body.manager, true); assert.equal(result.body.teacherReminders, false);
+    }
+    assert.equal((await f.call(legacy, legacy.parent, "GET", "/passpilot/appointments/capabilities")).status, 403);
+    await f.schedule(legacy, { yearStart: null, yearEnd: null });
+    assert.equal((await f.call(legacy, legacy.teacher, "GET", "/passpilot/appointments/capabilities")).body.schoolYearConfigured, false);
+    process.env.PASSPILOT_APPOINTMENTS_MODE = "off";
+    assert.equal((await f.call(legacy, legacy.teacher, "GET", "/passpilot/appointments/capabilities")).status, 404);
+  });
+  it("lists current-authority staff reminders for still-open windows starting yesterday", async () => {
+    const now = Date.now(), startsAt = new Date(now - 23 * 3600000), endsAt = new Date(now + 1800000);
+    await f.schedule(canonical, { dateOverrides: { [startsAt.toISOString().slice(0, 10)]: { instructional: true } } });
+    const row = await created(canonical, 0, { startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString() });
+    const params = new URLSearchParams({ from: new Date(now - 24 * 3600000).toISOString(), through: new Date(now + 86400000).toISOString(), status: "scheduled" });
+    const list = await f.call(canonical, canonical.teacher, "GET", `/passpilot/appointments?${params}`);
+    assert.equal(list.status, 200); assert.equal(list.body.appointments[0]!.id, row.id);
+    assert.equal(list.body.appointments[0]!.studentName, "Student0 Fixture"); assert.equal("staffNotes" in list.body.appointments[0]!, false);
+    await f.assignTeacher(canonical, canonical.outsider);
+    assert.equal((await f.call(canonical, canonical.teacher, "GET", `/passpilot/appointments?${params}`)).body.appointments.length, 0);
+  });
   it("preserves pre-activation pass returns for an old restricted writer without appointment grants", async () => {
     process.env.PASSPILOT_APPOINTMENTS_MODE = "off";
     assert.equal((await f.sql("SELECT count(*)::int AS count FROM passpilot_appointments")).rows[0].count, 0, "Pre-admission fixture must have no appointments");
