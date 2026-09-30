@@ -4197,6 +4197,29 @@ async function focusBrowserFixture(context, overrides = {}) {
   return { page, harness, aggregate, row, posts };
 }
 
+test('Classroom picker uses the current Dashboard authority and explicit student targets', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.route('**/api/classroom/courses?*', route => route.fulfill({ json: { courses: [{ id: 'course-a', name: 'Synthetic Classroom course' }] } }));
+  await page.route('**/api/classroom/courses/course-a/resources', route => route.fulfill({ json: { resources: [{ id: 'assignment-a', title: 'Synthetic assignment', links: [{ title: 'Assignment page', url: 'https://lesson.example.edu/task' }] }] } }));
+  const statusReads = [];
+  await page.route('**/api/classpilot/commands/focus-1/status?*', async route => {
+    statusReads.push(route.request().url());
+    await route.fulfill({ json: { command: { id: 'focus-1', ...posts[0], targets: [{ studentId: STUDENT_ID, status: 'completed' }] } } });
+  });
+  await page.getByTestId('button-classroom-assignments').click();
+  await page.getByLabel('Course', { exact: true }).selectOption('course-a');
+  await page.getByLabel('Assignment or material').selectOption('assignment-a');
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await page.getByLabel('Classroom action results').getByText(/Open: Received/).waitFor();
+  await page.clock.fastForward(1000);
+  await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).waitFor();
+  assert.deepEqual(posts, [{ teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'open-tab', commandPayload: { url: 'https://lesson.example.edu/task' } }]);
+  assert.equal(new URL(statusReads[0]).searchParams.get('teachingSessionId'), OWN_SESSION_ID);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('Focus controls bind duplicate URLs to the selected opaque tab and keep received pending until completion', { timeout: 60_000 }, async context => {
   const { page, harness, posts } = await focusBrowserFixture(context);
   assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-first`).getByText('Active', { exact: true }).count(), 1);
