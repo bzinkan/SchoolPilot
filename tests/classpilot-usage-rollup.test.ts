@@ -13,7 +13,7 @@ import { getTableColumns } from "drizzle-orm";
 process.env.REDIS_URL = "";
 process.env.NODE_ENV = "test";
 process.env.RLS_GUC_ENABLED = "true";
-process.env.RLS_ENABLED_TABLES = "classpilot_usage_rollups";
+process.env.RLS_ENABLED_TABLES = "classpilot_usage_rollups,classpilot_usage_rollup_days";
 delete process.env.CLASSPILOT_USAGE_ROLLUP_MODE;
 delete process.env.CLASSPILOT_DIGITAL_USAGE_MODE;
 // pg serializes Date parameters, and parses timestamp-without-time-zone columns, in the
@@ -167,6 +167,14 @@ before(async () => {
   // A pushed schema makes CREATE TABLE IF NOT EXISTS a no-op; the SQL still
   // reconciles the SET NULL keys and installs forced RLS exactly as production.
   await system.query(migration.CLASSPILOT_USAGE_ROLLUPS_SQL);
+  const daysMigration = await import("../src/db/classpilotUsageRollupDaysMigration.js");
+  const migrationClient = await system.connect();
+  try {
+    await migrationClient.query("BEGIN");
+    await migrationClient.query(daysMigration.CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
+    await migrationClient.query("COMMIT");
+  } catch (error) { await migrationClient.query("ROLLBACK"); throw error; }
+  finally { migrationClient.release(); }
 
   // School S: attribution, API, CSV and Student Data. Its day is three local
   // days ago so the default 30-day retention always keeps it.
@@ -240,7 +248,7 @@ after(async () => {
     // schools are retained records that cannot be hard-deleted.
     const bestEffort = (text: string, values: unknown[]) => system.query(text, values).catch(() => undefined);
     if (schoolIds.length) {
-      for (const table of ["classpilot_usage_rollups", "classpilot_ai_decisions", "classpilot_monitoring_events", "heartbeats",
+      for (const table of ["classpilot_usage_rollup_days", "classpilot_usage_rollups", "classpilot_ai_decisions", "classpilot_monitoring_events", "heartbeats",
         "classpilot_session_students", "teaching_sessions", "audit_logs"]) {
         await bestEffort(`DELETE FROM ${table} WHERE school_id = ANY($1::text[])`, [schoolIds]);
       }
@@ -418,7 +426,7 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
       now: new Date("2026-09-15T05:00:05Z"), deadline: new Date("2026-09-15T05:25:00Z"), markers: markers(),
       clock: () => new Date("2026-09-15T05:00:06Z"),
     });
-    assert.equal(second.retentionSkippedDays, 1);
+    assert.equal(second.retentionSkippedDays, 0, "durable final coverage survives a lost Redis marker");
     assert.equal(second.finalizedDays, 0);
     assert.deepEqual(await total(), finalized);
 
@@ -539,6 +547,9 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
        VALUES ($1, $3::date, $2, 'docs.example.edu', 'educational', 120, 10), ($1, $3::date, $2, 'games.example.net', 'non-educational', 30, 3)`,
       [S.schoolId, S.b, today],
     );
+    const snapshotDay = rollup.classpilotUsageRollupDay(today, TIME_ZONE);
+    await system.query(rollup.CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [S.schoolId, today,
+      snapshotDay.dayStartUtc.toISOString(), snapshotDay.dayEndUtc.toISOString(), new Date().toISOString(), false]);
     const studentData = async () => {
       const response = await fetch(`${baseUrl}/classpilot/student-data?period=today&studentId=${S.b}`, { headers: headers(S.admin, S.schoolId) });
       assert.equal(response.status, 200, await response.clone().text());
@@ -561,5 +572,120 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     const response = await fetch(`${baseUrl}/admin/cleanup-students`, { method: "POST", headers: { ...headers(S.admin, S.schoolId), "content-type": "application/json" } });
     assert.equal(response.status, 200, await response.clone().text());
     assert.deepEqual(await rows(S.schoolId), []);
+    assert.equal((await system.query("SELECT 1 FROM classpilot_usage_rollup_days WHERE school_id = $1", [S.schoolId])).rowCount, 0);
+  });
+});
+
+describe("computation coverage ledger (DB lane)", { concurrency: false }, () => {
+  it("serializes concurrent old and new live cutoffs without losing the newer activity", async () => {
+    const schoolId = await createSchool("Concurrent", "720");
+    const studentId = await createStudent(schoolId, "Concurrent");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 2.5 * 3600_000, url: "https://new.example.edu", category: "educational" });
+    const older = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    const newer = new Date(day.dayStartUtc.getTime() + 3 * 3600_000);
+    await Promise.all([newer, older].map((windowEndUtc) => rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc, exclusions: [] })));
+    const ledger = await system.query("SELECT processed_through FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId]);
+    assert.equal(ledger.rows[0].processed_through.getTime(), newer.getTime());
+    assert.equal((await rows(schoolId))[0]?.seconds, 15);
+  });
+  it("records empty DST days with their real windows and reports verified zeros", async () => {
+    const schoolId = await createSchool("Empty DST", "8760");
+    const read = await import("../src/services/classpilotUsageRead.js");
+    for (const [date, hours] of [["2026-03-08", 23], ["2026-11-01", 25]] as const) {
+      const day = rollup.classpilotUsageRollupDay(date, TIME_ZONE);
+      assert.deepEqual(await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] }),
+        { rowCount: 0, seconds: 0, heartbeatCount: 0 });
+      const ledger = await system.query("SELECT *, EXTRACT(EPOCH FROM (day_end_at-day_start_at))/3600 AS hours FROM classpilot_usage_rollup_days WHERE school_id=$1 AND usage_date=$2::date", [schoolId, date]);
+      assert.equal(Number(ledger.rows[0].hours), hours);
+      assert.equal(ledger.rows[0].is_final, true);
+      assert.equal(ledger.rows[0].processed_through.getTime(), day.dayEndUtc.getTime());
+      const result = await read.getClasspilotDigitalUsage({ schoolId, scope: "school", id: null, from: date, to: date, now: new Date(day.dayEndUtc.getTime() + 3600_000) });
+      assert.equal(result.dataState, "final");
+      assert.equal(result.byDay.length, 1);
+      assert.equal(result.byDay[0]?.monitoredBrowserSeconds, 0);
+      assert.equal(result.range.computedDays, 1);
+    }
+  });
+
+  it("rolls back both aggregates and completion if completion fails", async () => {
+    const schoolId = await createSchool("Atomic", "720");
+    const studentId = await createStudent(schoolId, "Atomic");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://a.example.edu", category: "educational" });
+    const firstCutoff = new Date(day.dayStartUtc.getTime() + 2 * 3600_000);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    const beforeRows = await rows(schoolId);
+    const coverage = async () => (await system.query("SELECT processed_through, computed_at, is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows;
+    const beforeCoverage = await coverage();
+    const failingPool: Parameters<typeof rollup.rollupClasspilotUsageDay>[0] = {
+      query: (text, values) => system.query(text, values),
+      async connect() {
+        const client = await system.connect();
+        return { async query(text, values) {
+          if (text === rollup.CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL) throw new Error("completion failed");
+          return client.query(text, values);
+        }, release(error) { client.release(error); } };
+      },
+    };
+    await assert.rejects(rollup.rollupClasspilotUsageDay(failingPool, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] }), /completion failed/);
+    assert.deepEqual(await rows(schoolId), beforeRows);
+    assert.deepEqual(await coverage(), beforeCoverage);
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    const finalCoverage = await coverage();
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: firstCutoff, exclusions: [] });
+    assert.deepEqual(await coverage(), finalCoverage, "a stale queue cannot regress the final cutoff");
+  });
+
+  it("invalidates only the affected school/day when an incompatible writer changes aggregates", async () => {
+    const schoolId = await createSchool("Invalidation", "720");
+    const studentId = await createStudent(schoolId, "Invalidation");
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    const adjacent = rollup.classpilotUsageRollupDay("2026-09-15", TIME_ZONE);
+    await heartbeat({ schoolId, studentId, at: day.dayStartUtc.getTime() + 3600_000, url: "https://a.example.edu", category: "educational" });
+    const compute = () => rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+    await compute();
+    await rollup.rollupClasspilotUsageDay(system, { schoolId, day: adjacent, windowEndUtc: adjacent.dayEndUtc, exclusions: [] });
+    const dates = async () => (await system.query("SELECT usage_date::text AS date FROM classpilot_usage_rollup_days WHERE school_id=$1 ORDER BY usage_date", [schoolId])).rows.map((row) => row.date);
+    await system.query("UPDATE classpilot_usage_rollups SET seconds=0 WHERE school_id=$1", [schoolId]);
+    assert.deepEqual(await dates(), [adjacent.date]);
+    await compute();
+    await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2::date,$3,'legacy.example','unknown',1,1)", [schoolId, day.date, studentId]);
+    assert.deepEqual(await dates(), [adjacent.date]);
+    await compute();
+    await system.query("DELETE FROM classpilot_usage_rollups WHERE school_id=$1 AND usage_date=$2::date", [schoolId, day.date]);
+    assert.deepEqual(await dates(), [adjacent.date]);
+    // Expired empty days also need explicit ledger retention cleanup.
+    await system.query("WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id=$1 AND usage_date<$2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id=$1 AND usage_date<$2::date", [schoolId, "2026-09-16"]);
+    assert.deepEqual(await dates(), []);
+  });
+
+  it("preserves coverage of retained rows across student CASCADE and class/session SET NULL", async () => {
+    const schoolId = await createSchool("Retained coverage", "720");
+    const removedStudent = await createStudent(schoolId, "Removed");
+    const remainingStudent = await createStudent(schoolId, "Remaining");
+    const teacher = await createUser(schoolId, "teacher", "cascade-teacher");
+    const classId = randomUUID(), sessionGroupId = randomUUID(), sessionId = randomUUID();
+    for (const id of [classId, sessionGroupId]) await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,'Retained','admin_class')", [id, schoolId, teacher.id]);
+    await system.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time) VALUES($1,$2,$3,$4,'2026-09-14 12:00:00','2026-09-14 13:00:00')", [sessionId, schoolId, sessionGroupId, teacher.id]);
+    const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
+    await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,session_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2::date,$3,NULL,NULL,'removed.example','unknown',15,1),($1,$2::date,$4,$5,$6,'retained.example','educational',30,2)", [schoolId, day.date, removedStudent, remainingStudent, classId, sessionId]);
+    await system.query(rollup.CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [schoolId, day.date, day.dayStartUtc.toISOString(), day.dayEndUtc.toISOString(), day.dayEndUtc.toISOString(), true]);
+    const ledger = async () => (await system.query("SELECT processed_through,computed_at,is_final FROM classpilot_usage_rollup_days WHERE school_id=$1", [schoolId])).rows;
+    const completed = await ledger();
+    await system.query("DELETE FROM students WHERE school_id=$1 AND id=$2", [schoolId, removedStudent]);
+    assert.deepEqual(await ledger(), completed);
+    assert.deepEqual((await rows(schoolId)).map((row) => row.student_id), [remainingStudent]);
+    await system.query("DELETE FROM groups WHERE school_id=$1 AND id=$2", [schoolId, classId]);
+    assert.deepEqual(await ledger(), completed);
+    assert.equal((await rows(schoolId))[0]?.class_id, null);
+    await system.query("DELETE FROM teaching_sessions WHERE school_id=$1 AND id=$2", [schoolId, sessionId]);
+    assert.deepEqual(await ledger(), completed);
+    assert.equal((await rows(schoolId))[0]?.session_id, null);
+    const read = await import("../src/services/classpilotUsageRead.js");
+    const report = await read.getClasspilotDigitalUsage({ schoolId, scope: "school", id: null, from: day.date, to: day.date, now: new Date("2026-09-16T12:00:00Z") });
+    assert.equal(report.dataState, "final");
+    assert.equal(report.totals.monitoredBrowserSeconds, 30);
+    assert.equal(report.totals.activeMonitoredStudents, 1);
   });
 });
