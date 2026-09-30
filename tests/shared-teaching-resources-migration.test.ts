@@ -21,7 +21,8 @@ describe("School Library schema rollout", () => {
     const contractIndex = ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]);
     assert.ok(index >= 0 && contractIndex > index);
     assert.equal(ids.indexOf("20260929_microsoft_sign_in_expand"), index - 1);
-    assert.equal(ids.at(-1), "20260824_staff_identity_integrity_contract");
+    assert.equal(ids[contractIndex], "20260824_staff_identity_integrity_contract");
+    assert.ok(!schoolPilot27ExpandMigrations.some((migration) => migration.id === ids[contractIndex]));
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === sharedTeachingResourcesMigration.id));
     assert.equal(new Set(ids).size, ids.length, "migration ids stay unique");
     assert.equal(sharedTeachingResourcesMigration.mode, "transactional");

@@ -16,14 +16,15 @@ import {
 const source = (path: string) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 describe("Flight Path precise resources schema rollout", () => {
-  it("ships before the content revision expand and deferred staff identity contract", () => {
+  it("preserves historical order and appends the content revision expand", () => {
     const ids = schoolPilot27Migrations.map((migration) => migration.id);
     const index = ids.indexOf(flightPathResourcesMigration.id);
     const contractIndex = ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]);
     assert.ok(index >= 0);
-    assert.equal(ids[index + 1], flightPathContentRevisionMigration.id);
-    assert.equal(index, contractIndex - 2);
+    assert.equal(index, contractIndex - 1);
+    assert.equal(ids.at(-1), flightPathContentRevisionMigration.id);
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === flightPathResourcesMigration.id));
+    assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === flightPathContentRevisionMigration.id));
     assert.equal(new Set(ids).size, ids.length, "migration ids stay unique");
     assert.equal(flightPathResourcesMigration.id, "20260929_flight_path_resources_expand");
     assert.equal(flightPathResourcesMigration.mode, "transactional");

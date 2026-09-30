@@ -531,8 +531,8 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotUsageRollupsMigration,
   classpilotUsageRollupDaysMigration,
   flightPathResourcesMigration,
-  flightPathContentRevisionMigration,
   staffIdentityIntegrityMigration,
+  flightPathContentRevisionMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [
@@ -553,7 +553,9 @@ if (firstStaffIdentityContractIndex < 0) {
  * email index and ownership backstops commit or roll back together.
  */
 export const schoolPilot27ExpandMigrations: readonly SchoolPilotMigration[] =
-  schoolPilot27Migrations.slice(0, firstStaffIdentityContractIndex);
+  schoolPilot27Migrations.filter((migration) => !STAFF_IDENTITY_CONTRACT_MIGRATION_IDS.some(
+    (contractId) => contractId === migration.id
+  ));
 
 export function selectSchoolPilot27MigrationPlan(options: {
   contractRolloutRequested: boolean;
