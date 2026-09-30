@@ -295,23 +295,24 @@ function parseHttpsUrl(value: unknown): URL | null {
   return parsed;
 }
 
+function youtubeHostVideoId(parsed: URL): string | null {
+  if (parsed.pathname === "/watch") {
+    // Exactly one decoded "v" parameter: an ambiguous query never matches.
+    const ids = parsed.searchParams.getAll("v");
+    return ids.length === 1 ? youtubeVideoId(ids[0]) : null;
+  }
+  const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
+  if (player) {
+    const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETER_SET.has(name));
+    return harmless ? youtubeVideoId(player[1]) : null;
+  }
+  return youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
+}
+
 function identityFromParsedUrl(parsed: URL): RestrictionResourceIdentity | null {
   const host = restrictionMatchHostname(parsed.hostname);
   if (YOUTUBE_HOSTS.has(host)) {
-    let id: string | null = null;
-    if (parsed.pathname === "/watch") {
-      // Exactly one decoded "v" parameter: an ambiguous query never matches.
-      const ids = parsed.searchParams.getAll("v");
-      id = ids.length === 1 ? youtubeVideoId(ids[0]) : null;
-    } else {
-      const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
-      if (player) {
-        const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETER_SET.has(name));
-        id = harmless ? youtubeVideoId(player[1]) : null;
-      } else {
-        id = youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
-      }
-    }
+    const id = youtubeHostVideoId(parsed);
     return id ? { provider: "youtube", resourceId: id } : null;
   }
   if (host === YOUTUBE_SHORT_HOST) {
