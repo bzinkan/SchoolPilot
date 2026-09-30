@@ -1,0 +1,376 @@
+{
+  "version": 1,
+  "sourceRevision": "330148bca32a7cd92f0646a6ca6ecc402b2305af",
+  "startedAt": "2026-09-30T20:46:38.380Z",
+  "passed": false,
+  "productionReadiness": false,
+  "profile": {
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "3eb0261850745bcf021121b66c2d92bac47ea8c05f7ace38a3acd52aeda9cd96",
+    "src/services/classpilotUsageRead.ts": "1137559a6b2d79272af2c6b3a58cad5ba939b6fae59a20e0b646bed147fc7059",
+    "src/routes/classpilot/devices.ts": "a4422a3f1a92245560fe1fab88282193a4c740e727a7b1f6cc8e842805bc30ea",
+    "scripts/load/usage/local-usage-scale.mjs": "8c580ac9ad0b3230b9ef5199f13856e603795fa54ca7fe4867b7e2ae6f214c9c"
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified."
+  ],
+  "writerQueries": [
+    {
+      "durationMs": 60003.26829999997,
+      "schoolId": "408b71e1-eea9-4cc6-9b48-6b043dc96899"
+    },
+    {
+      "durationMs": 60003.298699999985,
+      "schoolId": "4ce5a0f7-1517-4eee-a1ea-e33ca85bc15d"
+    },
+    {
+      "durationMs": 748.5823999999557,
+      "schoolId": "408b71e1-eea9-4cc6-9b48-6b043dc96899"
+    },
+    {
+      "durationMs": 935.6970999999903,
+      "schoolId": "4ce5a0f7-1517-4eee-a1ea-e33ca85bc15d"
+    }
+  ],
+  "reads": {
+    "0/school": {
+      "count": 4,
+      "minMs": 6787.425599999988,
+      "p50Ms": 6845.593299999979,
+      "p95Ms": 7401.274200000014,
+      "maxMs": 7401.274200000014,
+      "afterLiveMs": 1333.0499999999884,
+      "csvMs": 1877.3727000000072,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 797,
+        "csvTotalMinutes": "270763.3"
+      }
+    },
+    "0/grade": {
+      "count": 6,
+      "minMs": 3677.154200000019,
+      "p50Ms": 5002.598499999993,
+      "p95Ms": 7068.855099999986,
+      "maxMs": 7068.855099999986,
+      "afterLiveMs": 491.8052000000025,
+      "csvMs": 446.61860000004526,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 174,
+        "csvTotalMinutes": "54152.9"
+      }
+    },
+    "0/class": {
+      "count": 6,
+      "minMs": 768.4157999999879,
+      "p50Ms": 775.9121000000159,
+      "p95Ms": 1286.515000000014,
+      "maxMs": 1286.515000000014,
+      "afterLiveMs": 48.06579999998212,
+      "csvMs": 70.82539999997243,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "2709.0"
+      }
+    },
+    "0/student": {
+      "count": 6,
+      "minMs": 378.4271000000008,
+      "p50Ms": 650.154200000019,
+      "p95Ms": 1078.3812000000034,
+      "maxMs": 1078.3812000000034,
+      "afterLiveMs": 45.72220000001835,
+      "csvMs": 183.16769999999087,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "542.0"
+      }
+    },
+    "1/school": {
+      "count": 4,
+      "minMs": 6759.869000000006,
+      "p50Ms": 7073.6454000000085,
+      "p95Ms": 7823.346500000014,
+      "maxMs": 7823.346500000014,
+      "afterLiveMs": 1271.444599999988,
+      "csvMs": 1194.8025999999954,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 783,
+        "csvTotalMinutes": "270763.0"
+      }
+    },
+    "1/grade": {
+      "count": 6,
+      "minMs": 3560.1967000000004,
+      "p50Ms": 4965.354999999981,
+      "p95Ms": 15757.337600000028,
+      "maxMs": 15757.337600000028,
+      "afterLiveMs": 392.67840000003343,
+      "csvMs": 410.617200000037,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 174,
+        "csvTotalMinutes": "54152.9"
+      }
+    },
+    "1/class": {
+      "count": 6,
+      "minMs": 766.3735000000161,
+      "p50Ms": 881.6426999999967,
+      "p95Ms": 1279.5337,
+      "maxMs": 1279.5337,
+      "afterLiveMs": 45.17639999999665,
+      "csvMs": 123.66419999999925,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "2709.0"
+      }
+    },
+    "1/student": {
+      "count": 6,
+      "minMs": 653.924800000008,
+      "p50Ms": 969.4266000000061,
+      "p95Ms": 1760.3450000000012,
+      "maxMs": 1760.3450000000012,
+      "afterLiveMs": 28.870200000004843,
+      "csvMs": 68.95000000001164,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "542.0"
+      }
+    }
+  },
+  "ingest": {
+    "requests": 120,
+    "insertedHeartbeats": 119,
+    "bySchool": {
+      "0": 60,
+      "1": 60
+    },
+    "statuses": {
+      "200": 119,
+      "204": 1
+    },
+    "bySchoolInserted": {
+      "0": 60,
+      "1": 59
+    },
+    "timings": {
+      "count": 120,
+      "minMs": 115.49799999999232,
+      "p50Ms": 833.2963000000163,
+      "p95Ms": 6130.153200000001,
+      "maxMs": 22947.873099999968
+    }
+  },
+  "peakRssBytes": 286584832,
+  "rls": [
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "dataset": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 500000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-27",
+    "unavailableDate": "2026-09-25",
+    "heavyDate": "2026-09-28",
+    "today": "2026-09-30",
+    "dateRange": {
+      "from": "2025-09-30",
+      "to": "2026-09-30"
+    }
+  },
+  "seedMs": 210321.8614,
+  "fixtureCounts": [
+    {
+      "school_id": "408b71e1-eea9-4cc6-9b48-6b043dc96899",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    },
+    {
+      "school_id": "4ce5a0f7-1517-4eee-a1ea-e33ca85bc15d",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    }
+  ],
+  "poolMax": {
+    "api": 16,
+    "worker": 5,
+    "apiWaitingPeak": 6,
+    "workerWaitingPeak": 0
+  },
+  "concurrentPhaseMs": 85838.38559999998,
+  "phaseOutcomes": [
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "read_waves",
+      "status": "rejected",
+      "error": {
+        "name": "AssertionError",
+        "code": "ERR_ASSERTION",
+        "message": "Expected values to be strictly equal:\n\n500 !== 200\n"
+      }
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    }
+  ],
+  "concurrentWriters": [],
+  "attributionPlanFailure": {
+    "code": "42P18",
+    "message": "could not determine data type of parameter $4"
+  },
+  "currentDayWriters": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 795.2057999999961,
+      "rowCount": 59,
+      "seconds": 797,
+      "heartbeatCount": 60
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 985.4857000000193,
+      "rowCount": 58,
+      "seconds": 783,
+      "heartbeatCount": 59
+    }
+  ],
+  "heavyDayAtomicity": [
+    {
+      "schoolIndex": 0,
+      "writerCommitted": false,
+      "aggregateRows": 0,
+      "completionRows": 0
+    },
+    {
+      "schoolIndex": 1,
+      "writerCommitted": false,
+      "aggregateRows": 0,
+      "completionRows": 0
+    }
+  ],
+  "databaseBytes": 2323504151,
+  "databaseCountersDelta": {
+    "temp_bytes": 2550030336,
+    "temp_files": 116,
+    "blks_read": 1588290,
+    "blks_hit": 12184671
+  },
+  "correctness": {
+    "realMaxRangeAccepted": true,
+    "nextLongerRangeRejected": true,
+    "independentAllScopeTotals": true,
+    "concurrentSchoolWriters": false,
+    "actualHttpIngest": true,
+    "successfulEmptyDay": true,
+    "gapWithheld": true,
+    "expiredDateWithheld": true,
+    "atomicSnapshotReads": true,
+    "currentDayRawOracle": true,
+    "crossSchoolIdsDenied": true,
+    "csvStrictAuditRecorded": true
+  },
+  "finishedAt": "2026-09-30T20:51:34.520Z",
+  "failure": {
+    "name": "error",
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  }
+}

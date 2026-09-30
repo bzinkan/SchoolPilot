@@ -41,6 +41,19 @@ current-day and export diagnostics after a worker failure without reporting a
 capacity pass. Closed-loop throughput is observed capacity, not proof of a fixed
 external arrival rate.
 
+The separate repeated profiles preserve subsequent collection results rather
+than replacing the initial failed record. `evidence-scale-failure-diagnostics-20260930.json`
+also includes HTTP 500 failures; its raw oracle initially used a fractional
+cutoff beyond the writer's established whole-second SQL input and therefore did
+not complete the current-day checks. `evidence-scale-failure-complete-20260930.json`
+uses a whole-second cutoff and passes the post-phase raw oracle and all eight
+scope/date CSV checks, while both writers and some concurrent reads still fail.
+Its EXPLAIN collection had an untyped unused date parameter (`42P18`), fixed in
+follow-on tooling. No attribution-performance result is claimed from that failed
+diagnostic. An immutable read-only reference query permits subsequent bounded
+EXPLAIN ANALYZE comparisons on the same synthetic dataset; it cannot insert
+aggregate rows and runs only after the actual workload measurement ends.
+
 The hourly fleet, preceding heavy jobs, Redis distribution, managed Chromebook
 behavior, RDS capacity, and production rollout remain unverified. This failed
 profile does not authorize feature activation or infrastructure expansion.

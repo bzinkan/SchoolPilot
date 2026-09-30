@@ -72,7 +72,7 @@ export async function runLocalScale() {
   const metrics = { version: 1, sourceRevision: process.env.USAGE_SOURCE_REVISION, startedAt: new Date().toISOString(), passed: false,
     productionReadiness: false, profile: { postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
-    sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-usage-scale.mjs'].map(file => [file, hash(resolve(root, file))])),
+    sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-usage-scale.mjs', 'scripts/load/usage/reference-attribution-20260930.sql'].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
     writerQueries: [], reads: {}, readFailures: [], apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
     ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
@@ -285,6 +285,12 @@ export async function runLocalScale() {
     try {
       metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
     } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
+    const reference = readFileSync(resolve(root, 'scripts/load/usage/reference-attribution-20260930.sql'), 'utf8');
+    assert.match(reference, /WITH observed AS MATERIALIZED/);
+    assert.doesNotMatch(reference, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|COPY|DO)\b/i, 'The immutable baseline diagnostic must remain read-only');
+    try {
+      metrics.baselineAttributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + reference, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
+    } catch (error) { metrics.baselineAttributionPlanFailure = { code: error.code, message: error.message }; }
     save();
     await flushHeartbeatClassificationBatches();
     // The established writer compares UTC wall-clock timestamps at whole-second
