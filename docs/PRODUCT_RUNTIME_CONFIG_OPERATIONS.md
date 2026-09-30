@@ -20,7 +20,7 @@ survive each clone unchanged.
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` | `off`, `on` | `off` | School Library (roadmap PR 1) | none |
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` | comma-separated lower-case school UUIDs, no spaces, no duplicates | every school (when the mode is `on`) | School Library allowlist | none |
 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | PassPilot rules (PR 7) | RLS admission of `passpilot_destination_policies`, `passpilot_pass_limits`, `passpilot_encounter_restrictions`, `passpilot_pass_denials` |
-| `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | complete preserved 128-table admission; serving source atomic writer contract v1 on both services |
+| `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | complete preserved 128-table admission; serving source atomic writer contract v2 on both services |
 | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | `legacy`, `shadow`, `set_based`, `on` | `shadow` | `daily_usage` rollup (PR 10a) | promotion to `set_based`/`on`: live mode `shadow` plus an evidence file |
 | `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1 |
 | `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
@@ -191,7 +191,7 @@ a feature as on when it cannot be.
 
 **Appointment writers.** `PASSPILOT_APPOINTMENTS_MODE=on` requires the complete immutable
 `passpilotAppointmentsPostExpand` inventory on API and worker and atomic writer
-contract version 1 in their exact serving source SHA. Plan and Apply check this
+contract version 2 in their exact serving source SHA. Plan and Apply check this
 even when appointments were already on. Keep schema, grants, RLS admission and
 the explicit pass-return trigger during a schema-aware feature-off rollback.
 See `docs/PASSPILOT_APPOINTMENTS.md` for staged setup and lifecycle requirements.
