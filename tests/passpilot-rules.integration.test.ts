@@ -676,6 +676,125 @@ describe("PassPilot issuance rules (DB lane)", { concurrency: false }, () => {
     assert.equal(overrideRows[0].destination, "nurse");
   });
 
+  for (const mode of ["on", "off"] as const) {
+    it(`conceals retained encounter overrides in staff and kiosk reads/returns with Rules ${mode}`, async () => {
+      const [target, other] = [L.students[0]!, L.students[1]!];
+      const encounterCode = "PASSPILOT_RULE_ENCOUNTER";
+      const created = await admin("POST", "/encounters", { studentIdA: target, studentIdB: other });
+      assert.equal(created.status, 201, JSON.stringify(created.body));
+      const restrictionId: string = created.body.encounterRestrictions[0].id;
+      await seedPass({ schoolId: L.schoolId, studentId: other, gradeId: L.gradeA, issuedAt: new Date(), status: "active" });
+      const issued = await issue(L.admin, target, "nurse", { overrideRuleCode: encounterCode });
+      assert.equal(issued.status, 201, JSON.stringify(issued.body));
+      assert.equal(issued.body.pass.ruleOverrideCode, encounterCode, "verified administrator sees its override");
+      const passId: string = issued.body.pass.id;
+      // Give the PassPilot teacher a current ClassPilot assignment too, so the
+      // cross-product timeline exercises its real teacher authorization path.
+      const groupId = randomUUID();
+      await pool.query("INSERT INTO groups(id, school_id, teacher_id, name, group_type, status) VALUES ($1, $2, $3, 'Privacy class', 'admin_class', 'active')", [groupId, L.schoolId, L.teacher.id]);
+      await pool.query("INSERT INTO group_students(group_id, student_id) VALUES ($1, $2)", [groupId, target]);
+      await pool.query(`INSERT INTO student_timeline_events(school_id, student_id, event_type, source_type, source_id, title, metadata)
+        VALUES ($1, $2, 'pass', 'passpilot', $3, 'Retained pass metadata', $4::jsonb)`,
+      [L.schoolId, target, passId, JSON.stringify({ passId, ruleOverrideCode: encounterCode })]);
+      const assertPublic = (body: unknown, surface: string) => {
+        const json = JSON.stringify(body);
+        assert.equal(json.includes(encounterCode), false, `${surface} must conceal the encounter override`);
+        assert.equal(json.includes(restrictionId), false, `${surface} must conceal restriction identity`);
+      };
+      const reactivate = () => pool.query("UPDATE passes SET status = 'active', returned_at = NULL WHERE id = $1", [passId]);
+      try {
+        await withEnv({ PASSPILOT_RULES_MODE: mode }, async () => {
+          for (const actor of [L.teacher, L.office]) {
+            for (const path of ["/passpilot/passes", "/passpilot/passes/active", `/passpilot/passes/active?classId=${L.gradeA}`, `/passpilot/passes/history?studentId=${target}&role=school_admin`]) {
+              const result = await call("GET", path, { ...staffHeaders(actor, L.schoolId), "x-passpilot-role": "admin" });
+              assert.equal(result.status, 200, JSON.stringify(result.body));
+              assert.ok(result.body.passes.some((pass: { id: string }) => pass.id === passId), `${path} contains the overridden pass`);
+              assertPublic(result.body, `${actor === L.teacher ? "teacher" : "office"} ${path}`);
+            }
+            const timeline = await call("GET", `/classpilot/students/${target}/timeline?types=pass`, staffHeaders(actor, L.schoolId));
+            // The mounted ClassPilot student-history router denies office staff
+            // before this timeline route. Preserve that existing boundary.
+            assert.equal(timeline.status, actor === L.teacher ? 200 : 403, JSON.stringify(timeline.body));
+            if (actor === L.teacher) {
+              assert.ok(timeline.body.events.some((event: { id: string; persisted: boolean }) => !event.persisted && event.id === `pass:${passId}`), "fallback pass metadata is present");
+              assert.ok(timeline.body.events.some((event: { title: string; persisted: boolean }) => event.persisted && event.title === "Retained pass metadata"), "retained persisted metadata is present");
+            }
+            assertPublic(timeline.body, "ClassPilot pass timeline");
+            const exported = await call("GET", `/passpilot/admin/rules/students/${target}/records`, staffHeaders(actor, L.schoolId));
+            assert.equal(exported.status, mode === "on" ? 403 : 404, "public roles cannot export administrator encounter records");
+            assertPublic(exported.body, "unauthorized records export");
+          }
+          const kioskHeaders = { "x-school-id": L.schoolId, "x-kiosk-pin": PIN };
+          for (const [path, headers] of [
+            [`/passpilot/kiosk/students?classId=${L.gradeA}`, kioskHeaders],
+            [`/passpilot/kiosk/snapshot?classId=${L.gradeA}`, kioskHeaders],
+            ["/passpilot/kiosk/snapshot", activityHeaders()],
+          ] as const) {
+            const result = await call("GET", path, headers);
+            assert.equal(result.status, 200, JSON.stringify(result.body));
+            assert.ok(JSON.stringify(result.body).includes(passId), "kiosk response contains the overridden pass");
+            assertPublic(result.body, path);
+          }
+          const student = await pool.query("SELECT student_id_number FROM students WHERE id = $1", [target]);
+          const lookup = await call("POST", "/passpilot/kiosk/lookup", kioskHeaders, { studentIdNumber: student.rows[0].student_id_number });
+          assert.equal(lookup.status, 200, JSON.stringify(lookup.body));
+          assert.equal(lookup.body.activePass.id, passId);
+          assertPublic(lookup.body, "kiosk lookup");
+
+          for (const actor of [L.teacher, L.office]) {
+            for (const method of ["PATCH", "PUT"]) {
+              const returned = await call(method, `/passpilot/passes/${passId}/return`, staffHeaders(actor, L.schoolId));
+              assert.equal(returned.status, 200, JSON.stringify(returned.body));
+              assert.equal(returned.body.pass.id, passId);
+              assertPublic(returned.body, `${method} staff return`);
+              await reactivate();
+            }
+          }
+          const checkin = await call("POST", "/passpilot/kiosk/checkin", kioskHeaders, { studentId: target });
+          assert.equal(checkin.status, 200, JSON.stringify(checkin.body));
+          assert.equal(checkin.body.pass.id, passId);
+          assertPublic(checkin.body, "kiosk checkin");
+          for (const actor of [L.teacher, L.office]) {
+            const history = await call("GET", `/passpilot/passes/history?studentId=${target}`, staffHeaders(actor, L.schoolId));
+            assert.equal(history.status, 200, JSON.stringify(history.body));
+            assertPublic(history.body, "returned-pass history used by report CSV exports");
+          }
+          const administrator = await call("GET", `/passpilot/passes/history?studentId=${target}`, staffHeaders(L.admin, L.schoolId));
+          assert.equal(administrator.status, 200);
+          assert.equal(administrator.body.passes.find((pass: { id: string }) => pass.id === passId).ruleOverrideCode, encounterCode);
+          await reactivate();
+          const adminList = await call("GET", "/passpilot/passes", staffHeaders(L.admin, L.schoolId));
+          assert.equal(adminList.status, 200);
+          assert.equal(adminList.body.passes.find((pass: { id: string }) => pass.id === passId).ruleOverrideCode, encounterCode);
+          const adminReturn = await call("PATCH", `/passpilot/passes/${passId}/return`, staffHeaders(L.admin, L.schoolId));
+          assert.equal(adminReturn.status, 200);
+          assert.equal(adminReturn.body.pass.ruleOverrideCode, encounterCode);
+          for (const [method, suffix] of [["PATCH", "/cancel"], ["DELETE", ""]] as const) {
+            await reactivate();
+            const cancelled = await call(method, `/passpilot/passes/${passId}${suffix}`, staffHeaders(L.teacher, L.schoolId));
+            assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));
+            assertPublic(cancelled.body, `${method} cancellation`);
+          }
+          if (mode === "on") {
+            const records = await admin("GET", `/students/${target}/records`);
+            assert.equal(records.status, 200, JSON.stringify(records.body));
+            assert.ok(records.body.denials.some((row: { ruleCode: string; overridden: boolean }) => row.ruleCode === encounterCode && row.overridden));
+            assert.equal(JSON.stringify(records.body).includes(other), false, "access-request export does not disclose the paired student");
+          }
+        });
+        const stored = await pool.query("SELECT rule_override_code FROM passes WHERE id = $1", [passId]);
+        assert.equal(stored.rows[0].rule_override_code, encounterCode);
+        const audit = await pool.query("SELECT metadata FROM audit_logs WHERE school_id = $1 AND action = 'passpilot.rule.override' AND entity_id = $2", [L.schoolId, passId]);
+        assert.equal(audit.rowCount, 1);
+        assert.equal(audit.rows[0].metadata.ruleCode, encounterCode);
+        assert.equal((await denials(L.schoolId, target)).filter((row) => row.overridden && row.rule_code === encounterCode).length, 1);
+      } finally {
+        await pool.query("DELETE FROM group_students WHERE group_id = $1", [groupId]);
+        await pool.query("DELETE FROM groups WHERE id = $1", [groupId]);
+      }
+    });
+  }
+
   it("validates, scopes, and audits every rules API write", async () => {
     const [x, y] = [L.students[0]!, L.students[1]!];
     const auditEntities = async (): Promise<string[]> => (await pool.query(

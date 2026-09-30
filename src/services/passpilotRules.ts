@@ -714,13 +714,17 @@ export async function purgeExpiredPasspilotPassDenials(
 }
 
 /**
- * Pass responses carry ruleOverrideCode only when an override happened, so a
- * response with the mode off is identical to one from before this column.
+ * Null override codes stay absent for compatibility. Encounter overrides are
+ * confidential even after Rules is turned off; only a verified administrator
+ * role may retain that code. Public/kiosk callers deliberately omit viewerRole.
  */
 export function withoutNullRuleOverride<T extends { ruleOverrideCode?: string | null }>(
-  pass: T
+  pass: T,
+  viewerRole?: string | null
 ): Omit<T, "ruleOverrideCode"> & { ruleOverrideCode?: string } {
-  if (pass.ruleOverrideCode) return pass as Omit<T, "ruleOverrideCode"> & { ruleOverrideCode: string };
+  if (pass.ruleOverrideCode && (
+    pass.ruleOverrideCode !== "PASSPILOT_RULE_ENCOUNTER" || canOverridePasspilotRules(viewerRole)
+  )) return pass as Omit<T, "ruleOverrideCode"> & { ruleOverrideCode: string };
   const { ruleOverrideCode: _omitted, ...rest } = pass;
   return rest;
 }

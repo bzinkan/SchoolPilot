@@ -88,7 +88,8 @@ function teacherName(user: {
 
 export async function normalizePasspilotPass(
   pass: Pass,
-  schoolId: string
+  schoolId: string,
+  viewerRole?: string | null
 ) {
   const grade = pass.gradeId
     ? (await getGradesBySchool(schoolId)).find((entry) => entry.id === pass.gradeId)
@@ -99,8 +100,7 @@ export async function normalizePasspilotPass(
     ? "classpilot_groups"
     : "legacy_grades";
   return {
-    // ruleOverrideCode appears only on an overridden pass (see withoutNullRuleOverride).
-    ...withoutNullRuleOverride(pass),
+    ...withoutNullRuleOverride(pass, viewerRole),
     activity: pass.supervisionContextId ? { kind: pass.activityKind, name: pass.activityNameSnapshot } : null,
     classId,
     className,

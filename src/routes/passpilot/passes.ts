@@ -105,7 +105,7 @@ router.use(
 router.use(requirePasspilotClassModel);
 
 // Enrich passes with student/teacher/grade data
-async function enrichPasses(rawPasses: Pass[], schoolId: string) {
+async function enrichPasses(rawPasses: Pass[], schoolId: string, viewerRole: string | null) {
   if (rawPasses.length === 0) return [];
 
   const [allStudents, allGrades] = await Promise.all([
@@ -151,7 +151,7 @@ async function enrichPasses(rawPasses: Pass[], schoolId: string) {
       || "Former staff member";
 
     return {
-      ...withoutNullRuleOverride(pass),
+      ...withoutNullRuleOverride(pass, viewerRole),
       classId,
       className,
       class: classId
@@ -231,7 +231,7 @@ router.get("/", async (req, res, next) => {
 
     const rawPasses = await getActivePassesBySchool(schoolId);
     const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
-    const enriched = await enrichPasses(scopedPasses, schoolId);
+    const enriched = await enrichPasses(scopedPasses, schoolId, role);
     return res.json({ passes: enriched });
   } catch (err) {
     next(err);
@@ -259,13 +259,13 @@ router.get("/active", async (req, res, next) => {
           code: "PASSPILOT_CLASS_NOT_FOUND",
         });
       }
-      const enriched = await enrichPasses(scoped.passes, schoolId);
+      const enriched = await enrichPasses(scoped.passes, schoolId, role);
       return res.json({ classId: scoped.classId, passes: enriched });
     }
 
     const rawPasses = await getActivePassesBySchool(schoolId);
     const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
-    const enriched = await enrichPasses(scopedPasses, schoolId);
+    const enriched = await enrichPasses(scopedPasses, schoolId, role);
     return res.json({ passes: enriched });
   } catch (err) {
     next(err);
@@ -362,7 +362,7 @@ router.get("/history", async (req, res, next) => {
     });
     const rawPasses = historyPage.passes;
 
-    const enriched = await enrichPasses(rawPasses, schoolId);
+    const enriched = await enrichPasses(rawPasses, schoolId, role);
     return res.json({
       passes: enriched,
       nextCursor: historyPage.nextCursor ? encodeHistoryCursor(historyPage.nextCursor) : null,
@@ -544,7 +544,7 @@ router.post("/", async (req, res, next) => {
       });
     }
     await recordPassTimeline(pass, "issued", req.authUser!.id);
-    return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.status(201).json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
   } catch (err) {
     next(err);
   }
@@ -566,7 +566,7 @@ router.patch("/:id/return", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
   } catch (err) {
     next(err);
   }
@@ -588,7 +588,7 @@ router.put("/:id/return", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "returned", req.authUser!.id);
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
   } catch (err) {
     next(err);
   }
@@ -610,7 +610,7 @@ router.patch("/:id/cancel", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "cancelled", req.authUser!.id);
-    return res.json({ pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.json({ pass: await normalizePasspilotPass(pass, schoolId, role) });
   } catch (err) {
     next(err);
   }
@@ -631,7 +631,7 @@ router.delete("/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Active pass not found" });
     }
     await recordPassTimeline(pass, "cancelled", req.authUser!.id);
-    return res.json({ ok: true, pass: await normalizePasspilotPass(pass, schoolId) });
+    return res.json({ ok: true, pass: await normalizePasspilotPass(pass, schoolId, role) });
   } catch (err) {
     next(err);
   }
