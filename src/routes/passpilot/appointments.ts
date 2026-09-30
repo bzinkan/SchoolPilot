@@ -10,7 +10,7 @@ import { readPasspilotAppointmentsMode } from "../../config/passpilotAppointment
 import { PASSPILOT_APPOINTMENT_STATUSES } from "../../schema/passpilotAppointments.js";
 import { createAppointmentSchema, editAppointmentSchema, cancelAppointmentSchema, activateAppointmentSchema } from "../../services/passpilotAppointmentsValidation.js";
 import { createPasspilotAppointment, editPasspilotAppointment, cancelPasspilotAppointment, getPasspilotAppointment,
-  listPasspilotAppointments, activatePasspilotAppointment } from "../../services/passpilotAppointments.js";
+  listPasspilotAppointments, activatePasspilotAppointment, getPasspilotAppointmentsCapabilities } from "../../services/passpilotAppointments.js";
 import { isPasspilotRuleError, recordPasspilotRuleDenial, passpilotRuleTeacherResponse } from "../../services/passpilotRules.js";
 import { isDatabaseErrorCode } from "../../util/databaseError.js";
 
@@ -51,6 +51,10 @@ async function list(req: Request, res: Response, next: NextFunction, accessReque
   }
 }
 router.get("/", (req, res, next) => list(req, res, next));
+router.get("/capabilities", async (req, res, next) => {
+  try { return res.json(await getPasspilotAppointmentsCapabilities(res.locals.schoolId!, actor(req))); }
+  catch (error) { next(error); }
+});
 // Administrator access/erasure handling is separate from teacher reminders and
 // future aggregate reporting. No private notes are copied into pass records.
 router.get("/students/:studentId/records", (req, res, next) => list(req, res, next, true));

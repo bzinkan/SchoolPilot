@@ -27,7 +27,14 @@ change supersession workflow. The canonical config/revision and the strict
 `passpilot.school_year.updated` audit commit together; an audit failure rolls back
 the save. No new schema, tenant table, RLS admission or runtime flag is introduced.
 
-This is the server setup slice. Role-gated PassPilot interface controls ship with
-the appointment UI slice. Appointment activation also depends on the separate
+The appointment UI supplies role-gated controls in Set Up → Settings. The form
+shows the server-owned timezone, previews changed occurrences and blockers, and
+requires a fresh preview after editing a date or receiving a stale-revision error.
+These controls work while appointments are off. Appointment activation also depends on the separate
 attendance/dismissal eligibility-race correction; keep the feature off until both
 dependencies are reviewed and serving on API and worker.
+
+The existing shared PassPilot auth adapter exposes Set Up only with a current
+`admin` or `school_admin` school membership. A global super administrator without
+that membership can use the authorized setup API but does not gain the existing
+Set Up interface through this slice. Other shared setup role checks are unchanged.

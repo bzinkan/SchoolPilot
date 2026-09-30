@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { passPilotClassRequest } from '../classData';
+import { useAppointmentCapabilities } from '../appointmentData';
 import {
   ClipboardList,
   Users,
@@ -13,6 +14,7 @@ import {
   Monitor,
   Pencil,
   Hash,
+  CalendarDays,
 } from 'lucide-react';
 import ClaimKioskDialog from './ClaimKioskDialog';
 import { useKioskSessions } from '../useKioskSessions';
@@ -40,6 +42,7 @@ const navItems = [
   { label: 'My Class', icon: <BookOpen className="h-5 w-5" />, id: 'myclass', to: '/passpilot/my-class' },
   { label: 'Classes', icon: <Users className="h-5 w-5" />, id: 'roster', to: '/passpilot/classes' },
   { label: 'Reports', icon: <BarChart3 className="h-5 w-5" />, id: 'reports', to: '/passpilot/reports', staffOnly: true },
+  { label: 'Appointments', icon: <CalendarDays className="h-5 w-5" />, id: 'appointments', to: '/passpilot/appointments', appointmentsOnly: true },
   { label: 'Set Up', icon: <Settings className="h-5 w-5" />, id: 'setup', to: '/passpilot/setup', adminOnly: true },
   { label: 'Kiosk schedule', icon: <Monitor className="h-5 w-5" />, id: 'settings', to: '/passpilot/settings', scheduleOnly: true },
 ];
@@ -47,6 +50,7 @@ const navItems = [
 export default function AppShell({ children, currentTab }) {
   const { user, school, isAdmin, isSchoolwideManager, isTeacher, logout, refetchUser } = usePassPilotAuth();
   const { hasClassPilot, hasGoPilot } = useLicenses();
+  const appointments = useAppointmentCapabilities(user, school);
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
   const [pendingKioskAction, setPendingKioskAction] = useState(null);
@@ -123,6 +127,7 @@ export default function AppShell({ children, currentTab }) {
       && (!item.scheduleOnly || isTeacher || isAdmin)
     && (!item.managerOnly || isSchoolwideManager)
     && (!item.staffOnly || isTeacher || isSchoolwideManager)
+    && (!item.appointmentsOnly || (appointments.isSuccess && appointments.data?.manager))
   ));
 
   const initials = user?.displayName
