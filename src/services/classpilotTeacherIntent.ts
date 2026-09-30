@@ -1,4 +1,5 @@
 import { domainMatches } from "./aiClassification.js";
+import { isUrlAllowedByResources } from "./restrictionResources.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import db from "../db.js";
 import { settings } from "../schema/shared.js";
@@ -17,11 +18,15 @@ export async function schoolAllowedDomainsForTaskIntent(schoolId: string): Promi
   return value;
 }
 export function classpilotTeacherIntentForUrl(url: string, options: {
-  allowedDomains: readonly string[]; flightPath?: { active?: boolean; allowedDomains?: readonly string[] | null } | null;
+  allowedDomains: readonly string[];
+  flightPath?: { active?: boolean; allowedDomains?: readonly string[] | null; resources?: unknown } | null;
 }): "flight_path" | "school_allowed_domain" | null {
   let hostname: string;
   try { const parsed = new URL(url); if (!["http:", "https:"].includes(parsed.protocol)) return null; hostname = parsed.hostname; } catch { return null; }
   if (options.flightPath?.active && options.flightPath.allowedDomains?.some((entry) => domainMatches(hostname, entry))) return "flight_path";
+  // Sections and resources of a precise Flight Path (only ever delivered to a
+  // binding that accepted preciseRestrictionResourcesV1) attribute the same way.
+  if (options.flightPath?.active && Array.isArray(options.flightPath.resources) && isUrlAllowedByResources(url, options.flightPath.resources)) return "flight_path";
   if (options.allowedDomains.some((entry) => domainMatches(hostname, entry))) return "school_allowed_domain";
   return null;
 }
