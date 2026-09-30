@@ -34,6 +34,7 @@ const SECTION = normalizeAllowedResource({ url: "https://www.nasa.gov/solar-syst
 const DOC_URL = "https://docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit";
 const SCHOOL = "11111111-1111-4111-8111-111111111111";
 const PROOF = `${PRECISE_RESTRICTION_CLEAR_PROOF_PREFIX}${"a".repeat(64)}`;
+const LIVE_API_TASK_DEFINITION = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:7";
 
 function restrictionsWith(overrides: Record<string, unknown>) {
   return {
@@ -225,31 +226,37 @@ describe("precise restriction clear CLI safety contract", () => {
     assert.equal(dryRun.execute, false);
     assert.doesNotThrow(() => validatePreciseRestrictionClearCliOptions(dryRun));
     assert.doesNotThrow(() => validatePreciseRestrictionClearCliOptions(parsePreciseRestrictionClearCliArgs(["--all-schools"])));
+    const executeArgs = [
+      "--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT,
+      "--api-task-definition-arn", LIVE_API_TASK_DEFINITION,
+    ];
     for (const args of [
       [],
       ["--school-id", SCHOOL, "--all-schools"],
       ["--school-id", "not-a-uuid"],
-      ["--all-schools", "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
-      ["--school-id", SCHOOL, "--execute", "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
-      ["--school-id", SCHOOL, "--execute", "--proof", "precise-clear-proof-v1:short", "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
-      ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", "yes"],
-      ["--school-id", SCHOOL, "--execute", "--dry-run", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
+      ["--all-schools", "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
+      ["--school-id", SCHOOL, "--execute", "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
+      ["--school-id", SCHOOL, "--execute", "--proof", "precise-clear-proof-v1:short", "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
+      ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", "yes", "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
+      ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
+      ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", "schoolpilot-production-api:7"],
+      ["--school-id", SCHOOL, "--execute", "--dry-run", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
       ["--school-id", SCHOOL, "--proof", PROOF],
+      ["--school-id", SCHOOL, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
     ]) {
       assert.throws(() => validatePreciseRestrictionClearCliOptions(parsePreciseRestrictionClearCliArgs(args)), args.join(" "));
     }
     assert.throws(() => parsePreciseRestrictionClearCliArgs(["--school-id"]));
     assert.throws(() => parsePreciseRestrictionClearCliArgs(["--force"]));
-    const execute = parsePreciseRestrictionClearCliArgs([
-      "--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT,
-    ]);
+    const execute = parsePreciseRestrictionClearCliArgs(executeArgs);
     assert.doesNotThrow(() => validatePreciseRestrictionClearCliOptions(execute));
     assert.equal(execute.expectedProof, PROOF);
+    assert.equal(execute.apiTaskDefinitionArn, LIVE_API_TASK_DEFINITION);
   });
 
-  it("requires explicit admission and a verified ECS task identity for every execution", async () => {
+  it("requires explicit admission and the live API task definition for every execution", async () => {
     const identity = async () => ({
-      taskDefinitionArn: "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:1",
+      taskDefinitionArn: LIVE_API_TASK_DEFINITION,
       taskDefinitionSha256: "runtime-identity-proof",
     });
     await assert.doesNotReject(() => assertPreciseRestrictionClearExecutionAdmission({
@@ -269,8 +276,24 @@ describe("precise restriction clear CLI safety contract", () => {
     await assert.rejects(() => assertPreciseRestrictionClearExecutionAdmission({
       execute: true, environment: admitted, resolveRuntimeIdentity: async () => { throw new Error("metadata unavailable"); },
     }), refused);
+    // The one-off must run exactly the live API revision, so the capability
+    // check reads the live service's registry and kill switch.
+    const mismatch = (error: unknown) =>
+      (error as { code?: string }).code === "PRECISE_RESTRICTION_CLEAR_TASK_DEFINITION_MISMATCH";
+    for (const expectedApiTaskDefinitionArn of [
+      undefined,
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:6",
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:7",
+    ]) {
+      await assert.rejects(() => assertPreciseRestrictionClearExecutionAdmission({
+        execute: true, expectedApiTaskDefinitionArn, environment: admitted, resolveRuntimeIdentity: identity,
+      }), mismatch, String(expectedApiTaskDefinitionArn));
+    }
     await assert.doesNotReject(() => assertPreciseRestrictionClearExecutionAdmission({
-      execute: true, environment: admitted, resolveRuntimeIdentity: identity,
+      execute: true,
+      expectedApiTaskDefinitionArn: LIVE_API_TASK_DEFINITION,
+      environment: admitted,
+      resolveRuntimeIdentity: identity,
     }));
   });
 });

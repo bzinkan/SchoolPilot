@@ -19,6 +19,8 @@ const REPORT_VERSION = "classpilot-precise-restriction-clear-v1";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROOF_PATTERN = /^precise-clear-proof-v1:[0-9a-f]{64}$/;
+const TASK_DEFINITION_ARN_PATTERN =
+  /^arn:aws(?:-[a-z]+)?:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]{1,255}:[1-9]\d*$/;
 
 export type PreciseRestrictionClearCliOptions = {
   help: boolean;
@@ -28,14 +30,23 @@ export type PreciseRestrictionClearCliOptions = {
   schoolId?: string;
   expectedProof?: string;
   acknowledgement?: string;
+  /** The live API service's current task definition, read by the operator. */
+  apiTaskDefinitionArn?: string;
 };
 
 type ClearExecutionEnvironment = {
   PRECISE_RESTRICTION_CLEAR_EXECUTION_ADMISSION?: string;
 };
 
+/**
+ * An execution must run as an admitted ECS one-off of the exact task
+ * definition revision the live API service is running. The capability check
+ * then reads the live service's registry and kill switch, not whatever an
+ * older or newer revision carries.
+ */
 export async function assertPreciseRestrictionClearExecutionAdmission(options: {
   execute: boolean;
+  expectedApiTaskDefinitionArn?: string;
   environment?: ClearExecutionEnvironment;
   resolveRuntimeIdentity?: () => Promise<EcsApiRuntimeIdentity | null>;
 }): Promise<void> {
@@ -57,6 +68,15 @@ export async function assertPreciseRestrictionClearExecutionAdmission(options: {
     throw refused("ECS runtime identity could not be verified.");
   }
   if (!identity) throw refused("Precise restriction clearing requires ECS task identity.");
+  if (
+    !options.expectedApiTaskDefinitionArn
+    || identity.taskDefinitionArn !== options.expectedApiTaskDefinitionArn
+  ) {
+    throw Object.assign(
+      new Error("This one-off does not run the live API service's task definition revision."),
+      { code: "PRECISE_RESTRICTION_CLEAR_TASK_DEFINITION_MISMATCH" }
+    );
+  }
 }
 
 function usage(): string {
@@ -71,8 +91,11 @@ function usage(): string {
     "  --execute",
     "  --proof <precise-clear-proof-v1:...>   copied from that school's dry run",
     `  --acknowledge ${PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT}`,
+    "  --api-task-definition-arn <arn>        the live API service's current task definition,",
+    "                                         read from ECS describe-services; the one-off must run it",
     `  ECS task env: PRECISE_RESTRICTION_CLEAR_EXECUTION_ADMISSION=${PRECISE_RESTRICTION_CLEAR_PRODUCTION_ADMISSION}`,
-    "  preciseRestrictionResourcesV1 inactive for the school (apply precise-restriction-resources-off first)",
+    "  preciseRestrictionResourcesV1 inactive for the school in that live revision",
+    "  (apply precise-restriction-resources-off first)",
     "",
     "Output contains school IDs, counts and the proof only. It never emits student,",
     "staff or school names, URLs, or restriction contents.",
@@ -109,6 +132,9 @@ export function parsePreciseRestrictionClearCliArgs(
     } else if (argument === "--acknowledge") {
       options.acknowledgement = valueAfter(args, index, argument);
       index += 1;
+    } else if (argument === "--api-task-definition-arn") {
+      options.apiTaskDefinitionArn = valueAfter(args, index, argument);
+      index += 1;
     } else {
       throw new Error("Unknown precise restriction clear argument.");
     }
@@ -139,7 +165,14 @@ export function validatePreciseRestrictionClearCliOptions(
     if (options.acknowledgement !== PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT) {
       throw new Error("Execution requires the exact acknowledgement.");
     }
-  } else if (options.expectedProof !== undefined || options.acknowledgement !== undefined) {
+    if (!options.apiTaskDefinitionArn || !TASK_DEFINITION_ARN_PATTERN.test(options.apiTaskDefinitionArn)) {
+      throw new Error("Execution requires the live API service's exact task definition ARN.");
+    }
+  } else if (
+    options.expectedProof !== undefined
+    || options.acknowledgement !== undefined
+    || options.apiTaskDefinitionArn !== undefined
+  ) {
     throw new Error("Execution-only arguments require --execute.");
   }
 }
@@ -174,7 +207,10 @@ export async function runPreciseRestrictionClearCli(args: string[]): Promise<num
   }
 
   try {
-    await assertPreciseRestrictionClearExecutionAdmission({ execute: options.execute });
+    await assertPreciseRestrictionClearExecutionAdmission({
+      execute: options.execute,
+      expectedApiTaskDefinitionArn: options.apiTaskDefinitionArn,
+    });
   } catch (error) {
     emit({ version: REPORT_VERSION, status: "failed", failureCode: safeFailureCode(error) }, true);
     return 1;
