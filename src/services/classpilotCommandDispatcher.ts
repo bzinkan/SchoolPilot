@@ -92,7 +92,7 @@ import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPo
 import { classpilotSsoPolicyApprovesObservedUrl } from "./classpilotHeartbeatSsoSanitizer.js";
 import { classpilotTransientCurrentPageCommandEnvelope } from "./classpilotTransientCurrentPage.js";
 import { requireScheduledClassroomContext } from "./classpilotActivityAuthority.js";
-import { assertExactFocusTargetScope, focusAuthoringEnabled, focusCapabilityAccepted,
+import { assertExactFocusTargetScope, focusAuthoringEnabled, focusCapabilityAccepted, focusRecord,
   FOCUS_TAB_CAPABILITY, type ClasspilotExactTabTarget } from "./classpilotFocus.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
@@ -1613,7 +1613,8 @@ export async function executeClasspilotCommand(options: {
   }
   const capabilityObservedIds = new Set([...deferredIds, ...authRelevantIds]);
   if (focusNewAction || options.commandType === "stop-focus"
-    || controlStateRows.some(row => serializeClasspilotStudentControlState(row).restrictions.focus?.active))
+    || controlStateRows.some(row => normalizeClasspilotRestrictions(
+      focusRecord(row.desiredState).restrictions).focus?.active))
     for (const target of committedTargets) if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);
   if (requiredToolsCapability) for (const target of committedTargets) {
     if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);

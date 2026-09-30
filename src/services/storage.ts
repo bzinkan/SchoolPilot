@@ -20670,6 +20670,9 @@ function classpilotCommandAckResult(
   const hasFrozenAuthority = Object.keys(frozenAuthority).length > 0;
   if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
     const sanitized = { ...(candidate as Record<string, unknown>) };
+    // This public status is reserved for server projection of the immutable
+    // continuation intent; extension ACKs cannot invent a child receipt.
+    delete sanitized.followUp;
     for (const key of classpilotCommandAuthorityResultKeys) delete sanitized[key];
     return hasFrozenAuthority ? { ...sanitized, ...frozenAuthority } : sanitized;
   }

@@ -19,22 +19,24 @@ function stripInternalTargetIdentifiers(value: unknown): unknown {
     return value;
   }
 
+  const record = value as Record<string, unknown>;
   const safe: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, entry] of Object.entries(record)) {
     // These are structured private authority objects; exclude the complete
     // object before recursively projecting any teacher DTO.
     if (protectedFocusKeys.has(key)) {
-      if (key === "focusOpenIntentV1") {
-        const intent = readFocusOpenIntent({ focusOpenIntentV1: entry });
-        if (intent) safe.followUp = { kind: "focus", state: intent.state,
-          ...(intent.state === "committed" ? { commandId: intent.childCommandId } : {}),
-          ...(intent.errorCode ? { errorCode: intent.errorCode } : {}) };
-      }
       continue;
     }
+    // Public continuation status is derived only from the private persisted
+    // intent. Ignore any old or incoming client field regardless of key order.
+    if (key === "followUp") continue;
     if (isInternalTargetKey(key)) continue;
     safe[key] = stripInternalTargetIdentifiers(entry);
   }
+  const intent = readFocusOpenIntent(record);
+  if (intent) safe.followUp = { kind: "focus", state: intent.state,
+    ...(intent.state === "committed" ? { commandId: intent.childCommandId } : {}),
+    ...(intent.errorCode ? { errorCode: intent.errorCode } : {}) };
   return safe;
 }
 

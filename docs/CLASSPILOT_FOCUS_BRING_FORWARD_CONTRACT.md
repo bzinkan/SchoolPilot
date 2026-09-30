@@ -1,6 +1,6 @@
 # Focus and Bring Forward v1: draft command contract
 
-Status: **DRAFT, PENDING INDEPENDENT REVIEW AND IMPLEMENTATION**. This document defines the proposed server and extension contract for the Focus/Bring Forward slice of the remaining roadmap. No behavior in this document is claimed to be implemented, automated-test verified, deployed, managed-device verified, uploaded or available in a Chrome Web Store version. Release evidence must be recorded separately after implementation.
+Status: **DRAFT, REVIEWED SERVER IMPLEMENTATION; EXTENSION AND RELEASE GATES PENDING**. This document defines the reviewed Focus/Bring Forward contract for the remaining roadmap. The server implementation has focused unit, restricted-role database/concurrency and runtime-tool test evidence on its candidate branch. Extension integration, browser and managed-device acceptance, deployment, upload and Chrome Web Store availability remain pending; this document provides no release or version evidence. Record those gates separately before activation.
 
 The public command shapes below are fixed for this slice. After review, this document supersedes the provisional Focus section 12 of [the precise restriction contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The existing precise matcher, resource fields, restriction precedence and sign-in envelope remain authoritative. Focus never creates a restriction exception.
 

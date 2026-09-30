@@ -180,12 +180,16 @@ test("successful open consumes the private 21st-tab receipt once without public 
 test("received or failed opens and forged receipt metadata cannot create a follow-up", async () => {
   const source = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
   const intent = readFocusOpenIntent(source.command.targets[0]?.result); assert.ok(intent);
-  const received = await openAck(source.command.id, intent.binding.revisionAtAssignment, { ackState: "received" });
+  const received = await openAck(source.command.id, intent.binding.revisionAtAssignment, { ackState: "received",
+    result: { followUp: { kind: "focus", state: "committed", commandId: "forged-child" } } });
   assert.equal(received.disposition, "applied");
+  assert.equal(Object.hasOwn(focusRecord((await sourceTarget(source.command.id)).result), "followUp"), false);
   assert.equal(await focus(), null);
   await openAck(source.command.id, intent.binding.revisionAtAssignment, { result: { tabReceiptVersion: 1,
-    tabRef: "forged", tabSnapshotRevision: 10, focusOpenIntentV1: { state: "committed" } } });
+    tabRef: "forged", tabSnapshotRevision: 10, focusOpenIntentV1: { state: "committed" },
+    followUp: { kind: "focus", state: "committed", commandId: "forged-child" } } });
   assert.equal(readFocusOpenIntent((await sourceTarget(source.command.id)).result)?.state, "refused");
+  assert.equal(Object.hasOwn(focusRecord((await sourceTarget(source.command.id)).result), "followUp"), false);
   assert.equal(await focus(), null);
   const failedSource = await issue("open-tab", { url: "https://example.org/lesson", focusAfterOpen: true });
   const failedIntent = readFocusOpenIntent(failedSource.command.targets[0]?.result); assert.ok(failedIntent);
