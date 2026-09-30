@@ -57,6 +57,12 @@ import {
   CLASSPILOT_ACTIVITY_KINDS,
   type ClasspilotActivityKind,
 } from "./classpilotActivityAttribution.js";
+import { readClasspilotDigitalUsageMode } from "../config/classpilotUsageModes.js";
+import {
+  ClasspilotDigitalUsageError,
+  getClasspilotStudentMonitoredBrowserTime,
+  type ClasspilotStudentMonitoredBrowserTime,
+} from "./classpilotUsageRead.js";
 
 export type ClasspilotStudentDataPeriod = "today" | "week" | "month" | "year";
 export type ClasspilotStudentDataRole = "admin" | "school_admin" | "teacher";
@@ -435,6 +441,8 @@ export function buildClasspilotStudentDataResponse(options: {
   generatedAt: Date;
   identities: StudentIdentity[];
   usageRows: StoredUsageRow[];
+  /** Administrator school-scope view of one student with Digital Usage on. */
+  selectedStudentMonitoredBrowserTime?: ClasspilotStudentMonitoredBrowserTime;
 }) {
   const accumulators = new Map<string, StudentAccumulator>(
     options.identities.map((identity) => [identity.studentId, {
@@ -508,9 +516,15 @@ export function buildClasspilotStudentDataResponse(options: {
   const monitoredSeconds = summaries.reduce((sum, student) => sum + student.monitoredSeconds, 0);
   const topDomains = sortedBoundedDomains(allDomainTotals, monitoredSeconds).slice(0, 10);
   const topActivities = sortedBoundedActivities(allActivityTotals, monitoredSeconds).slice(0, 10);
-  const selectedStudent = options.selectedStudentId
+  const selectedSummary = options.selectedStudentId
     ? summaries.find((student) => student.studentId === options.selectedStudentId) ?? null
     : null;
+  // The school-day rollups are a separate measure from the class-session usage
+  // above; they are exported beside it, never summed into it.
+  const monitoredBrowserTime = selectedSummary ? options.selectedStudentMonitoredBrowserTime : undefined;
+  const selectedStudent = selectedSummary && monitoredBrowserTime
+    ? { ...selectedSummary, monitoredBrowserTime }
+    : selectedSummary;
   const revisionInput = {
     schemaVersion: 2,
     period: options.period,
@@ -526,6 +540,7 @@ export function buildClasspilotStudentDataResponse(options: {
     topDomains,
     topActivities,
     students: summaries,
+    ...(monitoredBrowserTime ? { monitoredBrowserTime } : {}),
   };
   const revision = `student-data-v2:${createHash("sha256")
     .update(JSON.stringify(revisionInput))
@@ -2167,6 +2182,27 @@ export async function getClasspilotStudentData(options: {
     if (candidates.some((candidate) => candidate.state === "unavailable")) {
       throw new ClasspilotStudentDataUnavailableError();
     }
+    // Student Data export of the Monitored Browser Time rollups: one selected
+    // student, administrators in the school-wide scope, Digital Usage on.
+    const selectedStudentMonitoredBrowserTime = options.studentId
+      && options.role !== "teacher"
+      && selection.scope.kind === "school"
+      && !selection.session
+      && readClasspilotDigitalUsageMode() === "on"
+      ? await getClasspilotStudentMonitoredBrowserTime({
+          schoolId: options.schoolId,
+          studentId: options.studentId,
+          from: window.startLocalDate,
+          to: window.endLocalDate,
+          now,
+          transaction: transactionDb,
+        }).catch((error: unknown) => {
+          // A frozen-roster student no longer in the school has no rollups to
+          // export; that must not fail the Student Data read itself.
+          if (error instanceof ClasspilotDigitalUsageError) return undefined;
+          throw error;
+        })
+      : undefined;
     const provisionalUsage = await materializeReadOnlyProvisionalUsage({
       schoolId: options.schoolId,
       timeZone: window.timeZone,
@@ -2198,6 +2234,7 @@ export async function getClasspilotStudentData(options: {
       generatedAt: now,
       identities,
       usageRows: [...storedUsage, ...provisionalUsage.rows],
+      selectedStudentMonitoredBrowserTime,
     });
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }

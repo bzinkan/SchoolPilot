@@ -215,6 +215,49 @@ function normalizeStudentSummary(value, fallback = {}) {
   };
 }
 
+const MONITORED_BROWSER_TIME_STATES = new Set(['unavailable', 'live', 'final']);
+const LOCAL_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function localDate(value) {
+  return typeof value === 'string' && LOCAL_DATE.test(value) ? value : null;
+}
+
+// School-day Monitored Browser Time rollups for one selected student
+// (administrators with Digital Usage on). A separate measure from the
+// class-session seconds above; exported beside them, never summed in.
+function normalizeMonitoredBrowserTime(value) {
+  const raw = record(value);
+  if (!MONITORED_BROWSER_TIME_STATES.has(raw.dataState)) return null;
+  const range = record(raw.range);
+  const totals = record(raw.totals);
+  return {
+    dataState: raw.dataState,
+    range: {
+      retainedFrom: localDate(range.retainedFrom),
+      partiallyExpired: range.partiallyExpired === true,
+      computedFrom: localDate(range.computedFrom),
+    },
+    totals: {
+      monitoredBrowserSeconds: nonnegativeInteger(totals.monitoredBrowserSeconds),
+      instructionalSeconds: nonnegativeInteger(totals.instructionalSeconds),
+      offTaskSeconds: nonnegativeInteger(totals.offTaskSeconds),
+      unknownSeconds: nonnegativeInteger(totals.unknownSeconds),
+    },
+    byDay: (Array.isArray(raw.byDay) ? raw.byDay : []).flatMap((item) => {
+      const day = record(item);
+      const date = localDate(day.date);
+      return date ? [{
+        date,
+        state: day.state === 'final' ? 'final' : 'live',
+        monitoredBrowserSeconds: nonnegativeInteger(day.monitoredBrowserSeconds),
+        instructionalSeconds: nonnegativeInteger(day.instructionalSeconds),
+        offTaskSeconds: nonnegativeInteger(day.offTaskSeconds),
+        unknownSeconds: nonnegativeInteger(day.unknownSeconds),
+      }] : [];
+    }),
+  };
+}
+
 function sortedStudents(rows) {
   const lastName = (name) => String(name || '').trim().split(/\s+/).at(-1) || '';
   return rows.sort((left, right) => (
@@ -381,9 +424,15 @@ export function normalizeStudentDataResponse(payload, {
         topActivity: record(root.student).topActivity ?? root.topActivity,
       }
     : aggregateById.get(String(studentId || ''));
-  const selectedStudent = studentId && selectedRaw
+  const selectedSummary = studentId && selectedRaw
     ? normalizeStudentSummary(selectedRaw)
     : null;
+  const monitoredBrowserTime = selectedSummary
+    ? normalizeMonitoredBrowserTime(record(root.student).monitoredBrowserTime)
+    : null;
+  const selectedStudent = selectedSummary && monitoredBrowserTime
+    ? { ...selectedSummary, monitoredBrowserTime }
+    : selectedSummary;
   if (studentId && selectedStudent && selectedStudent.studentId !== String(studentId)) {
     throw new StudentDataContractError(
       'The server returned a different student than the requested Student Data selector.',
@@ -546,6 +595,35 @@ export function studentDataCsv(report, { period = 'today', studentId = null } = 
         studentDataActivityLabel(activity),
         activity.domain,
         activity.seconds,
+      ]);
+    }
+    const browserTime = selected.monitoredBrowserTime
+      ? normalizeMonitoredBrowserTime(selected.monitoredBrowserTime)
+      : null;
+    if (browserTime) {
+      rows.push([]);
+      rows.push(['Monitored Browser Time (school days)', browserTime.dataState]);
+      rows.push(['Retained from', browserTime.range.retainedFrom ?? '']);
+      rows.push(['Partially expired', browserTime.range.partiallyExpired ? 'yes' : 'no']);
+      rows.push(['Computed from', browserTime.range.computedFrom ?? '']);
+      rows.push(['Date', 'Day state', 'Monitored Browser Time seconds', 'Instructional seconds', 'Off-task seconds', 'Unclassified seconds']);
+      for (const day of browserTime.byDay) {
+        rows.push([
+          day.date,
+          day.state,
+          day.monitoredBrowserSeconds,
+          day.instructionalSeconds,
+          day.offTaskSeconds,
+          day.unknownSeconds,
+        ]);
+      }
+      rows.push([
+        'Total',
+        '',
+        browserTime.totals.monitoredBrowserSeconds,
+        browserTime.totals.instructionalSeconds,
+        browserTime.totals.offTaskSeconds,
+        browserTime.totals.unknownSeconds,
       ]);
     }
   } else {
