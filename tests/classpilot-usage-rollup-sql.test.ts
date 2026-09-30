@@ -92,7 +92,10 @@ describe("classpilot_usage_rollups migration", () => {
     const rules = ids.indexOf(passpilotRulesIndexesMigration.id);
     const rollups = ids.indexOf(classpilotUsageRollupsMigration.id);
     const contract = ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]);
-    assert.ok(rules >= 0 && rollups === rules + 1 && contract === rollups + 1);
+    // Later expand migrations (the precise Flight Path resources column) sit
+    // between this one and the contract; only the expand-before-contract order
+    // matters.
+    assert.ok(rules >= 0 && rollups === rules + 1 && contract > rollups);
     assert.equal(ids.filter((id) => id === classpilotUsageRollupsMigration.id).length, 1);
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === classpilotUsageRollupsMigration.id));
   });
