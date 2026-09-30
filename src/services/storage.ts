@@ -1,5 +1,7 @@
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
+import { focusAssignmentMatches, focusRecord, focusStatusSchema, readFocusAssignment, readFocusCleanup, readFocusOpenIntent,
+  readFocusRestriction, withoutClasspilotFocus } from "./classpilotFocus.js";
 import { prepareToolsCommand, persistToolsCommand } from "./classpilotToolsCommands.js";
 import { eq, and, desc, asc, gt, gte, lt, lte, ilike, or, isNull, isNotNull, inArray, notInArray, getTableColumns, sql, ne, exists, type SQL, type SQLWrapper } from "drizzle-orm";
 import { randomInt } from "node:crypto";
@@ -11434,6 +11436,12 @@ export async function startStudentSessionWithReplacements(
       )
       .returning();
 
+    if (replacedSessions.length) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      for (const replaced of replacedSessions) await retireClasspilotFocusForBinding(transactionDb, schoolId,
+        replaced.studentId, { studentSessionId: replaced.id, deviceId: replaced.deviceId });
+    }
+
     const [session] = await tx
       .insert(studentSessions)
       .values({
@@ -11480,6 +11488,7 @@ export async function endStudentSessionExact(options: {
   scheduledClassroom?: { contextId: string; actorId: string; controlRevision: number };
 }): Promise<StudentSession | undefined> {
   const result = await db.transaction(async (tx) => {
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [options.studentId], tx as unknown as typeof db);
     if (options.scheduledClassroom) {
       const transactionDb = tx as unknown as typeof db;
       await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
@@ -11515,6 +11524,11 @@ export async function endStudentSessionExact(options: {
         isNull(studentSessions.endedAt)
       ))
       .returning();
+    if (session) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      await retireClasspilotFocusForBinding(tx as unknown as typeof db, options.schoolId, options.studentId,
+        { studentSessionId: options.studentSessionId, deviceId: options.deviceId });
+    }
     return session;
   });
   if (result) {
@@ -11542,9 +11556,11 @@ export async function endStudentSessionByRecoveryTokenHash(options: {
         eq(studentSessions.isActive, true),
         isNull(studentSessions.endedAt)
       ))
-      .limit(1)
-      .for("update", { of: studentSessions });
+      .limit(1);
     if (!binding) return undefined;
+    // The guarded update rechecks the recovery token after acquiring the same
+    // authority-first lock used by transfer and command acknowledgement.
+    await lockClasspilotStudentControlAuthorities(options.schoolId, [binding.session.studentId], tx as unknown as typeof db);
     const [ended] = await tx
       .update(studentSessions)
       .set({ isActive: false, endedAt: sql`now()`, sessionRecoveryTokenHash: null })
@@ -11555,6 +11571,11 @@ export async function endStudentSessionByRecoveryTokenHash(options: {
         isNull(studentSessions.endedAt)
       ))
       .returning();
+    if (ended) {
+      const { retireClasspilotFocusForBinding } = await import("./classpilotFocusPersistence.js");
+      await retireClasspilotFocusForBinding(tx as unknown as typeof db, options.schoolId, ended.studentId,
+        { studentSessionId: ended.id, deviceId: ended.deviceId });
+    }
     return ended;
   });
   if (result) await invalidateClasspilotPassiveAuthorization(options.schoolId);
@@ -20576,12 +20597,15 @@ function frozenClasspilotCommandTargetResult(
     : {};
   const freezesExactTabAuthority = commandData.commandType === "close-tabs"
     && Array.isArray(commandPayload.tabsToClose);
+  const freezesFocusAuthority = ["activate-tab", "focus-tab"].includes(commandData.commandType)
+    || (commandData.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
   const freezesDurableMessageAuthority = commandData.commandType === "teacher-message";
   const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "lesson-activity", "student-sign-out"].includes(commandData.commandType);
   const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
     && commandPayload.currentPage === true;
   if (
     !freezesExactTabAuthority
+    && !freezesFocusAuthority
     && !freezesDurableMessageAuthority
     && !freezesCurrentPageAuthority
     && !freezesScheduledAuthority
@@ -20595,9 +20619,11 @@ function frozenClasspilotCommandTargetResult(
       : {}),
     ...(freezesScheduledAuthority ? { scheduledAuthorityRevision: controlRevision,
       ...(classroomAuthorityRevision !== undefined ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}) } : {}),
-    ...(freezesExactTabAuthority || freezesCurrentPageAuthority
+    ...(freezesExactTabAuthority || freezesCurrentPageAuthority || freezesFocusAuthority
       ? { frozenControlRevision: controlRevision }
       : {}),
+    ...(freezesFocusAuthority && classroomAuthorityRevision !== undefined
+      ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}),
   };
 }
 
@@ -20607,6 +20633,11 @@ const classpilotCommandAuthorityResultKeys = [
   "durableAuthorityRevision",
   "scheduledAuthorityRevision",
   "scheduledContextAuthorityRevision",
+  "focusOpenIntentV1",
+  "focusExactAuthorityV1",
+  "focusAssignmentV1",
+  "focusStatusV1",
+  "focusCleanupV1",
 ] as const;
 
 /**
@@ -20986,12 +21017,18 @@ export async function createClasspilotCommandWithTargets(
       .returning();
     if (!command) throw new Error("Failed to create ClassPilot command");
 
-    const targets = authoritativeTargets.length > 0
+    let targets = authoritativeTargets.length > 0
       ? await tx
           .insert(classpilotCommandTargets)
           .values(authoritativeTargets.map((target) => ({ ...target, commandId: command.id })))
           .returning()
       : [];
+
+    if (["activate-tab", "focus-tab", "stop-focus"].includes(command.commandType)
+      || (command.commandType === "open-tab" && (command.commandPayload as Record<string, unknown>).focusAfterOpen === true)) {
+      const { persistClasspilotFocusCommand } = await import("./classpilotFocusPersistence.js");
+      targets = await persistClasspilotFocusCommand(tx as unknown as typeof db, command, targets);
+    }
 
     if (!options.routineReservation?.replayCommandId) await persistToolsCommand(tx as unknown as typeof db, command);
     if (options.routineReservation) {
@@ -21383,11 +21420,28 @@ export async function expireClasspilotTransientCommandTargets(
   const now = options.now || new Date();
   const commandConditions: SQL[] = [
     isNotNull(classpilotCommands.expiresAt),
-    sql`${classpilotCommands.expiresAt} <= ${now}`,
+    lte(classpilotCommands.expiresAt, now),
   ];
   if (options.commandId) commandConditions.push(eq(classpilotCommands.id, options.commandId));
   if (options.schoolId) commandConditions.push(eq(classpilotCommands.schoolId, options.schoolId));
   if (options.teacherId) commandConditions.push(eq(classpilotCommands.teacherId, options.teacherId));
+
+  // Receipt milestones do not extend the server-owned continuation deadline.
+  // This conditional update rechecks pending after any competing target-row
+  // lock, preserving a child assignment already committed by the ACK path.
+  await dbInstance.update(classpilotCommandTargets).set({
+    result: sql`jsonb_set(jsonb_set(${classpilotCommandTargets.result},
+      '{focusOpenIntentV1,state}', '"expired"'::jsonb),
+      '{focusOpenIntentV1,errorCode}', '"FOCUS_RECEIPT_EXPIRED"'::jsonb)`,
+    updatedAt: now,
+  }).where(and(
+    sql`${classpilotCommandTargets.result}->'focusOpenIntentV1'->>'state' = 'pending'`,
+    exists(dbInstance.select({ one: sql`1` }).from(classpilotCommands).where(and(
+      eq(classpilotCommands.id, classpilotCommandTargets.commandId),
+      eq(classpilotCommands.schoolId, classpilotCommandTargets.schoolId),
+      ...commandConditions,
+    ))),
+  ));
 
   const dueCommands = await dbInstance
     .selectDistinct({ id: classpilotCommands.id })
@@ -21463,6 +21517,7 @@ export type ClasspilotCommandAckOptions = {
   errorMessage?: string | null;
   controlRevision?: number;
   appliedAuthPolicyRevision?: number;
+  acceptedCapabilities?: readonly string[];
   now?: Date;
 };
 
@@ -21481,6 +21536,7 @@ export async function persistClasspilotCommandTargetAck(
     const [binding] = await tx
       .select({
         target: getTableColumns(classpilotCommandTargets),
+        command: getTableColumns(classpilotCommands),
         commandExpiresAt: classpilotCommands.expiresAt,
         commandType: classpilotCommands.commandType,
         commandPayload: classpilotCommands.commandPayload,
@@ -21544,6 +21600,7 @@ export async function persistClasspilotCommandTargetAck(
       : {};
     const transientCurrentPage = binding.commandType === "lock-screen"
       && commandPayload.currentPage === true;
+    const focusExactCommand = ["activate-tab", "focus-tab", "stop-focus"].includes(binding.commandType);
     const frozenControlRevision = Number.isSafeInteger(frozenResult.frozenControlRevision)
       ? Number(frozenResult.frozenControlRevision)
       : undefined;
@@ -21624,6 +21681,14 @@ export async function persistClasspilotCommandTargetAck(
           target,
         };
       }
+    }
+    if (focusExactCommand && (frozenControlRevision === undefined
+      || options.controlRevision !== frozenControlRevision
+      || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId,
+        studentId: options.studentId, teachingSessionId: binding.commandTeachingSessionId,
+        supervisionContextId: binding.commandSupervisionContextId, ownershipRevision: frozenControlRevision }, transactionDb)))) {
+      return { disposition: "terminal_rejected" as const, retryable: false as const,
+        code: "COMMAND_ACK_BINDING_MISMATCH" as const, target };
     }
     if (target.status === "unavailable") {
       return {
@@ -21863,12 +21928,37 @@ export async function persistClasspilotCommandTargetAck(
     }
     if (options.ackState === "failed") update.failedAt = now;
 
+    if (binding.commandType === "open-tab" && options.ackState === "completed") {
+      const { consumeClasspilotFocusOpenReceipt } = await import("./classpilotFocusPersistence.js");
+      const continuation = await consumeClasspilotFocusOpenReceipt(transactionDb, binding.command, target, {
+        result: options.result, controlRevision: options.controlRevision,
+        acceptedCapabilities: options.acceptedCapabilities ?? [], now: options.now || new Date(),
+      });
+      if (continuation) update.result = { ...(update.result as Record<string, unknown>),
+        focusOpenIntentV1: continuation.focusOpenIntentV1 };
+    } else if (binding.commandType === "open-tab" && options.ackState === "failed") {
+      const intent = readFocusOpenIntent(target.result);
+      if (intent?.state === "pending") update.result = { ...focusRecord(update.result), focusOpenIntentV1: { ...intent,
+        state: "refused", errorCode: "FOCUS_OPEN_FAILED" } };
+    }
+
     const [updatedTarget] = await tx
       .update(classpilotCommandTargets)
       .set(update)
       .where(eq(classpilotCommandTargets.id, target.id))
       .returning();
     if (!updatedTarget) throw new Error("Failed to persist ClassPilot command ACK");
+    if (binding.commandType === "stop-focus" && options.ackState === "completed") {
+      // A bare cleanup ACK reports only Focus. It must not mark the withheld
+      // non-Focus snapshot applied or change its independent enforcement health.
+      await tx.update(classpilotStudentControlStates).set({
+        desiredState: sql`jsonb_set(${classpilotStudentControlStates.desiredState},
+          '{focusStatusV1}', '{"state":"inactive"}'::jsonb)`, updatedAt: now,
+      }).where(and(eq(classpilotStudentControlStates.schoolId, options.schoolId),
+        eq(classpilotStudentControlStates.studentId, options.studentId),
+        eq(classpilotStudentControlStates.revision, options.controlRevision!),
+        sql`coalesce(${classpilotStudentControlStates.desiredState}->'restrictions'->'focus'->>'active','false') <> 'true'`));
+    }
     return {
       disposition: "applied" as const,
       retryable: false as const,
@@ -22433,7 +22523,7 @@ export async function replaceClasspilotStudentControlSnapshots(
 
     const rows: ClasspilotStudentControlState[] = [];
     for (const studentId of authorizedStudentIds) {
-      const desiredState = assertDesiredControlState(
+      let desiredState = assertDesiredControlState(
         typeof options.desiredState === "function"
           ? options.desiredState(
               studentId,
@@ -22446,6 +22536,12 @@ export async function replaceClasspilotStudentControlSnapshots(
       // stored command id, but only while the row already belongs to this
       // class, so an ownership change never inherits another session's origin.
       const currentSnapshot = currentByStudent.get(studentId);
+      if (currentSnapshot?.teachingSessionId !== options.teachingSessionId
+        || currentSnapshot.supervisionContextId !== null) {
+        desiredState = withoutClasspilotFocus(desiredState);
+        const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+        await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, [studentId]);
+      }
       const sourceCommandId = options.preserveSourceCommandId
         && currentSnapshot?.teachingSessionId === options.teachingSessionId
         ? currentSnapshot.sourceCommandId
@@ -22708,11 +22804,20 @@ export async function replaceClasspilotSupervisionControlSnapshots(
     const currentByStudent = new Map(currentStates.map((state) => [state.studentId, state]));
     const rows: ClasspilotStudentControlState[] = [];
     for (const studentId of studentIds) {
-      const desiredState = assertDesiredControlState(
+      let desiredState = assertDesiredControlState(
         typeof options.desiredState === "function"
           ? options.desiredState(studentId, currentByStudent.get(studentId) || null)
           : options.desiredState
       );
+      const currentSnapshot = currentByStudent.get(studentId);
+      const focusAssignment = readFocusAssignment(desiredState) || readFocusCleanup(desiredState);
+      if (currentSnapshot?.supervisionContextId !== options.supervisionContextId
+        || currentSnapshot.teachingSessionId !== null
+        || (focusAssignment && focusAssignment.contextAuthorityRevision !== String(context.classroomAuthorityRevision))) {
+        desiredState = withoutClasspilotFocus(desiredState);
+        const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+        await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, [studentId]);
+      }
       const [row] = await tx
         .insert(classpilotStudentControlStates)
         .values({
@@ -22791,7 +22896,7 @@ export async function initializeClasspilotSupervisionControlStates(
         ? {
             restorableClassState: {
               teachingSessionId: current.teachingSessionId,
-              desiredState: current.desiredState,
+              desiredState: withoutClasspilotFocus(current.desiredState),
               sourceCommandId: current.sourceCommandId,
             },
           }
@@ -22877,7 +22982,7 @@ export async function restoreClasspilotStudentControlStatesAfterSupervision(
           schoolId: options.schoolId,
           teachingSessionId: owner.session.id,
           studentIds: [studentId],
-          desiredState: restoredDesiredState,
+          desiredState: withoutClasspilotFocus(restoredDesiredState),
           sourceCommandId: restorable?.sourceCommandId || null,
           scheduledEndAt,
           hardExpiresAt,
@@ -22939,6 +23044,9 @@ export async function clearClasspilotStudentControlStatesForSession(
 
     const studentIds = roster.map((row) => row.studentId);
     await lockClasspilotStudentControlAuthorities(options.schoolId, studentIds, transactionDb);
+    const { cancelClasspilotFocusOpenIntents } = await import("./classpilotFocusPersistence.js");
+    await cancelClasspilotFocusOpenIntents(transactionDb, options.schoolId, studentIds,
+      { teachingSessionId: options.teachingSessionId, supervisionContextId: null });
     const cleared = await tx
       .update(classpilotStudentControlStates)
       .set({
@@ -23081,6 +23189,7 @@ export async function acknowledgeClasspilotStudentControlState(
     error?: string | null;
     acknowledgedAt?: Date;
     acceptedCapabilities?: readonly string[];
+    focusStatus?: unknown;
   },
   dbInstance: typeof db = db
 ): Promise<ClasspilotStudentControlState | undefined> {
@@ -23107,6 +23216,30 @@ export async function acknowledgeClasspilotStudentControlState(
       .limit(1)
       .for("update");
     if (!current) return undefined;
+    const focus = readFocusRestriction(focusRecord(current.desiredState).restrictions);
+    const focusAssignment = readFocusAssignment(current.desiredState);
+    const focusStatus = focusStatusSchema.safeParse(options.focusStatus);
+    if (focus?.active) {
+      if (!focusAssignment || !focusAssignmentMatches({ assignment: focusAssignment,
+        schoolId: options.schoolId, studentId: options.studentId,
+        studentSessionId: options.studentSessionId, deviceId: options.deviceId,
+        teachingSessionId: current.teachingSessionId, supervisionContextId: current.supervisionContextId })
+        || !(await hasExactClasspilotTelemetryBinding(options, transactionDb))
+        || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId,
+          studentId: options.studentId, teachingSessionId: current.teachingSessionId,
+          supervisionContextId: current.supervisionContextId }, transactionDb))
+        || !focusStatus.success || focusStatus.data.state === "inactive"
+        || focusStatus.data.assignmentId !== focus.assignmentId) return undefined;
+      if (focusStatus.data.state === "invalidated") {
+        const cleaned = withoutClasspilotFocus(current.desiredState);
+        const [retired] = await tx.update(classpilotStudentControlStates).set({ desiredState: cleaned,
+          revision: current.revision + 1, appliedRevision: null, enforcementHealth: "pending",
+          lastOutcome: null, lastError: null, lastAcknowledgedAt: null, updatedAt: acknowledgedAt,
+        }).where(and(eq(classpilotStudentControlStates.id, current.id),
+          eq(classpilotStudentControlStates.revision, options.appliedRevision))).returning();
+        return retired;
+      }
+    } else if (focusStatus.success && focusStatus.data.state !== "inactive") return undefined;
     const deferred = readClasspilotLateSignInDeliveryProvenance(current.desiredState);
     if (
       deferred
@@ -23173,7 +23306,7 @@ export async function acknowledgeClasspilotStudentControlState(
         return undefined;
       }
     }
-    const desiredState = deferred && options.outcome === "applied"
+    let desiredState = deferred && options.outcome === "applied"
       ? recordClasspilotLateSignInAppliedBinding({
           desiredState: current.desiredState,
           binding: {
@@ -23186,6 +23319,7 @@ export async function acknowledgeClasspilotStudentControlState(
           appliedAt: acknowledgedAt,
         })
       : current.desiredState;
+    if (focusStatus.success) desiredState = { ...focusRecord(desiredState), focusStatusV1: focusStatus.data };
     const [state] = await tx
       .update(classpilotStudentControlStates)
       .set({
@@ -23261,11 +23395,11 @@ export async function acknowledgeClasspilotStudentControlState(
         receivedAt: sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${acknowledgedAt})`,
         ...(applied ? { completedAt: acknowledgedAt } : {}),
         ...(!applied && !expired ? { failedAt: acknowledgedAt } : {}),
-        result: {
+        result: classpilotCommandAckResult(origin.target.result, {
           classroomStateRevision: state.revision,
           outcome: options.outcome,
           reconciliation: true,
-        },
+        }, false),
         errorMessage: applied ? null : options.error?.slice(0, 500) || `Classroom state ${options.outcome}`,
         updatedAt: acknowledgedAt,
       })

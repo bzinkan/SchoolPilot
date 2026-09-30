@@ -165,6 +165,8 @@ The public teacher projection exposes the explicit Focus state/reason and assign
 
 Stop is idempotent. If there is no Focus, do not generate an assignment or claim an activation. The stop transaction also cancels pending Open + Focus intents for those original recipient/authority pairs so a later source-open ACK cannot restart Focus. A new assignment created after stop remains protected from late prior cleanup by its distinct immutable ID and current revision.
 
+If the remaining precise/auth restriction snapshot is wholly withheld, an exact-bound bare `stop-focus` command with strict `data: {}` remains deliverable. It carries the current control revision, original explicit student binding/typed scope and unextended classroom expiry; it carries no partial classroom snapshot. A protected server-only `focusCleanupV1` tombstone retains the original stop command and retired binding for restart, heartbeat and WebSocket recovery. The heartbeat/hello `focusCleanup` field contains this complete command envelope. Capability withdrawal may not suppress this cleanup while scoped authority remains accepted. New Focus or binding/ownership transitions retire the tombstone. Duplicate cleanup is idempotent; a late lower-revision cleanup cannot clear a replacement. The extension clears only its currently owned Focus and saved Focus, preserving the previous valid non-Focus policy, its original lifetime and every other control. Stop ACKs are fenced to their frozen control revision; a late ACK cannot authorize another cleanup or modify a replacement.
+
 Lifecycle cleanup must retire active and saved/restorable Focus plus matching pending continuations on:
 
 - teaching/supervision end, expiry and scheduled handoff;

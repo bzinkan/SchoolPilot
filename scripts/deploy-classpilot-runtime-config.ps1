@@ -107,19 +107,21 @@ $script:RoadmapProfileCapabilities = @{
     "read-only-observation-off" = "screenshotReadOnlyObservationV1"
     "precise-restriction-resources-pilot" = "preciseRestrictionResourcesV1"
     "precise-restriction-resources-off" = "preciseRestrictionResourcesV1"
+    "focus-tab-pilot" = "focusTabV1"
+    "focus-tab-off" = "focusTabV1"
 }
 $script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
 $script:RoadmapCapabilities = @(
     "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
-    $script:PreciseRestrictionCapability
+    $script:PreciseRestrictionCapability, "focusTabV1"
 )
 $script:RoadmapPilotModes = @(
     "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
-    "precise-restriction-resources-pilot"
+    "precise-restriction-resources-pilot", "focus-tab-pilot"
 )
 $script:RoadmapOffModes = @(
     "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
-    "precise-restriction-resources-off"
+    "precise-restriction-resources-off", "focus-tab-off"
 )
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
@@ -141,8 +143,8 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities) + @(
-    "kioskLaunchTicketV1"
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cne "focusTabV1" }) + @(
+    "kioskLaunchTicketV1", "focusTabV1"
 )
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
@@ -165,6 +167,7 @@ $script:CapabilityFlags = [ordered]@{
     kioskLaunchTicketV2           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2"
     scheduledClassroomV1          = "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1"
     preciseRestrictionResourcesV1 = "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1"
+    focusTabV1                   = "CLASSPILOT_CAP_FOCUS_TAB_V1"
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -201,6 +204,20 @@ $script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
 $script:PreciseRestrictionRequiredReleaseTag = ""
 $script:PreciseRestrictionRequiredMergeSha = ""
 $script:PreciseRestrictionRequiredZipSha256 = ""
+
+# Release preparation only. Keep activation impossible until the independently
+# reviewed, managed-Chromebook-verified Focus package is bound by a later PR.
+# These empty values do not claim a candidate version, Store upload or evidence.
+$script:FocusTabRequiredReleaseTag = ""
+$script:FocusTabRequiredMergeSha = ""
+$script:FocusTabRequiredZipSha256 = ""
+function Assert-FocusTabPilotReleaseEvidenceBound {
+    if ([string]$script:FocusTabRequiredReleaseTag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$' -or
+        [string]$script:FocusTabRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:FocusTabRequiredZipSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "focus-tab-pilot requires the exact MANAGED-CHROMEBOOK VERIFIED Focus package to be bound first."
+    }
+}
 
 function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
     if ([string]$script:PreciseRestrictionRequiredReleaseTag -cnotmatch '^v2\.1[0-9]\.[0-9]+$' -or
@@ -675,6 +692,9 @@ function ConvertTo-RuntimeConfiguration {
         }
         if ($mode -ceq "precise-restriction-resources-pilot") {
             Assert-PreciseRestrictionPilotReleaseEvidenceBound
+        }
+        if ($mode -ceq "focus-tab-pilot") {
+            Assert-FocusTabPilotReleaseEvidenceBound
         }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {

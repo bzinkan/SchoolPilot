@@ -1,4 +1,7 @@
 import { classpilotCommandDeliveryPolicy } from "./classpilotCommandDelivery.js";
+import { readFocusOpenIntent } from "./classpilotFocus.js";
+
+const protectedFocusKeys = new Set(["focusAssignmentV1", "focusOpenIntentV1", "focusStatusV1", "focusExactAuthorityV1", "focusCleanupV1"]);
 
 function isInternalTargetKey(key: string): boolean {
   const normalized = key.replace(/[_-]/g, "").toLowerCase();
@@ -18,6 +21,17 @@ function stripInternalTargetIdentifiers(value: unknown): unknown {
 
   const safe: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    // These are structured private authority objects; exclude the complete
+    // object before recursively projecting any teacher DTO.
+    if (protectedFocusKeys.has(key)) {
+      if (key === "focusOpenIntentV1") {
+        const intent = readFocusOpenIntent({ focusOpenIntentV1: entry });
+        if (intent) safe.followUp = { kind: "focus", state: intent.state,
+          ...(intent.state === "committed" ? { commandId: intent.childCommandId } : {}),
+          ...(intent.errorCode ? { errorCode: intent.errorCode } : {}) };
+      }
+      continue;
+    }
     if (isInternalTargetKey(key)) continue;
     safe[key] = stripInternalTargetIdentifiers(entry);
   }
