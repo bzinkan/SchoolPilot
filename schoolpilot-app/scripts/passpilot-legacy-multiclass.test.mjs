@@ -122,6 +122,11 @@ async function installApiMocks(context, state) {
       await route.fulfill({ json: { csrfToken: "legacy-multiclass-csrf" } });
       return;
     }
+    if (pathname === "/api/passpilot/admin/rules" || pathname.startsWith("/api/passpilot/admin/rules/")) {
+      // PASSPILOT_RULES_MODE is off by default: no rules router, no Rules tab.
+      await route.fulfill({ status: 404, json: { error: "Not found" } });
+      return;
+    }
     if (pathname === "/api/passpilot/classes") {
       await route.fulfill({ json: { source: "legacy_grades", classes: state.classes } });
       return;

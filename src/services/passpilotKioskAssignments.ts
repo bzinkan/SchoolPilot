@@ -20,6 +20,7 @@ import { lockInstructionalCalendarDate, lockClasspilotStudentControlAuthorities 
 import { isWithinTrackingWindow } from "./schoolHours.js";
 import { emptyKioskSchedule, kioskError, kioskScheduleSchema, selectKioskAssignment, standaloneKioskWindows,
   type KioskAssignment, type KioskMode, type KioskSchedule } from "./passpilotKioskSchedule.js";
+import { enforcePasspilotIssuanceRules } from "./passpilotRules.js";
 
 type Database = typeof db;
 type Source = "legacy_grades" | "classpilot_groups";
@@ -334,6 +335,8 @@ async function recordKioskPassTimeline(database: Database, pass: Pass, action: "
 
 export async function createActivityKioskPass(options: { schoolId: string; sessionId: string; studentId: string; expectedRevision: unknown;
   expectedPinHash: string | null; destination: string; customDestination?: string | null }) {
+  // One issuance-rule evaluation instant, taken before any lock wait.
+  const ruleEvaluatedAt = new Date();
   return db.transaction(async tx => {
     const database = tx as unknown as Database;
     await lockKioskSchool(database, options.schoolId);
@@ -358,6 +361,16 @@ export async function createActivityKioskPass(options: { schoolId: string; sessi
       recordPasspilotKioskCounter("staleCheckoutConflicts");
       throw kioskError("The kiosk assignment changed. Select the student again.");
     }
+    // Scheduled assignments define the period for kiosk passes; a manual or
+    // overridden kiosk has no timetable block, so its window is not a period.
+    const scheduledBlock = assignment.mode !== "manual" && !assignment.overridden;
+    await enforcePasspilotIssuanceRules(tx, { schoolId: options.schoolId, studentId: options.studentId, destination: options.destination,
+      issuedVia: "kiosk", actorUserId: null, teacherId: session.teacherId, classSource: assignment.source,
+      gradeId: assignment.source === "legacy_grades" ? current.classId : null,
+      classpilotGroupId: assignment.source === "classpilot_groups" ? current.classId : null,
+      supervisionContextId: current.supervisionContextId, issuingKioskSessionId: session.id,
+      kioskWindow: scheduledBlock ? { startsAt: current.startsAt, endsAt: current.endsAt, label: current.name } : null,
+      now: ruleEvaluatedAt, override: null });
     const [pass] = await tx.insert(passes).values({ schoolId: options.schoolId, studentId: options.studentId, teacherId: session.teacherId,
       gradeId: assignment.source === "legacy_grades" ? current.classId : null,
       classpilotGroupId: assignment.source === "classpilot_groups" ? current.classId : null,

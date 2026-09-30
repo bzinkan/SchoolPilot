@@ -37,6 +37,7 @@ type Registry = {
     studentInformationPostExpand: RegistryInventory;
     classpilotTeacherPreferencesPostExpand: RegistryInventory;
     importProcessingStagesPostExpand: RegistryInventory;
+    passpilotRulesPostExpand: RegistryInventory;
   };
   reviewedEnablementRequests: Record<string, string[]>;
   semanticExceptions: {
@@ -88,6 +89,24 @@ function ciAllowlist(): string[] {
 }
 
 describe("semantic RLS registry", () => {
+  it("adds only the four PassPilot rule tables to the verified 121-table baseline", () => {
+    const tables = [
+      "passpilot_destination_policies",
+      "passpilot_pass_limits",
+      "passpilot_encounter_restrictions",
+      "passpilot_pass_denials",
+    ];
+    const previous = registry.inventories.importProcessingStagesPostExpand;
+    const next = registry.inventories.passpilotRulesPostExpand;
+    assert.deepEqual(registry.reviewedEnablementRequests.passpilotRules, tables);
+    assert.deepEqual(next.tables, [...previous.tables, ...tables]);
+    assert.equal(previous.count, 121);
+    assert.equal(next.count, 125);
+    assert.equal(next.sha256, sha256(next.tables));
+    assert.equal(isReviewedRlsEnforcementRequest(tables), true);
+    assert.equal(isReviewedRlsEnforcementRequest(tables.slice(0, 3)), false);
+    assert.equal(isReviewedRlsEnforcementRequest([...tables].reverse()), false);
+  });
   it("adds only the durable import stage ledger without replacing the verified preference baseline", () => {
     const previous = registry.inventories.classpilotTeacherPreferencesPostExpand;
     const next = registry.inventories.importProcessingStagesPostExpand;
@@ -189,7 +208,9 @@ describe("semantic RLS registry", () => {
     assert.deepEqual(new Set(production), new Set(expected));
     assert.equal(sha256(production), "0e24d7a703856e5038fc13d43c1b8eccaf0632d293aa314635ac4a5164490946",
       "Production CSV must retain the exact 2026-09-28 API157/worker172 paperwork observation order");
-    assert.deepEqual(ciAllowlist(), registry.inventories.importProcessingStagesPostExpand.tables);
+    // CI admits the reviewed PassPilot rule bundle ahead of production, which
+    // keeps the observed 121-table baseline until a later adoption PR.
+    assert.deepEqual(ciAllowlist(), registry.inventories.passpilotRulesPostExpand.tables);
     assert.deepEqual(registry.inventories.mydeskImportsPostExpand.tables, [
       ...registry.inventories.mydeskSeatingPostExpand.tables,
       ...registry.reviewedEnablementRequests.mydeskImports!,

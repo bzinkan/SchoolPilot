@@ -20,6 +20,7 @@ import {
   isTeacherAssignedToLegacyPasspilotGrade,
   type PasspilotClassSource,
 } from "./storage.js";
+import { withoutNullRuleOverride } from "./passpilotRules.js";
 
 export type NormalizedPasspilotClass = {
   id: string;
@@ -98,7 +99,8 @@ export async function normalizePasspilotPass(
     ? "classpilot_groups"
     : "legacy_grades";
   return {
-    ...pass,
+    // ruleOverrideCode appears only on an overridden pass (see withoutNullRuleOverride).
+    ...withoutNullRuleOverride(pass),
     activity: pass.supervisionContextId ? { kind: pass.activityKind, name: pass.activityNameSnapshot } : null,
     classId,
     className,

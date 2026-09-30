@@ -168,6 +168,8 @@ function MyClassTab() {
   const [timePeriod, setTimePeriod] = useState('today');
   const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name, classId, schoolId }
   const [updatingPassId, setUpdatingPassId] = useState(null);
+  // A pass rule an administrator may override: { studentId, studentName, passType, customReasonText, code, message }.
+  const [ruleOverride, setRuleOverride] = useState(null);
   const passActionInFlightRef = React.useRef(false);
   const nowMs = usePassNow();
 
@@ -514,13 +516,14 @@ function MyClassTab() {
     || passesLoading
     || classInventoryQuery.isLoading;
 
-  const handleMarkOut = async (studentId, studentName, passType = 'general', customReasonText = '') => {
+  const handleMarkOut = async (studentId, studentName, passType = 'general', customReasonText = '', overrideRuleCode = null) => {
     try {
       const requestBody = {
         studentId,
         passType,
         customReason: customReasonText || undefined,
         ...(activeGradeId ? { classId: activeGradeId } : {}),
+        ...(overrideRuleCode ? { overrideRuleCode } : {}),
       };
 
       await passPilotClassRequest('POST', '/passes', requestBody);
@@ -551,11 +554,38 @@ function MyClassTab() {
       }, 100);
     } catch (error) {
       console.error('handleMarkOut error:', error);
+      const data = error?.response?.data;
+      // The server offers an override only to administrators, and one rule
+      // at a time; a retry that already carried an override is not re-offered.
+      if (
+        !overrideRuleCode
+        && data?.canOverride === true
+        && typeof data?.code === 'string'
+        && data.code.startsWith('PASSPILOT_RULE_')
+      ) {
+        setRuleOverride({
+          studentId,
+          studentName,
+          passType,
+          customReasonText,
+          code: data.code,
+          message: data.error || 'A pass rule applies to this student right now.',
+        });
+        return;
+      }
       toast({
         title: "Error",
-        description: error.message,
+        description: data?.error || error?.message || 'The pass could not be issued.',
         variant: "destructive",
       });
+    }
+  };
+
+  const confirmRuleOverride = () => {
+    const pending = ruleOverride;
+    setRuleOverride(null);
+    if (pending) {
+      handleMarkOut(pending.studentId, pending.studentName, pending.passType, pending.customReasonText, pending.code);
     }
   };
 
@@ -1704,6 +1734,24 @@ function MyClassTab() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Administrator-only rule override: offered when the server says canOverride. */}
+      <AlertDialog open={!!ruleOverride} onOpenChange={(open) => { if (!open) setRuleOverride(null); }}>
+        <AlertDialogContent data-testid="dialog-rule-override">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Issue this pass anyway?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {ruleOverride?.message} Issuing it anyway overrides this one rule and is recorded as an administrator override.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-rule-override">Don&apos;t issue</AlertDialogCancel>
+            <AlertDialogAction data-testid="button-confirm-rule-override" onClick={confirmRuleOverride}>
+              Issue anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Claim Kiosk dialog: enter the 6-digit code shown on the kiosk screen */}
       <ClaimKioskDialog

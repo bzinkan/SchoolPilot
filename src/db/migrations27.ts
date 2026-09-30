@@ -4,6 +4,7 @@ import { mydeskImportDestinationMigration } from "./mydeskImportDestinationMigra
 import { studentInformationRedesignMigration } from "./studentInformationRedesignMigration.js";
 import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
 import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
+import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -521,6 +522,8 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   importProcessingStagesMigration,
   microsoftSignInMigration,
   sharedTeachingResourcesMigration,
+  passpilotRulesMigration,
+  passpilotRulesIndexesMigration,
   staffIdentityIntegrityMigration,
 ];
 

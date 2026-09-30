@@ -63,6 +63,7 @@ import {
   deviceBelongsToSchoolAndStudent,
 } from "../dist/services/classpilotDeviceScope.js";
 import { getClasspilotDashboardSnapshot } from "../dist/services/classpilotDashboardSnapshot.js";
+import { getPasspilotRules } from "../dist/services/passpilotRulesAdmin.js";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 
@@ -156,6 +157,9 @@ after(async () => {
       await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM passpilot_grade_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      for (const table of ["passpilot_pass_denials", "passpilot_encounter_restrictions", "passpilot_pass_limits", "passpilot_destination_policies"]) {
+        await db.execute(sql`DELETE FROM ${sql.raw(table)} WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      }
       await db.execute(sql`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -224,6 +228,37 @@ describe("cross-school isolation", () => {
         INSERT INTO passpilot_grade_students (school_id, grade_id, student_id)
         VALUES (${schoolB.id}, ${gradeB.id}, ${studentB.id})
         ON CONFLICT DO NOTHING
+      `)),
+      (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
+    );
+  });
+
+  it("RLS partitions PassPilot issuance rules and their school-scoped read", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const [studentA, studentB] = await Promise.all([
+      inSchool(schoolA.id, () => createStudent({ schoolId: schoolA.id, firstName: "Rules", lastName: "A", status: "active" })),
+      inSchool(schoolB.id, () => createStudent({ schoolId: schoolB.id, firstName: "Rules", lastName: "B", status: "active" })),
+    ]);
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_destination_policies (school_id, destination, max_concurrent)
+      VALUES (${schoolA.id}, 'nurse', 2), (${schoolB.id}, 'nurse', 3)
+    `).then(() => undefined));
+    await asSystem(() => db.execute(sql`
+      INSERT INTO passpilot_pass_limits (school_id, student_id, daily_limit)
+      VALUES (${schoolA.id}, ${studentA.id}, 4), (${schoolB.id}, ${studentB.id}, 5)
+    `).then(() => undefined));
+
+    const ownRules = await inSchool(schoolA.id, () => getPasspilotRules(schoolA.id));
+    assert.deepEqual(ownRules.destinationPolicies.map((policy) => [policy.destination, policy.maxConcurrent]), [["nurse", 2]]);
+    assert.deepEqual(ownRules.studentLimits.map((limit) => [limit.studentId, limit.dailyLimit]), [[studentA.id, 4]]);
+    const foreignRules = await inSchool(schoolB.id, () => getPasspilotRules(schoolA.id));
+    assert.deepEqual([foreignRules.destinationPolicies, foreignRules.studentLimits], [[], []],
+      "a request bound to school B cannot read school A's rules even by naming school A");
+    await assert.rejects(
+      inSchool(schoolA.id, () => db.execute(sql`
+        INSERT INTO passpilot_destination_policies (school_id, destination, max_concurrent)
+        VALUES (${schoolB.id}, 'office', 1)
       `)),
       (error: unknown) => errorChainMatches(error, /row-level security|policy/i)
     );

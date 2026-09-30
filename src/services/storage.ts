@@ -94,6 +94,7 @@ import { touchCoverageCategories } from "./classpilotCoverageCategoryVersions.js
 import { preserveManualRosterMemberships } from "./rosterManualOwnership.js";
 import { assertClasspilotMonitoringSettingsUpdate, assertClasspilotMonitoringTimezoneUpdate, changesClasspilotMonitoringSettings } from "./classpilotMonitoringSettings.js";
 import { classpilotSchoolSchedules } from "../schema/classpilotScheduling.js";
+import { enforcePasspilotIssuanceRules, type PasspilotRuleCode, type PasspilotRuleOutcome } from "./passpilotRules.js";
 import type { SchoolSchedulingConfig, SchedulingCalendar } from "./classpilotSchedulingRules.js";
 import { assertAppliedScheduleProfileClassEligibility, assertSchoolSchedulingClassOverlap, getClasspilotBaseScheduleWindow, getClasspilotInstructionalDateStatus, getSchoolSchedulingContext, previewSchoolScheduling, validateClassScheduling } from "./classpilotScheduling.js";
 import { normalizeClassScheduleRule, resolveClassBaseWindow, type ClasspilotScheduleRule } from "./classpilotSchedulingRules.js";
@@ -4413,7 +4414,16 @@ export async function createPass(data: InsertPass): Promise<Pass> {
   return pass!;
 }
 
-export type LegacyPasspilotClassAuthorization = {
+// PassPilot issuance rules (PASSPILOT_RULES_MODE). Kiosk checkouts are always
+// the "kiosk" channel; authenticated callers name theirs. Only the teacher
+// route passes ruleOverride, and only for administrators.
+export type PasspilotIssuanceRuleOptions = {
+  issuanceChannel?: "teacher" | "ai";
+  ruleOverride?: PasspilotRuleCode | null;
+  ruleOutcome?: PasspilotRuleOutcome;
+};
+
+export type LegacyPasspilotClassAuthorization = PasspilotIssuanceRuleOptions & {
   actorUserId?: string | null;
   manager?: boolean;
   kiosk?: boolean;
@@ -4462,6 +4472,9 @@ export async function createLegacyPass(
   data: InsertPass,
   authorization: LegacyPasspilotClassAuthorization
 ): Promise<Pass> {
+  // One evaluation instant, taken before any lock wait (issued_at defaults to
+  // the transaction start, so both land on the same school-local day).
+  const ruleEvaluatedAt = new Date();
   return db.transaction(async (tx) => {
     let lockedKioskSchool: { kioskGradeId: string | null } | undefined;
     if (authorization?.kiosk && !authorization.kioskSessionId) {
@@ -4630,6 +4643,21 @@ export async function createLegacyPass(
         authorization
       );
     }
+    const { overriddenCode } = await enforcePasspilotIssuanceRules(tx, {
+      schoolId: data.schoolId,
+      studentId: data.studentId,
+      destination: data.destination,
+      issuedVia: authorization?.kiosk ? "kiosk" : authorization?.issuanceChannel ?? "teacher",
+      actorUserId: authorization?.kiosk ? null : authorization?.actorUserId ?? null,
+      teacherId: data.teacherId ?? null,
+      classSource: "legacy_grades",
+      gradeId: resolvedGradeId ?? null,
+      classpilotGroupId: null,
+      issuingKioskSessionId: authorization?.kioskSessionId ?? null,
+      now: ruleEvaluatedAt,
+      override: authorization?.kiosk ? null : authorization?.ruleOverride ?? null,
+      outcome: authorization?.ruleOutcome,
+    });
     const [pass] = await tx
       .insert(passes)
       .values({
@@ -4637,6 +4665,7 @@ export async function createLegacyPass(
         gradeId: resolvedGradeId,
         classpilotGroupId: null,
         classNameSnapshot: selectedGrade?.name ?? data.classNameSnapshot ?? null,
+        ruleOverrideCode: overriddenCode,
       })
       .returning();
     return pass!;
@@ -26928,7 +26957,7 @@ export async function createCanonicalPass(
   data: Omit<InsertPass, "gradeId" | "classpilotGroupId" | "classNameSnapshot"> & {
     classId: string;
   },
-  authorization: {
+  authorization: PasspilotIssuanceRuleOptions & {
     actorUserId?: string | null;
     manager?: boolean;
     kiosk?: boolean;
@@ -26937,6 +26966,8 @@ export async function createCanonicalPass(
     kioskSessionId?: string | null;
   } = {}
 ): Promise<Pass> {
+  // One evaluation instant, taken before any lock wait (see createLegacyPass).
+  const ruleEvaluatedAt = new Date();
   return db.transaction(async (tx) => {
     let lockedKioskSchool: { kioskClasspilotGroupId: string | null } | undefined;
     if (authorization.kiosk && !authorization.kioskSessionId) {
@@ -27043,6 +27074,21 @@ export async function createCanonicalPass(
       }
     }
 
+    const { overriddenCode } = await enforcePasspilotIssuanceRules(tx, {
+      schoolId: data.schoolId,
+      studentId: data.studentId,
+      destination: data.destination,
+      issuedVia: authorization.kiosk ? "kiosk" : authorization.issuanceChannel ?? "teacher",
+      actorUserId: authorization.kiosk ? null : authorization.actorUserId ?? null,
+      teacherId: data.teacherId ?? null,
+      classSource: "classpilot_groups",
+      gradeId: null,
+      classpilotGroupId: group.id,
+      issuingKioskSessionId: authorization.kioskSessionId ?? null,
+      now: ruleEvaluatedAt,
+      override: authorization.kiosk ? null : authorization.ruleOverride ?? null,
+      outcome: authorization.ruleOutcome,
+    });
     const { classId, ...passData } = data;
     const [pass] = await tx
       .insert(passes)
@@ -27051,6 +27097,7 @@ export async function createCanonicalPass(
         gradeId: null,
         classpilotGroupId: classId,
         classNameSnapshot: group.name,
+        ruleOverrideCode: overriddenCode,
       })
       .returning();
     await tx

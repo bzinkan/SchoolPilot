@@ -48,6 +48,11 @@ import { getToolsForContext } from "./chatTools.js";
 import { getPasspilotClasses } from "./passpilotClasses.js";
 import { isWithinTrackingWindow } from "./schoolHours.js";
 import { isDatabaseErrorCode } from "../util/databaseError.js";
+import {
+  isPasspilotRuleError,
+  passpilotRuleAssistantMessage,
+  recordPasspilotRuleDenial,
+} from "./passpilotRules.js";
 
 export interface ToolContext {
   userId: string;
@@ -484,15 +489,20 @@ const executors: Record<string, ToolExecutor> = {
       pass = source === "classpilot_groups"
         ? await createCanonicalPass(
             { ...commonPass, classId: args.classId },
-            { actorUserId: ctx.userId, manager }
+            { actorUserId: ctx.userId, manager, issuanceChannel: "ai" }
           )
         : await createLegacyPass(
             { ...commonPass, gradeId: args.classId },
-            { actorUserId: ctx.userId, manager }
+            { actorUserId: ctx.userId, manager, issuanceChannel: "ai" }
           );
     } catch (err) {
       if (isDatabaseErrorCode(err, "23505")) {
         return { success: false, error: "Student already has an active pass" };
+      }
+      // A rule denial is an answer, not a system error: never escalate it.
+      if (isPasspilotRuleError(err)) {
+        await recordPasspilotRuleDenial(err.passpilotRule);
+        return { success: false, error: passpilotRuleAssistantMessage(err) };
       }
       throw err;
     }

@@ -83,7 +83,7 @@ try {
   $env:JWT_SECRET = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
   $env:SESSION_SECRET = [guid]::NewGuid().ToString('N')
   $registry = Get-Content (Join-Path $repository 'src/config/rlsRegistry.json') -Raw | ConvertFrom-Json -DateKind String
-  $tables = @($registry.inventories.importProcessingStagesPostExpand.tables)
+  $tables = @($registry.inventories.passpilotRulesPostExpand.tables)
   if ($tables -cnotcontains 'import_processing_stages' -or ($tables | Select-Object -Unique).Count -ne $tables.Count) { throw 'Current stage-ledger RLS inventory is invalid.' }
   $env:RLS_ENABLED_TABLES = $tables -join ','
   $env:RLS_TEST_ROLE = $role; $env:RLS_GUC_ENABLED = 'true'; $env:SCHEDULER_ENABLED = 'false'; $env:NODE_ENV = 'test'

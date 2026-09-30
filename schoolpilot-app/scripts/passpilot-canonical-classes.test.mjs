@@ -290,6 +290,13 @@ async function installApiMocks(page, state) {
       await route.fulfill({ json: { csrfToken: "browser-test-csrf" } });
       return;
     }
+    if (pathname === "/api/passpilot/admin/rules" || pathname.startsWith("/api/passpilot/admin/rules/")) {
+      // PASSPILOT_RULES_MODE is off by default: the rules router does not exist,
+      // so School Setup shows no Rules tab and today's flows stay unchanged.
+      state.rulesRequests.push(`${request.method()} ${pathname}`);
+      await route.fulfill({ status: 404, json: { error: "Not found" } });
+      return;
+    }
     if (pathname === "/api/passpilot/admin/settings") {
       if (request.method() === "GET") {
         state.settingsGetCount += 1;
@@ -702,6 +709,7 @@ function freshState(overrides = {}) {
       revision: 4,
     },
     settingsGetCount: 0,
+    rulesRequests: [],
     settingsWrites: [],
     settingsSaveFailuresRemaining: 0,
     settingsVerificationFailuresRemaining: 0,
@@ -1685,6 +1693,10 @@ test("PassPilot canonical classes use the persisted source and preserve the lega
       0,
       "the unenforced approval setting must not be presented as an operational control",
     );
+    await settingsPage.waitForFunction(() => document.querySelector('[role="tablist"]') !== null);
+    assert.equal(await settingsPage.getByTestId("tab-rules").count(), 0, "a 404 rules probe renders no Rules tab");
+    assert.deepEqual(settingsState.rulesRequests.filter((entry) => !entry.startsWith("GET ")), [],
+      "School Setup only probes the rules endpoint; it never writes while rules are off");
 
     await settingsPage.getByText("Kiosk Mode Enabled", { exact: true }).click();
     assert.equal(await kioskSwitch.getAttribute("aria-checked"), "false");

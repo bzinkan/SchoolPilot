@@ -35,7 +35,10 @@ import {
 
 const GRADE_LEVELS = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
 const PASS_PILOT_SETTINGS_PATH = "/passpilot/admin/settings";
+// Answers 404 until PASSPILOT_RULES_MODE is on for this deployment.
+const PASS_PILOT_RULES_PATH = "/passpilot/admin/rules";
 const ClassSourceSetup = lazy(() => import("./ClassSourceSetup"));
+const RulesTab = lazy(() => import("./RulesTab"));
 
 function apiErrorMessage(error, fallback = "Try again.") {
   const data = error?.response?.data;
@@ -56,28 +59,39 @@ function samePassPilotSettings(left, right) {
 
 export function SetupView() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isAdmin } = usePassPilotAuth();
+  const { isAdmin, school } = usePassPilotAuth();
   const { consolidated: managedByClassPilot } = useStudentImportHome();
   const classesQuery = useCanonicalPassPilotClasses();
   const canonical = classesQuery.isSuccess && isCanonicalPassPilotSource(classesQuery.data?.source);
   const showClassSource = isAdmin && managedByClassPilot && !canonical;
+  // Admin-only probe: the Rules tab exists only when the server answers.
+  const rulesQuery = useQuery({
+    queryKey: [PASS_PILOT_RULES_PATH, school?.id],
+    queryFn: () => apiRequest("GET", PASS_PILOT_RULES_PATH),
+    enabled: isAdmin && !!school?.id,
+    retry: false,
+  });
+  const showRules = isAdmin && rulesQuery.isSuccess;
   const availableTabs = [
     "teachers",
     "students",
     ...(!canonical ? ["classes", "assignments"] : []),
     ...(showClassSource ? ["class-source"] : []),
     "settings",
+    ...(showRules ? ["rules"] : []),
   ];
   const requestedTab = searchParams.get("section") || "teachers";
   const activeTab = availableTabs.includes(requestedTab) ? requestedTab : "teachers";
+  // Keep a ?section=rules deep link until the probe resolves either way.
+  const rulesProbePending = requestedTab === "rules" && rulesQuery.isLoading;
 
   useEffect(() => {
-    if (!classesQuery.isSuccess || requestedTab === activeTab) return;
+    if (!classesQuery.isSuccess || rulesProbePending || requestedTab === activeTab) return;
     const next = new URLSearchParams(searchParams);
     if (activeTab === "teachers") next.delete("section");
     else next.set("section", activeTab);
     setSearchParams(next, { replace: true });
-  }, [activeTab, classesQuery.isSuccess, requestedTab, searchParams, setSearchParams]);
+  }, [activeTab, classesQuery.isSuccess, requestedTab, rulesProbePending, searchParams, setSearchParams]);
 
   const setActiveTab = (nextTab) => {
     const next = new URLSearchParams(searchParams);
@@ -124,6 +138,7 @@ export function SetupView() {
           {!canonical ? <TabsTrigger value="assignments">Class Assignments</TabsTrigger> : null}
           {showClassSource ? <TabsTrigger value="class-source">Class Source</TabsTrigger> : null}
           <TabsTrigger value="settings">Settings</TabsTrigger>
+          {showRules ? <TabsTrigger value="rules" data-testid="tab-rules">Rules</TabsTrigger> : null}
         </TabsList>
         <TabsContent value="teachers"><TeachersTab /></TabsContent>
         <TabsContent value="students"><StudentRosterTab managedByClassPilot={managedByClassPilot} /></TabsContent>
@@ -144,6 +159,13 @@ export function SetupView() {
           </TabsContent>
         ) : null}
         <TabsContent value="settings"><SettingsTab /></TabsContent>
+        {showRules ? (
+          <TabsContent value="rules">
+            <Suspense fallback={<Skeleton className="mt-4 h-72 w-full" />}>
+              <RulesTab rulesQueryKey={[PASS_PILOT_RULES_PATH, school?.id]} />
+            </Suspense>
+          </TabsContent>
+        ) : null}
       </Tabs>
     </div>
   );
