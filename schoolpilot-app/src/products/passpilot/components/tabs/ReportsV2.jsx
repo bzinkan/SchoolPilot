@@ -25,6 +25,9 @@ export default function ReportsV2({ user, school, capabilities }) {
     try { return { params: reportFilters(values, timeZone) }; } catch (error) { return { error: error.message }; }
   }, [values, timeZone]);
   const fail = async error => {
+    if ([401, 403].includes(error.response?.status) || error.response?.data?.code === 'PASSPILOT_REPORT_SNAPSHOT_CHANGED') {
+      pendingExport.current?.abort(); setExporting(false);
+    }
     if ([401, 403].includes(error.response?.status)) { setDenied(true); cache.removeQueries({ queryKey: key }); }
     if (error.response?.data?.code === 'PASSPILOT_REPORT_SNAPSHOT_CHANGED') setSnapshotChanged(true);
     setMessage(await reportError(error));
@@ -55,9 +58,8 @@ export default function ReportsV2({ user, school, capabilities }) {
   useEffect(() => () => { pendingExport.current?.abort(); cache.removeQueries({ queryKey: ['passpilot-reports-v2', ...scope] }); }, [cache, scope]);
   const update = patch => { pendingExport.current?.abort(); setExporting(false); setMessage(''); setSnapshotChanged(false); setValues(current => ({ ...current, ...patch })); };
   const refresh = async () => {
-    setMessage('');
+    setMessage(''); setSnapshotChanged(false);
     await Promise.all([cache.resetQueries({ queryKey: [...key, 'summary'] }), cache.resetQueries({ queryKey: [...key, 'passes'] })]);
-    setSnapshotChanged(false);
   };
   const exportCsv = async kind => {
     const controller = new AbortController(); pendingExport.current = controller; setExporting(true); setMessage('');
@@ -105,6 +107,6 @@ export default function ReportsV2({ user, school, capabilities }) {
       <div className="grid gap-4 sm:grid-cols-2"><section className="rounded-md border p-3"><h3 className="font-semibold">Destinations</h3><ul>{data.destinations.map(item => <li key={item.destination} className="flex justify-between gap-3"><span>{item.destination.replaceAll('_', ' ')}</span><span>{item.count}</span></li>)}</ul></section><section className="rounded-md border p-3"><h3 className="font-semibold">Busiest school-local hours</h3><p className="text-xs text-muted-foreground">Hourly issuance counts. Historical bell periods are unavailable.</p><ul>{data.periods.buckets.map(item => <li key={item.hour} className="flex justify-between gap-3"><span>{item.label}</span><span>{item.count}</span></li>)}</ul></section></div></> : null}
     <section><h3 className="mb-2 font-semibold">Pass history</h3>{pages.isLoading && enabled ? <p role="status">Loading pass history…</p> : null}{pages.isError ? <p role="alert">{pages.error.message}</p> : null}
       <div className="max-w-full overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['Student', 'Issuer / class', 'Destination', 'Status', 'Issued', 'Returned', 'Completed duration'].map(label => <th key={label} className="p-2">{label}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.id} className="border-t"><td className="p-2"><button className="text-primary underline" aria-label={`Filter to ${row.studentName}`} onClick={() => update({ studentId: row.studentId })}>{row.studentName}</button></td><td className="p-2">{row.teacherName || 'Former staff'}<br />{row.className || 'Unattributed'}</td><td className="p-2">{row.customDestination || row.destination?.replaceAll('_', ' ')}</td><td className="p-2">{row.status}{row.currentlyOverdue ? ' · Currently overdue' : ''}</td><td className="p-2">{dateTime(row.issuedAt)}</td><td className="p-2">{dateTime(row.returnedAt)}</td><td className="p-2">{reportDuration(row.completedDurationSeconds)}</td></tr>)}</tbody></table></div>
-      {pages.isSuccess && !rows.length ? <p>No retained pass history for these filters.</p> : null}{pages.hasNextPage ? <Button className="mt-3" variant="outline" disabled={pages.isFetchingNextPage || denied} onClick={() => pages.fetchNextPage()}>Load more passes</Button> : null}
+      {pages.isSuccess && enabled && !rows.length ? <p>No retained pass history for these filters.</p> : null}{pages.hasNextPage ? <Button className="mt-3" variant="outline" disabled={pages.isFetchingNextPage || !enabled} onClick={() => pages.fetchNextPage()}>Load more passes</Button> : null}
     </section></div>;
 }
