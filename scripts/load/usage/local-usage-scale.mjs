@@ -201,6 +201,11 @@ export async function runLocalScale() {
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
     metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
     assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_001 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
+    if (process.env.USAGE_SCALE_PREPARE_ONLY === '1') {
+      metrics.fixturePreparationOnly = true; save();
+      console.log(JSON.stringify({ event: 'local_usage_scale_prepared', sourceRevision: metrics.sourceRevision, capacityMeasured: false }));
+      return;
+    }
     const size = scope => ({ school: 500, grade: 100, class: 5, student: 1 })[scope];
     const checkReport = (read, scope, allowHeavy = false) => {
       assert.equal(read.status, 200); assert.equal(read.body.range.retentionDays, 365); assert.equal(read.body.range.requestedDays, 365); assert.equal(read.body.range.partiallyExpired, true);
@@ -347,7 +352,7 @@ export async function runLocalScale() {
     console.log(JSON.stringify({ event: 'local_usage_scale_complete', sourceRevision: metrics.sourceRevision, writerMs: metrics.concurrentWriters.map(row => row.durationMs), ingestRequests: metrics.ingest.requests, insertedHeartbeats: metrics.ingest.insertedHeartbeats, productionReadiness: false }));
   } catch (error) {
     metrics.failure = { name: error.name, code: error.code || 'SCALE_ASSERTION', message: error.message };
-    if (phaseStarted) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
+    if (phaseStarted && metrics.concurrentPhaseMs === undefined) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
     if (metrics.ingest.timingsMs?.length) { metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs; }
     save(); throw error;
   }

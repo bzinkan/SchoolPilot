@@ -2,9 +2,12 @@
 [CmdletBinding()]
 param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
-  [Parameter(Mandatory=$true)][string]$OutputDirectory
+  [Parameter(Mandatory=$true)][string]$OutputDirectory,
+  [switch]$PrepareOnly,
+  [switch]$HoldFixtureForDiagnostics
 )
 $ErrorActionPreference = 'Stop'
+if ($PrepareOnly -and -not $HoldFixtureForDiagnostics) { throw 'Preparation-only mode requires the bounded diagnostic hold.' }
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 if ($output.Equals($repository, [StringComparison]::OrdinalIgnoreCase) -or $output.StartsWith($repository + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Choose an external evidence directory.' }
@@ -14,7 +17,7 @@ $container = 'schoolpilot-usage-scale-' + $run
 $database = 'schoolpilot_redesign_usage_scale_' + $run
 $fixtureRole = 'scale_fixture_' + $run; $appRole = 'scale_app_' + $run
 $fixturePassword = [guid]::NewGuid().ToString('N'); $appPassword = [guid]::NewGuid().ToString('N')
-$names = @('DATABASE_URL','ADMIN_DATABASE_URL','DATABASE_URL_PRIVILEGED','JWT_SECRET','SESSION_SECRET','STUDENT_TOKEN_SECRET','NODE_ENV','REDIS_URL','RLS_GUC_ENABLED','RLS_ENABLED_TABLES','SCHEDULER_ENABLED','USAGE_LOCAL_SCALE','USAGE_SCALE_OUTPUT','USAGE_SCALE_CAPS','USAGE_SCALE_CONTAINER','USAGE_SOURCE_REVISION','CLASSPILOT_USAGE_ROLLUP_MODE','CLASSPILOT_DIGITAL_USAGE_MODE','DB_POOL_MIN','SESSION_DB_POOL_MIN')
+$names = @('DATABASE_URL','ADMIN_DATABASE_URL','DATABASE_URL_PRIVILEGED','JWT_SECRET','SESSION_SECRET','STUDENT_TOKEN_SECRET','NODE_ENV','REDIS_URL','RLS_GUC_ENABLED','RLS_ENABLED_TABLES','SCHEDULER_ENABLED','USAGE_LOCAL_SCALE','USAGE_SCALE_OUTPUT','USAGE_SCALE_CAPS','USAGE_SCALE_CONTAINER','USAGE_SOURCE_REVISION','USAGE_SCALE_PREPARE_ONLY','CLASSPILOT_USAGE_ROLLUP_MODE','CLASSPILOT_DIGITAL_USAGE_MODE','DB_POOL_MIN','SESSION_DB_POOL_MIN')
 $saved = @{}; foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
 $created = $false; $exitCode = 1
 Push-Location -LiteralPath $repository
@@ -63,6 +66,7 @@ try {
   $env:DB_POOL_MIN = '0'; $env:SESSION_DB_POOL_MIN = '0'
   $env:USAGE_LOCAL_SCALE = '1'; $env:USAGE_SCALE_OUTPUT = Join-Path $output 'usage-scale.json'
   $env:USAGE_SCALE_CAPS = Join-Path $output 'resource-caps.json'; $env:USAGE_SCALE_CONTAINER = $container
+  $env:USAGE_SCALE_PREPARE_ONLY = if ($PrepareOnly) { '1' } else { '0' }
   # Windows PowerShell5 converts native stderr warnings to ErrorRecords.
   # Preserve them as evidence without aborting a successful running process.
   $strictPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -72,6 +76,15 @@ try {
   } finally { $ErrorActionPreference = $strictPreference }
   Get-Content -LiteralPath (Join-Path $output 'scale.log') | Where-Object { $_ -match '"event":"local_usage_scale_' }
   [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); imageDigest=$image; container=$container; database=$database; restrictedNonOwnerRole=$true; postgresCpu=4; postgresMemoryBytes=4294967296; nodeOldSpaceMiB=512; productionMutations=0; exitCode=$exitCode } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
+  if ($HoldFixtureForDiagnostics) {
+    # This optional local-only hold permits read-only EXPLAIN work on the same
+    # costly synthetic fixture. No credentials are persisted. Signal completion
+    # using the external marker; expiry still runs the exact guarded cleanup.
+    $marker = Join-Path $output 'diagnostics-complete.marker'
+    $holdDeadline = [DateTime]::UtcNow.AddMinutes(30)
+    Write-Output ([ordered]@{ event='local_usage_scale_diagnostic_hold'; container=$container; database=$database; fixtureRole=$fixtureRole; appRole=$appRole; marker=$marker; expiresAtUtc=$holdDeadline.ToString('o') } | ConvertTo-Json -Compress)
+    while (-not (Test-Path -LiteralPath $marker) -and [DateTime]::UtcNow -lt $holdDeadline) { Start-Sleep -Milliseconds 500 }
+  }
 } finally {
   if ($created) {
     if ($container -cnotmatch '^schoolpilot-usage-scale-[a-f0-9]{12}$' -or $container.Substring($container.Length-12) -cne $run -or $database -cne ('schoolpilot_redesign_usage_scale_' + $run)) { throw 'Generated cleanup target guard failed.' }
