@@ -349,3 +349,75 @@ describe("precise Flight Path resources while the capability is on", () => {
     assert.deepEqual((await storedPath(copied.body.flightPath.id)).resources, [SECTION, VIDEO]);
   });
 });
+
+describe("read-only normalized scope previews", () => {
+  it("requires authenticated school staff and rejects a body-supplied tenant", async () => {
+    const anonymous = await fetch(`${baseUrl}/classpilot/flight-paths/preview-resources`, {
+      method: "POST", headers: { "content-type": "application/json", "x-school-id": school.id },
+      body: JSON.stringify({ purpose: "flight_path", allowedDomains: ["nasa.gov"] }),
+    });
+    assert.equal(anonymous.status, 401);
+    const forged = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "flight_path", allowedDomains: ["nasa.gov"], schoolId: school.id,
+    });
+    assert.equal(forged.status, 400);
+    assert.equal(forged.body.code, "RESOURCE_PREVIEW_INVALID");
+  });
+
+  it("previews legacy websites while precise authoring is off without creating a path", async () => {
+    setPrecise(false);
+    const before = await requestJson("GET", "/classpilot/flight-paths", teacherA);
+    const response = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "flight_path", allowedDomains: ["https://www.NASA.gov/solar-system"],
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.authoring, { allowedDomains: ["nasa.gov"], resources: [] });
+    assert.equal(response.body.scopes[0].type, "website");
+    assert.equal(response.body.warnings[0].code, "BROADER_WEBSITE");
+    const precise = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "waypoint", boundary: "resource", url: "https://nasa.gov/solar-system",
+    });
+    assert.equal(precise.status, 409);
+    const after = await requestJson("GET", "/classpilot/flight-paths", teacherA);
+    assert.deepEqual(after.body, before.body);
+  });
+
+  it("uses save-equivalent boundaries and warns when a website broadens a precise entry", async () => {
+    setPrecise(true);
+    const response = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "flight_path", allowedDomains: ["nasa.gov"],
+      resources: [{ url: "https://nasa.gov/solar-system/" }],
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.schemaVersion, 1);
+    assert.equal(response.body.scopes[1].type, "section");
+    assert.match(response.body.scopes[1].description, /paths below/);
+    assert.match(response.body.warnings[0].message, /do not narrow/);
+    const saved = await requestJson("POST", "/classpilot/flight-paths", teacherA, {
+      flightPathName: `${TAG} Reviewed`, ...response.body.authoring,
+    });
+    assert.equal(saved.status, 201);
+    assert.deepEqual(saved.body.flightPath.resources, [SECTION]);
+  });
+
+  it("reviews only selected Classroom links and supplies canonical creation inputs", async () => {
+    setPrecise(true);
+    const resources = [
+      { id: "chosen", links: [{ url: "https://youtu.be/dQw4w9WgXcQ" }, { url: "https://youtu.be/invalid" }] },
+      { id: "other", links: [{ url: "https://other.example.org/private" }] },
+    ];
+    const reviewed = await requestJson("POST", "/classpilot/flight-paths/preview-resources", teacherA, {
+      purpose: "classroom", boundary: "resource", resources, selectedResourceIds: ["chosen"],
+    });
+    assert.equal(reviewed.status, 200);
+    assert.equal(reviewed.body.scopes.length, 1);
+    assert.equal(reviewed.body.skipped.length, 1);
+    assert.deepEqual(reviewed.body.authoring.resourceLinks, [VIDEO.canonicalUrl]);
+    const saved = await requestJson("POST", "/classpilot/flight-paths/from-classroom", teacherA, {
+      courseId: "reviewed-course", flightPathName: `${TAG} Reviewed import`, boundary: "resource", resourceLinks: reviewed.body.authoring.resourceLinks,
+    });
+    assert.equal(saved.status, 201);
+    assert.deepEqual(saved.body.flightPath.resources, [VIDEO]);
+    assert.deepEqual(saved.body.flightPath.allowedDomains, []);
+  });
+});
