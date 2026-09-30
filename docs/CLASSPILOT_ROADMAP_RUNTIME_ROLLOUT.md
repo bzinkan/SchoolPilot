@@ -86,7 +86,7 @@ The pilot profile is refused until a reviewed follow-up binds the exact ClassPil
 
 ### Deployment order
 
-1. PR 2-pre (#550) must already be serving in an image that does not contain PR 2. Its fence makes every older image withhold precise state instead of widening it. Never roll an image back below PR 2-pre once PR 2 has served traffic.
+1. PR 2-pre (#550) and PR 2 (#555) reached `main` together, and `scripts/deploy.sh` deploys only `origin/main`, so the first production image with PR 2 also carries the PR 2-pre fence; no separate PR 2-pre image exists. Precise state can exist only after the capability is activated, so until then a rollback below #550 cannot widen anything. Never activate `preciseRestrictionResourcesV1` until the serving image and the image a rollback would return to both contain #550, which takes at least one more ordinary deploy after the first image that ships it. Once the capability has been active, never roll an image back below #550.
 2. Deploy the server image containing PR 2 with the capability off. Merging PR 2 changes the runtime-config tool, so any plan saved before the merge is void; plan every later profile from the post-merge tool SHA.
 3. Only an image that registers `preciseRestrictionResourcesV1` ever receives its registry entry. An older image's boot check (`assertClasspilotCapabilityRolloutsEnv`) refuses to start on an unknown registry key, so the tool projects every runtime it produces onto the capabilities the serving image registers:
    - It reads them with `git show <app sha>:src/services/classpilotProtocol.ts`; the ECR tag check binds that SHA to the serving digest.
