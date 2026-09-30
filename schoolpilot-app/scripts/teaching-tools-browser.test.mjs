@@ -9,6 +9,7 @@ import { teacherTabLimitSeed, teachingToolsQuery } from '../src/products/classpi
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const artifacts = path.resolve(root, '../docs/images/settings-organization');
+const previewArtifacts = path.resolve(process.env.TEMP || '/tmp', 'schoolpilot-precise-scopes');
 let vite, browser, base;
 const authModule = `import{createContext,useContext}from'react';export const FixtureAuth=createContext(null);export const useAuth=()=>useContext(FixtureAuth);`;
 const entry = `
@@ -34,6 +35,7 @@ createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client
 
 before(async () => {
   await mkdir(artifacts, { recursive: true });
+  await mkdir(previewArtifacts, { recursive: true });
   vite = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-teaching-tools-${process.pid}`, server: { host: '127.0.0.1', port: 0 },
     plugins: [{ name: 'teaching-tools-fixture', enforce: 'pre', transform(_code, id) {
       if (id.replaceAll('\\', '/').endsWith('/src/contexts/AuthContext.jsx')) return { code: authModule, map: null };
@@ -56,10 +58,29 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6 }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
+  state.precise = precise;
   await page.route('**/api/**', async route => {
     const req = route.request(), url = new URL(req.url()), schoolId = req.headers()['x-school-id'];
     const body = req.method() === 'GET' ? null : req.postDataJSON();
     state.requests.push({ method: req.method(), path: url.pathname, search: url.search, schoolId, body });
+    if (url.pathname.endsWith('/preview-resources')) {
+      if (state.holdPreview) await new Promise(resolve => { state.releasePreview = resolve; });
+      if (state.previewError) return route.fulfill({ status: 400, json: { error: 'The resource could not be limited. Paste its full link.' } });
+      const source = body.purpose === 'classroom' ? body.resources.flatMap(item => item.links) : body.resources || [];
+      const canonical = source.map(item => ({ url: item.url.includes('forms.gle') ? 'https://docs.google.com/forms/d/reviewed-form/viewform' : item.url.replace('www.nasa.gov', 'nasa.gov') }));
+      const resourceScopes = canonical.map(item => {
+        const url = new URL(item.url), form = url.hostname === 'docs.google.com' && url.pathname.startsWith('/forms/'), video = url.hostname.endsWith('youtube.com');
+        const label = form ? 'Google Form' : video ? 'YouTube video' : 'Section';
+        return { type: form || video ? 'resource' : 'section', hostname: url.hostname, url: item.url, label,
+          description: form || video ? `Only this ${label.toLowerCase()} is allowed.` : `${url.hostname}${url.pathname} and paths below that section; other sections and subdomains are excluded.` };
+      });
+      const domains = body.purpose === 'classroom' && body.boundary === 'website' ? ['science.example.test'] : body.allowedDomains || [];
+      return route.fulfill({ json: { schemaVersion: 1, purpose: body.purpose, ...(body.boundary ? { boundary: body.boundary } : {}),
+        scopes: [...domains.map(hostname => ({ type: 'website', hostname, url: `https://${hostname}`, label: 'Entire website', description: `Every page on ${hostname} and its subdomains is allowed.` })), ...((body.boundary === 'website') ? [] : resourceScopes)],
+        warnings: domains.map(hostname => ({ hostname, code: 'BROADER_WEBSITE', message: `${hostname} allows other pages. Specific entries alongside it do not narrow that broader access.` })),
+        skipped: state.skipped || [], authoring: { allowedDomains: domains, resources: canonical, ...(body.purpose === 'classroom' ? { resourceLinks: body.boundary === 'website' ? domains.map(domain => `https://${domain}`) : canonical.map(item => item.url) } : {}) },
+      } });
+    }
     if (url.pathname.endsWith('/teacher/preferences')) {
       if (req.method() === 'PATCH') {
         if (state.holdSave) await new Promise(resolve => { state.releaseSave = resolve; });
@@ -77,7 +98,7 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher', preci
       state.gradeVersion = 'grades-v3'; state.gradeLevels = body.gradeLevels;
       return route.fulfill({ json: { schoolId, version: state.gradeVersion, gradeLevels: state.gradeLevels } });
     }
-    if (url.pathname.endsWith('/flight-paths')) return route.fulfill({ json: precise
+    if (url.pathname.endsWith('/flight-paths')) return route.fulfill({ json: state.precise
       ? {
           flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'], resources: [PRECISE_VIDEO] }],
           features: { preciseRestrictionResources: true },
@@ -223,6 +244,8 @@ test('website dialog close keeps edits until confirmed and Classroom import uses
     await page.getByTestId('button-import-classroom-flight-path').click();
     await page.getByLabel('Course', { exact: true }).selectOption('course-a');
     await page.getByRole('checkbox', { name: 'Plant cells', exact: false }).check();
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
     await page.getByRole('dialog').getByRole('button', { name: 'Create Flight Path', exact: true }).click();
     await page.getByText('Flight Path created.', { exact: false }).waitFor();
     const write = writes(state).at(-1);
@@ -262,13 +285,128 @@ test('precise Flight Path entries are editable only with the feature and are sen
     await page.getByTestId('button-edit-flight-path-flight-a').click();
     assert.equal(await page.getByTestId('textarea-flight-path-resources').inputValue(), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     await page.getByTestId('textarea-flight-path-resources').fill('https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n  https://www.nasa.gov/solar-system  ');
+    assert.equal(await page.getByTestId('button-save-flight-path').isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
     await page.getByTestId('button-save-flight-path').click();
     const patched = await recorded(state, row => row.method === 'PATCH' && row.path === '/api/flight-paths/flight-a');
     assert.deepEqual(patched.body.resources, [
       { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
-      { url: 'https://www.nasa.gov/solar-system' },
+      { url: 'https://nasa.gov/solar-system' },
     ]);
     assert.deepEqual(patched.body.allowedDomains, ['science.example.test']);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('Flight Path review sends canonical links and is discarded on edits, errors and school changes', async () => {
+  const { page, state } = await open({ precise: true });
+  try {
+    await page.getByTestId('button-create-flight-path').click();
+    await page.getByTestId('input-flight-path-name').fill('Reviewed science');
+    await page.getByTestId('input-flight-path-domains').fill('docs.google.com');
+    await page.getByTestId('textarea-flight-path-resources').fill('https://forms.gle/AbCdEfGhIj');
+    const review = page.getByTestId('button-review-restriction-scope'), save = page.getByTestId('button-save-flight-path');
+    assert.equal(await save.isDisabled(), true);
+    await review.click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    assert.match(await page.getByRole('region', { name: 'Reviewed allowed scope' }).innerText(), /do not narrow/);
+    await save.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(previewArtifacts, 'flight-path-desktop.png'), fullPage: true });
+    await page.getByTestId('input-flight-path-name').fill('Changed name');
+    assert.equal(await save.isDisabled(), true);
+    assert.equal(await page.getByRole('region', { name: 'Reviewed allowed scope' }).count(), 0);
+    await page.getByTestId('input-flight-path-name').fill('Reviewed science');
+    assert.equal(await save.isDisabled(), true, 'undoing an edit must not resurrect the old review');
+    state.previewError = true;
+    await review.click(); await page.getByText('The resource could not be limited. Paste its full link.').waitFor();
+    assert.equal(await save.isDisabled(), true);
+    state.previewError = false;
+    await review.click(); await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    await save.click();
+    const created = await recorded(state, row => row.method === 'POST' && row.path === '/api/flight-paths');
+    assert.deepEqual(created.body.resources, [{ url: 'https://docs.google.com/forms/d/reviewed-form/viewform' }]);
+    assert.equal(JSON.stringify(created.body).includes('forms.gle'), false);
+    assert.equal(state.requests.filter(row => row.path.endsWith('/preview-resources')).every(row => row.schoolId === 'school-a'), true);
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('a held scope preview cannot return after a resource edit or restore an old-school draft', async () => {
+  const { page, state } = await open({ precise: true });
+  try {
+    await page.getByTestId('button-create-flight-path').click();
+    await page.getByTestId('input-flight-path-name').fill('Pending review');
+    await page.getByTestId('textarea-flight-path-resources').fill('https://www.nasa.gov/solar-system');
+    state.holdPreview = true;
+    await page.getByTestId('button-review-restriction-scope').click();
+    await recorded(state, row => row.path.endsWith('/preview-resources'));
+    await page.getByTestId('textarea-flight-path-resources').fill('https://www.nasa.gov/missions');
+    state.releasePreview(); state.holdPreview = false;
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    assert.match(await page.getByRole('region', { name: 'Reviewed allowed scope' }).innerText(), /missions/);
+    assert.doesNotMatch(await page.getByRole('region', { name: 'Reviewed allowed scope' }).innerText(), /solar-system/);
+    await page.evaluate(() => window.fixtureSchool('school-b'));
+    await page.getByTestId('button-create-flight-path').waitFor();
+    assert.equal(await page.getByRole('region', { name: 'Reviewed allowed scope' }).count(), 0);
+    assert(!writes(state).some(row => row.path === '/api/flight-paths'));
+    assert.deepEqual(state.errors, []);
+  } finally { state.releasePreview?.(); await page.close(); }
+});
+
+test('Classroom resource review keeps canonical boundaries, reports skipped links and omits original link inputs', async () => {
+  const { page, state } = await open({ precise: true });
+  try {
+    await page.getByTestId('button-import-classroom-flight-path').click();
+    await page.getByLabel('Course', { exact: true }).selectOption('course-a');
+    await page.getByRole('checkbox', { name: 'Plant cells', exact: false }).check();
+    await page.getByRole('radio', { name: /^Resource/ }).check();
+    state.skipped = [{ url: 'https://youtube.com/results?search_query=math', code: 'RESOURCE_URL_INVALID' }];
+    const save = page.getByRole('dialog').getByRole('button', { name: 'Create Flight Path', exact: true });
+    assert.equal(await save.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    await page.getByText('1 linked item left out', { exact: false }).waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(previewArtifacts, 'classroom-mobile.png'), fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.getByRole('checkbox', { name: 'Plant cells', exact: false }).uncheck();
+    await page.getByRole('checkbox', { name: 'Plant cells', exact: false }).check();
+    assert.equal(await save.isDisabled(), true, 'restoring a selection must not restore its prior scope review');
+    assert.equal(await page.getByRole('region', { name: 'Reviewed allowed scope' }).count(), 0);
+    await page.getByRole('radio', { name: /^Website/ }).check();
+    assert.equal(await save.isDisabled(), true);
+    await page.getByRole('radio', { name: /^Resource/ }).check();
+    assert.equal(await save.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    await save.click();
+    const created = await recorded(state, row => row.path.endsWith('/from-classroom'));
+    assert.deepEqual(created.body.resources, [{ id: 'resource-a' }]);
+    assert.deepEqual(created.body.selectedResourceIds, ['resource-a']);
+    assert.deepEqual(created.body.resourceLinks, ['https://science.example.test/cells']);
+    assert.equal(created.body.boundary, 'resource');
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+test('precise feature loss preserves retained Flight Path entries and keeps Classroom website-only', async () => {
+  const { page, state } = await open({ precise: true });
+  try {
+    await page.getByTestId('button-edit-flight-path-flight-a').click();
+    await page.getByTestId('textarea-flight-path-resources').waitFor();
+    state.precise = false;
+    await page.evaluate(() => window.queryClient.invalidateQueries({ queryKey: ['/api/flight-paths'] }));
+    await page.getByTestId('flight-path-resources-kept').waitFor();
+    assert.equal(await page.getByTestId('textarea-flight-path-resources').count(), 0);
+    await page.getByTestId('input-flight-path-name').fill('Rename retained entries');
+    await page.getByTestId('button-save-flight-path').click();
+    const patched = await recorded(state, row => row.method === 'PATCH' && row.path === '/api/flight-paths/flight-a');
+    assert.equal('resources' in patched.body, false);
+    await page.getByTestId('button-import-classroom-flight-path').click();
+    assert.equal(await page.getByRole('radio', { name: /^Resource/ }).count(), 0);
+    assert.equal(await page.getByRole('radio', { name: /^Website/ }).isChecked(), true);
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
 });

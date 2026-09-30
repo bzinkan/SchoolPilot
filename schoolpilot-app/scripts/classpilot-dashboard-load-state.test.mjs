@@ -253,6 +253,8 @@ async function configureDashboard(page, {
   dashboardActivity = { enabled: false, schoolId: SCHOOL_ID, viewerId: ADMIN_ID },
   observableActivities = null,
   expectedWebsocketRole = null,
+  flightPathResponse = { flightPaths: [] },
+  scopePreviewResponse = null,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -268,6 +270,7 @@ async function configureDashboard(page, {
   const coverageSummaryRequests = [];
   const activityRequests = [];
   const pageErrors = [];
+  const scopePreviewRequests = [];
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript((schoolId) => {
@@ -361,7 +364,13 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === "/api/flight-paths") {
-      await route.fulfill({ json: { flightPaths: [] } });
+      await route.fulfill({ json: flightPathResponse });
+      return;
+    }
+    if (pathname === '/api/classpilot/flight-paths/preview-resources') {
+      scopePreviewRequests.push({ schoolId: request.headers()['x-school-id'], body: request.postDataJSON() });
+      const response = typeof scopePreviewResponse === 'function' ? await scopePreviewResponse(request) : scopePreviewResponse;
+      await route.fulfill({ json: response || {} });
       return;
     }
     if (pathname === "/api/block-lists") {
@@ -520,6 +529,7 @@ async function configureDashboard(page, {
 
   return {
     commandPosts,
+    scopePreviewRequests,
     coverageMutationRequests,
     observationLeaseRequests,
     pageErrors,
@@ -2226,6 +2236,57 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
     await browser?.close().catch(() => {});
     await vite.close().catch(() => {});
   }
+});
+
+test('precise Waypoint review preserves canonical resource commands and discards an edited boundary', { timeout: 60_000 }, async () => {
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  await vite.listen();
+  const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const now = new Date('2026-09-30T14:05:00.000Z');
+  await page.clock.install({ time: now });
+  try {
+    const live = teachingSession();
+    const rows = [student({ lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString(), capabilities: { preciseRestrictionResourcesV1: true } })];
+    const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ school: success(rows), scoped: success(rows) }),
+      activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+      flightPathResponse: { flightPaths: [], features: { preciseRestrictionResources: true } },
+      scopePreviewResponse: request => ({ schemaVersion: 1, purpose: 'waypoint', boundary: request.postDataJSON().boundary,
+        scopes: [{ type: 'resource', hostname: 'docs.google.com', label: 'Google Form', url: 'https://docs.google.com/forms/d/reviewed-form/viewform', description: 'Only this Google Form is allowed.' }],
+        warnings: [], skipped: [], authoring: { allowedDomains: [], resources: [], url: 'https://docs.google.com/forms/d/reviewed-form/viewform' },
+      }),
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+    await page.getByTestId('button-lock-screen').click();
+    assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /website.*may differ/);
+    await page.getByTestId('radio-lock-screen-specific').check();
+    await page.getByTestId('input-lock-screen-url').fill('https://forms.gle/AbCdEfGhIj');
+    await page.getByTestId('radio-lock-screen-boundary-resource').check();
+    const confirm = page.getByTestId('button-confirm-lock-screen');
+    assert.doesNotMatch(await page.getByTestId('dialog-lock-screen').innerText(), /Browsing remains allowed on its hostname/);
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    await page.getByTestId('radio-lock-screen-boundary-website').check();
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('radio-lock-screen-boundary-resource').check();
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    const previewArtifacts = path.resolve(process.env.TEMP || '/tmp', 'schoolpilot-precise-scopes');
+    mkdirSync(previewArtifacts, { recursive: true });
+    await confirm.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(previewArtifacts, 'waypoint-desktop.png'), fullPage: true });
+    await confirm.click();
+    await waitUntil(() => harness.commandPosts.length > 0, 'Reviewed Waypoint must submit through the existing exact student command contract');
+    assert.deepEqual(harness.commandPosts.at(-1).body.commandPayload, { url: 'https://docs.google.com/forms/d/reviewed-form/viewform', boundary: 'resource' });
+    assert.deepEqual(harness.commandPosts.at(-1).body.targetStudentIds, [STUDENT_ID]);
+    assert.equal(harness.scopePreviewRequests.every(row => row.schoolId === SCHOOL_ID), true);
+    assert.equal(JSON.stringify(harness.commandPosts).includes('forms.gle'), false);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); await browser.close(); await vite.close(); }
 });
 
 test('terminal read denials stop clock and lifecycle replay and recover only after authority or checked retry', { timeout: 120_000 }, async () => {
