@@ -593,6 +593,59 @@ describe("cross-school isolation", () => {
     assert.equal((await inSchool(schoolA.id, () => getFlightPathById(shared.id, schoolA.id)))?.visibility, "school");
   });
 
+  it("precise Flight Path resources travel only with their row inside its school", async () => {
+    // Roadmap PR 2: resources live on flight_paths (already RLS-enforced), so
+    // they follow exactly the row's tenant scoping; a same-school copy carries
+    // them verbatim.
+    const resources = [
+      { type: "section" as const, hostname: "nasa.gov", includeSubdomains: false as const, pathPrefix: "/solar-system" },
+      {
+        type: "resource" as const,
+        hostname: "youtube.com",
+        includeSubdomains: false as const,
+        provider: "youtube" as const,
+        resourceId: "dQw4w9WgXcQ",
+        canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      },
+    ];
+    const peer = await createUser({ email: `${TAG}-precise-peer@${TAG}-a.example.edu`, firstName: "Precise", lastName: "Peer" });
+    await createMembership({ userId: peer.id, schoolId: schoolA.id, role: "teacher", status: "active" });
+    const shared = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_precise_shared`,
+      allowedDomains: ["khanacademy.org"],
+      resources,
+      visibility: "school",
+    }));
+    assert.deepEqual((await inSchool(schoolA.id, () => getFlightPathById(shared.id, schoolA.id)))?.resources, resources);
+    assert.equal(await inSchool(schoolB.id, () => getFlightPathById(shared.id, schoolB.id)), undefined);
+    assert.equal(await inSchool(schoolB.id, () => getApplicableFlightPathById(shared.id, schoolB.id, teacher.id)), undefined);
+    const libraryInB = await inSchool(schoolB.id, () => getLibraryFlightPathsForSchool(schoolB.id, teacher.id));
+    assert.equal(libraryInB.some((row) => row.flightPath.id === shared.id), false);
+    const copied = await inSchool(schoolA.id, () => copyFlightPathToTeacher(shared.id, schoolA.id, { actorId: peer.id, isAdmin: false }));
+    assert.ok(copied);
+    assert.notEqual(copied.copy.id, shared.id);
+    assert.equal(copied.copy.schoolId, schoolA.id);
+    assert.deepEqual(copied.copy.resources, resources, "a copy carries its precise entries verbatim");
+    assert.equal(await inSchool(schoolB.id, () => copyFlightPathToTeacher(shared.id, schoolB.id, { actorId: teacher.id, isAdmin: true })), undefined);
+  });
+
+  it("RLS hides another school's precise Flight Path resources even when that school is named explicitly", {
+    skip: process.env.RLS_GUC_ENABLED !== "true",
+  }, async () => {
+    const path = await inSchool(schoolA.id, () => createFlightPath({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      flightPathName: `${TAG}_rls_precise`,
+      allowedDomains: [],
+      resources: [{ type: "section", hostname: "nasa.gov", includeSubdomains: false, pathPrefix: "/solar-system" }],
+    }));
+    assert.equal(await inSchool(schoolB.id, () => getFlightPathById(path.id, schoolA.id)), undefined);
+    const rows: any = await inSchool(schoolB.id, () => db.execute(sql`SELECT resources FROM flight_paths WHERE id = ${path.id}`));
+    assert.equal(rows.rows.length, 0, "school B's tenant context reads no row, so no resources");
+  });
+
   it("getGradeById exposes the schoolId handlers gate on", async () => {
     const grade = await inSchool(schoolA.id, () => createGrade({ schoolId: schoolA.id, name: `${TAG}_grade` } as any));
     const fetched = await inSchool(schoolA.id, () => getGradeById(grade.id));
