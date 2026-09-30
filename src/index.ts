@@ -15,6 +15,7 @@ import {
   PASSPILOT_RULES_SQL,
   PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL,
 } from "./db/passpilotRulesMigration.js";
+import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { SHARED_TEACHING_RESOURCES_EXPAND_SQL } from "./db/sharedTeachingResourcesMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
@@ -4983,6 +4984,7 @@ export async function runStartupMigrations(): Promise<void> {
   // transaction block, which CREATE INDEX CONCURRENTLY rejects.
   await pool.query(PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL);
   await pool.query(PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL);
+  await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL);
 
 }
 

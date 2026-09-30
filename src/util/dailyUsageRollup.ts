@@ -112,6 +112,8 @@ function safeMarkerPart(value: string): string {
  * school's completed day. Postgres advisory locks still serialize execution;
  * the marker is a cheap cross-process once-per-day fast path. A bounded local
  * fallback preserves idempotent behavior while Redis is temporarily unavailable.
+ * The namespace keeps independent jobs' markers apart (the Monitored Browser
+ * Time rollup uses "usage-rollup" for its finalized days).
  */
 export class DailyUsageRollupMarkers {
   private readonly redisUrl: string | undefined;
@@ -124,10 +126,11 @@ export class DailyUsageRollupMarkers {
 
   constructor(
     redisUrl = process.env.REDIS_URL,
-    redisPrefix = process.env.REDIS_PREFIX ?? "schoolpilot"
+    redisPrefix = process.env.REDIS_PREFIX ?? "schoolpilot",
+    namespace = "daily-usage"
   ) {
     this.redisUrl = redisUrl;
-    this.keyPrefix = `${redisPrefix}:scheduler:daily-usage`;
+    this.keyPrefix = `${redisPrefix}:scheduler:${safeMarkerPart(namespace)}`;
   }
 
   key(schoolId: string, date: string): string {

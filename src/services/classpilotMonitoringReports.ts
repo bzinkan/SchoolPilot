@@ -13,6 +13,7 @@ import {
 import {
   calculateHeartbeatCoverage,
   calculateHeartbeatCoverageV1,
+  serverTrackingDisabledIntervals,
   trackingPolicyDisabledIntervals,
   type CoverageInterval,
 } from "./classpilotHeartbeatCoverage.js";
@@ -26,12 +27,6 @@ export type ClasspilotActivityReportInput = Omit<ClasspilotSessionReportInput, "
 
 function ownsObservation(intervals: readonly CoverageInterval[], occurredAt: Date): boolean {
   return intervals.some((interval) => interval.start <= occurredAt && occurredAt < interval.end);
-}
-
-function metadataRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }
 
 function normalizedDomain(value: string | null | undefined): string | null {
@@ -54,35 +49,9 @@ function reportSafetyReviewStatus(
   return "Automated";
 }
 
-export function serverTrackingDisabledIntervals(
-  input: ClasspilotActivityReportInput,
-  studentId: string,
-  windowStart: Date,
-  windowEnd: Date
-): CoverageInterval[] {
-  const transitions = input.monitoringEvents
-    // Extension telemetry is useful evidence that a signal changed, but it is
-    // not an authority for shrinking report eligibility. Only a server-authored
-    // policy transition may exclude otherwise authenticated time.
-    .filter((event) => event.studentId === studentId
-      && event.eventType === "monitoring_state_changed"
-      && event.origin === "server")
-    .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
-  const intervals: CoverageInterval[] = [];
-  let disabledAt: Date | null = null;
-  for (const event of transitions) {
-    const state = String(metadataRecord(event.metadata).state || "").toLowerCase();
-    const disabled = ["off", "disabled", "tracking_disabled"].includes(state);
-    const enabled = ["active", "idle", "on", "enabled"].includes(state);
-    if (disabled && !disabledAt) disabledAt = event.occurredAt < windowStart ? windowStart : event.occurredAt;
-    if (enabled && disabledAt) {
-      intervals.push({ start: disabledAt, end: event.occurredAt > windowEnd ? windowEnd : event.occurredAt });
-      disabledAt = null;
-    }
-  }
-  if (disabledAt) intervals.push({ start: disabledAt, end: windowEnd });
-  return intervals.filter((interval) => interval.end > interval.start);
-}
+// Lives in the pure coverage module so the usage rollup can reuse it without
+// the report storage graph; re-exported for existing report callers.
+export { serverTrackingDisabledIntervals };
 
 export function materializeV1Students(
   report: ClasspilotActivityReportWindow,

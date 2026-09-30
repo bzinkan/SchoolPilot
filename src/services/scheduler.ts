@@ -95,6 +95,13 @@ import {
   type DailyUsageAggregate,
   type DailyUsageRollupMode,
 } from "./classpilotDailyUsageRollup.js";
+import {
+  classpilotUsageRollupDeadline,
+  classpilotUsageRollupMetricRecord,
+  runClasspilotUsageRollup,
+  type ClasspilotUsageRollupOutcome,
+} from "./classpilotUsageRollup.js";
+import { readClasspilotUsageRollupMode } from "../config/classpilotUsageModes.js";
 import { reapExpiredManualStudentSessions } from "./classpilotStudentSessionLifecycle.js";
 import { flushClasspilotLifecyclePushes } from "./classpilotLifecyclePushes.js";
 import { discoverScheduleBoundarySchools, runDueClasspilotScheduleBoundaries, SCHEDULE_BOUNDARY_POLL_MS } from "./classpilotScheduleBoundaries.js";
@@ -117,6 +124,11 @@ let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
 const dailyUsageRollupMarkers = new DailyUsageRollupMarkers();
+// Finalized Monitored Browser Time days (classpilot_usage_rollups).
+const classpilotUsageRollupMarkers = new DailyUsageRollupMarkers(undefined, undefined, "usage-rollup");
+// When this process last finished the heartbeat retention purge; bounds how
+// far a purge that overran into the next hour can have reached.
+let lastHeartbeatPurgeFinishedAt: Date | null = null;
 const reportedAutomaticScheduleSkips = new Map<string, number>();
 const AUTOMATIC_SCHEDULE_SKIP_DEDUPE_MS = 36 * 60 * 60 * 1000;
 const MAX_REPORTED_AUTOMATIC_SCHEDULE_SKIPS = 4_096;
@@ -250,11 +262,15 @@ async function runHeavyJobsSerially() {
   }
   heavyJobRunning = true;
   try {
-    const currentHour = new Date().getUTCHours();
+    const heavyJobStartedAt = new Date();
+    const currentHour = heavyJobStartedAt.getUTCHours();
     // Rollup at top of hour
     if (currentHour !== lastRollupHour) {
       lastRollupHour = currentHour;
       await rollupDailyUsage();
+      // Budgeted to stop taking work at :25, so it can never push this hour's
+      // retention purge (below) past the hour.
+      await rollupClasspilotUsage(heavyJobStartedAt);
       await renewMailpilotWatches();
     }
     // Purge at 30min past the hour (staggered to avoid overlap with rollup)
@@ -830,6 +846,33 @@ async function autoEndStaleClassPilotSessions() {
 // ClassPilot - Daily usage rollup
 // ============================================================================
 
+// Active schools with an active ClassPilot license (dedicated scheduler pool).
+function listClasspilotRollupSchools() {
+  return schedulerDb
+    .select({
+      id: schools.id,
+      schoolTimezone: schools.schoolTimezone,
+    })
+    .from(schools)
+    .innerJoin(
+      productLicenses,
+      and(
+        eq(productLicenses.schoolId, schools.id),
+        eq(productLicenses.product, "CLASSPILOT"),
+        eq(productLicenses.status, "active")
+      )
+    )
+    .where(and(
+      eq(schools.status, "active"),
+      eq(schools.isActive, true),
+      isNull(schools.disabledAt),
+      isNull(schools.deletedAt),
+      sql`${schools.planStatus} <> 'canceled'`,
+      or(isNull(schools.activeUntil), gt(schools.activeUntil, sql`now()`)),
+      or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`now()`))
+    ));
+}
+
 async function rollupDailyUsage() {
   const startedAt = performance.now();
   // Read once so every school in the run, and the run's log line, share one mode.
@@ -838,30 +881,7 @@ async function rollupDailyUsage() {
   let failedSchools = 0;
   let shadowMismatches = 0;
   try {
-    // Find active schools with ClassPilot license (uses dedicated scheduler pool)
-    const activeSchools = await schedulerDb
-      .select({
-        id: schools.id,
-        schoolTimezone: schools.schoolTimezone,
-      })
-      .from(schools)
-      .innerJoin(
-        productLicenses,
-        and(
-          eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "CLASSPILOT"),
-          eq(productLicenses.status, "active")
-        )
-      )
-      .where(and(
-        eq(schools.status, "active"),
-        eq(schools.isActive, true),
-        isNull(schools.disabledAt),
-        isNull(schools.deletedAt),
-        sql`${schools.planStatus} <> 'canceled'`,
-        or(isNull(schools.activeUntil), gt(schools.activeUntil, sql`now()`)),
-        or(isNull(productLicenses.expiresAt), gt(productLicenses.expiresAt, sql`now()`))
-      ));
+    const activeSchools = await listClasspilotRollupSchools();
 
     const now = new Date();
     for (let offset = 0; offset < activeSchools.length; offset += DAILY_USAGE_SCHOOL_BATCH_SIZE) {
@@ -1056,6 +1076,70 @@ async function rollupSchoolUsageLegacy(
 }
 
 // ============================================================================
+// ClassPilot - Monitored Browser Time rollups (classpilot_usage_rollups)
+// ============================================================================
+
+// CLASSPILOT_USAGE_ROLLUP_MODE (off|on, fails closed until the table is RLS
+// admitted). Off: returns before any query. See classpilotUsageRollup.ts.
+async function rollupClasspilotUsage(heavyJobStartedAt: Date) {
+  if (readClasspilotUsageRollupMode() !== "on") return;
+  const startedAt = performance.now();
+  const deadline = classpilotUsageRollupDeadline(heavyJobStartedAt);
+  let outcome: ClasspilotUsageRollupOutcome | null = null;
+  let runFailed = false;
+  try {
+    const activeSchools = await listClasspilotRollupSchools();
+    outcome = await runClasspilotUsageRollup({
+      pool: schedulerPool,
+      schools: activeSchools.map((school) => ({
+        id: school.id,
+        timeZone: school.schoolTimezone || "America/New_York",
+      })),
+      now: new Date(),
+      deadline,
+      markers: classpilotUsageRollupMarkers,
+      lastPurgeFinishedAt: lastHeartbeatPurgeFinishedAt,
+      onSchoolError: (error) => {
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "rollupClasspilotUsageSchool",
+        });
+      },
+    });
+  } catch (err) {
+    runFailed = true;
+    console.error("[ClassPilot] Monitored Browser Time rollup failed");
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupClasspilotUsage" });
+  } finally {
+    const failedSchools = (outcome?.failedSchools ?? 0) + (runFailed ? 1 : 0);
+    const deferredDays = outcome?.deferredDays ?? 0;
+    // Every counter, zeros included; only nonzero failures and deferrals are
+    // also published as CloudWatch metrics.
+    console.log(JSON.stringify({
+      event: "classpilot_usage_rollup",
+      schools: outcome?.schools ?? 0,
+      finalizedDays: outcome?.finalizedDays ?? 0,
+      recomputedDays: outcome?.recomputedDays ?? 0,
+      unchangedDays: outcome?.unchangedDays ?? 0,
+      retentionSkippedDays: outcome?.retentionSkippedDays ?? 0,
+      deferredDays,
+      failedSchools,
+      rowCount: outcome?.rowCount ?? 0,
+      budgetExhausted: outcome?.budgetExhausted ?? false,
+      durationMs: Math.round(performance.now() - startedAt),
+      deadline: deadline.toISOString(),
+    }));
+    const metrics = classpilotUsageRollupMetricRecord(
+      { failedSchools, deferredDays },
+      {
+        environment: process.env.APP_ENV || process.env.NODE_ENV || "development",
+        timestamp: Date.now(),
+      }
+    );
+    if (metrics) console.log(JSON.stringify(metrics));
+  }
+}
+
+// ============================================================================
 // ClassPilot - Heartbeat purge (based on retentionHours setting)
 // ============================================================================
 
@@ -1196,6 +1280,13 @@ async function purgeExpiredHeartbeats() {
       `, [school.id, cutoff]);
       await schedulerPool.query(`DELETE FROM classpilot_session_usage WHERE school_id = $1 AND local_date < $2`, [school.id, cutoffLocalDate]);
       await schedulerPool.query(`DELETE FROM daily_usage WHERE school_id = $1 AND date < $2`, [school.id, cutoffLocalDate]);
+      // Monitored Browser Time rollups share the daily aggregate horizon. A
+      // failure here must not skip this school's remaining retention steps.
+      await schedulerPool.query(`DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
+        errorMonitor.trackError("scheduler_failure", error as Error, {
+          job: "purgeExpiredHeartbeats", errorCode: "USAGE_ROLLUP_RETENTION_FAILED",
+        });
+      });
       await schedulerPool.query(`
         DELETE FROM events AS legacy
         USING devices AS device
@@ -1262,6 +1353,7 @@ async function purgeExpiredHeartbeats() {
     console.error("[ClassPilot] Heartbeat purge failed");
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredHeartbeats" });
   }
+  lastHeartbeatPurgeFinishedAt = new Date();
 }
 
 // ============================================================================

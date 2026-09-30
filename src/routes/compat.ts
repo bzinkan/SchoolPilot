@@ -44,7 +44,7 @@ import {
   upsertAdminClassroomClass,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, dailyUsage } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, dailyUsage, classpilotUsageRollups } from "../schema/classpilot.js";
 import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
@@ -718,9 +718,11 @@ router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async 
 router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    // Delete heartbeats, devices, daily_usage, and group_students for this school
+    // Delete heartbeats, devices and the usage aggregates derived from them
+    // (daily_usage and the Monitored Browser Time rollups) for this school
     await db.delete(heartbeats).where(eq(heartbeats.schoolId, schoolId));
     await db.delete(dailyUsage).where(eq(dailyUsage.schoolId, schoolId));
+    await db.delete(classpilotUsageRollups).where(eq(classpilotUsageRollups.schoolId, schoolId));
     await db.delete(deviceTable).where(eq(deviceTable.schoolId, schoolId));
     await logAudit({
       schoolId,

@@ -194,6 +194,56 @@ export function trackingPolicyDisabledIntervals(
   );
 }
 
+/** The monitoring-event fields that decide server-authored tracking state. */
+export type ClasspilotTrackingStateEvent = {
+  studentId: string;
+  eventType: string;
+  origin: string;
+  occurredAt: Date;
+  metadata: unknown;
+};
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+/**
+ * Derive intervals where a server-authored policy transition turned a
+ * student's tracking off. Session and supervision reports pass their whole
+ * input; the Monitored Browser Time rollup passes only these events.
+ */
+export function serverTrackingDisabledIntervals(
+  input: { monitoringEvents: readonly ClasspilotTrackingStateEvent[] },
+  studentId: string,
+  windowStart: Date,
+  windowEnd: Date
+): CoverageInterval[] {
+  const transitions = input.monitoringEvents
+    // Extension telemetry is useful evidence that a signal changed, but it is
+    // not an authority for shrinking report eligibility. Only a server-authored
+    // policy transition may exclude otherwise authenticated time.
+    .filter((event) => event.studentId === studentId
+      && event.eventType === "monitoring_state_changed"
+      && event.origin === "server")
+    .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());
+  const intervals: CoverageInterval[] = [];
+  let disabledAt: Date | null = null;
+  for (const event of transitions) {
+    const state = String(metadataRecord(event.metadata).state || "").toLowerCase();
+    const disabled = ["off", "disabled", "tracking_disabled"].includes(state);
+    const enabled = ["active", "idle", "on", "enabled"].includes(state);
+    if (disabled && !disabledAt) disabledAt = event.occurredAt < windowStart ? windowStart : event.occurredAt;
+    if (enabled && disabledAt) {
+      intervals.push({ start: disabledAt, end: event.occurredAt > windowEnd ? windowEnd : event.occurredAt });
+      disabledAt = null;
+    }
+  }
+  if (disabledAt) intervals.push({ start: disabledAt, end: windowEnd });
+  return intervals.filter((interval) => interval.end > interval.start);
+}
+
 export function calculateHeartbeatCoverage(options: {
   windowStart: Date;
   windowEnd: Date;

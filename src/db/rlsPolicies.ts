@@ -37,7 +37,8 @@ const schoolDisciplineInventory: RlsRegistryInventory = rlsRegistry.inventories.
 const studentInformationInventory: RlsRegistryInventory = rlsRegistry.inventories.studentInformationPostExpand;
 const teacherPreferencesInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotTeacherPreferencesPostExpand;
 const importProcessingStagesInventory: RlsRegistryInventory = rlsRegistry.inventories.importProcessingStagesPostExpand;
-const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotRulesPostExpand;
+const passpilotRulesInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotRulesPostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotUsageRollupsPostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -87,7 +88,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, currentInventory];
+  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(

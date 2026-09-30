@@ -327,6 +327,52 @@ test('selected-student CSV separates safe app labels from hostnames', () => {
   assert.match(csv, /"Site or app","Domain","Bounded seconds"/);
   assert.match(csv, /"Google Forms","docs.google.com","40"/);
   assert.doesNotMatch(csv, /private-form-id|Private form title/);
+  assert.doesNotMatch(csv, /Monitored Browser Time/, 'no rollup section without the server block');
+});
+
+test('selected-student export carries Monitored Browser Time rollups beside session seconds', () => {
+  const SCHOOL_SCOPE = { key: 'school', kind: 'school', label: 'Entire school', groupId: null };
+  const payload = {
+    schemaVersion: 2,
+    revision: 'revision-9',
+    period: 'week',
+    scope: SCHOOL_SCOPE,
+    dataState: 'final',
+    asOf: '2026-09-18T12:00:00.000Z',
+    student: {
+      studentId: 'student-1',
+      name: 'Ada Student',
+      monitoredSeconds: 40,
+      siteCount: 1,
+      topDomains: [{ domain: 'docs.example.org', seconds: 40 }],
+      monitoredBrowserTime: {
+        measure: 'Monitored Browser Time',
+        dataState: 'live',
+        range: { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14' },
+        totals: { monitoredBrowserSeconds: 125, instructionalSeconds: 100, offTaskSeconds: 15, unknownSeconds: 10, heartbeatCount: 12 },
+        byDay: [
+          { date: '2026-09-17', state: 'final', monitoredBrowserSeconds: 100, instructionalSeconds: 90, offTaskSeconds: 5, unknownSeconds: 5 },
+          { date: '2026-09-18', state: 'live', monitoredBrowserSeconds: 25, instructionalSeconds: 10, offTaskSeconds: 10, unknownSeconds: 5 },
+          { date: '=cmd', state: 'final', monitoredBrowserSeconds: 1 },
+        ],
+      },
+    },
+  };
+  const report = normalizeStudentDataResponse(payload, { studentId: 'student-1', expectedScope: SCHOOL_SCOPE, expectedPeriod: 'week' });
+  assert.equal(report.student.monitoredSeconds, 40, 'class-session seconds are untouched');
+  assert.equal(report.student.monitoredBrowserTime.dataState, 'live');
+  assert.deepEqual(report.student.monitoredBrowserTime.range, { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14' });
+  assert.deepEqual(report.student.monitoredBrowserTime.byDay.map((day) => day.date), ['2026-09-17', '2026-09-18'], 'malformed dates are dropped');
+
+  const csv = studentDataCsv(report, { period: 'week', studentId: 'student-1' });
+  assert.match(csv, /"Monitored Browser Time \(school days\)","live"/);
+  assert.match(csv, /"Date","Day state","Monitored Browser Time seconds","Instructional seconds","Off-task seconds","Unclassified seconds"/);
+  assert.match(csv, /"2026-09-17","final","100","90","5","5"/);
+  assert.match(csv, /"Total","","125","100","15","10"/);
+  assert.doesNotMatch(csv, /=cmd|Screen Time/i);
+
+  const withoutBlock = normalizeStudentDataResponse({ ...payload, student: { ...payload.student, monitoredBrowserTime: undefined } }, { studentId: 'student-1' });
+  assert.equal('monitoredBrowserTime' in withoutBlock.student, false, 'absent block leaves the summary shape unchanged');
 });
 
 test('freshness helpers distinguish provisional polling states from final data', () => {

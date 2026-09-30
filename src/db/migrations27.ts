@@ -5,6 +5,7 @@ import { studentInformationRedesignMigration } from "./studentInformationRedesig
 import { classpilotTeacherPreferencesMigration } from "./classpilotTeacherPreferencesMigration.js";
 import { importProcessingStagesMigration } from "./importProcessingStagesMigration.js";
 import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
+import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
 import {
@@ -524,6 +525,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   sharedTeachingResourcesMigration,
   passpilotRulesMigration,
   passpilotRulesIndexesMigration,
+  classpilotUsageRollupsMigration,
   staffIdentityIntegrityMigration,
 ];
 

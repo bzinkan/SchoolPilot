@@ -48,6 +48,7 @@ import scheduledSupervisionRoutes from "./classpilot/scheduledSupervision.js";
 import scheduledConflictRoutes from "./classpilot/scheduledConflicts.js";
 import instructionalCalendarRoutes from "./classpilot/instructionalCalendar.js";
 import monitoringEventRoutes from "./classpilot/monitoringEvents.js";
+import classpilotAdminUsageRoutes from "./classpilot/adminUsage.js";
 import scheduleChangeRoutes from "./classpilot/scheduleChanges.js";
 import liveViewTelemetryRoutes from "./classpilot/liveViewTelemetry.js";
 import classpilotSsoPolicyRoutes from "./classpilot/ssoPolicy.js";
@@ -410,6 +411,8 @@ router.use("/classpilot", liveViewTelemetryRoutes);
 router.use("/classpilot", monitoringRoutes);
 router.use("/classpilot/teaching-sessions", teachingSessionRoutes);
 router.use("/classpilot/admin/classes", adminClassRoutes);
+// Steps aside (unknown-route 404) unless CLASSPILOT_DIGITAL_USAGE_MODE is on and admitted.
+router.use("/classpilot/admin/usage", classpilotAdminUsageRoutes);
 router.use("/classpilot/admin/scheduling", schedulingRoutes);
 router.use("/classpilot/admin/schedule-profiles", scheduleProfileRoutes);
 router.use("/classpilot/monitoring-interruptions", monitoringInterruptionRoutes);
