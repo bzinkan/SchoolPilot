@@ -267,6 +267,22 @@ describe("encounter pairs, DTOs, and retention", () => {
       { id: "p", ruleOverrideCode: "PASSPILOT_RULE_DAILY_LIMIT" });
   });
 
+  it("conceals a retained encounter override from the default pass DTO without changing the record", () => {
+    const retained = { id: "p", ruleOverrideCode: "PASSPILOT_RULE_ENCOUNTER" };
+    assert.deepEqual(withoutNullRuleOverride(retained), { id: "p" });
+    assert.equal(retained.ruleOverrideCode, "PASSPILOT_RULE_ENCOUNTER");
+  });
+
+  it("retains encounter override metadata only for administrator roles", () => {
+    const retained = { id: "p", ruleOverrideCode: "PASSPILOT_RULE_ENCOUNTER" };
+    for (const role of [undefined, null, "teacher", "office_staff", "parent", "ADMIN", "unknown"]) {
+      assert.deepEqual(withoutNullRuleOverride(retained, role), { id: "p" }, String(role));
+    }
+    for (const role of ["admin", "school_admin", "super_admin"]) {
+      assert.deepEqual(withoutNullRuleOverride(retained, role), retained, role);
+    }
+  });
+
   it("purges denials older than 400 days in bounded batches", async () => {
     const calls: Array<{ text: string; values: unknown[] }> = [];
     const results = [5000, 12];
