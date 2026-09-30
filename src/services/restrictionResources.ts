@@ -185,9 +185,31 @@ const DOCS_HOST = "docs.google.com";
 const DRIVE_HOST = "drive.google.com";
 const CLASSROOM_HOST = "classroom.google.com";
 const FORMS_SHORT_LINK_HOST = "forms.gle";
+/**
+ * A path tail below a section prefix or after a provider resource id. It may
+ * not hide a separator or a dot segment from the WHATWG parser: servers such
+ * as nginx decode `%2F` before resolving `..`; Tomcat, Spring and Jetty treat
+ * `..;` as `..`; some decode overlong UTF-8 (`%C0%AE`) or fold fullwidth forms
+ * (`%EF%BC%8E`) into `.`, `/` and `\`. So `;` is refused, and so is every
+ * escape except ordinary ones: `%2E`, `%2F`, `%25`, `%5C`, `%C0`, `%C1`, `%E0`
+ * followed by `%80`-`%9F`, `%EF%BC%8E`, `%EF%BC%8F`, `%EF%BC%BC` (any case)
+ * and a `%` that does not start a two-digit escape. The text is RE2-compatible:
+ * the contract's DNR shapes use it verbatim, so the browser layer and this
+ * matcher agree byte for byte.
+ */
+export const RESTRICTION_PATH_TAIL_PATTERN =
+  "(?:/(?:[^?#%;]|%(?:[013-46-9abdfABDF][0-9a-fA-F]|2[0-46-9a-dA-D]|5[0-9abd-fABD-F]|[Cc][2-9a-fA-F]"
+  + "|[Ee][1-9a-eA-E]|[Ee]0%[AaBb][0-9a-fA-F]|[Ee][Ff]%(?:[0-9ac-fAC-F][0-9a-fA-F]|[Bb][0-9abd-fABD-F]"
+  + "|[Bb][Cc]%(?:[0-79ac-fAC-F][0-9a-fA-F]|8[0-9a-dA-D]|[Bb][0-9abd-fABD-F]))))*)?";
+const RESTRICTION_PATH_TAIL = new RegExp(`^${RESTRICTION_PATH_TAIL_PATTERN}$`);
+
+function safePathTail(tail: string | undefined): boolean {
+  return RESTRICTION_PATH_TAIL.test(tail ?? "");
+}
+
 // Page paths: moving to another video changes the page URL, which the
 // extension's navigation and SPA listeners re-check.
-const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(?:\/.*)?$/;
+const YOUTUBE_PAGE_PATH = /^\/(?:shorts|live)\/([A-Za-z0-9_-]{11})(\/.*)?$/;
 // Player paths: an embedded player can move through other videos without
 // changing its URL, so only exactly `/embed/<id>` or `/v/<id>` with harmless
 // player parameters identifies one video (see YOUTUBE_PLAYER_PARAMETERS).
@@ -204,12 +226,19 @@ export const YOUTUBE_PLAYER_PARAMETERS: readonly string[] = [
   "playsinline", "rel", "si", "start", "t", "widget_referrer",
 ];
 const YOUTUBE_PLAYER_PARAMETER_SET = new Set(YOUTUBE_PLAYER_PARAMETERS);
+/**
+ * The raw value of an allowlisted player parameter. `;`, `&`-smuggled or
+ * encoded separators and any other punctuation are refused, so a value can
+ * never carry a second parameter (`autoplay=1;playlist=A,B`).
+ */
+export const YOUTUBE_PLAYER_VALUE_PATTERN = "[A-Za-z0-9._:/-]*";
+const YOUTUBE_PLAYER_VALUE = new RegExp(`^${YOUTUBE_PLAYER_VALUE_PATTERN}$`);
 /** Eleven-character path words YouTube uses for playlists and channel streams, never videos. */
 export const YOUTUBE_RESERVED_IDS: readonly string[] = ["videoseries", "live_stream"];
 const YOUTUBE_RESERVED_ID_SET = new Set(YOUTUBE_RESERVED_IDS);
 const DOCS_PATH =
-  /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
-const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(?:\/.*)?$/;
+  /^\/(?:u\/[0-9]{1,2}\/)?(document|presentation|spreadsheets|forms)\/(?:u\/[0-9]{1,2}\/)?d\/(e\/)?([A-Za-z0-9_-]{20,128})(\/.*)?$/;
+const DRIVE_FILE_PATH = /^\/(?:u\/[0-9]{1,2}\/)?file\/(?:u\/[0-9]{1,2}\/)?d\/([A-Za-z0-9_-]{20,128})(\/.*)?$/;
 const DRIVE_ID_PATH = /^\/(?:u\/[0-9]{1,2}\/)?(?:open|uc)$/;
 const CLASSROOM_ACCOUNT_PREFIX = /^\/u\/[0-9]{1,2}(?=\/|$)/;
 const CLASSROOM_COURSE_PATH = /^\/c\/([A-Za-z0-9_-]{1,128})(?:\/(a|m)\/([A-Za-z0-9_-]{1,128}))?(?:\/.*)?$/;
@@ -295,6 +324,18 @@ function parseHttpsUrl(value: unknown): URL | null {
   return parsed;
 }
 
+/** Every raw `name[=value]` segment of a player link's query is allowlisted. */
+function youtubePlayerQueryHarmless(search: string): boolean {
+  if (search === "") return true;
+  return search.slice(1).split("&").every((segment) => {
+    if (segment === "") return true;
+    const separator = segment.indexOf("=");
+    const name = separator === -1 ? segment : segment.slice(0, separator);
+    const value = separator === -1 ? "" : segment.slice(separator + 1);
+    return YOUTUBE_PLAYER_PARAMETER_SET.has(name) && YOUTUBE_PLAYER_VALUE.test(value);
+  });
+}
+
 function youtubeHostVideoId(parsed: URL): string | null {
   if (parsed.pathname === "/watch") {
     // Exactly one decoded "v" parameter: an ambiguous query never matches.
@@ -302,11 +343,9 @@ function youtubeHostVideoId(parsed: URL): string | null {
     return ids.length === 1 ? youtubeVideoId(ids[0]) : null;
   }
   const player = YOUTUBE_PLAYER_PATH.exec(parsed.pathname);
-  if (player) {
-    const harmless = [...parsed.searchParams.keys()].every((name) => YOUTUBE_PLAYER_PARAMETER_SET.has(name));
-    return harmless ? youtubeVideoId(player[1]) : null;
-  }
-  return youtubeVideoId(YOUTUBE_PAGE_PATH.exec(parsed.pathname)?.[1]);
+  if (player) return youtubePlayerQueryHarmless(parsed.search) ? youtubeVideoId(player[1]) : null;
+  const page = YOUTUBE_PAGE_PATH.exec(parsed.pathname);
+  return page && safePathTail(page[2]) ? youtubeVideoId(page[1]) : null;
 }
 
 function identityFromParsedUrl(parsed: URL): RestrictionResourceIdentity | null {
@@ -321,7 +360,7 @@ function identityFromParsedUrl(parsed: URL): RestrictionResourceIdentity | null 
   }
   if (host === DOCS_HOST) {
     const match = DOCS_PATH.exec(parsed.pathname);
-    if (!match) return null;
+    if (!match || !safePathTail(match[4])) return null;
     return {
       provider: DOCS_KIND_PROVIDER[match[1]!]!,
       resourceId: `${match[2] ?? ""}${match[3]!}`,
@@ -329,7 +368,7 @@ function identityFromParsedUrl(parsed: URL): RestrictionResourceIdentity | null 
   }
   if (host === DRIVE_HOST) {
     const file = DRIVE_FILE_PATH.exec(parsed.pathname);
-    if (file) return { provider: "google_drive", resourceId: file[1]! };
+    if (file) return safePathTail(file[2]) ? { provider: "google_drive", resourceId: file[1]! } : null;
     if (DRIVE_ID_PATH.test(parsed.pathname)) {
       const ids = parsed.searchParams.getAll("id");
       return ids.length === 1 && GOOGLE_FILE_ID.test(ids[0]!)
@@ -360,6 +399,9 @@ function validSectionPathPrefix(value: unknown): value is string {
   if (value.length < 2 || value.length > MAX_SECTION_PATH_PREFIX_LENGTH) return false;
   if (!value.startsWith("/") || value.endsWith("/") || value.includes("//")) return false;
   if (/[?#\\\s]/.test(value)) return false;
+  // The same tail rule the matcher applies below a prefix: a teacher-authored
+  // prefix cannot carry `;`, an encoded separator or dot, or an unsafe escape.
+  if (!RESTRICTION_PATH_TAIL.test(value)) return false;
   try {
     return new URL(`https://example.com${value}`).pathname === value;
   } catch {
@@ -467,7 +509,10 @@ function websiteResource(hostname: string): WebsiteAllowedResource {
 
 function sectionResource(hostname: string, pathPrefix: string): SectionAllowedResource {
   if (!validSectionPathPrefix(pathPrefix)) {
-    resourceError("RESOURCE_URL_INVALID", `Section paths must be at most ${MAX_SECTION_PATH_PREFIX_LENGTH} characters of a normal URL path`);
+    resourceError(
+      "RESOURCE_URL_INVALID",
+      `Section paths must be a normal URL path of at most ${MAX_SECTION_PATH_PREFIX_LENGTH} characters, without ";" or encoded separators`
+    );
   }
   return { type: "section", hostname, includeSubdomains: false, pathPrefix };
 }
@@ -651,21 +696,13 @@ export function normalizePreciseWaypointResource(url: unknown): PreciseAllowedRe
 // ---------------------------------------------------------------------------
 
 /**
- * The part of a path below a section prefix may not hide a separator or a
- * dot segment from the WHATWG parser: servers such as nginx decode `%2F`
- * before resolving `..`, and Tomcat, Spring and Jetty treat `..;` as `..`.
- * So below the prefix, `;`, `%2F`, `%5C`, `%2E`, `%25` (any case) and any `%`
- * that does not start a two-digit escape fail closed.
- */
-const SECTION_PATH_ESCAPE = /;|%(?![0-9A-Fa-f]{2})|%2[EeFf5]|%5[Cc]/;
-
-/**
  * Normative matcher. `website`: http(s), host equal to or below the hostname.
  * `section`: https, default port, the exact host, and the path equal to the
  * prefix or below it at a "/" boundary (case-sensitive; query and fragment
- * ignored), with no `;`, encoded separator, encoded dot or malformed escape
- * below the prefix. `resource`: the URL identifies the same provider resource.
- * Credentials, unparsable input and out-of-contract entries are never allowed.
+ * ignored), with the part below the prefix a safe path tail (see
+ * RESTRICTION_PATH_TAIL_PATTERN). `resource`: the URL identifies the same
+ * provider resource. Credentials, unparsable input and out-of-contract
+ * entries are never allowed.
  */
 export function isUrlAllowedByResource(url: unknown, resource: unknown): boolean {
   const entry = validateAllowedResource(resource);
@@ -686,7 +723,7 @@ export function isUrlAllowedByResource(url: unknown, resource: unknown): boolean
   if (entry.type === "section") {
     return host === entry.hostname
       && (parsed.pathname === entry.pathPrefix || parsed.pathname.startsWith(`${entry.pathPrefix}/`))
-      && !SECTION_PATH_ESCAPE.test(parsed.pathname.slice(entry.pathPrefix.length));
+      && safePathTail(parsed.pathname.slice(entry.pathPrefix.length));
   }
   const identity = identityFromParsedUrl(parsed);
   return !!identity && identity.provider === entry.provider && identity.resourceId === entry.resourceId;
