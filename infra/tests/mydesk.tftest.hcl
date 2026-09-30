@@ -343,11 +343,11 @@ run "contact_imports_do_not_require_discipline_imports" {
 run "usage_computation_ledger_target" {
   command = plan
   variables {
-    environment = "test"
+    environment        = "test"
     rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupDaysPostExpand.tables)
   }
   assert {
-    condition = length(local.rls_post_expand_tables) == 127 && contains(local.rls_post_expand_tables, "classpilot_usage_rollup_days")
+    condition     = length(local.rls_post_expand_tables) == 127 && contains(local.rls_post_expand_tables, "classpilot_usage_rollup_days")
     error_message = "The complete target must retain prior admissions and add the computation ledger."
   }
 }
