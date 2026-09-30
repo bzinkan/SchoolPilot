@@ -22,7 +22,6 @@ import {
 import { classpilotFlightPathApplyPayload } from "../src/services/classpilotPreciseRestrictions.js";
 import { snapshotHeartbeatHotPathMetrics } from "../src/services/heartbeatHotPathMetrics.js";
 import { sanitizeExtensionMonitoringEvent } from "../src/services/classpilotMonitoringEventSanitizer.js";
-import { classpilotTeacherIntentForUrl } from "../src/services/classpilotTeacherIntent.js";
 import type { ClasspilotClassroomState, ClasspilotStudentControlState } from "../src/schema/classpilot.js";
 
 // Roadmap PR 2 projection: precise Waypoints and Flight Paths reach only an
@@ -337,22 +336,7 @@ describe("precise restriction projection", () => {
   });
 });
 
-describe("precise restriction reporting", () => {
-  it("attributes a URL allowed by a delivered precise Flight Path entry to the Flight Path", () => {
-    const video = normalizeAllowedResource({ url: "https://youtu.be/dQw4w9WgXcQ" });
-    const flightPath = { active: true, allowedDomains: ["khanacademy.org"], resources: [video] };
-    assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5", { allowedDomains: [], flightPath }), "flight_path");
-    assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=aaaaaaaaaaa", { allowedDomains: [], flightPath }), null,
-      "another video on the same host is not the teacher's choice");
-    assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ", {
-      allowedDomains: [], flightPath: { ...flightPath, active: false },
-    }), null);
-    assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ", {
-      allowedDomains: [], flightPath: { ...flightPath, resources: "garbage" },
-    }), null);
-    assert.equal(classpilotTeacherIntentForUrl("https://www.khanacademy.org/math", { allowedDomains: [], flightPath }), "flight_path");
-  });
-
+describe("precise restriction reporting (pure)", () => {
   it("accepts the resource policy source on blocked-navigation events", () => {
     const event = sanitizeExtensionMonitoringEvent({
       sourceEventId: "evt-precise-policy",

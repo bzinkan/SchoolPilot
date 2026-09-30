@@ -504,3 +504,19 @@ test("the rollback clear ends every stored precise restriction with one revision
     process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "true";
   }
 });
+
+test("teacher intent attributes a URL allowed by a delivered precise Flight Path entry to the Flight Path", async () => {
+  const { classpilotTeacherIntentForUrl } = await import("../src/services/classpilotTeacherIntent.js");
+  const video = normalizeAllowedResource({ url: "https://youtu.be/dQw4w9WgXcQ" });
+  const flightPath = { active: true, allowedDomains: ["khanacademy.org"], resources: [video] };
+  assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=5", { allowedDomains: [], flightPath }), "flight_path");
+  assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=aaaaaaaaaaa", { allowedDomains: [], flightPath }), null,
+    "another video on the same host is not the teacher's choice");
+  assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ", {
+    allowedDomains: [], flightPath: { ...flightPath, active: false },
+  }), null);
+  assert.equal(classpilotTeacherIntentForUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ", {
+    allowedDomains: [], flightPath: { ...flightPath, resources: "garbage" },
+  }), null);
+  assert.equal(classpilotTeacherIntentForUrl("https://www.khanacademy.org/math", { allowedDomains: [], flightPath }), "flight_path");
+});
