@@ -486,6 +486,32 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     });
   });
 
+  it("keeps newest AI ties, school ownership and teacher intent isolated in each student timeline", async () => {
+    const schoolId = await createSchool("Student AI lookup", "720");
+    const studentA = await createStudent(schoolId, "AI A"), studentB = await createStudent(schoolId, "AI B");
+    const date = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -2);
+    const window = rollup.classpilotUsageRollupDay(date, TIME_ZONE);
+    const start = window.dayStartUtc.getTime() + 9 * 3600_000;
+    const tied = await heartbeat({ schoolId, studentId: studentA, at: start, url: "https://lesson.example.test/", category: "educational" });
+    const exempt = await heartbeat({ schoolId, studentId: studentA, at: start + 20_000, url: "https://lesson.example.test/", category: "non-educational" });
+    const fallback = await heartbeat({ schoolId, studentId: studentB, at: start, url: "https://lesson.example.test/", category: "educational" });
+    const decisionAt = wall(start + 60_000);
+    await system.query(`INSERT INTO classpilot_ai_decisions(id,school_id,heartbeat_id,category,teacher_intent_source,created_at) VALUES
+      ($1,$2,$3,'educational',NULL,$4::timestamp),
+      ($5,$2,$3,'non-educational',NULL,$4::timestamp),
+      ($6,$7,$3,'educational',NULL,$8::timestamp),
+      ($9,$2,$10,'non-educational','flight_path',$4::timestamp),
+      ($11,$2,$12,'non-educational',NULL,$13::timestamp)`,
+      [`a-${randomUUID()}`, schoolId, tied, decisionAt, `z-${randomUUID()}`, randomUUID(), O.schoolId,
+        wall(start + 120_000), randomUUID(), exempt, randomUUID(), fallback, wall(window.dayStartUtc.getTime() - 1000)]);
+    const result = await rollup.rollupClasspilotUsageDay(system, { schoolId, day: window, windowEndUtc: window.dayEndUtc, exclusions: [] });
+    assert.deepEqual([result.seconds, result.heartbeatCount], [45, 3]);
+    const byStudentCategory = Object.fromEntries((await rows(schoolId)).map(row => [`${row.student_id}:${row.classification}`, [row.seconds, row.heartbeat_count]]));
+    assert.deepEqual(byStudentCategory, {
+      [`${studentA}:non-educational`]: [15, 1], [`${studentA}:educational`]: [15, 1], [`${studentB}:educational`]: [15, 1],
+    });
+  });
+
   it("serves no Digital Usage route unless both modes are on and the table is admitted", async () => {
     const off = await usage("");
     assert.equal(off.status, 404);
