@@ -211,32 +211,42 @@ export async function previewSchoolScheduling(options: {
 
 export async function saveSchoolScheduling(options: { schoolId: string; config: unknown; expectedRevision: number; previewToken: string; actorId: string }) {
   const config = normalizeSchoolSchedulingConfig(options.config);
-  const { withClasspilotSchedulePostCommitTransaction, supersedePendingScheduleChangesForGroup, recordClasspilotMonitoringPolicyChange } = await import("./storage.js");
+  const { withClasspilotSchedulePostCommitTransaction } = await import("./storage.js");
   return withClasspilotSchedulePostCommitTransaction(async (tx) => {
     const database = tx as unknown as typeof db;
     if (!await lockStaffAssignmentLifecycleSchool(tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0], options.schoolId)) throw schedulingError("School not found.", "SCHOOL_NOT_FOUND", 404);
     await database.select({ id: schools.id }).from(schools).where(eq(schools.id, options.schoolId)).for("update");
     await database.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`passpilot-class-source:${options.schoolId}`}))`);
     await assertClasspilotEntitled(options.schoolId, database, { lock: true });
-    const current = await getSchoolSchedulingContext(options.schoolId, database);
-    if (JSON.stringify(current.config.scheduleProfiles ?? []) !== JSON.stringify(config.scheduleProfiles ?? []) || JSON.stringify(current.config.profileApplications ?? []) !== JSON.stringify(config.profileApplications ?? [])) {
-      throw schedulingError("Use Schedule Profiles to save, apply, or cancel a profile. Reload this calendar draft to keep current profile applications.", "SCHEDULE_PROFILE_WORKFLOW_REQUIRED", 409);
-    }
-    const preview = await previewSchoolScheduling({ schoolId: options.schoolId, config, dbInstance: database });
-    if (preview.revision !== options.expectedRevision || preview.previewToken !== options.previewToken) throw schedulingError("Schedules changed since this preview. Preview the changes again.", "SCHEDULE_PREVIEW_STALE", 409);
-    if (preview.blockers.length) throw schedulingError(preview.blockers[0]!.message, preview.blockers[0]!.code, 409);
-    const [saved] = await database.insert(classpilotSchoolSchedules).values({ schoolId: options.schoolId, config, revision: preview.revision + 1, updatedBy: options.actorId })
-      .onConflictDoUpdate({ target: classpilotSchoolSchedules.schoolId, set: { config, revision: preview.revision + 1, updatedAt: new Date(), updatedBy: options.actorId } }).returning();
-    recordClasspilotMonitoringPolicyChange(database, options.schoolId);
-    // A pending request was previewed against older base windows. Supersede it
-    // through the existing workflow helper; approved unaffected swaps remain.
-    const affected = new Set(preview.changes.map((change) => change.classId));
-    // changes is a bounded display sample, so use every scheduled class when
-    // there are more changes than displayed to avoid truncating workflow work.
-    if (preview.changedOccurrences > preview.changes.length) {
-      for (const group of await database.select({ id: groups.id }).from(groups).where(eq(groups.schoolId, options.schoolId))) affected.add(group.id);
-    }
-    for (const groupId of affected) await supersedePendingScheduleChangesForGroup({ schoolId: options.schoolId, groupId, actorId: options.actorId, reason: "class_configuration_changed", dbInstance: database });
-    return { config: saved!.config, revision: saved!.revision, changedOccurrences: preview.changedOccurrences };
+    return saveSchoolSchedulingInTransaction({ ...options, config, dbInstance: database });
   });
+}
+
+/** Internal canonical writer. Callers must lock and verify their product/staff authority first. */
+export async function saveSchoolSchedulingInTransaction(options: {
+  schoolId: string; config: SchoolSchedulingConfig; expectedRevision: number; previewToken: string;
+  actorId: string; dbInstance: typeof db;
+}) {
+  const database = options.dbInstance, config = options.config;
+  const { supersedePendingScheduleChangesForGroup, recordClasspilotMonitoringPolicyChange } = await import("./storage.js");
+  const current = await getSchoolSchedulingContext(options.schoolId, database);
+  if (JSON.stringify(current.config.scheduleProfiles ?? []) !== JSON.stringify(config.scheduleProfiles ?? []) || JSON.stringify(current.config.profileApplications ?? []) !== JSON.stringify(config.profileApplications ?? [])) {
+    throw schedulingError("Use Schedule Profiles to save, apply, or cancel a profile. Reload this calendar draft to keep current profile applications.", "SCHEDULE_PROFILE_WORKFLOW_REQUIRED", 409);
+  }
+  const preview = await previewSchoolScheduling({ schoolId: options.schoolId, config, dbInstance: database });
+  if (preview.revision !== options.expectedRevision || preview.previewToken !== options.previewToken) throw schedulingError("Schedules changed since this preview. Preview the changes again.", "SCHEDULE_PREVIEW_STALE", 409);
+  if (preview.blockers.length) throw schedulingError(preview.blockers[0]!.message, preview.blockers[0]!.code, 409);
+  const [saved] = await database.insert(classpilotSchoolSchedules).values({ schoolId: options.schoolId, config, revision: preview.revision + 1, updatedBy: options.actorId })
+    .onConflictDoUpdate({ target: classpilotSchoolSchedules.schoolId, set: { config, revision: preview.revision + 1, updatedAt: new Date(), updatedBy: options.actorId } }).returning();
+  recordClasspilotMonitoringPolicyChange(database, options.schoolId);
+  // A pending request was previewed against older base windows. Supersede it
+  // through the existing workflow helper; approved unaffected swaps remain.
+  const affected = new Set(preview.changes.map((change) => change.classId));
+  // changes is a bounded display sample, so use every scheduled class when
+  // there are more changes than displayed to avoid truncating workflow work.
+  if (preview.changedOccurrences > preview.changes.length) {
+    for (const group of await database.select({ id: groups.id }).from(groups).where(eq(groups.schoolId, options.schoolId))) affected.add(group.id);
+  }
+  for (const groupId of affected) await supersedePendingScheduleChangesForGroup({ schoolId: options.schoolId, groupId, actorId: options.actorId, reason: "class_configuration_changed", dbInstance: database });
+  return { config: saved!.config, revision: saved!.revision, changedOccurrences: preview.changedOccurrences };
 }

@@ -19,6 +19,7 @@ export default defineConfig({
     "./src/schema/core.ts",
     "./src/schema/students.ts",
     "./src/schema/passpilot.ts",
+    "./src/schema/passpilotAppointments.ts",
     "./src/schema/gopilot.ts",
     "./src/schema/classpilot.ts",
     "./src/schema/mailpilot.ts",

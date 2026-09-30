@@ -25,6 +25,8 @@ $script:TestApiArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolp
 $script:TestWorkerArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:177'
 $script:BaselineTables = 'students,passes,classpilot_ai_decisions,flight_paths,block_lists'
 $script:RulesTables = @('passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials')
+$script:AppointmentRegistry = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../src/config/rlsRegistry.json'))
+$script:AppointmentTables = @((($script:AppointmentRegistry | ConvertFrom-Json -Depth 30 -DateKind String).inventories.passpilotAppointmentsPostExpand.tables))
 $script:SchoolA = '0f1e2d3c-4b5a-4c6d-8e7f-a1b2c3d4e5f6'
 $script:SchoolB = '9a8b7c6d-5e4f-4a3b-9c2d-e1f0a9b8c7d6'
 
@@ -67,6 +69,15 @@ function Get-ServingState([string]$Role) {
 }
 function Invoke-GitText {
     param([string[]]$Arguments, [string]$RepositoryRoot)
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotReportsMode.ts') {
+        if ($script:Mock.CompatibleReportsWriter) { return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;' }
+        return '// earlier report projection'
+    }
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotAppointmentsMode.ts') {
+        if ($script:Mock.CompatibleAppointmentWriter) { return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;' }
+        return 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;'
+    }
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/rlsRegistry.json') { return $script:AppointmentRegistry }
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/classpilotUsageModes.ts') {
         if ($script:Mock.CompatibleUsageWriter) { return 'export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;' }
         return '// pre-ledger release'
@@ -91,7 +102,7 @@ function Reset-ProductMock {
         Services = [pscustomobject]@{ Api = (New-TestService api $script:TestApiArn 3); Worker = (New-TestService worker $script:TestWorkerArn 1) }
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
-        CompatibleUsageWriter = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
+        CompatibleUsageWriter = $true; CompatibleAppointmentWriter = $true; CompatibleReportsWriter = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
     }
     $script:CurrentToolSha = $script:TestSha
     $script:ApiServiceMutationStarted = $false; $script:WorkerServiceMutationStarted = $false
@@ -208,9 +219,13 @@ function Invoke-TestRollback($Plan) {
 }
 
 try {
-    # --- Configuration: only the seven managed names, exact values only ---
+    # --- Configuration: only the eight managed names, exact values only ---
     Reset-ProductMock
     Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_RULES_MODE = 'on' }))['PASSPILOT_RULES_MODE'] -ceq 'on') 'An exact managed value must parse.'
+    Assert-Condition ((ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'v2' }))['PASSPILOT_REPORTS_MODE'] -ceq 'v2') 'Reports must parse the exact reviewed v2 value.'
+    foreach ($value in @('on', 'V2', ' v2', 'v2 ')) {
+        Assert-Throws { ConvertTo-ProductChanges (New-TestConfig @{ PASSPILOT_REPORTS_MODE = $value }) } 'Report mode aliases must be refused.'
+    }
     foreach ($name in @('NODE_ENV', 'CLIENT_URL', 'DATABASE_URL', 'CLASSPILOT_SCHEDULED_CLASSROOM_MODE', 'CLASSPILOT_LIVE_VIEW_SIGNALING_ENABLED', 'PASSPILOT_RULES_MODE ')) {
         Assert-ThrowsMatch { ConvertTo-ProductChanges (New-TestConfig @{ $name = 'on' }) } 'not a wave-1 product flag' "Unmanaged name '$name' must be refused."
     }
@@ -356,6 +371,7 @@ try {
             Reset-ProductMock
             foreach ($live in $gate.Live.GetEnumerator()) { Set-BothEnvironment $live.Key $live.Value }
             Add-BothTables $gate.Tables
+            if ($gate.Name -ceq 'PASSPILOT_APPOINTMENTS_MODE') { Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',') }
         }
         foreach ($table in $gate.Tables) {
             foreach ($role in @('api', 'worker')) {
@@ -375,11 +391,45 @@ try {
         Assert-NoMutation 'Precondition checks must be read-only.'
     }
     # Preconditions are re-checked at Apply against the live task definitions.
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    $appointmentConfig = New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }
+    $appointmentPlan = New-TestProductPlan $appointmentConfig
+    $script:Mock.CompatibleAppointmentWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan $appointmentConfig } 'atomic writer contract version 2' 'Admitted tables cannot enable a pre-eligibility-lock serving image.'
+    Assert-ThrowsMatch { Invoke-ProductApply $appointmentPlan.plan $appointmentPlan.sha256 $script:TestDirectory } 'atomic writer contract version 2' 'Apply must recheck atomic compatibility before any mutation.'
+    Assert-NoMutation 'Incompatible appointment image must fail before registration or service mutation.'
+    Set-BothEnvironment 'PASSPILOT_APPOINTMENTS_MODE' 'on'
+    Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_APPOINTMENTS_MODE = 'off' }))) 'Emergency appointment turn-off must remain possible on an older image.'
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    Set-BothEnvironment 'PASSPILOT_APPOINTMENTS_MODE' 'on'; Remove-TestTable 'worker' 'classpilot_usage_rollup_days'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } '128-table admission' 'Continuing appointment activation requires every preserved admission on the worker.'
     Reset-ProductMock; Add-BothTables $script:RulesTables
     $plan = New-TestProductPlan $rulesConfig
     Remove-TestTable 'worker' 'passpilot_pass_denials'
     Assert-ThrowsMatch { Invoke-ProductApply $plan.plan $plan.sha256 $script:TestDirectory } 'PASSPILOT_RULES_MODE=on requires' 'Apply must re-check RLS admission.'
     Assert-NoMutation 'A failed Apply precondition must not mutate.'
+
+    # Reports require the serving confidentiality/aggregate contract and full
+    # admission at both Plan and Apply, even when v2 is already active.
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ',')
+    $reportsConfig = New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'v2' }
+    $reportsPlan = New-TestProductPlan $reportsConfig
+    Assert-Condition ('passpilotReports' -cin @($reportsPlan.plan.activations)) 'Reports must be an explicit governed activation.'
+    $script:Mock.CompatibleReportsWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } 'report contract version 2' 'Plan must reject a pre-contract report projection.'
+    Assert-ThrowsMatch { Invoke-ProductApply $reportsPlan.plan $reportsPlan.sha256 $script:TestDirectory } 'report contract version 2' 'Apply must recheck report compatibility.'
+    Assert-NoMutation 'An incompatible report image cannot mutate task definitions.'
+    Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'; Set-BothEnvironment 'RLS_GUC_ENABLED' 'false'
+    Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'off' }))) 'Reports emergency turn-off must remain available.'
+    foreach ($role in @('api', 'worker')) {
+        foreach ($table in @('passes', 'passpilot_pass_denials', 'passpilot_appointments', 'classpilot_usage_rollup_days')) {
+            Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ','); Remove-TestTable $role $table
+            Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } '128-table admission' "Reports must preserve $table admission on $role."
+        }
+    }
+    Reset-ProductMock; Set-BothEnvironment 'RLS_ENABLED_TABLES' ($script:AppointmentTables -join ','); Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'
+    Remove-TestTable 'worker' 'students'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } '128-table admission' 'Keeping v2 on must recheck admission.'
 
     # --- Digital usage requires the usage rollup ---
     Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days')

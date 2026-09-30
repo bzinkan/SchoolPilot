@@ -17,6 +17,7 @@ import {
 } from "./db/passpilotRulesMigration.js";
 import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigration.js";
 import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
+import { PASSPILOT_APPOINTMENTS_SQL } from "./db/passpilotAppointmentsMigration.js";
 import { FLIGHT_PATH_RESOURCES_EXPAND_SQL } from "./db/flightPathResourcesMigration.js";
 import { FLIGHT_PATH_CONTENT_REVISION_SQL } from "./db/flightPathContentRevisionMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
@@ -4989,6 +4990,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL);
   await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL);
   await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
+  await pool.query(PASSPILOT_APPOINTMENTS_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
   await pool.query(FLIGHT_PATH_CONTENT_REVISION_SQL);
 

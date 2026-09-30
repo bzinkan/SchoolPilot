@@ -32,6 +32,7 @@ export function usePassPilotAuth() {
   const user = unifiedUser
     ? {
         id: unifiedUser.id,
+        authVersion: unifiedUser.authVersion,
         email: unifiedUser.email,
         role,
         roles,

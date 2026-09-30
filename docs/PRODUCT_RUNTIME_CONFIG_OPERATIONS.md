@@ -20,7 +20,8 @@ survive each clone unchanged.
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` | `off`, `on` | `off` | School Library (roadmap PR 1) | none |
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` | comma-separated lower-case school UUIDs, no spaces, no duplicates | every school (when the mode is `on`) | School Library allowlist | none |
 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | PassPilot rules (PR 7) | RLS admission of `passpilot_destination_policies`, `passpilot_pass_limits`, `passpilot_encounter_restrictions`, `passpilot_pass_denials` |
-| `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | RLS admission of `passpilot_appointments` |
+| `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | complete preserved 128-table admission; serving source atomic writer contract v2 on both services |
+| `PASSPILOT_REPORTS_MODE` | `off`, `v2` | `off` | PassPilot Reports v2 | complete preserved 128-table admission; report contract v2 in both services' exact serving source |
 | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | `legacy`, `shadow`, `set_based`, `on` | `shadow` | `daily_usage` rollup (PR 10a) | promotion to `set_based`/`on`: live mode `shadow` plus an evidence file |
 | `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1 |
 | `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
@@ -65,7 +66,7 @@ Everything else is refused, including:
 - Production must be steady: both services stable on one completed deployment, API
   desired count 1–3, the reviewed `100/200` deployment configuration, autoscaling not
   held, the reviewed task sizes (API 1024 CPU / 2048 MiB, worker 512 / 1024), and API
-  and worker carrying identical values for all seven names.
+  and worker carrying identical values for all eight names.
 - Use a dedicated evidence directory: an absolute path outside the repository,
   either a new leaf or one this tool created (marker file
   `.schoolpilot-product-runtime-evidence-v1`). The My Desk and ClassPilot evidence
@@ -188,6 +189,22 @@ runs at Plan and again at Apply. Admission itself happens only through
 `deploy.sh production --backend --enable-rls-table <bundle>`. The feature's mode
 reader also stays off without admission; the tool refuses so a plan can never record
 a feature as on when it cannot be.
+
+**Appointment writers.** `PASSPILOT_APPOINTMENTS_MODE=on` requires the complete immutable
+`passpilotAppointmentsPostExpand` inventory on API and worker and atomic writer
+contract version 2 in their exact serving source SHA. Plan and Apply check this
+even when appointments were already on. Keep schema, grants, RLS admission and
+the explicit pass-return trigger during a schema-aware feature-off rollback.
+See `docs/PASSPILOT_APPOINTMENTS.md` for staged setup and lifecycle requirements.
+
+**Reports contract.** `PASSPILOT_REPORTS_MODE=v2` requires full preserved 128-table
+admission and RLS binding on API and worker, plus Reports contract version 2 in
+their exact serving source SHA/digest. Plan and Apply verify this while v2 remains
+enabled. Turning reportsoff remains available. No new schema is expanded for
+Reports; retained appointment outcomes are readable even with appointments off.
+See `docs/PASSPILOT_REPORTS_V2.md` for verified role scope, denominator definitions,
+encounter confidentiality and strict audited CSV. This setter does not authorize
+arbitrary older appointment writers after first appointment activation.
 
 **Digital usage needs the rollup.** In every plan's resulting state,
 `CLASSPILOT_DIGITAL_USAGE_MODE=on` requires `CLASSPILOT_USAGE_ROLLUP_MODE=on`. Turn them on
