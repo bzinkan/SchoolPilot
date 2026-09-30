@@ -141,7 +141,7 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 
 - Current PassPilot behavior is preserved.
 - Rules: student maximum passes per day and per period or class window; per-destination policy (bathroom capacity, expected duration, optional auto approval; separate nurse and office policies); encounter rules that stop configured student pairs from holding overlapping active passes. The issuance transaction evaluates active pass, daily limit, period limit, destination capacity and encounter restriction atomically, without race conditions.
-- Appointments: scheduled appointment passes (for example, Student, Counselor, 1:15 PM) with school, student, destination, scheduled time, requesting staff, reason or notes, notification lead, status and timestamps. An upcoming appointment can notify the teacher or student. An appointment does not mark the student out of class before activation.
+- Appointments v1: existing PassPilot managers schedule/edit/cancel one-time explicit windows; currently authorized teachers receive staff-only reminders and manually activate through the canonical pass issuer. Private manager notes never enter pass/timeline/kiosk records. No automatic issuance, recurrence, GoPilot role inheritance or student/kiosk reminders. The server/schema contract is in `PASSPILOT_APPOINTMENTS.md`; separate PassPilot-only school-year setup and staff reminder/UI slices precede activation acceptance.
 - Analytics: passes per student, average and (where useful) median duration, overdue percentage, busiest periods and destinations, capacity denials, rule denials and appointment completion. No stigmatizing labels such as "problem student" or "frequent flyer"; write "12 passes this week".
 - Wave-1 scope for PR 7: destination capacity, default and per-student daily and period limits, encounter restrictions, and an override for admin roles only. Auto approval stays unenforced and unsurfaced (Decision 6).
 
@@ -198,7 +198,7 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 | PR 6 | Google Classroom Assignment quick actions | A | Next plan cycle |
 | ClassPilot 2.10.0 | One extension release carrying `preciseRestrictionResourcesV1` and `focusTabV1` | A | Contract defined; ships after server PRs 2–5 |
 | PR 7 | PassPilot Rules | B | Merged in #554: `PASSPILOT_RULES_MODE` off, not deployed |
-| PR 8 | PassPilot Appointments | B | Outlined |
+| PR 8 | PassPilot Appointments | B | Server/schema/atomic activation implemented locally with mode off; PassPilot-only year setup and staff reminder/UI slices follow separately, then activation acceptance |
 | PR 9 | PassPilot Analytics | B | Outlined |
 | PR 10a (split of PR 10) | Daily usage rollup hardening, shadow-safe | B | Merged in #548 |
 | PR 10b (split of PR 10) | Digital Usage rollup table + read API | B | Merged in #556: both modes off, not deployed |
@@ -292,7 +292,7 @@ Wave-1 product flags are environment modes with exact values `off` or `on`; unse
 | PR 1 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` | `off`, `on` | `off` | Master plan flag `sharedTeachingResources`. Surfaced to the client only through `features.sharedTeachingResources`. |
 | PR 1 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` | comma-separated school IDs | empty | Optional allowlist. With mode `on`, an empty list means every school. |
 | PR 7 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | Master plan flag `passpilotRules`. Reads `off` unless its four tables are RLS-admitted at runtime; PR 1a refuses `on` unless they are in the live `RLS_ENABLED_TABLES`. |
-| PR 8 | `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | Master plan flag `passpilotAppointments`. Same RLS precondition in PR 1a. |
+| PR 8 | `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | Full preserved 128-table admission and serving-source atomic writer contract v1 on API/worker; configured school-year boundaries and grants before activation. |
 | PR 9 | `PASSPILOT_REPORTS_V2_MODE` | `off`, `on` | `off` | Outline name. Not in PR 1a's wave-1 allowlist; PR 9 adds it to that tool by review. |
 | PR 10a | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | existing `legacy`, `shadow`, `set_based`; PR 10a adds `on` as an alias of `set_based` | unset = `shadow` | Existing variable (`src/services/scheduler.ts:906-913`). Unset on the live API and worker revisions (read-only check, 2026-09-29). PR 1a refuses `on` without a shadow-mismatch evidence file from three clean school days. |
 | PR 10b | `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | Reads `off` unless `classpilot_usage_rollups` is RLS-admitted. |

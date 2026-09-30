@@ -41,6 +41,7 @@ import { publishWS } from "../realtime/ws-redis.js";
 import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
 import { purgeExpiredPasspilotPassDenials } from "./passpilotRules.js";
+import { maintainPasspilotAppointments } from "./passpilotAppointmentsLifecycle.js";
 import {
   getStaffIdentityIntegrityScanIntervalMinutes,
   runStaffIdentityIntegrityScan,
@@ -319,6 +320,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("cleanupSchoolDiscipline", async () => { try { await cleanupSchoolDiscipline(); } catch { console.error(JSON.stringify({event:"school_discipline_cleanup_failed"})); } });
     scheduleLockedJob("cleanupMyDeskImports", async () => { try { await cleanupMyDeskImports(); } catch { console.error(JSON.stringify({event:"mydesk_import_cleanup_failed"})); } });
     scheduleLockedJob("cleanupStudentInformationImports", async () => { try { await cleanupStudentInformationImports(); } catch { console.error(JSON.stringify({event:"student_information_cleanup_failed"})); } });
+    scheduleLockedJob("maintainPasspilotAppointments", async () => { try { await maintainPasspilotAppointments(schedulerPool); } catch { console.error(JSON.stringify({ event: "passpilot_appointments_maintenance_failed" })); } });
     scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
@@ -357,6 +359,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
   }, 60 * 1000);
   scheduleLockedJob("purgePasspilotPassDenials", purgePasspilotPassDenials);
+  scheduleLockedJob("maintainPasspilotAppointments", async () => { try { await maintainPasspilotAppointments(schedulerPool); } catch { console.error(JSON.stringify({ event: "passpilot_appointments_maintenance_failed" })); } });
   scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);

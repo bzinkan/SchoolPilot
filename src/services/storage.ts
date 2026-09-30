@@ -4470,12 +4470,13 @@ async function assertLegacyPasspilotClassAuthorization(
 
 export async function createLegacyPass(
   data: InsertPass,
-  authorization: LegacyPasspilotClassAuthorization
+  authorization: LegacyPasspilotClassAuthorization,
+  transaction?: PasspilotClassTransaction
 ): Promise<Pass> {
   // One evaluation instant, taken before any lock wait (issued_at defaults to
   // the transaction start, so both land on the same school-local day).
   const ruleEvaluatedAt = new Date();
-  return db.transaction(async (tx) => {
+  return (transaction ?? db).transaction(async (tx) => {
     let lockedKioskSchool: { kioskGradeId: string | null } | undefined;
     if (authorization?.kiosk && !authorization.kioskSessionId) {
       [lockedKioskSchool] = await tx
@@ -26972,11 +26973,12 @@ export async function createCanonicalPass(
     // Per-device kiosk session: when set (with kiosk: true), the checkout is
     // validated against the session row instead of the school-global slot.
     kioskSessionId?: string | null;
-  } = {}
+  } = {},
+  transaction?: PasspilotClassTransaction
 ): Promise<Pass> {
   // One evaluation instant, taken before any lock wait (see createLegacyPass).
   const ruleEvaluatedAt = new Date();
-  return db.transaction(async (tx) => {
+  return (transaction ?? db).transaction(async (tx) => {
     let lockedKioskSchool: { kioskClasspilotGroupId: string | null } | undefined;
     if (authorization.kiosk && !authorization.kioskSessionId) {
       [lockedKioskSchool] = await tx
@@ -27328,7 +27330,7 @@ function sameStringSet(left: string[], right: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-async function takePasspilotClassLock(
+export async function takePasspilotClassLock(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
   schoolId: string
 ): Promise<void> {

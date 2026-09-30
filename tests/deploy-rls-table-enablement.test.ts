@@ -23,7 +23,7 @@ const productionTfvars = readFileSync(new URL("../infra/production.tfvars", impo
 const rlsRegistry = JSON.parse(
   readFileSync(new URL("../src/config/rlsRegistry.json", import.meta.url), "utf8"),
 ) as {
-  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[] };
+  reviewedEnablementRequests: { classpilotClassTools: string[]; passpilotKioskSchedule: string[]; mydesk: string[]; mydeskSeating: string[]; mydeskImports: string[]; mydeskReconciliation: string[]; mydeskWorkspaceAndDiscipline: string[]; studentInformation: string[]; classpilotTeacherPreferences: string[]; importProcessingStages: string[]; passpilotRules: string[]; classpilotUsageRollups: string[]; classpilotUsageRollupDays: string[]; passpilotAppointments: string[] };
   inventories: {
     historicalObservedProduction: { count: number; tables: string[] };
     schoolPilot270PostExpand: { count: number; tables: string[] };
@@ -36,6 +36,7 @@ const rlsRegistry = JSON.parse(
     passpilotRulesPostExpand: { count: number; tables: string[] };
     classpilotUsageRollupsPostExpand: { count: number; tables: string[] };
     classpilotUsageRollupDaysPostExpand: { count: number; tables: string[] };
+    passpilotAppointmentsPostExpand: { count: number; tables: string[] };
   };
 };
 
@@ -67,6 +68,17 @@ function environmentValue(definition: ReturnType<typeof taskDefinition>, name: s
 }
 
 describe("one-release RLS table enablement", () => {
+  it("admits only appointments after the successful-computation ledger", () => {
+    const previous = rlsRegistry.inventories.classpilotUsageRollupDaysPostExpand.tables;
+    const table = "passpilot_appointments";
+    const api = taskDefinition("api", previous), worker = taskDefinition("scheduler-worker", previous);
+    verifyLiveRlsEnablementSources({ apiTaskDefinition: api, workerTaskDefinition: worker, table });
+    const candidates = [{ taskDefinition: api, containerName: "api" }, { taskDefinition: worker, containerName: "scheduler-worker" }];
+    for (const candidate of candidates) addReviewedRlsTable(candidate.taskDefinition, { containerName: candidate.containerName, table });
+    verifyEnabledRlsCandidates({ taskDefinitions: candidates, table, expectedPreviousTables: previous });
+    assert.deepEqual(environmentValue(api, "RLS_ENABLED_TABLES")?.split(","), rlsRegistry.inventories.passpilotAppointmentsPostExpand.tables);
+    assert.throws(() => addReviewedRlsTable(taskDefinition("api", previous), { containerName: "api", table: `${table},passes` }), /reviewed/);
+  });
   it("admits only the computation ledger from the aggregate-table target", () => {
     const previous = rlsRegistry.inventories.classpilotUsageRollupsPostExpand.tables;
     const table = rlsRegistry.reviewedEnablementRequests.classpilotUsageRollupDays.join(",");
@@ -294,6 +306,7 @@ describe("one-release RLS table enablement", () => {
       ...rlsRegistry.reviewedEnablementRequests.passpilotRules,
       ...rlsRegistry.reviewedEnablementRequests.classpilotUsageRollups,
       ...rlsRegistry.reviewedEnablementRequests.classpilotUsageRollupDays,
+      ...rlsRegistry.reviewedEnablementRequests.passpilotAppointments,
     ]);
     const api = taskDefinition("api");
     const worker = taskDefinition("scheduler-worker");
