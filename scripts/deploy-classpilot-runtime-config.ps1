@@ -102,10 +102,22 @@ $script:RoadmapProfileCapabilities = @{
     "school-website-block-off" = "schoolWebsiteBlockEnforcementV1"
     "read-only-observation-pilot" = "screenshotReadOnlyObservationV1"
     "read-only-observation-off" = "screenshotReadOnlyObservationV1"
+    "precise-restriction-resources-pilot" = "preciseRestrictionResourcesV1"
+    "precise-restriction-resources-off" = "preciseRestrictionResourcesV1"
 }
-$script:RoadmapCapabilities = @("afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability)
-$script:RoadmapPilotModes = @("after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot")
-$script:RoadmapOffModes = @("after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off")
+$script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
+$script:RoadmapCapabilities = @(
+    "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
+    $script:PreciseRestrictionCapability
+)
+$script:RoadmapPilotModes = @(
+    "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
+    "precise-restriction-resources-pilot"
+)
+$script:RoadmapOffModes = @(
+    "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
+    "precise-restriction-resources-off"
+)
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
     $script:FastPreviewCapability,
@@ -149,6 +161,7 @@ $script:CapabilityFlags = [ordered]@{
     kioskLaunchTicketV1           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V1"
     kioskLaunchTicketV2           = "CLASSPILOT_CAP_KIOSK_LAUNCH_TICKET_V2"
     scheduledClassroomV1          = "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1"
+    preciseRestrictionResourcesV1 = "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1"
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -178,6 +191,62 @@ $script:LateSignInBlockedZipSha256s = @(
 )
 $script:FastPreviewRequiredReleaseTag = "v2.8.2"
 $script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
+# preciseRestrictionResourcesV1 is negotiated only by ClassPilot 2.10.0, which is
+# not tagged yet. The pilot stays refused until a reviewed follow-up binds the
+# exact MANAGED-CHROMEBOOK VERIFIED 2.10.0 package here (tag, merge commit, ZIP
+# SHA-256). The off profile is always available.
+$script:PreciseRestrictionRequiredReleaseTag = ""
+$script:PreciseRestrictionRequiredMergeSha = ""
+$script:PreciseRestrictionRequiredZipSha256 = ""
+
+function Assert-PreciseRestrictionPilotReleaseEvidenceBound {
+    if ([string]$script:PreciseRestrictionRequiredReleaseTag -cnotmatch '^v2\.1[0-9]\.[0-9]+$' -or
+        [string]$script:PreciseRestrictionRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$script:PreciseRestrictionRequiredZipSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw "precise-restriction-resources-pilot requires the exact MANAGED-CHROMEBOOK VERIFIED ClassPilot 2.10.0 package to be bound first."
+    }
+}
+
+function Get-ServingProtocolCapabilities {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$AppSha
+    )
+    if ($AppSha -cnotmatch '^[0-9a-f]{40}$') { throw "Serving app SHA must be a full lowercase commit SHA." }
+    $source = Invoke-GitText -Arguments @("show", "${AppSha}:src/services/classpilotProtocol.ts") -RepositoryRoot $RepositoryRoot
+    $match = [Regex]::Match(
+        $source,
+        'export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = \[(?<list>[\s\S]*?)\] as const;'
+    )
+    if (-not $match.Success) { throw "The serving app's ClassPilot capability registry could not be read." }
+    $list = [Regex]::Replace($match.Groups["list"].Value, '//[^\r\n]*', '')
+    $names = @([Regex]::Matches($list, '"(?<name>[A-Za-z0-9]+)"') | ForEach-Object { $_.Groups["name"].Value })
+    if ($names.Count -eq 0) { throw "The serving app's ClassPilot capability registry could not be read." }
+    return $names
+}
+
+# The serving image's parseCapabilityRollouts rejects ANY unknown key in
+# CLASSPILOT_CAPABILITY_ROLLOUTS_JSON, and its boot check then refuses to start
+# the API. Every candidate registry must therefore name only capabilities the
+# serving app SHA registers: an image older than a capability must never be given
+# its entry, not even {"mode":"off"}.
+function Assert-ServingAppRegistersRuntimeCapabilities {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$AppSha,
+        [Parameter(Mandatory = $true)]$RuntimeConfiguration
+    )
+    $registryText = [string]$RuntimeConfiguration.Environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON
+    if ([string]::IsNullOrWhiteSpace($registryText)) { throw "The candidate runtime has no capability rollout registry." }
+    $written = @((ConvertFrom-StrictJsonText -Text $registryText).PSObject.Properties.Name)
+    $serving = @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha)
+    $unknown = @($written | Where-Object { $_ -cnotin $serving })
+    if ($unknown.Count -gt 0) {
+        throw ("The serving app " + $AppSha.Substring(0, 12) + " does not register " + ($unknown -join ", ") +
+            "; its boot check would reject this rollout registry. Deploy an image that registers it first, " +
+            "or Rollback the Apply that introduced it before reverting to an older image.")
+    }
+}
 
 function Assert-LateSignInPilotReleaseEvidenceBound {
     if ([string]$script:ClassPilotReleaseTag -cne $script:LateSignInRequiredReleaseTag) {
@@ -531,6 +600,9 @@ function ConvertTo-RuntimeConfiguration {
         }
         if ($mode -ceq "late-signin-pilot") {
             Assert-LateSignInPilotReleaseEvidenceBound
+        }
+        if ($mode -ceq "precise-restriction-resources-pilot") {
+            Assert-PreciseRestrictionPilotReleaseEvidenceBound
         }
     }
     elseif ($Profile.PSObject.Properties.Name -contains "pilotSchoolId") {
@@ -4004,6 +4076,8 @@ function New-RuntimeConfigPlan {
         -MaximumApiDesiredCount $(if ($runtime.Mode -ceq "off" -or $ConfirmProtectedWindowProductionMutation) { 6 } else { 3 })
     $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+    Assert-ServingAppRegistersRuntimeCapabilities -RepositoryRoot $RepositoryRoot -AppSha $AppSha `
+        -RuntimeConfiguration $runtime
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
     $fastPreviewCandidateReceipt = $null
@@ -4545,6 +4619,8 @@ function Invoke-RuntimeConfigApply {
         -SkipEcrShaCheck:($runtime.Mode -ceq "off") -MaximumApiDesiredCount $maximumApiDesiredCount
     $runtime = Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $runtimeIntent `
         -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api"
+    Assert-ServingAppRegistersRuntimeCapabilities -RepositoryRoot ([string]$Plan.repositoryRoot) `
+        -AppSha ([string]$Plan.appSha) -RuntimeConfiguration $runtime
     if (@($runtime.EnabledCapabilities).Count -ne [int]$Plan.enabledCapabilityCount) {
         throw "Runtime profile enabled-capability semantics changed after planning."
     }

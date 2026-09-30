@@ -30,7 +30,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   "timerControlsV1",
   "lessonActivitiesV1",
   "exitTicketsV1",
-  // Roadmap PR 2: "This resource only" Waypoints and section/resource Flight
+  // Roadmap PR 2: This-resource-only Waypoints and section/resource Flight
   // Path entries. Index 25, inside the 32-name realtime capability cache.
   "preciseRestrictionResourcesV1",
 ] as const;
