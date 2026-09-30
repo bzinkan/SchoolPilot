@@ -90,3 +90,50 @@ passed. Bulk historical device IDs in this first run were synthetic; the
 follow-on fixture binds them to registered student devices without changing
 raw count, schedule, categories, domains or quotas. This initial failure is
 not a school-day capacity pass and remains immutable.
+
+The second run at `2ed5107027f93290625405a359aa61a34d790b8a` passed and is
+preserved in `scripts/load/usage/evidence-school-day-passed-20260930.json`.
+It ran from `2026-09-30T23:20:34.440Z` to `23:25:58.758Z`; the accepted
+concurrent phase is measured separately from fixture preparation and diagnostic
+EXPLAIN. Both complete writers committed 84,000 rows, 10,002,500 seconds,
+1,000,000 observations and one completion row per school. All 64 reports
+returned 200 and matched the independent scope/category/domain oracle. All
+recorded API statements and acquisitions succeeded.
+
+| Measured operation | Slowest observed | Existing deadline | Margin below deadline |
+| --- | ---: | ---: | ---: |
+| Complete heavy-day worker operation | 46,857 ms | 60,000 ms | 21.9% |
+| Report SQL, full supported date range | 4,414 ms | 15,000 ms | 70.6% |
+| API connection acquisition (5,836 calls) | 267 ms | 5,000 ms | 94.7% |
+
+School report HTTP maxima were 4,743/4,726 ms; grade 3,372/3,380 ms,
+class 571/566 ms and student 355/735 ms. The four authenticated ingest clients
+made 906 requests (905 successful writes and one accepted 204), with 453/452
+observations stored through the two post-phase cutoffs. Current-day raw oracles,
+eight CSVs with strict audits, tenant denials, successful empty days and
+unavailable/expired gaps passed. Peak Node RSS was 288.9 MiB; this is an
+observation, not an RSS quota. PostgreSQL retained the exact 4 CPU/4 GiB caps,
+forced RLS and a non-owner, non-superuser, non-bypass application role. The
+runner exited zero and removed its exact generated container and volumes after
+bounded read-only diagnostics.
+
+The production reader and writer file hashes are identical between these two
+school-day runs. The second fixture changes bulk device IDs to registered
+bindings, validates those bindings before timing, and adds the fresh-output
+guard and optional diagnostic hold. Counts, session schedule, categories,
+domains, oracle, deadlines and resource caps are unchanged. Both used fresh
+containers and ANALYZE. This comparison does not isolate a cause for their
+timing difference; cache, storage and planner variability remain possible.
+One passing local run does not establish repeatable fleet capacity or erase
+the preceding failure or the still-failing 500,000-grain stress profile.
+
+Additional read-only, warm serial EXPLAIN comparisons on the second fixture
+matched all returned school/grade rows. An unadopted empty-AI/exclusion guard
+prototype reduced attribution from 11,092 to 9,213 ms; a report preaggregation
+prototype reduced the school query from 2,721 to 1,664 ms and grade query from
+474 to 360 ms. These diagnostics were outside the measured concurrent phase,
+used the same restricted role and did not write fixture data. They are not
+capacity results or production changes. Full plans and execution/resource
+metadata remain in the external run14 evidence directory; the committed
+result includes the actual accepted attribution plan and all measured API
+families. Dense AI/exclusion, fleet/device and operational gates remain open.
