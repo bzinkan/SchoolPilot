@@ -238,6 +238,18 @@ export async function runLocalScale() {
     const failedPhase = outcomes.find(outcome => outcome.status === 'rejected');
     metrics.concurrentWriters = outcomes.slice(0, 2).filter(result => result.status === 'fulfilled').map(result => result.value);
     metrics.reads = Object.fromEntries([...readTimings].map(([key, timings]) => [key, summarize(timings)]));
+    // A bounded, read-only plan isolates attribution/grouping from aggregate
+    // insertion/index/FK work. Collect before later diagnostic assertions, so
+    // an unrelated oracle failure cannot hide the expensive query's evidence.
+    const attributedSql = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(',\ninserted AS (')[0] + `,
+      grain AS (SELECT student_id,class_id,session_id,domain,classification,
+        ROUND(SUM(GREATEST(attributed_seconds,0)))::int AS seconds,COUNT(*)::int AS heartbeats
+        FROM attributed GROUP BY student_id,class_id,session_id,domain,classification)
+      SELECT COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeats) AS heartbeats FROM grain`;
+    try {
+      metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
+    } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
+    save();
     await flushHeartbeatClassificationBatches();
     // The established writer compares UTC wall-clock timestamps at whole-second
     // precision. Use that same explicit input boundary in the independent raw
@@ -287,13 +299,6 @@ export async function runLocalScale() {
     metrics.correctness = { realMaxRangeAccepted: true, nextLongerRangeRejected: true, independentAllScopeTotals: true, concurrentSchoolWriters: true, actualHttpIngest: true,
       successfulEmptyDay: true, gapWithheld: true, expiredDateWithheld: true, atomicSnapshotReads: true, currentDayRawOracle: true, crossSchoolIdsDenied: true, csvStrictAuditRecorded: true };
     metrics.correctness.concurrentSchoolWriters = !outcomes.slice(0, 2).some(outcome => outcome.status === 'rejected');
-    // Preserve useful diagnostics even when the unchanged worker deadline was
-    // exceeded. EXPLAIN ANALYZE reads attribution only, with the same 60s limit;
-    // it performs no extra aggregate insertion or schema change.
-    const attributedSql = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(',\ninserted AS (')[0] + '\nSELECT COUNT(*)::bigint AS rows, SUM(attributed_seconds) AS seconds FROM attributed';
-    try {
-      metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
-    } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
     metrics.finishedAt = new Date().toISOString(); save();
     if (failedPhase) throw failedPhase.reason;
     metrics.finishedAt = new Date().toISOString(); metrics.passed = true; save();
