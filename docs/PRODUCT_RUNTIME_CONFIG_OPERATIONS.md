@@ -21,7 +21,7 @@ survive each clone unchanged.
 | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS` | comma-separated lower-case school UUIDs, no spaces, no duplicates | every school (when the mode is `on`) | School Library allowlist | none |
 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | PassPilot rules (PR 7) | RLS admission of `passpilot_destination_policies`, `passpilot_pass_limits`, `passpilot_encounter_restrictions`, `passpilot_pass_denials` |
 | `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | complete preserved 128-table admission; serving source atomic writer contract v2 on both services |
-| `PASSPILOT_REPORTS_MODE` | `off`, `v2` | `off` | PassPilot Reports v2 | complete preserved 128-table admission; report contract v2 in both services' exact serving source |
+| `PASSPILOT_REPORTS_MODE` | `off`, `v2` | `off` | PassPilot Reports v2 | complete preserved 128-table admission; report contract v2 and authority fence v1 in both services' exact serving source |
 | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | `legacy`, `shadow`, `set_based`, `on` | `shadow` | `daily_usage` rollup (PR 10a) | promotion to `set_based`/`on`: live mode `shadow` plus an evidence file |
 | `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1 |
 | `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
@@ -198,10 +198,13 @@ the explicit pass-return trigger during a schema-aware feature-off rollback.
 See `docs/PASSPILOT_APPOINTMENTS.md` for staged setup and lifecycle requirements.
 
 **Reports contract.** `PASSPILOT_REPORTS_MODE=v2` requires full preserved 128-table
-admission and RLS binding on API and worker, plus Reports contract version 2 in
-their exact serving source SHA/digest. Plan and Apply verify this while v2 remains
-enabled. Turning reportsoff remains available. No new schema is expanded for
-Reports; retained appointment outcomes are readable even with appointments off.
+admission and RLS binding on API and worker, plus Reports contract version 2 and
+authority-fence version 1 in their exact serving source SHA/digest. Plan and Apply
+verify this while v2 remains enabled. Turning Reports off remains available.
+Pre-fix v2 sources such as `7c23f69c` and `d01fb045` are incompatible with
+activation or a continuing v2 plan, even though their wire version is 2.
+No new schema is expanded for Reports; retained appointment outcomes are readable
+even with appointments off.
 See `docs/PASSPILOT_REPORTS_V2.md` for verified role scope, denominator definitions,
 encounter confidentiality and strict audited CSV. This setter does not authorize
 arbitrary older appointment writers after first appointment activation.

@@ -272,13 +272,14 @@ function Assert-ProductPreconditions {
     # usage remains on. Turning both usage flags off stays available.
     $activations = Get-ProductActivations $Prior $Desired
     if ($Desired['PASSPILOT_REPORTS_MODE'] -ceq 'v2') {
-        $compatibilityError = 'PASSPILOT_REPORTS_MODE=v2 requires complete preserved 128-table admission, RLS_GUC_ENABLED=true, and report contract version 2 in the exact source SHA serving both API and worker.'
+        $compatibilityError = 'PASSPILOT_REPORTS_MODE=v2 requires complete preserved 128-table admission, RLS_GUC_ENABLED=true, and report contract version 2 with authority-fence version 1 in the exact source SHA serving both API and worker.'
         try {
             $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotReportsMode.ts") -RepositoryRoot $RepositoryRoot
             $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
             $inventory = $registry.inventories.passpilotAppointmentsPostExpand
         } catch { throw $compatibilityError }
         if ($source -cnotmatch 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;' -or
+            $source -cnotmatch 'export const PASSPILOT_REPORTS_AUTHORITY_FENCE_VERSION = 1;' -or
             $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
             @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or
             @('students', 'passes', 'passpilot_pass_denials', 'passpilot_appointments' | Where-Object { $_ -cnotin @($inventory.tables) }).Count) { throw $compatibilityError }
