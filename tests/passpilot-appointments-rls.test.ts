@@ -52,7 +52,7 @@ describe("appointments under forced tenant RLS", { skip: enabled ? false : "requ
     assert.equal(list.body.appointments.length, 1); assert.equal("staffNotes" in list.body.appointments[0]!, false);
     const id = list.body.appointments[0]!.id;
     assert.equal((await f.activate(b, id, {}, b.outsider)).status, 404);
-    await f.sql("UPDATE groups SET teacher_id=$2 WHERE id=$1", [b.classId, b.outsider.id]);
+    await f.assignTeacher(b, b.outsider);
     assert.equal((await f.activate(b, id)).status, 404);
     assert.equal((await f.activate(b, id, {}, b.outsider)).status, 201);
   });
