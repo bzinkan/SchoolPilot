@@ -189,21 +189,21 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 | Operational | Stop legacy TURN A/B after explicit verification/approval | 0 | Done: stopped 2026-09-28; the saved TURN Terraform plan was applied 2026-09-29 |
 | PR 1a (wave-1 addition) | Governed product runtime activation tool, `scripts/deploy-product-runtime-config.ps1` | 0 | Merged in #552: AUTOMATED-TEST VERIFIED against mocked AWS; never run against AWS |
 | PR 1-pre (wave-1 addition) | Scope the AI assistant's Flight Path list to the caller's own paths | A | Merged in #547 |
-| PR 1 | Shared Flight Paths + Block Lists | A | Merged in #553: `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` off, not deployed |
+| PR 1 | Shared Flight Paths + Block Lists | A | #553 merged; default off; current deployment/activation UNKNOWN |
 | PR 2-pre (wave-1 addition) | Forward-compatibility fence one release before PR 2 | A | Merged in #550; see constraint 4 for the activation rule |
-| PR 2 | Structured restriction-resource backend/model | A | Merged in #555: `preciseRestrictionResourcesV1` off, not deployed; contract in `CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md`; matcher hardening follow-up open |
+| PR 2 | Structured restriction-resource backend/model | A | #555 and hardening #559 merged; capability default off; production UNKNOWN; contract in `CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md` |
 | PR 3 | Precise Waypoint enforcement: Entire Website + This Resource | A | Next plan cycle |
 | PR 4 | Mixed Website/Section/Resource Flight Paths | A | Next plan cycle |
 | PR 5 | Bring Forward + Focus | A | Next plan cycle |
 | PR 6 | Google Classroom Assignment quick actions | A | Next plan cycle |
 | ClassPilot 2.10.0 | One extension release carrying `preciseRestrictionResourcesV1` and `focusTabV1` | A | Contract defined; ships after server PRs 2–5 |
-| PR 7 | PassPilot Rules | B | Merged in #554: `PASSPILOT_RULES_MODE` off, not deployed |
+| PR 7 | PassPilot Rules | B | #554 merged; confidentiality correction required; default off; production UNKNOWN |
 | PR 8 | PassPilot Appointments | B | Outlined |
 | PR 9 | PassPilot Analytics | B | Outlined |
 | PR 10a (split of PR 10) | Daily usage rollup hardening, shadow-safe | B | Merged in #548 |
-| PR 10b (split of PR 10) | Digital Usage rollup table + read API | B | Merged in #556: both modes off, not deployed |
+| PR 10b (split of PR 10) | Digital Usage rollup table + read API | B | #556 merged; coverage/cursor corrections required; production UNKNOWN |
 | PR 11 | Digital Usage admin UI | B | Outlined |
-| PR 12 | Present to Class SFU/LiveKit architecture ADR + new TURN/TLS design | C | Waits for the ADR decision |
+| PR 12 | Present to Class SFU hosting/security/cost ADR | C | Decision document preparation authorized; implementation waits for approval |
 | PR 13 | Presentation session/auth backend + short-lived SFU credentials | C | Not started |
 | PR 14 | Teacher capture + SFU publisher | C | Not started |
 | PR 15 | ClassPilot student SFU subscriber + presentation UI | C | Not started |
@@ -229,7 +229,7 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 | 0 | PR 0 docs, PR 0A hardening, PR 1a activation tool | PR 0A merges after the two 2026-09-29 operational applies (both done; see "Phase 0 and 0A status") |
 | A | PR 1-pre, PR 1, PR 2-pre, PR 2, then PR 3/4/5/6 + ClassPilot 2.10.0 | PR 1 before PR 2 (PR 2 edits PR 1's files). PR 2 and PR 3 edit the runtime-config tool, so they merge only after the `live-view-retire` apply (Plan and Apply must share a tool SHA); that apply ran on 2026-09-29 |
 | B | Corrective usage PR → appointments → reports; usage page after corrected API | Serialize each new-table inventory onto current main. Operational shadow/observation gates govern activation; they do not block synthetic page development. |
-| C | PR 12 ADR, then PR 13–18 | Brian's ADR decision first |
+| C | PR 12 ADR, then PR 13–18 | Prepare the ADR now; Brian's decision precedes media implementation |
 | D | PR 19–21 | Only after Lane C is live and independent |
 
 Wave 1, including matcher/clear follow-up #559 and deployment clarification #558, is merged. The continuation gap matrix below records the remaining code and operational evidence. Historical labels such as "PR 3" are roadmap slices; they are not GitHub PR numbers.
@@ -243,7 +243,7 @@ Wave 1, including matcher/clear follow-up #559 and deployment clarification #558
 5. Server before extension. ClassPilot 2.10.0 ships only after server PRs 2, 3, 4 and 5 are deployed with their capabilities off.
 6. Lane B new-table PRs merge in the order PR 7, PR 10b, PR 8, each chaining its RLS inventory onto the previous one.
 7. Activation order, not implementation order: daily rollup promotion requires three clean shadow school days on the relevant build. Corrected usage aggregation requires both aggregate and completion admission, followed by one observed school day before reporting activation. PR 11 may be built/tested against corrected synthetic fixtures beforehand.
-8. Lane C starts with the PR 12 ADR decision. Lane D starts only after Present to Class runs on its own media stack.
+8. Lane C media implementation starts after the PR 12 ADR decision. ADR research/preparation may proceed independently. Lane D starts only after Present to Class runs on its own media stack.
 9. A feature rollout and a destructive legacy removal never share a deployment.
 
 ### Deployment-order rules
