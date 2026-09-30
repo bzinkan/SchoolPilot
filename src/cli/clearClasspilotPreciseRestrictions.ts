@@ -20,7 +20,24 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROOF_PATTERN = /^precise-clear-proof-v1:[0-9a-f]{64}$/;
 const TASK_DEFINITION_ARN_PATTERN =
-  /^arn:aws(?:-[a-z]+)?:ecs:[a-z0-9-]+:\d{12}:task-definition\/[A-Za-z0-9_-]{1,255}:[1-9]\d*$/;
+  /^arn:aws(?:-[a-z]+)?:ecs:[a-z0-9-]+:\d{12}:task-definition\/([A-Za-z0-9_-]{1,255}):[1-9]\d*$/;
+
+/**
+ * The reviewed production API task-definition families, the same list as
+ * $script:AllowedApiFamilies in scripts/deploy-classpilot-runtime-config.ps1
+ * (a test pins the two together). The one-off must run one of them.
+ */
+export const PRECISE_RESTRICTION_CLEAR_API_FAMILIES: readonly string[] = [
+  "schoolpilot-production-api",
+  "schoolpilot-production-api-emergency",
+];
+
+/** The task-definition family of an API task-definition ARN, or null. */
+export function apiTaskDefinitionFamily(arn: unknown): string | null {
+  if (typeof arn !== "string") return null;
+  const family = TASK_DEFINITION_ARN_PATTERN.exec(arn)?.[1];
+  return family && PRECISE_RESTRICTION_CLEAR_API_FAMILIES.includes(family) ? family : null;
+}
 
 export type PreciseRestrictionClearCliOptions = {
   help: boolean;
@@ -40,9 +57,12 @@ type ClearExecutionEnvironment = {
 
 /**
  * An execution must run as an admitted ECS one-off of the exact task
- * definition revision the live API service is running. The capability check
- * then reads the live service's registry and kill switch, not whatever an
- * older or newer revision carries.
+ * definition revision the live API service is running, in a reviewed API
+ * family. The capability check then reads the live service's registry and
+ * kill switch, not whatever an older or newer revision carries. The API task
+ * role cannot call ecs:DescribeServices, so the CLI cannot read the live
+ * service itself: the operator's read-only describe-services check supplies
+ * the expected revision, and the CLI proves its own task runs exactly it.
  */
 export async function assertPreciseRestrictionClearExecutionAdmission(options: {
   execute: boolean;
@@ -70,6 +90,8 @@ export async function assertPreciseRestrictionClearExecutionAdmission(options: {
   if (!identity) throw refused("Precise restriction clearing requires ECS task identity.");
   if (
     !options.expectedApiTaskDefinitionArn
+    || apiTaskDefinitionFamily(options.expectedApiTaskDefinitionArn) === null
+    || apiTaskDefinitionFamily(identity.taskDefinitionArn) === null
     || identity.taskDefinitionArn !== options.expectedApiTaskDefinitionArn
   ) {
     throw Object.assign(
@@ -91,8 +113,9 @@ function usage(): string {
     "  --execute",
     "  --proof <precise-clear-proof-v1:...>   copied from that school's dry run",
     `  --acknowledge ${PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT}`,
-    "  --api-task-definition-arn <arn>        the live API service's current task definition,",
-    "                                         read from ECS describe-services; the one-off must run it",
+    "  --api-task-definition-arn <arn>        the live API service's current task definition, in a",
+    "                                         reviewed API family, read from ECS describe-services;",
+    "                                         the one-off must run exactly that revision",
     `  ECS task env: PRECISE_RESTRICTION_CLEAR_EXECUTION_ADMISSION=${PRECISE_RESTRICTION_CLEAR_PRODUCTION_ADMISSION}`,
     "  preciseRestrictionResourcesV1 inactive for the school in that live revision",
     "  (apply precise-restriction-resources-off first)",
@@ -165,8 +188,8 @@ export function validatePreciseRestrictionClearCliOptions(
     if (options.acknowledgement !== PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT) {
       throw new Error("Execution requires the exact acknowledgement.");
     }
-    if (!options.apiTaskDefinitionArn || !TASK_DEFINITION_ARN_PATTERN.test(options.apiTaskDefinitionArn)) {
-      throw new Error("Execution requires the live API service's exact task definition ARN.");
+    if (apiTaskDefinitionFamily(options.apiTaskDefinitionArn) === null) {
+      throw new Error("Execution requires the live API service's exact task definition ARN in a reviewed API family.");
     }
   } else if (
     options.expectedProof !== undefined

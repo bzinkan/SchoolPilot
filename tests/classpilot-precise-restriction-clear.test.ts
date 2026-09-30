@@ -16,7 +16,9 @@ import {
 } from "../src/services/classpilotPreciseRestrictionRollback.js";
 import {
   PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT,
+  PRECISE_RESTRICTION_CLEAR_API_FAMILIES,
   PRECISE_RESTRICTION_CLEAR_PRODUCTION_ADMISSION,
+  apiTaskDefinitionFamily,
   assertPreciseRestrictionClearExecutionAdmission,
   parsePreciseRestrictionClearCliArgs,
   validatePreciseRestrictionClearCliOptions,
@@ -221,6 +223,25 @@ describe("precise restriction rollback precheck", () => {
 });
 
 describe("precise restriction clear CLI safety contract", () => {
+  it("accepts only the reviewed API task-definition families the runtime tool uses", () => {
+    const tool = readFileSync(new URL("../scripts/deploy-classpilot-runtime-config.ps1", import.meta.url), "utf8");
+    const listed = /\$script:AllowedApiFamilies = @\(([^)]*)\)/.exec(tool)?.[1] ?? "";
+    assert.deepEqual([...listed.matchAll(/"([^"]+)"/g)].map((match) => match[1]), [...PRECISE_RESTRICTION_CLEAR_API_FAMILIES]);
+    assert.equal(apiTaskDefinitionFamily(LIVE_API_TASK_DEFINITION), "schoolpilot-production-api");
+    assert.equal(
+      apiTaskDefinitionFamily("arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:3"),
+      "schoolpilot-production-api-emergency"
+    );
+    for (const arn of [
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:7",
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:0",
+      "schoolpilot-production-api:7",
+      undefined,
+    ]) {
+      assert.equal(apiTaskDefinitionFamily(arn), null, String(arn));
+    }
+  });
+
   it("defaults to a dry run and forbids all-school execution", () => {
     const dryRun = parsePreciseRestrictionClearCliArgs(["--school-id", SCHOOL]);
     assert.equal(dryRun.execute, false);
@@ -240,6 +261,7 @@ describe("precise restriction clear CLI safety contract", () => {
       ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", "yes", "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
       ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT],
       ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", "schoolpilot-production-api:7"],
+      ["--school-id", SCHOOL, "--execute", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:7"],
       ["--school-id", SCHOOL, "--execute", "--dry-run", "--proof", PROOF, "--acknowledge", PRECISE_RESTRICTION_CLEAR_ACKNOWLEDGEMENT, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
       ["--school-id", SCHOOL, "--proof", PROOF],
       ["--school-id", SCHOOL, "--api-task-definition-arn", LIVE_API_TASK_DEFINITION],
@@ -289,6 +311,13 @@ describe("precise restriction clear CLI safety contract", () => {
         execute: true, expectedApiTaskDefinitionArn, environment: admitted, resolveRuntimeIdentity: identity,
       }), mismatch, String(expectedApiTaskDefinitionArn));
     }
+    const workerTaskDefinition = "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:7";
+    await assert.rejects(() => assertPreciseRestrictionClearExecutionAdmission({
+      execute: true,
+      expectedApiTaskDefinitionArn: workerTaskDefinition,
+      environment: admitted,
+      resolveRuntimeIdentity: async () => ({ taskDefinitionArn: workerTaskDefinition, taskDefinitionSha256: "worker" }),
+    }), mismatch, "a one-off outside the reviewed API families is refused even when the ARNs match");
     await assert.doesNotReject(() => assertPreciseRestrictionClearExecutionAdmission({
       execute: true,
       expectedApiTaskDefinitionArn: LIVE_API_TASK_DEFINITION,
