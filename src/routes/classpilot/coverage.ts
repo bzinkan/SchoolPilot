@@ -78,6 +78,8 @@ import {
 } from "../../services/classpilotCoverageSummary.js";
 import { scheduledSupervisionSource, scheduledContextHasClassroomTools, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { SCHEDULED_CLASSROOM_COMMANDS } from "../../services/classpilotDashboardActivity.js";
+import { assertExactFocusTargetScope, type ClasspilotExactTabTarget } from "../../services/classpilotFocus.js";
+import { validateClasspilotCommandPayload } from "../../services/classpilotCommandValidation.js";
 import { supervisionActivityPresentation } from "../../services/classpilotSupervisionPurpose.js";
 import { classpilotSupervisionPreviewObserved } from "../../config/classpilotSupervisionPreviewRollout.js";
 import { getClasspilotStudentControlStates } from "../../services/storage.js";
@@ -1239,9 +1241,9 @@ export async function resolveCoverageCommandTargets(
       // device is reachable or the signed-out target passed the school gate.
       // Non-persistent commands (notably durable teacher messages) retain
       // their own queueing policy while delivery is unavailable.
-      stateAuthorized: capable && (active
+      stateAuthorized: commandType === "stop-focus" || (capable && (active
         || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
-        || deferredAuthorized),
+        || deferredAuthorized)),
       lateSignInEligible: deferredAuthorized,
       unavailableReason: active
         ? undefined
@@ -2419,6 +2421,11 @@ router.post("/coverage/contexts/:id/commands", ...auth, requireClasspilotFullMon
       return res.status(400).json({ error: "Unsupported coverage command type" });
     }
     const targetScope = String(req.body.targetScope || "").trim();
+    if (commandType === "activate-tab" || commandType === "focus-tab") {
+      const payload = validateClasspilotCommandPayload(commandType, req.body.commandPayload);
+      assertExactFocusTargetScope(commandType, targetScope, req.body.targetStudentIds,
+        payload.tabTargets as ClasspilotExactTabTarget[]);
+    }
     if (targetScope !== "context" && targetScope !== "students") {
       return res.status(400).json({ error: "targetScope must be context or students" });
     }

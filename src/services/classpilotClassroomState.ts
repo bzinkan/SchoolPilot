@@ -4,6 +4,8 @@ import type {
 } from "../schema/classpilot.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 import type { ClasspilotSsoPolicy } from "./classpilotSsoPolicy.js";
+import { focusAssignmentMatches, focusCapabilityAccepted, focusRecord, readFocusAssignment,
+  readFocusRestriction, type ClasspilotFocusRestriction } from "./classpilotFocus.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
   isWaypointLandingUrl,
@@ -120,6 +122,7 @@ export type ClasspilotClassroomStateSnapshot = {
     attentionMode: { active: boolean; message?: string };
     tabLimit: number | null;
     temporaryAllows: Array<{ domain: string; expiresAt: string }>;
+    focus?: ClasspilotFocusRestriction;
   };
 };
 
@@ -456,6 +459,9 @@ export function normalizeClasspilotRestrictions(value: unknown): ClasspilotClass
     },
     tabLimit: positiveInteger(source.tabLimit),
     temporaryAllows,
+    // Preserve even malformed carried Focus; the delivery validator withholds
+    // it whole instead of silently converting an active assignment to a clear.
+    ...(source.focus !== undefined ? { focus: source.focus as ClasspilotFocusRestriction } : {}),
   };
 }
 
@@ -617,7 +623,8 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   withheldReason?:
     | "late_sign_in_capability_required"
     | "restriction_auth_update_required"
-    | "precise_restriction_capability_required";
+    | "precise_restriction_capability_required"
+    | "focus_tab_capability_required";
 } {
   const provenance = readClasspilotLateSignInDeliveryProvenance(options.state.desiredState);
   const exact = options.exactBinding;
@@ -645,6 +652,19 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
   }
   let classroomState = serializeClasspilotStudentControlState(options.state, options.now);
   let restrictions = classroomState.restrictions;
+  if (restrictions.focus !== undefined) {
+    const focus = readFocusRestriction(restrictions);
+    const assignment = readFocusAssignment(options.state.desiredState);
+    if (!focus || (focus.active && (!assignment || assignment.assignmentId !== focus.assignmentId
+      || !exact || !focusCapabilityAccepted(options.acceptedCapabilities)
+      || !focusAssignmentMatches({ assignment, ...exact,
+        teachingSessionId: options.state.teachingSessionId,
+        supervisionContextId: options.state.supervisionContextId })))) {
+      return { classroomState: null, withheld: true, withheldReason: "focus_tab_capability_required" };
+    }
+    restrictions = { ...restrictions, focus };
+    classroomState = { ...classroomState, restrictions };
+  }
   // Precise restriction resources reach only an exact binding that accepted
   // preciseRestrictionResourcesV1, and only when every carried entry
   // re-validates. Anything else withholds the whole snapshot (never a host
@@ -681,7 +701,8 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
     || restrictions.blockList.active
     || restrictions.attentionMode.active
     || restrictions.tabLimit !== null
-    || restrictions.temporaryAllows.length > 0;
+    || restrictions.temporaryAllows.length > 0
+    || restrictions.focus?.active === true;
   let deliveredState = stillRestricted && provenance
     ? { ...classroomState, deliveryContext: { lateSignInRestrictionSso: true } as const }
     : classroomState;
@@ -786,6 +807,16 @@ export function effectiveClasspilotControlEnforcementHealth(
     .filter((value): value is Date => !!value)
     .sort((left, right) => left.getTime() - right.getTime())[0];
   if (effectiveExpiry && effectiveExpiry.getTime() <= now.getTime()) return "expired";
+  const focusValue = focusRecord(focusRecord(state.desiredState).restrictions).focus;
+  if (focusValue !== undefined) {
+    const focus = readFocusRestriction(focusRecord(state.desiredState).restrictions);
+    const assignment = readFocusAssignment(state.desiredState);
+    if (!focus || (focus.active && (!delivery?.exactBinding
+      || !focusCapabilityAccepted(delivery.acceptedCapabilities)
+      || !assignment || assignment.assignmentId !== focus.assignmentId
+      || !focusAssignmentMatches({ assignment, ...delivery.exactBinding,
+        teachingSessionId: state.teachingSessionId, supervisionContextId: state.supervisionContextId })))) return "unsupported";
+  }
 
   // A precise-resource snapshot that this binding cannot receive (invalid, or
   // preciseRestrictionResourcesV1 not accepted) is never synced to it,

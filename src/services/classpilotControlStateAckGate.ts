@@ -36,10 +36,12 @@ export function classpilotControlStateAckRequired(options: {
   lateSignInOriginPending: boolean;
   /** Client-applied SSO fence differs from the current projection revision. */
   restrictionAuthRevisionMismatch: boolean;
+  focusStatusChanged?: boolean;
 }): boolean {
   return options.lateSignInOriginPending
     || options.controlState.appliedRevision !== options.appliedRevision
     || options.controlState.enforcementHealth
       !== classpilotControlStateAckExpectedHealth(options.outcome)
-    || options.restrictionAuthRevisionMismatch;
+    || options.restrictionAuthRevisionMismatch
+    || options.focusStatusChanged === true;
 }
