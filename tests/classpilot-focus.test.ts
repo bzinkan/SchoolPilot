@@ -100,6 +100,19 @@ describe("Focus and Bring Forward public and desired-state contract", () => {
     assert.deepEqual(projected.targets[0].result, { followUp: { kind: "focus", state: "committed", commandId: "child" }, nested: {} });
     assert.doesNotMatch(JSON.stringify(projected), /device|session|serverOrigin|ownerId|revisionAtAssignment/);
   });
+  it("derives committed and refused follow-up status independently of forged client fields and key order", () => {
+    for (const state of ["committed", "refused"] as const) {
+      const intent = { version: 1, assignmentId: "assignment", childCommandId: "trusted-child", deadline: now.toISOString(),
+        state, binding: assignment, ...(state === "committed" ? { childRevision: 8 } : { errorCode: "FOCUS_RECEIPT_INVALID" }) };
+      const forged = { kind: "focus", state: state === "committed" ? "refused" : "committed", commandId: "forged-child" };
+      for (const result of [{ focusOpenIntentV1: intent, followUp: forged }, { followUp: forged, focusOpenIntentV1: intent }]) {
+        const projected = publicClasspilotCommand({ targets: [{ result }] });
+        assert.deepEqual(projected.targets[0].result.followUp, { kind: "focus", state,
+          ...(state === "committed" ? { commandId: "trusted-child" } : { errorCode: "FOCUS_RECEIPT_INVALID" }) });
+      }
+    }
+    assert.deepEqual(publicClasspilotCommand({ targets: [{ result: { followUp: { state: "committed" } } }] }).targets[0].result, {});
+  });
   it("emits a bounded empty bare stop on capability withdrawal without projecting remaining restrictions", () => {
     const cleaned = state({ restrictions: { flightPath: { active: true, resources: [{ provider: "google_docs", resourceId: "private" }] } },
       focusCleanupV1: assignment });
