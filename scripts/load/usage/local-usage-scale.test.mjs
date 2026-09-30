@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assertLocalScaleFixture, currentObservationSeconds, measureCall } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
 const local = { USAGE_LOCAL_SCALE: '1', NODE_ENV: 'test', USAGE_SCALE_CONTAINER: `schoolpilot-usage-scale-${run}`,
@@ -29,6 +29,15 @@ test('dedicated runner verifies exact loopback port, caps and cleanup ownership 
   assert.match(script, /docker rm --force --volumes \$container/);
   assert.doesNotMatch(script, /docker (?:rm|stop|update).*schoolpilot-db/);
   assert.match(script, /Choose an external evidence directory/);
+});
+
+test('current-day oracle does not grant fractional tail time beyond the established whole-second writer boundary', () => {
+  const now = Date.parse('2026-09-30T12:00:50.999Z'), cutoff = currentObservationCutoff(now);
+  assert.equal(cutoff.toISOString(), '2026-09-30T12:00:50.000Z');
+  assert.deepEqual([...currentObservationSeconds([
+    { student_id: 'a', timestamp: '2026-09-30T12:00:49.400Z' },
+    { student_id: 'b', timestamp: '2026-09-30T12:00:50.200Z' },
+  ], cutoff)], [['a', 1]]);
 });
 
 test('API timing preserves both pg overloads, returned values and failures', async () => {

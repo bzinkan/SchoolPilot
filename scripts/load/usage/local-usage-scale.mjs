@@ -24,6 +24,7 @@ export function assertLocalScaleFixture(env) {
 const wall = value => value.toISOString().replace('T', ' ').replace('Z', '');
 const sleep = ms => new Promise(done => setTimeout(done, ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+export const currentObservationCutoff = (now = Date.now()) => new Date(Math.floor(now / 1000) * 1000);
 
 // A separate small oracle over raw current-day observations. It intentionally
 // does not use the application's SQL, classifications or aggregate rows.
@@ -73,7 +74,7 @@ export async function runLocalScale() {
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
     sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-usage-scale.mjs'].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
-    writerQueries: [], reads: {}, apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
+    writerQueries: [], reads: {}, readFailures: [], apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
     ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
   assert.match(metrics.sourceRevision, /^[a-f0-9]{40}$/);
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
@@ -252,12 +253,17 @@ export async function runLocalScale() {
     const requestScopes = schools.flatMap(school => ['school', 'grade', 'class', 'student'].map(scope => ({ school, scope })));
     readTimings = new Map(requestScopes.map(({ school, scope }) => [`${school.index}/${scope}`, []]));
     const readers = (async () => {
+      let failure;
       for (let wave = 0; wave < 4; wave++) {
-        await Promise.all(requestScopes.flatMap(({ school, scope }) => Array.from({ length: 2 }, async () => {
-          const read = checkReport(await get(school, scope), scope, true); readTimings.get(`${school.index}/${scope}`).push(read.durationMs);
+        const results = await Promise.allSettled(requestScopes.flatMap(({ school, scope }) => Array.from({ length: 2 }, async () => {
+          const read = await get(school, scope);
+          try { checkReport(read, scope, true); readTimings.get(`${school.index}/${scope}`).push(read.durationMs); }
+          catch (error) { metrics.readFailures.push({ schoolIndex: school.index, scope, status: read.status, durationMs: read.durationMs, code: read.body?.code ?? error.code }); throw error; }
         })));
+        failure ??= results.find(result => result.status === 'rejected')?.reason;
         await sleep(500);
       }
+      if (failure) throw failure;
     })();
     const outcomes = await Promise.allSettled([...writes, readers, ...ingestion]);
     ingestRunning = false; concurrentMeasurement = false;
@@ -284,7 +290,7 @@ export async function runLocalScale() {
     // The established writer compares UTC wall-clock timestamps at whole-second
     // precision. Use that same explicit input boundary in the independent raw
     // oracle rather than granting fractional tail time beyond its actual cutoff.
-    const cutoff = new Date(Math.floor(Date.now() / 1000) * 1000), currentDay = rollup.classpilotUsageRollupDay(today, zone);
+    const cutoff = currentObservationCutoff(), currentDay = rollup.classpilotUsageRollupDay(today, zone);
     metrics.currentDayWriters = [];
     metrics.heavyDayAtomicity = [];
     for (const school of schools) {
