@@ -1339,8 +1339,8 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\{DOMAIN_RESTRICTION_URL_HELP\}/,
-  'the Waypoint URL field must use the shared honest landing-page help',
+  /DOMAIN_RESTRICTION_URL_HELP\}/,
+  'the website Waypoint URL field must retain the shared honest landing-page help, including conditional precise-resource copy',
 );
 assert.doesNotMatch(
   dashboardSource,
