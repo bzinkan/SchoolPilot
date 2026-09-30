@@ -26,6 +26,21 @@ const sleep = ms => new Promise(done => setTimeout(done, ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 export const currentObservationCutoff = (now = Date.now()) => new Date(Math.floor(now / 1000) * 1000);
 
+export function usageAttributionDiagnosticSql(statement) {
+  const marker = ',\ninserted AS (';
+  const boundary = statement.indexOf(marker);
+  assert.ok(boundary > 0 && statement.indexOf(marker, boundary + 1) === -1, 'Expected one aggregate insertion boundary');
+  const prefix = statement.slice(0, boundary);
+  const sql = prefix + (prefix.includes('\ngrains AS (')
+    ? ` SELECT $4::date AS usage_date,COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeat_count) AS heartbeats FROM grains`
+    : `, grain AS (SELECT student_id,class_id,session_id,domain,classification,
+        ROUND(SUM(GREATEST(attributed_seconds,0)))::int AS seconds,COUNT(*)::int AS heartbeats
+        FROM attributed GROUP BY student_id,class_id,session_id,domain,classification)
+      SELECT $4::date AS usage_date,COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeats) AS heartbeats FROM grain`);
+  assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|COPY|DO)\b/i, 'Attribution diagnostic must remain read-only');
+  return sql;
+}
+
 // A separate small oracle over raw current-day observations. It intentionally
 // does not use the application's SQL, classifications or aggregate rows.
 export function currentObservationSeconds(rows, cutoff) {
@@ -89,7 +104,7 @@ export async function runLocalScale() {
       client.query = async (...args) => {
         const started = performance.now();
         try { return await query(...args); }
-        finally { if (typeof args[0] === 'string' && args[0].startsWith('WITH observed AS MATERIALIZED')) metrics.writerQueries.push({ durationMs: performance.now() - started, schoolId: args[1]?.[0] }); }
+        finally { if (typeof args[0] === 'string' && args[0].includes('\ninserted AS (\n  INSERT INTO classpilot_usage_rollups')) metrics.writerQueries.push({ durationMs: performance.now() - started, schoolId: args[1]?.[0] }); }
       };
     }
     return client;
@@ -201,6 +216,11 @@ export async function runLocalScale() {
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
     metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
     assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_001 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
+    if (process.env.USAGE_SCALE_PREPARE_ONLY === '1') {
+      metrics.fixturePreparationOnly = true; save();
+      console.log(JSON.stringify({ event: 'local_usage_scale_prepared', sourceRevision: metrics.sourceRevision, capacityMeasured: false }));
+      return;
+    }
     const size = scope => ({ school: 500, grade: 100, class: 5, student: 1 })[scope];
     const checkReport = (read, scope, allowHeavy = false) => {
       assert.equal(read.status, 200); assert.equal(read.body.range.retentionDays, 365); assert.equal(read.body.range.requestedDays, 365); assert.equal(read.body.range.partiallyExpired, true);
@@ -277,11 +297,7 @@ export async function runLocalScale() {
     // A bounded, read-only plan isolates attribution/grouping from aggregate
     // insertion/index/FK work. Collect before later diagnostic assertions, so
     // an unrelated oracle failure cannot hide the expensive query's evidence.
-    const attributedSql = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(',\ninserted AS (')[0] + `,
-      grain AS (SELECT student_id,class_id,session_id,domain,classification,
-        ROUND(SUM(GREATEST(attributed_seconds,0)))::int AS seconds,COUNT(*)::int AS heartbeats
-        FROM attributed GROUP BY student_id,class_id,session_id,domain,classification)
-      SELECT $4::date AS usage_date,COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeats) AS heartbeats FROM grain`;
+    const attributedSql = usageAttributionDiagnosticSql(rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL);
     try {
       metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
     } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
@@ -347,7 +363,7 @@ export async function runLocalScale() {
     console.log(JSON.stringify({ event: 'local_usage_scale_complete', sourceRevision: metrics.sourceRevision, writerMs: metrics.concurrentWriters.map(row => row.durationMs), ingestRequests: metrics.ingest.requests, insertedHeartbeats: metrics.ingest.insertedHeartbeats, productionReadiness: false }));
   } catch (error) {
     metrics.failure = { name: error.name, code: error.code || 'SCALE_ASSERTION', message: error.message };
-    if (phaseStarted) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
+    if (phaseStarted && metrics.concurrentPhaseMs === undefined) metrics.concurrentPhaseMs = performance.now() - phaseStarted;
     if (metrics.ingest.timingsMs?.length) { metrics.ingest.timings = summarize(metrics.ingest.timingsMs); delete metrics.ingest.timingsMs; }
     save(); throw error;
   }
