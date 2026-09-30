@@ -116,3 +116,30 @@ rows. These comparisons cannot establish successful commit or concurrent
 headroom. No staged writer, planner override, constraint relaxation or cap
 increase was adopted. The dedicated fixture was removed after preserving
 external plans and hashes. The 60-second writer capacity gate remains open.
+
+The API query-family rerun at
+`0698a2edfd0e19353805d28a142ab8113df967bc` is preserved as
+`evidence-scale-api-families-20260930.json`. All 64 concurrent maximum-range
+reports returned 200 and matched independent scope/date totals. There were no
+API statement or acquisition failures: report SQL peaked at 4,548 ms (69.68%
+below 15,000 ms), acquisition at 332 ms (93.36% below 5,000 ms), coverage at
+108 ms and every other labeled family below 970 ms. Both heavy writers still
+timed out at 60 seconds and left zero aggregates/coverage. Live raw oracles,
+eight scoped CSV exports and audits, missing/empty/expired-day semantics and
+cross-school denials passed. Actual ingest offered 772 requests (386 per school),
+with 771 rows through cutoff; one request returned 204. Read-only attribution
+took 10,528 ms, while the original query still timed out at 60 seconds. Peak
+Node RSS was 288.8 MiB. This run improves report evidence, and remains a failed
+500,000-grain stress profile; the prior HTTP failures remain recorded.
+
+The stress day produces 500,000 grains because each of 500 students has 1,000
+unique observations at 20-second gaps (each duplicated), split across ten
+33-minute-20-second sessions of the same class. Every observation in each
+100-observation session has a distinct domain. Its 200-domain palette repeats
+only in a later session, and classification is fixed by domain. Consequently
+each student produces 1,000 distinct session/domain/category grains. These
+transitions are physically possible over 5 hours 33 minutes, but a domain change
+every 20 seconds with ten restarts of the same class is an extreme write stress
+case. Its failed result remains an explicit capacity limitation. A separate
+school-day profile must justify dwell and frozen class/session windows and
+cannot change this workload or claim stress acceptance.
