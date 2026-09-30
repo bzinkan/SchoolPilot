@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
 const local = { USAGE_LOCAL_SCALE: '1', NODE_ENV: 'test', USAGE_SCALE_CONTAINER: `schoolpilot-usage-scale-${run}`,
@@ -53,4 +53,16 @@ test('API timing preserves both pg overloads, returned values and failures', asy
   await new Promise(done => assert.equal(client.query('ok', (error, value) => { assert.equal(error, undefined); assert.equal(value, 'callback-value'); done(); }), 'query-object'));
   assert.equal(records.length, 3); assert.ok(records.every(row => row.duration >= 0));
   assert.equal(records[1].error, expectedError);
+});
+
+test('both attribution shapes retain their correct heartbeat sums while diagnostics cannot insert rows', () => {
+  const suffix = ',\ninserted AS (\n  INSERT INTO classpilot_usage_rollups SELECT 1) SELECT * FROM inserted';
+  const baseline = usageAttributionDiagnosticSql('WITH observed AS MATERIALIZED (SELECT 1), attributed AS (SELECT 1)' + suffix);
+  assert.match(baseline, /COUNT\(\*\)::int AS heartbeats/);
+  assert.doesNotMatch(baseline, /INSERT INTO/);
+  const bounded = usageAttributionDiagnosticSql('WITH school_sessions AS MATERIALIZED (SELECT 1),\ngrains AS (SELECT 1)' + suffix);
+  assert.match(bounded, /SUM\(heartbeat_count\) AS heartbeats FROM grains/);
+  assert.doesNotMatch(bounded, /INSERT INTO/);
+  assert.throws(() => usageAttributionDiagnosticSql('DELETE FROM schools' + suffix));
+  assert.throws(() => usageAttributionDiagnosticSql('SELECT 1'));
 });
