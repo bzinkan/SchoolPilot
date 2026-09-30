@@ -69,7 +69,8 @@ export async function appointmentFixture() {
     return { authorization: `Bearer ${signUserToken({ userId: person.id, email: person.email, isSuperAdmin: false })}`,
       "x-school-id": tenant.schoolId, "x-passpilot-class-model": "classpilot-groups-v1" };
   }
-  type Body = { error?: string; code?: string; replayed?: boolean; appointment: { id: string; studentId: string; revision: number; status: string; staffNotes?: string | null; schoolTimezone: string; startsAt: string; endsAt: string; retainedUntil: string; passId: string | null };
+  type Body = { error?: string; code?: string; replayed?: boolean; enabled?: boolean; manager?: boolean; teacherReminders?: boolean; schoolTimezone?: string; schoolYearConfigured?: boolean;
+    appointment: { id: string; studentId: string; studentName?: string; revision: number; status: string; staffNotes?: string | null; schoolTimezone: string; startsAt: string; endsAt: string; retainedUntil: string; passId: string | null };
     appointments: Body["appointment"][]; nextCursor: string | null; pass: { id: string; notes: string | null; status: string; ruleOverrideCode?: string } };
   async function call(tenant: Tenant, person: Person, method: string, path: string, body?: unknown) {
     const response = await fetch(url + path, { method, headers: { "content-type": "application/json", ...headers(tenant, person) },
