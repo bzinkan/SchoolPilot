@@ -73,6 +73,19 @@ export async function runLocalUsageBenchmark() {
       await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Synthetic','Usage')", [id, address]);
       await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,$3,'active')", [schoolId, id, roleName]);
     }
+    // Exercise real authentication/entitlement before the expensive raw fixture.
+    server = createServer(createApp()); await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
+    const origin = `http://127.0.0.1:${server.address().port}/api/classpilot/admin/usage`;
+    const token = signUserToken({ userId: staff, email, isSuperAdmin: false });
+    const range = { from: time.addLocalDays(date, -1), to: time.addLocalDays(date, 1) };
+    const get = async (scope = 'school', id, format = 'json') => {
+      const query = new URLSearchParams({ scope, ...range, format }); if (id) query.set('id', id);
+      const started = performance.now(), response = await fetch(`${origin}?${query}`, { headers: { Authorization: `Bearer ${token}`, 'X-School-Id': schoolId } });
+      const payload = format === 'json' ? await response.json() : await response.text();
+      assert.equal(response.status, 200, `Usage ${scope}/${format} status ${response.status}`);
+      return { durationMs: performance.now() - started, payload, headers: response.headers };
+    };
+    assert.equal((await get()).payload.dataState, 'unavailable');
     await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level) SELECT id,$2,'Synthetic','Usage','active','6' FROM unnest($1::text[]) id", [students, schoolId]);
     for (let index = 0; index < 2; index++) {
       await admin.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,$4,'admin_class')", [groups[index], schoolId, teacher, `Synthetic Class ${index + 1}`]);
@@ -109,17 +122,6 @@ export async function runLocalUsageBenchmark() {
     const first = await rollup.rollupClasspilotUsageDay(worker, { schoolId, day, windowEndUtc: new Date(day.dayStartUtc.getTime() + 14 * 3600_000), exclusions: [] });
     metrics.liveRewrite = { durationMs: performance.now() - initialStarted, ...first };
     assert.equal(first.seconds, 7_500_000); assert.equal(first.heartbeatCount, 500_000);
-    server = createServer(createApp()); await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
-    const origin = `http://127.0.0.1:${server.address().port}/api/classpilot/admin/usage`;
-    const token = signUserToken({ id: staff, email, role: 'school_admin', isSuperAdmin: false });
-    const range = { from: time.addLocalDays(date, -1), to: time.addLocalDays(date, 1) };
-    const get = async (scope = 'school', id, format = 'json') => {
-      const query = new URLSearchParams({ scope, ...range, format }); if (id) query.set('id', id);
-      const started = performance.now(), response = await fetch(`${origin}?${query}`, { headers: { Authorization: `Bearer ${token}`, 'X-School-Id': schoolId } });
-      const payload = format === 'json' ? await response.json() : await response.text();
-      assert.equal(response.status, 200, `Usage ${scope}/${format} status ${response.status}`);
-      return { durationMs: performance.now() - started, payload, headers: response.headers };
-    };
     const expected = { school: 7_500_000, grade: 7_500_000, class: 3_750_000, student: 15_000 };
     const ids = { school: undefined, grade: '6', class: groups[0], student: students[0] };
     metrics.reads = {};
@@ -143,7 +145,7 @@ export async function runLocalUsageBenchmark() {
     const empty = rollup.classpilotUsageRollupDay(time.addLocalDays(date, 1), zone);
     await rollup.rollupClasspilotUsageDay(worker, { schoolId, day: empty, windowEndUtc: empty.dayEndUtc, exclusions: [] });
     const completed = await get(); assert.equal(completed.payload.range.computedDays, 2); assert.equal(completed.payload.byDay[1].monitoredBrowserSeconds, 0); assert.equal(completed.payload.range.unavailableDates.length, 1); assert.equal(completed.payload.dataState, 'final');
-    const canaryToken = signUserToken({ id: staff, email, role: 'school_admin', isSuperAdmin: false });
+    const canaryToken = signUserToken({ userId: staff, email, isSuperAdmin: false });
     const forbidden = await fetch(`${origin}?scope=school&${new URLSearchParams(range)}`, { headers: { Authorization: `Bearer ${canaryToken}`, 'X-School-Id': canary } }); assert.equal(forbidden.status, 403); await forbidden.text();
     metrics.correctness = { exactIndependentTotals: true, deterministicDedup: true, teacherIntentExemption: true, frozenOfficialClassAttribution: true, newestAiDecision: true, successfulEmptyDay: true, internalGapWithheld: true, crossSchoolDenied: true, snapshotReadsDuringAtomicRewrite: true };
     const planClient = await worker.connect();
@@ -154,13 +156,14 @@ export async function runLocalUsageBenchmark() {
     } finally { await planClient.query('ROLLBACK'); planClient.release(); }
     const readPlanClient = await worker.connect();
     try {
-      metrics.readExplain = (await readPlanClient.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT usage_date,SUM(seconds),COUNT(DISTINCT student_id) FROM classpilot_usage_rollups rollup JOIN classpilot_usage_rollup_days day USING(school_id,usage_date) WHERE school_id=$1 AND usage_date BETWEEN $2::date AND $3::date GROUP BY usage_date`, [schoolId, range.from, range.to])).rows[0]['QUERY PLAN'];
+      metrics.representativeDayGroupingExplain = (await readPlanClient.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT usage_date,SUM(seconds),COUNT(DISTINCT student_id) FROM classpilot_usage_rollups rollup JOIN classpilot_usage_rollup_days day USING(school_id,usage_date) WHERE school_id=$1 AND usage_date BETWEEN $2::date AND $3::date GROUP BY usage_date`, [schoolId, range.from, range.to])).rows[0]['QUERY PLAN'];
     } finally { readPlanClient.release(); }
     const retentionStart = performance.now();
     let removed = 0, batches = 0;
     do {
       // Same bounded heartbeat deletion form as purgeExpiredHeartbeats.
       const result = await worker.query(`DELETE FROM heartbeats WHERE id IN (SELECT id FROM heartbeats WHERE school_id=$1 AND timestamp < $2::timestamp LIMIT 5000)`, [schoolId, wall(new Date(day.dayStartUtc.getTime() - 30 * 86400_000))]);
+      if (result.rowCount > 0) await new Promise(done => setTimeout(done, 100));
       removed += result.rowCount; batches++; if (result.rowCount < 5000) break;
     } while (batches <= 11);
     assert.equal(removed, 50_000);
