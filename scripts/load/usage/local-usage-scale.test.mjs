@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql, apiStatementKind } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
 const local = { USAGE_LOCAL_SCALE: '1', NODE_ENV: 'test', USAGE_SCALE_CONTAINER: `schoolpilot-usage-scale-${run}`,
@@ -65,4 +65,12 @@ test('both attribution shapes retain their correct heartbeat sums while diagnost
   assert.doesNotMatch(bounded, /INSERT INTO/);
   assert.throws(() => usageAttributionDiagnosticSql('DELETE FROM schools' + suffix));
   assert.throws(() => usageAttributionDiagnosticSql('SELECT 1'));
+});
+
+test('API diagnostics retain fixed family labels rather than SQL or parameters', () => {
+  assert.equal(apiStatementKind('WITH scoped AS (SELECT * FROM classpilot_usage_rollups JOIN classpilot_usage_rollup_days ON true) SELECT COUNT(*) GROUP BY GROUPING SETS (())'), 'usageReport');
+  assert.equal(apiStatementKind('SELECT computed_at FROM classpilot_usage_rollup_days WHERE school_id=$1'), 'usageCoverage');
+  assert.equal(apiStatementKind('SELECT * FROM schools JOIN settings ON true WHERE id=$1'), 'settings');
+  assert.equal(apiStatementKind('INSERT INTO heartbeats VALUES($1)'), 'heartbeat');
+  assert.equal(apiStatementKind('SELECT set_config($1,$2,true)'), 'transaction');
 });

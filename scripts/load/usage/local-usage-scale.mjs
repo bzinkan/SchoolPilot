@@ -41,6 +41,22 @@ export function usageAttributionDiagnosticSql(statement) {
   return sql;
 }
 
+export function apiStatementKind(text) {
+  if (text.includes('GROUPING SETS')) return 'usageReport';
+  if (/\bclasspilot_usage_rollup_days\b/.test(text)) return 'usageCoverage';
+  if (/\bclasspilot_usage_rollups\b/.test(text)) return 'usageRows';
+  if (/\baudit_logs\b/.test(text)) return 'audit';
+  if (/\bheartbeats\b/.test(text)) return 'heartbeat';
+  if (/\bsettings\b/.test(text)) return 'settings';
+  if (/\bschool_memberships\b/.test(text)) return 'membership';
+  if (/\bstudents\b/.test(text)) return 'studentDirectory';
+  if (/\bdevices\b/.test(text)) return 'device';
+  if (/\bteaching_sessions\b/.test(text)) return 'teachingSession';
+  if (/\bschools\b/.test(text)) return 'school';
+  if (/^\s*(?:BEGIN|COMMIT|ROLLBACK|SET|SELECT set_config)\b/i.test(text)) return 'transaction';
+  return 'other';
+}
+
 // A separate small oracle over raw current-day observations. It intentionally
 // does not use the application's SQL, classifications or aggregate rows.
 export function currentObservationSeconds(rows, cutoff) {
@@ -127,7 +143,7 @@ export async function runLocalScale() {
     measureCall(appPool, 'connect', (durationMs, error) => record(metrics.apiDatabase.acquisitions, durationMs, error));
     appPool.on('connect', client => measureCall(client, 'query', (durationMs, error, input) => {
       const text = typeof input === 'string' ? input : input?.text || '';
-      const kind = text.includes('GROUPING SETS') ? 'usageReport' : 'other';
+      const kind = apiStatementKind(text);
       const target = metrics.apiDatabase.statements[kind] ??= { count: 0, failures: 0, maxMs: 0 };
       record(target, durationMs, error);
     }));
