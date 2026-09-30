@@ -13,11 +13,53 @@ Use UNKNOWN for unverified serving images, live flags and Store publication.
 Do not turn skipped tests or simulation into managed-device evidence.
 
 The 2026-09-30 source baseline was SchoolPilot `60f33db` and ClassPilot `55bb531`.
-Recheck remote main before implementation/review. The ClassPilot manifest 2.9.6
-was an unsubmitted repository candidate. The next release version is provisional.
-The public Store listing retrieved on September 30 showed 2.9.5, updated September
-25; repeat that check immediately before a later upload.
+Remote main was reverified during implementation at those same commits. The
+[public Store listing](https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca)
+rechecked September 30 showed 2.9.6, updated September 27, superseding the earlier
+2.9.5 observation. The v2.9.6 tag resolves to ClassPilot `55bb531`; GitHub release
+history was empty. These observations do not establish the published ZIP hash.
+Local combined precise/Focus candidate 2.10.0 was selected after these checks;
+source/package/device acceptance and publication are separate. Repeat the Store
+check immediately before any later authorized upload.
 Preserve the existing draft Observe branch and other sessions' checkouts.
+
+## Review order and draft slices
+
+The links below are reviewable implementation slices, not merged or deployed
+state. Their current-head checks and exact source evidence are recorded in each
+PR; a green earlier head does not cover a later amendment. Stacked branches
+preserve the common corrected foundation without modifying either original
+checkout. Rebase dependents after their prerequisite changes and rerun affected
+checks before review.
+
+| Stage | SchoolPilot draft PRs | Dependency or evidence |
+|---|---|---|
+| Foundation | [Axios correction #562](https://github.com/bzinkan/SchoolPilot/pull/562), [stacked-branch CI #564](https://github.com/bzinkan/SchoolPilot/pull/564) | Dependency audit and required checks must run on every stack. |
+| Corrections | [confidentiality #566](https://github.com/bzinkan/SchoolPilot/pull/566), [usage coverage/cutoff #563](https://github.com/bzinkan/SchoolPilot/pull/563) | Public retained overrides and both usage correctness findings have regression coverage; ledger admission and writer fencing remain release preconditions. |
+| Precise authoring | [normalized preview API #567](https://github.com/bzinkan/SchoolPilot/pull/567), [interfaces #571](https://github.com/bzinkan/SchoolPilot/pull/571) | Server normalizer, uncached review, broader-site warnings and explicit Classroom boundaries. |
+| Focus | [contract #565](https://github.com/bzinkan/SchoolPilot/pull/565), [backend #572](https://github.com/bzinkan/SchoolPilot/pull/572), [teacher controls #575](https://github.com/bzinkan/SchoolPilot/pull/575) | Exact student/tab references, current authority, validated Open receipt and cleanup remain one contract. |
+| Classroom | [revision/prerequisite backend #582](https://github.com/bzinkan/SchoolPilot/pull/582), [integrated actions #577](https://github.com/bzinkan/SchoolPilot/pull/577) | Actual interface-to-HTTP/acknowledgement test proves only confirmed students open a lesson; migration is additive and append-only. |
+| Appointments | [API #570](https://github.com/bzinkan/SchoolPilot/pull/570), [eligibility races #573](https://github.com/bzinkan/SchoolPilot/pull/573), [school year #574](https://github.com/bzinkan/SchoolPilot/pull/574), [staff interface #579](https://github.com/bzinkan/SchoolPilot/pull/579) | Admission and source-matched writer v2 before activation; configured calendar, atomic issuance and staff-only reminders. |
+| Reports | [aggregates/audited CSV #583](https://github.com/bzinkan/SchoolPilot/pull/583), [staff interface #584](https://github.com/bzinkan/SchoolPilot/pull/584) | Restricted-role CI and current class/roster authority races must pass; backend owns denominators, historical scope and export audit. |
+| Usage | [administrator page #568](https://github.com/bzinkan/SchoolPilot/pull/568), [initial synthetic load #569](https://github.com/bzinkan/SchoolPilot/pull/569) | Expanded bounded profiles supplement the initial result; record successful school-day capacity and failed stress limits separately. |
+| SFU decision | [dated hosting/privacy/cost ADR #561](https://github.com/bzinkan/SchoolPilot/pull/561) | Proposed managed-service cap is unapproved; no media implementation or provisioning. |
+| Verification fixtures | [browser teardown #576](https://github.com/bzinkan/SchoolPilot/pull/576), [fixed metrics clock #581](https://github.com/bzinkan/SchoolPilot/pull/581) | Drain held requests and avoid minute-boundary counter flush; preserve actual browser/HTTP assertions. |
+
+The separate ClassPilot stack is [precise enforcement #119](https://github.com/bzinkan/ClassPilot/pull/119),
+[Focus #120](https://github.com/bzinkan/ClassPilot/pull/120), then
+[local 2.10.0 candidate #121](https://github.com/bzinkan/ClassPilot/pull/121).
+Publication, managed-device acceptance and capability activation are distinct.
+
+Expanded usage measurements must retain their workload cardinalities. The valid
+extreme fixture produces 500,000 aggregate grains per school from repeated
+20-second domain changes and ten short sessions; both initial writes exceed the
+existing 60-second limit and roll back aggregates and completion. Report checks
+on that bounded fixture passed all 64 requests, with a 4.55-second maximum usage
+query under the 15-second API limit. These results do not establish successful
+stress writing. A separately named one-million-observation school-day fixture
+uses the actual 10-second heartbeat cadence, six lessons, passing windows and
+200 school-wide domains. Its result must be recorded independently, preserving
+all failed evidence and existing resource/timeout/constraint limits.
 
 ## Operator preflight for a later authorized release
 
@@ -57,7 +99,8 @@ activity was observed; unavailable dates must never appear as measured zeros.
 ## Extension candidate and rollback
 
 1. Check live Store publication and repository release history before selecting
-   the successor. `2.10.0` is provisional. Keep the production extension identity
+   the successor. The local successor selected after September 30 verification
+   is `2.10.0`; selection does not satisfy release acceptance. Keep the production extension identity
    and canonical package scripts; do not claim a tag is a published version.
 2. Record manifest version, tested commit, package contents and SHA-256. Run
    source and packaged lifecycle/enforcement tests against the pinned resource
