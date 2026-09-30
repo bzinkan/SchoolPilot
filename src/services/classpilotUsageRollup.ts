@@ -116,7 +116,35 @@ export const CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL = `SELECT EXISTS (
  * with heartbeats."timestamp" (timestamp without time zone, never converted),
  * $4 the school-local usage date, $5 the excluded intervals as JSON.
  */
-export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH observed AS MATERIALIZED (
+export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH school_sessions AS MATERIALIZED (
+  SELECT id, start_time, end_time, scheduled_end_at
+  FROM teaching_sessions
+  WHERE school_id = $1
+    AND start_time < $3::timestamp
+    AND start_time >= $2::timestamp - interval '12 hours'
+),
+school_roster_window AS MATERIALIZED (
+  SELECT roster.student_id, roster.group_id AS class_id, session.id AS session_id, session.start_time,
+    GREATEST(session.start_time, roster.captured_at AT TIME ZONE 'UTC') AS starts_at,
+    LEAST(
+      COALESCE(session.end_time, 'infinity'::timestamp),
+      COALESCE(session.scheduled_end_at AT TIME ZONE 'UTC', 'infinity'::timestamp),
+      session.start_time + interval '12 hours'
+    ) AS ends_at
+  FROM school_sessions AS session
+  JOIN classpilot_session_students AS roster
+    ON roster.teaching_session_id = session.id AND roster.school_id = $1
+  JOIN groups AS class
+    ON class.id = roster.group_id AND class.school_id = $1
+),
+grains AS (
+  -- Forced tenant RLS can substantially underestimate school cardinality.
+  -- Correlating the timeline and roster to one student bounds any nested-loop
+  -- plan to that student's observations and sessions instead of the school.
+  SELECT student_grains.*
+  FROM students AS student_scope
+  CROSS JOIN LATERAL (
+WITH observed AS MATERIALIZED (
   SELECT heartbeat.id, heartbeat.student_id, heartbeat."timestamp" AS observed_at,
     heartbeat.active_tab_url, heartbeat.ai_category, heartbeat.teacher_intent_source
   FROM heartbeats AS heartbeat
@@ -124,10 +152,7 @@ export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH observed AS MATERIALIZED
     AND heartbeat.student_id IS NOT NULL
     AND heartbeat."timestamp" >= $2::timestamp
     AND heartbeat."timestamp" < $3::timestamp
-    AND EXISTS (
-      SELECT 1 FROM students AS student
-      WHERE student.school_id = $1 AND student.id = heartbeat.student_id
-    )
+    AND heartbeat.student_id = student_scope.id
 ),
 excluded AS MATERIALIZED (
   SELECT NULLIF(item->>'studentId', '') AS student_id,
@@ -150,13 +175,18 @@ deduplicated AS MATERIALIZED (
   ORDER BY student_id, date_trunc('second', observed_at), observed_at, id
 ),
 ai_decision AS MATERIALIZED (
-  SELECT DISTINCT ON (decision.heartbeat_id) decision.heartbeat_id, decision.category,
+  SELECT decision.heartbeat_id, decision.category,
     decision.teacher_intent_source
-  FROM classpilot_ai_decisions AS decision
-  WHERE decision.school_id = $1
-    AND decision.created_at >= $2::timestamp
-    AND decision.heartbeat_id IN (SELECT id FROM deduplicated)
-  ORDER BY decision.heartbeat_id, decision.created_at DESC, decision.id DESC
+  FROM deduplicated AS observation
+  CROSS JOIN LATERAL (
+    SELECT newest.heartbeat_id, newest.category, newest.teacher_intent_source
+    FROM classpilot_ai_decisions AS newest
+    WHERE newest.school_id = $1
+      AND newest.heartbeat_id = observation.id
+      AND newest.created_at >= $2::timestamp
+    ORDER BY newest.created_at DESC, newest.id DESC
+    LIMIT 1
+  ) AS decision
 ),
 normalized AS (
   SELECT observation.id, observation.student_id, observation.observed_at,
@@ -197,28 +227,15 @@ classified AS (
   FROM normalized
 ),
 roster_window AS MATERIALIZED (
-  SELECT roster.student_id, roster.group_id AS class_id, session.id AS session_id, session.start_time,
-    GREATEST(session.start_time, roster.captured_at AT TIME ZONE 'UTC') AS starts_at,
-    LEAST(
-      COALESCE(session.end_time, 'infinity'::timestamp),
-      COALESCE(session.scheduled_end_at AT TIME ZONE 'UTC', 'infinity'::timestamp),
-      session.start_time + interval '12 hours'
-    ) AS ends_at
-  FROM classpilot_session_students AS roster
-  JOIN teaching_sessions AS session
-    ON session.id = roster.teaching_session_id AND session.school_id = $1
-  JOIN groups AS class
-    ON class.id = roster.group_id AND class.school_id = $1
-  WHERE roster.school_id = $1
-    AND session.start_time < $3::timestamp
-    AND session.start_time >= $2::timestamp - interval '12 hours'
+  SELECT * FROM school_roster_window
+  WHERE student_id = student_scope.id
 ),
 roster_boundaries AS (
   SELECT student_id, starts_at AS at FROM roster_window WHERE starts_at < ends_at
   UNION
   SELECT student_id, ends_at AS at FROM roster_window WHERE starts_at < ends_at
 ),
-roster_intervals AS (
+roster_intervals AS MATERIALIZED (
   SELECT student_id, at AS starts_at, LEAD(at) OVER (PARTITION BY student_id ORDER BY at) AS ends_at
   FROM roster_boundaries
 ),
@@ -245,17 +262,24 @@ attributed AS (
     ON winning_roster.student_id = classified.student_id
     AND classified.observed_at >= winning_roster.starts_at
     AND classified.observed_at < winning_roster.ends_at
+)
+SELECT attributed.student_id, attributed.class_id, attributed.session_id,
+  attributed.domain, attributed.classification,
+  ROUND(SUM(GREATEST(attributed.attributed_seconds, 0)))::int AS seconds,
+  COUNT(*)::int AS heartbeat_count
+FROM attributed
+GROUP BY attributed.student_id, attributed.class_id, attributed.session_id,
+  attributed.domain, attributed.classification
+  ) AS student_grains
+  WHERE student_scope.school_id = $1
 ),
 inserted AS (
   INSERT INTO classpilot_usage_rollups (
     school_id, usage_date, student_id, class_id, session_id, domain, classification, seconds, heartbeat_count
   )
-  SELECT $1, $4::date, attributed.student_id, attributed.class_id, attributed.session_id,
-    attributed.domain, attributed.classification,
-    ROUND(SUM(GREATEST(attributed.attributed_seconds, 0)))::int, COUNT(*)::int
-  FROM attributed
-  GROUP BY attributed.student_id, attributed.class_id, attributed.session_id,
-    attributed.domain, attributed.classification
+  SELECT $1, $4::date, grains.student_id, grains.class_id, grains.session_id,
+    grains.domain, grains.classification, grains.seconds, grains.heartbeat_count
+  FROM grains
   RETURNING seconds, heartbeat_count
 )
 SELECT COUNT(*)::int AS row_count,
