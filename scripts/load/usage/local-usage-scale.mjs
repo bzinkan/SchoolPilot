@@ -281,7 +281,7 @@ export async function runLocalScale() {
       grain AS (SELECT student_id,class_id,session_id,domain,classification,
         ROUND(SUM(GREATEST(attributed_seconds,0)))::int AS seconds,COUNT(*)::int AS heartbeats
         FROM attributed GROUP BY student_id,class_id,session_id,domain,classification)
-      SELECT COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeats) AS heartbeats FROM grain`;
+      SELECT $4::date AS usage_date,COUNT(*)::bigint AS rows,SUM(seconds) AS seconds,SUM(heartbeats) AS heartbeats FROM grain`;
     try {
       metrics.attributionPlan = (await worker.query('EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, TIMING OFF) ' + attributedSql, [schools[0].id, wall(day.dayStartUtc), wall(day.dayEndUtc), heavyDate, '[]'])).rows;
     } catch (error) { metrics.attributionPlanFailure = { code: error.code, message: error.message }; }
