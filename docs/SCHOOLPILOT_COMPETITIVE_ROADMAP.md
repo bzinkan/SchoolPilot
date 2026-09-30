@@ -85,17 +85,17 @@ Every new tenant table must receive:
 
 ## Phases
 
-The master plan's phases, with the PRs that implement them. Status is as of 2026-09-29.
+The master plan's phases, with the PRs that implement them. Status is as of 2026-09-30.
 
 | Phase | Master plan name | PRs | Status |
 |---|---|---|---|
 | 0 | Current-state audit + legacy TURN cost reduction | PR 0, PR 0A, operational stop | Parking shipped (#541) and applied; audit merged in #549; PR 0A hardening merged in #551, not deployed as of merge |
-| 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Planned (PR 1-pre open as #547) |
-| 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, ClassPilot 2.10.0 | PR 2-pre and PR 2 planned; PR 3–4 next plan cycle |
+| 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Merged in #547, #552 and #553; flag off, not deployed |
+| 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, ClassPilot 2.10.0 | PR 2-pre merged in #550 and PR 2 in #555, capability off and not deployed; matcher hardening follow-up open; PR 3–4 next plan cycle |
 | 3 | Focus Tab + Bring Forward | PR 5, ClassPilot 2.10.0 | Extension contract defined; server PR next plan cycle |
 | 4 | Google Classroom Assignment -> Open / Open + Focus / Open as Lesson | PR 6 | Next plan cycle |
-| 5 | PassPilot Rules + Appointments + Expanded Analytics | PR 7, PR 8, PR 9 | PR 7 planned; PR 8–9 outlined |
-| 6 | Digital Usage / Monitored Browser-Time Analytics | PR 10a, PR 10b, PR 11 | PR 10a and PR 10b planned; PR 11 outlined |
+| 5 | PassPilot Rules + Appointments + Expanded Analytics | PR 7, PR 8, PR 9 | PR 7 merged in #554, mode off and not deployed; PR 8–9 outlined |
+| 6 | Digital Usage / Monitored Browser-Time Analytics | PR 10a, PR 10b, PR 11 | PR 10a merged in #548 and PR 10b in #556, modes off and not deployed; PR 11 outlined |
 | 7 | Present to Class using a NEW SFU-based architecture | PR 12–18 | Waits for the PR 12 ADR decision |
 | 8 | Final cleanup/decommission of retired Live View + legacy TURN infrastructure | PR 19–21, operational destroy | Not started; blocked on Phase 7 |
 
@@ -182,26 +182,26 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 
 The master plan's PR list, plus five wave-1 additions (marked). Lane letters refer to the lane table below.
 
-| PR | Scope | Lane | Status (2026-09-29) |
+| PR | Scope | Lane | Status (2026-09-30) |
 |---|---|---|---|
 | PR 0 | Roadmap + legacy media audit (this document and `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`) | 0 | IMPLEMENTED (docs), merged in #549 |
 | PR 0A | Legacy TURN parking Terraform/documentation protections | 0 | Parking shipped in #541; hardening (literal `prevent_destroy` on the rest of the retained TURN identity, HA profile parity, default-off WebSocket signaling gate) merged in #551: IMPLEMENTED and AUTOMATED-TEST VERIFIED, not deployed as of merge |
 | Operational | Stop legacy TURN A/B after explicit verification/approval | 0 | Done: stopped 2026-09-28; the saved TURN Terraform plan was applied 2026-09-29 |
-| PR 1a (wave-1 addition) | Governed product runtime activation tool, `scripts/deploy-product-runtime-config.ps1` | 0 | Planned |
-| PR 1-pre (wave-1 addition) | Scope the AI assistant's Flight Path list to the caller's own paths | A | Open (#547) |
-| PR 1 | Shared Flight Paths + Block Lists | A | Planned |
-| PR 2-pre (wave-1 addition) | Forward-compatibility fence one release before PR 2 | A | Planned |
-| PR 2 | Structured restriction-resource backend/model | A | Planned |
+| PR 1a (wave-1 addition) | Governed product runtime activation tool, `scripts/deploy-product-runtime-config.ps1` | 0 | Merged in #552: AUTOMATED-TEST VERIFIED against mocked AWS; never run against AWS |
+| PR 1-pre (wave-1 addition) | Scope the AI assistant's Flight Path list to the caller's own paths | A | Merged in #547 |
+| PR 1 | Shared Flight Paths + Block Lists | A | Merged in #553: `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` off, not deployed |
+| PR 2-pre (wave-1 addition) | Forward-compatibility fence one release before PR 2 | A | Merged in #550; see constraint 4 for the activation rule |
+| PR 2 | Structured restriction-resource backend/model | A | Merged in #555: `preciseRestrictionResourcesV1` off, not deployed; contract in `CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md`; matcher hardening follow-up open |
 | PR 3 | Precise Waypoint enforcement: Entire Website + This Resource | A | Next plan cycle |
 | PR 4 | Mixed Website/Section/Resource Flight Paths | A | Next plan cycle |
 | PR 5 | Bring Forward + Focus | A | Next plan cycle |
 | PR 6 | Google Classroom Assignment quick actions | A | Next plan cycle |
 | ClassPilot 2.10.0 | One extension release carrying `preciseRestrictionResourcesV1` and `focusTabV1` | A | Contract defined; ships after server PRs 2–5 |
-| PR 7 | PassPilot Rules | B | Planned |
+| PR 7 | PassPilot Rules | B | Merged in #554: `PASSPILOT_RULES_MODE` off, not deployed |
 | PR 8 | PassPilot Appointments | B | Outlined |
 | PR 9 | PassPilot Analytics | B | Outlined |
-| PR 10a (split of PR 10) | Daily usage rollup hardening, shadow-safe | B | Planned |
-| PR 10b (split of PR 10) | Digital Usage rollup table + read API | B | Planned |
+| PR 10a (split of PR 10) | Daily usage rollup hardening, shadow-safe | B | Merged in #548 |
+| PR 10b (split of PR 10) | Digital Usage rollup table + read API | B | Merged in #556: both modes off, not deployed |
 | PR 11 | Digital Usage admin UI | B | Outlined |
 | PR 12 | Present to Class SFU/LiveKit architecture ADR + new TURN/TLS design | C | Waits for the ADR decision |
 | PR 13 | Presentation session/auth backend + short-lived SFU credentials | C | Not started |
@@ -232,17 +232,17 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 | C | PR 12 ADR, then PR 13–18 | Brian's ADR decision first |
 | D | PR 19–21 | Only after Lane C is live and independent |
 
-Near-term order: the two operational applies (done 2026-09-29) → PR 0 → PR 0A → PR 1-pre and PR 1a → PR 1 → PR 2-pre → PR 2; PR 7 and PR 10a in parallel.
+Wave-1 merge order (2026-09-29 and 2026-09-30): #547 → #548 → #550 → #549 → #551 → #552 → #553 → #554 → #556 → #557 (the `engine.io` security fix) → #555. What remains is the PR 2 matcher hardening follow-up and the activation sequence in "Wave-1 status".
 
 ### Hard ordering constraints
 
 1. PR 0A merges only after the saved TURN Terraform plan and the `live-view-retire` runtime profile are applied. Both were applied on 2026-09-29.
 2. PR 1-pre merges before PR 1, and PR 1 before PR 2.
 3. Never merge a change to `scripts/deploy-classpilot-runtime-config.ps1` between a runtime-config Plan and its Apply; Plan and Apply must run from the same tool SHA (`CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md`). PR 2 and PR 3 edit that tool.
-4. PR 2-pre is deployed, in an image that does not contain PR 2, before PR 2 is deployed.
+4. PR 2-pre (#550) and PR 2 (#555) reached `main` together, and `scripts/deploy.sh` deploys only `origin/main`, so no separate PR 2-pre image will exist. The fence matters only once precise state exists. Never activate `preciseRestrictionResourcesV1` until the serving image and the image a rollback would return to both contain #550, which takes at least one more deploy after the first image that ships it. After the capability has been active, never roll an image back below #550.
 5. Server before extension. ClassPilot 2.10.0 ships only after server PRs 2, 3, 4 and 5 are deployed with their capabilities off.
 6. Lane B new-table PRs merge in the order PR 7, PR 10b, PR 8, each chaining its RLS inventory onto the previous one.
-7. PR 10b waits for PR 10a plus its shadow evidence; PR 11 waits for PR 10b plus one observed day of rollups.
+7. Activation order, not merge order: the daily rollup is promoted only after three clean shadow school days on the PR 10a build; `classpilot_usage_rollups` is then admitted and `CLASSPILOT_USAGE_ROLLUP_MODE` turned on; PR 11 waits for one observed day of rollups. PR 10b's code merged with both modes off, so merging it activated nothing.
 8. Lane C starts with the PR 12 ADR decision. Lane D starts only after Present to Class runs on its own media stack.
 9. A feature rollout and a destructive legacy removal never share a deployment.
 
@@ -252,7 +252,7 @@ Near-term order: the two operational applies (done 2026-09-29) → PR 0 → PR 0
 - **Clean deploys.** Deploy from a clean `main` clone with CI green, including the SOC 2 approval job that `scripts/deploy.sh` gates on. Backend and frontend deploy as separate runs.
 - **RLS admission.** A new tenant-table bundle is admitted once with `scripts/deploy.sh production --backend --enable-rls-table <tables>`; its mode stays `off` until a later governed Apply.
 - **Flags off at deploy.** Production mode flags change only through a PR 1a Apply; capability kill switches and registry entries change only through `scripts/deploy-classpilot-runtime-config.ps1`. Nobody edits ECS task definitions by hand, and no Terraform seed variable is added for a wave-1 flag.
-- **PR 2-pre before PR 2**, in separate images, as above.
+- **PR 2-pre and PR 2** ship in the same first image. Constraint 4 gives the activation and rollback rule.
 - **Server before extension.** A SchoolPilot deploy never publishes or updates the extension. ClassPilot 2.10.0 is packaged from a clean tag after server PRs 2–5 are deployed, MANAGED-CHROMEBOOK VERIFIED on at least two Google Admin-managed Chromebooks, and only then uploaded to the Chrome Web Store by Brian.
 - **The serving image must know every capability in the live registry.** `parseCapabilityRollouts` (`src/services/classpilotProtocol.ts:138-160`) treats any unknown key in `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` as an invalid registry, and an invalid registry turns every protocol-v3 capability off. The runtime-config tool writes an entry for every capability it registers, adding a missing additive capability as `{"mode":"off"}` (`scripts/deploy-classpilot-runtime-config.ps1:74-80` and `:2459-2476`). Therefore: deploy the server image that registers a new capability before any runtime-config Apply writes its entry; before reverting an image past a capability's introduction, remove that entry from the live registry (since PR 2 the tool projects every runtime onto the serving image's registry, and a plan with `-RegistryTargetAppSha <older app SHA>` drops the entries the older image does not register; see `CLASSPILOT_ROADMAP_RUNTIME_ROLLOUT.md`); and PR 19 removes the live `liveViewIceServersV1` entry, or keeps the parser accepting that retired name, before it deletes the name from the server registry.
 - **PR 2 rollback** (runbook in `CLASSPILOT_ROADMAP_RUNTIME_ROLLOUT.md`, added by PR 2): apply `precise-restriction-resources-off`, clear every active precise restriction with a control-revision bump, and only then revert the image, observing the registry rule above.
@@ -390,6 +390,38 @@ Extension work for Phases 2 and 3 ships as one ClassPilot release, 2.10.0, after
 - **Options compared.** The master plan asks the ADR to evaluate self-hosted LiveKit in AWS primarily (EC2 versus ECS, UDP networking, public IPs, Redis, room model, authentication, metrics, horizontal scaling, updates, failure handling, cost, TURN/TLS and managed-Chromebook compatibility). The 2026-09-29 assessment makes a managed SFU the default unless the ADR proves otherwise. The ADR compares three options: LiveKit Cloud (managed), self-hosted LiveKit in AWS, and an S3/CloudFront frame-relay MVP.
 - **TURN for the new SFU.** Client-to-SFU over WebRTC/UDP is preferred, with TURN/TLS as the fallback for restrictive school networks. TURN is not the fan-out system; the SFU distributes media. The default direction is the TURN capability integrated with the new LiveKit/SFU stack (UDP, TCP fallback, TURN/TLS, port 443 where appropriate, short-lived access, reliable Chromebook behavior). Reusing the parked legacy coturn nodes is considered only if it shows a clear reliability, operational or meaningful cost advantage. The parked coturn nodes are never restarted because the new feature needs TURN.
 - **Privacy.** Live only, no recording, no media in PostgreSQL, Redis, S3 or logs. The current Live View and TURN wording on the legal pages (`PrivacyPolicy.jsx`, `TermsOfService.jsx`, `Subprocessors.jsx`) is reviewed in the PR 12 privacy review, not in Lane 0.
+
+## Wave-1 status (2026-09-30)
+
+All wave-1 pull requests are merged to `main`, and none is deployed. Every new mode and capability is off, so merging changed no production behavior. Each activation below is a separate, reviewed step.
+
+| PR | GitHub | What it adds | Readiness at merge |
+|---|---|---|---|
+| PR 0 | #549 | This roadmap and the legacy media audit | IMPLEMENTED (docs) |
+| PR 0A | #551 | `prevent_destroy` on the retained TURN identity, TURN parity in the HA profile, the default-off Live View signaling gate | AUTOMATED-TEST VERIFIED; a production plan-only run for `module.turn` at the merged head showed 0 to add, 0 to change, 0 to destroy |
+| PR 1-pre | #547 | The AI assistant lists only the teacher's own Flight Paths; administrators keep the school view | AUTOMATED-TEST VERIFIED |
+| PR 1a | #552 | The governed product runtime tool, `scripts/deploy-product-runtime-config.ps1` | AUTOMATED-TEST VERIFIED against mocked AWS; never run against AWS |
+| PR 1 | #553 | School Library: shared and Official Flight Paths and Block Lists | AUTOMATED-TEST VERIFIED |
+| PR 2-pre | #550 | The fence that withholds precise restriction state wherever it cannot be delivered safely | AUTOMATED-TEST VERIFIED |
+| PR 2 | #555 | Structured restriction resources, `preciseRestrictionResourcesV1`, registry projection in the runtime-config tool, the rollback clear CLI and `CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md` | AUTOMATED-TEST VERIFIED; independently reviewed twice before merge |
+| PR 7 | #554 | PassPilot rules: daily and period limits, destination capacity, encounter restrictions, administrator override, denial records | AUTOMATED-TEST VERIFIED; BROWSER VERIFIED by automated Chromium flows |
+| PR 10a | #548 | Shadow-safe hardening of the daily usage rollup | AUTOMATED-TEST VERIFIED |
+| PR 10b | #556 | `classpilot_usage_rollups` and the administrator Monitored Browser Time API | AUTOMATED-TEST VERIFIED; not LOAD VERIFIED |
+| Security | #557 | `engine.io` 6.6.11 for GHSA-2gc4-cqfq-p2gv | CI |
+
+One follow-up is open: hardening of the PR 2 matcher (YouTube player parameter values, overlong and fullwidth escapes below and inside section prefixes, provider path tails, the clear CLI's service binding). It changes the shared case file, so it merges before ClassPilot pins the case-file SHA-256.
+
+### Activation sequence (not started)
+
+Every step respects the AWS cost rollout's windows: no production `scripts/deploy.sh` run or runtime-config apply from Wednesday evening through Thursday evening, 2026-09-30 to 2026-10-01.
+
+1. Deploy current `main`, backend then frontend, with every new mode off. This ships the Live View signaling gate, the assistant fix, the precise-restriction fence and every new migration.
+2. Admit the new RLS bundles in chain order, each with its own `scripts/deploy.sh production --backend --enable-rls-table <tables>` run: `passpilotRules` (four tables, 125 in total) before `classpilotUsageRollups` (126). The modes stay off.
+3. Daily usage rollup: after three clean shadow school days on that build (rows with `mode = shadow` only; the query is in `SCALE_READINESS.md`), promote `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` with the PR 1a tool.
+4. Digital Usage: turn `CLASSPILOT_USAGE_ROLLUP_MODE` on with the PR 1a tool, observe one school day of `classpilot_usage_rollup` logs, then turn `CLASSPILOT_DIGITAL_USAGE_MODE` on. PR 11 builds the administrator page after that.
+5. PassPilot rules: turn `PASSPILOT_RULES_MODE` on with the PR 1a tool.
+6. School Library: turn `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` on with the PR 1a tool, optionally limited to a pilot school through `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS`.
+7. Precise restrictions: nothing before ClassPilot 2.10.0. The precise pilot profile stays refused until the 2.10.0 package evidence is bound, and until the serving image and its rollback target both contain #550 (constraint 4).
 
 ## Phase 0 and 0A status (2026-09-29 evening)
 
