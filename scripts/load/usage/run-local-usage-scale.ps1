@@ -40,7 +40,9 @@ try {
   if ($createStatus -ne 0 -or -not $created) { throw 'Dedicated local capped container creation failed.' }
   $ready = $false
   for ($attempt = 0; $attempt -lt 30; $attempt++) {
-    docker exec $container pg_isready -U $fixtureRole -d $database *> $null
+    # The image's initialization server accepts Unix sockets before restarting.
+    # Require TCP readiness so schema restore waits for the final server.
+    docker exec $container pg_isready -h 127.0.0.1 -p 5432 -U $fixtureRole -d $database *> $null
     if ($LASTEXITCODE -eq 0) { $ready = $true; break }
     Start-Sleep -Milliseconds 500
   }

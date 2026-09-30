@@ -29,6 +29,7 @@ test('dedicated runner verifies exact loopback port, caps and cleanup ownership 
   assert.match(script, /docker rm --force --volumes \$container/);
   assert.doesNotMatch(script, /docker (?:rm|stop|update).*schoolpilot-db/);
   assert.match(script, /Choose an external evidence directory/);
+  assert.match(script, /pg_isready -h 127\.0\.0\.1 -p 5432/, 'Wait for final TCP server, not the temporary Unix-socket initialization server');
 });
 
 test('current-day oracle does not grant fractional tail time beyond the established whole-second writer boundary', () => {
