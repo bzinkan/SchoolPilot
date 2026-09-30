@@ -118,7 +118,7 @@ describe("PassPilot appointments: staff authority, atomic activation and lifecyc
     const duplicate = await f.activate(canonical, appointment.id); assert.equal(duplicate.status, 200);
     assert.equal(duplicate.body.pass.id, results[0]!.body.pass.id); assert.equal(duplicate.body.pass.status, "returned"); assert.equal(duplicate.body.appointment.status, "completed");
     assert.equal(await count("passes", canonical.schoolId), 1);
-    await f.sql("UPDATE groups SET teacher_id=$2 WHERE id=$1", [canonical.classId, canonical.outsider.id]);
+    await f.assignTeacher(canonical, canonical.outsider);
     assert.equal((await f.activate(canonical, appointment.id)).status, 404, "Completed-pass replay must recheck current student authority");
   });
   it("serializes cancellation/activation and rejects stale edits without issuing a second pass", async () => {
@@ -186,6 +186,8 @@ describe("PassPilot appointments: staff authority, atomic activation and lifecyc
         await new Promise<void>(resolve => setTimeout(resolve, 20));
         if (attempt === 99) assert.fail("Activation never reached the locked school");
       }
+      // Preserve the deployed staff-integrity contract while revoking access.
+      await locker.query("DELETE FROM teacher_grades WHERE grade_id=$1 AND teacher_id=$2", [legacy.classId, legacy.teacher.id]);
       await locker.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [legacy.schoolId, legacy.teacher.id]);
       await locker.query("COMMIT");
       const result = await pending; assert.equal(result.status, 403); assert.equal(await count("passes", legacy.schoolId), 0);
