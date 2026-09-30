@@ -202,7 +202,7 @@ describe("precise Flight Path resources while the capability is off", () => {
   });
 
   it("lets the owner edit the website part of a path that still holds resources", async () => {
-    const path = await inSchool(() => storage.createFlightPath({
+    const path: any = await inSchool(() => storage.createFlightPath({
       schoolId: school.id,
       teacherId: teacherA.id,
       flightPathName: `${TAG} Held`,
@@ -332,7 +332,7 @@ describe("precise Flight Path resources while the capability is on", () => {
   it("shows library viewers the resources and copies them verbatim", async () => {
     setPrecise(true);
     setLibrary(true);
-    const shared = await inSchool(() => storage.createFlightPath({
+    const shared: any = await inSchool(() => storage.createFlightPath({
       schoolId: school.id,
       teacherId: teacherA.id,
       flightPathName: `${TAG} Shared`,
