@@ -109,7 +109,7 @@ export async function runLocalScale() {
       await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) SELECT $1,id,CASE WHEN id=$2 THEN 'school_admin' ELSE 'teacher' END,'active' FROM unnest($3::text[]) id", [school.id, school.staff, [school.staff, ...school.teachers]]);
       await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level,email) SELECT id,$2,'Synthetic','Scale','active',(6+(ordinality-1)%5)::text,'scale-'||id||'@example.test' FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.id]);
       await admin.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,($3::text[])[ordinality::int],'Synthetic Class '||ordinality,'admin_class' FROM unnest($1::text[]) WITH ORDINALITY class(id,ordinality)", [school.groups, school.id, school.teachers]);
-      await admin.query("INSERT INTO student_groups(student_id,group_id) SELECT id,($2::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.groups]);
+      await admin.query("INSERT INTO group_students(student_id,group_id) SELECT id,($2::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.groups]);
       // Ten nonoverlapping heavy-day windows per class; each observation has
       // exactly one frozen official class/session. Large historical/current
       // scope inventories remain present while the real writer selects its day.
@@ -171,6 +171,12 @@ export async function runLocalScale() {
       assert.equal(read.body.byDay.find(row => row.date === emptyDate).monitoredBrowserSeconds, 0);
       assert.equal(read.body.byDay.some(row => row.date === gapDate), false);
       assert.equal(read.body.range.unavailableDates.includes(gapDate), true);
+      for (const date of historyDates) {
+        const row = read.body.byDay.find(row => row.date === date); assert.ok(row);
+        assert.equal(row.monitoredBrowserSeconds, 90 * n); assert.equal(row.instructionalSeconds, 30 * n);
+        assert.equal(row.offTaskSeconds, 30 * n); assert.equal(row.unknownSeconds, 30 * n); assert.equal(row.state, 'final');
+      }
+      assert.equal(read.body.byDay.some(row => row.date === range.from), false);
       return read;
     };
     const ingestOne = async (school, index) => {
@@ -243,7 +249,12 @@ export async function runLocalScale() {
         assert.equal(read.body.byDay.find(row => row.date === today).monitoredBrowserSeconds, liveSeconds);
         assert.equal(read.body.range.computedDays, 364); assert.deepEqual(read.body.range.unavailableDates, [gapDate]);
         const csv = await get(school, scope, 'csv'); assert.equal(csv.status, 200); assert.match(csv.body, /Monitored Browser Time/); assert.equal(csv.headers.get('cache-control'), 'no-store, private');
+        const expectedTotalMinutes = ((historyDates.length * 90 * size(scope) + 15000 * size(scope) + liveSeconds) / 60).toFixed(1);
+        assert.ok(csv.body.includes(`"Total","","${expectedTotalMinutes}"`), 'CSV totals must match the independent scope oracle');
+        assert.ok(csv.body.includes(`"${emptyDate}","final","0.0"`));
+        assert.equal(csv.body.includes(`"${gapDate}",`), false);
         metrics.reads[`${school.index}/${scope}`].afterLiveMs = read.durationMs; metrics.reads[`${school.index}/${scope}`].csvMs = csv.durationMs;
+        metrics.reads[`${school.index}/${scope}`].expected = { completedHistoricalDays: historyDates.length, historySeconds: historyDates.length * 90 * size(scope), heavyDaySeconds: 15000 * size(scope), currentObservedSeconds: liveSeconds, csvTotalMinutes: expectedTotalMinutes };
       }
       assert.equal((await admin.query("SELECT COUNT(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='classpilot.usage.export'", [school.id])).rows[0].count, 4);
     }
