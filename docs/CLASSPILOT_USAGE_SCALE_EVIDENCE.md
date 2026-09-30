@@ -57,3 +57,43 @@ aggregate rows and runs only after the actual workload measurement ends.
 The hourly fleet, preceding heavy jobs, Redis distribution, managed Chromebook
 behavior, RDS capacity, and production rollout remain unverified. This failed
 profile does not authorize feature activation or infrastructure expansion.
+
+The report-query checkpoint at `ec890bd158268c229fee29961459364c994fe8ff`
+preserves `evidence-scale-partial-improvement-20260930.json`. All 64 concurrent
+reports and both schools' raw-observation/CSV checks passed. The measured usage
+SQL maximum was 4,714 ms and API acquisition maximum 925 ms, below the existing
+15,000/5,000 ms deadlines. Both aggregate insertions still reached 60 seconds;
+both original and revised read-only attribution/grouping queries also reached
+that deadline. Its failed-run `concurrentPhaseMs` includes later diagnostics;
+the follow-on collector preserves the actual measured phase separately.
+
+Planner-only diagnosis on the identical capped fixture found forced-RLS
+estimates of 10 school observations versus 1,000,000 actual rows and one roster
+interval versus 5,000 actual intervals. A nested-loop plan scanned the entire
+school's materialized roster for each deduplicated observation. Interval
+boundaries could also be recomputed for each roster candidate. The correction
+bounds school sessions once and runs observations, newest heartbeat AI lookup,
+roster intervals and grouping one student at a time. It preserves the session
+winner, exclusions, rounding and all retained grain dimensions. No optimizer
+setting, deadline, infrastructure cap or supported date range changed.
+
+The full capped profile at `22cf604a2231d3ad027e3caf43d0fe2938b0c1ee` remains
+**failed**, preserved as `evidence-scale-bounded-insertion-failure-20260930.json`.
+Read-only attribution/grouping afterward finished in 7,680 ms without temporary
+reads, but both concurrent insertions still reached 60 seconds and four of 64
+school-scope requests returned HTTP 500. The 64 measured usage-report queries
+had no SQL errors and a 10,242 ms maximum; four other API queries failed. Their
+initial collector did not identify query families, so this does not establish
+API deadline acceptance. Follow-on diagnostics retain fixed query-family labels
+and bounded SQLSTATE counts, never SQL text or request parameters. Both workers
+rolled back heavy-day aggregates and completion. Current-day independent raw
+oracles, all eight scope/date CSV exports and audits, successful empty days,
+withheld gaps/expired dates and cross-school denials passed.
+
+The heavy-day profile uses recorded heartbeat categories and has no dense AI
+decision history or tracking-exclusion population. Their capacity remains open,
+alongside the fleet, RDS I/O, device and operational gates above. Isolated
+diagnostic fixtures may be held for at most 30 minutes for EXPLAIN work, with
+an external completion marker and exact generated-ownership cleanup. Diagnostic
+INSERTs run only against synthetic data and are rolled back; they cannot establish
+a capacity pass. Original workload and failure records remain immutable.
