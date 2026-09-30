@@ -114,7 +114,7 @@ export default function PrivacyPolicy() {
             <ul className="list-disc pl-6 text-slate-700 space-y-2">
               <li><strong>Ordinary screen previews:</strong> An image retained for an authorized class is held for no more than 120 seconds and expires automatically; out-of-class capture-health checks do not retain image pixels</li>
               <li><strong>Safety and evidence captures:</strong> Image content uses a separate deployment retention policy (30 days by default), after which the image is purged while bounded review metadata may remain</li>
-              <li><strong>ClassPilot heartbeat history and session-report detail:</strong> Uses the school's selected whole-number period from 1 through 365 days, default 30, and is purged or redacted by an hourly scheduled job</li>
+              <li><strong>ClassPilot heartbeat history, the daily usage summaries derived from it (including Monitored Browser Time), and session-report detail:</strong> Uses the school's selected whole-number period from 1 through 365 days, default 30, and is purged or redacted by an hourly scheduled job</li>
               <li><strong>Hall pass records:</strong> Retained for the current school year for analytics</li>
               <li><strong>PassPilot pass rules (when a school turns them on):</strong> PassPilot rule denial records are kept for 400 days and then deleted automatically. Destination capacity, pass limits and encounter restrictions remain until an administrator deletes them or the school's data is destroyed under the executed agreement. A denial never records another student's identity</li>
               <li><strong>Dismissal records:</strong> Retained for the current school year for safety audits</li>
