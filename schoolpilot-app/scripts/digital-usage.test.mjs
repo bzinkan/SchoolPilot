@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageGrades, usageLocalDate, usageQuery } from '../src/products/classpilot/lib/digitalUsage.js';
+import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageGrades, usageLocalDate, usagePresentationState, usageQuery } from '../src/products/classpilot/lib/digitalUsage.js';
 
 test('presets count inclusive school calendar dates across DST and UTC boundaries', () => {
   const today = usageLocalDate(new Date('2026-03-09T03:00:00Z'), 'America/Los_Angeles');
@@ -46,4 +46,13 @@ test('pre-ledger API responses cannot display interpolated zeros without coverag
   assert.throws(() => requireUsageReport({ totals: { monitoredBrowserSeconds: 0 }, byDay: [] }), /Report coverage is unavailable/);
   const report = { schemaVersion: 1, range: { unavailableDates: ['2026-09-30'], computedDays: 0, requestedDays: 1 } };
   assert.equal(requireUsageReport(report), report);
+});
+
+test('final computed days never make an incomplete or expired requested report final', () => {
+  const report = { dataState: 'final', range: { partiallyComputed: false, partiallyExpired: false, to: '2026-09-30', today: '2026-09-30' } };
+  assert.equal(usagePresentationState(report), 'Final');
+  assert.equal(usagePresentationState({ ...report, range: { ...report.range, partiallyComputed: true } }), 'Partial');
+  assert.equal(usagePresentationState({ ...report, range: { ...report.range, partiallyExpired: true } }), 'Partial');
+  assert.equal(usagePresentationState({ ...report, range: { ...report.range, to: '2026-10-01' } }), 'Partial');
+  assert.equal(usagePresentationState({ ...report, dataState: 'unavailable' }), 'Unavailable');
 });

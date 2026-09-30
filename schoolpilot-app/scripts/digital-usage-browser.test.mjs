@@ -58,7 +58,7 @@ async function open({ mode = 'partial', role = 'school_admin', zone = 'America/N
       if (url.searchParams.get('format') === 'csv') return route.fulfill({ contentType: 'text/csv', headers: { 'content-disposition': 'attachment; filename=fixture.csv' }, body: '\ufeffMeasure,Monitored Browser Time\r\n' });
       return route.fulfill({ json: reportFor(url, schoolId, mode) });
     }
-    if (url.pathname.endsWith('/teacher-students')) return route.fulfill({ json: { students: [{ id: `${schoolId}-student`, firstName: schoolId === 'school-a' ? 'Avery' : 'Jamie', lastName: 'Brooks', gradeLevel: '6' }] } });
+    if (url.pathname.endsWith('/classpilot/roster/students')) return route.fulfill({ json: { students: [{ id: `${schoolId}-student`, firstName: schoolId === 'school-a' ? 'Avery' : 'Jamie', lastName: 'Brooks', gradeLevel: '6' }] } });
     if (url.pathname.endsWith('/admin/settings')) return route.fulfill({ json: { sections: { rosterGrades: { gradeLevels: ['6', '9'] } } } });
     if (url.pathname.endsWith('/admin/classes')) return route.fulfill({ json: { classes: [{ id: `${schoolId}-class`, name: 'Biology', status: 'active' }] } });
     return route.fulfill({ json: {} });
@@ -102,6 +102,7 @@ test('scope choices use canonical same-school IDs and no missing selection trigg
     await page.getByLabel('Scope', { exact: true }).selectOption('student'); await page.getByLabel('Find a student').fill('Avery');
     await page.getByLabel('Student', { exact: true }).selectOption('school-a-student'); await page.getByText('student: school-a-student', { exact: true }).waitFor();
     assert.equal(requests.at(-1).params.scope, 'student'); assert.equal(requests.at(-1).schoolId, 'school-a');
+    assert.equal(requests.some(request => request.path.includes('teacher-students')), false, 'The usage page never requests the decrypted-PIN directory');
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
 });
@@ -146,7 +147,8 @@ test('read and audited export failures stay visible, retry recovers, and old cov
   try {
     await page.getByText('Synthetic report unavailable', { exact: false }).waitFor(); assert.equal(await page.getByTestId('usage-total').count(), 0);
     failing = false; await page.getByRole('button', { name: 'Try again', exact: true }).click(); await page.getByTestId('usage-total').waitFor();
-    await page.getByText('Final · 7 of 7 retained days computed', { exact: true }).waitFor();
+    assert.equal(await page.getByTestId('usage-report-state').textContent(), 'Final');
+    await page.getByText('Computed days: Final', { exact: true }).waitFor();
     await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await page.getByText('CSV was not exported.', { exact: false }).waitFor();
     assert.deepEqual(errors, []);
   } finally { await page.close(); }
@@ -156,6 +158,19 @@ test('read and audited export failures stay visible, retry recovers, and old cov
   } });
   try { await old.page.getByText('Report coverage is unavailable.', { exact: false }).waitFor(); assert.equal(await old.page.getByTestId('usage-total').count(), 0); assert.deepEqual(old.errors, []); }
   finally { await old.page.close(); }
+});
+
+test('missing or expired requested days keep the overall report Partial while computed rows remain Final', async () => {
+  for (const expired of [false, true]) {
+    const { page, errors } = await open({ handler: async (route, url, schoolId) => {
+      if (!url.pathname.endsWith('/admin/usage')) return false;
+      const report = reportFor(url, schoolId, expired ? 'empty' : 'partial');
+      report.dataState = 'final'; report.byDay.forEach(day => { day.state = 'final'; }); report.range.partiallyExpired = expired;
+      await route.fulfill({ json: report }); return true;
+    } });
+    try { await page.getByTestId('usage-report-state').waitFor(); assert.equal(await page.getByTestId('usage-report-state').textContent(), 'Partial'); await page.getByText('Computed days: Final', { exact: true }).waitFor(); assert.deepEqual(errors, []); }
+    finally { await page.close(); }
+  }
 });
 
 test('teacher and office roles make no usage/directory requests; losing authority removes an already displayed report', async () => {

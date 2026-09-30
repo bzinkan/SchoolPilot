@@ -9,7 +9,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
 import { adminIdentityKey } from '../lib/adminNavigation';
-import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageError, usageGrades, usageLocalDate, usageQuery } from '../lib/digitalUsage';
+import { formatUsageTime, requireUsageReport, usageCalendar, usageDateRange, usageError, usageGrades, usageLocalDate, usagePresentationState, usageQuery } from '../lib/digitalUsage';
 
 const API = '/classpilot/admin/usage';
 const selectClass = 'h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -53,7 +53,7 @@ function Report({ report }) {
   const totals = report.totals;
   const timestamp = value => value ? new Intl.DateTimeFormat('en-US', { timeZone: report.range.timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Not yet computed';
   return <div className="space-y-5" data-testid="usage-report">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4"><div><h2 className="text-lg font-semibold">{report.scope.label}</h2><p className="text-sm text-muted-foreground">{report.range.from} to {report.range.to} · {report.range.timeZone}</p></div><span className="rounded-full border px-3 py-1 text-xs font-medium">{available ? STATE_LABELS[report.dataState] : 'Unavailable'} · {report.range.computedDays} of {report.range.requestedDays} retained days computed</span></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4"><div><h2 className="text-lg font-semibold">{report.scope.label}</h2><p className="text-sm text-muted-foreground">{report.range.from} to {report.range.to} · {report.range.timeZone}</p></div><div className="space-y-1 text-right text-xs"><div className="flex flex-wrap justify-end gap-2"><span data-testid="usage-report-state" className="rounded-full border px-3 py-1 font-semibold">{usagePresentationState(report)}</span>{available && <span className="rounded-full border px-3 py-1">Computed days: {STATE_LABELS[report.dataState]}</span>}</div><p className="text-muted-foreground">{report.range.computedDays} of {report.range.requestedDays} retained days computed</p></div></div>
     {report.range.partiallyExpired && <Notice>Part of this range is outside retention. Full-day reports are retained from {report.range.retainedFrom}; earlier dates are unavailable.</Notice>}
     {report.range.partiallyComputed && <Notice>{report.range.unavailableDates.length} retained {report.range.unavailableDates.length === 1 ? 'day is' : 'days are'} unavailable. Totals and sites include only computed days. Missing observations are not zero use.</Notice>}
     {!available ? <div className="rounded-xl border bg-card p-8 text-center"><Clock className="mx-auto mb-3 h-6 w-6 text-muted-foreground" aria-hidden="true" /><h3 className="font-semibold">No report available for this range</h3><p className="mt-2 text-sm text-muted-foreground">No retained day has a completed computation. Choose another range or check again after the next hourly rollup.</p></div> : <>
@@ -82,7 +82,7 @@ function UsagePage({ school, identity }) {
   const headers = { 'X-School-Id': school.id };
   useEffect(() => { const timer = setInterval(() => setClock(new Date()), 60_000); return () => { clearInterval(timer); exportController.current?.abort(); }; }, []);
   const read = (url, signal) => apiRequest('GET', url, undefined, { headers, signal });
-  const students = useQuery({ queryKey: ['usage-students', identity], queryFn: ({ signal }) => read('/admin/teacher-students', signal), enabled: scope === 'student' || scope === 'grade', gcTime: 0 });
+  const students = useQuery({ queryKey: ['usage-students', identity], queryFn: ({ signal }) => read('/classpilot/roster/students', signal), enabled: scope === 'student' || scope === 'grade', gcTime: 0 });
   const settings = useQuery({ queryKey: ['usage-grades', identity], queryFn: ({ signal }) => read('/classpilot/admin/settings', signal), enabled: scope === 'grade', gcTime: 0 });
   const classes = useQuery({ queryKey: ['usage-classes', identity], queryFn: ({ signal }) => read('/classpilot/admin/classes?status=all', signal), enabled: scope === 'class', gcTime: 0 });
   const studentList = students.data?.students || [];

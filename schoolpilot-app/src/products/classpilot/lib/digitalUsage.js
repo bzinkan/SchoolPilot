@@ -39,6 +39,12 @@ export function requireUsageReport(report) {
   return report;
 }
 
+export function usagePresentationState(report) {
+  if (report.dataState === 'unavailable') return 'Unavailable';
+  if (report.range.partiallyComputed || report.range.partiallyExpired || report.range.to > report.range.today) return 'Partial';
+  return report.dataState === 'live' ? 'Live' : 'Final';
+}
+
 // Keep absent days absent from all numeric series. Only a successful byDay row
 // can supply zero; neither date interpolation nor retention supplies observations.
 export function usageCalendar(report) {
