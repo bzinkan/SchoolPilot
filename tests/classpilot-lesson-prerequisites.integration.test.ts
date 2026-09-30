@@ -310,6 +310,83 @@ test("exact status and reviewed reuse HTTP enforce current actor/context and pub
     assert.ok(results[0]!.flightPath.updatedAt); assert.deepEqual(results.map(result => result.reused).sort(), [false, true]);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+test("the real Classroom UI lesson orchestrator follows canonical HTTP receipts under restricted RLS", async () => {
+  const frontendUrl = new URL("../schoolpilot-app/src/products/classpilot/lib/classroomActions.js", import.meta.url).href;
+  const frontend = z.object({
+    runClassroomAction: z.function().args(z.unknown()).returns(z.promise(z.unknown())),
+    reviewedFlightPathMatches: z.function().args(z.unknown(), z.unknown()).returns(z.boolean()),
+  }).parse(await import(frontendUrl));
+  const express = (await import("express")).default;
+  const commandsRouter = (await import("../src/routes/classpilot/commands.js")).default;
+  const flightPathsRouter = (await import("../src/routes/classpilot/flightPaths.js")).default;
+  const { signUserToken } = await import("../src/services/jwt.js");
+  const { createServer } = await import("node:http");
+  const app = express(); app.use(express.json()); app.use("/api/classpilot", commandsRouter); app.use("/api/classpilot/flight-paths", flightPathsRouter);
+  app.use((error: { status?: number; code?: string; message?: string }, _req: import("express").Request, res: import("express").Response, _next: import("express").NextFunction) =>
+    res.status(error.status || 500).json({ error: error.message, code: error.code }));
+  const server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}/api/classpilot`;
+  const headers = { authorization: `Bearer ${signUserToken({ userId: ids.teacher, email: `${ids.teacher}@example.edu` })}`,
+    "x-school-id": ids.school, "X-ClassPilot-Context-Authority-Revision": String(context.classroomAuthorityRevision), "content-type": "application/json" };
+  const request = async (path: string, body?: unknown) => {
+    const response = await fetch(`${origin}${path}`, { headers, ...(body === undefined ? {} : { method: "POST", body: JSON.stringify(body) }) });
+    const data: unknown = await response.json();
+    assert.ok(response.ok, `Canonical HTTP ${response.status}: ${JSON.stringify(data)}`); return data;
+  };
+  const commandShape = z.object({ command: z.object({ id: z.string(), commandType: z.string(),
+    targets: z.array(z.object({ studentId: z.string(), status: z.string() }).passthrough()) }).passthrough() });
+  const issued: Array<{ type: string; payload: Record<string, unknown>; recipients: string[] }> = [];
+  const polled: string[] = [];
+  process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "true";
+  try {
+    const preview = z.object({ authoring: z.object({ allowedDomains: z.array(z.string()), resources: z.array(z.unknown()),
+      resourceLinks: z.array(z.string()) }).passthrough() }).parse(await request("/flight-paths/preview-resources", {
+      purpose: "classroom", boundary: "website", selectedResourceIds: ["combined-item"], resources: [{ id: "combined-item", links: [{ url: "https://example.org/lesson" }] }],
+    }));
+    const saved = z.object({ flightPath: z.object({ id: z.string(), updatedAt: z.string().datetime() }).passthrough(), reused: z.boolean() }).parse(
+      await request("/flight-paths/from-classroom", { courseId: "combined-course", selectedResourceIds: ["combined-item"],
+        resources: [{ id: "combined-item" }], resourceLinks: preview.authoring.resourceLinks, boundary: "website", reuseReviewedSource: true }));
+    assert.equal(frontend.reviewedFlightPathMatches(saved.flightPath, preview.authoring), true);
+    const outcomes = z.array(z.object({ studentId: z.string(), restriction: z.string(), open: z.string(), focus: z.string() })).parse(
+      await frontend.runClassroomAction({ action: "lesson", url: "https://example.org/lesson", studentIds: ids.students,
+        flightPath: saved.flightPath, waitOptions: { timeoutMs: 5000 },
+        postCommand: async (type: string, payload: Record<string, unknown>, recipients: string[]) => {
+          issued.push({ type, payload, recipients });
+          const value = commandShape.parse(await request("/commands", { supervisionContextId: context.id, targetScope: "students",
+            targetStudentIds: recipients, commandType: type, commandPayload: payload }));
+          assert.ok(value.command.targets.every(target => target.status !== "unavailable"), JSON.stringify(value));
+          if (type === "apply-flight-path") {
+            await confirm(value.command.id, 0);
+            const state = await control(1);
+            await inSchool(() => storage.persistClasspilotCommandTargetAck({ commandId: value.command.id, schoolId: ids.school,
+              studentId: ids.students[1]!, studentSessionId: sessions[1]!, deviceId: ids.devices[1]!, ackState: "failed",
+              controlRevision: state.revision, acceptedCapabilities: capabilities, result: { outcome: "failed", appliedRevision: state.revision } }));
+          } else {
+            assert.equal(type, "open-tab");
+            await openAck(value.command.id, (await control()).revision);
+          }
+          return value;
+        },
+        readCommand: async (command: { id: string }) => {
+          polled.push(command.id);
+          const data = await request(`/commands/${command.id}/status?supervisionContextId=${context.id}`);
+          const publicJson = JSON.stringify(data);
+          assert.ok(ids.devices.every(id => !publicJson.includes(id)) && sessions.every(id => !publicJson.includes(id)));
+          return data;
+        },
+      }));
+    assert.equal(issued.length, 2); assert.equal(issued[0]!.payload.expectedFlightPathUpdatedAt, saved.flightPath.updatedAt);
+    assert.deepEqual(issued[1]!.recipients, [ids.students[0]!]); assert.ok(issued[1]!.payload.afterRestrictionCommandId);
+    assert.equal(outcomes.find(row => row.studentId === ids.students[0])!.open, "completed");
+    assert.equal(outcomes.find(row => row.studentId === ids.students[1])!.open, "not opened");
+    assert.ok(outcomes.every(row => row.focus === "not requested")); assert.equal(new Set(polled).size, 2);
+  } finally {
+    delete process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1;
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 });
 
 

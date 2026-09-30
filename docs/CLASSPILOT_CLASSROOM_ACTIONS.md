@@ -53,6 +53,14 @@ cases cover the picker, per-student results, normalized boundaries, Website
 warnings, mobile dialog containment, mode-off behavior and held responses.
 Both suites run in existing frontend CI lanes.
 
+The restricted-role API integration suite also runs the real UI lesson
+orchestrator against canonical preview, reviewed reuse, command issuance and
+exact status HTTP routes. Authenticated synthetic per-recipient acknowledgements
+confirm only one student, proving that the actual timestamp pin and source
+prerequisite survive the combined interface and that the failed student is not
+opened. This local contract check preserves public DTO privacy; it does not
+replace packaged extension or managed-device acceptance.
+
 Required source prerequisites: precise previews/authoring, Focus command and
 teacher-control contracts, and the Classroom command prerequisite/status and
 reviewed-source reuse API. Keep runtime capabilities default off. Packaged
