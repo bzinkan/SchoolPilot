@@ -7,6 +7,7 @@ import type {
   InsertBlockList,
   InsertFlightPath,
 } from "../schema/classpilot.js";
+import type { AllowedResource } from "./restrictionResources.js";
 
 export type TeachingResourceVisibility = "private" | "school";
 
@@ -174,6 +175,9 @@ export function cloneFlightPathInsert(source: FlightPath, owner: CopyOwner): Ins
     flightPathName: copyNameForTeachingResource(source.flightPathName, owner.existingNames),
     description: source.description ?? null,
     allowedDomains: [...(source.allowedDomains ?? [])],
+    // Precise entries travel with the copy verbatim, whatever the school's
+    // rollout state: they are re-validated when the copy is applied.
+    resources: [...(source.resources ?? [])],
     blockedDomains: [...(source.blockedDomains ?? [])],
     isDefault: false,
     sourceType: null,
@@ -240,6 +244,8 @@ export type LibraryFlightPathView = {
   flightPathName: string;
   description: string | null;
   allowedDomains: string[];
+  /** Precise section/resource entries; routes omit an empty list while the capability is off. */
+  resources: AllowedResource[];
   blockedDomains: string[];
   visibility: TeachingResourceVisibility;
   official: boolean;
@@ -279,6 +285,7 @@ export function libraryFlightPathView(
     flightPathName: row.flightPathName,
     description: row.description ?? null,
     allowedDomains: [...(row.allowedDomains ?? [])],
+    resources: [...(row.resources ?? [])],
     blockedDomains: [...(row.blockedDomains ?? [])],
     visibility: visibilityValue(row.visibility),
     official: row.official === true,

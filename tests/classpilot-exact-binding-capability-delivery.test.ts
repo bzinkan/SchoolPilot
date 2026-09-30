@@ -174,7 +174,7 @@ test("deferred exact-binding fanout excludes a same-binding legacy socket", asyn
   }
 });
 
-test("PR 2-pre fence: precise restriction frames reach no student socket, whatever it negotiated", async () => {
+test("precise restriction frames reach only exact-bound sockets that accepted preciseRestrictionResourcesV1", async () => {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(server, "listening");
   const address = server.address();
@@ -192,18 +192,16 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
     studentSessionId: "precise-fence-session",
     deviceId: "precise-fence-device",
   };
+  // Three sockets on the same exact binding: no capabilities, the set a
+  // ClassPilot 2.9.6 client negotiates (sign-in safe, focusTabV1 spoofed in),
+  // and a 2.10.0 client that ACCEPTED the precise capability.
   const legacy = await connect();
-  // A socket can only hold names the server registry accepts. Even a spoofed
-  // record of the future capability must not unlock precise delivery here.
-  const spoofed = await connect();
+  const signInSafe = await connect();
+  const capable = await connect();
   for (const [connection, acceptedCapabilities] of [
     [legacy, []],
-    [spoofed, [
-      "lateSignInRestrictionSsoV1",
-      "restrictionAuthPassThroughV1",
-      "preciseRestrictionResourcesV1",
-      "focusTabV1",
-    ]],
+    [signInSafe, ["lateSignInRestrictionSsoV1", "restrictionAuthPassThroughV1", "focusTabV1"]],
+    [capable, ["lateSignInRestrictionSsoV1", "restrictionAuthPassThroughV1", "preciseRestrictionResourcesV1"]],
   ] as const) {
     registerWsClient(connection.serverSocket);
     authenticateWsClient(connection.serverSocket, {
@@ -212,9 +210,9 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
       acceptedCapabilities: [...acceptedCapabilities],
     });
   }
-  const received: string[] = [];
-  for (const connection of [legacy, spoofed]) {
-    connection.client.on("message", (frame: Buffer) => { received.push(frame.toString()); });
+  const received = new Map<string, string[]>([["legacy", []], ["signInSafe", []], ["capable", []]]);
+  for (const [name, connection] of [["legacy", legacy], ["signInSafe", signInSafe], ["capable", capable]] as const) {
+    connection.client.on("message", (frame: Buffer) => { received.get(name)!.push(frame.toString()); });
   }
   const docsResource = {
     type: "resource",
@@ -224,15 +222,12 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
     resourceId: "1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ",
     canonicalUrl: "https://docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit",
   };
-  const preciseFrames = [
-    {
-      type: "classroom-state-sync",
-      _msgId: "precise-waypoint-state",
-      classroomState: {
-        revision: 9,
-        restrictions: { screenLock: { active: true, url: docsResource.canonicalUrl, resource: docsResource } },
-      },
-    },
+  const waypointState = {
+    revision: 9,
+    restrictions: { screenLock: { active: true, url: docsResource.canonicalUrl, resource: docsResource } },
+  };
+  const deliverable = [
+    { type: "classroom-state-sync", _msgId: "precise-waypoint-state", classroomState: waypointState },
     {
       type: "classroom-state",
       _msgId: "precise-flight-path-state",
@@ -242,8 +237,17 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
       },
     },
     {
+      // A stateful command frame travels with its authoritative snapshot.
+      type: "remote-control",
+      _msgId: "precise-waypoint-command",
+      command: { type: "lock-screen", data: { url: docsResource.canonicalUrl, resource: docsResource } },
+      classroomState: waypointState,
+    },
+  ];
+  const neverDelivered = [
+    {
       // Bare legacy frame: ClassPilot 2.9.x would apply data.url as a lock on
-      // all of docs.google.com.
+      // all of docs.google.com, so it is refused even for a capable socket.
       type: "remote-control",
       _msgId: "precise-bare-waypoint",
       command: { type: "lock-screen", data: { url: docsResource.canonicalUrl, resource: docsResource } },
@@ -253,25 +257,62 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
       _msgId: "precise-bare-flight-path",
       command: { type: "apply-flight-path", data: { allowedDomains: ["khanacademy.org"], resources: "malformed" } },
     },
+    {
+      // Entries that fail re-validation are withheld from every socket.
+      type: "classroom-state-sync",
+      _msgId: "precise-malformed-state",
+      classroomState: {
+        revision: 12,
+        restrictions: {
+          flightPath: {
+            active: true,
+            allowedDomains: [],
+            resources: [{ ...docsResource, canonicalUrl: "https://evil.example.com/" }],
+          },
+        },
+      },
+    },
+    {
+      // A Waypoint whose url is not its resource's canonical URL is out of contract.
+      type: "classroom-state-sync",
+      _msgId: "precise-mismatched-waypoint",
+      classroomState: {
+        revision: 13,
+        restrictions: { screenLock: { active: true, url: "https://docs.google.com/", resource: docsResource } },
+      },
+    },
   ];
 
   try {
-    for (const frame of preciseFrames) {
+    for (const frame of [...deliverable, ...neverDelivered]) {
       assert.equal(classpilotStudentFrameCarriesPreciseRestriction(frame), true, frame._msgId);
-      assert.equal(sendToStudentBindingLocal(binding, frame), false, frame._msgId);
-      // A relayed envelope names its requirement explicitly; the fence still wins.
-      assert.equal(sendToStudentBindingLocal(binding, frame, {
-        requiredCapabilities: ["preciseRestrictionResourcesV1"],
-      }), false, frame._msgId);
+      // Non-exact surfaces never carry precise restrictions.
       assert.equal(sendToDeviceLocal(binding.schoolId, binding.deviceId, frame), false, frame._msgId);
       assert.equal(broadcastToStudentsLocal(binding.schoolId, frame), 0, frame._msgId);
       sendToRoleLocal(binding.schoolId, "student", frame);
     }
+    for (const frame of neverDelivered) {
+      assert.equal(sendToStudentBindingLocal(binding, frame), false, frame._msgId);
+      assert.equal(sendToStudentBindingLocal(binding, frame, {
+        requiredCapabilities: ["preciseRestrictionResourcesV1"],
+      }), false, frame._msgId);
+    }
+    for (const [index, frame] of deliverable.entries()) {
+      const arrived = once(capable.client, "message");
+      // An explicit (or relayed) requirement can narrow delivery but never
+      // waive the capability the frame itself needs.
+      const options = index === 0 ? {} : { requiredCapabilities: ["restrictionAuthPassThroughV1"] };
+      assert.equal(sendToStudentBindingLocal(binding, frame, options), true, frame._msgId);
+      const [payload] = await arrived;
+      assert.equal(String(payload), JSON.stringify(frame), "a capable socket receives the frame byte-for-byte");
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.deepEqual(received, [], "no precise frame reached any student socket");
+    assert.deepEqual(received.get("legacy"), [], "no precise frame reached a socket without capabilities");
+    assert.deepEqual(received.get("signInSafe"), [], "no precise frame reached a 2.9.6-shaped socket");
+    assert.equal(received.get("capable")!.length, deliverable.length, "only valid snapshots reached the capable socket");
 
     // Ordinary frames, including Lesson Activity resources, are untouched and
-    // byte-identical on the wire.
+    // byte-identical on the wire for every socket.
     const lesson = {
       type: "remote-control",
       _msgId: "lesson-resources-unchanged",
@@ -291,16 +332,20 @@ test("PR 2-pre fence: precise restriction frames reach no student socket, whatev
     };
     for (const frame of [lesson, legacyWaypoint]) {
       assert.equal(classpilotStudentFrameCarriesPreciseRestriction(frame), false, frame._msgId);
-      const delivered = Promise.all([once(legacy.client, "message"), once(spoofed.client, "message")]);
+      const delivered = Promise.all([
+        once(legacy.client, "message"),
+        once(signInSafe.client, "message"),
+        once(capable.client, "message"),
+      ]);
       assert.equal(sendToStudentBindingLocal(binding, frame), true, frame._msgId);
       const frames = await delivered;
       for (const [payload] of frames) assert.equal(String(payload), JSON.stringify(frame));
     }
   } finally {
-    removeWsClient(legacy.serverSocket);
-    removeWsClient(spoofed.serverSocket);
-    legacy.client.terminate();
-    spoofed.client.terminate();
+    for (const connection of [legacy, signInSafe, capable]) {
+      removeWsClient(connection.serverSocket);
+      connection.client.terminate();
+    }
     for (const socket of server.clients) socket.terminate();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

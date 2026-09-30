@@ -22,11 +22,14 @@ import type {
 } from "../src/schema/classpilot.js";
 import { snapshotHeartbeatHotPathMetrics } from "../src/services/heartbeatHotPathMetrics.js";
 
-// Roadmap PR 2-pre forward-compatibility fence. PR 2 will store a precise
-// Waypoint as `screenLock.resource` and precise Flight Path entries as
-// `flightPath.resources`. This image must withhold any stored payload carrying
-// either key instead of degrading it to a whole-domain lock or an empty Flight
-// Path, and every payload that exists today must serialize exactly as before.
+// Roadmap PR 2-pre forward-compatibility fence, as converted by PR 2. A precise
+// Waypoint is stored as `screenLock.resource` and precise Flight Path entries
+// as `flightPath.resources`. A payload carrying either key is never degraded
+// to a whole-domain lock or an empty Flight Path: it is withheld from every
+// binding that has not negotiated preciseRestrictionResourcesV1 (and from
+// every binding when it fails re-validation), and every payload that exists
+// today still serializes exactly as before. Capable delivery is covered in
+// classpilot-precise-restriction-projection.test.ts.
 
 const NOW = new Date("2026-09-29T15:00:00.000Z");
 const APPLIED_AT = new Date("2026-09-29T14:55:00.000Z");
@@ -52,8 +55,10 @@ const SSO_POLICY = {
   }],
 };
 
-// The capability set ClassPilot 2.9.6 negotiates under an all-on server,
-// plus the two roadmap names spoofed in. None of them may unlock the fence.
+// The capability set ClassPilot 2.9.6 negotiates under an all-on server, plus
+// focusTabV1 spoofed in. Without preciseRestrictionResourcesV1 accepted,
+// nothing may unlock the fence. (PR 2 deliberately removed that name from
+// this spoofed set: a binding that negotiated it now receives valid entries.)
 const EVERY_CAPABILITY = [
   "scopedAuthorityChecksV1",
   "authBoundTelemetryV1",
@@ -64,9 +69,9 @@ const EVERY_CAPABILITY = [
   "restrictionAuthPassThroughV1",
   "restrictionPortalFirstV1",
   "scheduledClassroomV1",
-  "preciseRestrictionResourcesV1",
   "focusTabV1",
 ];
+const PRECISE_CAPABLE = [...EVERY_CAPABILITY, "preciseRestrictionResourcesV1"];
 
 function classroomRow(
   stateType: string,
@@ -190,27 +195,31 @@ type PreciseCase = {
   /** The raw key PR 2 wrote and its value, which must survive verbatim. */
   key: "resource" | "resources";
   value: unknown;
+  /** Whether the entries pass PR 2's re-validation (so a capable binding may receive them). */
+  valid: boolean;
   /** Desired snapshot restrictions as PR 2 would persist them. */
   restrictions: Record<string, unknown>;
   /** The same restriction as classpilot_classroom_states rows. */
   rows: ClasspilotClassroomState[];
 };
 
-function waypointCase(name: string, resource: unknown, url: string = DOCS_RESOURCE.canonicalUrl): PreciseCase {
+function waypointCase(name: string, resource: unknown, url: string = DOCS_RESOURCE.canonicalUrl, valid = false): PreciseCase {
   return {
     name,
     key: "resource",
     value: resource,
+    valid,
     restrictions: { screenLock: { active: true, url, resource } },
     rows: [classroomRow("screen-lock", "active", { url, resource })],
   };
 }
 
-function flightPathCase(name: string, allowedDomains: string[], resources: unknown): PreciseCase {
+function flightPathCase(name: string, allowedDomains: string[], resources: unknown, valid = false): PreciseCase {
   return {
     name,
     key: "resources",
     value: resources,
+    valid,
     restrictions: {
       flightPath: { active: true, allowedDomains, name: "Reading", resources },
     },
@@ -224,12 +233,13 @@ function flightPathCase(name: string, allowedDomains: string[], resources: unkno
 }
 
 const PRECISE_CASES: PreciseCase[] = [
-  waypointCase("Docs resource Waypoint", DOCS_RESOURCE),
+  waypointCase("Docs resource Waypoint", DOCS_RESOURCE, DOCS_RESOURCE.canonicalUrl, true),
+  // Out of contract under PR 2: the Waypoint url is not the resource's canonical URL.
   waypointCase("YouTube resource Waypoint", YOUTUBE_RESOURCE, "https://www.youtube.com/watch"),
-  waypointCase("Classroom section Waypoint", CLASSROOM_SECTION, "https://classroom.google.com/c/NjE2MzQ1Njc4"),
-  flightPathCase("resource-only Flight Path", [], [DOCS_RESOURCE, YOUTUBE_RESOURCE]),
-  flightPathCase("mixed Flight Path", ["khanacademy.org"], [KHAN_WEBSITE, CLASSROOM_SECTION, DOCS_RESOURCE]),
-  flightPathCase("website-only resources", ["khanacademy.org"], [KHAN_WEBSITE]),
+  waypointCase("Classroom section Waypoint", CLASSROOM_SECTION, "https://classroom.google.com/c/NjE2MzQ1Njc4", true),
+  flightPathCase("resource-only Flight Path", [], [DOCS_RESOURCE, YOUTUBE_RESOURCE], true),
+  flightPathCase("mixed Flight Path", ["khanacademy.org"], [KHAN_WEBSITE, CLASSROOM_SECTION, DOCS_RESOURCE], true),
+  flightPathCase("website-only resources", ["khanacademy.org"], [KHAN_WEBSITE], true),
   flightPathCase("malformed resources: string", ["khanacademy.org"], DOCS_RESOURCE.canonicalUrl),
   flightPathCase("malformed resources: null", ["khanacademy.org"], null),
   flightPathCase("malformed resources: object", ["khanacademy.org"], { type: "resource" }),
@@ -263,7 +273,15 @@ function deliveryAttempts(state: ClasspilotStudentControlState): DeliveryOptions
       portalFirstOnLogin: true as const,
       now: NOW,
     },
-    { state, gateActive: true, acceptedCapabilities: ["preciseRestrictionResourcesV1"], exactBinding: BINDING, now: NOW },
+    // The capability without an exact binding never releases the entries.
+    { state, gateActive: true, acceptedCapabilities: ["preciseRestrictionResourcesV1"], exactBinding: null, now: NOW },
+    {
+      state,
+      gateActive: true,
+      acceptedCapabilities: PRECISE_CAPABLE,
+      exactBinding: { ...BINDING, studentId: "another-student" },
+      now: NOW,
+    },
   ];
 }
 
@@ -362,7 +380,7 @@ describe("PR 2-pre fence: PR-2-shaped payloads are withheld on every path", () =
       }
     });
 
-    it(`${precise.name}: every delivery surface withholds instead of serializing a legacy restriction`, () => {
+    it(`${precise.name}: every non-capable delivery surface withholds instead of serializing a legacy restriction`, () => {
       const stored = controlState({ restrictions: precise.restrictions });
       const rebuilt = controlState({ restrictions: restrictionsFromClassroomStates(precise.rows, NOW) });
       const deferred = controlState(withClasspilotLateSignInOrigin({
@@ -376,17 +394,36 @@ describe("PR 2-pre fence: PR-2-shaped payloads are withheld on every path", () =
           assert.equal(delivered.classroomState, null, "no domain lock or empty Flight Path is ever serialized");
           // A deferred row is first fenced by the unchanged late-sign-in gate;
           // once that gate admits the binding, the precise fence withholds it.
+          const exactBound = attempt.exactBinding?.schoolId === BINDING.schoolId
+            && attempt.exactBinding?.studentId === BINDING.studentId;
           const lateSignInFenced = state === deferred && !(
-            attempt.gateActive && attempt.acceptedCapabilities.includes("lateSignInRestrictionSsoV1")
+            attempt.gateActive && attempt.acceptedCapabilities.includes("lateSignInRestrictionSsoV1") && exactBound
           );
           assert.deepEqual(delivered, lateSignInFenced
             ? { classroomState: null, withheld: true, withheldReason: "late_sign_in_capability_required" }
             : WITHHELD);
         }
+        // A capable exact binding receives only entries that re-validate.
+        const capable = serializeClasspilotStudentControlStateForDelivery({
+          state,
+          gateActive: true,
+          acceptedCapabilities: PRECISE_CAPABLE,
+          exactBinding: BINDING,
+          now: NOW,
+        });
+        if (precise.valid) {
+          assert.equal(capable.withheld, false, precise.name);
+          const carrier: Record<string, unknown> = precise.key === "resource"
+            ? capable.classroomState!.restrictions.screenLock
+            : capable.classroomState!.restrictions.flightPath;
+          assert.deepEqual(carrier[precise.key], precise.value, "a valid entry is delivered verbatim, never degraded");
+        } else {
+          assert.deepEqual(capable, WITHHELD, "an entry that fails re-validation is withheld even from a capable binding");
+        }
       }
     });
 
-    it(`${precise.name}: enforcement health is unsupported until the snapshot expires`, () => {
+    it(`${precise.name}: enforcement health is unsupported for non-capable clients until the snapshot expires`, () => {
       const synced = controlState(
         { restrictions: precise.restrictions },
         { enforcementHealth: "synced", appliedRevision: 41, lastOutcome: "applied" }
@@ -402,9 +439,24 @@ describe("PR 2-pre fence: PR-2-shaped payloads are withheld on every path", () =
           restrictionAuthPolicyRevision: 12,
           appliedAuthPolicyRevision: 12,
         },
+        {
+          gateActive: true,
+          acceptedCapabilities: PRECISE_CAPABLE,
+          exactBinding: BINDING,
+          preciseRestrictionCapabilityRequired: true,
+        },
       ]) {
         assert.equal(effectiveClasspilotControlEnforcementHealth(synced, "2.10.0", NOW, delivery), "unsupported");
       }
+      assert.equal(
+        effectiveClasspilotControlEnforcementHealth(synced, "2.10.0", NOW, {
+          gateActive: true,
+          acceptedCapabilities: PRECISE_CAPABLE,
+          exactBinding: BINDING,
+        }),
+        precise.valid ? "synced" : "unsupported",
+        "a capable binding reports its stored health only for entries that re-validate"
+      );
       assert.equal(
         effectiveClasspilotControlEnforcementHealth(synced, "2.10.0", new Date("2026-09-29T16:00:01.000Z")),
         "expired"
@@ -576,7 +628,13 @@ describe("PR 2-pre fence: honest withheld outcomes", () => {
   it("refuses a replayed precise payload before the command row and never frames one", () => {
     const dispatcher = source("../src/services/classpilotCommandDispatcher.ts");
     const gate = section(dispatcher, "if (classpilotCommandPayloadRequiresPreciseCapability(options.commandType, commandPayload))", "const issuedAt = new Date();");
-    assert.match(gate, /available: false,[\s\S]*stateAuthorized: false,[\s\S]*lateSignInEligible: false,[\s\S]*unavailableReason: CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON/);
+    // PR 2: a replayed payload that no longer validates, or a school whose
+    // rollout is off, still refuses every target; otherwise only a live
+    // target whose fresh snapshot ACCEPTED the capability keeps its target.
+    assert.match(gate, /classpilotPreciseCommandPayloadValid\(options\.commandType, commandPayload\)[\s\S]*preciseRestrictionResourcesActive\(options\.schoolId\)/);
+    assert.match(gate, /read\.snapshot\.acceptedCapabilities\?\.includes\(PRECISE_RESTRICTION_RESOURCES_CAPABILITY\)/);
+    assert.doesNotMatch(gate, /extensionCapabilities/, "the 32-capped raw advertisement never admits a target");
+    assert.match(gate, /available: false,[\s\S]*stateAuthorized: false,[\s\S]*lateSignInEligible: false,[\s\S]*unavailableReason: !preciseDeliverable \|\| live\s*\? CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON/);
     assert.ok(
       dispatcher.indexOf("if (classpilotCommandPayloadRequiresPreciseCapability(options.commandType, commandPayload))")
         < dispatcher.indexOf("const created = await createClasspilotCommandWithTargets("),
@@ -585,16 +643,23 @@ describe("PR 2-pre fence: honest withheld outcomes", () => {
     const frame = section(dispatcher, "export function classpilotCommandFrameForTarget", "const deliveryEnvelope = {");
     assert.match(
       frame,
-      /classpilotCommandPayloadRequiresPreciseCapability\(commandType, payload\)[\s\S]*classpilotControlStateRequiresPreciseCapability\(classroomState\)[\s\S]*return null;/
+      /classpilotCommandPayloadRequiresPreciseCapability\(commandType, payload\)[\s\S]*classpilotControlStateRequiresPreciseCapability\(classroomState\)[\s\S]*!preciseClassroomState[\s\S]*!delivery\.requiredCapabilities\?\.includes\(PRECISE_RESTRICTION_RESOURCES_CAPABILITY\)[\s\S]*return null;/,
+      "a precise payload is framed only with its precise snapshot and a declared capability"
     );
   });
 
   it("reports the precise reason on the teacher dashboard projection", () => {
     const compat = source("../src/routes/compat.ts");
+    const requirement = section(compat, "const preciseRestrictionCapabilityRequired = ", "const desiredClassroomState");
+    assert.match(
+      requirement,
+      /classpilotPreciseRestrictionCapabilityRequired\(\{\s*desiredState: visibleOwnedDesiredControlState\.desiredState,\s*acceptedCapabilities,/
+    );
     const aggregate = section(compat, "const enforcementHealth = visibleOwnedDesiredControlState", "const publicExtensionContract");
+    assert.match(aggregate, /restrictionAuthCapabilityRequired,\s*preciseRestrictionCapabilityRequired,/);
     assert.match(
       aggregate,
-      /preciseRestrictionUpdateRequired = enforcementHealth === "unsupported"[\s\S]*classpilotControlStateRequiresPreciseCapability\(\s*visibleOwnedDesiredControlState\.desiredState/
+      /preciseRestrictionUpdateRequired = enforcementHealth === "unsupported"\s*&& preciseRestrictionCapabilityRequired/
     );
     assert.match(
       compat,

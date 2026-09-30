@@ -918,7 +918,11 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       );
     }
     assert.match(storage, /return sql`\(\$\{visibility\} = 'school' OR \$\{official\}\)`;/);
-    assert.match(dispatcher, /code: "FLIGHT_PATH_EMPTY"/);
+    // Roadmap PR 2 moved the apply payload (websites plus precise resources)
+    // into one helper; an empty path is still a 409 FLIGHT_PATH_EMPTY.
+    assert.match(dispatcher, /const payload = classpilotFlightPathApplyPayload\(\{ schoolId, flightPath \}\);/);
+    const precise = await source("src/services/classpilotPreciseRestrictions.ts");
+    assert.match(precise, /allowedDomains\.length === 0 && precise\.length === 0\) \{\s+throw flightPathError\("Flight Path has no allowed domains", "FLIGHT_PATH_EMPTY"\);/);
   });
 
   it("persists authoritative poll lifecycle expiry into every delivered start payload", async () => {

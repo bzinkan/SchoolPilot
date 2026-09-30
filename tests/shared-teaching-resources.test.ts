@@ -18,7 +18,17 @@ import {
   teachingResourcePermissions,
   withoutTeachingResourcePublication,
 } from "../src/services/teachingResourceLibrary.js";
+import { withFlightPathResourcesVisibility } from "../src/services/classpilotPreciseRestrictions.js";
 import type { BlockList, FlightPath } from "../src/schema/classpilot.js";
+
+const DOCS_RESOURCE = {
+  type: "resource" as const,
+  hostname: "docs.google.com",
+  includeSubdomains: false as const,
+  provider: "google_docs" as const,
+  resourceId: "1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ_-abcd",
+  canonicalUrl: "https://docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ_-abcd/edit",
+};
 
 const OWNER = "teacher-a";
 const OTHER = "teacher-b";
@@ -34,6 +44,7 @@ function flightPath(overrides: Partial<FlightPath> = {}): FlightPath {
     flightPathName: "Research",
     description: "Lesson sites",
     allowedDomains: ["science.example"],
+    resources: [],
     blockedDomains: ["games.example"],
     isDefault: true,
     sourceType: "google_classroom",
@@ -185,6 +196,7 @@ describe("School Library copies", () => {
       flightPathName: "Research (copy)",
       description: "Lesson sites",
       allowedDomains: ["science.example"],
+      resources: [],
       blockedDomains: ["games.example"],
       isDefault: false,
       sourceType: null,
@@ -197,6 +209,15 @@ describe("School Library copies", () => {
       publishedBy: null,
     });
     assert.notEqual(insert.allowedDomains, source.allowedDomains, "rule lists are copied, not shared");
+  });
+
+  it("copies precise resources verbatim whatever the school's rollout state", () => {
+    // Roadmap PR 2: a copy carries its section and resource entries; they are
+    // re-validated when the copy is applied, never dropped to their hosts.
+    const source = flightPath({ visibility: "school", resources: [DOCS_RESOURCE] });
+    const insert = cloneFlightPathInsert(source, { schoolId: "school-a", teacherId: OTHER, existingNames: [] });
+    assert.deepEqual(insert.resources, [DOCS_RESOURCE]);
+    assert.notEqual(insert.resources, source.resources, "the resource list is copied, not shared");
   });
 
   it("copies a Block List as a private item owned by the copier", () => {
@@ -219,7 +240,9 @@ describe("School Library copies", () => {
 describe("School Library projections", () => {
   it("keeps the previous response shape when the library is off", () => {
     const row = flightPath({ visibility: "school", official: true, publishedAt: PUBLISHED, publishedBy: ADMIN });
-    const legacy = withoutTeachingResourcePublication(row);
+    // Routes also omit the empty precise-resource list while that capability
+    // is off for the school (roadmap PR 2).
+    const legacy = withFlightPathResourcesVisibility(withoutTeachingResourcePublication(row), false);
     assert.deepEqual(Object.keys(legacy), [
       "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
       "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt",
@@ -243,6 +266,7 @@ describe("School Library projections", () => {
       flightPathName: "Research",
       description: "Lesson sites",
       allowedDomains: ["science.example"],
+      resources: [],
       blockedDomains: ["games.example"],
       visibility: "school",
       official: false,

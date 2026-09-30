@@ -1,13 +1,26 @@
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import {
   PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
+  RestrictionResourceError,
+  assertRestrictionResourceLimits,
   canonicalUrlForResource,
   legacyHostProjection,
+  normalizeAllowedResource,
+  normalizeAllowedResourceList,
   preciseRestrictionResources,
+  restrictionResourceIdentityKey,
   validateAllowedResource,
   validateAllowedResourceList,
+  type AllowedResource,
   type PreciseAllowedResource,
 } from "./restrictionResources.js";
+import {
+  MAX_FORMS_SHORT_LINKS_PER_REQUEST,
+  isFormsShortLink,
+  resolveFormsShortLink,
+  resolveRestrictionResourceInputs,
+  type ShortLinkFetch,
+} from "./restrictionResourceResolver.js";
 
 /**
  * Server-side (environment-aware) rules for precise restriction resources.
@@ -111,4 +124,130 @@ export function classpilotPreciseCommandPayloadValid(commandType: string, payloa
     return !!resources && resources.length > 0;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Flight Path authoring (routes)
+// ---------------------------------------------------------------------------
+
+/**
+ * Flight Path responses keep their previous shape while the capability is off
+ * for the school: an empty `resources` list is omitted. A path that still
+ * holds entries (for example after a rollout was turned off) always shows
+ * them, so its owner is never misled about what it contains.
+ */
+export function withFlightPathResourcesVisibility<Row extends { resources?: unknown }>(
+  row: Row,
+  preciseActive: boolean
+): Row | Omit<Row, "resources"> {
+  if (preciseActive || (Array.isArray(row.resources) && row.resources.length > 0)) return row;
+  const { resources: _resources, ...rest } = row;
+  return rest;
+}
+
+/**
+ * A POST/PATCH `resources` field: `{url}` or `{type:"website", hostname}`
+ * entries only. Website entries are returned as hosts for allowed_domains (the
+ * list ClassPilot 2.9.x enforces); section and resource entries are the new
+ * `resources` column. Authoring needs the school's rollout, except clearing
+ * an existing list with `[]`, which is always allowed. forms.gle links are
+ * resolved here (save time) before normalization.
+ */
+export async function normalizeFlightPathResourcesInput(
+  value: unknown,
+  schoolId: string,
+  options: { fetch?: ShortLinkFetch; env?: NodeJS.ProcessEnv } = {}
+): Promise<{ resources: PreciseAllowedResource[]; websiteHosts: string[] }> {
+  if (!Array.isArray(value)) {
+    throw new RestrictionResourceError("RESOURCE_INPUT_INVALID", "resources must be an array");
+  }
+  if (value.length > 0) requirePreciseRestrictionResourcesActive(schoolId, options.env);
+  const resolved = await resolveRestrictionResourceInputs(value, { fetch: options.fetch });
+  const normalized = normalizeAllowedResourceList(resolved);
+  return {
+    resources: preciseRestrictionResources(normalized),
+    websiteHosts: legacyHostProjection(normalized),
+  };
+}
+
+/** Classroom material link URLs, fallback links first, each once, bounded. */
+export function classroomImportLinkUrls(selectedResources: unknown[], fallbackLinks: unknown[]): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value !== "string" || !value.trim() || seen.has(value)) return;
+    seen.add(value);
+    urls.push(value);
+  };
+  fallbackLinks.forEach(add);
+  for (const resource of selectedResources) {
+    const links = resource && typeof resource === "object" && Array.isArray((resource as { links?: unknown }).links)
+      ? (resource as { links: unknown[] }).links
+      : [];
+    for (const link of links) {
+      add(link && typeof link === "object" ? (link as { url?: unknown }).url : undefined);
+    }
+  }
+  if (urls.length > MAX_CLASSROOM_IMPORT_LINKS) {
+    throw new RestrictionResourceError(
+      "RESOURCE_LIMIT_EXCEEDED",
+      `Select fewer Classroom items; at most ${MAX_CLASSROOM_IMPORT_LINKS} links can be imported at once`
+    );
+  }
+  return urls;
+}
+
+export const MAX_CLASSROOM_IMPORT_LINKS = 1_000;
+
+/**
+ * A Classroom import at the "resource" boundary. Every link becomes its own
+ * resource or section (a Classroom post, a YouTube video, a Doc, a Form) or,
+ * for a bare site, a website host. A link that cannot be limited precisely is
+ * left out and reported, never widened to its host. Up to
+ * MAX_FORMS_SHORT_LINKS_PER_REQUEST forms.gle links are resolved in parallel.
+ */
+export async function classroomImportResourceEntries(
+  urls: readonly string[],
+  options: { fetch?: ShortLinkFetch } = {}
+): Promise<{
+  resources: PreciseAllowedResource[];
+  websiteHosts: string[];
+  skipped: Array<{ url: string; code: string }>;
+}> {
+  const shortLinks = urls.filter((url) => isFormsShortLink(url)).slice(0, MAX_FORMS_SHORT_LINKS_PER_REQUEST);
+  const resolvedShortLinks = new Map<string, string>();
+  await Promise.all(shortLinks.map(async (url) => {
+    try {
+      resolvedShortLinks.set(url, await resolveFormsShortLink(url, { fetch: options.fetch }));
+    } catch (error) {
+      if (!(error instanceof RestrictionResourceError)) throw error;
+    }
+  }));
+  const entries: AllowedResource[] = [];
+  const seen = new Set<string>();
+  const skipped: Array<{ url: string; code: string }> = [];
+  for (const url of urls) {
+    const candidate = isFormsShortLink(url) ? resolvedShortLinks.get(url) : url;
+    if (!candidate) {
+      skipped.push({ url, code: "RESOURCE_SHORT_LINK_UNRESOLVED" });
+      continue;
+    }
+    try {
+      const entry = normalizeAllowedResource({ url: candidate });
+      const key = restrictionResourceIdentityKey(entry);
+      if (!seen.has(key)) {
+        seen.add(key);
+        entries.push(entry);
+      }
+    } catch (error) {
+      if (!(error instanceof RestrictionResourceError)) throw error;
+      skipped.push({ url, code: error.code });
+    }
+  }
+  assertRestrictionResourceLimits(entries);
+  return {
+    resources: preciseRestrictionResources(entries),
+    websiteHosts: legacyHostProjection(entries),
+    skipped,
+  };
 }

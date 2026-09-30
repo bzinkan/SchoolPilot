@@ -12,6 +12,7 @@ import { createRedisReadyWaiter } from "../util/redisReadyWaiter.js";
 import { verifyUserToken } from "../services/jwt.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { markStudentSignInFailure } from "../services/classpilotStudentSignInDiagnostics.js";
+import { restrictionResourceRequestNeedsResolution } from "../services/restrictionResourceResolver.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -161,6 +162,29 @@ export const auditLimiter = rateLimit({
     if (userId) return `user:${userId}`;
     // ipKeyGenerator normalizes IPv6 (collapses to a /64) so a caller can't
     // bypass the limit by rotating addresses within their prefix.
+    return `ip:${ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown")}`;
+  },
+});
+
+// Precise restriction resources resolve forms.gle short links with outbound
+// HEAD requests when a Flight Path is saved. Only requests that would resolve
+// at least one short link count, per signed-in user (IP when anonymous); every
+// other Flight Path save is unaffected.
+export const restrictionResourceResolutionLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  message: {
+    error: "Too many short-link lookups. Try again in a few minutes, or paste the full Google Form link.",
+    code: "RESOURCE_SHORT_LINK_RATE_LIMITED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisStore("rl:restriction-resource-resolve:"),
+  passOnStoreError: true,
+  skip: (req: Request) => !restrictionResourceRequestNeedsResolution(req.body),
+  keyGenerator: (req: Request) => {
+    const userId = (req as Request & { authUser?: { id?: string } }).authUser?.id;
+    if (userId) return `user:${userId}`;
     return `ip:${ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown")}`;
   },
 });

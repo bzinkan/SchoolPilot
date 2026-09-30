@@ -18405,8 +18405,16 @@ export async function updateFlightPath(
         entityName: fp.flightPathName,
         changes: {
           fields: Object.keys(data).sort(),
-          before: { flightPathName: existing.flightPathName, allowedDomainCount: existing.allowedDomains?.length ?? 0 },
-          after: { flightPathName: fp.flightPathName, allowedDomainCount: fp.allowedDomains?.length ?? 0 },
+          before: {
+            flightPathName: existing.flightPathName,
+            allowedDomainCount: existing.allowedDomains?.length ?? 0,
+            resourceCount: existing.resources?.length ?? 0,
+          },
+          after: {
+            flightPathName: fp.flightPathName,
+            allowedDomainCount: fp.allowedDomains?.length ?? 0,
+            resourceCount: fp.resources?.length ?? 0,
+          },
         },
         metadata: teachingResourceAuditContext(existing, actor),
       }));
