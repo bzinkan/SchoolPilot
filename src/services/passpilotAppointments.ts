@@ -179,6 +179,13 @@ export async function getPasspilotAppointment(schoolId: string, actor: Appointme
 }
 
 export type AppointmentListInput = { from?: Date; through?: Date; status?: PasspilotAppointment["status"]; limit: number; cursor?: { startsAt: Date; id: string }; studentId?: string };
+export async function getPasspilotAppointmentsCapabilities(schoolId: string, actor: AppointmentActor) {
+  return db.transaction(async tx => {
+    const ctx = await context(tx, schoolId, actor, false);
+    return { enabled: true, manager: isPassPilotManager(ctx.role), teacherReminders: ctx.role === "teacher",
+      schoolTimezone: ctx.timeZone, schoolYearConfigured: Boolean(ctx.schedule.yearStart && ctx.schedule.yearEnd) };
+  });
+}
 export async function listPasspilotAppointments(schoolId: string, actor: AppointmentActor, input: AppointmentListInput, accessRequest = false) {
   return db.transaction(async (tx) => {
     const ctx = await context(tx, schoolId, actor, false);
@@ -192,10 +199,13 @@ export async function listPasspilotAppointments(schoolId: string, actor: Appoint
     if (input.studentId) conditions.push(eq(appointments.studentId, input.studentId));
     if (input.status) conditions.push(sql`(CASE WHEN ${appointments.status}='scheduled' AND ${appointments.endsAt}<=now() THEN 'missed' ELSE ${appointments.status} END)=${input.status}`);
     if (input.cursor) conditions.push(or(gt(appointments.startsAt, input.cursor.startsAt), and(eq(appointments.startsAt, input.cursor.startsAt), gt(appointments.id, input.cursor.id)))!);
-    const rows = await tx.select().from(appointments).where(and(...conditions)).orderBy(asc(appointments.startsAt), asc(appointments.id)).limit(input.limit + 1);
+    const rows = await tx.select({ appointment: appointments, firstName: students.firstName, lastName: students.lastName })
+      .from(appointments).innerJoin(students, and(eq(students.schoolId, appointments.schoolId), eq(students.id, appointments.studentId)))
+      .where(and(...conditions)).orderBy(asc(appointments.startsAt), asc(appointments.id)).limit(input.limit + 1);
     const page = rows.slice(0, input.limit), last = page.at(-1);
     if (accessRequest) await audit(tx, ctx, "records_exported", input.studentId ?? schoolId, { count: page.length });
-    return { appointments: page.map((row) => projection(row, ctx)), nextCursor: rows.length > input.limit && last ? { startsAt: last.startsAt, id: last.id } : null };
+    return { appointments: page.map(({ appointment, firstName, lastName }) => ({ ...projection(appointment, ctx), studentName: [firstName, lastName].filter(Boolean).join(" ") })),
+      nextCursor: rows.length > input.limit && last ? { startsAt: last.appointment.startsAt, id: last.appointment.id } : null };
   });
 }
 
