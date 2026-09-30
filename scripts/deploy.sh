@@ -5298,7 +5298,12 @@ for(const eni of enis){
   if(apiArns.has(taskByEni.get(eni.NetworkInterfaceId)?.taskArn))apiPrivateIps.push(eni.PrivateIpAddress);
 }
 if(new Set(publicIps).size!==publicIps.length||new Set(apiPrivateIps).size!==apiPrivateIps.length||apiPrivateIps.length!==apiArns.size)process.exit(1);
-const groups=targetGroupResponse?.TargetGroups||[]; const group=groups[0]; const targets=healthResponse?.TargetHealthDescriptions||[];
+const groups=targetGroupResponse?.TargetGroups||[]; const group=groups[0]; const apiIpSet=new Set(apiPrivateIps);
+// A replaced task's address stays "draining" for the target group's 300s
+// deregistration delay after ECS stops it, and takes no new requests. Only
+// that case is set aside; a running API task that is draining still fails.
+const targets=(healthResponse?.TargetHealthDescriptions||[]).filter((entry)=>
+  !(entry?.TargetHealth?.State==="draining"&&!apiIpSet.has(entry?.Target?.Id)));
 if(groups.length!==1||group?.TargetGroupArn!==process.env.SAME_IMAGE_TARGET_GROUP_ARN||group?.TargetType!=="ip"||
    !Number.isInteger(Number(group?.Port))||Number(group.Port)<1||targets.length!==apiPrivateIps.length||
    JSON.stringify(targets.map((entry)=>entry?.Target?.Id).sort())!==JSON.stringify([...apiPrivateIps].sort())||
@@ -6142,11 +6147,18 @@ if [[ -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" &&
   exit 1
 fi
 
-CHECKS_JSON=$(gh run list --commit "$LOCAL_SHA" --limit 20 --json status,conclusion,workflowName)
+# Only push runs prove main. Every PR CI completion also files a skipped
+# "Immutable Release Image" workflow_run under main's SHA, and dozens of those
+# once pushed the CI run out of a 20-run window while the gate still passed.
+CHECKS_JSON=$(gh run list --commit "$LOCAL_SHA" --event push --limit 100 --json status,conclusion,workflowName)
 if ! CHECK_REPORT=$(CHECKS_JSON="$CHECKS_JSON" node <<'NODE'
 const runs = JSON.parse(process.env.CHECKS_JSON || "[]");
 if (runs.length === 0) {
   console.log("No GitHub Actions runs found for origin/main; refusing deploy without a green CI signal.");
+  process.exit(1);
+}
+if (!runs.some((run) => run.workflowName === "CI")) {
+  console.log("No CI workflow run found for origin/main; refusing deploy without a green CI signal.");
   process.exit(1);
 }
 const greenConclusions = new Set(["success", "skipped", "neutral"]);
