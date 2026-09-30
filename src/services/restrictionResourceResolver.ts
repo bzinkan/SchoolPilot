@@ -193,6 +193,7 @@ export async function resolveRestrictionResourceInputs(
  */
 export function restrictionResourceRequestNeedsResolution(body: unknown): boolean {
   if (!isPlainObject(body)) return false;
+  if (body.purpose === "waypoint" && body.boundary === "resource" && isFormsShortLink(body.url)) return true;
   if (restrictionResourceInputsNeedResolution(body.resources)) return true;
   if (body.boundary !== "resource") return false;
   const classroomLinks = Array.isArray(body.resources)
