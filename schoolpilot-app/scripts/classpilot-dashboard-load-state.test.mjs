@@ -4109,6 +4109,161 @@ async function assignedTestingBrowser(context, options = {}) {
   return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }
 
+async function focusBrowserFixture(context, overrides = {}) {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-08-25T13:01:00Z') });
+  const row = student({ clientProtocolVersion: 3, tabSnapshotRevision: 7,
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true, closeTabsExactV2: true },
+    activeTabRef: 'opaque-first', activeTabUrl: 'https://lesson.example.edu/same',
+    allOpenTabs: [{ tabRef: 'opaque-first', url: 'https://lesson.example.edu/same', title: 'First duplicate' },
+      { tabRef: 'opaque-second', url: 'https://lesson.example.edu/same', title: 'Second duplicate' }], ...overrides });
+  const aggregate = aggregateController({ scoped: success([row]) });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', activeSession: live,
+    allSessions: [live], acknowledgeSessionSubscriptions: true });
+  const posts = [];
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); posts.push(body);
+    await route.fulfill({ json: { command: { id: `focus-${posts.length}`, ...body, schoolId: SCHOOL_ID,
+      targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'received' })) } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
+  await page.getByTestId('dialog-tabs').waitFor();
+  return { page, harness, aggregate, row, posts };
+}
+
+test('Focus controls bind duplicate URLs to the selected opaque tab and keep received pending until completion', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-first`).getByText('Active', { exact: true }).count(), 1);
+  assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-second`).getByText('Active', { exact: true }).count(), 0);
+  if (process.env.FOCUS_UI_QA_DIR) {
+    mkdirSync(process.env.FOCUS_UI_QA_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.FOCUS_UI_QA_DIR, 'focus-desktop.png'), fullPage: true });
+  }
+  await page.getByTestId('button-focus-tab-opaque-second').click();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'focus-tab', commandPayload: { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] } });
+  await page.getByTestId('focus-command-results').getByText('Focus: awaiting confirmation', { exact: true }).waitFor();
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId('button-bring-forward-opaque-first').click();
+  await waitUntil(() => posts.length === 2, 'Bring Forward must post its selected exact target');
+  assert.equal(posts[1].commandType, 'activate-tab');
+  assert.deepEqual(posts[1].commandPayload, { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-first', observedRevision: 7 }] });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls reject advertised but withdrawn capability and preserve exact Stop cleanup', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context, {
+    acceptedCapabilities: {}, extensionCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true },
+    focus: { state: 'suspended', assignmentId: 'prior-focus', reason: 'authentication' } });
+  assert.equal(await page.getByTestId('button-focus-tab-opaque-first').isDisabled(), true);
+  assert.equal(await page.getByTestId('button-bring-forward-opaque-first').isDisabled(), true);
+  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus paused for sign-in', { exact: true }).waitFor();
+  await page.getByTestId(`button-stop-focus-${STUDENT_ID}`).click();
+  await waitUntil(() => posts.length === 1, 'Stop Focus remains an explicit cleanup request');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID], commandType: 'stop-focus', commandPayload: {} });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls retain a completed acknowledgement that arrives before the HTTP creation response', { timeout: 60_000 }, async context => {
+  const { page, harness } = await focusBrowserFixture(context);
+  let finishResponse;
+  let started = false;
+  const gate = new Promise(resolve => { finishResponse = resolve; });
+  context.after(() => finishResponse());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); started = true;
+    await gate;
+    await route.fulfill({ json: { command: { id: 'early-ack', ...body,
+      targets: [{ studentId: STUDENT_ID, status: 'pending' }] } } });
+  });
+  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await waitUntil(() => started, 'Hold the HTTP response after creating the command');
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    command: { id: 'early-ack', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
+  finishResponse();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId('focus-command-results').getByText('Focus: device confirmation received', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus cleanup includes offline assigned students without a missing-target broadcast', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  // Current-authority roster updates can withdraw telemetry while saved Focus
+  // still requires cleanup. Query the actual Dashboard through its cache.
+  await page.evaluate(async ({ studentId }) => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    for (const query of queryClient.getQueryCache().getAll()) {
+      if (!String(query.queryKey[0]).includes('aggregated')) continue;
+      queryClient.setQueryData(query.queryKey, previous => {
+        if (!previous) return previous;
+        const rows = Array.isArray(previous) ? previous : previous.students;
+        if (!Array.isArray(rows)) return previous;
+        const next = rows.map(row => row.studentId === studentId ? { ...row, status: 'offline', isLoggedIn: false,
+          loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null, monitoringState: 'not_expected' } : row);
+        return Array.isArray(previous) ? next : { ...previous, students: next };
+      });
+    }
+  }, { studentId: STUDENT_ID });
+  await page.getByTestId('button-tabs').click();
+  await page.getByTestId('dialog-tabs').waitFor();
+  assert.equal(await page.locator('[data-testid^="tab-row-"]').count(), 0, 'Withdrawn telemetry must remove every exact tab action before offline cleanup');
+  await page.getByTestId('button-stop-focus-targets').click();
+  await waitUntil(() => posts.length === 1, 'Offline cleanup must send its explicit student');
+  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
+  assert.equal(posts[0].targetScope, 'students');
+  assert.deepEqual(posts[0].commandPayload, {});
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls discard a late command response after the assignment changes and fit a narrow viewport', { timeout: 60_000 }, async context => {
+  const { page, harness } = await focusBrowserFixture(context);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.getByTestId('dialog-tabs').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  if (process.env.FOCUS_UI_QA_DIR) {
+    mkdirSync(process.env.FOCUS_UI_QA_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.FOCUS_UI_QA_DIR, 'focus-mobile.png'), fullPage: true });
+  }
+  let finishCommand;
+  let started = false;
+  const gate = new Promise(resolve => { finishCommand = resolve; });
+  context.after(() => finishCommand());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); started = true;
+    await gate;
+    await route.fulfill({ json: { command: { id: 'late-focus', ...body,
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } } });
+  });
+  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await waitUntil(() => started, 'The original assignment command must be in flight');
+  harness.setActiveSession(null);
+  harness.setAllSessions([]);
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.refetchQueries({ queryKey: ['/api/sessions/active'] });
+    await queryClient.refetchQueries({ queryKey: ['/api/sessions/all'] });
+  });
+  await page.getByTestId('dialog-tabs').waitFor({ state: 'hidden' });
+  finishCommand();
+  await page.waitForFunction(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    return queryClient.getMutationCache().getAll().some(mutation => mutation.state.variables?.type === 'focus-tab'
+      && mutation.state.status === 'error');
+  });
+  assert.equal(await page.getByTestId('focus-command-results').count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('admin Dashboard ignores a persisted grade filter and retains its student controls after reload', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: chatBaselinePlugins() });
   const page = await browser.newPage();
