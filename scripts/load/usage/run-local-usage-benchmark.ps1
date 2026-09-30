@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
-if ($output.StartsWith($repository + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Choose an external evidence directory.' }
+if ($output.Equals($repository, [StringComparison]::OrdinalIgnoreCase) -or $output.StartsWith($repository + [System.IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Choose an external evidence directory.' }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 $run = [guid]::NewGuid().ToString('N').Substring(0,12)
 $database = 'schoolpilot_redesign_usage_capacity_' + $run
@@ -27,8 +27,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Local schema-only export failed.' }
   Get-Content -LiteralPath $schema -Raw | docker exec -i schoolpilot-db psql -U schoolpilot -d $database -v ON_ERROR_STOP=1 *> (Join-Path $output 'schema-restore.log')
   if ($LASTEXITCODE -ne 0) { throw 'Local schema-only restore failed.' }
+  $rolesCreated = $true # Also clean up if the multi-statement creation stops partway through.
   "CREATE ROLE $fixtureRole LOGIN SUPERUSER PASSWORD '$fixturePassword'; CREATE ROLE $appRole LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT PASSWORD '$appPassword'; GRANT USAGE ON SCHEMA public TO $appRole; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO $appRole; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO $appRole;" | docker exec -i schoolpilot-db psql -U schoolpilot -d $database -v ON_ERROR_STOP=1 | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'Disposable fixture/application role creation failed.' }; $rolesCreated = $true
+  if ($LASTEXITCODE -ne 0) { throw 'Disposable fixture/application role creation failed.' }
   $env:DATABASE_URL = "postgresql://${appRole}:${appPassword}@127.0.0.1:5435/$database"
   $env:ADMIN_DATABASE_URL = "postgresql://${fixtureRole}:${fixturePassword}@127.0.0.1:5435/$database"
   $env:DATABASE_URL_PRIVILEGED = $env:DATABASE_URL
@@ -43,7 +44,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Local database resource evidence failed.' }
   node --import ./tests/test-environment.mjs scripts/load/usage/local-usage-benchmark.mjs *> (Join-Path $output 'benchmark.log')
   $exitCode = $LASTEXITCODE
-  Get-Content -LiteralPath (Join-Path $output 'benchmark.log') | Select-Object -Last 5
+  Get-Content -LiteralPath (Join-Path $output 'benchmark.log') | Where-Object { $_ -match '"event":"local_usage_benchmark_' }
   [ordered]@{ sourceRevision=$env:USAGE_SOURCE_REVISION; schemaSource=$SchemaDatabase; schemaOnly=$true; schemaSha256=(Get-FileHash -LiteralPath $schema -Algorithm SHA256).Hash.ToLower(); database=$database; restrictedRole=$true; productionMutations=0; exitCode=$exitCode; limits='Shared local Docker database has no production CPU/memory/I/O guarantee; application and driver share one local process' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'execution.json') -Encoding utf8
 } finally {
   # Only the freshly generated database and roles from this run may be removed.
@@ -53,7 +54,7 @@ try {
     if ($LASTEXITCODE -ne 0) { Write-Error 'Disposable fixture database cleanup failed.' }
   }
   if ($rolesCreated) {
-    docker exec schoolpilot-db psql -U schoolpilot -d postgres -v ON_ERROR_STOP=1 -c "DROP ROLE $appRole; DROP ROLE $fixtureRole;" | Out-Null
+    docker exec schoolpilot-db psql -U schoolpilot -d postgres -v ON_ERROR_STOP=1 -c "DROP ROLE IF EXISTS $appRole; DROP ROLE IF EXISTS $fixtureRole;" | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Error 'Disposable fixture roles cleanup failed.' }
   }
   foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
