@@ -450,6 +450,42 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     assert.deepEqual(await rows(R.schoolId), []);
   });
 
+  it("resolves overlapping frozen roster intervals once without duplicate time, honoring capture, tied starts and end bounds", async () => {
+    const schoolId = await createSchool("Overlapping intervals", "720");
+    const student = await createStudent(schoolId, "Window", "6");
+    const teacher = await createUser(schoolId, "teacher", "window-teacher");
+    const date = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -2);
+    const start = schoolTime.localDateStartUtc(date, TIME_ZONE).getTime() + 9 * 3600_000;
+    const group = randomUUID();
+    await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,'Overlapping','admin_class')", [group, schoolId, teacher.id]);
+    const sessions = [
+      { id: `a-${randomUUID()}`, start: 0, captured: 0, end: 140, scheduled: null },
+      { id: `b-${randomUUID()}`, start: 20, captured: 60, end: 120, scheduled: null },
+      { id: `c-${randomUUID()}`, start: 40, captured: 40, end: 110, scheduled: null },
+      { id: `z-${randomUUID()}`, start: 40, captured: 80, end: 140, scheduled: 100 },
+    ];
+    for (const item of sessions) {
+      await system.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time) VALUES($1,$2,$3,$4,$5::timestamp,$6::timestamp)",
+        [item.id, schoolId, group, teacher.id, wall(start + item.start * 1000), wall(start + item.end * 1000)]);
+      if (item.scheduled !== null) await system.query("UPDATE teaching_sessions SET scheduled_date=$2::date,scheduled_timezone=$3,scheduled_start_at=$4::timestamptz,scheduled_end_at=$5::timestamptz,scheduled_state='active' WHERE id=$1",
+        [item.id, date, TIME_ZONE, new Date(start + item.start * 1000).toISOString(), new Date(start + item.scheduled * 1000).toISOString()]);
+      await system.query("INSERT INTO classpilot_session_students(school_id,teaching_session_id,group_id,student_id,captured_at) VALUES($1,$2,$3,$4,$5::timestamptz)",
+        [schoolId, item.id, group, student, new Date(start + item.captured * 1000).toISOString()]);
+    }
+    for (const second of [-20, 0, 20, 40, 60, 80, 100, 110, 120, 140]) {
+      await heartbeat({ schoolId, studentId: student, at: start + second * 1000, url: "https://lesson.example.test/", category: "educational" });
+    }
+    const window = rollup.classpilotUsageRollupDay(date, TIME_ZONE);
+    const result = await rollup.rollupClasspilotUsageDay(system, { schoolId, day: window, windowEndUtc: window.dayEndUtc, exclusions: [] });
+    assert.deepEqual([result.seconds, result.heartbeatCount], [140, 10]);
+    const actual = await rows(schoolId);
+    const bySession = Object.fromEntries(actual.map(row => [row.session_id ?? "unattributed", [row.seconds, row.heartbeat_count]]));
+    assert.deepEqual(bySession, {
+      [sessions[0].id]: [45, 3], [sessions[1].id]: [10, 1],
+      [sessions[2].id]: [40, 3], [sessions[3].id]: [15, 1], unattributed: [30, 2],
+    });
+  });
+
   it("serves no Digital Usage route unless both modes are on and the table is admitted", async () => {
     const off = await usage("");
     assert.equal(off.status, 404);
