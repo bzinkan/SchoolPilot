@@ -69,6 +69,24 @@ export function normalizeCommandSummary(value) {
   };
 }
 
+const UNSUPPORTED_CLIENT_PREFIX = 'Unsupported client:';
+
+/**
+ * Students the server refused because their ClassPilot extension lacks a
+ * capability the command needs (for example preciseRestrictionResourcesV1).
+ * They are not signed out: they need the extension update.
+ */
+export function unsupportedCommandStudentIds(value) {
+  return [...new Set(
+    (value?.command?.targets || value?.targets || [])
+      .filter((target) => target?.status === 'unavailable'
+        && typeof target?.errorMessage === 'string'
+        && target.errorMessage.startsWith(UNSUPPORTED_CLIENT_PREFIX))
+      .map((target) => target?.studentId)
+      .filter(Boolean),
+  )];
+}
+
 export function completedStudentIdsFromCommand(value) {
   return new Set(
     (value?.command?.targets || value?.targets || [])
@@ -119,6 +137,12 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
     // 2026-09-04, when three attempts to clear a Flight Path each reported
     // success and changed nothing.
     const nothingDelivered = summary.requested > 0 && summary.unavailable >= summary.requested;
+    // A precise ("This resource only", section or resource) restriction is
+    // refused per student when the extension cannot enforce it; those students
+    // are online but need the ClassPilot update, not a sign-in.
+    const unsupportedStudentIds = unsupportedCommandStudentIds(value);
+    const unsupported = Math.min(unsupportedStudentIds.length, summary.unavailable);
+    const signedOut = summary.unavailable - unsupported;
     const pendingText = summary.pending > 0
       ? `${plural(summary.pending, 'restriction is', 'restrictions are')} pending — will apply when monitoring resumes.`
       : summary.acknowledged > 0
@@ -127,12 +151,17 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
           ? null
           : 'The desired restriction was saved for the selected students.';
     return {
-      title: nothingDelivered ? 'Restriction not delivered' : 'Restriction saved',
+      title: nothingDelivered
+        ? unsupported > 0 && signedOut === 0 ? 'Extension update required' : 'Restriction not delivered'
+        : 'Restriction saved',
       description: [
         pendingText,
         summary.failed > 0 ? `${plural(summary.failed, 'target')} failed.` : null,
-        summary.unavailable > 0
-          ? `${plural(summary.unavailable, 'student is', 'students are')} signed out, so the restriction was not delivered to them. Apply it again once they are signed in.`
+        signedOut > 0
+          ? `${plural(signedOut, 'student is', 'students are')} signed out, so the restriction was not delivered to them. Apply it again once they are signed in.`
+          : null,
+        unsupported > 0
+          ? `${plural(unsupported, 'student needs', 'students need')} the ClassPilot update before this restriction can apply.`
           : null,
         Number(value?.skippedCurrentPageCount) > 0
           ? `${plural(Number(value.skippedCurrentPageCount), 'signed-out student was', 'signed-out students were')} skipped because a current-page Waypoint needs a fresh online page.`
@@ -140,6 +169,7 @@ export function commandDeliveryFeedback(value, commandType = value?.command?.com
         'Acknowledgements are device-reported and are not tamper proof.',
       ].filter(Boolean).join(' '),
       variant: summary.failed > 0 || nothingDelivered ? 'destructive' : undefined,
+      ...(unsupportedStudentIds.length > 0 ? { unsupportedStudentIds } : {}),
     };
   }
 

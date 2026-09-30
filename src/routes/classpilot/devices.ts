@@ -1031,6 +1031,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
       // go dark again on the next heartbeat.
       scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
       scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
+      preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
     },
     activityFresh,
     activityState: snapshot.activityState,

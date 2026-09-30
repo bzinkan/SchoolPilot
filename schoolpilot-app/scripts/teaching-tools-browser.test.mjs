@@ -47,7 +47,12 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await vite?.close(); });
 
-async function open({ route = '/classpilot/my-settings', role = 'teacher' } = {}) {
+const PRECISE_VIDEO = {
+  type: 'resource', hostname: 'youtube.com', includeSubdomains: false, provider: 'youtube',
+  resourceId: 'dQw4w9WgXcQ', canonicalUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+};
+
+async function open({ route = '/classpilot/my-settings', role = 'teacher', precise = false } = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const state = { requests: [], errors: [], preference: { revision: 0, maxTabsPerStudent: null, schoolMaxTabsPerStudent: 6, effectiveMaxTabsPerStudent: 6 }, conflict: null, holdSave: false, releaseSave: null, groupsRevoked: false, holdClassSave: false, gradeVersion: "grades-v1", gradeLevels: ["5"] };
   page.on('pageerror', error => state.errors.push(error.message));
@@ -72,7 +77,12 @@ async function open({ route = '/classpilot/my-settings', role = 'teacher' } = {}
       state.gradeVersion = 'grades-v3'; state.gradeLevels = body.gradeLevels;
       return route.fulfill({ json: { schoolId, version: state.gradeVersion, gradeLevels: state.gradeLevels } });
     }
-    if (url.pathname.endsWith('/flight-paths')) return route.fulfill({ json: { flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'] }] } });
+    if (url.pathname.endsWith('/flight-paths')) return route.fulfill({ json: precise
+      ? {
+          flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'], resources: [PRECISE_VIDEO] }],
+          features: { preciseRestrictionResources: true },
+        }
+      : { flightPaths: [{ id: 'flight-a', flightPathName: 'Research destinations', allowedDomains: ['science.example.test'] }] } });
     if (url.pathname.endsWith('/block-lists')) return route.fulfill({ json: { blockLists: [{ id: 'block-a', name: 'Independent work', blockedDomains: ['games.example.test'] }] } });
     if (url.pathname.endsWith('/teacher/groups')) return route.fulfill({ json: { groups: [...(state.groupsRevoked ? [] : [{ id: 'own-a', name: 'My Science', teacherId: 'teacher-a', groupType: 'teacher_group' }]), { id: 'official-a', name: 'Official Biology', teacherId: 'teacher-a', groupType: 'admin_class' }] } });
     if (url.pathname.endsWith('/subgroups')) { if (req.method() === 'POST' && state.holdClassSave) await new Promise(resolve => { state.releaseClassSave = resolve; }); return route.fulfill({ json: { subgroups: [] } }); }
@@ -221,6 +231,44 @@ test('website dialog close keeps edits until confirmed and Classroom import uses
     assert.deepEqual(write.body.selectedResourceIds, ['resource-a']);
     assert(state.requests.some(row => row.path === '/api/classroom/courses' && row.search === '?purpose=classroom_resources'));
     assert(!state.requests.some(row => /roster-connector|workspace_import/.test(row.path + row.search)));
+    assert.deepEqual(state.errors, []);
+  } finally { await page.close(); }
+});
+
+async function recorded(state, predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const row = writes(state).find(predicate);
+    if (row) return row;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error('expected write was not recorded');
+}
+
+test('precise Flight Path entries are editable only with the feature and are sent as one {url} per line', async () => {
+  const off = await open();
+  try {
+    await off.page.getByTestId('button-create-flight-path').click();
+    await off.page.getByTestId('input-flight-path-name').fill('Websites only');
+    assert.equal(await off.page.getByTestId('textarea-flight-path-resources').count(), 0);
+    await off.page.getByTestId('button-save-flight-path').click();
+    const created = await recorded(off.state, row => row.method === 'POST' && row.path === '/api/flight-paths');
+    assert.equal('resources' in created.body, false, 'no resources key while the feature is off');
+  } finally { await off.page.close(); }
+
+  const { page, state } = await open({ precise: true });
+  try {
+    await page.getByTestId('flight-path-resource-flight-a-0').waitFor();
+    assert.match(await page.getByTestId('flight-path-resource-flight-a-0').innerText(), /YouTube video dQw4w9WgXcQ/);
+    await page.getByTestId('button-edit-flight-path-flight-a').click();
+    assert.equal(await page.getByTestId('textarea-flight-path-resources').inputValue(), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    await page.getByTestId('textarea-flight-path-resources').fill('https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n  https://www.nasa.gov/solar-system  ');
+    await page.getByTestId('button-save-flight-path').click();
+    const patched = await recorded(state, row => row.method === 'PATCH' && row.path === '/api/flight-paths/flight-a');
+    assert.deepEqual(patched.body.resources, [
+      { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+      { url: 'https://www.nasa.gov/solar-system' },
+    ]);
+    assert.deepEqual(patched.body.allowedDomains, ['science.example.test']);
     assert.deepEqual(state.errors, []);
   } finally { await page.close(); }
 });

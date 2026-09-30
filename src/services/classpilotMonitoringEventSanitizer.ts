@@ -36,6 +36,9 @@ const NAVIGATION_POLICY_SOURCES = new Set([
   "screen_lock",
   "attention_mode",
   "tab_limit",
+  // ClassPilot 2.10.0: a section or resource entry of a precise Waypoint or
+  // Flight Path (preciseRestrictionResourcesV1) blocked the navigation.
+  "resource",
 ]);
 
 export type SanitizedMonitoringEvent = {

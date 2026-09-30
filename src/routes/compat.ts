@@ -102,7 +102,7 @@ import {
   CLASSPILOT_PRECISE_RESTRICTION_ENFORCEMENT_UNAVAILABLE_REASON,
   classpilotControlStateHasLateSignInOrigin,
   classpilotControlStateHasAuthRelevantRestriction,
-  classpilotControlStateRequiresPreciseCapability,
+  classpilotPreciseRestrictionCapabilityRequired,
   classpilotRestrictionAuthCapabilityRequired,
   classpilotRestrictionAuthProjectionRevision,
   effectiveClasspilotControlEnforcementHealth,
@@ -227,6 +227,9 @@ function publicClasspilotExtensionContract(
       // set is the negotiated one, never the raw extension advertisement.
       scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
       scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
+      // Precise Waypoints and Flight Paths reach only students whose extension
+      // negotiated this; the dashboard counts the rest as needing the update.
+      preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
     },
   };
 }
@@ -1197,6 +1200,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         "restrictionAuthPassThroughV1",
         { schoolId }
       ),
+      preciseRestrictionResourcesV1: isClasspilotCapabilityActive(
+        "preciseRestrictionResourcesV1",
+        { schoolId }
+      ),
     };
     const aggregated = dbStudents.map((student) => {
       const snapshot = snapshotByStudent.get(student.id);
@@ -1297,6 +1304,14 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         );
       const restrictionAuthUpdateRequired = restrictionAuthCapabilityRequired
         && !acceptedCapabilities.includes("restrictionAuthPassThroughV1");
+      // A precise Waypoint or Flight Path reaches only a binding that accepted
+      // preciseRestrictionResourcesV1, and never when its entries fail
+      // re-validation; either way this student cannot be enforced.
+      const preciseRestrictionCapabilityRequired = !!visibleOwnedDesiredControlState
+        && classpilotPreciseRestrictionCapabilityRequired({
+          desiredState: visibleOwnedDesiredControlState.desiredState,
+          acceptedCapabilities,
+        });
       const desiredClassroomState = visibleOwnedDesiredControlState
         ? serializeClasspilotStudentControlState(visibleOwnedDesiredControlState)
         : undefined;
@@ -1325,6 +1340,7 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
               gateActive: operatorCapabilities.lateSignInRestrictionSsoV1,
               acceptedCapabilities,
               restrictionAuthCapabilityRequired,
+              preciseRestrictionCapabilityRequired,
               restrictionAuthPolicyRevision: restrictionAuthRelevant
                 ? classpilotRestrictionAuthProjectionRevision({
                     policyRevision: ssoPolicy.revision,
@@ -1346,13 +1362,10 @@ router.get("/students-aggregated", ...classPilotStaffAuth, requireClasspilotFull
         : scopedRealtimeClassroomState
           ? visibleRealtime?.enforcementHealth || "unsupported"
           : "unsupported";
-      // Forward-compatibility fence: this image withholds a precise-resource
-      // snapshot from every client, so that reason outranks sign-in-safe support.
+      // The precise-resource reason outranks sign-in-safe support: the
+      // snapshot is withheld before the sign-in check is reached.
       const preciseRestrictionUpdateRequired = enforcementHealth === "unsupported"
-        && !!visibleOwnedDesiredControlState
-        && classpilotControlStateRequiresPreciseCapability(
-          visibleOwnedDesiredControlState.desiredState
-        );
+        && preciseRestrictionCapabilityRequired;
       const publicExtensionContract = publicClasspilotExtensionContract(capabilityRealtime);
       const publicClassroomControls = normalizeClasspilotPublicClassroomControls(
         scheduledContext && !scopedRealtimeClassroomState ? undefined : visibleRealtime?.classroomControls

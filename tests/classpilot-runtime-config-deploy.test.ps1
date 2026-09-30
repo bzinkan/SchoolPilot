@@ -433,8 +433,18 @@ try {
         "liveViewIceServersV1", "kioskLaunchTicketV2", "screenshotTrackingWindowLeaseV1",
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
-        "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "kioskLaunchTicketV1"
+        "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
+        "kioskLaunchTicketV1"
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
+    Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
+        $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
+        $script:RoadmapProfileCapabilities["precise-restriction-resources-off"] -ceq "preciseRestrictionResourcesV1" -and
+        $script:AdditiveCapabilities -ccontains "preciseRestrictionResourcesV1" -and
+        -not ($script:ActivationOrder -ccontains "preciseRestrictionResourcesV1")) `
+        "Precise restriction resources must be an additive roadmap capability with pilot and off profiles only."
+    Assert-Condition ($testRuntime.Environment.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 -ceq "false" -and
+        $testRollouts.preciseRestrictionResourcesV1.mode -ceq "off") `
+        "Existing runtime profiles must leave precise restriction resources off."
 
     $globalProfile = [pscustomobject]@{ schemaVersion = 1; mode = "global-on" }
     $globalRuntime = ConvertTo-RuntimeConfiguration -Profile $globalProfile
@@ -1429,10 +1439,38 @@ try {
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
+    # The precise-restriction pilot is refused until a reviewed follow-up binds the
+    # exact MANAGED-CHROMEBOOK VERIFIED ClassPilot 2.10.0 package; the off profile
+    # never needs it.
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "The precise-restriction pilot must refuse until 2.10.0 release evidence is bound."
+    [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+        schemaVersion = 7; mode = "precise-restriction-resources-off"
+    }))
+    foreach ($partial in @(
+        @{ Tag = "v2.10.0"; Merge = ""; Zip = "" },
+        @{ Tag = "v2.9.6"; Merge = ("c" * 40); Zip = ("d" * 64) },
+        @{ Tag = "v2.10.0"; Merge = ("C" * 40); Zip = ("d" * 64) }
+    )) {
+        $script:PreciseRestrictionRequiredReleaseTag = $partial.Tag
+        $script:PreciseRestrictionRequiredMergeSha = $partial.Merge
+        $script:PreciseRestrictionRequiredZipSha256 = $partial.Zip
+        Assert-Throws { Assert-PreciseRestrictionPilotReleaseEvidenceBound } `
+            "Partial or malformed 2.10.0 release evidence must not admit the precise-restriction pilot."
+    }
+    # Test-only binding so the shared roadmap cases below can exercise the pilot.
+    $script:PreciseRestrictionRequiredReleaseTag = "v2.10.0"
+    $script:PreciseRestrictionRequiredMergeSha = "c" * 40
+    $script:PreciseRestrictionRequiredZipSha256 = "d" * 64
+
     $roadmapCases = @(
         @{ Capability = "afterHoursSafetyOnlyV1"; Prefix = "after-hours-safety-only" },
         @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" },
-        @{ Capability = "screenshotReadOnlyObservationV1"; Prefix = "read-only-observation" }
+        @{ Capability = "screenshotReadOnlyObservationV1"; Prefix = "read-only-observation" },
+        @{ Capability = "preciseRestrictionResourcesV1"; Prefix = "precise-restriction-resources" }
     )
     $roadmapSourceRuntime = $restrictionAuthPilotRuntime
     foreach ($roadmapCase in $roadmapCases) {
@@ -1993,13 +2031,38 @@ try {
 
     $toolSha = "b" * 40
     $global:RuntimeConfigGitState = [ordered]@{ Branch = "main"; Sha = $toolSha; Dirty = "" }
+    # The serving app's capability registry is read with git show; the mock serves
+    # this checkout's registry unless a test substitutes an older one.
+    $currentProtocolSource = [IO.File]::ReadAllText((Join-Path $repositoryRoot "src/services/classpilotProtocol.ts"))
+    $global:RuntimeConfigGitState.ServingProtocolSource = $currentProtocolSource
+    $global:RuntimeConfigGitState.ShowRequests = [Collections.Generic.List[string]]::new()
+    # A registry target (an older image) can be served from its own SHA.
+    $global:RuntimeConfigGitState.ProtocolSourceBySha = @{}
     $global:SchoolPilotRuntimeConfigGitHandler = {
         param([string[]]$Arguments)
         if ($Arguments[0] -ceq "branch") { return $global:RuntimeConfigGitState.Branch }
         if ($Arguments[0] -ceq "status") { return $global:RuntimeConfigGitState.Dirty }
         if ($Arguments[0] -ceq "rev-parse") { return $global:RuntimeConfigGitState.Sha }
+        if ($Arguments[0] -ceq "show" -and $Arguments.Count -eq 2 -and
+            $Arguments[1] -cmatch '^[0-9a-f]{40}:src/services/classpilotProtocol\.ts$') {
+            $global:RuntimeConfigGitState.ShowRequests.Add($Arguments[1])
+            $requestedSha = $Arguments[1].Substring(0, 40)
+            $protocolSource = if ($global:RuntimeConfigGitState.ProtocolSourceBySha.ContainsKey($requestedSha)) {
+                $global:RuntimeConfigGitState.ProtocolSourceBySha[$requestedSha]
+            } else { $global:RuntimeConfigGitState.ServingProtocolSource }
+            if ($null -eq $protocolSource) { throw "Mocked git show failed." }
+            return $protocolSource
+        }
         throw "Unexpected mocked git operation."
     }
+    $servingCapabilities = @(Get-ServingProtocolCapabilities -RepositoryRoot $repositoryRoot -AppSha ("a" * 40))
+    Assert-Condition ($servingCapabilities -ccontains "preciseRestrictionResourcesV1" -and
+        $servingCapabilities -ccontains "restrictionPortalFirstV1" -and
+        -not ($servingCapabilities -ccontains "This") -and
+        $global:RuntimeConfigGitState.ShowRequests[0] -ceq (("a" * 40) + ":src/services/classpilotProtocol.ts")) `
+        "The serving registry must be read from the exact app SHA, names only, comments ignored."
+    Assert-Throws { Get-ServingProtocolCapabilities -RepositoryRoot $repositoryRoot -AppSha "HEAD" } `
+        "The serving registry must be read from a full commit SHA, never a ref."
     [void](Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha $toolSha)
     Assert-Throws {
         Assert-RepositoryIdentity -RepositoryRoot $repositoryRoot -ExpectedSha ("a" * 40)
@@ -3653,6 +3716,183 @@ try {
         $roadmapPlanText = [IO.File]::ReadAllText($roadmapPlanResult.PlanPath)
         Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
     }
+
+    # --- Registry projection: never write a capability the serving image cannot parse ---
+    # An image older than roadmap PR 2 rejects the whole rollout registry (and so
+    # refuses to boot) if it names preciseRestrictionResourcesV1, even as off. Every
+    # produced runtime is therefore projected onto the serving image's registry:
+    # entries (and kill switches) it does not register are omitted, and only a
+    # profile that would activate such a capability is refused.
+    $preciseLine = [Regex]::Match($currentProtocolSource, '\r?\n\s*"preciseRestrictionResourcesV1",')
+    Assert-Condition $preciseLine.Success "The current registry must list the precise capability."
+    $prePreciseProtocolSource = $currentProtocolSource.Remove($preciseLine.Index, $preciseLine.Length)
+    function New-RuntimeWithPreciseControls {
+        # $Mode "absent" writes a pre-PR-2 runtime (neither control); "on" pilots one school.
+        param($RuntimeConfiguration, [ValidateSet("absent", "on")][string]$Mode, [string]$SchoolId)
+        $environment = [ordered]@{}
+        foreach ($item in $RuntimeConfiguration.Environment.GetEnumerator()) {
+            $environment[[string]$item.Key] = [string]$item.Value
+        }
+        $rollouts = [string]$environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON | ConvertFrom-Json -AsHashtable -Depth 10
+        if ($Mode -ceq "absent") {
+            $environment.Remove("CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1")
+            $rollouts.Remove("preciseRestrictionResourcesV1")
+        }
+        else {
+            $environment.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "true"
+            $rollouts.preciseRestrictionResourcesV1 = [ordered]@{ mode = "on"; schoolIds = @($SchoolId) }
+        }
+        $environment.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON = $rollouts | ConvertTo-Json -Depth 8 -Compress
+        return [pscustomobject]@{ Mode = [string]$RuntimeConfiguration.Mode; Environment = $environment }
+    }
+    function Get-TestCandidateApiEnvironment {
+        param([Parameter(Mandatory = $true)][string]$Arn)
+        $task = $global:RuntimeConfigTestState.TaskResponses[$Arn].taskDefinition
+        return @(@($task.containerDefinitions | Where-Object name -CEQ "api")[0].environment)
+    }
+    function Test-PreciseControlsAbsent {
+        param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Environment)
+        $registry = [string]@($Environment | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0].value
+        return @($Environment | Where-Object name -CEQ "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1").Count -eq 0 -and
+            -not (@((ConvertFrom-StrictJsonText -Text $registry).PSObject.Properties.Name) -ccontains "preciseRestrictionResourcesV1")
+    }
+    $prePreciseGlobalRuntime = New-RuntimeWithPreciseControls -RuntimeConfiguration $globalRuntime -Mode absent
+
+    # (1) Merge-to-deploy window: this tool is newer than the serving image. A plan
+    # for another capability omits the precise pair and applies.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $prePreciseGlobalRuntime
+    $global:RuntimeConfigGitState.ServingProtocolSource = $prePreciseProtocolSource
+    $windowProfilePath = Join-Path $testRoot "registry-projection-window-profile.json"
+    Write-TestJson -Path $windowProfilePath -Value ([pscustomobject]@{
+        schemaVersion = 7; mode = "school-website-block-pilot"; pilotSchoolId = $testSchoolId
+    })
+    $windowPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $windowProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    $windowPlan = Read-RuntimePlan -Path $windowPlanResult.PlanPath -ExpectedSha256 $windowPlanResult.PlanSha256
+    Assert-Condition (-not ($windowPlan.PSObject.Properties.Name -contains "registryTargetAppSha")) `
+        "An ordinary plan records no registry target."
+    $windowApply = Invoke-RuntimeConfigApply -Plan $windowPlan -PlanSha256 $windowPlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $windowEnvironment = Get-TestCandidateApiEnvironment -Arn ([string]$windowApply.candidateApiTaskDefinitionArn)
+    $windowControls = Get-RuntimeCapabilityControls -Environment $windowEnvironment
+    Assert-Condition ($windowApply.status -ceq "applied" -and (Test-PreciseControlsAbsent -Environment $windowEnvironment) -and
+        [string]$windowControls.schoolWebsiteBlockEnforcementV1.mode -ceq "on") `
+        "A plan against an image older than the precise capability must omit its registry entry and kill switch, and still apply."
+
+    # (2) Activating a capability the serving image lacks is still refused.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $prePreciseGlobalRuntime
+    $activationProfilePath = Join-Path $testRoot "registry-projection-activation-profile.json"
+    Write-TestJson -Path $activationProfilePath -Value ([pscustomobject]@{
+        schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
+    })
+    $activationError = $null
+    try {
+        [void](New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $activationProfilePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now)
+    } catch { $activationError = $_.Exception.Message }
+    Assert-Condition ($null -ne $activationError -and $activationError -cmatch 'would activate preciseRestrictionResourcesV1') `
+        "Plan must refuse to activate a capability the serving image does not register."
+    foreach ($unreadable in @($null, "export const OTHER = [];")) {
+        $global:RuntimeConfigGitState.ServingProtocolSource = $unreadable
+        Assert-Throws {
+            New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $windowProfilePath `
+                -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+                -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+        } "Outside containment, Plan must fail closed when the serving registry cannot be read."
+    }
+
+    # (3) Emergency off in the window. Containment skips the ECR tag check, so its
+    # projection reads the serving task definition's own registry: neither an
+    # unreadable nor a mistyped (newer) app SHA can slip the precise entry in.
+    $offWindowProfilePath = Join-Path $testRoot "registry-projection-off-profile.json"
+    Write-TestJson -Path $offWindowProfilePath -Value ([pscustomobject]@{ schemaVersion = 1; mode = "off" })
+    foreach ($servingText in @($null, $currentProtocolSource)) {
+        Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+        Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $prePreciseGlobalRuntime
+        $global:RuntimeConfigTestState.RejectEcrLookup = $true
+        $global:RuntimeConfigGitState.ServingProtocolSource = $servingText
+        $offWindowPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $offWindowProfilePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+        $offWindowPlan = Read-RuntimePlan -Path $offWindowPlanResult.PlanPath -ExpectedSha256 $offWindowPlanResult.PlanSha256
+        $offWindowApply = Invoke-RuntimeConfigApply -Plan $offWindowPlan -PlanSha256 $offWindowPlanResult.PlanSha256 `
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+        $offWindowEnvironment = Get-TestCandidateApiEnvironment -Arn ([string]$offWindowApply.candidateApiTaskDefinitionArn)
+        Assert-Condition ($offWindowApply.status -ceq "applied" -and (Test-PreciseControlsAbsent -Environment $offWindowEnvironment) -and
+            [string]@($offWindowEnvironment | Where-Object name -CEQ "CLASSPILOT_PROTOCOL_V3_ENABLED")[0].value -ceq "false") `
+            "Emergency off in the merge-to-deploy window must apply without writing a key the serving image rejects."
+        $global:RuntimeConfigTestState.RejectEcrLookup = $false
+    }
+    $global:RuntimeConfigGitState.ServingProtocolSource = $currentProtocolSource
+
+    # (4) Image revert past PR 2: a reviewed plan projects onto the older target's
+    # registry, dropping the (already off) precise pair and preserving everything
+    # else, so the older image boots with the resulting runtime.
+    $olderAppSha = "e" * 40
+    $global:RuntimeConfigGitState.ProtocolSourceBySha[$olderAppSha] = $prePreciseProtocolSource
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $preciseOffProfilePath = Join-Path $testRoot "registry-projection-precise-off-profile.json"
+    Write-TestJson -Path $preciseOffProfilePath -Value ([pscustomobject]@{
+        schemaVersion = 7; mode = "precise-restriction-resources-off"
+    })
+    Assert-Throws {
+        New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $preciseOffProfilePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest -RegistryTargetAppSha "HEAD" `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    } "The registry target must be a full commit SHA."
+    $revertPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $preciseOffProfilePath `
+        -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest -RegistryTargetAppSha $olderAppSha `
+        -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+    $revertPlan = Read-RuntimePlan -Path $revertPlanResult.PlanPath -ExpectedSha256 $revertPlanResult.PlanSha256
+    Assert-Condition ([string]$revertPlan.registryTargetAppSha -ceq $olderAppSha) "The reviewed plan records its registry target."
+    # Apply re-derives the projection from the pinned serving pair and the plan's
+    # target, and must reproduce the reviewed runtime byte for byte. A target that
+    # reads differently at Apply (a rewritten repository) is refused before any
+    # mutation; the serving image itself cannot change between Plan and Apply
+    # because both pin its exact task definitions and digest.
+    $global:RuntimeConfigGitState.ProtocolSourceBySha[$olderAppSha] = $currentProtocolSource
+    $revertMismatchError = $null
+    try {
+        [void](Invoke-RuntimeConfigApply -Plan $revertPlan -PlanSha256 $revertPlanResult.PlanSha256 `
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    } catch { $revertMismatchError = $_.Exception.Message }
+    Assert-Condition ($null -ne $revertMismatchError -and $revertMismatchError -cmatch 'changed after planning' -and
+        $global:RuntimeConfigTestState.ApiCurrentArn -ceq $apiSourceArn -and
+        $global:RuntimeConfigTestState.WorkerCurrentArn -ceq $workerSourceArn) `
+        "Apply must refuse, without mutation, a projection that no longer reproduces the reviewed runtime."
+    $global:RuntimeConfigGitState.ProtocolSourceBySha[$olderAppSha] = $prePreciseProtocolSource
+    $revertApply = Invoke-RuntimeConfigApply -Plan $revertPlan -PlanSha256 $revertPlanResult.PlanSha256 `
+        -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $revertEnvironment = Get-TestCandidateApiEnvironment -Arn ([string]$revertApply.candidateApiTaskDefinitionArn)
+    $sourceApiEnvironment = @(@($global:RuntimeConfigTestState.TaskResponses[$apiSourceArn].taskDefinition.containerDefinitions |
+        Where-Object name -CEQ "api")[0].environment)
+    Assert-Condition ($revertApply.status -ceq "applied" -and (Test-PreciseControlsAbsent -Environment $revertEnvironment) -and
+        (Get-CanonicalJsonSha256 -Value (Get-RuntimeCapabilityControls -Environment $revertEnvironment)) -ceq
+            (Get-CanonicalJsonSha256 -Value (Get-RuntimeCapabilityControls -Environment $sourceApiEnvironment))) `
+        "A plan for an older target image must drop only the entries it does not register and preserve every control."
+
+    # (5) Dropping an entry is never a way to switch a capability off: an active
+    # precise pilot must be turned off by its own off profile first.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration (
+        New-RuntimeWithPreciseControls -RuntimeConfiguration $globalRuntime -Mode on -SchoolId $testSchoolId)
+    $otherOffProfilePath = Join-Path $testRoot "registry-projection-other-off-profile.json"
+    Write-TestJson -Path $otherOffProfilePath -Value ([pscustomobject]@{ schemaVersion = 7; mode = "school-website-block-off" })
+    $activeDropError = $null
+    try {
+        [void](New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $otherOffProfilePath `
+            -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest -RegistryTargetAppSha $olderAppSha `
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now)
+    } catch { $activeDropError = $_.Exception.Message }
+    Assert-Condition ($null -ne $activeDropError -and $activeDropError -cmatch 'would activate preciseRestrictionResourcesV1') `
+        "A registry target must never silently drop an active capability."
+    $global:RuntimeConfigGitState.ProtocolSourceBySha = @{}
+    $global:RuntimeConfigGitState.ServingProtocolSource = $currentProtocolSource
     # --- School-scope unpin through the guarded mocked plan/apply/rollback path ---
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     # Production carries provisioned TURN wiring alongside the pinned registry; the

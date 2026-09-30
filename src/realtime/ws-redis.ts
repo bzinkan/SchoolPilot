@@ -25,10 +25,12 @@ export type WsRedisTarget =
       requiredCapability?:
         | "lateSignInRestrictionSsoV1"
         | "restrictionAuthPassThroughV1"
+        | "preciseRestrictionResourcesV1"
         | "screenshotActiveObservationCadenceV1";
       requiredCapabilities?: Array<
         | "lateSignInRestrictionSsoV1"
         | "restrictionAuthPassThroughV1"
+        | "preciseRestrictionResourcesV1"
         | "screenshotActiveObservationCadenceV1"
       >;
     }

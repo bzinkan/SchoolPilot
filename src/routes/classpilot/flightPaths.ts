@@ -7,6 +7,16 @@ import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import { requireClasspilotEntitlement } from "../../middleware/requireClasspilotEntitlement.js";
 import { isSharedTeachingResourcesEnabled } from "../../config/sharedTeachingResources.js";
 import { logAudit } from "../../services/audit.js";
+import { restrictionResourceResolutionLimiter } from "../../middleware/rateLimiter.js";
+import {
+  classroomImportLinkUrls,
+  classroomImportResourceEntries,
+  normalizeFlightPathResourcesInput,
+  preciseRestrictionResourcesActive,
+  requirePreciseRestrictionResourcesActive,
+  withFlightPathResourcesVisibility,
+} from "../../services/classpilotPreciseRestrictions.js";
+import type { PreciseAllowedResource } from "../../services/restrictionResources.js";
 import {
   canViewSharedResource,
   libraryBlockListView,
@@ -95,13 +105,30 @@ function auditActor(req: any, res: any) {
 }
 
 /**
+ * Precise restriction resources (preciseRestrictionResourcesV1) are rolled
+ * out per school independently of the School Library. While they are off the
+ * Flight Path responses keep their previous shape (see
+ * withFlightPathResourcesVisibility).
+ */
+function preciseResourcesEnabled(res: any): boolean {
+  return preciseRestrictionResourcesActive(res.locals.schoolId);
+}
+
+/**
  * The owner's or an administrator's view of an item. With the School Library
  * off for the school, the response keeps exactly its previous shape.
  */
 function managedFlightPathView(req: any, res: any, row: FlightPath) {
-  return schoolLibraryEnabled(res)
-    ? ownedTeachingResourceView(row, resourceActor(req, res))
-    : withoutTeachingResourcePublication(row);
+  return withFlightPathResourcesVisibility(
+    schoolLibraryEnabled(res)
+      ? ownedTeachingResourceView(row, resourceActor(req, res))
+      : withoutTeachingResourcePublication(row),
+    preciseResourcesEnabled(res)
+  );
+}
+
+function ownedFlightPathView(res: any, row: FlightPath, actor: TeachingResourceActor) {
+  return withFlightPathResourcesVisibility(ownedTeachingResourceView(row, actor), preciseResourcesEnabled(res));
 }
 
 function managedBlockListView(req: any, res: any, row: BlockList) {
@@ -380,16 +407,26 @@ router.post("/block-lists/remove", ...adminAuth, retiredBlockListDeviceTargeting
 router.get("/", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
+    const precise = preciseResourcesEnabled(res);
+    // features.preciseRestrictionResources is present only while the
+    // capability is active for this school, with or without the School Library.
+    const preciseFeature = precise ? { preciseRestrictionResources: true as const } : {};
     const teacherPaths = await getFlightPathsByTeacherAndSchool(req.authUser!.id, schoolId);
     if (!schoolLibraryEnabled(res)) {
-      return res.json({ flightPaths: teacherPaths.map((row) => withoutTeachingResourcePublication(row)) });
+      return res.json({
+        flightPaths: teacherPaths.map((row) => withFlightPathResourcesVisibility(withoutTeachingResourcePublication(row), precise)),
+        ...(precise ? { features: preciseFeature } : {}),
+      });
     }
     const actor = resourceActor(req, res);
     const library = await getLibraryFlightPathsForSchool(schoolId, actor.actorId);
     return res.json({
-      flightPaths: teacherPaths.map((row) => ownedTeachingResourceView(row, actor)),
-      library: library.map(({ flightPath, ownerName }) => libraryFlightPathView(flightPath, ownerName, actor)),
-      features: { sharedTeachingResources: true },
+      flightPaths: teacherPaths.map((row) => withFlightPathResourcesVisibility(ownedTeachingResourceView(row, actor), precise)),
+      library: library.map(({ flightPath, ownerName }) => withFlightPathResourcesVisibility(
+        libraryFlightPathView(flightPath, ownerName, actor),
+        precise
+      )),
+      features: { sharedTeachingResources: true, ...preciseFeature },
     });
   } catch (err) {
     next(err);
@@ -397,19 +434,28 @@ router.get("/", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/flight-paths
-router.post("/", ...auth, async (req, res, next) => {
+router.post("/", ...auth, restrictionResourceResolutionLimiter, async (req, res, next) => {
   try {
-    const { flightPathName, description, allowedDomains, blockedDomains, isDefault } = req.body;
+    const { flightPathName, description, allowedDomains, blockedDomains, isDefault, resources } = req.body;
     if (!flightPathName) {
       return res.status(400).json({ error: "flightPathName is required" });
     }
+    // Optional precise entries ({url} or {type:"website", hostname}); website
+    // entries join allowedDomains, sections and resources go to `resources`.
+    const requested = resources === undefined
+      ? undefined
+      : await normalizeFlightPathResourcesInput(resources, res.locals.schoolId!);
+    const websites = validateRuleList(allowedDomains, "Flight Path");
 
     const fp = await createFlightPath({
       schoolId: res.locals.schoolId!,
       teacherId: req.authUser!.id,
       flightPathName,
       description: description || null,
-      allowedDomains: validateRuleList(allowedDomains, "Flight Path"),
+      allowedDomains: requested
+        ? validateRuleList([...websites, ...requested.websiteHosts], "Flight Path")
+        : websites,
+      ...(requested ? { resources: requested.resources } : {}),
       blockedDomains: validateRuleList(blockedDomains, "Flight Path block list"),
       isDefault: isDefault || false,
     });
@@ -421,7 +467,7 @@ router.post("/", ...auth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/flight-paths/from-classroom
-router.post("/from-classroom", ...auth, async (req, res, next) => {
+router.post("/from-classroom", ...auth, restrictionResourceResolutionLimiter, async (req, res, next) => {
   try {
     const {
       courseId,
@@ -433,8 +479,12 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
       description,
       blockedDomains,
       isDefault,
+      boundary = "website",
     } = req.body;
     if (!courseId) return res.status(400).json({ error: "courseId is required" });
+    if (boundary !== "website" && boundary !== "resource") {
+      return res.status(400).json({ error: "boundary must be website or resource" });
+    }
 
     const selectedIds = Array.isArray(selectedResourceIds) ? selectedResourceIds.map(String) : [];
     const providedResources = Array.isArray(resources) ? resources : [];
@@ -445,11 +495,28 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "selected resources were not included in the request" });
     }
 
-    const allowedDomains = extractAllowedEntries(
-      selectedResources,
-      Array.isArray(resourceLinks) ? resourceLinks : []
-    );
-    if (allowedDomains.length === 0) {
+    // Default: today's hostname-level import. "resource": each Classroom link
+    // becomes its own resource or section (preciseRestrictionResourcesV1);
+    // a link that can't be limited precisely is left out, never widened.
+    let allowedDomains: string[];
+    let preciseResources: PreciseAllowedResource[] = [];
+    let skippedLinkCount = 0;
+    if (boundary === "resource") {
+      requirePreciseRestrictionResourcesActive(res.locals.schoolId!);
+      const imported = await classroomImportResourceEntries(classroomImportLinkUrls(
+        selectedResources,
+        Array.isArray(resourceLinks) ? resourceLinks : []
+      ));
+      allowedDomains = imported.websiteHosts;
+      preciseResources = imported.resources;
+      skippedLinkCount = imported.skipped.length;
+    } else {
+      allowedDomains = extractAllowedEntries(
+        selectedResources,
+        Array.isArray(resourceLinks) ? resourceLinks : []
+      );
+    }
+    if (allowedDomains.length === 0 && preciseResources.length === 0) {
       return res.status(400).json({ error: "No usable Classroom resource URLs were found" });
     }
     validateRuleList(allowedDomains, "Flight Path");
@@ -460,6 +527,7 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
       flightPathName: flightPathName || name || "Classroom Flight Path",
       description: description || null,
       allowedDomains,
+      ...(boundary === "resource" ? { resources: preciseResources } : {}),
       blockedDomains: validateRuleList(blockedDomains, "Flight Path block list"),
       isDefault: !!isDefault,
       sourceType: "google_classroom",
@@ -472,13 +540,25 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
 
     return res.status(201).json({
       flightPath: managedFlightPathView(req, res, fp),
-      extracted: {
-        allowedDomains,
-        domainLevelEntries: allowedDomains,
-        resourceCount: selectedResources.length,
-        enforcementLevel: "hostname",
-        warning: "Classroom resource links are enforced at the website hostname level, not as individual pages or videos.",
-      },
+      extracted: boundary === "resource"
+        ? {
+            allowedDomains,
+            domainLevelEntries: allowedDomains,
+            resources: preciseResources,
+            resourceCount: selectedResources.length,
+            skippedLinkCount,
+            enforcementLevel: "resource",
+            ...(skippedLinkCount > 0 ? {
+              warning: `${skippedLinkCount} Classroom link${skippedLinkCount === 1 ? "" : "s"} could not be limited to one page, video or document and ${skippedLinkCount === 1 ? "was" : "were"} left out.`,
+            } : {}),
+          }
+        : {
+            allowedDomains,
+            domainLevelEntries: allowedDomains,
+            resourceCount: selectedResources.length,
+            enforcementLevel: "hostname",
+            warning: "Classroom resource links are enforced at the website hostname level, not as individual pages or videos.",
+          },
     });
   } catch (err) {
     next(err);
@@ -500,7 +580,12 @@ router.get("/:id", ...auth, async (req, res, next) => {
     // and the owner's name only while the owner is a member of this school.
     if (schoolLibraryEnabled(res) && canViewSharedResource(fp, req.authUser!.id)) {
       const ownerName = await getTeachingResourceOwnerName(schoolId, fp.teacherId);
-      return res.json({ flightPath: libraryFlightPathView(fp, ownerName, resourceActor(req, res)) });
+      return res.json({
+        flightPath: withFlightPathResourcesVisibility(
+          libraryFlightPathView(fp, ownerName, resourceActor(req, res)),
+          preciseResourcesEnabled(res)
+        ),
+      });
     }
     return res.status(404).json({ error: "Flight path not found" });
   } catch (err) {
@@ -509,19 +594,34 @@ router.get("/:id", ...auth, async (req, res, next) => {
 });
 
 // PATCH /api/classpilot/flight-paths/:id
-router.patch("/:id", ...auth, async (req, res, next) => {
+router.patch("/:id", ...auth, restrictionResourceResolutionLimiter, async (req, res, next) => {
   try {
     const id = param(req, "id");
     const existing = await getFlightPathById(id, res.locals.schoolId!);
     if (!existing || !canManageOwnedResource(req, res, existing.teacherId)) {
       return res.status(404).json({ error: "Flight path not found" });
     }
-    const { flightPathName, description, allowedDomains, blockedDomains, isDefault } = req.body;
+    const { flightPathName, description, allowedDomains, blockedDomains, isDefault, resources } = req.body;
 
     const data: Record<string, unknown> = {};
     if (flightPathName !== undefined) data.flightPathName = flightPathName;
     if (description !== undefined) data.description = description;
     if (allowedDomains !== undefined) data.allowedDomains = validateRuleList(allowedDomains, "Flight Path");
+    // Omitting `resources` leaves stored entries untouched, so the owner can
+    // always edit the website part even while the capability is off for the
+    // school. A present list replaces the precise entries (an empty list
+    // clears them and is always allowed); its website entries join the path's
+    // allowed websites.
+    if (resources !== undefined) {
+      const requested = await normalizeFlightPathResourcesInput(resources, res.locals.schoolId!);
+      data.resources = requested.resources;
+      if (requested.websiteHosts.length > 0) {
+        data.allowedDomains = validateRuleList([
+          ...((data.allowedDomains as string[] | undefined) ?? existing.allowedDomains ?? []),
+          ...requested.websiteHosts,
+        ], "Flight Path");
+      }
+    }
     if (blockedDomains !== undefined) data.blockedDomains = validateRuleList(blockedDomains, "Flight Path block list");
     if (isDefault !== undefined) data.isDefault = isDefault;
 
@@ -561,7 +661,7 @@ router.post("/:id/visibility", ...auth, async (req, res, next) => {
     const { visibility } = parseBody(visibilityBody, req.body);
     const actor = resourceActor(req, res);
     const updated = await setFlightPathVisibility(param(req, "id"), res.locals.schoolId!, { visibility, actor });
-    return res.json({ flightPath: ownedTeachingResourceView(updated, actor) });
+    return res.json({ flightPath: ownedFlightPathView(res, updated, actor) });
   } catch (err) {
     next(err);
   }
@@ -574,7 +674,7 @@ router.post("/:id/official", ...adminAuth, async (req, res, next) => {
     const { official } = parseBody(officialBody, req.body);
     const actor = resourceActor(req, res);
     const updated = await setFlightPathOfficial(param(req, "id"), res.locals.schoolId!, { official, actor });
-    return res.json({ flightPath: ownedTeachingResourceView(updated, actor) });
+    return res.json({ flightPath: ownedFlightPathView(res, updated, actor) });
   } catch (err) {
     next(err);
   }
@@ -599,7 +699,7 @@ router.post("/:id/copy", ...auth, async (req, res, next) => {
       entityName: copied.copy.flightPathName,
       metadata: { sourceId: copied.source.id, sourceOfficial: copied.source.official },
     });
-    return res.status(201).json({ flightPath: ownedTeachingResourceView(copied.copy, actor) });
+    return res.status(201).json({ flightPath: ownedFlightPathView(res, copied.copy, actor) });
   } catch (err) {
     next(err);
   }

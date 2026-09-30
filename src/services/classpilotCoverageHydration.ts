@@ -49,6 +49,7 @@ export type ClasspilotCoverageStatus = {
     restrictionAuthPassThroughV1: boolean;
     scheduledClassroomV1: boolean;
     scopedAuthorityChecksV1: boolean;
+    preciseRestrictionResourcesV1: boolean;
   };
   screenshotHealth: ClasspilotRealtimeStatus["screenshotHealth"];
   operatorCapabilities: {
@@ -126,6 +127,7 @@ function coverageAcceptedCapabilities(status: ClasspilotRealtimeStatus | null) {
     // does, and reads them from this projection rather than the aggregate.
     scheduledClassroomV1: acceptedCapabilities.has("scheduledClassroomV1"),
     scopedAuthorityChecksV1: acceptedCapabilities.has("scopedAuthorityChecksV1"),
+    preciseRestrictionResourcesV1: acceptedCapabilities.has("preciseRestrictionResourcesV1"),
   };
 }
 

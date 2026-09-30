@@ -23,6 +23,7 @@
     "audit:gopilot": "node dist/cli/auditGopilotContainment.js",
     "repair:classpilot-staff-identity": "node --env-file-if-exists=.env dist/cli/repairClasspilotStaffIdentity.js",
     "check:classpilot-tile-auth-plans": "node --env-file-if-exists=.env dist/cli/checkClasspilotTileAuthorizationPlans.js --execute",
+    "clear:classpilot-precise-restrictions": "node --env-file-if-exists=.env dist/cli/clearClasspilotPreciseRestrictions.js",
     "check": "tsc --noEmit",
     "check:tests": "node scripts/check-test-types.mjs",
     "check:test-casts": "node scripts/check-test-cast-ratchet.mjs",

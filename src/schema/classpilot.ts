@@ -16,6 +16,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { students } from "./students.js";
 import { schools } from "./core.js";
+import type { AllowedResource } from "../services/restrictionResources.js";
 
 // ============================================================================
 // Devices - ClassPilot Chromebook registration
@@ -1907,6 +1908,9 @@ export const flightPaths = pgTable(
     allowedDomains: text("allowed_domains")
       .array()
       .default(sql`'{}'::text[]`),
+    // Precise section/resource entries (roadmap PR 2). Websites stay in
+    // allowed_domains, the only list ClassPilot 2.9.x receives.
+    resources: jsonb("resources").$type<AllowedResource[]>().notNull().default(sql`'[]'::jsonb`),
     blockedDomains: text("blocked_domains")
       .array()
       .default(sql`'{}'::text[]`),
@@ -1927,6 +1931,10 @@ export const flightPaths = pgTable(
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
+    check(
+      "flight_paths_resources_check",
+      sql`CASE WHEN jsonb_typeof(${table.resources}) = 'array' THEN jsonb_array_length(${table.resources}) <= 200 AND octet_length(${table.resources}::text) <= 65536 ELSE false END`
+    ),
     index("flight_paths_school_id_idx").on(table.schoolId),
     index("flight_paths_teacher_id_idx").on(table.teacherId),
     index("flight_paths_school_library_idx")

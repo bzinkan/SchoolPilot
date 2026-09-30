@@ -4,6 +4,14 @@ import type {
 } from "../schema/classpilot.js";
 import { recordHeartbeatHotPathCounter } from "./heartbeatHotPathMetrics.js";
 import type { ClasspilotSsoPolicy } from "./classpilotSsoPolicy.js";
+import {
+  PRECISE_RESTRICTION_RESOURCES_CAPABILITY,
+  isWaypointLandingUrl,
+  validateAllowedResource,
+  validateAllowedResourceList,
+  type AllowedResource,
+  type PreciseAllowedResource,
+} from "./restrictionResources.js";
 
 export const CLASSPILOT_CLASSROOM_STATE_SCHEMA_VERSION = 1 as const;
 
@@ -92,17 +100,20 @@ export type ClasspilotClassroomStateSnapshot = {
       url?: string | null;
       domain?: string | null;
       /**
-       * Opaque precise-resource Waypoint written by a newer server. Kept only
-       * so the forward-compatibility fence can withhold the whole snapshot;
-       * this image never interprets or delivers it.
+       * "This resource only" Waypoint (preciseRestrictionResourcesV1): one
+       * section or resource whose canonical URL is `url`. Raw stored values
+       * are kept verbatim through every normalization; a delivery snapshot
+       * carries only a re-validated canonical copy, and only to an exact
+       * binding that accepted the capability.
        */
       resource?: unknown;
     };
     flightPath: {
       active: boolean;
+      /** Website hostnames, the only part ClassPilot 2.9.x enforces. */
       allowedDomains: string[];
       name?: string | null;
-      /** Opaque precise Flight Path resources from a newer server (see screenLock.resource). */
+      /** Section and resource entries of a precise Flight Path (see screenLock.resource). */
       resources?: unknown;
     };
     blockList: { active: boolean; blockedDomains: string[]; name?: string | null };
@@ -188,15 +199,18 @@ function iso(value: unknown): string | null {
 }
 
 /**
- * Roadmap PR 2-pre forward-compatibility fence. A newer server stores a
- * precise Waypoint as `screenLock.resource` and precise Flight Path entries as
- * `flightPath.resources`, in classroom-state rows, desired snapshots and
- * command payloads. This image can neither validate nor project them.
- * Dropping the key would widen a single-document Waypoint into a lock on its
- * whole domain (ClassPilot 2.9.x derives the domain from `url`) and turn a
- * resource-only Flight Path into an empty one. Any presence of either key is
- * therefore preserved verbatim through every normalization, and it withholds
- * the whole snapshot or command frame from every device surface.
+ * Precise restriction resources (roadmap PR 2; fence from PR 2-pre). A precise
+ * Waypoint is stored as `screenLock.resource` and precise Flight Path entries
+ * as `flightPath.resources`, in classroom-state rows, desired snapshots and
+ * command payloads. Dropping either key would widen a single-document
+ * Waypoint into a lock on its whole domain (ClassPilot 2.9.x derives the
+ * domain from `url`) and turn a resource-only Flight Path into an empty one.
+ *
+ * Presence rule: any value other than `undefined` counts, valid or not, and is
+ * preserved verbatim through every normalization. A snapshot carrying either
+ * key is delivered only to an exact binding whose negotiated (accepted, never
+ * advertised) capabilities include preciseRestrictionResourcesV1, and only
+ * when every carried entry re-validates. Everything else is withheld whole.
  */
 export const CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON =
   "Unsupported client: preciseRestrictionResourcesV1 is required";
@@ -241,6 +255,69 @@ export function classpilotCommandPayloadRequiresPreciseCapability(
   if (commandType === "lock-screen") return carriesPreciseRestrictionKey(payload, "resource");
   if (commandType === "apply-flight-path") return carriesPreciseRestrictionKey(payload, "resources");
   return false;
+}
+
+export type ClasspilotPreciseRestrictionPayload =
+  | { state: "none" }
+  | { state: "invalid" }
+  | {
+      state: "valid";
+      screenLockResource?: PreciseAllowedResource;
+      flightPathResources?: AllowedResource[];
+    };
+
+/**
+ * Re-validates the precise keys of a restrictions object exactly as stored.
+ * A Waypoint resource must be a section or resource on an active Waypoint
+ * whose `url` is its canonical URL; Flight Path resources must be a valid,
+ * non-empty list on an active path. Anything else is "invalid" and withholds
+ * the whole snapshot: an entry is never dropped or degraded to its host.
+ */
+export function classpilotPreciseRestrictionPayload(restrictions: unknown): ClasspilotPreciseRestrictionPayload {
+  const source = objectValue(restrictions);
+  const screenLock = objectValue(source.screenLock);
+  const flightPath = objectValue(source.flightPath);
+  const hasResource = carriesPreciseRestrictionKey(screenLock, "resource");
+  const hasResources = carriesPreciseRestrictionKey(flightPath, "resources");
+  if (!hasResource && !hasResources) return { state: "none" };
+  let screenLockResource: PreciseAllowedResource | undefined;
+  let flightPathResources: AllowedResource[] | undefined;
+  if (hasResource) {
+    const resource = validateAllowedResource(screenLock.resource);
+    if (
+      !resource
+      || resource.type === "website"
+      || screenLock.active !== true
+      || !isWaypointLandingUrl(screenLock.url, resource)
+    ) return { state: "invalid" };
+    screenLockResource = resource;
+  }
+  if (hasResources) {
+    const resources = validateAllowedResourceList(flightPath.resources);
+    if (!resources || resources.length === 0 || flightPath.active !== true) return { state: "invalid" };
+    flightPathResources = resources;
+  }
+  return {
+    state: "valid",
+    ...(screenLockResource ? { screenLockResource } : {}),
+    ...(flightPathResources ? { flightPathResources } : {}),
+  };
+}
+
+/**
+ * Whether a desired snapshot's precise restriction cannot be delivered to a
+ * client with these negotiated capabilities (teacher DTO and health): any
+ * invalid precise payload, or a valid one without the accepted capability.
+ */
+export function classpilotPreciseRestrictionCapabilityRequired(options: {
+  desiredState: unknown;
+  acceptedCapabilities: readonly string[];
+}): boolean {
+  const desired = objectValue(options.desiredState);
+  const precise = classpilotPreciseRestrictionPayload(desired.restrictions ?? desired);
+  if (precise.state === "none") return false;
+  return precise.state === "invalid"
+    || !options.acceptedCapabilities.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY);
 }
 
 export function readClasspilotLateSignInDeliveryProvenance(
@@ -566,18 +643,38 @@ export function serializeClasspilotStudentControlStateForDelivery(options: {
       };
     }
   }
-  const classroomState = serializeClasspilotStudentControlState(options.state, options.now);
-  const restrictions = classroomState.restrictions;
-  // Forward-compatibility fence: this image never delivers precise restriction
-  // resources, whatever the client negotiated. An expired snapshot has already
-  // serialized to the empty set above, so its clear still reaches the device.
-  if (classpilotRestrictionsRequirePreciseCapability(restrictions)) {
-    recordHeartbeatHotPathCounter("preciseRestrictionDeliveryWithheld");
-    return {
-      classroomState: null,
-      withheld: true,
-      withheldReason: "precise_restriction_capability_required",
+  let classroomState = serializeClasspilotStudentControlState(options.state, options.now);
+  let restrictions = classroomState.restrictions;
+  // Precise restriction resources reach only an exact binding that accepted
+  // preciseRestrictionResourcesV1, and only when every carried entry
+  // re-validates. Anything else withholds the whole snapshot (never a host
+  // fallback). An expired snapshot has already serialized to the empty set
+  // above, so its clear still reaches every device.
+  const precise = classpilotPreciseRestrictionPayload(restrictions);
+  if (precise.state !== "none") {
+    if (
+      precise.state === "invalid"
+      || !exactBindingAuthorized
+      || !options.acceptedCapabilities.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY)
+    ) {
+      recordHeartbeatHotPathCounter("preciseRestrictionDeliveryWithheld");
+      return {
+        classroomState: null,
+        withheld: true,
+        withheldReason: "precise_restriction_capability_required",
+      };
+    }
+    restrictions = {
+      ...restrictions,
+      screenLock: precise.screenLockResource
+        ? { ...restrictions.screenLock, resource: precise.screenLockResource }
+        : restrictions.screenLock,
+      flightPath: precise.flightPathResources
+        ? { ...restrictions.flightPath, resources: precise.flightPathResources }
+        : restrictions.flightPath,
     };
+    classroomState = { ...classroomState, restrictions };
+    recordHeartbeatHotPathCounter("preciseRestrictionCapableDelivery");
   }
   const stillRestricted = restrictions.screenLock.active
     || restrictions.flightPath.active
@@ -681,6 +778,8 @@ export function effectiveClasspilotControlEnforcementHealth(
     restrictionAuthCapabilityRequired?: boolean;
     restrictionAuthPolicyRevision?: number | null;
     appliedAuthPolicyRevision?: number | null;
+    /** Set by the teacher DTO beside restrictionAuthCapabilityRequired. */
+    preciseRestrictionCapabilityRequired?: boolean;
   }
 ): ClasspilotControlEnforcementHealth {
   const effectiveExpiry = [state.scheduledEndAt, state.hardExpiresAt]
@@ -688,10 +787,16 @@ export function effectiveClasspilotControlEnforcementHealth(
     .sort((left, right) => left.getTime() - right.getTime())[0];
   if (effectiveExpiry && effectiveExpiry.getTime() <= now.getTime()) return "expired";
 
-  // Forward-compatibility fence: a snapshot carrying precise restriction
-  // resources is never delivered by this image, so no binding can be synced
-  // to it, whatever an earlier ACK or a newer server recorded.
-  if (classpilotControlStateRequiresPreciseCapability(state.desiredState)) return "unsupported";
+  // A precise-resource snapshot that this binding cannot receive (invalid, or
+  // preciseRestrictionResourcesV1 not accepted) is never synced to it,
+  // whatever an earlier ACK or another binding recorded.
+  if (
+    delivery?.preciseRestrictionCapabilityRequired
+    || classpilotPreciseRestrictionCapabilityRequired({
+      desiredState: state.desiredState,
+      acceptedCapabilities: delivery?.acceptedCapabilities ?? [],
+    })
+  ) return "unsupported";
 
   // A previously delivered strict restriction can outlive a school policy
   // activation. Once sign-in-safe projection is required, a client without the

@@ -170,6 +170,9 @@ const EMPTY_LIST = Object.freeze([]);
 // Own items first, then School Library items (present only while the library
 // is on for the school). Module-level so the query result stays referentially stable.
 const selectFlightPathOptions = (data) => mergeTeachingResourceOptions(data, 'flightPaths');
+// "This resource only" Waypoints appear only while the server reports
+// preciseRestrictionResourcesV1 active for the school (roadmap PR 2).
+const selectPreciseRestrictionResourcesEnabled = (data) => data?.features?.preciseRestrictionResources === true;
 const selectBlockListOptions = (data) => mergeTeachingResourceOptions(data, 'blockLists');
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_TILE_MAP = new Map();
@@ -474,6 +477,7 @@ export default function Dashboard() {
   const [showLockScreenDialog, setShowLockScreenDialog] = useState(false);
   const [lockScreenMode, setLockScreenMode] = useState("current");
   const [lockScreenUrl, setLockScreenUrl] = useState("");
+  const [lockScreenBoundary, setLockScreenBoundary] = useState("website");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
@@ -768,6 +772,11 @@ export default function Dashboard() {
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
     select: selectFlightPathOptions,
+  });
+  const { data: preciseRestrictionResourcesEnabled = false } = useQuery({
+    queryKey: ['/api/flight-paths'],
+    queryFn: () => apiRequest('GET', '/flight-paths'),
+    select: selectPreciseRestrictionResourcesEnabled,
   });
 
   const { data: blockLists = EMPTY_LIST } = useQuery({
@@ -4952,15 +4961,35 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       setTransientPendingControls(pendingTransientControls(tracked));
       setTransientCommandVersion((version) => version + 1);
     }
-    const deliveryFeedback = commandDeliveryFeedback(enrichedData, commandType);
+    const textFeedback = commandDeliveryFeedback(enrichedData, commandType);
     const studentNames = [...students, ...claimedPickupStudents].reduce((names, student) => {
       if (student?.studentId) names[student.studentId] = student.studentName || student.studentEmail || 'Student';
       return names;
     }, {});
+    // Name the students whose ClassPilot extension must update before a
+    // precise Waypoint or Flight Path can reach them.
+    const { unsupportedStudentIds, ...feedbackFields } = textFeedback;
+    const deliveryFeedback = unsupportedStudentIds?.length > 0
+      ? {
+          ...feedbackFields,
+          description: (
+            <div className="space-y-1">
+              <p>{textFeedback.description}</p>
+              <ul className="list-disc pl-4 text-xs" data-testid="delivery-unsupported-list">
+                {unsupportedStudentIds.map((studentId) => (
+                  <li key={studentId} data-testid={`delivery-unsupported-${studentId}`}>
+                    {studentNames[studentId] || 'Student'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ),
+        }
+      : feedbackFields;
     const decorated = {
       ...enrichedData,
       deliveryFeedback,
-      message: deliveryFeedback.description,
+      message: textFeedback.description,
       studentNames,
       targetLabel: targetBannerLabel,
       createdAt: new Date().toISOString(),
@@ -5053,27 +5082,37 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   });
 
   const lockScreenMutation = useMutation({
-    mutationFn: async ({ url, studentIds }) => postActiveCommand('lock-screen', { url }, { studentIds }),
+    // The Entire website payload stays exactly { url }; only This resource
+    // only adds a boundary, and the server derives the resource itself.
+    mutationFn: async ({ url, studentIds, boundary }) => postActiveCommand(
+      'lock-screen',
+      boundary === 'resource' ? { url, boundary } : { url },
+      { studentIds },
+    ),
     onSuccess: (data, variables) => {
       const skippedCount = Number(variables.skippedSignedOutCount || 0);
       toast(skippedCount > 0
         ? {
             ...data.deliveryFeedback,
-            description: `${data.deliveryFeedback.description} ${skippedCount} signed-out student${skippedCount === 1 ? ' was' : 's were'} skipped because a current page is not available before sign-in.`,
+            description: `${data.message} ${skippedCount} signed-out student${skippedCount === 1 ? ' was' : 's were'} skipped because a current page is not available before sign-in.`,
           }
         : data.deliveryFeedback);
       setShowLockScreenDialog(false);
-      // Auto-allow an explicit lock domain so on-task students aren't flagged
-      if (variables.url !== 'CURRENT_URL') {
+      // Auto-allow an explicit lock domain so on-task students aren't flagged.
+      // A This-resource-only Waypoint never allows its whole domain: the
+      // off-task check matches the resource itself.
+      if (variables.url !== 'CURRENT_URL' && variables.boundary !== 'resource') {
         try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       }
       setLockScreenUrl("");
+      setLockScreenBoundary("website");
       setLockScreenMode("current");
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return;
-      toast({ variant: "destructive", title: "Error", description: error.message });
+      // This-resource-only links are validated on the server; show its reason.
+      toast({ variant: "destructive", title: "Error", description: error?.response?.data?.error || error.message });
     },
   });
 
@@ -5147,6 +5186,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
       return;
     }
+    setLockScreenBoundary("website");
     setLockScreenMode("current");
     setLockScreenUrl("");
     setShowLockScreenDialog(true);
@@ -5180,7 +5220,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         return;
       }
     }
-    lockScreenMutation.mutate({ url, studentIds, skippedSignedOutCount });
+    lockScreenMutation.mutate({
+      url,
+      studentIds,
+      skippedSignedOutCount,
+      boundary: lockScreenMode === "url" && preciseRestrictionResourcesEnabled ? lockScreenBoundary : "website",
+    });
   };
 
   const handleUnlockScreen = () => {
@@ -7223,6 +7268,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
                 <p className="text-xs text-muted-foreground">{DOMAIN_RESTRICTION_URL_HELP}</p>
+                {preciseRestrictionResourcesEnabled && (
+                  <fieldset className="space-y-2 pt-1" data-testid="lock-screen-boundary">
+                    <legend className="text-sm font-medium">Students can use</legend>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input type="radio" name="lock-screen-boundary" value="website" checked={lockScreenBoundary === "website"} onChange={() => setLockScreenBoundary("website")} data-testid="radio-lock-screen-boundary-website" />
+                      <span>Entire website<span className="block text-xs text-muted-foreground">Students may move anywhere on this site.</span></span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input type="radio" name="lock-screen-boundary" value="resource" checked={lockScreenBoundary === "resource"} onChange={() => setLockScreenBoundary("resource")} data-testid="radio-lock-screen-boundary-resource" />
+                      <span>This resource only<span className="block text-xs text-muted-foreground">Students stay on this video, document, form or page. Students whose ClassPilot extension needs an update are listed and keep their current restriction.</span></span>
+                    </label>
+                  </fieldset>
+                )}
               </div>
             )}
           </div>

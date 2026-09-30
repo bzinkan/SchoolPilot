@@ -20,9 +20,15 @@ import { teachingToolsSection, teachingToolsShouldBlock } from "../lib/teachingT
 import TeachingDefaults from "../components/TeachingDefaults";
 import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
 import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceList } from "../lib/teachingResourceLibrary";
+import { restrictionResourceLabel, restrictionResourceUrl } from "../lib/restrictionResourceMatcher";
 
 const EMPTY_RESOURCE_LIST = Object.freeze({ own: Object.freeze([]), library: Object.freeze([]), libraryEnabled: false });
 const selectFlightPathList = (data) => teachingResourceList(data, 'flightPaths');
+// Precise Flight Path entries (videos, documents, forms, pages) are editable
+// only while the server reports preciseRestrictionResourcesV1 active for the
+// school; the School Library is not a prerequisite.
+const selectPreciseResourcesEnabled = (data) => data?.features?.preciseRestrictionResources === true;
+const resourceLinesOf = (flightPath) => (flightPath?.resources || []).map(restrictionResourceUrl).filter(Boolean).join("\n");
 const selectBlockListList = (data) => teachingResourceList(data, 'blockLists');
 
 // Shared / Official marker; the id keeps own rows and School Library rows distinct.
@@ -63,6 +69,7 @@ function TeachingToolsContent({ currentUser, logout }) {
   const [flightPathName, setFlightPathName] = useState("");
   const [flightPathDescription, setFlightPathDescription] = useState("");
   const [flightPathAllowedDomains, setFlightPathAllowedDomains] = useState("");
+  const [flightPathResources, setFlightPathResources] = useState("");
   const [deleteFlightPathId, setDeleteFlightPathId] = useState(null);
 
   // Block Lists state
@@ -93,6 +100,18 @@ function TeachingToolsContent({ currentUser, logout }) {
     select: selectFlightPathList,
   });
   const flightPaths = flightPathData.own;
+  const { data: preciseResourcesEnabled = false } = useQuery({
+    queryKey: ['/api/flight-paths', ...scope],
+    queryFn: ({ signal }) => request('GET', '/flight-paths', undefined, { signal }),
+    select: selectPreciseResourcesEnabled,
+  });
+  // One link per line. Sent only while the feature is on, so an owner can
+  // always edit the websites of a path whose resources are switched off.
+  const resourcesPayload = () => (preciseResourcesEnabled
+    ? {
+        resources: flightPathResources.split("\n").map((line) => line.trim()).filter(Boolean).map((url) => ({ url })),
+      }
+    : {});
 
   const { data: blockListData = EMPTY_RESOURCE_LIST, isError: blockListsError, refetch: retryBlockLists } = useQuery({
     queryKey: ['/api/block-lists', ...scope],
@@ -212,6 +231,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     setFlightPathName("");
     setFlightPathDescription("");
     setFlightPathAllowedDomains("");
+    setFlightPathResources("");
     setEditingFlightPath(null);
   };
 
@@ -221,6 +241,7 @@ function TeachingToolsContent({ currentUser, logout }) {
         flightPathName,
         description: flightPathDescription || undefined,
         allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
+        ...resourcesPayload(),
       });
     },
     onSuccess: () => {
@@ -232,7 +253,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     },
     onError: (error) => {
       if (!lifetime.current.alive) return;
-      toast({ variant: "destructive", title: "Failed to create Flight Path", description: error.message });
+      toast({ variant: "destructive", title: "Failed to create Flight Path", description: teachingResourceErrorMessage(error) });
     },
   });
 
@@ -243,6 +264,7 @@ function TeachingToolsContent({ currentUser, logout }) {
         flightPathName,
         description: flightPathDescription || undefined,
         allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
+        ...resourcesPayload(),
       });
     },
     onSuccess: () => {
@@ -254,7 +276,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     },
     onError: (error) => {
       if (!lifetime.current.alive) return;
-      toast({ variant: "destructive", title: "Failed to update Flight Path", description: error.message });
+      toast({ variant: "destructive", title: "Failed to update Flight Path", description: teachingResourceErrorMessage(error) });
     },
   });
 
@@ -580,6 +602,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     setFlightPathName(flightPath.flightPathName);
     setFlightPathDescription(flightPath.description || "");
     setFlightPathAllowedDomains(flightPath.allowedDomains?.join(", ") || "");
+    setFlightPathResources(resourceLinesOf(flightPath));
     setShowFlightPathDialog(true);
   };
 
@@ -591,7 +614,7 @@ function TeachingToolsContent({ currentUser, logout }) {
     }
   };
 
-  const toolDirty = (showFlightPathDialog && JSON.stringify([flightPathName, flightPathDescription, flightPathAllowedDomains]) !== JSON.stringify([editingFlightPath?.flightPathName || '', editingFlightPath?.description || '', editingFlightPath?.allowedDomains?.join(', ') || '']))
+  const toolDirty = (showFlightPathDialog && JSON.stringify([flightPathName, flightPathDescription, flightPathAllowedDomains, flightPathResources]) !== JSON.stringify([editingFlightPath?.flightPathName || '', editingFlightPath?.description || '', editingFlightPath?.allowedDomains?.join(', ') || '', resourceLinesOf(editingFlightPath)]))
     || (showBlockListDialog && JSON.stringify([blockListName, blockListDescription, blockListDomains]) !== JSON.stringify([editingBlockList?.name || '', editingBlockList?.description || '', editingBlockList?.blockedDomains?.join(', ') || '']))
     || (showSubgroupDialog && JSON.stringify([subgroupName, subgroupColor]) !== JSON.stringify([editingSubgroup?.name || '', editingSubgroup?.color || '#9333ea']))
     || Boolean(coTeacherToAdd);
@@ -700,9 +723,14 @@ function TeachingToolsContent({ currentUser, logout }) {
                                   {domain}
                                 </Badge>
                               ))
-                            ) : (
+                            ) : fp.resources?.length > 0 ? null : (
                               <span className="text-xs text-muted-foreground">No domains configured</span>
                             )}
+                            {(fp.resources || []).map((entry, index) => (
+                              <Badge key={`resource-${index}`} variant="secondary" className="text-xs" data-testid={`flight-path-resource-${fp.id}-${index}`}>
+                                {restrictionResourceLabel(entry)}
+                              </Badge>
+                            ))}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center justify-end gap-2 ml-4">
@@ -1277,6 +1305,28 @@ function TeachingToolsContent({ currentUser, logout }) {
                 </p>
               </div>
             </div>
+            {preciseResourcesEnabled ? (
+              <div className="space-y-2">
+                <Label htmlFor="flight-path-resources">Specific videos, documents and pages (optional)</Label>
+                <Textarea
+                  id="flight-path-resources"
+                  data-testid="textarea-flight-path-resources"
+                  disabled={toolBusy}
+                  value={flightPathResources}
+                  onChange={(e) => setFlightPathResources(e.target.value)}
+                  placeholder={"https://www.youtube.com/watch?v=...\nhttps://docs.google.com/document/d/.../edit\nhttps://www.nasa.gov/solar-system"}
+                  className="min-h-[96px] font-mono text-xs"
+                />
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>One link per line. A YouTube video, Google Doc, Slides, Sheet, Form or Drive file allows only that item; a Google Classroom class or assignment, or any other page, allows that page and the pages under it.</p>
+                  <p>Students whose ClassPilot extension needs an update do not receive a Flight Path with these entries; you will see who.</p>
+                </div>
+              </div>
+            ) : editingFlightPath?.resources?.length > 0 ? (
+              <p className="text-xs text-muted-foreground" data-testid="flight-path-resources-kept">
+                This Flight Path also has {editingFlightPath.resources.length} specific video, document or page entr{editingFlightPath.resources.length === 1 ? "y" : "ies"}. They are turned off for your school right now and stay unchanged when you save.
+              </p>
+            ) : null}
           </div>
           <DialogFooter>
             <Button

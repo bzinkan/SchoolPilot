@@ -57,6 +57,13 @@ import {
   withClasspilotLateSignInOrigin,
   type ClasspilotRestrictionAuthPassThroughEnvelope,
 } from "./classpilotClassroomState.js";
+import {
+  classpilotFlightPathApplyPayload,
+  classpilotPreciseCommandPayloadValid,
+  preciseRestrictionResourcesActive,
+  requirePreciseRestrictionResourcesActive,
+} from "./classpilotPreciseRestrictions.js";
+import { PRECISE_RESTRICTION_RESOURCES_CAPABILITY } from "./restrictionResources.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 import { countClasspilotCurrentPageSignedOutSkips } from "./classpilotCurrentPage.js";
 import {
@@ -199,6 +206,8 @@ export async function normalizeCommandPayload(
     case "open-tab":
       return { extensionType: "open-tab", payload: validated };
     case "lock-screen":
+      // "This resource only" needs the school's precise-restriction rollout.
+      if (validated.resource !== undefined) requirePreciseRestrictionResourcesActive(schoolId);
       return { extensionType: "lock-screen", payload: validated };
     case "close-tabs":
       return {
@@ -250,24 +259,12 @@ export async function normalizeCommandPayload(
           : await getFlightPathById(flightPathId, schoolId, teacherId)
         : undefined;
       if (!flightPath) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
-      const allowedDomains = requireRuleListWithinExtensionLimit(
-        flightPath.allowedDomains,
-        "Flight Path"
-      );
-      if (allowedDomains.length === 0) {
-        throw Object.assign(new Error("Flight Path has no allowed domains"), {
-          status: 409,
-          code: "FLIGHT_PATH_EMPTY",
-        });
-      }
-      return {
-        extensionType: "apply-flight-path",
-        payload: {
-          flightPathId: flightPath.id,
-          flightPathName: flightPath.flightPathName,
-          allowedDomains,
-        },
-      };
+      // Website hosts keep today's allowedDomains exactly; section and
+      // resource entries ride in `resources` only when the path has them
+      // (and only with the school's precise rollout active).
+      const payload = classpilotFlightPathApplyPayload({ schoolId, flightPath });
+      requireRuleListWithinExtensionLimit(payload.allowedDomains, "Flight Path");
+      return { extensionType: "apply-flight-path", payload };
     }
     case "apply-block-list": {
       const blockListId = String(validated.blockListId || "").trim();
@@ -665,9 +662,12 @@ export function classpilotCommandFrameForTarget(
   delivery: {
     policy: ClasspilotCommandDeliveryPolicy;
     expiresAt: Date | null;
-    requiredCapability?: "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1";
+    requiredCapability?:
+      | "lateSignInRestrictionSsoV1"
+      | "restrictionAuthPassThroughV1"
+      | "preciseRestrictionResourcesV1";
     requiredCapabilities?: Array<
-      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1"
+      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1" | "preciseRestrictionResourcesV1"
     >;
     exactBindingControlRevision?: number;
     authPassThrough?: ClasspilotRestrictionAuthPassThroughEnvelope;
@@ -677,14 +677,19 @@ export function classpilotCommandFrameForTarget(
   classroomState: ReturnType<typeof serializeClasspilotStudentControlState> | undefined,
   commandAuthority: ReturnType<typeof classpilotCommandAuthorityEnvelope>
 ) {
-  // Forward-compatibility fence: this image never frames precise restriction
-  // resources. A bare legacy frame would hand ClassPilot 2.9.x `data.url` as a
-  // whole-domain Waypoint (or an empty Flight Path), and a snapshot carrying
-  // them is withheld by the delivery serializer. executeClasspilotCommand marks
-  // such targets unavailable before any frame is requested.
+  // Precise restriction resources travel only inside their authoritative
+  // classroom snapshot, to a binding the frame declares must have accepted
+  // preciseRestrictionResourcesV1. A bare legacy frame would hand ClassPilot
+  // 2.9.x `data.url` as a whole-domain Waypoint (or an empty Flight Path), so
+  // a precise payload without a precise snapshot is never framed.
+  const preciseCommandPayload = classpilotCommandPayloadRequiresPreciseCapability(commandType, payload);
+  const preciseClassroomState = classpilotControlStateRequiresPreciseCapability(classroomState);
   if (
-    classpilotCommandPayloadRequiresPreciseCapability(commandType, payload)
-    || classpilotControlStateRequiresPreciseCapability(classroomState)
+    (preciseCommandPayload || preciseClassroomState)
+    && (
+      !preciseClassroomState
+      || !delivery.requiredCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY)
+    )
   ) {
     return null;
   }
@@ -1213,17 +1218,40 @@ export async function executeClasspilotCommand(options: {
     }
   }
   if (classpilotCommandPayloadRequiresPreciseCapability(options.commandType, commandPayload)) {
-    // Forward-compatibility fence: live payloads are strict-validated, so only a
-    // replayed payload written by a newer server can carry precise restriction
-    // resources here. Refuse every target before the command row exists, so no
-    // desired state, legacy projection or bare frame is ever produced from it.
+    // Precise restriction gate (roadmap PR 2), before the command row exists.
+    // Only a live target whose fresh realtime snapshot shows
+    // preciseRestrictionResourcesV1 among its ACCEPTED capabilities (never the
+    // 32-capped raw advertisement) keeps its target. Every other target gets
+    // no desired state, so no legacy projection can ever be produced for it:
+    // an online client without the capability is "Unsupported client", and an
+    // offline student is never deferred (there is no capability evidence to
+    // defer on). A replayed payload whose entries no longer validate, or a
+    // school whose rollout is off, refuses every target.
+    const preciseDeliverable = classpilotPreciseCommandPayloadValid(options.commandType, commandPayload)
+      && preciseRestrictionResourcesActive(options.schoolId);
+    const preciseEvidence = preciseDeliverable
+      ? await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets
+        .filter((target) => target.available && target.studentSessionId && target.deviceId)
+        .map((target) => ({ studentId: target.studentId, studentSessionId: target.studentSessionId!, deviceId: target.deviceId! })))
+      : null;
     for (let index = 0; index < effectiveTargets.length; index++) {
+      const target = effectiveTargets[index]!;
+      const live = target.available && !!target.studentSessionId && !!target.deviceId;
+      const read = preciseEvidence?.get(target.studentId);
+      const capable = preciseDeliverable
+        && live
+        && read?.status === "hit"
+        && classpilotRealtimeFresh(read.snapshot)
+        && read.snapshot.acceptedCapabilities?.includes(PRECISE_RESTRICTION_RESOURCES_CAPABILITY) === true;
+      if (capable) continue;
       effectiveTargets[index] = {
-        ...effectiveTargets[index]!,
+        ...target,
         available: false,
         stateAuthorized: false,
         lateSignInEligible: false,
-        unavailableReason: CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON,
+        unavailableReason: !preciseDeliverable || live
+          ? CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON
+          : target.unavailableReason || "restriction_requires_online_student",
       };
     }
   }
@@ -1928,6 +1956,9 @@ export async function executeClasspilotCommand(options: {
               : []),
             ...(currentPageAuthority.authPassThrough
               ? ["restrictionAuthPassThroughV1" as const]
+              : []),
+            ...(classpilotControlStateRequiresPreciseCapability(authoritativeClassroomState)
+              ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY]
               : []),
           ];
           const deduplicatedRequiredCapabilities = [...new Set(requiredCapabilities)];

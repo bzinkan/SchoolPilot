@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  CLASSPILOT_PROTOCOL_V3_CAPABILITIES,
   CLASSPILOT_SERVER_PROTOCOL_VERSION,
   classpilotCapabilitiesPinnedToSchools,
   classpilotCapabilityRolloutMode,
@@ -206,6 +207,52 @@ test("read-only screenshot observation requires explicit capability and all thre
   }
   assert.equal(negotiate(capabilities, { ...env, CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1: "false" })
     .includes("screenshotActiveObservationCadenceV1"), true, "rollback retains existing class capture cadence");
+});
+
+test("precise restriction resources negotiate only with scoped authority, the flag and the school rollout", () => {
+  const precise = "preciseRestrictionResourcesV1";
+  // Index 25: inside the 32-name realtime capability cache, which is the
+  // accepted list delivery reads. Appended last so the order of every
+  // existing accepted name is unchanged.
+  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.indexOf(precise), 25);
+  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.at(-1), precise);
+  assert.ok(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.length <= 32);
+  const env: NodeJS.ProcessEnv = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED: "true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1: "true",
+    CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1: "true",
+  };
+  const negotiate = (advertisedCapabilities: string[], currentEnv: NodeJS.ProcessEnv = env, schoolId = "school-1") =>
+    negotiateClasspilotProtocol({
+      clientProtocolVersion: 3, advertisedCapabilities, env: currentEnv, scope: { schoolId },
+    }).acceptedCapabilities;
+  const capable = ["scopedAuthorityChecksV1", precise];
+  assert.deepEqual(negotiate(capable), capable);
+  assert.deepEqual(negotiate([precise]), [], "the repaired scoping marker is required");
+  assert.deepEqual(negotiate(capable, {}), [], "default off: advertisement alone never activates it");
+  for (const flag of Object.keys(env)) {
+    assert.equal(negotiate(capable, { ...env, [flag]: "false" }).includes(precise), false, `${flag}=false`);
+  }
+  // Independent of sign-in pass-through: neither required nor implied.
+  assert.equal(negotiate([...capable, "restrictionAuthPassThroughV1"]).includes("restrictionAuthPassThroughV1"), false);
+  const pilot: NodeJS.ProcessEnv = {
+    ...env,
+    CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({
+      scopedAuthorityChecksV1: { mode: "on" },
+      [precise]: { mode: "on", schoolIds: ["school-1"] },
+    }),
+  };
+  assert.equal(isClasspilotCapabilityActive(precise, { schoolId: "school-1" }, pilot), true);
+  assert.equal(isClasspilotCapabilityActive(precise, { schoolId: "school-2" }, pilot), false);
+  assert.deepEqual(negotiate(capable, pilot, "school-1"), capable);
+  assert.deepEqual(negotiate(capable, pilot, "school-2"), ["scopedAuthorityChecksV1"]);
+  for (const mode of ["off", "observe"]) {
+    const inactive = {
+      ...env,
+      CLASSPILOT_CAPABILITY_ROLLOUTS_JSON: JSON.stringify({ scopedAuthorityChecksV1: { mode: "on" }, [precise]: { mode } }),
+    };
+    assert.equal(isClasspilotCapabilityActive(precise, { schoolId: "school-1" }, inactive), false, mode);
+  }
 });
 
 test("kiosk launch ticket V1 remains independent of the repaired scoping marker", () => {

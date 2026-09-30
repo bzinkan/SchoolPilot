@@ -669,6 +669,46 @@ test('late-sign-in feedback separates pending from undelivered and reports curre
   assert.match(feedback.description, /1 signed-out student was skipped/);
 });
 
+test('precise restriction feedback separates students who need the ClassPilot update from signed-out students', () => {
+  const unsupportedReason = 'Unsupported client: preciseRestrictionResourcesV1 is required';
+  const targets = [
+    { studentId: 'capable', status: 'sent', errorMessage: null },
+    { studentId: 'legacy-1', status: 'unavailable', errorMessage: unsupportedReason },
+    { studentId: 'legacy-2', status: 'unavailable', errorMessage: unsupportedReason },
+    { studentId: 'offline', status: 'unavailable', errorMessage: 'restriction_requires_online_student' },
+  ];
+  const summary = { requested: 4, attempted: 1, acknowledged: 0, completed: 0, pending: 1, failed: 0, unavailable: 3, expired: 0 };
+  const feedback = commandDeliveryFeedback({
+    command: { commandType: 'lock-screen', deliveryPolicy: 'persistent_control', targets },
+    summary,
+  }, 'lock-screen');
+  assert.equal(feedback.title, 'Restriction saved');
+  assert.match(feedback.description, /1 student is signed out, so the restriction was not delivered to them\./);
+  assert.match(feedback.description, /2 students need the ClassPilot update before this restriction can apply\./);
+  assert.deepEqual(feedback.unsupportedStudentIds, ['legacy-1', 'legacy-2']);
+
+  const allUnsupported = commandDeliveryFeedback({
+    command: {
+      commandType: 'apply-flight-path',
+      deliveryPolicy: 'persistent_control',
+      targets: targets.filter((target) => target.studentId.startsWith('legacy')),
+    },
+    summary: { requested: 2, attempted: 0, acknowledged: 0, completed: 0, pending: 0, failed: 0, unavailable: 2, expired: 0 },
+  }, 'apply-flight-path');
+  assert.equal(allUnsupported.title, 'Extension update required');
+  assert.equal(allUnsupported.variant, 'destructive');
+  assert.doesNotMatch(allUnsupported.description, /signed out/);
+
+  // Outcomes without a capability refusal keep exactly their previous shape.
+  const signedOutOnly = commandDeliveryFeedback({
+    command: { commandType: 'lock-screen', deliveryPolicy: 'persistent_control', targets: [targets[3]] },
+    summary: { requested: 1, attempted: 0, acknowledged: 0, completed: 0, pending: 0, failed: 0, unavailable: 1, expired: 0 },
+  }, 'lock-screen');
+  assert.equal(signedOutOnly.title, 'Restriction not delivered');
+  assert.equal('unsupportedStudentIds' in signedOutOnly, false);
+  assert.match(signedOutOnly.description, /1 student is signed out/);
+});
+
 test('Coverage command contract includes persistent restriction removal', () => {
   assert.equal(DEFAULT_COVERAGE_COMMANDS.includes('remove-flight-path'), true);
   assert.equal(DEFAULT_COVERAGE_COMMANDS.includes('remove-block-list'), true);

@@ -291,7 +291,17 @@ test("archived ClassPilot 2.9.6 fixture replays with an unchanged protocol-v3 ca
       scope,
       env: {},
     }).acceptedCapabilities, [], "every capability stays dark by default");
-    // A 2.9.6-shaped client spoofing the roadmap names gains nothing.
+    // The real 2.9.6 advertisement never gains the roadmap capabilities, even
+    // with the precise server flag on. (Roadmap PR 2 registers
+    // preciseRestrictionResourcesV1, so an advertisement that names it is
+    // negotiated exactly like every other capability; focusTabV1 stays unknown.)
+    const withPreciseFlag = negotiateClasspilotSurfaceProtocol({
+      surface,
+      payload: request.body,
+      scope,
+      env: { ...everyServerCapabilityEnabled(), CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1: "true" },
+    });
+    assert.deepEqual(withPreciseFlag.acceptedCapabilities, CLASSPILOT_2_9_6_ACCEPTED_WITH_EVERY_FLAG);
     const spoofed = negotiateClasspilotSurfaceProtocol({
       surface,
       payload: {
@@ -301,11 +311,37 @@ test("archived ClassPilot 2.9.6 fixture replays with an unchanged protocol-v3 ca
       scope,
       env: everyServerCapabilityEnabled(),
     });
-    assert.deepEqual(spoofed.acceptedCapabilities, CLASSPILOT_2_9_6_ACCEPTED_WITH_EVERY_FLAG);
+    assert.deepEqual(spoofed.acceptedCapabilities, CLASSPILOT_2_9_6_ACCEPTED_WITH_EVERY_FLAG,
+      "with the precise flag off (the default), naming the capability gains nothing");
     const acceptedNames: readonly string[] = spoofed.acceptedCapabilities;
     assert.ok(!acceptedNames.includes("preciseRestrictionResourcesV1"));
     assert.ok(!acceptedNames.includes("focusTabV1"));
   }
+});
+
+test("a 2.10.0-shaped advertisement negotiates preciseRestrictionResourcesV1 only when the server enables it", () => {
+  const fixture = readArchivedFixture(CLASSPILOT_2_9_6.file);
+  const payload = {
+    ...fixture.requests.heartbeat.body,
+    capabilities: [...fixture.requests.heartbeat.body.capabilities, "preciseRestrictionResourcesV1", "focusTabV1"],
+  };
+  const scope = { schoolId: "fixture-school" };
+  const accepted = negotiateClasspilotSurfaceProtocol({
+    surface: "heartbeat",
+    payload,
+    scope,
+    env: { ...everyServerCapabilityEnabled(), CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1: "true" },
+  }).acceptedCapabilities;
+  assert.deepEqual(accepted, [...CLASSPILOT_2_9_6_ACCEPTED_WITH_EVERY_FLAG, "preciseRestrictionResourcesV1"],
+    "the new capability is appended; every existing accepted name keeps its position");
+  assert.ok(accepted.length <= 32, "the accepted set stays inside the realtime capability cache");
+  assert.ok(!(accepted as readonly string[]).includes("focusTabV1"), "focusTabV1 is not registered until its server PR");
+  assert.deepEqual(negotiateClasspilotSurfaceProtocol({
+    surface: "heartbeat",
+    payload,
+    scope,
+    env: everyServerCapabilityEnabled(),
+  }).acceptedCapabilities, CLASSPILOT_2_9_6_ACCEPTED_WITH_EVERY_FLAG, "default off");
 });
 
 test("a 2.9.6 binding receives legacy restrictions but never a precise-resource snapshot", () => {

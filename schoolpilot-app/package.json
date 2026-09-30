@@ -82,7 +82,8 @@
     "test:my-desk-seating": "node --test scripts/seating-model.test.mjs scripts/seating-browser.test.mjs",
     "test:my-desk-imports": "node --test scripts/import-review-model.test.mjs scripts/import-browser.test.mjs",
     "test:classpilot-settings": "node --test --test-concurrency=1 scripts/admin-settings-browser.test.mjs scripts/teaching-tools-browser.test.mjs",
-    "test:teaching-tools-library": "node --test --test-concurrency=1 scripts/teaching-tools-library.test.mjs"
+    "test:teaching-tools-library": "node --test --test-concurrency=1 scripts/teaching-tools-library.test.mjs",
+    "test:restriction-resource-matcher": "node --test scripts/restriction-resource-matcher.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

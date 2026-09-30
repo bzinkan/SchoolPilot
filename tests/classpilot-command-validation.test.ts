@@ -4,6 +4,7 @@ import {
   ClasspilotCommandPayloadError,
   validateClasspilotCommandPayload,
 } from "../src/services/classpilotCommandValidation.js";
+import { RestrictionResourceError } from "../src/services/restrictionResources.js";
 
 function invalid(run: () => unknown, path?: string) {
   assert.throws(run, (error: any) => {
@@ -57,6 +58,81 @@ describe("ClassPilot teacher command payload validation", () => {
       url: "CURRENT_URL",
       deviceId: "must-not-cross-public-contract",
     }));
+  });
+
+  it("keeps Entire website byte-identical and derives a This-resource-only Waypoint on the server", () => {
+    for (const payload of [
+      { url: "https://www.ixl.com/math/grade-5" },
+      { url: "https://www.ixl.com/math/grade-5", boundary: "website" },
+    ]) {
+      assert.deepEqual(validateClasspilotCommandPayload("lock-screen", payload), {
+        url: "https://www.ixl.com/math/grade-5",
+      });
+    }
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url: "CURRENT_URL", boundary: "website" }), {
+      url: "CURRENT_URL",
+    });
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "https://youtu.be/dQw4w9WgXcQ?t=30",
+      boundary: "resource",
+    }), {
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      resource: {
+        type: "resource",
+        hostname: "youtube.com",
+        includeSubdomains: false,
+        provider: "youtube",
+        resourceId: "dQw4w9WgXcQ",
+        canonicalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      },
+    });
+    // A section keeps the www. host its teacher typed as the landing URL (some
+    // sites answer only there); the stored entry stays canonical.
+    const moonPhases = {
+      type: "section",
+      hostname: "ixl.com",
+      includeSubdomains: false,
+      pathPrefix: "/science/grade-7/moon-phases",
+    };
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.ixl.com/science/grade-7/moon-phases",
+      boundary: "resource",
+    }), { url: "https://www.ixl.com/science/grade-7/moon-phases", resource: moonPhases });
+    for (const url of ["https://ixl.com/science/grade-7/moon-phases/", "ixl.com/science/grade-7/moon-phases"]) {
+      assert.deepEqual(validateClasspilotCommandPayload("lock-screen", { url, boundary: "resource" }), {
+        url: "https://ixl.com/science/grade-7/moon-phases",
+        resource: moonPhases,
+      }, url);
+    }
+    assert.deepEqual(validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      boundary: "resource",
+    }).url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "a provider resource always lands on its canonical URL");
+    // The current page is never a resource boundary: it is observed, not chosen.
+    invalid(() => validateClasspilotCommandPayload("lock-screen", { url: "CURRENT_URL", boundary: "resource" }), "url");
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.ixl.com/math", boundary: "page",
+    }), "boundary");
+    // Provider, id and landing URL are never client-supplied.
+    invalid(() => validateClasspilotCommandPayload("lock-screen", {
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      boundary: "resource",
+      resource: { type: "resource", provider: "youtube", resourceId: "9bZkp7q19f0" },
+    }));
+    for (const [url, code] of [
+      ["https://www.ixl.com/", "RESOURCE_URL_TOO_BROAD"],
+      ["https://www.youtube.com/", "RESOURCE_URL_UNSUPPORTED"],
+      ["https://www.ixl.com/math?grade=7", "RESOURCE_URL_UNSUPPORTED"],
+      ["https://forms.gle/AbCdEf123456", "RESOURCE_SHORT_LINK_UNRESOLVED"],
+      ["http://www.youtube.com/watch?v=dQw4w9WgXcQ", "RESOURCE_URL_INVALID"],
+      ["https://student:secret@docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit", "RESOURCE_URL_INVALID"],
+    ] as const) {
+      assert.throws(
+        () => validateClasspilotCommandPayload("lock-screen", { url, boundary: "resource" }),
+        (error: unknown) => error instanceof RestrictionResourceError && error.code === code && error.status === 400,
+        url
+      );
+    }
   });
 
   it("requires exact tab identity and never accepts URL fallback rows", () => {
