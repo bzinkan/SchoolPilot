@@ -17,10 +17,10 @@ rollup job, retention, and the read/CSV API. The admin page is PR 11.
 
 `src/config/classpilotUsageModes.ts` reads both. Anything but the exact value `on` is off; a malformed
 or inconsistent pair (Digital Usage on with the rollup off) turns both off; and `on` still reads as
-off until `RLS_GUC_ENABLED=true` and `RLS_ENABLED_TABLES` contains `classpilot_usage_rollups` in that
+off until `RLS_GUC_ENABLED=true` and `RLS_ENABLED_TABLES` contains both `classpilot_usage_rollups` and `classpilot_usage_rollup_days` in that
 process. Production changes go only through `scripts/deploy-product-runtime-config.ps1`
 (`docs/PRODUCT_RUNTIME_CONFIG_OPERATIONS.md`), which sets both names on the API and the worker, refuses
-`on` until the table is admitted on both, and refuses Digital Usage without the rollup.
+`on` until both tables are admitted on both services and their serving source SHA declares usage coverage contract version 1. It refuses Digital Usage without the rollup.
 
 With both flags off nothing changes: the job returns before any query, and the API router steps aside
 to the ordinary unknown-route JSON 404 before authentication.
@@ -82,11 +82,11 @@ Known v1 limits:
 `runHeavyJobsSerially` calls `rollupClasspilotUsage()` in the top-of-hour block, after the daily usage
 rollup and before the :30 retention purge. For each active, ClassPilot-licensed school it:
 
-1. Finalizes yesterday once (a Redis marker, `scheduler:usage-rollup`, records it), at the first
-   top-of-hour tick after local midnight. All finalizations are queued before any of today's work.
-2. Recomputes today when a heartbeat arrived since today's last computation.
+1. Finalizes yesterday once, using the durable school/day ledger as the authority, at the first
+   top-of-hour tick after local midnight. Redis markers are advisory only. All finalizations are queued before today's work.
+2. Computes today once even when empty, then refreshes when a heartbeat arrived since its stored processed cutoff (with a five-minute overlap).
 
-Each day is rewritten with DELETE and INSERT in one transaction on the scheduler pool, under a per-school
+Each day is rewritten with DELETE, INSERT and its completion record in one transaction on the scheduler pool, under a per-school
 advisory lock; every statement filters `school_id = $1` itself because the scheduler bypasses RLS.
 
 Retention safety: the job never rewrites a day that starts before the purge horizon (the top of the
@@ -111,10 +111,10 @@ Nonzero `failedSchools` and `deferredDays` are also published as EMF metrics
 
 ## Retention and deletion
 
-- `purgeExpiredHeartbeats` deletes rollups dated before the retention cutoff's school-local date, next to
+- `purgeExpiredHeartbeats` deletes rollups and completion records (including empty days) dated before the retention cutoff's school-local date, next to
   `daily_usage`, in the same hourly pass. A failure there is reported and does not skip the school's
   remaining retention steps.
-- `POST /api/admin/cleanup-students` clears the table with heartbeats and `daily_usage`.
+- `POST /api/admin/cleanup-students` clears both usage tables with heartbeats and `daily_usage`.
 - The Student Data export includes one student's rollups (`student.monitoredBrowserTime` and a
   "Monitored Browser Time (school days)" CSV section) for administrators in the school-wide scope while
   Digital Usage is on. Teachers never receive them.
@@ -130,8 +130,11 @@ Nonzero `failedSchools` and `deferredDays` are also published as EMF metrics
 - `from`/`to` default to today; the range is ordered and at most 366 days
   (`400 CLASSPILOT_USAGE_DATE_INVALID` / `CLASSPILOT_USAGE_RANGE_INVALID`).
 - Presented days are clipped to today, to `range.retainedFrom` (the first day wholly inside retention;
-  `range.partiallyExpired`) and to `range.computedFrom` (the first day the rollup produced;
-  `range.partiallyComputed`). Withheld days are never reported as zero. `dataState` is `unavailable` when
+  `range.partiallyExpired`). Each presented date requires its own successful completion record;
+  `range.computedFrom` is the first covered date in this requested retained range.
+  `range.unavailableDates` lists internal holes too; `range.computedDays` and `range.requestedDays` describe
+  coverage and `range.partiallyComputed` is true when any eligible date is unavailable.
+  Missing days are omitted from numeric `byDay`, totals and top sites. Only successful empty days show zero. `dataState` is `unavailable` when
   nothing can be presented, `live` while any presented day may still change, else `final`.
 - Response: `measure`, `scope`, `range`, `dataState`, `totals{monitoredBrowserSeconds,
   instructionalSeconds, offTaskSeconds, unknownSeconds, activeMonitoredStudents, heartbeatCount}`,
@@ -141,8 +144,12 @@ Nonzero `failedSchools` and `deferredDays` are also published as EMF metrics
 
 ## Rollout
 
-1. Deploy the backend with the migration and admit the table once:
-   `deploy.sh production --backend --enable-rls-table classpilot_usage_rollups` (both modes stay off).
+1. Keep both modes off and deploy the compatible backend with the additive migration. After any prerequisite
+   PassPilot rules admission, admit the aggregate table once if it is not already admitted:
+   `deploy.sh production --backend --enable-rls-table classpilot_usage_rollups`.
+   Then admit the completion ledger separately:
+   `deploy.sh production --backend --enable-rls-table classpilot_usage_rollup_days`.
+   Confirm both API and worker serve the same compatible source SHA and carry both admissions.
 2. Product runtime tool Apply: `CLASSPILOT_USAGE_ROLLUP_MODE=on`.
 3. Observe at least one school day of `classpilot_usage_rollup` lines, for example with CloudWatch Logs
    Insights on `/ecs/schoolpilot-production-api`:
@@ -155,8 +162,18 @@ pool's 15-second timeout).
 
 ## Rollback
 
-- Turn Digital Usage off, then the rollup, with the product runtime tool. The table is additive and
-  its rows keep expiring through the hourly purge.
-- Before rolling the image back past this change while rollups exist, remove them (for example with the
-  cleanup endpoint per school, or a reviewed `DELETE FROM classpilot_usage_rollups`): an older image
-  neither reads nor purges the table.
+- Turn both usage flags off with the product runtime tool before deploying an older image.
+  Keep the additive tables, policies and invalidation triggers. Retention and cleanup must handle
+  completion records too, including successful empty days. Follow the recovery semantics below.
+
+## Computation ledger and rollback
+
+Migration `classpilot-usage-rollup-days-20260930` adds `classpilot_usage_rollup_days`, a forced-RLS school/day ledger, with reviewed singleton bundle `classpilotUsageRollupDays`. The 127-table `classpilotUsageRollupDaysPostExpand` registry target preserves the prior 126-table target and the observed production baseline. Admit the aggregate table first if needed, then this singleton; admission does not enable either product flag.
+
+Each row stores the actual UTC day boundaries, the processed half-open cutoff (`processed_through`), completion time, and `is_final`. The writer commits it after aggregate replacement, including a zero-row result. Under the same school advisory lock it refuses a cutoff at or before the stored one, so queued stale work cannot regress a newer or final snapshot. Refresh probes use the processed cutoff rather than transaction start or commit time; a school queued at 14:00 and computed at 14:20 still checks for 14:10 activity on the next tick. Finalization can repair activity missed by earlier live snapshots while retention still permits a complete day.
+
+There is no initial historical backfill. Existing aggregates without completion records are unavailable until a compatible computation succeeds; completion is never inferred from those rows. Failed, deferred, expired and partly purged days do not acquire successful coverage. `dataState=final` describes the presented days; consumers must also inspect coverage fields to describe a partial range. Student Data and both CSV exports preserve the unavailable dates.
+
+Statement-level INSERT, UPDATE and DELETE triggers on direct aggregate edits invalidate only the affected school/day completion records. Nested foreign-key CASCADE/SET NULL actions preserve completion for the remaining retained rows; The triggers recognize deleted same-school student parents and exact class/session nulling with a missing parent; all other changed fields invalidate coverage. Trigger depth alone cannot distinguish deferred statement-trigger execution. Student deletion removes that student's totals, while class/session deletion removes only attribution. Coverage describes retained data, not deleted records. Hard school deletion removes its ledger through the school FK. The compatible writer restores completion last within its transaction. An incompatible writer or old aggregate cleanup cannot leave those changed dates verified in the corrected reader. Empty-day records have no aggregate rows, so retention and school activity cleanup explicitly delete them too.
+
+Before deploying an older image, turn **both** Digital Usage and usage rollup flags off through the governed setter, keeping the additive migration, ledger and invalidation triggers installed. Do not enable the old reader or writer. The setter checks the exact serving source SHA at both Plan and Apply; table admission alone does not satisfy compatibility. Returning to a compatible release permits activation after both services and admissions are verified. Any legacy writes made during rollback invalidate changed days; today/yesterday can recompute safely inside retention, while older invalidated dates remain unavailable. Operators who deliberately replace or restore aggregate data must invalidate the matching ledger dates in the same transaction; never synthesize completion or remove the triggers to make a range appear complete.

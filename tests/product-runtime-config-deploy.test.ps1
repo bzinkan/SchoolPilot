@@ -65,6 +65,14 @@ function Get-ServingState([string]$Role) {
     $container = if ($Role -ceq 'Api') { 'api' } else { 'scheduler-worker' }
     return Get-ProductManagedState (Get-ProductEnvironment -Task $response.taskDefinition -ContainerName $container)
 }
+function Invoke-GitText {
+    param([string[]]$Arguments, [string]$RepositoryRoot)
+    if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/classpilotUsageModes.ts') {
+        if ($script:Mock.CompatibleUsageWriter) { return 'export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;' }
+        return '// pre-ledger release'
+    }
+    throw "Unexpected git source query: $($Arguments -join ' ')"
+}
 function Reset-ProductMock {
     $envs = @(
         [pscustomobject]@{ name = 'RLS_GUC_ENABLED'; value = 'true' },
@@ -83,7 +91,7 @@ function Reset-ProductMock {
         Services = [pscustomobject]@{ Api = (New-TestService api $script:TestApiArn 3); Worker = (New-TestService worker $script:TestWorkerArn 1) }
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
-        Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
+        CompatibleUsageWriter = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
     }
     $script:CurrentToolSha = $script:TestSha
     $script:ApiServiceMutationStarted = $false; $script:WorkerServiceMutationStarted = $false
@@ -342,8 +350,8 @@ try {
     foreach ($gate in @(
             @{ Name = 'PASSPILOT_RULES_MODE'; Config = @{ PASSPILOT_RULES_MODE = 'on' }; Tables = $script:RulesTables; Live = @{} },
             @{ Name = 'PASSPILOT_APPOINTMENTS_MODE'; Config = @{ PASSPILOT_APPOINTMENTS_MODE = 'on' }; Tables = @('passpilot_appointments'); Live = @{} },
-            @{ Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Config = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }; Tables = @('classpilot_usage_rollups'); Live = @{} },
-            @{ Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Config = @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }; Tables = @('classpilot_usage_rollups'); Live = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' } })) {
+            @{ Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Config = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Live = @{} },
+            @{ Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Config = @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Live = @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' } })) {
         $prepare = {
             Reset-ProductMock
             foreach ($live in $gate.Live.GetEnumerator()) { Set-BothEnvironment $live.Key $live.Value }
@@ -374,11 +382,16 @@ try {
     Assert-NoMutation 'A failed Apply precondition must not mutate.'
 
     # --- Digital usage requires the usage rollup ---
-    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups')
+    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days')
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage alone must be refused.'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on'; CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage with the rollup off must be refused.'
     $both = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'on' })
     Assert-Condition ('usageRollup' -cin @($both.plan.activations) -and 'digitalUsage' -cin @($both.plan.activations)) 'Both usage features may activate together.'
+    $script:Mock.CompatibleUsageWriter = $false
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }) } 'coverage contract version 1' 'Plan must reject a pre-ledger serving SHA even with both admissions.'
+    Assert-ThrowsMatch { Invoke-ProductApply $both.plan $both.sha256 $script:TestDirectory } 'coverage contract version 1' 'Apply must re-check source compatibility before mutation.'
+    Assert-NoMutation 'An incompatible serving release must not mutate.'
+    $script:Mock.CompatibleUsageWriter = $true
     Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'; Set-BothEnvironment 'CLASSPILOT_DIGITAL_USAGE_MODE' 'on'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'The rollup cannot turn off under live digital usage.'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = $null }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'The rollup cannot be unset under live digital usage.'

@@ -22,8 +22,8 @@ survive each clone unchanged.
 | `PASSPILOT_RULES_MODE` | `off`, `on` | `off` | PassPilot rules (PR 7) | RLS admission of `passpilot_destination_policies`, `passpilot_pass_limits`, `passpilot_encounter_restrictions`, `passpilot_pass_denials` |
 | `PASSPILOT_APPOINTMENTS_MODE` | `off`, `on` | `off` | PassPilot appointments (PR 8) | RLS admission of `passpilot_appointments` |
 | `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` | `legacy`, `shadow`, `set_based`, `on` | `shadow` | `daily_usage` rollup (PR 10a) | promotion to `set_based`/`on`: live mode `shadow` plus an evidence file |
-| `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of `classpilot_usage_rollups` |
-| `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of `classpilot_usage_rollups`; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
+| `CLASSPILOT_USAGE_ROLLUP_MODE` | `off`, `on` | `off` | usage rollups (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1 |
+| `CLASSPILOT_DIGITAL_USAGE_MODE` | `off`, `on` | `off` | Digital Usage API (PR 10b) | RLS admission of both `classpilot_usage_rollups` and `classpilot_usage_rollup_days`; serving source SHA coverage contract v1; always requires `CLASSPILOT_USAGE_ROLLUP_MODE=on` |
 
 Values are exact: no case folding, no surrounding whitespace. `on` for the daily
 rollup is the alias of `set_based` added by PR 10a; a release older than PR 10a
@@ -243,3 +243,5 @@ changing the file afterwards blocks Apply.
 | `recovery_required` (or a stale `preparing`, `api_update_pending`, `worker_update_pending`) | Recovery could not be proven, or the lease transition was ambiguous. The lease, and possibly the autoscaling hold, are kept on purpose. | Follow "Manual recovery" in `CLASSPILOT_RUNTIME_CONFIG_OPERATIONS.md` (same lease) before any new Plan. |
 
 A plan that already has a receipt is never applied again; create a new plan.
+
+Usage coverage compatibility is checked against `AppSha` from the exact serving API and worker task definitions and image digest, at both Plan and Apply. `src/config/classpilotUsageModes.ts` at that SHA must declare `CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1`. This is required whenever the desired usage flags remain on, including a plan changing other flags. A local working-tree edit or RLS admission cannot make an older release compatible. Turn both usage flags off before an older-image rollback; keep the additive computation-ledger migration and aggregate invalidation triggers. See `CLASSPILOT_DIGITAL_USAGE.md` for unavailable coverage and recovery semantics.
