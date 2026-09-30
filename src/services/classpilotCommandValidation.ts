@@ -94,8 +94,9 @@ export function validateClasspilotCommandPayload(
   try {
     switch (commandType) {
       case "open-tab": {
-        const value = strictObject({ url: z.unknown(), focusAfterOpen: z.literal(true).optional() }).parse(raw);
-        return { url: httpUrl(value.url), ...(value.focusAfterOpen ? { focusAfterOpen: true } : {}) };
+        const value = strictObject({ url: z.unknown(), focusAfterOpen: z.literal(true).optional(), afterRestrictionCommandId: id.optional() }).parse(raw);
+        return { url: httpUrl(value.url), ...(value.focusAfterOpen ? { focusAfterOpen: true } : {}),
+          ...(value.afterRestrictionCommandId ? { afterRestrictionCommandId: value.afterRestrictionCommandId } : {}) };
       }
       case "activate-tab":
       case "focus-tab":
@@ -162,7 +163,8 @@ export function validateClasspilotCommandPayload(
       case "remove-block-list":
         return strictObject({}).parse(raw);
       case "apply-flight-path":
-        return strictObject({ flightPathId: id }).parse(raw);
+        return strictObject({ flightPathId: id, expectedFlightPathUpdatedAt: z.string().datetime({ offset: true })
+          .refine(value => Number.isFinite(Date.parse(value)), "Expected a valid ISO instant").optional() }).parse(raw);
       case "apply-block-list":
         return strictObject({ blockListId: id }).parse(raw);
       case "attention-mode":

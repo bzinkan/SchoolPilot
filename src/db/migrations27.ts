@@ -17,6 +17,7 @@ import { staffIdentityIntegrityMigration } from "./staffIdentityIntegrityMigrati
 import { microsoftSignInMigration } from "./microsoftSignInMigration.js";
 import { sharedTeachingResourcesMigration } from "./sharedTeachingResourcesMigration.js";
 import { flightPathResourcesMigration } from "./flightPathResourcesMigration.js";
+import { flightPathContentRevisionMigration } from "./flightPathContentRevisionMigration.js";
 import { safetyCenterMigration } from "./safetyCenterMigration.js";
 import { mailpilotSafetyDurabilityMigration } from "./mailpilotSafetyDurabilityMigration.js";
 import { classpilotSchedulingMigration } from "./classpilotSchedulingMigration.js";
@@ -530,6 +531,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   classpilotUsageRollupsMigration,
   classpilotUsageRollupDaysMigration,
   flightPathResourcesMigration,
+  flightPathContentRevisionMigration,
   staffIdentityIntegrityMigration,
 ];
 

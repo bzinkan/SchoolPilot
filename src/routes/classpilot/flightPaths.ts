@@ -29,6 +29,7 @@ import {
   getFlightPathsByTeacherAndSchool,
   getFlightPathById,
   createFlightPath,
+  createOrReuseReviewedClassroomFlightPath,
   updateFlightPath,
   deleteFlightPath,
   getBlockListsByTeacherAndSchool,
@@ -480,8 +481,10 @@ router.post("/from-classroom", ...auth, restrictionResourceResolutionLimiter, as
       blockedDomains,
       isDefault,
       boundary = "website",
+      reuseReviewedSource = false,
     } = req.body;
     if (!courseId) return res.status(400).json({ error: "courseId is required" });
+    if (typeof reuseReviewedSource !== "boolean") return res.status(400).json({ error: "reuseReviewedSource must be boolean" });
     if (boundary !== "website" && boundary !== "resource") {
       return res.status(400).json({ error: "boundary must be website or resource" });
     }
@@ -521,7 +524,7 @@ router.post("/from-classroom", ...auth, restrictionResourceResolutionLimiter, as
     }
     validateRuleList(allowedDomains, "Flight Path");
 
-    const fp = await createFlightPath({
+    const insert = {
       schoolId: res.locals.schoolId!,
       teacherId: req.authUser!.id,
       flightPathName: flightPathName || name || "Classroom Flight Path",
@@ -536,10 +539,14 @@ router.post("/from-classroom", ...auth, restrictionResourceResolutionLimiter, as
         ? selectedIds
         : selectedResources.map((resource: any) => String(resource?.id)).filter(Boolean),
       sourceUpdatedAt: new Date(),
-    });
+    };
+    const saved = reuseReviewedSource ? await createOrReuseReviewedClassroomFlightPath(insert)
+      : { flightPath: await createFlightPath(insert), reused: false };
+    const fp = saved.flightPath;
 
     return res.status(201).json({
       flightPath: managedFlightPathView(req, res, fp),
+      ...(reuseReviewedSource ? { reused: saved.reused } : {}),
       extracted: boundary === "resource"
         ? {
             allowedDomains,

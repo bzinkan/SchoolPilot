@@ -18,6 +18,7 @@ import {
 import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigration.js";
 import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
 import { FLIGHT_PATH_RESOURCES_EXPAND_SQL } from "./db/flightPathResourcesMigration.js";
+import { FLIGHT_PATH_CONTENT_REVISION_SQL } from "./db/flightPathContentRevisionMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { SHARED_TEACHING_RESOURCES_EXPAND_SQL } from "./db/sharedTeachingResourcesMigration.js";
 import { PASSPILOT_KIOSK_SCHEDULE_SQL } from "./db/passpilotKioskScheduleMigration.js";
@@ -4989,6 +4990,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL);
   await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
+  await pool.query(FLIGHT_PATH_CONTENT_REVISION_SQL);
 
 }
 
