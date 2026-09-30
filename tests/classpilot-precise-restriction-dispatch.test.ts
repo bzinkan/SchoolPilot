@@ -9,6 +9,7 @@ import { classpilotCommandAuthorityEnvelope } from "../src/services/classpilotCo
 import {
   CLASSPILOT_PRECISE_RESTRICTION_TARGET_UNAVAILABLE_REASON,
   effectiveClasspilotControlEnforcementHealth,
+  emptyClasspilotRestrictions,
   serializeClasspilotStudentControlStateForDelivery,
 } from "../src/services/classpilotClassroomState.js";
 import { normalizeAllowedResource, type AllowedResource } from "../src/services/restrictionResources.js";
@@ -18,6 +19,7 @@ import { normalizeAllowedResource, type AllowedResource } from "../src/services/
 // fresh snapshot ACCEPTED preciseRestrictionResourcesV1. A 2.9.6-shaped target
 // becomes unavailable with the exact reason and gets no desired state, an
 // offline student is never deferred, and website-only commands are unchanged.
+// The last tests run the rollback clear (runbook step 2) against that state.
 
 process.env.REDIS_URL = "";
 process.env.CLASSPILOT_SCHEDULED_CLASSROOM_MODE = "on";
@@ -338,4 +340,167 @@ test("the frame builder frames a precise payload only with its precise snapshot 
   assert.ok(built);
   assert.deepEqual(built.classroomState.restrictions.screenLock.resource, DOC);
   assert.equal(built.exactBinding?.bindingVersion, 2, "precise frames are exact-bound");
+});
+
+test("the reviewed rollback precheck and the clear transform agree on every stored shape", async () => {
+  const rollback = await import("../src/services/classpilotPreciseRestrictionRollback.js");
+  const predicate = sql.raw(rollback.PRECISE_CONTROL_STATE_PREDICATE_SQL.replaceAll("desired_state", "candidate.value"));
+  for (const shape of [
+    {},
+    { restrictions: emptyClasspilotRestrictions() },
+    { restrictions: { ...emptyClasspilotRestrictions(), screenLock: { active: true, url: "https://docs.google.com/document/d/x/edit", resource: DOC } } },
+    { restrictions: { ...emptyClasspilotRestrictions(), screenLock: { active: false, resource: null } } },
+    { restrictions: { ...emptyClasspilotRestrictions(), flightPath: { active: true, allowedDomains: ["a.example"], resources: [] } } },
+    { restrictions: { ...emptyClasspilotRestrictions(), flightPath: { active: true, allowedDomains: ["a.example"] } } },
+    { restrictions: [{ screenLock: { resource: DOC } }] },
+    { restrictions: { screenLock: ["resource"] } },
+    { screenLock: "resource" },
+    { screenLock: { active: true, resource: DOC } },
+    { flightPath: { active: true, allowedDomains: [], resources: [DOC] } },
+    { lateSignInDelivery: { screenLock: { resource: DOC } } },
+    { restorableClassState: { desiredState: { restrictions: { flightPath: { active: true, resources: [SECTION] } } } } },
+    { restorableClassState: { desiredState: { screenLock: { resource: DOC } } } },
+    { restorableClassState: [{ desiredState: { screenLock: { resource: DOC } } }] },
+    { restorableClassState: { desiredState: { restrictions: { flightPath: { active: true, allowedDomains: ["a.example"] } } } } },
+  ]) {
+    const rows: any = await statement(sql`SELECT coalesce(${predicate}, false) AS precise
+      FROM (SELECT ${JSON.stringify(shape)}::jsonb AS value) AS candidate`);
+    assert.equal(rows.rows[0].precise, rollback.clearPreciseRestrictionsFromDesiredState(shape).changed, JSON.stringify(shape));
+  }
+});
+
+test("the rollback clear ends every stored precise restriction with one revision bump and keeps everything else", async () => {
+  const clear = await import("../src/services/classpilotPreciseRestrictionClear.js");
+  const rollback = await import("../src/services/classpilotPreciseRestrictionRollback.js");
+  // A live "This resource only" Waypoint over the capable student's retained
+  // website Flight Path from the earlier test.
+  const { writeClasspilotRealtimeStatus } = await import("../src/services/classpilotRealtimeStatus.js");
+  await writeClasspilotRealtimeStatus({ schoolId: ids.school, studentId: ids.capable, studentSessionId: bindings.get(ids.capable)!,
+    deviceId: ids.capableDevice, heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities: [...CAPABLE_CAPABILITIES] });
+  await execute("lock-screen", { url: "https://docs.google.com/document/d/1a2B3c4D5e6F7g8H9i0JkLmNoPqRsTuVwXyZ/edit", boundary: "resource" },
+    [liveTarget(ids.capable, ids.capableDevice)]);
+  const capableBefore = (await control(ids.capable))!;
+  const legacyBefore = await control(ids.legacy);
+  const beforeRestrictions = (capableBefore.desiredState as { restrictions: Record<string, unknown> }).restrictions;
+  assert.deepEqual((beforeRestrictions.screenLock as Record<string, unknown>).resource, DOC);
+  const capableRows = await classroomStateRows(ids.capable);
+  assert.deepEqual(capableRows.map((row) => row.state_type), ["flight-path", "screen-lock"]);
+  assert.equal("resources" in capableRows[0]!.payload, false);
+  assert.deepEqual(capableRows[1]!.payload.resource, DOC);
+
+  // A Coverage restoration snapshot carrying a precise Flight Path, an expired
+  // legacy flat snapshot, and a class-wide precise classroom-state row.
+  const flatStudent = randomUUID();
+  await statement(sql`INSERT INTO students(id,school_id,first_name,last_name,status) VALUES(${flatStudent},${ids.school},'Flat','Student','active')`);
+  await statement(sql`INSERT INTO classpilot_student_control_states(school_id,student_id,supervision_context_id,revision,desired_state,hard_expires_at)
+    VALUES(${ids.school},${flatStudent},${context.id},4,${JSON.stringify({ screenLock: { active: true, url: "https://docs.google.com/document/d/x/edit", resource: DOC } })}::jsonb,
+      now() - interval '1 hour')`);
+  const restorable = {
+    teachingSessionId: randomUUID(),
+    sourceCommandId: randomUUID(),
+    desiredState: {
+      restrictions: { ...emptyClasspilotRestrictions(), flightPath: { active: true, allowedDomains: ["khanacademy.org"], name: "Moon phases", resources: [SECTION] } },
+    },
+  };
+  await statement(sql`INSERT INTO classpilot_student_control_states(school_id,student_id,revision,desired_state)
+    VALUES(${ids.school},${ids.offline},2,${JSON.stringify({ restrictions: emptyClasspilotRestrictions(), restorableClassState: restorable })}::jsonb)
+    ON CONFLICT (school_id,student_id) DO UPDATE SET desired_state=EXCLUDED.desired_state,
+      revision=classpilot_student_control_states.revision+1, teaching_session_id=NULL, supervision_context_id=NULL,
+      scheduled_end_at=NULL, hard_expires_at=NULL`);
+  const offlineBefore = (await control(ids.offline))!;
+  const classWide: any = await statement(sql`INSERT INTO classpilot_classroom_states(school_id,supervision_context_id,student_id,state_type,state_key,payload,applied_by)
+    VALUES(${ids.school},${context.id},NULL,'flight-path','class-wide',${JSON.stringify({ flightPathId: ids.mixedPath, allowedDomains: ["khanacademy.org"], resources: [SECTION, DOC, VIDEO] })}::jsonb,${ids.teacher})
+    RETURNING id`);
+  const classWideId = classWide.rows[0].id as string;
+
+  const plan = await inSchool(() => clear.planClasspilotPreciseRestrictionClear(ids.school));
+  assert.equal(plan.controlStateCount, 3);
+  assert.equal(plan.classroomStateCount, 2);
+  assert.deepEqual(
+    (await inSchool(() => clear.inventoryClasspilotPreciseRestrictions())).filter((entry) => entry.schoolId === ids.school),
+    [{ schoolId: ids.school, controlStateCount: 3, classroomStateCount: 2 }]
+  );
+
+  const failedWith = (code: string) => (error: unknown) => (error as { code?: string }).code === code;
+  await assert.rejects(
+    () => inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({ schoolId: ids.school, expectedProof: plan.proof })),
+    failedWith("PRECISE_RESTRICTION_CAPABILITY_ACTIVE"),
+    "the off profile must be applied first"
+  );
+  process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "false";
+  try {
+    await assert.rejects(
+      () => inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({
+        schoolId: ids.school,
+        expectedProof: `${rollback.PRECISE_RESTRICTION_CLEAR_PROOF_PREFIX}${"0".repeat(64)}`,
+      })),
+      failedWith("PRECISE_RESTRICTION_CLEAR_PROOF_MISMATCH")
+    );
+    assert.deepEqual(await control(ids.capable), capableBefore, "a refused clear changes nothing");
+
+    const result = await inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({ schoolId: ids.school, expectedProof: plan.proof }));
+    assert.deepEqual(result, {
+      schoolId: ids.school,
+      controlStatesCleared: 3,
+      screenLocksCleared: 2,
+      flightPathsCleared: 1,
+      restorableSnapshotsCleared: 1,
+      classroomStatesCleared: 2,
+    });
+
+    const capableAfter = (await control(ids.capable))!;
+    assert.equal(capableAfter.revision, capableBefore.revision + 1);
+    assert.deepEqual(capableAfter.desiredState, {
+      ...(capableBefore.desiredState as Record<string, unknown>),
+      restrictions: { ...beforeRestrictions, screenLock: { active: false } },
+    }, "only the precise Waypoint ends; the website Flight Path stays");
+    assert.equal(capableAfter.enforcementHealth, "pending");
+    assert.equal(capableAfter.appliedRevision, null);
+    assert.equal(capableAfter.sourceCommandId, null);
+    assert.equal(capableAfter.lastOutcome, rollback.PRECISE_RESTRICTION_CLEAR_OUTCOME);
+    assert.equal(capableAfter.teachingSessionId, capableBefore.teachingSessionId);
+    assert.equal(capableAfter.supervisionContextId, capableBefore.supervisionContextId);
+
+    const offlineAfter = (await control(ids.offline))!;
+    assert.equal(offlineAfter.revision, offlineBefore.revision + 1);
+    assert.deepEqual(offlineAfter.desiredState, {
+      restrictions: emptyClasspilotRestrictions(),
+      restorableClassState: {
+        ...restorable,
+        sourceCommandId: null,
+        desiredState: { restrictions: { ...restorable.desiredState.restrictions, flightPath: { active: false, allowedDomains: [] } } },
+      },
+    });
+    const flatAfter = (await control(flatStudent))!;
+    assert.equal(flatAfter.revision, 5);
+    assert.deepEqual(flatAfter.desiredState, { screenLock: { active: false } });
+    assert.deepEqual(await control(ids.legacy), legacyBefore, "a website Waypoint is untouched");
+
+    assert.deepEqual((await classroomStateRows(ids.capable)).map((row) => row.state_type), ["flight-path"]);
+    const classWideAfter: any = await statement(sql`SELECT cleared_at FROM classpilot_classroom_states WHERE school_id=${ids.school} AND id=${classWideId}`);
+    assert.ok(classWideAfter.rows[0].cleared_at, "the class-wide precise row is cleared");
+
+    // Nothing precise remains, the next dry run proves it, and a 2.9.6 binding
+    // receives the cleared revision instead of a withheld state.
+    const again = await inSchool(() => clear.planClasspilotPreciseRestrictionClear(ids.school));
+    assert.equal(again.controlStateCount + again.classroomStateCount, 0);
+    assert.deepEqual(
+      (await inSchool(() => clear.inventoryClasspilotPreciseRestrictions())).filter((entry) => entry.schoolId === ids.school),
+      []
+    );
+    const delivered = serializeClasspilotStudentControlStateForDelivery({
+      state: capableAfter,
+      gateActive: true,
+      acceptedCapabilities: LEGACY_CAPABILITIES,
+      exactBinding: { schoolId: ids.school, studentId: ids.capable, studentSessionId: bindings.get(ids.capable)!, deviceId: ids.capableDevice },
+    });
+    assert.equal(delivered.withheld, false);
+    assert.deepEqual(delivered.classroomState?.restrictions.screenLock, { active: false });
+    assert.deepEqual(delivered.classroomState?.restrictions.flightPath, { active: true, allowedDomains: ["khanacademy.org", "ixl.com"], name: "Websites" });
+    const repeated = await inSchool(() => clear.clearClasspilotPreciseRestrictionsForSchool({ schoolId: ids.school, expectedProof: again.proof }));
+    assert.equal(repeated.controlStatesCleared + repeated.classroomStatesCleared, 0, "a repeated clear is a no-op");
+    assert.equal((await control(ids.capable))!.revision, capableAfter.revision);
+  } finally {
+    process.env.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 = "true";
+  }
 });

@@ -1,4 +1,4 @@
-# Runtime rollout: monitoring hours, school website policy, content labels
+# Runtime rollout: monitoring hours, school website policy, content labels, precise restriction resources
 
 This document describes the implemented protocol and the checks required before an operator enables it. It is not deployment or load-test evidence. The API/web deploy and Chrome Web Store release remain separate operations.
 
@@ -11,6 +11,7 @@ Negotiation requires a protocol-v3 client advertising the capability, `CLASSPILO
 | `afterHoursSafetyOnlyV1` | `CLASSPILOT_CAP_AFTER_HOURS_SAFETY_ONLY_V1` | `after-hours-safety-only-pilot`, `after-hours-safety-only-off` |
 | `schoolWebsiteBlockEnforcementV1` | `CLASSPILOT_CAP_SCHOOL_WEBSITE_BLOCK_ENFORCEMENT_V1` | `school-website-block-pilot`, `school-website-block-off` |
 | `screenshotReadOnlyObservationV1` | `CLASSPILOT_CAP_SCREENSHOT_READ_ONLY_OBSERVATION_V1` | `read-only-observation-pilot`, `read-only-observation-off` |
+| `preciseRestrictionResourcesV1` | `CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1` | `precise-restriction-resources-pilot` (refused until the 2.10.0 evidence is bound), `precise-restriction-resources-off`; see [Precise restriction resources](#precise-restriction-resources-roadmap-pr-2) |
 
 Read-only observation additionally requires the existing tracking-window and active-preview capabilities to cover the pilot school. It changes screenshot cadence only; see [teacher-independent observation](CLASSPILOT_READ_ONLY_OBSERVATION.md) for authorization, older-extension compatibility and rollback.
 
@@ -69,3 +70,78 @@ Focused tests are `classpilot-monitoring-policy`, `classpilot-screenshot-publish
 Before an extension release, additionally rehearse a full→limited→full and full→off→full boundary in an actual Chrome profile with the new capability on/off, a stale client, a manual shared-device handoff during classification, an offline website-policy update, a newer revision arriving before an older one, and a partial tab-close failure. Inspect receipt status and confirm private telemetry stays absent during restricted time. Packaged-extension and school cohort rollout checks remain release requirements.
 
 Rollback capability flags before widening another cohort. A safety-only rollback makes limited clients stop monitoring; it never restores full after-hours collection. Disabling website enforcement capability leaves the durable block list and DNR filtering intact while removing the existing-tab enforcement claim. Disable the v3 report gate to keep new rows on the previous configured report version; completed v3 snapshots remain readable. Retain policy revisions and review audit history rather than deleting them.
+
+## Precise restriction resources (roadmap PR 2)
+
+`preciseRestrictionResourcesV1` adds "This resource only" Waypoints and Flight Path entries for one YouTube video, Google Doc, Slides deck, Sheet, Form or Drive file, or one section of a site. The extension contract, matcher and case-file hash are in [the ClassPilot 2.10.0 contract](CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md). The capability is off by default. While it is off for a school, teachers cannot author sections or resources (409 `PRECISE_RESTRICTION_RESOURCES_DISABLED`), a Flight Path that has them cannot be applied, and the dashboard hides the controls. An owner can still edit the websites of such a path; the stored entries stay untouched.
+
+Admission follows the schema-v7 pattern above. Profiles:
+
+```json
+{ "schemaVersion": 7, "mode": "precise-restriction-resources-pilot", "pilotSchoolId": "<school uuid>" }
+{ "schemaVersion": 7, "mode": "precise-restriction-resources-off" }
+```
+
+The pilot profile is refused until a reviewed follow-up binds the exact ClassPilot 2.10.0 package in `scripts/deploy-classpilot-runtime-config.ps1` (`PreciseRestrictionRequiredReleaseTag`, `PreciseRestrictionRequiredMergeSha`, `PreciseRestrictionRequiredZipSha256`). That package must be MANAGED-CHROMEBOOK VERIFIED on at least two Google Admin-managed Chromebooks. The off profile is always available.
+
+### Deployment order
+
+1. PR 2-pre (#550) must already be serving in an image that does not contain PR 2. Its fence makes every older image withhold precise state instead of widening it. Never roll an image back below PR 2-pre once PR 2 has served traffic.
+2. Deploy the server image containing PR 2 with the capability off. Merging PR 2 changes the runtime-config tool, so any plan saved before the merge is void; plan every later profile from the post-merge tool SHA.
+3. Only after that image is serving may a runtime-config Apply write the `preciseRestrictionResourcesV1` registry entry. Every Apply writes it, as `{"mode":"off"}` unless the precise pilot is selected. The tool enforces this ordering: Plan and Apply read the serving app SHA's `CLASSPILOT_PROTOCOL_V3_CAPABILITIES` with `git show <sha>:src/services/classpilotProtocol.ts`, and refuse a registry that names a capability the serving image does not register. An older image's boot check (`assertClasspilotCapabilityRolloutsEnv`) refuses to start on an unknown registry key.
+4. ClassPilot 2.10.0 ships only after server PRs 2 to 5 are deployed with their capabilities off. Then comes the pilot profile, after the evidence binding above.
+
+Saving a `forms.gle` link makes the API resolve it once, at save time: HTTPS `HEAD` requests with manual redirects, at most 3 hops, 3 seconds each, and `GET` only on a 405. Each hop must stay on `forms.gle` or `https://docs.google.com/forms/`. This is an outbound egress dependency of the API tasks (through the NAT). A failure returns 400 `RESOURCE_SHORT_LINK_UNRESOLVED` and nothing is stored. Only requests that need resolution count against `restrictionResourceResolutionLimiter`: 30 per user per 10 minutes, Redis-backed.
+
+### Rollback runbook
+
+Follow these steps in order. They end every stored precise restriction explicitly before any image older than PR 2 can read it.
+
+1. **Turn the capability off.** Plan and Apply `precise-restriction-resources-off`. Precise states are then withheld from every client, precise commands are refused, and teachers see "Extension update required for this Waypoint or Flight Path" for affected students.
+2. **Clear stored precise restrictions with a control-revision bump.** The reviewed script is `src/cli/clearClasspilotPreciseRestrictions.ts`. It is dry-run first and prints only school IDs, counts and a proof. Run the inventory in an ECS one-off task of the API task definition, so it reads the same registry:
+
+   ```text
+   npm run clear:classpilot-precise-restrictions -- --all-schools
+   ```
+
+   Exit code 3 means precise rows remain; each affected school is listed. For each school, run the dry run, then execute with the exact proof it printed. Execution requires the one-off task override `PRECISE_RESTRICTION_CLEAR_EXECUTION_ADMISSION=controlled-ecs-one-off-v1`, and the CLI verifies the ECS task identity:
+
+   ```text
+   npm run clear:classpilot-precise-restrictions -- --school-id <school-uuid>
+   npm run clear:classpilot-precise-restrictions -- --school-id <school-uuid> --execute --proof <precise-clear-proof-v1:...> --acknowledge precise-restriction-clear-v1
+   ```
+
+   The clear runs in one transaction per school and takes each student's control lock. It is refused while the capability is still active for the school, and it is refused when the rows changed after the dry run: run the dry run again. It replaces each precise Waypoint with `{ "active": false }` and each precise Flight Path with `{ "active": false, "allowedDomains": [] }`, in the snapshot, the legacy flat shape and the Coverage restoration snapshot. Every other restriction is kept exactly. The script also bumps the revision, sets health `pending` and clears the source command, and it clears the matching `classpilot_classroom_states` rows. Devices pick up the new revision on their next heartbeat. Flight Path definitions (`flight_paths.resources`) and command history are not changed. Tell the affected teachers that those restrictions ended; they can apply a website Waypoint or a website-only Flight Path instead.
+
+   The inventory runs this read-only precheck, quoted verbatim so it can be reviewed and run separately. It must return zero rows before step 3:
+
+   ```sql
+   SELECT 'control_state' AS kind, school_id, count(*)::int AS row_count
+   FROM classpilot_student_control_states
+   WHERE desired_state @? 'strict $.restrictions.screenLock.resource'
+      OR desired_state @? 'strict $.restrictions.flightPath.resources'
+      OR desired_state @? 'strict $.screenLock.resource'
+      OR desired_state @? 'strict $.flightPath.resources'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.screenLock.resource'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.restrictions.flightPath.resources'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.screenLock.resource'
+      OR desired_state @? 'strict $.restorableClassState.desiredState.flightPath.resources'
+   GROUP BY school_id
+   UNION ALL
+   SELECT 'classroom_state' AS kind, school_id, count(*)::int AS row_count
+   FROM classpilot_classroom_states
+   WHERE cleared_at IS NULL
+     AND ((state_type = 'screen-lock' AND payload ? 'resource')
+       OR (state_type = 'flight-path' AND payload ? 'resources'))
+   GROUP BY school_id
+   ORDER BY kind, school_id;
+   ```
+
+3. **Remove the registry entry.** Run `-Operation Rollback` on the runtime-config Applies that wrote the `preciseRestrictionResourcesV1` entry, newest first, until the serving API and worker task definitions carry no such key in `CLASSPILOT_CAPABILITY_ROLLOUTS_JSON` (check read-only). Each Rollback restores its exact prior pair, so it also undoes any other capability change made in that Apply. Re-plan those changes after step 4; the tool refuses any plan that would write the entry again.
+4. **Only then revert the image**, and never below the PR 2-pre (#550) image. `scripts/deploy.sh` carries the live registry forward. An image older than PR 2 refuses to boot if the entry is still present.
+
+If step 2 is skipped, an older image still fails closed: the PR 2-pre fence withholds every stored precise state, so a 2.10.0 device keeps its last applied restriction until the revision changes or `hardExpiresAt` passes (at most 12 hours), and teachers see the student as unsupported. The clear is still required, because it ends those restrictions visibly and leaves nothing for a later image to interpret.
+
+After a rollback, older images never read `flight_paths.resources`. A resource-only Flight Path is refused with 409 `FLIGHT_PATH_EMPTY`, and a mixed path applies its websites only, which is narrower. Re-deploying PR 2 later restores the stored entries unchanged.
+
+Focused tests: `restriction-resources`, `restriction-resource-resolver`, `classpilot-precise-restriction-projection`, `classpilot-precise-restriction-fence`, `classpilot-precise-restriction-dispatch` (dispatch gate and the rollback clear, DB), `classpilot-precise-restriction-clear` (transform, precheck and CLI safety), `flight-path-precise-resources-routes` (DB), `flight-path-resources-migration`, and the `classpilot-runtime-config-deploy.test.ps1` precise and serving-registry cases.
