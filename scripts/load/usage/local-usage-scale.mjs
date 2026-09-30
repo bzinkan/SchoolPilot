@@ -146,7 +146,7 @@ export async function runLocalScale() {
       school.deviceTokens = school.students.map((studentId, i) => createStudentToken({ studentId, schoolId: school.id, deviceId: school.devices[i], sessionId: school.studentSessions[i], studentEmail: `scale-${studentId}@example.test` }));
     }
     await admin.query('ANALYZE'); metrics.seedMs = performance.now() - seedStarted;
-    metrics.fixtureCounts = (await admin.query('SELECT school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
+    metrics.fixtureCounts = (await admin.query('SELECT id AS school_id,(SELECT COUNT(*) FROM heartbeats WHERE school_id=schools.id) AS raw,(SELECT COUNT(*) FROM teaching_sessions WHERE school_id=schools.id) AS sessions,(SELECT COUNT(*) FROM classpilot_session_students WHERE school_id=schools.id) AS frozen_roster_rows,(SELECT COUNT(*) FROM classpilot_usage_rollups WHERE school_id=schools.id) AS aggregates FROM schools')).rows;
     assert.ok(metrics.fixtureCounts.every(row => Number(row.raw) === 1_000_000 && Number(row.aggregates) === metrics.dataset.historicalRowsPerSchool));
     server = createServer(createApp()); await new Promise(done => server.listen(0, '127.0.0.1', done));
     const base = `http://127.0.0.1:${server.address().port}/api/classpilot`;
