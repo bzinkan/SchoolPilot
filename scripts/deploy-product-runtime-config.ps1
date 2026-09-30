@@ -12,7 +12,7 @@ param(
 # transport, private files, task cloning, operation fence (the same DynamoDB
 # lease as the ClassPilot and My Desk tools, so one runtime-config operation
 # runs at a time), autoscaling hold, health checks and exact convergence. It
-# never invokes the capability workflow and writes no name outside the seven
+# never invokes the capability workflow and writes no name outside the eight
 # below: every other environment entry, secret and task field is fingerprinted
 # and must survive each clone unchanged.
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
@@ -21,6 +21,7 @@ $script:ProductModeValues = [ordered]@{
     CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = @('off', 'on')
     PASSPILOT_RULES_MODE = @('off', 'on')
     PASSPILOT_APPOINTMENTS_MODE = @('off', 'on')
+    PASSPILOT_REPORTS_MODE = @('off', 'v2')
     # src/services/scheduler.ts dailyUsageRollupMode(): unset reads as shadow,
     # and `on` is the alias of set_based added by the PR 10a hardening.
     CLASSPILOT_DAILY_USAGE_ROLLUP_MODE = @('legacy', 'shadow', 'set_based', 'on')
@@ -28,7 +29,7 @@ $script:ProductModeValues = [ordered]@{
     CLASSPILOT_DIGITAL_USAGE_MODE = @('off', 'on')
 }
 $script:RuntimeEnvironmentNames = @('CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', $script:ProductSchoolIdsName, 'PASSPILOT_RULES_MODE',
-    'PASSPILOT_APPOINTMENTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
+    'PASSPILOT_APPOINTMENTS_MODE', 'PASSPILOT_REPORTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
 $script:AllowedSecretNames = @()
 # These features' mode readers stay off unless their whole table bundle is RLS
@@ -191,6 +192,7 @@ function Get-ProductExposure {
         AllSchools = $allSchools; Schools = $schools
         passpilotRules = $State['PASSPILOT_RULES_MODE'] -ceq 'on'
         passpilotAppointments = $State['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on'
+        passpilotReports = $State['PASSPILOT_REPORTS_MODE'] -ceq 'v2'
         dailyUsageRollupPromotion = $State['CLASSPILOT_DAILY_USAGE_ROLLUP_MODE'] -cin @('set_based', 'on')
         usageRollup = $State['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on'
         digitalUsage = $State['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on'
@@ -207,7 +209,7 @@ function Get-ProductActivations {
     if (-not $before.AllSchools -and ($after.AllSchools -or @($after.Schools | Where-Object { $_ -cnotin $before.Schools }).Count)) {
         $activations.Add('sharedTeachingResources')
     }
-    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage')) {
+    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage')) {
         if ($after.$feature -and -not $before.$feature) { $activations.Add($feature) }
     }
     return ,$activations.ToArray()
@@ -269,6 +271,24 @@ function Assert-ProductPreconditions {
     # Admission checks apply to activation; source compatibility applies while
     # usage remains on. Turning both usage flags off stays available.
     $activations = Get-ProductActivations $Prior $Desired
+    if ($Desired['PASSPILOT_REPORTS_MODE'] -ceq 'v2') {
+        $compatibilityError = 'PASSPILOT_REPORTS_MODE=v2 requires complete preserved 128-table admission, RLS_GUC_ENABLED=true, and report contract version 2 in the exact source SHA serving both API and worker.'
+        try {
+            $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotReportsMode.ts") -RepositoryRoot $RepositoryRoot
+            $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
+            $inventory = $registry.inventories.passpilotAppointmentsPostExpand
+        } catch { throw $compatibilityError }
+        if ($source -cnotmatch 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;' -or
+            $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
+            @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or
+            @('students', 'passes', 'passpilot_pass_denials', 'passpilot_appointments' | Where-Object { $_ -cnotin @($inventory.tables) }).Count) { throw $compatibilityError }
+        foreach ($environment in $Snapshot.Environments) {
+            if (-not $environment.ContainsKey('RLS_GUC_ENABLED') -or $environment['RLS_GUC_ENABLED'] -cne 'true' -or
+                -not $environment.ContainsKey('RLS_ENABLED_TABLES')) { throw $compatibilityError }
+            $tables = $environment['RLS_ENABLED_TABLES'].Split(',')
+            if (@($inventory.tables | Where-Object { $_ -cnotin $tables }).Count) { throw $compatibilityError }
+        }
+    }
     if ($Desired['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on') {
         # Both stable services are bound to AppSha/digest. The singleton table
         # alone cannot make a pre-atomic issuer or older admission image safe.

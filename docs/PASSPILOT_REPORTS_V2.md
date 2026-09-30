@@ -29,7 +29,8 @@ recorded override attempts; no rule identifiers or breakdown are returned.
 Summary, pass pagination and CSV share exact filters: required offset-bearing
 `from` inclusive and `through` exclusive, positive range at most 366 elapsed days;
 optional `studentId`, `classId` or `gradeId` (mutually exclusive), `teacherId`,
-`destination` and `issuedVia=teacher|kiosk`. Teachers may filter an issuer only to
+`destination=bathroom|nurse|office|counselor|other_classroom|custom` and
+`issuedVia=teacher|kiosk`. Teachers may filter an issuer only to
 themselves. Identifiers remain school scoped and are authorization checked. No
 caller timezone, school ID, role, rule code or relationship filter is accepted.
 
@@ -54,7 +55,7 @@ caller timezone, school ID, role, rule code or relationship filter is accepted.
   "recordedDenials": { "count": 4, "coverage": "best_effort", "includesRecordedOverrideAttempts": true },
   "overrides": null,
   "appointments": { "total": 6, "scheduled": 2, "activated": 1, "completed": 1, "cancelled": 1, "missed": 1, "futureWindowCount": 2, "maturedWindowCount": 3, "missedRate": { "numerator": 1, "denominator": 3, "ratio": 0.3333333333333333 }, "attribution": "current_student_roster" },
-  "coverage": { "state": "partial", "codes": ["RECORDED_DENIALS_BEST_EFFORT", "HISTORICAL_BELL_PERIODS_UNAVAILABLE"], "administratorEvidence": false }
+  "coverage": { "state": "partial", "codes": ["RETAINED_RECORDS_ONLY", "RECORDED_DENIALS_BEST_EFFORT", "HISTORICAL_BELL_PERIODS_UNAVAILABLE"], "administratorEvidence": false }
 }
 ```
 
@@ -90,7 +91,10 @@ authority, including when Rules is off, rather than untrusted projection options
 - No data: zero cohort counts retain nullable averages/ratios and
   `coverage.state="no_data"`. Coverage otherwise states known partial sources,
   including best-effort denials, missing historical bell snapshots and invalid
-  legacy completed/deadline values. Absence of records does not prove no event.
+  legacy completed/deadline values. `RETAINED_RECORDS_ONLY` always states that
+  deleted or retention gaps cannot be reconstructed. Absence of records does not
+  prove no event; the current school-year configuration never implies a past
+  purge cutoff.
 
 ## Pass views and CSV
 
