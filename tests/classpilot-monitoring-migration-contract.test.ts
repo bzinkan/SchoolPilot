@@ -185,6 +185,12 @@ test("retention covers every school, removes report identity, and defaults only 
   assert.doesNotMatch(retention, /state <> 'expired'/);
   assert.match(retention, /DELETE FROM classpilot_session_usage WHERE school_id = \$1 AND local_date < \$2/);
   assert.match(retention, /DELETE FROM daily_usage WHERE school_id = \$1 AND date < \$2/);
+  // Monitored Browser Time rollups share the daily aggregate horizon, and a
+  // failure on that table cannot skip the school's remaining retention steps.
+  assert.match(
+    retention,
+    /DELETE FROM daily_usage WHERE school_id = \$1 AND date < \$2`, \[school\.id, cutoffLocalDate\]\);[\s\S]{0,400}?DELETE FROM classpilot_usage_rollups WHERE school_id = \$1 AND usage_date < \$2::date`, \[school\.id, cutoffLocalDate\]\)\.catch\(/
+  );
   assert.match(retention, /USING devices AS device/);
   assert.match(retention, /Pre-report delivery rows can exist from an older release/);
   assert.match(retention, /NOT EXISTS \(\s+SELECT 1 FROM classpilot_session_reports AS report/);
