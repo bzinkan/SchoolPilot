@@ -6,7 +6,7 @@ This document turns the product owner's eight-phase master plan into a sequence 
 
 The master plan also sets three standing prohibitions: do not implement the roadmap in one PR, do not deploy production infrastructure or publish a Chrome Web Store extension automatically, and do not permanently destroy legacy TURN resources during the cost-reduction phase.
 
-Line references are to SchoolPilot `origin/main` at `a811b04d` and ClassPilot `origin/main` at `55bb531` (extension 2.9.6). They drift; re-locate each anchor by symbol before editing. A PR that changes a status row in this document updates it in the same PR.
+Historical line references below are to SchoolPilot `a811b04d` and ClassPilot `55bb531`. The continuation baseline was rechecked on 2026-09-30: SchoolPilot `60f33db` and ClassPilot `55bb531` (repository manifest 2.9.6, an unsubmitted candidate). Re-locate anchors by symbol before editing. Repository versions do not establish the live Chrome Web Store version. A PR that changes a status row updates it in this document.
 
 ## Product model
 
@@ -90,12 +90,12 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 | Phase | Master plan name | PRs | Status |
 |---|---|---|---|
 | 0 | Current-state audit + legacy TURN cost reduction | PR 0, PR 0A, operational stop | Parking shipped (#541) and applied; audit merged in #549; PR 0A hardening merged in #551, not deployed as of merge |
-| 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Merged in #547, #552 and #553; flag off, not deployed |
-| 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, ClassPilot 2.10.0 | PR 2-pre merged in #550 and PR 2 in #555, capability off and not deployed; matcher hardening follow-up open; PR 3–4 next plan cycle |
-| 3 | Focus Tab + Bring Forward | PR 5, ClassPilot 2.10.0 | Extension contract defined; server PR next plan cycle |
+| 1 | Shared Flight Paths + Block Lists | PR 1-pre, PR 1a, PR 1 | Merged in #547, #552 and #553; default off; current deployment/activation UNKNOWN |
+| 2 | Precise Restriction Engine for Waypoints + Flight Paths | PR 2-pre, PR 2, PR 3, PR 4, coordinated extension candidate | #550, #555 and matcher/clear hardening #559 merged; residual scope previews, warnings and Classroom import selection remain; browser enforcement is missing; current production state UNKNOWN |
+| 3 | Focus Tab + Bring Forward | PR 5, coordinated extension candidate | Section 12 of the precise contract is PROVISIONAL; finalize the server contract before extension Focus implementation |
 | 4 | Google Classroom Assignment -> Open / Open + Focus / Open as Lesson | PR 6 | Next plan cycle |
-| 5 | PassPilot Rules + Appointments + Expanded Analytics | PR 7, PR 8, PR 9 | PR 7 merged in #554, mode off and not deployed; PR 8–9 outlined |
-| 6 | Digital Usage / Monitored Browser-Time Analytics | PR 10a, PR 10b, PR 11 | PR 10a merged in #548 and PR 10b in #556, modes off and not deployed; PR 11 outlined |
+| 5 | PassPilot Rules + Appointments + Expanded Analytics | PR 7, PR 8, PR 9 | Rules #554 merged, confidentiality correction required; appointments/reports missing; default off; production UNKNOWN |
+| 6 | Digital Usage / Monitored Browser-Time Analytics | PR 10a, PR 10b, PR 11 | #548/#556 merged; coverage/cursor corrections, dedicated page and load evidence required; production UNKNOWN |
 | 7 | Present to Class using a NEW SFU-based architecture | PR 12–18 | Waits for the PR 12 ADR decision |
 | 8 | Final cleanup/decommission of retired Live View + legacy TURN infrastructure | PR 19–21, operational destroy | Not started; blocked on Phase 7 |
 
@@ -114,12 +114,12 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 ### Phase 2 — Precise restriction engine for Waypoints and Flight Paths
 
 - One restriction-resource model (`AllowedResource`: website, section or resource) serves Waypoints and Flight Paths. Teachers never see raw regex configuration.
-- A Waypoint contains exactly one destination. Entire Website stays the default. "This resource only" keeps the student in the selected activity without general access to the rest of the domain. "This section" is an optional later choice.
+- A Waypoint contains exactly one destination. Entire Website stays the default. "This resource only" uses the canonical provider identity; the generic-page adapter creates a section that includes descendants, not a literal exact page. Show the normalized scope before application.
 - A Flight Path contains one or more allowed resources, and the student may move among all of them.
 - Provider-aware resource identity for YouTube videos, Google Docs, Forms and Slides, and Google Classroom assignments or materials where practical. `youtube.com/watch?v=ABC123` and `youtube.com/watch?v=ABC123&t=90` are the same resource; another video ID is not allowed.
 - Enforcement restricts top-level (main-frame) navigation and leaves page subresources alone, using Chrome `declarativeNetRequest` and `webNavigation`.
 - Google and Clever authentication pass-through stays tightly scoped and never becomes a general browsing exemption.
-- Master plan precedence, approximately: Attention > School blocks > Teacher Block List > Waypoint / Flight Path > approved temporary authentication pass-through. Teacher allows never override administrator blocks. The wave-1 extension contract keeps today's DNR order, which places the tightly scoped authentication pass-through above the Waypoint so a restricted student can finish an approved sign-in (see "ClassPilot 2.10.0").
+- Use the normative pairwise precedence table in `CLASSPILOT_PRECISE_RESTRICTIONS_CONTRACT.md`, including conditional temporary allows and the Waypoint overlay over a retained Flight Path. Approved authentication may pass a Waypoint while school and teacher blocks remain authoritative. Do not implement an approximate hierarchy from this roadmap.
 - Capability `preciseRestrictionResourcesV1`. Website restrictions keep working on older compatible clients. A section or resource restriction for a client without the capability fails closed with an honest unsupported-client outcome; one YouTube video is never converted into all of youtube.com.
 - The exact wire contract is defined by PR 2 in `src/services/restrictionResources.ts` with a shared case file, `tests/fixtures/restriction-resource-matcher-cases.json`, whose SHA is pinned in both repositories.
 
@@ -141,7 +141,7 @@ The master plan's phases, with the PRs that implement them. Status is as of 2026
 
 - Current PassPilot behavior is preserved.
 - Rules: student maximum passes per day and per period or class window; per-destination policy (bathroom capacity, expected duration, optional auto approval; separate nurse and office policies); encounter rules that stop configured student pairs from holding overlapping active passes. The issuance transaction evaluates active pass, daily limit, period limit, destination capacity and encounter restriction atomically, without race conditions.
-- Appointments: scheduled appointment passes (for example, Student, Counselor, 1:15 PM) with school, student, destination, scheduled time, requesting staff, reason or notes, notification lead, status and timestamps. An upcoming appointment can notify the teacher or student. An appointment does not mark the student out of class before activation.
+- Appointments: one-time, staff-managed appointments with explicit earliest/latest departure times. Existing PassPilot managers create/edit/cancel scheduled appointments; currently authorized teachers activate manually. Staff reminders appear inside PassPilot when the window opens, independently of lifecycle state. Student/kiosk reminders, recurrence and automatic issuance are deferred. Activation rechecks eligibility and atomically links one canonical pass; unused appointments become missed at the latest departure time. Returning the linked pass completes the appointment; overdue passes remain open.
 - Analytics: passes per student, average and (where useful) median duration, overdue percentage, busiest periods and destinations, capacity denials, rule denials and appointment completion. No stigmatizing labels such as "problem student" or "frequent flyer"; write "12 passes this week".
 - Wave-1 scope for PR 7: destination capacity, default and per-student daily and period limits, encounter restrictions, and an override for admin roles only. Auto approval stays unenforced and unsurfaced (Decision 6).
 
@@ -228,11 +228,11 @@ The master plan's PR list, plus five wave-1 additions (marked). Lane letters ref
 |---|---|---|
 | 0 | PR 0 docs, PR 0A hardening, PR 1a activation tool | PR 0A merges after the two 2026-09-29 operational applies (both done; see "Phase 0 and 0A status") |
 | A | PR 1-pre, PR 1, PR 2-pre, PR 2, then PR 3/4/5/6 + ClassPilot 2.10.0 | PR 1 before PR 2 (PR 2 edits PR 1's files). PR 2 and PR 3 edit the runtime-config tool, so they merge only after the `live-view-retire` apply (Plan and Apply must share a tool SHA); that apply ran on 2026-09-29 |
-| B | PR 7 → PR 8 → PR 9; PR 10a → ops → PR 10b → ops → PR 11 | The RLS inventory chain is serialized: each new-table PR re-points `infra/main.tf` (`rls_post_expand_tables`), `rlsPolicies.ts` `currentInventory` and the registry tests to its own inventory, in merge order (PR 7, PR 10b, PR 8) |
+| B | Corrective usage PR → appointments → reports; usage page after corrected API | Serialize each new-table inventory onto current main. Operational shadow/observation gates govern activation; they do not block synthetic page development. |
 | C | PR 12 ADR, then PR 13–18 | Brian's ADR decision first |
 | D | PR 19–21 | Only after Lane C is live and independent |
 
-Wave-1 merge order (2026-09-29 and 2026-09-30): #547 → #548 → #550 → #549 → #551 → #552 → #553 → #554 → #556 → #557 (the `engine.io` security fix) → #555. What remains is the PR 2 matcher hardening follow-up and the activation sequence in "Wave-1 status".
+Wave 1, including matcher/clear follow-up #559 and deployment clarification #558, is merged. The continuation gap matrix below records the remaining code and operational evidence. Historical labels such as "PR 3" are roadmap slices; they are not GitHub PR numbers.
 
 ### Hard ordering constraints
 
@@ -242,7 +242,7 @@ Wave-1 merge order (2026-09-29 and 2026-09-30): #547 → #548 → #550 → #549 
 4. PR 2-pre (#550) and PR 2 (#555) reached `main` together, and `scripts/deploy.sh` deploys only `origin/main`, so no separate PR 2-pre image will exist. The fence matters only once precise state exists. Never activate `preciseRestrictionResourcesV1` until the serving image and the image a rollback would return to both contain #550, which takes at least one more deploy after the first image that ships it. After the capability has been active, never roll an image back below #550.
 5. Server before extension. ClassPilot 2.10.0 ships only after server PRs 2, 3, 4 and 5 are deployed with their capabilities off.
 6. Lane B new-table PRs merge in the order PR 7, PR 10b, PR 8, each chaining its RLS inventory onto the previous one.
-7. Activation order, not merge order: the daily rollup is promoted only after three clean shadow school days on the PR 10a build; `classpilot_usage_rollups` is then admitted and `CLASSPILOT_USAGE_ROLLUP_MODE` turned on; PR 11 waits for one observed day of rollups. PR 10b's code merged with both modes off, so merging it activated nothing.
+7. Activation order, not implementation order: daily rollup promotion requires three clean shadow school days on the relevant build. Corrected usage aggregation requires both aggregate and completion admission, followed by one observed school day before reporting activation. PR 11 may be built/tested against corrected synthetic fixtures beforehand.
 8. Lane C starts with the PR 12 ADR decision. Lane D starts only after Present to Class runs on its own media stack.
 9. A feature rollout and a destructive legacy removal never share a deployment.
 
@@ -265,7 +265,7 @@ All new capabilities default off and are negotiated, never inferred from an exte
 | Capability | PRs | State | Kill switch | Set in production by |
 |---|---|---|---|---|
 | `preciseRestrictionResourcesV1` | PR 2 (server), PR 3 and PR 4 (enforcement), ClassPilot 2.10.0 (extension) | Designed in wave 1 | `CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1` plus a registry entry | `scripts/deploy-classpilot-runtime-config.ps1`, pilot and off profiles in the existing `<name>-pilot` / `<name>-off` pattern (`precise-restriction-resources-off` is the rollback profile) |
-| `focusTabV1` | PR 5 (server), ClassPilot 2.10.0 (extension) | Extension contract defined; server design in the next plan cycle | Named when PR 5 is planned (existing convention `CLASSPILOT_CAP_<NAME>`) | `scripts/deploy-classpilot-runtime-config.ps1` |
+| `focusTabV1` | PR 5 (server), coordinated extension candidate | PROVISIONAL; final server/ACK/lifecycle contract required first | Named in the final server PR (existing convention `CLASSPILOT_CAP_<NAME>`) | `scripts/deploy-classpilot-runtime-config.ps1` |
 | `classroomAssignmentLaunchV1` | PR 6 | RESERVED, UNDESIGNED. Suggested by the master plan; no design yet decides whether PR 6 needs its own extension capability | None | None |
 | `teacherPresentationV1` | PR 13–16 | Not designed; waits for the PR 12 ADR (Decision 8). Never reuses `liveViewIceServersV1` | Decided with the design | Decided with the design |
 
@@ -370,11 +370,11 @@ These decisions were taken for wave 1 on 2026-09-29. Flipping one needs an expli
 5. Wave-1 production flags are flipped only through the new governed script (PR 1a); no Terraform seed vars are added (deploy.sh renders from serving revisions).
 6. Auto-approval (`kioskRequiresApproval`) stays unenforced and unsurfaced in wave 1.
 7. PR 10 is split into 10a (hardening) and 10b (new table + API), and daily-rollup promotion needs three clean shadow days.
-8. Present to Class: no design work until the PR 12 ADR is decided.
+8. Present to Class: the 2026-09-30 continuation authorizes the hosting/security/cost ADR for Brian's decision. Media implementation, provisioning and spending remain blocked until that decision is approved.
 
-## ClassPilot 2.10.0
+## Coordinated ClassPilot extension candidate (2.10.0 provisional)
 
-Extension work for Phases 2 and 3 ships as one ClassPilot release, 2.10.0, after server PRs 2–5 are deployed. The extension specialist owns the implementation in the ClassPilot repository. Contract summary:
+Extension work for Phases 2 and 3 ships as one ClassPilot release after its server contracts are available and acceptance passes. `2.10.0` is a provisional target, not a live-version claim. Verify the current Store listing and release history before choosing the successor, and again immediately before a separately authorized upload. Existing precise-pilot evidence fields remain unbound until actual evidence exists. Contract summary:
 
 - **Capabilities.** Append `preciseRestrictionResourcesV1` and `focusTabV1` to `EXTENSION_CAPABILITIES` and `SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES`; use them only when negotiated. Version 2.10.0 in the manifest and the release pins, a new `CLASSPILOT_2_10_0_RELEASE.md`, and `SCHEDULED_CLASSROOM_PROTOCOL.md` sections for the new fields.
 - **Restriction fields.** `restrictions.flightPath.resources`, `restrictions.screenLock.resource` and `restrictions.focus`, parsed with a verbatim port of PR 2's normalizer and matcher and asserted against the shared case file.
@@ -386,14 +386,14 @@ Extension work for Phases 2 and 3 ships as one ClassPilot release, 2.10.0, after
 
 ## Present to Class direction
 
-- **ADR first.** PR 12 writes `docs/TEACHER_PRESENT_ARCHITECTURE.md`. Nothing is deployed during ADR work, and no Present to Class design work starts until Brian decides the ADR (Decision 8).
-- **Options compared.** The master plan asks the ADR to evaluate self-hosted LiveKit in AWS primarily (EC2 versus ECS, UDP networking, public IPs, Redis, room model, authentication, metrics, horizontal scaling, updates, failure handling, cost, TURN/TLS and managed-Chromebook compatibility). The 2026-09-29 assessment makes a managed SFU the default unless the ADR proves otherwise. The ADR compares three options: LiveKit Cloud (managed), self-hosted LiveKit in AWS, and an S3/CloudFront frame-relay MVP.
+- **ADR first.** PR 12 writes `docs/TEACHER_PRESENT_ARCHITECTURE.md` for a hosting/security/cost decision. No media implementation, provisioning or spending starts until Brian approves it (Decision 8).
+- **Options compared.** Compare LiveKit Cloud and self-hosted LiveKit in AWS using dated official prices, participant minutes, outbound data, idle resources, TURN/TLS, revocation and operating effort. The continuation evaluates managed SFU first; Brian must approve hosting, privacy and budget before implementation or provisioning. An S3/CloudFront frame relay does not satisfy the selected SFU topology.
 - **TURN for the new SFU.** Client-to-SFU over WebRTC/UDP is preferred, with TURN/TLS as the fallback for restrictive school networks. TURN is not the fan-out system; the SFU distributes media. The default direction is the TURN capability integrated with the new LiveKit/SFU stack (UDP, TCP fallback, TURN/TLS, port 443 where appropriate, short-lived access, reliable Chromebook behavior). Reusing the parked legacy coturn nodes is considered only if it shows a clear reliability, operational or meaningful cost advantage. The parked coturn nodes are never restarted because the new feature needs TURN.
 - **Privacy.** Live only, no recording, no media in PostgreSQL, Redis, S3 or logs. The current Live View and TURN wording on the legal pages (`PrivacyPolicy.jsx`, `TermsOfService.jsx`, `Subprocessors.jsx`) is reviewed in the PR 12 privacy review, not in Lane 0.
 
 ## Wave-1 status (2026-09-30)
 
-All wave-1 pull requests are merged to `main`, and none is deployed. Every new mode and capability is off, so merging changed no production behavior. Each activation below is a separate, reviewed step.
+All wave-1 pull requests are merged to `main`. The rows below preserve readiness recorded at merge, not current production evidence. No current production deployment or activation was verified in this continuation: both are UNKNOWN. Default-off repository settings and green CI do not establish serving configuration. Each operational activation remains a separate reviewed step.
 
 | PR | GitHub | What it adds | Readiness at merge |
 |---|---|---|---|
@@ -408,20 +408,41 @@ All wave-1 pull requests are merged to `main`, and none is deployed. Every new m
 | PR 10a | #548 | Shadow-safe hardening of the daily usage rollup | AUTOMATED-TEST VERIFIED |
 | PR 10b | #556 | `classpilot_usage_rollups` and the administrator Monitored Browser Time API | AUTOMATED-TEST VERIFIED; not LOAD VERIFIED |
 | Security | #557 | `engine.io` 6.6.11 for GHSA-2gc4-cqfq-p2gv | CI |
+| Matcher follow-up | #559 | YouTube parameter/path and escape hardening; service-bound rollback clear | Merged; AUTOMATED-TEST VERIFIED |
+| Deployment clarification | #558 | Backend/frontend release and independent activation order | Merged; IMPLEMENTED (docs) |
 
-One follow-up is open: hardening of the PR 2 matcher (YouTube player parameter values, overlong and fullwidth escapes below and inside section prefixes, provider path tails, the clear CLI's service binding). It changes the shared case file, so it merges before ClassPilot pins the case-file SHA-256.
+The matcher follow-up is merged in #559. The canonical shared fixture SHA-256 is `4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243`; ClassPilot must pin and exercise this exact fixture.
+
+### Continuation gap matrix (2026-09-30)
+
+Labels below are work slices, not GitHub PR numbers. New PRs record their actual number and evidence when created.
+
+| Slice | Source evidence / gap | Dependency and next change |
+|---|---|---|
+| C1 confidentiality | `withoutNullRuleOverride` preserves a non-null encounter override on shared pass DTOs | Correct all public reads/exports regardless of Rules mode; retain administrator audit access before Rules activation |
+| C2 usage correctness | `getClasspilotDigitalUsage` fills missing days as final zeros; `rollupClasspilotUsageDay` refreshes from `computed_at` | Atomic daily completion ledger, processed cutoff, unavailable-date API/consumer contract, new RLS admission and compatible-writer gate before usage activation |
+| W2 precise UI | `Dashboard` wording, `MySettings` previews/warnings, `ClassroomWebsiteImport` boundary selection | Reuse existing resource persistence and normalizer; do not rebuild wave 1 |
+| W2 browser enforcement | ClassPilot main lacks `preciseRestrictionResourcesV1` enforcement | Implement against final #555/#559 contract; preserve valid policy on failure; package tests and two managed devices |
+| W2 Focus contract | Strict command parser, dispatcher and control snapshots lack exact-tab Focus/activate commands | Final server contract, per-student projection, validated dependent open ACKs and capability/tool/lifecycle parity before extension Focus |
+| W2 Classroom actions | Existing OAuth/import helpers exist; launch sequencing is missing | Reviewed resource draft, confirmed restriction before Open, exact Open ACK before Focus, per-student outcomes |
+| W2 appointments | Governed mode name exists; appointment schema/API/UI do not | Canonical atomic issuance first; staff-only reminders and manager/teacher interfaces second |
+| W2 reports | Existing paginated history and browser Reports tab lack scoped server aggregates | Stabilize appointment outcomes; raw valid durations, factual denominators, audited formula-safe exports and governed Reports v2 mode |
+| W2 usage page/load | Rollup/API exist; dedicated administrator page and measured load are missing | C2 contract first; synthetic UI/load development independent of operational soak |
+| W2 SFU ADR | No approved presentation hosting/security/budget decision | `TEACHER_PRESENT_ARCHITECTURE.md` recommendation only; no media implementation before approval |
+
+After C1/C2 pass review, advance browser, staff-workflow and reporting lanes in parallel. Give shared schema/RLS/protocol/runtime-tool edits one owner at a time. Use isolated fresh-main worktrees; preserve unrelated draft Observe work. The release checklist is `REMAINING_ROADMAP_RELEASE_CHECKLIST.md`.
 
 ### Activation sequence (not started)
 
 Every step respects the AWS cost rollout's windows: no production `scripts/deploy.sh` run or runtime-config apply from Wednesday evening through Thursday evening, 2026-09-30 to 2026-10-01.
 
 1. Deploy current `main`, backend then frontend, with every new mode off. This ships the Live View signaling gate, the assistant fix, the precise-restriction fence and every new migration.
-2. Admit the new RLS bundles in chain order, each with its own `scripts/deploy.sh production --backend --enable-rls-table <tables>` run: `passpilotRules` (four tables, 125 in total) before `classpilotUsageRollups` (126). The modes stay off.
+2. Reconcile the actual live RLS inventory, then admit only missing reviewed bundles in chain order: Rules before existing usage aggregates, followed by the new usage completion ledger and later appointment admission. Preserve historical 125/126 inventories; do not use them as an assumed live baseline or rerun already-admitted bundles. Modes stay off.
 3. Daily usage rollup: after three clean shadow school days on that build (rows with `mode = shadow` only; the query is in `SCALE_READINESS.md`), promote `CLASSPILOT_DAILY_USAGE_ROLLUP_MODE` with the PR 1a tool.
-4. Digital Usage: turn `CLASSPILOT_USAGE_ROLLUP_MODE` on with the PR 1a tool, observe one school day of `classpilot_usage_rollup` logs, then turn `CLASSPILOT_DIGITAL_USAGE_MODE` on. PR 11 builds the administrator page after that.
-5. PassPilot rules: turn `PASSPILOT_RULES_MODE` on with the PR 1a tool.
+4. Digital Usage: only corrected compatible writers/readers with complete RLS admission may run. Turn rollup mode on with the governed product tool, observe one school day on that deployed build, then consider Digital Usage activation. Build and test the administrator page with synthetic fixtures before this operational gate if useful.
+5. PassPilot rules: C1 confidentiality regression tests must pass before activating Rules through the product tool.
 6. School Library: turn `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE` on with the PR 1a tool, optionally limited to a pilot school through `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS`.
-7. Precise restrictions: nothing before ClassPilot 2.10.0. The precise pilot profile stays refused until the 2.10.0 package evidence is bound, and until the serving image and its rollback target both contain #550 (constraint 4).
+7. Precise restrictions and Focus: require exact packaged evidence and two managed-Chromebook acceptance records. Bind the governed pilot profiles only after the chosen candidate passes. Precise serving and approved rollback images must both contain #550; rollback follows disable, clear incompatible state, then compatible image. No upload or activation is authorized by this checklist.
 
 ## Phase 0 and 0A status (2026-09-29 evening)
 
