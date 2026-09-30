@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { assertLocalScaleFixture, currentObservationSeconds } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, measureCall } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
 const local = { USAGE_LOCAL_SCALE: '1', NODE_ENV: 'test', USAGE_SCALE_CONTAINER: `schoolpilot-usage-scale-${run}`,
@@ -29,4 +29,19 @@ test('dedicated runner verifies exact loopback port, caps and cleanup ownership 
   assert.match(script, /docker rm --force --volumes \$container/);
   assert.doesNotMatch(script, /docker (?:rm|stop|update).*schoolpilot-db/);
   assert.match(script, /Choose an external evidence directory/);
+});
+
+test('API timing preserves both pg overloads, returned values and failures', async () => {
+  const records = [], expectedError = new Error('synthetic');
+  const client = { query(...args) {
+    const callback = args.at(-1), error = args[0] === 'fail' ? expectedError : undefined;
+    if (typeof callback === 'function') { queueMicrotask(() => callback(error, 'callback-value')); return 'query-object'; }
+    return error ? Promise.reject(error) : Promise.resolve('promise-value');
+  } };
+  measureCall(client, 'query', (duration, error) => records.push({ duration, error }));
+  assert.equal(await client.query('ok'), 'promise-value');
+  await assert.rejects(client.query('fail'), error => error === expectedError);
+  await new Promise(done => assert.equal(client.query('ok', (error, value) => { assert.equal(error, undefined); assert.equal(value, 'callback-value'); done(); }), 'query-object'));
+  assert.equal(records.length, 3); assert.ok(records.every(row => row.duration >= 0));
+  assert.equal(records[1].error, expectedError);
 });

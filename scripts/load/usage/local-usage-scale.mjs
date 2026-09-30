@@ -43,6 +43,24 @@ export function currentObservationSeconds(rows, cutoff) {
   }));
 }
 
+// Preserve pg's callback and Promise overloads while measuring actual API SQL
+// and checkout time. Never retain statement text, parameters or credentials.
+export function measureCall(target, name, record) {
+  const original = target[name].bind(target);
+  target[name] = (...args) => {
+    const started = performance.now();
+    const done = error => record(performance.now() - started, error, args[0]);
+    const callbackIndex = args.length - 1;
+    if (typeof args[callbackIndex] === 'function') {
+      const callback = args[callbackIndex];
+      args[callbackIndex] = (...values) => { done(values[0]); callback(...values); };
+      try { return original(...args); } catch (error) { done(error); throw error; }
+    }
+    try { return original(...args).then(value => { done(); return value; }, error => { done(error); throw error; }); }
+    catch (error) { done(error); throw error; }
+  };
+}
+
 export async function runLocalScale() {
   assertLocalScaleFixture(process.env);
   const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -55,12 +73,13 @@ export async function runLocalScale() {
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
     sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-usage-scale.mjs'].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
-    writerQueries: [], reads: {}, ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
+    writerQueries: [], reads: {}, apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
+    ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
   assert.match(metrics.sourceRevision, /^[a-f0-9]{40}$/);
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
   const admin = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 120_000 });
   const worker = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 10_000, statement_timeout: 60_000, options: '-c app.is_super=on' });
-  let server, appPool, sessionPool, sampler, ingestRunning = false, ingestion = [], readTimings, phaseStarted;
+  let server, appPool, sessionPool, sampler, ingestRunning = false, ingestion = [], readTimings, phaseStarted, concurrentMeasurement = false;
   const wrapped = new WeakSet(), connect = worker.connect.bind(worker);
   const measuredWorker = { connect: async () => {
     const client = await connect();
@@ -85,6 +104,17 @@ export async function runLocalScale() {
     const time = await import('../../../dist/util/schoolTime.js');
     const { createApp } = await import('../../../dist/app.js');
     ({ pool: appPool, sessionPool } = await import('../../../dist/db.js'));
+    const record = (target, durationMs, error) => {
+      if (!concurrentMeasurement) return;
+      target.count++; target.maxMs = Math.max(target.maxMs, durationMs); if (error) target.failures++;
+    };
+    measureCall(appPool, 'connect', (durationMs, error) => record(metrics.apiDatabase.acquisitions, durationMs, error));
+    appPool.on('connect', client => measureCall(client, 'query', (durationMs, error, input) => {
+      const text = typeof input === 'string' ? input : input?.text || '';
+      const kind = text.includes('GROUPING SETS') ? 'usageReport' : 'other';
+      const target = metrics.apiDatabase.statements[kind] ??= { count: 0, failures: 0, maxMs: 0 };
+      record(target, durationMs, error);
+    }));
     const { signUserToken } = await import('../../../dist/services/jwt.js');
     const { createStudentToken } = await import('../../../dist/services/deviceJwt.js');
     const { flushHeartbeatClassificationBatches } = await import('../../../dist/services/heartbeatClassificationBatcher.js');
@@ -205,7 +235,7 @@ export async function runLocalScale() {
     metrics.poolMax = { api: appPool.options.max, worker: worker.options.max, apiWaitingPeak: 0, workerWaitingPeak: 0 };
     sampler = setInterval(() => { metrics.peakRssBytes = Math.max(metrics.peakRssBytes, process.memoryUsage().rss); metrics.poolMax.apiWaitingPeak = Math.max(metrics.poolMax.apiWaitingPeak, appPool.waitingCount); metrics.poolMax.workerWaitingPeak = Math.max(metrics.poolMax.workerWaitingPeak, worker.waitingCount); }, 20); sampler.unref();
     const beforeStats = (await admin.query('SELECT temp_bytes,temp_files,blks_read,blks_hit FROM pg_stat_database WHERE datname=current_database()')).rows[0];
-    const started = performance.now(), ingestDeadline = started + 60_000; phaseStarted = started; ingestRunning = true; let nextDevice = 1;
+    const started = performance.now(), ingestDeadline = started + 60_000; phaseStarted = started; ingestRunning = true; concurrentMeasurement = true; let nextDevice = 1;
     ingestion = Array.from({ length: 4 }, async () => {
       while (ingestRunning && performance.now() < ingestDeadline) {
         const sequence = nextDevice++; await ingestOne(schools[sequence % 2], Math.floor(sequence / 2) % 500); await sleep(50);
@@ -230,7 +260,7 @@ export async function runLocalScale() {
       }
     })();
     const outcomes = await Promise.allSettled([...writes, readers, ...ingestion]);
-    ingestRunning = false;
+    ingestRunning = false; concurrentMeasurement = false;
     metrics.concurrentPhaseMs = performance.now() - started;
     metrics.reads = Object.fromEntries([...readTimings].filter(([, timings]) => timings.length).map(([key, timings]) => [key, summarize(timings)]));
     metrics.phaseOutcomes = outcomes.map((outcome, index) => ({ kind: index < 2 ? 'writer' : index === 2 ? 'read_waves' : 'ingest', status: outcome.status,
