@@ -1,6 +1,7 @@
 # Remaining-roadmap release preparation
 
-Status: preparation only, 2026-09-30. No deployment, activation, Store upload,
+Status: preparation only, scope dated 2026-09-30; final local evidence through
+2026-10-01 UTC. No deployment, activation, Store upload,
 paid service creation or legacy resource deletion is authorized by this document.
 The canonical scope and gap matrix remain in `SCHOOLPILOT_COMPETITIVE_ROADMAP.md`.
 
@@ -44,30 +45,119 @@ checks before review.
 | Classroom | [revision/prerequisite backend #582](https://github.com/bzinkan/SchoolPilot/pull/582), [integrated actions #577](https://github.com/bzinkan/SchoolPilot/pull/577) | Actual interface-to-HTTP/acknowledgement test proves only confirmed students open a lesson; migration is additive and append-only. |
 | Appointments | [API #570](https://github.com/bzinkan/SchoolPilot/pull/570), [eligibility races #573](https://github.com/bzinkan/SchoolPilot/pull/573), [school year #574](https://github.com/bzinkan/SchoolPilot/pull/574), [staff interface #579](https://github.com/bzinkan/SchoolPilot/pull/579) | Admission and source-matched writer v2 before activation; configured calendar, atomic issuance and staff-only reminders. |
 | Reports | [aggregates/audited CSV #583](https://github.com/bzinkan/SchoolPilot/pull/583), [staff interface #584](https://github.com/bzinkan/SchoolPilot/pull/584) | Authority-fence v1 is mandatory even on wire-version-2 images; changed class/roster/student/membership snapshots fail before data or export audit. Backend owns denominators and historical scope. |
-| Usage | [administrator page #568](https://github.com/bzinkan/SchoolPilot/pull/568), [initial synthetic load #569](https://github.com/bzinkan/SchoolPilot/pull/569) | Expanded bounded profiles supplement the initial result; record successful school-day capacity and failed stress limits separately. |
+| Usage | [administrator page #568](https://github.com/bzinkan/SchoolPilot/pull/568), [initial synthetic load #569](https://github.com/bzinkan/SchoolPilot/pull/569), [equivalent query improvements #586](https://github.com/bzinkan/SchoolPilot/pull/586), [bounded school-day profiles #591](https://github.com/bzinkan/SchoolPilot/pull/591), [canonical assignment fixtures #592](https://github.com/bzinkan/SchoolPilot/pull/592) | Expanded bounded profiles supplement the initial result; retain each measured source and workload, including failed stress limits and failed repeats. Current-schema fixtures preserve primary staff-assignment constraints. |
 | SFU decision | [dated hosting/privacy/cost ADR #561](https://github.com/bzinkan/SchoolPilot/pull/561) | Proposed managed-service cap is unapproved; no media implementation or provisioning. |
-| Verification fixtures | [browser teardown #576](https://github.com/bzinkan/SchoolPilot/pull/576), [fixed metrics clock #581](https://github.com/bzinkan/SchoolPilot/pull/581) | Drain held requests and avoid minute-boundary counter flush; preserve actual browser/HTTP assertions. |
+| Verification and browser usability | [browser teardown #576](https://github.com/bzinkan/SchoolPilot/pull/576), [fixed metrics clock #581](https://github.com/bzinkan/SchoolPilot/pull/581), [appointment reminder bounds #585](https://github.com/bzinkan/SchoolPilot/pull/585), [active schedule clock #587](https://github.com/bzinkan/SchoolPilot/pull/587), [native capture phase #588](https://github.com/bzinkan/SchoolPilot/pull/588), [responsive Class tools/actual browser readiness #589](https://github.com/bzinkan/SchoolPilot/pull/589), [load-harness startup/cohort fixture #590](https://github.com/bzinkan/SchoolPilot/pull/590), [concurrent device creation #593](https://github.com/bzinkan/SchoolPilot/pull/593), [retained-root auth fixtures #594](https://github.com/bzinkan/SchoolPilot/pull/594) | Preserve authority, pixel, workload and threshold assertions; distinguish test timing corrections from the real narrow-drawer usability fix and exact database-conflict recovery. Current-schema cleanup preserves school/staff roots and primary assignments. |
 
 The separate ClassPilot stack is [precise enforcement #119](https://github.com/bzinkan/ClassPilot/pull/119),
 [Focus #120](https://github.com/bzinkan/ClassPilot/pull/120), then
 [local 2.10.0 candidate #121](https://github.com/bzinkan/ClassPilot/pull/121).
 Publication, managed-device acceptance and capability activation are distinct.
 
-Expanded usage measurements must retain their workload cardinalities. The valid
-extreme fixture produces 500,000 aggregate grains per school from repeated
-20-second domain changes and ten short sessions; both initial writes exceed the
-existing 60-second limit and roll back aggregates and completion. Report checks
-on that bounded fixture passed all 64 requests, with a 4.55-second maximum usage
-query under the 15-second API limit. These results do not establish successful
-stress writing. A separately named one-million-observation school-day fixture
-uses the actual 10-second heartbeat cadence, six lessons, passing windows and
-200 school-wide domains. Its result must be recorded independently, preserving
-all failed evidence and existing resource/timeout/constraint limits. Its first
-bounded run also failed: 84,000 aggregate grains per school exceeded the worker
-timeout; concurrent reporting had seven HTTP failures. Consequently neither
-expanded profile satisfies capacity acceptance. Measured query improvements
-and any later results need their own exact-source evidence; no timeout,
-constraint or infrastructure increase may substitute for this acceptance.
+The combined SchoolPilot verification branch is
+[`codex/remaining-roadmap-integration` at `954685aeec179bb143b0c65372d30e70ffceca1a`](https://github.com/bzinkan/SchoolPilot/tree/954685aeec179bb143b0c65372d30e70ffceca1a).
+It preserves the independent draft slices; it is not a merge or deployment
+instruction. Backend/frontend builds and application type checks passed at
+`9758a546`; later backend commits change fixtures and CI only. Unit tests passed at
+`9940bf51`: 1,653 passes and four existing skips, with unchanged test-type/cast
+ratchets. All 122 shard-1 release-focused checks passed at `02fddfe7`. The final
+frontend amendment corrects held Usage CSV cancellation after a current access
+denial or context change: both 403/409 baseline probes downloaded the old CSV,
+while the corrected 21-case Usage suite and 19 administrator checks pass on
+`c97c4403`, including actual native request aborts and authorized recovery. The
+final frontend build passes; lint retains zero errors and 32 existing warnings.
+The later test-only amendment proves actual 401 login navigation destroys the
+old export document and prevents a download after draining its response. It
+passes on `954685ae`; mounted 403/409 cases retain strict native abort assertions.
+The original CI failure of the old-document network-event assertion is preserved;
+its absence was not reproduced locally and is not claimed as a product failure.
+API/query/schema/workload source hashes are unchanged from the measured
+`cc7b3b05` build. The 21 pure workload
+guards also pass. Frontend lint has zero errors and 32 existing
+warnings. On the complete current 128-table schema, all 35 native authentication
+and recovery cases passed, including 48 concurrent writer rounds and all cleanup
+hooks, with no skips. That authentication fixture runs with privileged database
+access; tenant-isolation evidence remains the separate restricted-role suites.
+The measured combined workload and per-command source/log hashes are recorded
+in the [structured release index](release-evidence/schoolpilot-remaining-roadmap-20260930.json).
+Its CI snapshot is dated: pending checks at capture are not passes. Later
+exact-head outcomes are recorded in each PR, including this documentation PR;
+do not transfer a prior head's CI or load result to amended source.
+
+The exact local ClassPilot 2.10.0 candidate at
+`b187af42d97f63eff31da9a1c9cf7535f853bb6f` passed Node 24.19.0 type checking,
+199 unit tests, the full source/native browser chain, 20 expected old-release
+regressions, and the exact packaged verifier. The retained ZIP has 24 verified
+files, 363,097 bytes and SHA-256
+`84808cfc8b900d0fe29f2e682f4211c84510bff72afcf3e969b4b8794c94557e`.
+The later candidate documentation commit changes no extension/script bytes.
+[Structured evidence and log hashes](https://github.com/bzinkan/ClassPilot/blob/codex/precise-focus-release/docs/release-evidence/classpilot-2.10.0-candidate-20260930.json)
+and the [exact-artifact device checklist](https://github.com/bzinkan/ClassPilot/blob/codex/precise-focus-release/docs/CLASS_PILOT_2_10_CANDIDATE.md)
+preserve the local evidence and pending device gate. Subsequent exact-head CI
+at documentation commit `3a9ece517d521632f1accbb5a51ff3fcf1934162` passed all ten
+checks across the [push run](https://github.com/bzinkan/ClassPilot/actions/runs/36796822346)
+and [PR run](https://github.com/bzinkan/ClassPilot/actions/runs/36796826297),
+including Chrome 120/133/152/stable. Chrome/151 local managed-mode simulations
+remain separate from two Google Admin-managed Chromebook acceptance records.
+
+Expanded usage measurements retain their exact workload cardinalities and
+failed evidence. The extreme fixture produces 500,000 aggregate grains per
+school from repeated 20-second domain changes and ten short sessions. Its
+measured writes exceeded the existing 60-second limit and rolled back both
+aggregates and completion. Improved reporting passed all 64 requests on that
+fixture, with a 4.55-second maximum usage query under the 15-second API limit;
+successful extreme-profile writing remains unverified.
+
+The separate school-day fixture uses one million unique observations per school
+at the actual 10-second cadence, six lessons, passing windows, 200 school-wide
+domains and valid device bindings. It produces 84,000 aggregate grains and
+10,002,500 monitored seconds per school. Earlier queries failed, briefly passed
+in 46.634/46.857 seconds, then failed their unchanged repeat with six of 64
+report requests also failing. Those results remain immutable evidence.
+
+After the equivalent query improvements in #586, two independently recorded
+school-day runs passed at unchanged PostgreSQL 4 CPU/4 GiB and Node 512 MiB heap
+limits. Both concurrent workers took 52.864/52.204 seconds in the first run and
+28.042/28.388 seconds in its repeat. All 64 reports passed in each run; the worst
+report SQL took 9.031 seconds and worst API connection acquisition took 642 ms.
+Across those runs the narrowest measured margins were 11.9% below the 60-second
+worker statement deadline, 39.8% below the 15-second API statement deadline and
+87.2% below the 5-second API acquisition deadline. Exact totals, coverage gaps,
+tenant rejection, atomicity, CSV/audit and actual heartbeat ingestion passed.
+These measurements establish bounded headroom for the named school-day fixture;
+they do not establish RDS I/O guarantees or whole-fleet scheduler capacity.
+
+The supported full-year date-range fixture scans 541,500 historical grains; it
+does not measure a 365-day history containing 84,000 grains every day. A separate
+10,000-AI-decision-per-school scenario exercises nonempty lookup and passed:
+concurrent workers took 29.875/29.827 seconds, all 64 reports passed, the maximum
+report SQL was 4.414 seconds and maximum acquisition was 726 ms. All independent
+totals, binding, tenant, coverage, ingestion and export/audit checks passed.
+These three runs use their recorded 127-table admission and source revisions.
+The final combined build was subsequently measured twice at `cc7b3b05` with the
+complete current schema, all 128 admitted tables forcing RLS under a non-owner
+role, and 52 complete migration-manifest entries. Both runs use the same source,
+workload, caps, compiled runtime modes and schema; schema comparison removes only
+the `pg_dump` restrict/unrestrict nonce after UTF-8/LF normalization.
+
+Both two-school, one-million-observation-per-school runs passed with 10,000
+matching AI decisions per school. The first workers took 57.120/56.507 seconds;
+the unchanged repeat took 34.311/34.243 seconds. All 64 reports per run, atomic
+completion, independent totals, live/empty/unavailable coverage, tenant checks
+and audited CSV checks passed. The conservative two-run margins are only 4.80%
+below the 60-second complete-worker budget, 19.71% below the 15-second report SQL
+budget and 44.49% below the 5-second connection-acquisition budget. The maximum
+whole HTTP report took 16.029 seconds; the SQL deadline is not a total HTTP
+response guarantee. The first run recorded 319 heartbeat requests and the repeat
+857, including four preflight calls in each; actual concurrent offerings were
+315/853. Stored rows were 318/856, including successful preflights.
+
+These passes establish bounded local headroom for this fixture. The tight 4.80%
+worker margin, failed 500,000-grain stress profile, dense retained-year capacity,
+dense AI/exclusion populations, fleet scheduling and RDS I/O remain explicit
+limits. No timeout, constraint or infrastructure increase was used. Preserve
+each independent source and immutable record in
+[the final comparison](https://github.com/bzinkan/SchoolPilot/blob/5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7/scripts/load/usage/evidence-school-day-integrated-128-ai-comparison-20261001.json).
 
 ## Operator preflight for a later authorized release
 
