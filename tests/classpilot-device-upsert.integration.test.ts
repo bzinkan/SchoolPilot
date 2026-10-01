@@ -12,8 +12,8 @@ const { default: db, pool, sessionPool } = await import("../dist/db.js");
 const { schedulerPool } = await import("../dist/services/schedulerDb.js");
 const { ensureClassPilotDeviceForSchool } = await import("../dist/services/classpilotStudentAuth.js");
 const { getDatabaseErrorDetails } = await import("../dist/util/databaseError.js");
-const { createSchool } = await import("../dist/services/storage.js");
-const { devices, schools } = await import("../dist/schema/index.js");
+const { createSchool, softDeleteSchool } = await import("../dist/services/storage.js");
+const { devices } = await import("../dist/schema/index.js");
 
 const suffix = randomUUID().replace(/-/g, "");
 const tag = `device-upsert-${suffix}`;
@@ -28,7 +28,7 @@ before(async () => {
 after(async () => {
   try {
     await db.delete(devices).where(eq(devices.schoolId, schoolId));
-    await db.delete(schools).where(eq(schools.id, schoolId));
+    await softDeleteSchool(schoolId);
   } finally {
     await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end()]);
   }
