@@ -6,6 +6,9 @@ import { formatChatTimestamp } from '../lib/chatTimestamp';
 import { deliveryLabel, looksLikeQuestion } from '../lib/chatThreads';
 import LastSeenTime from './LastSeenTime';
 
+// Delivery states whose bubble no longer reads "Waits until … signs in".
+const WAIT_SETTLED_STATUSES = new Set(['seen', 'delivered', 'failed']);
+
 export function ChatMessageBubble({ item, waitingFor = null }) {
   const question = item.sender === 'student' && looksLikeQuestion(item.message);
   return (
@@ -49,14 +52,21 @@ export function ChatMessageBubble({ item, waitingFor = null }) {
  * it is open on a visible tab, marks the student's messages read. Only this
  * thread auto-scrolls. A thread with no messages on this dashboard is one the
  * teacher is starting, so it has nothing to clear or end. `waitingFor` names a
- * signed-out student whose undelivered messages wait for them to sign in.
+ * signed-out student whose undelivered messages wait for them to sign in. Once
+ * a bubble says so ("Waits until … signs in"), the thread's own signed-out note
+ * is not repeated above it. `backButtonRef` lets the workspace put focus on
+ * Back when opening this thread in one pane removed the focused control.
  */
-function ChatThread({ visible = true, onOpenStudentDetails, conversation, monitoring = null, readiness = null, waitingFor = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
+function ChatThread({ visible = true, onOpenStudentDetails, conversation, monitoring = null, readiness = null, waitingFor = null, onClearThread, onEndChat, onMarkThreadRead, onBack, backButtonRef, children }) {
   const endRef = useRef(null);
   const { studentId, studentName, items } = conversation;
   const itemCount = items.length;
   const lastItemId = items[itemCount - 1]?.id ?? null;
   const unreadCount = conversation.unreadCount;
+  const bubbleSaysWaiting = Boolean(waitingFor) && items.some((item) => (
+    item.sender === 'teacher' && item.status && !WAIT_SETTLED_STATUSES.has(item.status)
+  ));
+  const note = readiness?.kind === 'offline' && bubbleSaysWaiting ? null : readiness;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
@@ -77,10 +87,11 @@ function ChatThread({ visible = true, onOpenStudentDetails, conversation, monito
         <div className="flex items-center gap-2 min-w-0">
           {onBack && (
             <button
+              ref={backButtonRef}
               type="button"
               onClick={onBack}
               className="p-1 rounded text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700"
-              aria-label="Back to conversations"
+              aria-label="Back to students"
               data-testid="chat-thread-back"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -144,13 +155,13 @@ function ChatThread({ visible = true, onOpenStudentDetails, conversation, monito
           )}
         </div>
       </div>
-      {readiness && (
+      {note && (
         <div
           className="px-3 py-1.5 text-xs bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-b border-amber-100 dark:border-amber-900 shrink-0"
-          data-testid={readiness.testId}
-          data-kind={readiness.kind}
+          data-testid={note.testId}
+          data-kind={note.kind}
         >
-          {readiness.label}{readiness.detail ? ` ${readiness.detail}` : ''}
+          {note.label}{note.detail ? ` ${note.detail}` : ''}
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5" data-testid="chat-thread-messages">

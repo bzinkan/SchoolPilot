@@ -105,6 +105,7 @@ import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
+  classToolsRecipientLabel,
   combineCommandSettlements,
   commandRecipientsSummary,
   DOMAIN_RESTRICTION_URL_HELP,
@@ -154,6 +155,8 @@ import { useObservationLease } from '../hooks/useObservationLease';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import { chatStudentName, countUnreadByStudent, deriveChatConversations, describeChatReplyError, looksLikeQuestion } from '../lib/chatThreads';
+import { broadcastButtonLabel, buildMessagingRoster } from '../lib/chatRoster';
+import { compareStudentsByLastName } from '../lib/studentOrder';
 import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
 import {
   classpilotObservationSessionEligible,
@@ -1811,6 +1814,12 @@ export default function Dashboard() {
     setSelectedStudent(null);
     setChatView((current) => ({ ...current, open: true, tab: 'messages', studentId: studentId ?? current.studentId, nonce: current.nonce + 1 }));
   }, []);
+  // A roster row, Find + Enter and "need reply" are open requests like a tile's:
+  // the reply box takes focus once. Focus still returns to whatever opened
+  // the panel when it closes.
+  const openChatThreadFromList = useCallback((studentId) => {
+    openChatThread(studentId, chatOpenerRef.current);
+  }, [openChatThread]);
   const selectChatConversation = useCallback((studentId) => {
     setChatView((current) => ({ ...current, open: true, tab: 'messages', studentId }));
   }, []);
@@ -2676,13 +2685,6 @@ export default function Dashboard() {
     setTeacherAllowedDomains(prev => new Set(prev).add(domain));
   };
 
-  const getLastName = (fullName) => {
-    if (!fullName) return '';
-    const nameParts = fullName.trim().split(/\s+/);
-    if (nameParts.length === 1) return nameParts[0].toLowerCase();
-    return nameParts[nameParts.length - 1].toLowerCase();
-  };
-
   const isStudentStructurallyCommandable = (student) => (
     (!isStudentInTemporarySupervision(student) || student?.supervisionContext?.id === scheduledSupervisionId) && !isStudentOwnedByAnotherClass(student)
   );
@@ -2974,10 +2976,35 @@ export default function Dashboard() {
   // A session-scoped aggregate already represents the frozen teaching-session
   // roster. Do not intersect it with mutable current group membership: doing so
   // can hide students added to or removed from the group after class started.
-  const sessionFilteredStudents = students.filter((student) => {
+  const sessionFilteredStudents = useMemo(() => students.filter((student) => {
     if (effectiveActivity && isStudentOwnedByAnotherClass(student)) return false;
     return true;
-  });
+  }), [effectiveActivity, isStudentOwnedByAnotherClass, students]);
+  // Class tools → Messages lists this whole class in the grid's order, whatever
+  // the grid's search box or subgroup filter shows, with the tiles' presence.
+  // A student supervised elsewhere is read-only there: "With {staff}".
+  // useAbsentStudents returns a new Set and the chat store new conversations
+  // on every render, so the memo keys on primitives: the absent ids, and each
+  // thread's student and unread count (all a row takes from a conversation).
+  const absentStudentIdsKey = JSON.stringify([...absentIds].sort());
+  const rosterThreadsKey = JSON.stringify(chatConversations.conversations
+    .map((conversation) => [conversation.studentId, conversation.unreadCount])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  const messagingRoster = useMemo(() => {
+    const coverageByStudent = new Map();
+    for (const student of sessionFilteredStudents) {
+      if (!isStudentMonitoringSuppressed(student)) continue;
+      // Named as the tile names them: the supervising staff member, else the context.
+      coverageByStudent.set(student.studentId, student.supervisionContext?.assignedStaff?.displayName || student.supervisionContext?.name || '');
+    }
+    return buildMessagingRoster({
+      students: sessionFilteredStudents,
+      monitoringByStudent: monitoringDisplaysByStudent,
+      absentIds: new Set(JSON.parse(absentStudentIdsKey)),
+      coverageByStudent,
+      conversations: JSON.parse(rosterThreadsKey).map(([studentId, unreadCount]) => ({ studentId, unreadCount })),
+    });
+  }, [absentStudentIdsKey, isStudentMonitoringSuppressed, monitoringDisplaysByStudent, rosterThreadsKey, sessionFilteredStudents]);
   const lateSignInRestrictionsEnabled = (dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision)
     && lateSignInRestrictionGateEnabled(sessionFilteredStudents);
   const isStudentLateSignInRestrictionEligible = (student) => (
@@ -3019,10 +3046,10 @@ export default function Dashboard() {
       const matchesSubgroup = !selectedSubgroupId || subgroupMembers.has(student.studentId);
       return matchesStudentSearch(student) && matchesSubgroup;
     })
-    .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
+    .sort(compareStudentsByLastName);
   const filteredAvailableStudents = availablePickupStudents
     .filter(matchesStudentSearch)
-    .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
+    .sort(compareStudentsByLastName);
   const filteredScheduledCoverageGroups = scheduledCoverageGroups
     .map((group) => ({
       ...group,
@@ -3033,13 +3060,13 @@ export default function Dashboard() {
           (group.className || '').toLowerCase().includes(normalizedSearchQuery) ||
           (group.teacherName || '').toLowerCase().includes(normalizedSearchQuery)
         ))
-        .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName))),
+        .sort(compareStudentsByLastName),
     }))
     .filter((group) => group.students.length > 0)
     .sort((a, b) => (a.className || a.label || "").localeCompare(b.className || b.label || ""));
   const filteredClaimedStudents = claimedPickupStudents
     .filter(matchesStudentSearch)
-    .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
+    .sort(compareStudentsByLastName);
   const filteredStudents = studentView === "available"
     ? [...filteredScheduledCoverageGroups.flatMap((group) => group.students), ...filteredAvailableStudents]
     : studentView === "claimed"
@@ -4483,7 +4510,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     return Array.from(sections.values())
       .map((section) => ({
         ...section,
-        students: section.students.sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName))),
+        students: section.students.sort(compareStudentsByLastName),
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
   })();
@@ -8021,7 +8048,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           onClose={closeChatDrawer} onTabChange={(tab) => setChatView(current => ({ ...current, tab }))}
           onReserveWidth={setClassToolsReservedWidth}
           contextLabel={effectiveActivity?.groupName || effectiveActivity?.name || groups.find(group => group.id === effectiveActivity?.groupId)?.name || 'Current class'}
-          recipientLabel={selectedStudentIds.size ? `${selectedStudentIds.size} selected students` : selectedSubgroupId ? `${subgroupMembers.size} students in selected group` : `all ${students.length} students`}
+          recipientLabel={classToolsRecipientLabel({
+            selectedCount: selectedStudentIds.size,
+            subgroupSelected: Boolean(selectedSubgroupId),
+            subgroupMemberCount: subgroupMembers.size,
+            classCount: students.length,
+          })}
           helpCount={classTools.data?.help?.length ?? raisedHands.size} unreadConversationCount={chatConversations.conversations.filter(conversation => conversation.unreadCount > 0).length}
           timer={classTools.data?.timer || (timerActive ? timerSnapshot : null)}
           renderMessages={({ width, visible }) => <ChatWorkspace
@@ -8031,6 +8063,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           totalUnread={chatConversations.totalUnread}
           selectedStudentId={chatView.studentId}
           onSelectConversation={selectChatConversation}
+          onOpenThread={openChatThreadFromList}
+          roster={messagingRoster}
+          broadcastLabel={broadcastButtonLabel({
+            selectedCount: selectedStudentIds.size,
+            subgroupName: selectedSubgroupId ? subgroupName || 'selected group' : null,
+          })}
           onClearThread={clearChatThread}
           onEndChat={endChat}
           onReplyToMessage={replyToStudent}

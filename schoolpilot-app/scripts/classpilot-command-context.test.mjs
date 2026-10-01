@@ -5,6 +5,7 @@ import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
+  classToolsRecipientLabel,
   commandRecipientsHeadline,
   commandRecipientsSummary,
   commandSupportsLateSignInRestriction,
@@ -1161,4 +1162,15 @@ test('the shared last-name comparator is the Dashboard grid rule', () => {
   const sorted = [{ studentName: 'Ben Student', id: 1 }, { studentName: 'zoe adams', id: 2 }, { studentName: 'Ada Student', id: 3 }]
     .sort(compareStudentsByLastName);
   assert.deepEqual(sorted.map((row) => row.id), [2, 1, 3], 'equal last names keep their incoming order');
+});
+
+test('the Class tools footer names who new actions reach, with a singular for one student', () => {
+  assert.equal(classToolsRecipientLabel({ selectedCount: 1, subgroupSelected: true, subgroupMemberCount: 4, classCount: 20 }), '1 selected student', 'ticks win');
+  assert.equal(classToolsRecipientLabel({ selectedCount: 3 }), '3 selected students');
+  assert.equal(classToolsRecipientLabel({ subgroupSelected: true, subgroupMemberCount: 1, classCount: 20 }), '1 student in selected group');
+  assert.equal(classToolsRecipientLabel({ subgroupSelected: true, subgroupMemberCount: 4 }), '4 students in selected group');
+  assert.equal(classToolsRecipientLabel({ classCount: 20 }), 'all 20 students');
+  assert.equal(classToolsRecipientLabel({ classCount: 1 }), '1 student');
+  assert.equal(classToolsRecipientLabel({ classCount: 0 }), 'no students');
+  assert.equal(classToolsRecipientLabel(), 'no students');
 });

@@ -630,6 +630,22 @@ export function recipientSnapshotLabel({ selectedCount = 0, subgroupName = null,
   return view === 'claimed' ? 'All claimed students' : 'Whole class';
 }
 
+// Class tools' footer: who a new action from the panel would reach right now,
+// by the same precedence as the dialogs (ticks, then the subgroup, then the
+// class), with a singular for one student.
+export function classToolsRecipientLabel({ selectedCount = 0, subgroupSelected = false, subgroupMemberCount = 0, classCount = 0 } = {}) {
+  const count = (value) => {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : 0;
+  };
+  const selected = count(selectedCount);
+  if (selected > 0) return `${selected} selected student${selected === 1 ? '' : 's'}`;
+  if (subgroupSelected) return `${studentCountText(count(subgroupMemberCount))} in selected group`;
+  const total = count(classCount);
+  if (total === 0) return 'no students';
+  return total === 1 ? '1 student' : `all ${total} students`;
+}
+
 export function snapshotCommandRecipients({ target, students = [], label = '', scopeKey = null, view = null } = {}) {
   const ids = normalizedIds(target?.targetStudentIds);
   if (ids.length === 0) throw new Error('Choose at least one student.');

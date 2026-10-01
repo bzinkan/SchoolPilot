@@ -1162,3 +1162,51 @@ test('classroom dialogs freeze recipients when they open and send them as explic
   assert.match(dashboard, /throw new Error\(RECIPIENTS_UNAVAILABLE_MESSAGE\);/);
   assert.doesNotMatch(dashboard, /Clear the selection and try again/);
 });
+
+test('the Messages roster and the student grid share one last-name order, and roster rows carry no message text', async () => {
+  const [dashboard, roster, rosterList] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/lib/chatRoster.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatRosterList.jsx', import.meta.url), 'utf8'),
+  ]);
+  // One comparator: the grid's inline last-name sorts are gone.
+  assert.match(dashboard, /import \{ compareStudentsByLastName \} from '\.\.\/lib\/studentOrder';/);
+  assert.doesNotMatch(dashboard, /getLastName|localeCompare\(\w+\(b\.studentName\)\)/, 'no second copy of the student order');
+  assert.match(
+    dashboard,
+    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]{0,300}?\}\)\s+\.sort\(compareStudentsByLastName\);/,
+    'the class grid sorts with the shared comparator',
+  );
+  assert.match(roster, /import \{ compareStudentsByLastName \} from '\.\/studentOrder\.js';/);
+  assert.match(roster, /\[\.\.\.\(students \|\| \[\]\)\]\.sort\(compareStudentsByLastName\)/, 'the roster sorts with the same comparator');
+  // The roster is the whole class: never the grid's search or subgroup filter.
+  assert.match(dashboard, /buildMessagingRoster\(\{\s*students: sessionFilteredStudents,\s*monitoringByStudent: monitoringDisplaysByStudent,/);
+  assert.doesNotMatch(dashboard, /buildMessagingRoster\(\{\s*students: filtered/);
+
+  const { buildMessagingRoster } = await import('../src/products/classpilot/lib/chatRoster.js');
+  const { compareStudentsByLastName } = await import('../src/products/classpilot/lib/studentOrder.js');
+  const students = [
+    { studentId: 'c', studentName: 'Cy Zed' },
+    { studentId: 'a', studentName: 'Ada Student' },
+    { studentId: 'b', studentName: 'ben adams' },
+    { studentId: 'd', studentName: 'Ann Student' },
+  ];
+  const rows = buildMessagingRoster({
+    students,
+    conversations: [{ studentId: 'a', studentName: 'Ada Student', unreadCount: 1, lastItem: { message: 'private words' }, lastAt: '2026-09-18T14:00:00.000Z', items: [] }],
+  });
+  assert.deepEqual(rows.map((row) => row.studentId), [...students].sort(compareStudentsByLastName).map((row) => row.studentId));
+  assert.equal(JSON.stringify(rows).includes('private words'), false, 'a roster row never carries what a student wrote');
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ['canMessage', 'hasThread', 'mark', 'name', 'srStatus', 'studentId', 'unreadCount', 'word']);
+  }
+
+  // A row renders only primitives: no preview, time or avatar.
+  assert.doesNotMatch(rosterList, /\blastItem\b|\blastAt\b|\.message\b|\.items\b|formatChatTimestamp|<time\b|\binitials\(/);
+  const rowProps = rosterList.match(/const RosterRow = memo\(function RosterRow\(\{([\s\S]*?)\}\)/)?.[1];
+  assert.ok(rowProps, 'RosterRow is memoised');
+  assert.deepEqual(
+    rowProps.split(',').map((prop) => prop.trim()).filter(Boolean).sort(),
+    ['canMessage', 'current', 'focusable', 'hasThread', 'mark', 'name', 'onOpen', 'readinessKind', 'readinessLabel', 'srStatus', 'studentId', 'unreadCount', 'word'],
+  );
+});
