@@ -1369,6 +1369,11 @@ describe("PassPilot kiosk token, snapshot, and health contracts", { concurrency:
 
   it("exchanges a PIN once, polls with a token, and serves a revisioned snapshot", async (t) => {
     if (!schemaReady) return t.skip("migration not applied");
+    // Keep this one exchange inside one metrics minute. Real HTTP and bcrypt
+    // continue normally; crossing a wall-clock minute would flush the counters
+    // before the assertions. The test context restores Date.now afterward.
+    const exchangeTime = Date.now();
+    t.mock.method(Date, "now", () => exchangeTime);
     const authService = await import("../dist/services/passpilotKioskAuth.js");
     const metricsService = await import("../dist/services/passpilotKioskMetrics.js");
     authService.resetPasspilotKioskAuthStateForTests();
