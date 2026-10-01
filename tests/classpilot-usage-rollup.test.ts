@@ -89,6 +89,23 @@ async function createStudent(schoolId: string, name: string, gradeLevel: string 
   return id;
 }
 
+async function createAdminClasses(schoolId: string, teacherId: string, classes: Array<{ id: string; name: string }>) {
+  const client = await system.connect();
+  try {
+    await client.query("BEGIN");
+    // The staff identity contract checks the matching primary relationship at
+    // commit. Construct both sides atomically, as the canonical class writer does.
+    await client.query(`INSERT INTO groups(id,school_id,teacher_id,name,group_type)
+      SELECT id,$2,$3,($4::text[])[ordinality::int],'admin_class'
+      FROM unnest($1::text[]) WITH ORDINALITY fixture(id,ordinality)`,
+    [classes.map(row => row.id), schoolId, teacherId, classes.map(row => row.name)]);
+    await client.query("INSERT INTO group_teachers(group_id,teacher_id,role) SELECT id,$2,'primary' FROM unnest($1::text[]) id",
+      [classes.map(row => row.id), teacherId]);
+    await client.query("COMMIT");
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+}
+
 async function heartbeat(options: {
   schoolId: string; studentId: string | null; at: number; url: string | null; category?: string | null;
   intent?: string | null; device?: string;
@@ -207,10 +224,7 @@ before(async () => {
   S.c = await createStudent(S.schoolId, "Cy", "7");
   S.g1 = randomUUID();
   S.g2 = randomUUID();
-  await system.query(
-    `INSERT INTO groups(id, school_id, teacher_id, name, group_type) VALUES ($1, $3, $4, 'Math', 'admin_class'), ($2, $3, $4, $5, 'admin_class')`,
-    [S.g1, S.g2, S.schoolId, S.teacher.id, "=cmd|' /C calc'!A0"],
-  );
+  await createAdminClasses(S.schoolId, S.teacher.id, [{ id: S.g1, name: "Math" }, { id: S.g2, name: "=cmd|' /C calc'!A0" }]);
   S.day = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -3);
   S.dayStart = schoolTime.localDateStartUtc(S.day, TIME_ZONE).getTime();
   const at = (hours: number, minutes = 0, seconds = 0, ms = 0) => S.dayStart + ((hours * 60 + minutes) * 60 + seconds) * 1000 + ms;
@@ -362,7 +376,7 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     P.session = randomUUID();
     const teacher = await createUser(P.schoolId, "teacher", "p-teacher");
     const group = randomUUID();
-    await system.query("INSERT INTO groups(id, school_id, teacher_id, name, group_type) VALUES ($1, $2, $3, 'Policy class', 'admin_class')", [group, P.schoolId, teacher.id]);
+    await createAdminClasses(P.schoolId, teacher.id, [{ id: group, name: "Policy class" }]);
     await system.query(
       "INSERT INTO teaching_sessions(id, group_id, teacher_id, school_id, start_time, end_time) VALUES ($1, $2, $3, $4, $5::timestamp, $6::timestamp)",
       [P.session, group, teacher.id, P.schoolId, wall(local(8)), wall(local(9))],
@@ -478,7 +492,7 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     const date = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -2);
     const start = schoolTime.localDateStartUtc(date, TIME_ZONE).getTime() + 9 * 3600_000;
     const group = randomUUID();
-    await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,'Overlapping','admin_class')", [group, schoolId, teacher.id]);
+    await createAdminClasses(schoolId, teacher.id, [{ id: group, name: "Overlapping" }]);
     const sessions = [
       { id: `a-${randomUUID()}`, start: 0, captured: 0, end: 140, scheduled: null },
       { id: `b-${randomUUID()}`, start: 20, captured: 60, end: 120, scheduled: null },
@@ -584,7 +598,7 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     const teacher = await createUser(schoolId, "teacher", "report-reference");
     const a = await createStudent(schoolId, "Report A", "6"), b = await createStudent(schoolId, "Report B", "7"), c = await createStudent(schoolId, "Report C", "6"), d = await createStudent(schoolId, "Zero-second D", "6");
     const classes = [randomUUID(), randomUUID()] as const;
-    await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,$3,'Reference','admin_class' FROM unnest($1::text[]) id", [classes, schoolId, teacher.id]);
+    await createAdminClasses(schoolId, teacher.id, classes.map(id => ({ id, name: "Reference" })));
     const from = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -4);
     const dates = [from, schoolTime.addLocalDays(from, 1), schoolTime.addLocalDays(from, 2), schoolTime.addLocalDays(from, 3)] as const;
     for (const date of [dates[0], dates[3]]) {
@@ -848,7 +862,7 @@ describe("computation coverage ledger (DB lane)", { concurrency: false }, () => 
     const remainingStudent = await createStudent(schoolId, "Remaining");
     const teacher = await createUser(schoolId, "teacher", "cascade-teacher");
     const classId = randomUUID(), sessionGroupId = randomUUID(), sessionId = randomUUID();
-    for (const id of [classId, sessionGroupId]) await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) VALUES($1,$2,$3,'Retained','admin_class')", [id, schoolId, teacher.id]);
+    await createAdminClasses(schoolId, teacher.id, [classId, sessionGroupId].map(id => ({ id, name: "Retained" })));
     await system.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time) VALUES($1,$2,$3,$4,'2026-09-14 12:00:00','2026-09-14 13:00:00')", [sessionId, schoolId, sessionGroupId, teacher.id]);
     const day = rollup.classpilotUsageRollupDay("2026-09-14", TIME_ZONE);
     await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,session_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2::date,$3,NULL,NULL,'removed.example','unknown',15,1),($1,$2::date,$4,$5,$6,'retained.example','educational',30,2)", [schoolId, day.date, removedStudent, remainingStudent, classId, sessionId]);
