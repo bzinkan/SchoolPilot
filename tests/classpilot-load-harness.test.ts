@@ -94,7 +94,12 @@ function run(args: string[], env: NodeJS.ProcessEnv = cleanEnv()) {
   });
 }
 
-function startAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs = 10_000) {
+function startAsync(
+  args: string[],
+  env: NodeJS.ProcessEnv = cleanEnv(),
+  timeoutMs = 10_000,
+  startup?: { ready: () => boolean; description: string }
+) {
   const child = spawn(process.execPath, [script, ...args], { env });
   let stdout = "";
   let stderr = "";
@@ -102,26 +107,66 @@ function startAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeout
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
+  let timer: NodeJS.Timeout;
+  let readinessPoll: NodeJS.Timeout | undefined;
+  let startupFinished = !startup;
+  let resolveStarted: () => void = () => {};
+  let rejectStarted: (error: Error) => void = () => {};
+  const started = startup ? new Promise<void>((resolve, reject) => {
+    resolveStarted = resolve;
+    rejectStarted = reject;
+  }) : Promise.resolve();
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  const clearWatchdogs = () => {
+    clearTimeout(timer);
+    if (readinessPoll) clearInterval(readinessPoll);
+  };
   const completed = new Promise<{
     status: number | null;
     signal: NodeJS.Signals | null;
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`load harness did not exit within ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.on("error", (error) => {
+    const armWatchdog = (milliseconds: number, message: string) => {
       clearTimeout(timer);
+      timer = setTimeout(() => {
+        clearWatchdogs();
+        const error = new Error(message);
+        rejectStarted(error);
+        reject(error);
+        child.kill("SIGKILL");
+      }, milliseconds);
+    };
+    if (startup) {
+      // Bootstrap is bounded separately from the unchanged traffic/exit budget.
+      armWatchdog(10_000, `load harness did not ${startup.description} within 10000ms`);
+      readinessPoll = setInterval(() => {
+        if (!startup.ready()) return;
+        startupFinished = true;
+        clearInterval(readinessPoll);
+        armWatchdog(timeoutMs, `load harness did not exit within ${timeoutMs}ms`);
+        resolveStarted();
+      }, 20);
+    } else armWatchdog(timeoutMs, `load harness did not exit within ${timeoutMs}ms`);
+    child.on("error", (error) => {
+      clearWatchdogs();
+      rejectStarted(error);
       reject(error);
     });
     child.on("close", (status, signal) => {
-      clearTimeout(timer);
+      clearWatchdogs();
+      if (!startupFinished) rejectStarted(new Error(`load harness exited before ${startup?.description}: ${stderr}`));
       resolve({ status, signal, stdout, stderr });
     });
   });
-  return { child, completed };
+  // A failed readiness assertion must not leave a later rejection unobserved.
+  // These handlers retain the original promises and their rejection for awaiters.
+  void completed.catch(() => {});
+  void started.catch(() => {});
+  return { child, started, completed, async dispose() {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await closed;
+  } };
 }
 
 function runAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs = 10_000) {
@@ -406,8 +451,12 @@ import { existsSync } from "node:fs";
 const originalDateNow = Date.now.bind(Date);
 const rollbackMarker = process.env.LOAD_TEST_WALL_CLOCK_ROLLBACK_MARKER || "";
 const rollbackMs = Number(process.env.LOAD_TEST_WALL_CLOCK_ROLLBACK_MS || 0);
+const advanceMarker = process.env.LOAD_TEST_WALL_CLOCK_ADVANCE_MARKER || "";
+const advanceMs = Number(process.env.LOAD_TEST_WALL_CLOCK_ADVANCE_MS || 0);
 Date.now = () => originalDateNow() - (
   rollbackMarker && existsSync(rollbackMarker) ? rollbackMs : 0
+) + (
+  advanceMarker && existsSync(advanceMarker) ? advanceMs : 0
 );
 
 const signalMarker = process.env.LOAD_TEST_SIGNAL_MARKER || "";
@@ -676,6 +725,7 @@ if (signalMarker) {
     const markerPath = join(tempDir, "wall-clock-rollback.marker");
     const summaryPath = join(tempDir, "wall-clock-rollback-summary.json");
     const progressPath = join(tempDir, "wall-clock-rollback-progress.jsonl");
+    let running: ReturnType<typeof startAsync> | undefined;
     try {
       const env = cleanEnv({
         NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --import=${pathToFileURL(controlPreloadPath).href}`.trim(),
@@ -692,17 +742,17 @@ if (signalMarker) {
         LOAD_TEST_WALL_CLOCK_ROLLBACK_MARKER: markerPath,
         LOAD_TEST_WALL_CLOCK_ROLLBACK_MS: "500",
       });
-      const { completed } = startAsync([], env, 6_000);
-      await waitUntil(() => {
+      running = startAsync([], env, 6_000, { ready: () => {
         try {
           return existsSync(progressPath) && readJsonLines(progressPath).some((record) => record.event === "start");
         } catch {
           return false;
         }
-      }, 2_000, "load harness did not publish its start progress event");
+      }, description: "publish its start progress event" });
+      await running.started;
       writeFileSync(markerPath, "rollback");
 
-      const result = await completed;
+      const result = await running.completed;
       assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
       assert.equal(summary.run.shutdownReason, "duration");
@@ -727,6 +777,7 @@ if (signalMarker) {
         assert.ok(progress[index].deltaWindowSeconds >= 0);
       }
     } finally {
+      await running?.dispose();
       for (const client of webSockets.clients) client.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       server.closeAllConnections?.();
@@ -752,6 +803,7 @@ if (signalMarker) {
     const markerPath = join(tempDir, "signal.marker");
     const summaryPath = join(tempDir, "signal-summary.json");
     const progressPath = join(tempDir, "signal-progress.jsonl");
+    let running: ReturnType<typeof startAsync> | undefined;
     try {
       const env = cleanEnv({
         NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --import=${pathToFileURL(controlPreloadPath).href}`.trim(),
@@ -766,17 +818,17 @@ if (signalMarker) {
         LOAD_EXTERNAL_PROGRESS_PATH: progressPath,
         LOAD_TEST_SIGNAL_MARKER: markerPath,
       });
-      const { completed } = startAsync([], env, 6_000);
-      await waitUntil(() => {
+      running = startAsync([], env, 6_000, { ready: () => {
         try {
           return existsSync(progressPath) && readJsonLines(progressPath).some((record) => record.event === "start");
         } catch {
           return false;
         }
-      }, 2_000, "load harness did not publish its start progress event");
+      }, description: "publish its start progress event" });
+      await running.started;
       writeFileSync(markerPath, "signal");
 
-      const result = await completed;
+      const result = await running.completed;
       assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
       assert.equal(summary.run.shutdownReason, "SIGTERM");
@@ -785,6 +837,7 @@ if (signalMarker) {
       assert.equal(summary.run.modeledTrafficSeconds, summary.run.actualTrafficSeconds);
       assert.equal(readJsonLines(progressPath).at(-1).event, "final");
     } finally {
+      await running?.dispose();
       for (const client of webSockets.clients) client.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));
       server.closeAllConnections?.();
@@ -798,7 +851,9 @@ if (signalMarker) {
     const readyPath = join(tempDir, "post-gate-ready.json");
     const startPath = join(tempDir, "post-gate-start.json");
     const progressPath = join(tempDir, "post-gate-progress.jsonl");
-    const expiresAt = new Date(Date.now() + 3_000).toISOString();
+    const advancePath = join(tempDir, "post-gate-clock-advance.marker");
+    // Stay valid throughout bounded bootstrap, then expire only after readiness.
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
     writeFileSync(authPath, JSON.stringify({
       schemaVersion: 1,
       expiresAt,
@@ -809,7 +864,10 @@ if (signalMarker) {
       }],
     }));
 
-    const { completed } = startAsync([], cleanEnv({
+    const running = startAsync([], cleanEnv({
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --import=${pathToFileURL(controlPreloadPath).href}`.trim(),
+      LOAD_TEST_WALL_CLOCK_ADVANCE_MARKER: advancePath,
+      LOAD_TEST_WALL_CLOCK_ADVANCE_MS: "120000",
       LOAD_BASE_URL: "http://127.0.0.1:1",
       LOAD_DEVICE_MANIFEST: manifestPath,
       LOAD_DURATION_SECONDS: "1",
@@ -821,24 +879,28 @@ if (signalMarker) {
       LOAD_SUPERVISOR_READY_PATH: readyPath,
       LOAD_SUPERVISOR_START_GATE_PATH: startPath,
       LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS: "5000",
-    }), 6_000);
+    }), 6_000, { ready: () => existsSync(readyPath), description: "publish supervisor readiness" });
 
-    await waitUntil(() => existsSync(readyPath), 2_000, "harness did not publish supervisor readiness");
-    const ready = JSON.parse(readFileSync(readyPath, "utf8"));
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
-    writeFileSync(startPath, JSON.stringify({
-      schemaVersion: 1,
-      type: "load_supervisor_start",
-      runId,
-      harnessProcessId: ready.harnessProcessId,
-      monitorProcessId: process.pid,
-      releasedAt: new Date().toISOString(),
-    }));
+    try {
+      await running.started;
+      const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+      writeFileSync(advancePath, "expire after readiness");
+      writeFileSync(startPath, JSON.stringify({
+        schemaVersion: 1,
+        type: "load_supervisor_start",
+        runId,
+        harnessProcessId: ready.harnessProcessId,
+        monitorProcessId: process.pid,
+        releasedAt: new Date().toISOString(),
+      }));
 
-    const result = await completed;
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /expires before traffic can finish after supervisor release/);
-    assert.equal(existsSync(progressPath), false, "traffic progress must not open after failed revalidation");
+      const result = await running.completed;
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /expires before traffic can finish after supervisor release/);
+      assert.equal(existsSync(progressPath), false, "traffic progress must not open after failed revalidation");
+    } finally {
+      await running.dispose();
+    }
   });
 
   it("atomically replaces an external summary and writes redacted JSONL progress", () => {
@@ -1702,7 +1764,11 @@ if (signalMarker) {
       assert.notEqual(scopeViolation.status, 0, scopeViolation.stdout);
       const scopeSummary = JSON.parse(readFileSync(scopeSummaryPath, "utf8"));
       assert.equal(scopeSummary.thresholds.passed, false);
-      assert.ok(scopeSummary.fatalGate.reasonCodes.includes("command-target-scope"));
+      assert.ok(scopeSummary.fatalGate.reasonCodes.includes("command-target-scope"), JSON.stringify({
+        fatalGate: scopeSummary.fatalGate,
+        commands: scopeSummary.commands,
+        counters: scopeSummary.counters,
+      }));
       assert.ok(scopeSummary.counters.commandUnexpectedTargetDeliveries > 0);
       assert.doesNotMatch(
         `${scopeViolation.stdout}\n${scopeViolation.stderr}\n${readFileSync(scopeSummaryPath, "utf8")}\n${readFileSync(scopeProgressPath, "utf8")}`,
@@ -2312,10 +2378,16 @@ if (signalMarker) {
   });
 
   it("enforces exact command latency and teacher latency independently for each redacted endpoint class", async () => {
+    // Make the masking fast/slow ratio explicit in the initial cohort. A
+    // contended timer must not turn the single slow history sample into >5%
+    // of the mixed teacher histogram by dropping a nominal 100ms poll tick.
+    const fastDashboardPaths = Array.from({ length: 20 }, (_, index) =>
+      `/api/students-aggregated?fixtureRead=${index}`
+    );
     const server = createServer((request, response) => {
       const send = () => {
         response.writeHead(200, { "content-type": "application/json" });
-        if (request.url === "/api/students-aggregated") {
+        if (request.url?.split("?", 1)[0] === "/api/students-aggregated") {
           response.end(JSON.stringify([{ studentId: "primary-student-1" }]));
         } else if (request.url === "/api/classpilot/heartbeats/device-1") {
           response.end(JSON.stringify({ heartbeats: [{ deviceId: "device-1" }] }));
@@ -2355,7 +2427,7 @@ if (signalMarker) {
         LOAD_CSRF_TOKEN: "endpoint-latency-csrf-secret",
         LOAD_TEACHER_TOKEN: "endpoint-latency-token-secret",
         LOAD_TEACHER_SCHOOL_ID: "school-1",
-        LOAD_TEACHER_PATHS: "/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}",
+        LOAD_TEACHER_PATHS: [...fastDashboardPaths, "/api/classpilot/heartbeats/{deviceId}"].join(","),
         LOAD_TEACHER_INTERVAL_MS: "100",
         LOAD_TEACHER_HISTORY_WARMUP_MS: "0",
         LOAD_COMMAND_ENDPOINT: "/api/classpilot/commands",
@@ -2371,7 +2443,16 @@ if (signalMarker) {
       assert.notEqual(result.status, 0);
       assert.match(result.stdout, /\{/, result.stderr);
       const summary = parseSummary(result.stdout);
-      assert.ok(summary.kinds.teacher.p95 <= 1000);
+      assert.ok(summary.kinds.teacher.p95 <= 1000, JSON.stringify({
+        teacher: summary.kinds.teacher,
+        teacherEndpoints: summary.teacherEndpoints,
+      }));
+      assert.deepEqual(Object.keys(summary.teacherEndpoints).sort(), [
+        "GET /api/classpilot/heartbeats/{deviceId}",
+        "GET /api/students-aggregated",
+        "POST /api/classpilot/commands",
+      ]);
+      assert.ok(summary.teacherEndpoints["GET /api/students-aggregated"].count >= fastDashboardPaths.length);
       assert.ok(summary.teacherEndpoints["GET /api/students-aggregated"].p95 <= 1000);
       assert.ok(summary.teacherEndpoints["GET /api/classpilot/heartbeats/{deviceId}"].p95 > 1000);
       assert.ok(summary.thresholds.failures.includes("GET /api/classpilot/heartbeats/{deviceId} p95 exceeds 1000ms"));
