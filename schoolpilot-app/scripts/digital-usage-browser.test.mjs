@@ -334,7 +334,7 @@ test('a delayed prior-query 403 cannot cancel a newer-context CSV', async () => 
   } finally { rejectOld(); if (oldActive) await oldDrained; held.release(); await held.drained; await page.close(); }
 });
 
-test('a current report 401 uses the actual API login redirect and cancels the held native CSV', async () => {
+test('a current report 401 uses the actual API login redirect and retires the old export document', async () => {
   const held = heldCsv(); let denied = false;
   const { page } = await open({ handler: async (route, url) => {
     if (!url.pathname.endsWith('/admin/usage')) return false;
@@ -342,12 +342,24 @@ test('a current report 401 uses the actual API login redirect and cancels the he
     if (denied) { await route.fulfill({ status: 401, json: { error: 'Session expired' } }); return true; }
     return false;
   } });
+  const oldDocument = await page.evaluateHandle(() => document), downloads = [], failures = [];
+  page.on('download', download => downloads.push(download.suggestedFilename()));
+  page.on('requestfailed', request => { if (isUsageCsv(request)) failures.push(request.failure()?.errorText); });
   try {
-    await page.route('**/login', route => route.fulfill({ contentType: 'text/html', body: '<h1>Login fixture destination</h1>' }));
+    await page.evaluate(() => { window.fixtureDocumentToken = 'old-usage-document'; });
+    await page.route('**/login', route => route.fulfill({ contentType: 'text/html', body: '<h1>Login fixture destination</h1><script>window.fixtureDocumentToken="new-login-document";</script>' }));
     await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await held.started;
-    const canceled = page.waitForEvent('requestfailed', { predicate: isUsageCsv }); denied = true;
+    denied = true;
     await page.evaluate(() => { void window.fixtureRefetchUsage(); });
     await page.waitForURL('**/login'); await page.getByRole('heading', { name: 'Login fixture destination' }).waitFor();
-    assert.match((await canceled).failure().errorText, /ABORTED/);
-  } finally { held.release(); await held.drained; await page.close(); }
+    // Hard navigation destroys the old realm. Its pending Blob/link callback can
+    // no longer run, even when Chromium omits the old requestfailed notification.
+    await assert.rejects(oldDocument.evaluate(document => document.URL), /context.*destroyed|context.*specified|context.*navigat/i);
+    assert.equal(await page.evaluate(() => window.fixtureDocumentToken), 'new-login-document');
+    held.release(); await held.drained; await page.waitForLoadState('networkidle');
+    assert.equal(new URL(page.url()).pathname, '/login');
+    assert.equal(await page.evaluate(() => window.fixtureDocumentToken), 'new-login-document');
+    assert.deepEqual(downloads, []);
+    console.log(`401 old document retired; held route drained; optional CSV requestfailed=${JSON.stringify(failures)}`);
+  } finally { held.release(); await held.drained; await oldDocument.dispose(); await page.close(); }
 });
