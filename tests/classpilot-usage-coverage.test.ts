@@ -19,7 +19,7 @@ const aggregate = [
   { ...total, total_row: 0, usage_date: "2026-09-15", monitored: 15 },
   total,
 ];
-async function report(dates: string[], rows = aggregate) {
+async function report(dates: string[], rows: Array<Record<string, unknown>> = aggregate) {
   const transaction = {
     async execute(statement: SQL) {
       const query = dialect.sqlToQuery(statement).sql;

@@ -145,6 +145,7 @@ for (const query of [attributionReference, reportReference]) assert.doesNotMatch
 
 function readonlyGrains() {
   const query = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\ninserted AS (")[0];
+  assert.ok(query, "The attribution diagnostic must have a nonempty read-only prefix");
   assert.ok(!query.includes("INSERT INTO"));
   return query + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
 }
@@ -483,7 +484,7 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
       { id: `b-${randomUUID()}`, start: 20, captured: 60, end: 120, scheduled: null },
       { id: `c-${randomUUID()}`, start: 40, captured: 40, end: 110, scheduled: null },
       { id: `z-${randomUUID()}`, start: 40, captured: 80, end: 140, scheduled: 100 },
-    ];
+    ] as const;
     for (const item of sessions) {
       await system.query("INSERT INTO teaching_sessions(id,school_id,group_id,teacher_id,start_time,end_time) VALUES($1,$2,$3,$4,$5::timestamp,$6::timestamp)",
         [item.id, schoolId, group, teacher.id, wall(start + item.start * 1000), wall(start + item.end * 1000)]);
@@ -582,10 +583,10 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     const schoolId = await createSchool("Report preaggregation", "720");
     const teacher = await createUser(schoolId, "teacher", "report-reference");
     const a = await createStudent(schoolId, "Report A", "6"), b = await createStudent(schoolId, "Report B", "7"), c = await createStudent(schoolId, "Report C", "6"), d = await createStudent(schoolId, "Zero-second D", "6");
-    const classes = [randomUUID(), randomUUID()];
+    const classes = [randomUUID(), randomUUID()] as const;
     await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,$3,'Reference','admin_class' FROM unnest($1::text[]) id", [classes, schoolId, teacher.id]);
     const from = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -4);
-    const dates = [from, schoolTime.addLocalDays(from, 1), schoolTime.addLocalDays(from, 2), schoolTime.addLocalDays(from, 3)];
+    const dates = [from, schoolTime.addLocalDays(from, 1), schoolTime.addLocalDays(from, 2), schoolTime.addLocalDays(from, 3)] as const;
     for (const date of [dates[0], dates[3]]) {
       for (let domain = 0; domain < 16; domain++) await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2,$3,$4,$5,'educational',12,1)", [schoolId, date, a, classes[0], `lesson-${domain}.example.test`]);
       await system.query(`INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,domain,classification,seconds,heartbeat_count) VALUES
