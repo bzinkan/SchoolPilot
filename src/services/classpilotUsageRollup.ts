@@ -116,7 +116,21 @@ export const CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL = `SELECT EXISTS (
  * with heartbeats."timestamp" (timestamp without time zone, never converted),
  * $4 the school-local usage date, $5 the excluded intervals as JSON.
  */
-export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH school_sessions AS MATERIALIZED (
+export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH school_ai_available AS MATERIALIZED (
+  -- This school-level presence probe lets an empty AI history avoid a newest
+  -- lookup for every observation. It shares the statement's snapshot and
+  -- the exact school/time predicate of the nonempty path below.
+  SELECT 1 FROM classpilot_ai_decisions
+  WHERE school_id = $1 AND created_at >= $2::timestamp
+  LIMIT 1
+),
+school_excluded AS MATERIALIZED (
+  SELECT NULLIF(item->>'studentId', '') AS student_id,
+    (item->>'start')::timestamp AS start_at,
+    (item->>'end')::timestamp AS end_at
+  FROM jsonb_array_elements($5::jsonb) AS item
+),
+school_sessions AS MATERIALIZED (
   SELECT id, start_time, end_time, scheduled_end_at
   FROM teaching_sessions
   WHERE school_id = $1
@@ -155,19 +169,17 @@ WITH observed AS MATERIALIZED (
     AND heartbeat.student_id = student_scope.id
 ),
 excluded AS MATERIALIZED (
-  SELECT NULLIF(item->>'studentId', '') AS student_id,
-    (item->>'start')::timestamp AS start_at,
-    (item->>'end')::timestamp AS end_at
-  FROM jsonb_array_elements($5::jsonb) AS item
+  SELECT * FROM school_excluded
+  WHERE student_id IS NULL OR student_id = student_scope.id
 ),
 eligible AS MATERIALIZED (
   SELECT observed.* FROM observed
-  WHERE NOT EXISTS (
+  WHERE (NOT EXISTS (SELECT 1 FROM excluded) OR NOT EXISTS (
     SELECT 1 FROM excluded
     WHERE (excluded.student_id IS NULL OR excluded.student_id = observed.student_id)
       AND observed.observed_at >= excluded.start_at
       AND observed.observed_at < excluded.end_at
-  )
+  ))
 ),
 deduplicated AS MATERIALIZED (
   SELECT DISTINCT ON (student_id, date_trunc('second', observed_at)) *
@@ -187,6 +199,7 @@ ai_decision AS MATERIALIZED (
     ORDER BY newest.created_at DESC, newest.id DESC
     LIMIT 1
   ) AS decision
+  WHERE EXISTS (SELECT 1 FROM school_ai_available)
 ),
 normalized AS (
   SELECT observation.id, observation.student_id, observation.observed_at,
@@ -194,11 +207,11 @@ normalized AS (
       ${HEARTBEAT_ATTRIBUTION_LIMIT_SECONDS}::numeric,
       EXTRACT(EPOCH FROM ((LEAD(observation.observed_at) OVER student_timeline) - observation.observed_at)),
       EXTRACT(EPOCH FROM ($3::timestamp - observation.observed_at)),
-      EXTRACT(EPOCH FROM ((
+      CASE WHEN EXISTS (SELECT 1 FROM excluded) THEN EXTRACT(EPOCH FROM ((
         SELECT MIN(excluded.start_at) FROM excluded
         WHERE (excluded.student_id IS NULL OR excluded.student_id = observation.student_id)
           AND excluded.start_at > observation.observed_at
-      ) - observation.observed_at))
+      ) - observation.observed_at)) END
     ) AS attributed_seconds,
     CASE WHEN observation.active_tab_url ~* '^https?://'
       THEN left(regexp_replace(lower(COALESCE(

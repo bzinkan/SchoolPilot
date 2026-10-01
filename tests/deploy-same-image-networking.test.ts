@@ -475,6 +475,40 @@ same_image_runtime_task_network_preflight "$EXPECTED_API_TASK_DEFINITION" "$EXPE
     assert.match(result.stdout, /Every running API\/worker task, ENI, public IPv4, and healthy API target was verified/);
   });
 
+  it("sets aside a replaced task's target during the ALB deregistration delay", () => {
+    const evidence = runtimeNetworkEvidence();
+    evidence.targetHealth.TargetHealthDescriptions.push({
+      Target: { Id: "10.0.9.9", Port: 3000 },
+      TargetHealth: { State: "draining", Reason: "Target.DeregistrationInProgress" },
+    });
+    const result = runLibrary(`
+aws() {
+  if [[ "$1 $2" == "ecs describe-services" ]]; then cat "$TEST_ROOT/services.json"; return 0; fi
+  if [[ "$1 $2" == "ecs list-tasks" ]]; then
+    if [[ " $* " == *" --service-name $WORKER_SERVICE "* ]]; then cat "$TEST_ROOT/worker-list.json"; else cat "$TEST_ROOT/api-list.json"; fi
+    return 0
+  fi
+  if [[ "$1 $2" == "ecs describe-tasks" ]]; then cat "$TEST_ROOT/tasks.json"; return 0; fi
+  if [[ "$1 $2" == "ec2 describe-network-interfaces" ]]; then cat "$TEST_ROOT/enis.json"; return 0; fi
+  if [[ "$1 $2" == "elbv2 describe-target-groups" ]]; then cat "$TEST_ROOT/target-groups.json"; return 0; fi
+  if [[ "$1 $2" == "elbv2 describe-target-health" ]]; then cat "$TEST_ROOT/target-health.json"; return 0; fi
+  return 91
+}
+same_image_runtime_task_network_preflight "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" runtime-test
+`, {
+      ".same-image-network.json": canonicalNetwork,
+      "services.json": JSON.stringify(evidence.services),
+      "api-list.json": JSON.stringify(evidence.apiList),
+      "worker-list.json": JSON.stringify(evidence.workerList),
+      "tasks.json": JSON.stringify(evidence.tasks),
+      "enis.json": JSON.stringify(evidence.enis),
+      "target-groups.json": JSON.stringify(evidence.targetGroups),
+      "target-health.json": JSON.stringify(evidence.targetHealth),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /healthy API target was verified runtime-test/);
+  });
+
   it("rejects missing/extra runtime identity and ENI/ALB posture", () => {
     const cases = [
       {
@@ -496,6 +530,22 @@ same_image_runtime_task_network_preflight "$EXPECTED_API_TASK_DEFINITION" "$EXPE
       {
         name: "unhealthy target",
         mutate(value: Record<string, any>) { value.targetHealth.TargetHealthDescriptions[0].TargetHealth.State = "draining"; },
+      },
+      {
+        name: "API task target still initial",
+        mutate(value: Record<string, any>) { value.targetHealth.TargetHealthDescriptions[0].TargetHealth.State = "initial"; },
+      },
+      {
+        name: "extra healthy target outside the running API tasks",
+        mutate(value: Record<string, any>) {
+          value.targetHealth.TargetHealthDescriptions.push({ Target: { Id: "10.0.9.9", Port: 3000 }, TargetHealth: { State: "healthy" } });
+        },
+      },
+      {
+        name: "extra unhealthy target outside the running API tasks",
+        mutate(value: Record<string, any>) {
+          value.targetHealth.TargetHealthDescriptions.push({ Target: { Id: "10.0.9.9", Port: 3000 }, TargetHealth: { State: "unhealthy" } });
+        },
       },
     ];
     for (const testCase of cases) {

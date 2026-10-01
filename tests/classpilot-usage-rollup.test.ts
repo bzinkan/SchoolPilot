@@ -6,6 +6,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { getTableColumns } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 // DB_SERIAL: runs as the database owner, so tenant isolation is asserted in
 // tests/classpilot-usage-rollup-rls.test.ts instead. The Digital Usage API is
@@ -136,6 +138,24 @@ async function withEnv<T>(values: Record<string, string | undefined>, fn: () => 
 }
 
 const MODES_ON = { CLASSPILOT_USAGE_ROLLUP_MODE: "on", CLASSPILOT_DIGITAL_USAGE_MODE: "on" };
+
+const attributionReference = readFileSync(new URL("./fixtures/usage-before-fast-paths/attribution.sql", import.meta.url), "utf8");
+const reportReference = readFileSync(new URL("./fixtures/usage-before-fast-paths/report.sql", import.meta.url), "utf8");
+for (const query of [attributionReference, reportReference]) assert.doesNotMatch(query, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|COPY|DO)\b/i);
+
+function readonlyGrains() {
+  const query = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\ninserted AS (")[0];
+  assert.ok(!query.includes("INSERT INTO"));
+  return query + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
+}
+
+function referenceTotals(row: Record<string, unknown> | undefined) {
+  return {
+    monitoredBrowserSeconds: Number(row?.monitored ?? 0), instructionalSeconds: Number(row?.instructional ?? 0),
+    offTaskSeconds: Number(row?.off_task ?? 0), unknownSeconds: Number(row?.unknown ?? 0),
+    activeMonitoredStudents: Number(row?.students ?? 0), heartbeatCount: Number(row?.heartbeats ?? 0),
+  };
+}
 
 function headers(user: Person, schoolId: string): Record<string, string> {
   return {
@@ -510,6 +530,105 @@ describe("Monitored Browser Time rollups (DB lane)", { concurrency: false }, () 
     assert.deepEqual(byStudentCategory, {
       [`${studentA}:non-educational`]: [15, 1], [`${studentA}:educational`]: [15, 1], [`${studentB}:educational`]: [15, 1],
     });
+  });
+
+  it("matches the frozen attribution query for empty/nonempty guards, interval clipping and an AI snapshot race", async () => {
+    const schoolId = await createSchool("Fast-path reference", "720");
+    const a = await createStudent(schoolId, "Guard A"), b = await createStudent(schoolId, "Guard B");
+    const date = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -2);
+    const day = rollup.classpilotUsageRollupDay(date, TIME_ZONE), start = day.dayStartUtc.getTime() + 9 * 3600_000;
+    const beats = [];
+    for (const seconds of [0, 10, 25]) beats.push(await heartbeat({ schoolId, studentId: a, at: start + seconds * 1000, url: "https://a.example.test/", category: "educational" }));
+    await heartbeat({ schoolId, studentId: b, at: start + 20_000, url: "https://b.example.test/", category: "educational" });
+    // Neither a newer foreign-school decision nor a stale own-school decision
+    // makes the exact school/window presence probe eligible.
+    await system.query(`INSERT INTO classpilot_ai_decisions(id,school_id,heartbeat_id,category,created_at) VALUES
+      ($1,$2,$3,'non-educational',$4::timestamp),($5,$6,$3,'non-educational',$7::timestamp)`,
+      [randomUUID(), O.schoolId, beats[0], wall(start + 120_000), randomUUID(), schoolId, wall(day.dayStartUtc.getTime() - 1000)]);
+    const client = await system.connect();
+    const compare = async (cutoff = day.dayEndUtc.getTime(), exclusions: unknown[] = []) => {
+      const values = [schoolId, wall(day.dayStartUtc.getTime()), wall(cutoff), date, JSON.stringify(exclusions)];
+      const expected = (await client.query(attributionReference, values)).rows;
+      const actual = (await client.query(readonlyGrains(), values)).rows;
+      assert.deepEqual(actual, expected);
+      return { seconds: actual.reduce((sum, row) => sum + row.seconds, 0), heartbeats: actual.reduce((sum, row) => sum + row.heartbeat_count, 0), rows: actual };
+    };
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const empty = await compare();
+      assert.deepEqual([empty.seconds, empty.heartbeats], [55, 4]);
+      await system.query(`INSERT INTO classpilot_ai_decisions(school_id,heartbeat_id,category,created_at) VALUES($1,$2,'non-educational',$3::timestamp)`, [schoolId, beats[0], wall(start + 60_000)]);
+      assert.deepEqual((await compare()).rows, empty.rows, "a concurrent decision cannot change the presence probe or newest lookup inside one snapshot");
+      await client.query("COMMIT");
+      await system.query(`INSERT INTO classpilot_ai_decisions(id,school_id,heartbeat_id,category,teacher_intent_source,created_at) VALUES
+        ($1,$2,$3,'educational',NULL,$4::timestamp),($5,$2,$3,'non-educational',NULL,$4::timestamp),
+        ($6,$2,$7,'non-educational','flight_path',$4::timestamp)`,
+        [`a-${randomUUID()}`, schoolId, beats[1], wall(start + 60_000), `z-${randomUUID()}`, randomUUID(), beats[2]]);
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const nonempty = await compare();
+      assert.equal(nonempty.rows.filter(row => row.classification === "non-educational").reduce((sum, row) => sum + row.seconds, 0), 25);
+      assert.deepEqual([nonempty.seconds, nonempty.heartbeats], [55, 4]);
+      assert.deepEqual([(await compare(start + 12_000)).seconds, (await compare(start + 12_000)).heartbeats], [12, 2]);
+      assert.equal((await compare(start)).heartbeats, 0, "empty observation window still has no grains");
+      const ownOff = { studentId: a, start: wall(start + 5000), end: wall(start + 12_000) };
+      assert.deepEqual([(await compare(undefined, [ownOff])).seconds, (await compare(undefined, [ownOff])).heartbeats], [35, 3]);
+      assert.equal((await compare(undefined, [{ ...ownOff, studentId: O.o1 }])).seconds, 55, "an unrelated student's interval cannot exclude either local student");
+      assert.equal((await compare(undefined, [ownOff, { start: wall(start + 30_000), end: wall(start + 40_000) }])).seconds, 20);
+      await client.query("COMMIT");
+    } finally { await client.query("ROLLBACK"); client.release(); }
+  });
+
+  it("matches frozen all-scope report results and retains one snapshot across a concurrent completed rewrite", async () => {
+    const schoolId = await createSchool("Report preaggregation", "720");
+    const teacher = await createUser(schoolId, "teacher", "report-reference");
+    const a = await createStudent(schoolId, "Report A", "6"), b = await createStudent(schoolId, "Report B", "7"), c = await createStudent(schoolId, "Report C", "6"), d = await createStudent(schoolId, "Zero-second D", "6");
+    const classes = [randomUUID(), randomUUID()];
+    await system.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,$3,'Reference','admin_class' FROM unnest($1::text[]) id", [classes, schoolId, teacher.id]);
+    const from = schoolTime.addLocalDays(schoolTime.localDateInTimeZone(new Date(), TIME_ZONE), -4);
+    const dates = [from, schoolTime.addLocalDays(from, 1), schoolTime.addLocalDays(from, 2), schoolTime.addLocalDays(from, 3)];
+    for (const date of [dates[0], dates[3]]) {
+      for (let domain = 0; domain < 16; domain++) await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2,$3,$4,$5,'educational',12,1)", [schoolId, date, a, classes[0], `lesson-${domain}.example.test`]);
+      await system.query(`INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,class_id,domain,classification,seconds,heartbeat_count) VALUES
+        ($1,$2,$3,$4,'games.example.test','non-educational',13,2),($1,$2,$3,$4,'','educational',7,1),
+        ($1,$2,$3,$4,'unknown.example.test','unknown',0,1),($1,$2,$5,$6,'lesson-0.example.test','educational',12,1)`, [schoolId, date, b, classes[1], c, classes[0]]);
+      await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2,$3,'','unknown',0,1)", [schoolId, date, d]);
+    }
+    await system.query("INSERT INTO classpilot_usage_rollups(school_id,usage_date,student_id,domain,classification,seconds,heartbeat_count) VALUES($1,$2,$3,'withheld.example.test','educational',999,1)", [schoolId, dates[2], a]);
+    for (const date of [dates[0], dates[1], dates[3]]) {
+      const day = rollup.classpilotUsageRollupDay(date, TIME_ZONE);
+      const final = date !== dates[0];
+      await system.query(rollup.CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [schoolId, date, day.dayStartUtc.toISOString(), day.dayEndUtc.toISOString(), new Date(day.dayEndUtc.getTime() - (final ? 0 : 3600_000)).toISOString(), final]);
+    }
+    const read = await import("../src/services/classpilotUsageRead.js"), dialect = new PgDialect(), client = await system.connect(), now = new Date();
+    const transaction = { execute(statement: SQL) { const query = dialect.sqlToQuery(statement); return client.query(query.sql, query.params); } };
+    const compare = async (scope: "school" | "grade" | "class" | "student", id: string | null, studentIds: string[] | null, classId: string | null) => {
+      const reference = (await client.query(reportReference, [schoolId, from, dates[3], 10, studentIds, classId])).rows;
+      const actual = await read.getClasspilotDigitalUsage({ schoolId, scope, id, from, to: dates[3], now, transaction: transaction as never });
+      assert.deepEqual(actual.totals, referenceTotals(reference.find(row => Number(row.total_row) === 1)));
+      assert.deepEqual(actual.range.unavailableDates, [dates[2]]);
+      for (const day of actual.byDay) {
+        const { date, state: _state, ...totals } = day;
+        assert.deepEqual(totals, referenceTotals(reference.find(row => row.usage_date === date)));
+      }
+      for (const [classification, field] of [["educational", "topEducationalDomains"], ["non-educational", "topNonEducationalDomains"]] as const) {
+        assert.deepEqual(actual[field], reference.filter(row => row.row_kind === "domain" && row.classification === classification).map(row => ({ domain: row.domain, seconds: Number(row.seconds) })));
+      }
+      return actual;
+    };
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const before = await compare("school", null, null, null);
+      assert.equal(before.totals.activeMonitoredStudents, 4, "zero-second observation grains still count their student");
+      await compare("grade", "6", [a, c, d], null); await compare("class", classes[0], null, classes[0]); await compare("student", a, [a], null);
+      await heartbeat({ schoolId, studentId: a, at: schoolTime.localDateStartUtc(from, TIME_ZONE).getTime() + 10 * 3600_000, url: "https://changed.example.test/", category: "educational" });
+      const day = rollup.classpilotUsageRollupDay(from, TIME_ZONE);
+      await rollup.rollupClasspilotUsageDay(system, { schoolId, day, windowEndUtc: day.dayEndUtc, exclusions: [] });
+      assert.deepEqual(await compare("school", null, null, null), before, "metadata, summary and domains remain in the already pinned read snapshot");
+      await client.query("COMMIT");
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      assert.notEqual((await compare("school", null, null, null)).totals.monitoredBrowserSeconds, before.totals.monitoredBrowserSeconds);
+      await client.query("COMMIT");
+    } finally { await client.query("ROLLBACK"); client.release(); }
   });
 
   it("serves no Digital Usage route unless both modes are on and the table is admitted", async () => {

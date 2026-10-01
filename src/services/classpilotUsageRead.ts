@@ -244,13 +244,18 @@ async function usageAggregates(
   executor: Executor,
   options: { schoolId: string; from: string; to: string; filter: SQL }
 ): Promise<Array<Record<string, unknown>>> {
-  // Read retained, successfully computed rows once. First collapse the fine
-  // domain/session grain into student-days for counts; counting distinct
-  // students on those rows avoids sorting the entire fine-grained history.
+  // Collapse the retained fine grain during its single ledger-joined scan.
+  // Materialize only student-days and domain totals; reusing all raw grains
+  // across the two reports otherwise spills large histories to temporary I/O.
   return rowsOf(await executor.execute(sql`
-    WITH scoped AS MATERIALIZED (
+    WITH grouped AS MATERIALIZED (
     SELECT rollup.usage_date, rollup.student_id, rollup.domain, rollup.classification,
-      rollup.seconds, rollup.heartbeat_count
+      GROUPING(rollup.usage_date, rollup.student_id) AS grain_kind,
+      SUM(rollup.seconds)::bigint AS monitored,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'educational')::bigint AS instructional,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'non-educational')::bigint AS off_task,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'unknown')::bigint AS unknown,
+      SUM(rollup.heartbeat_count)::bigint AS heartbeats
     FROM classpilot_usage_rollups AS rollup
     JOIN classpilot_usage_rollup_days AS day
       ON day.school_id = rollup.school_id AND day.usage_date = rollup.usage_date
@@ -258,13 +263,7 @@ async function usageAggregates(
       AND rollup.usage_date >= ${options.from}::date
       AND rollup.usage_date <= ${options.to}::date
       ${options.filter}
-    ), student_days AS (
-      SELECT usage_date, student_id, SUM(seconds)::bigint AS monitored,
-        SUM(seconds) FILTER (WHERE classification = 'educational')::bigint AS instructional,
-        SUM(seconds) FILTER (WHERE classification = 'non-educational')::bigint AS off_task,
-        SUM(seconds) FILTER (WHERE classification = 'unknown')::bigint AS unknown,
-        SUM(heartbeat_count)::bigint AS heartbeats
-      FROM scoped GROUP BY usage_date, student_id
+    GROUP BY GROUPING SETS ((rollup.usage_date, rollup.student_id), (rollup.classification, rollup.domain))
     ), summary AS (
       SELECT usage_date::text AS usage_date, GROUPING(usage_date) AS total_row,
         COALESCE(SUM(monitored), 0)::bigint AS monitored,
@@ -273,15 +272,12 @@ async function usageAggregates(
         COALESCE(SUM(unknown), 0)::bigint AS unknown,
         COUNT(DISTINCT student_id)::int AS students,
         COALESCE(SUM(heartbeats), 0)::bigint AS heartbeats
-      FROM student_days GROUP BY GROUPING SETS ((usage_date), ())
-    ), domains AS (
-      SELECT classification, domain, SUM(seconds)::bigint AS seconds
-      FROM scoped
-      WHERE classification IN ('educational', 'non-educational') AND domain <> ''
-      GROUP BY classification, domain HAVING SUM(seconds) > 0
+      FROM grouped WHERE grain_kind = 0 GROUP BY GROUPING SETS ((usage_date), ())
     ), ranked_domains AS (
-      SELECT *, ROW_NUMBER() OVER (PARTITION BY classification ORDER BY seconds DESC, domain ASC) AS rank
-      FROM domains
+      SELECT classification, domain, monitored AS seconds,
+        ROW_NUMBER() OVER (PARTITION BY classification ORDER BY monitored DESC, domain ASC) AS rank
+      FROM grouped
+      WHERE grain_kind = 3 AND classification IN ('educational', 'non-educational') AND domain <> '' AND monitored > 0
     )
     SELECT 'summary' AS row_kind, summary.*, NULL::text AS classification,
       NULL::text AS domain, NULL::bigint AS seconds FROM summary
