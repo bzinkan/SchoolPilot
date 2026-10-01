@@ -105,3 +105,18 @@ test('missing or duplicated targets never become a class-wide command', async ()
   for (const studentIds of [[], ['a', 'a']]) await assert.rejects(runClassroomAction({ action: 'open', url: 'https://example.test/', studentIds,
     readCommand: noRead, postCommand: async () => assert.fail('Cannot send missing targets') }), /explicit students/);
 });
+
+test('Website lesson starts normalize one terminal hostname dot without admitting unrelated hosts', () => {
+  const preview = { boundary: 'website', scopes: [{ url: 'https://example.test', label: 'Entire website' }], authoring: { allowedDomains: ['example.test'] } };
+  const choices = [
+    { url: 'https://example.test./lesson', title: 'Root lesson' },
+    { url: 'https://class.example.test./lesson', title: 'Subdomain lesson' },
+    { url: 'https://example.test../lesson', title: 'Two terminal dots' },
+    { url: 'https://notexample.test./lesson', title: 'Suffix spoof' },
+    { url: 'https://example.test.attacker.test./lesson', title: 'Unrelated host' },
+  ];
+  assert.deepEqual(classroomLessonStarts(preview, choices), [
+    { url: choices[0].url, label: 'Root lesson' },
+    { url: choices[1].url, label: 'Subdomain lesson' },
+  ]);
+});
