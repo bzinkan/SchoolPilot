@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getHeapStatistics } from 'node:v8';
 import pg from 'pg';
@@ -11,6 +11,7 @@ import { summarize } from './local-usage-benchmark.mjs';
 import { assertLocalScaleFixture, currentObservationCutoff, usageAttributionDiagnosticSql, apiStatementKind, currentObservationSeconds, measureCall } from './local-usage-scale.mjs';
 import { SCHOOL_DAY_PROFILE, schoolDayOracle, schoolDayRangeDomains, schoolDaySessionRoster, schoolDaySeedStudentWindows } from './school-day-profile.mjs';
 import { SCHOOL_DAY_AI_PROFILE, schoolDayAiDecisionSamples } from './school-day-ai-profile.mjs';
+import { fixtureRlsContract, assertFixtureRuntimeModes, assertCompleteFixtureCatalog } from './fixture-rls-contract.mjs';
 const wall = value => value.toISOString().replace('T',' ').replace('Z','');
 const sleep = ms => new Promise(done => setTimeout(done,ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -19,12 +20,14 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
   assertLocalScaleFixture(process.env);
   assert.equal(typeof aiScenario, 'boolean');
   const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const registryPath = resolve(root,'src/config/rlsRegistry.json');
+  const rlsContract = fixtureRlsContract(JSON.parse(readFileSync(registryPath,'utf8')),hash(registryPath),process.env);
   const output = process.env.USAGE_SCALE_OUTPUT; assert.ok(output);
   const caps = JSON.parse(readFileSync(process.env.USAGE_SCALE_CAPS, 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(caps.NanoCpus, 4_000_000_000); assert.equal(caps.Memory, 4_294_967_296);
   assert.ok(getHeapStatistics().heap_size_limit <= 600 * 1024 ** 2, 'Node512MiB V8 heap cap required');
   const metrics = { version: 1, sourceRevision: process.env.USAGE_SOURCE_REVISION, startedAt: new Date().toISOString(), passed: false,
-    productionReadiness: false, profile: { workload: aiScenario ? SCHOOL_DAY_AI_PROFILE : SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
+    productionReadiness: false, rlsContract, profile: { workload: aiScenario ? SCHOOL_DAY_AI_PROFILE : SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
     sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-school-day-scale.mjs', 'scripts/load/usage/school-day-profile.mjs', 'scripts/load/usage/school-day-ai-profile.mjs', 'scripts/load/usage/local-usage-scale.mjs', 'scripts/load/usage/reference-attribution-20260930.sql', ...(aiScenario ? ['scripts/load/usage/local-school-day-ai-scale.mjs'] : [])].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
@@ -52,6 +55,13 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     assert.equal((await admin.query('SELECT COUNT(*)::int AS count FROM schools')).rows[0].count, 0);
     const role = (await worker.query('SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
     assert.equal(role.rolsuper, false); assert.equal(role.rolbypassrls, false);
+    metrics.selectedInventoryCatalog = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname",[rlsContract.tables])).rows;
+    assertCompleteFixtureCatalog(rlsContract,metrics.selectedInventoryCatalog);
+    if (rlsContract.name === 'passpilotAppointmentsPostExpand') {
+      metrics.currentContractMigrations = (await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
+      assert.ok(metrics.currentContractMigrations.length > 0 && metrics.currentContractMigrations.every(row => row.status === 'complete'));
+      for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
+    }
     const rlsTables = ['heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days', ...(aiScenario ? ['classpilot_ai_decisions'] : [])];
     metrics.rls = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relname=ANY($1::text[]) ORDER BY relname", [rlsTables])).rows;
     assert.equal(metrics.rls.length, rlsTables.length); assert.ok(metrics.rls.every(row => row.relrowsecurity && row.relforcerowsecurity && !row.owns_table));
@@ -60,6 +70,10 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     const time = await import('../../../dist/util/schoolTime.js');
     const { createApp } = await import('../../../dist/app.js');
     ({ pool: appPool, sessionPool } = await import('../../../dist/db.js'));
+    if (rlsContract.name === 'passpilotAppointmentsPostExpand') assertFixtureRuntimeModes(rlsContract,await import('../../../dist/services/classpilotDailyUsageRollup.js'),await import('../../../dist/services/classpilotProtocol.js'),process.env);
+    const contractSnapshot = JSON.stringify({rlsContract,catalog:metrics.selectedInventoryCatalog,migrations:metrics.currentContractMigrations ?? null,role},null,2)+'\n';
+    writeFileSync(resolve(dirname(output),'fixture-contract.json'),contractSnapshot);
+    metrics.fixtureContractSnapshotSha256 = createHash('sha256').update(contractSnapshot).digest('hex');
     const record = (target, durationMs, error) => {
       if (!concurrentMeasurement) return;
       target.count++; target.maxMs = Math.max(target.maxMs, durationMs); if (error) target.failures++;
