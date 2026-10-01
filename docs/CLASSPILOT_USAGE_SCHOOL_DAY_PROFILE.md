@@ -289,6 +289,49 @@ itself prove overridden-category semantics or negative AI-row visibility. Those
 remain covered by the real SQL/reference and restricted-role regression suites;
 the scheduler worker intentionally uses its established privileged GUC. A sparse
 10,000-row decision history also cannot establish dense AI/exclusion capacity.
-No capacity result for this separately named scenario is claimed before an
-actual capped run completes. Its measurement is held until the next coordinated
-quiet window.
+Its separate capped measurement is preserved below; the empty-AI results above
+remain measurements of their original unchanged workload.
+
+The matching-category nonempty-AI scenario passed at frozen revision
+`57a2e7d6980bc4799cff2b1fbcf6eb1c342818c6`, preserved byte-for-byte in
+`scripts/load/usage/evidence-school-day-nonempty-ai-passed-20261001.json`.
+It ran from `2026-10-01T01:31:35.192Z` to `01:38:41.375Z`; preparation
+took 278,840 ms outside the 60,116 ms concurrent phase. The declared scenario,
+raw observations, sessions, device bindings and independent 84,000-grain oracle
+were frozen before starting. Production hashes match PR #586 and both preceding
+fast-path passes. The schema-only DDL also matches; the dump's generated psql
+restrict/unrestrict nonce changes its raw file hash.
+
+| Measured operation | Slowest observed | Existing deadline | Margin below deadline |
+| --- | ---: | ---: | ---: |
+| Complete heavy-day worker operation | 29,876 ms | 60,000 ms | 50.2% |
+| Report SQL, full supported date range | 4,414 ms | 15,000 ms | 70.6% |
+| API connection acquisition (6,342 calls) | 727 ms | 5,000 ms | 85.5% |
+
+Both complete workers committed 84,000 grains, 10,002,500 seconds, one million
+observations and one completion row per school in 29,875/29,827 ms. Binding
+validation found exactly 10,000 AI decisions per school, 500 students with 20
+each, 10,000 distinct matched observations and zero invalid bindings. All 64
+reports returned 200, every measured SQL/acquisition succeeded and all independent
+raw/category/domain/scope/CSV/audit/tenant/atomicity gates passed. The four ingest
+clients offered 995 requests (994 returned 200 and one accepted 204), with 497
+observations per school stored through the post-phase cutoffs. Peak Node RSS
+was 288.1 MiB. Temporary counters increased by 3,174,958,472 bytes across 191
+files. After the measured phase, read-only attribution took 10,252 ms; the frozen
+original baseline reached its 60-second timeout. These diagnostics are outside
+capacity timing. The runner exited zero and removed the exact generated capped
+fixture and volumes.
+
+External evidence is at
+`C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-school-day-20260930-run19-nonempty-ai`.
+The raw/committed JSON SHA-256 is `ad785644f9a3371653e7286463449ec397d8bb7529ec68317d95ff8c8425416c`,
+execution metadata is `ed3c7a3e66e840aab3be0ba592a8b3ee2a16f9b1537ea387c2d73ee629175513`
+and resource-cap metadata is `a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025`.
+
+This is one passing measurement of the separately named sparse, matching-category
+AI scenario. It does not replace the two unchanged empty-AI repeats or reduce
+their conservative 11.9% worker margin. The earlier measured school-day failures,
+preparation failure and valid 500,000-grain stress failure remain immutable.
+The 541,500-row historical range is not a 30.66-million-grain retained year.
+Dense AI/exclusion histories, broader repeated AI capacity, RDS/fleet, devices
+and operational activation gates remain open; no production feature was enabled.
