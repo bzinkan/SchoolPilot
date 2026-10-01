@@ -19,7 +19,7 @@ const aggregate = [
   { ...total, total_row: 0, usage_date: "2026-09-15", monitored: 15 },
   total,
 ];
-async function report(dates: string[], rows = aggregate) {
+async function report(dates: string[], rows: Array<Record<string, unknown>> = aggregate) {
   const transaction = {
     async execute(statement: SQL) {
       const query = dialect.sqlToQuery(statement).sql;
@@ -63,6 +63,19 @@ it("withholds pre-ledger aggregates until a compatible computation succeeds", as
   assert.equal(result.computedAt, null);
   assert.equal(result.range.computedDays, 0);
   assert.deepEqual(result.range.unavailableDates, ["2026-09-13", "2026-09-14", "2026-09-15"]);
+});
+
+it("separates combined day/total rows from both ranked domain lists", async () => {
+  const result = await report(["2026-09-13", "2026-09-15"], [
+    { row_kind: "domain", classification: "educational", domain: "lesson.example.test", seconds: 25 },
+    { row_kind: "domain", classification: "non-educational", domain: "games.example.test", seconds: 5 },
+    ...aggregate.map(row => ({ ...row, row_kind: "summary" })),
+  ]);
+  assert.equal(result.totals.monitoredBrowserSeconds, 30);
+  assert.equal(result.totals.activeMonitoredStudents, 1);
+  assert.equal(result.byDay.length, 2);
+  assert.deepEqual(result.topEducationalDomains, [{ domain: "lesson.example.test", seconds: 25 }]);
+  assert.deepEqual(result.topNonEducationalDomains, [{ domain: "games.example.test", seconds: 5 }]);
 });
 
 it("finds activity after a queued job's cutoff even when computed_at is twenty minutes later", async () => {
