@@ -174,3 +174,56 @@ still match the isolated earlier pass. Consequently reproducible school-day
 headroom is **not established**. The pass, both measured failures and the
 separate preparation failure remain visible; subsequent query corrections must
 receive correctness/RLS review and fresh unchanged-cap measurements.
+
+The approved fast paths in draft PR #586 were measured at profile revision
+`6b5725da91ebe1503984d98ca2bc34c247928750`. This fresh run passed, preserved
+byte-for-byte in `scripts/load/usage/evidence-school-day-fast-paths-passed-20261001.json`.
+It ran from `2026-10-01T00:32:31.135Z` to `00:41:20.807Z`; preparation
+took 385,123 ms outside the 60,096 ms concurrent phase. The device-bound
+fixture, independent oracle, concurrency, resource caps, constraints and
+deadlines are identical to the preceding bounded-preparation repeat. Only
+the reviewed reader/writer queries and their regression tests change runtime
+behavior. Deployment-only foundation reconciliation changes neither usage
+runtime nor the workload. The initial review main was `60f33dbcf93b6901ac038c2d0066f79fbd9632a4`;
+the reconciled main was `d4f3f232be7529ac4d584c2559768e6ad1b5421a`.
+
+| Measured operation | Slowest observed | Existing deadline | Margin below deadline |
+| --- | ---: | ---: | ---: |
+| Complete heavy-day worker operation | 52,864 ms | 60,000 ms | 11.9% |
+| Report SQL, full supported date range | 9,031 ms | 15,000 ms | 39.8% |
+| API connection acquisition (2,890 calls) | 642 ms | 5,000 ms | 87.2% |
+
+Both writers committed all 84,000 grains, 10,002,500 seconds, one million
+observations and one completion row per school. All 64 reports returned 200;
+all measured SQL families and acquisitions had zero failures. The four
+authenticated ingest clients offered 437 requests: 436 returned 200 and one
+returned the accepted 204; 218 observations per school were stored through
+the post-phase cutoffs. All independent raw/category/domain/scope/CSV/audit,
+cross-school and empty/gap/expired checks passed. Peak Node RSS was 280.3 MiB.
+The temporary I/O counters increased by 3,139,556,622 bytes across 199 files.
+The subsequent read-only attribution plan took 8,016 ms; the frozen original
+baseline attribution still reached its 60-second timeout. These diagnostics
+are outside the accepted concurrent phase. The runner exited zero and removed
+the exact generated capped fixture and volumes.
+
+The measured production files match PR #586 exactly. Their LF file SHA-256
+values are writer `63c8b5e2b20ae8f1b4a396b9b926523ff38c9cac16f88665865a73838c7f57c0`,
+reader `70154cd4947ab9da998fd24d9c4e52a3a7ef0696c27135fa2ecaa3a7dddebc0c`
+and unchanged heartbeat route `a4422a3f1a92245560fe1fab88282193a4c740e727a7b1f6cc8e842805bc30ea`.
+Git blobs and runtime semantics are identical across the two branches;
+Windows checkout line endings can produce different filesystem hashes.
+
+Full external evidence is at
+`C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-school-day-20260930-run17-fast-paths`.
+The raw/committed JSON SHA-256 is `35fc4167585e3fe52bc0f9aa4f0fe3f79b99afb945eb2b2ab6ad3fce6e34688c`,
+execution metadata is `ac9109b1e8a60fc48bc84596a1d99f28cfc345c932cb0618cf4c7fd6f7938bd0`
+and resource-cap metadata is `a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025`.
+
+This is one passing measurement of the revised queries, not proof of repeatable
+fleet capacity. The earlier isolated pass, both measured school-day failures,
+preparation failure and 500,000-grain stress failure remain immutable. This
+profile has no in-window AI decisions; its new presence guard cannot establish
+the nonempty lookup's capacity. A separately named 10,000-decision-per-school
+scenario is required to measure that path. Dense AI/exclusion histories, the
+30.66-million-grain retained year, RDS, fleet, device and operational gates
+remain open.
