@@ -127,7 +127,7 @@ after(async () => {
     // schools are retained records that cannot be hard-deleted.
     const bestEffort = (text: string, values: unknown[]) => system!.query(text, values).catch(() => undefined);
     if (system && schoolIds.length) {
-      for (const table of [TABLE, "heartbeats", "audit_logs", "students", "settings", "school_memberships", "product_licenses"]) {
+      for (const table of ["classpilot_usage_rollup_days", TABLE, "heartbeats", "audit_logs", "students", "settings", "school_memberships", "product_licenses"]) {
         await bestEffort(`DELETE FROM ${table} WHERE school_id = ANY($1::text[])`, [schoolIds]);
       }
       await bestEffort("DELETE FROM users WHERE id = ANY($1::text[])", [userIds]);
@@ -147,6 +147,8 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.ok(new Set((process.env.RLS_ENABLED_TABLES ?? "").split(",")).has(TABLE));
     const forced = await system!.query("SELECT relname FROM pg_class WHERE relname = $1 AND relrowsecurity AND relforcerowsecurity", [TABLE]);
     assert.equal(forced.rowCount, 1);
+    assert.ok(new Set((process.env.RLS_ENABLED_TABLES ?? "").split(",")).has("classpilot_usage_rollup_days"));
+    assert.equal((await system!.query("SELECT 1 FROM pg_class WHERE relname='classpilot_usage_rollup_days' AND relrowsecurity AND relforcerowsecurity")).rowCount, 1);
   });
 
   it("never turns school B heartbeats into school A rows on the scheduler pool", async () => {
@@ -193,6 +195,14 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.equal(deleted.rowCount, 0);
     const survived = await system!.query(`SELECT SUM(seconds)::int AS seconds FROM ${TABLE} WHERE school_id = $1`, [b!.schoolId]);
     assert.equal(survived.rows[0].seconds, 210);
+    await assert.rejects(inSchool(a!.schoolId, () => db.execute(sql`
+      INSERT INTO classpilot_usage_rollup_days(school_id,usage_date,day_start_at,day_end_at,processed_through)
+      VALUES(${b!.schoolId}, '2026-09-01', '2026-09-01T04:00:00Z', '2026-09-02T04:00:00Z', '2026-09-01T05:00:00Z')
+    `)), rejectedByPolicy);
+    const coverage = await inSchool(a!.schoolId, () => db.execute(sql`SELECT school_id FROM classpilot_usage_rollup_days WHERE school_id=${b!.schoolId}`));
+    assert.equal(coverage.rows.length, 0);
+    const unchanged = await inSchool(a!.schoolId, () => db.execute(sql`DELETE FROM classpilot_usage_rollup_days WHERE school_id=${b!.schoolId}`));
+    assert.equal(unchanged.rowCount, 0);
   });
 
   it("answers 404 for another school's student and school totals only for the caller's school over HTTP", async () => {
@@ -214,5 +224,16 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.equal(own.status, 200);
     const audit = await system!.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id = $1 AND action = 'classpilot.usage.export'", [a!.schoolId]);
     assert.equal(audit.rows[0].count, 1, "the export audit is written on the request path under forced RLS");
+  });
+
+  it("invalidates a direct tenant writer's own coverage without touching another school", async () => {
+    const [a, b] = tenants;
+    await inSchool(a!.schoolId, () => db.execute(sql`UPDATE classpilot_usage_rollups SET seconds=seconds WHERE school_id=${a!.schoolId}`));
+    const own = await inSchool(a!.schoolId, () => read.getClasspilotDigitalUsage({ schoolId: a!.schoolId, scope: "school", id: null, from: day, to: day }));
+    assert.equal(own.dataState, "unavailable");
+    assert.deepEqual(own.range.unavailableDates, [day]);
+    const other = await inSchool(b!.schoolId, () => read.getClasspilotDigitalUsage({ schoolId: b!.schoolId, scope: "school", id: null, from: day, to: day }));
+    assert.equal(other.dataState, "final");
+    assert.equal(other.totals.monitoredBrowserSeconds, 210);
   });
 });

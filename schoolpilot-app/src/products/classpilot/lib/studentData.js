@@ -236,6 +236,10 @@ function normalizeMonitoredBrowserTime(value) {
       retainedFrom: localDate(range.retainedFrom),
       partiallyExpired: range.partiallyExpired === true,
       computedFrom: localDate(range.computedFrom),
+      partiallyComputed: range.partiallyComputed === true,
+      requestedDays: nonnegativeInteger(range.requestedDays),
+      computedDays: nonnegativeInteger(range.computedDays),
+      unavailableDates: (Array.isArray(range.unavailableDates) ? range.unavailableDates : []).map(localDate).filter(Boolean),
     },
     totals: {
       monitoredBrowserSeconds: nonnegativeInteger(totals.monitoredBrowserSeconds),
@@ -603,6 +607,8 @@ export function studentDataCsv(report, { period = 'today', studentId = null } = 
     if (browserTime) {
       rows.push([]);
       rows.push(['Monitored Browser Time (school days)', browserTime.dataState]);
+      rows.push(['Computed retained days', browserTime.range.computedDays, 'Requested retained days', browserTime.range.requestedDays]);
+      rows.push(['Unavailable dates', browserTime.range.unavailableDates.join('; ')]);
       rows.push(['Retained from', browserTime.range.retainedFrom ?? '']);
       rows.push(['Partially expired', browserTime.range.partiallyExpired ? 'yes' : 'no']);
       rows.push(['Computed from', browserTime.range.computedFrom ?? '']);

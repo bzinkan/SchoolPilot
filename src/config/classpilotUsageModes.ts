@@ -7,11 +7,12 @@ export type ClasspilotUsageModes = { rollupMode: ClasspilotUsageMode; digitalUsa
 type Environment = Readonly<Record<string, string | undefined>>;
 
 /**
- * The reviewed classpilotUsageRollups admission bundle
+ * The reviewed classpilotUsageRollups and classpilotUsageRollupDays admissions
  * (src/config/rlsRegistry.json). Neither the rollup job nor the Digital Usage
- * API touches the table until it is RLS-enforced in this process.
+ * API touches either table until both are RLS-enforced in this process.
  */
-export const CLASSPILOT_USAGE_ROLLUP_RLS_TABLES = ["classpilot_usage_rollups"] as const;
+export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;
+export const CLASSPILOT_USAGE_ROLLUP_RLS_TABLES = ["classpilot_usage_rollups", "classpilot_usage_rollup_days"] as const;
 
 function strictMode(value: string | undefined): ClasspilotUsageMode {
   if (value === undefined || value === "off") return "off";
@@ -36,7 +37,7 @@ export function parseClasspilotUsageModes(env: Environment = process.env): Class
   return { rollupMode, digitalUsageMode };
 }
 
-/** True only when request binding is on and the rollup table is enforced. */
+/** True only when request binding is on and both usage tables are enforced. */
 export function classpilotUsageRollupsRlsAdmitted(env: Environment = process.env): boolean {
   if (env.RLS_GUC_ENABLED !== "true") return false;
   const enabled = parseRlsEnabledTables(env.RLS_ENABLED_TABLES);
@@ -46,7 +47,7 @@ export function classpilotUsageRollupsRlsAdmitted(env: Environment = process.env
 /**
  * Runtime readers. Anything but the exact value "on" is off, a malformed or
  * inconsistent pair is off, and "on" still fails closed until
- * classpilot_usage_rollups is RLS-admitted in this process.
+ * the aggregates and computation ledger are RLS-admitted in this process.
  */
 export function readClasspilotUsageModes(env: Environment = process.env): ClasspilotUsageModes {
   let modes: ClasspilotUsageModes;
