@@ -27,7 +27,7 @@ export function classroomLessonStarts(preview, selectedLinks) {
   if (!preview?.scopes?.length) return [];
   if (preview.boundary !== 'website') return preview.scopes;
   return selectedLinks.filter(link => {
-    const hostname = new URL(link.url).hostname;
+    const hostname = new URL(link.url).hostname.replace(/\.$/, '');
     return preview.authoring.allowedDomains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
   }).map(link => ({ url: link.url, label: link.title }));
 }
