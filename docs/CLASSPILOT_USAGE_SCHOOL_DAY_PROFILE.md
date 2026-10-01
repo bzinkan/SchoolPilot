@@ -195,8 +195,9 @@ the reconciled main was `d4f3f232be7529ac4d584c2559768e6ad1b5421a`.
 
 Both writers committed all 84,000 grains, 10,002,500 seconds, one million
 observations and one completion row per school. All 64 reports returned 200;
-all measured SQL families and acquisitions had zero failures. The four
-authenticated ingest clients offered 437 requests: 436 returned 200 and one
+all measured SQL families and acquisitions had zero failures. The run recorded
+437 ingest requests, including four preflight calls (433 were concurrent):
+436 returned 200 and one
 returned the accepted 204; 218 observations per school were stored through
 the post-phase cutoffs. All independent raw/category/domain/scope/CSV/audit,
 cross-school and empty/gap/expired checks passed. Peak Node RSS was 280.3 MiB.
@@ -242,8 +243,9 @@ Both complete workers committed the same 84,000 grains, 10,002,500 seconds,
 one million observations and one completion row per school in 28,042/28,387 ms.
 All 64 reports returned 200, every measured SQL/acquisition succeeded and all
 independent correctness/CSV/audit/tenant/atomicity gates passed. Report SQL
-peaked at 4,160 ms; 6,546 acquisitions peaked at 414 ms. The four ingest clients
-offered 1,039 requests (1,038 returned 200 and one accepted 204), with 519
+peaked at 4,160 ms; 6,546 acquisitions peaked at 414 ms. The run recorded
+1,039 ingest requests, including four preflight calls (1,035 were concurrent),
+with 1,038 returning 200 and one accepted 204, and 519
 observations per school stored through the post-phase cutoffs. Peak Node RSS
 was 287.6 MiB. Temporary counters increased by 3,134,741,916 bytes across 196
 files. Subsequent read-only attribution took 7,375 ms; the frozen original
@@ -256,8 +258,8 @@ preparation also varied substantially. Identical source/DDL and fresh capped
 containers do not isolate a cause; storage, cache and planning variation remain
 possible. These are two successful local repeats of the empty-AI school-day
 profile, not a guarantee for a broader workload or RDS/fleet environment.
-Every earlier failure and the 500,000-grain/dense-year limits remain explicit;
-the separately named nonempty-AI scenario has not yet been measured.
+Every earlier failure and the 500,000-grain/dense-year limits remain explicit.
+The separate nonempty-AI measurement is recorded below.
 
 External repeat evidence is at
 `C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-school-day-20260930-run18-fast-paths-repeat`.
@@ -313,8 +315,9 @@ observations and one completion row per school in 29,875/29,827 ms. Binding
 validation found exactly 10,000 AI decisions per school, 500 students with 20
 each, 10,000 distinct matched observations and zero invalid bindings. All 64
 reports returned 200, every measured SQL/acquisition succeeded and all independent
-raw/category/domain/scope/CSV/audit/tenant/atomicity gates passed. The four ingest
-clients offered 995 requests (994 returned 200 and one accepted 204), with 497
+raw/category/domain/scope/CSV/audit/tenant/atomicity gates passed. The run recorded
+995 ingest requests, including four preflight calls (991 were concurrent),
+with 994 returning 200 and one accepted 204, and 497
 observations per school stored through the post-phase cutoffs. Peak Node RSS
 was 288.1 MiB. Temporary counters increased by 3,174,958,472 bytes across 191
 files. After the measured phase, read-only attribution took 10,252 ms; the frozen
@@ -335,3 +338,104 @@ preparation failure and valid 500,000-grain stress failure remain immutable.
 The 541,500-row historical range is not a 30.66-million-grain retained year.
 Dense AI/exclusion histories, broader repeated AI capacity, RDS/fleet, devices
 and operational activation gates remain open; no production feature was enabled.
+
+## Combined source with the complete current contract
+
+Runs20 and21 passed on the same clean published integration source
+`cc7b3b05ae42172b8b2389600cb184f1165ffa54`. These are separately preserved in
+`evidence-school-day-integrated-128-ai-passed-20261001.json` and
+`evidence-school-day-integrated-128-ai-repeat-passed-20261001.json` under
+`scripts/load/usage/`. The accompanying comparison JSON records exact artifact
+hashes, cleanup evidence and the independently checked contract/source equality.
+Historical Runs17/18/19 retain their original 127-table source and recorded DDL;
+their earlier route/contract proof is not transferred to this combined release.
+
+The reader and writer UTF8/LF hashes still match PR #586's measured runtime
+(`70154cd4...` and `63c8b5e2...`). The integrated heartbeat route includes the
+reviewed Focus and exact-device race changes; its different hash is retained in
+the final source record. Both fresh generated fixtures explicitly selected
+`passpilotAppointmentsPostExpand`, applied all current local legacy/versioned
+migrations before traffic, and verified all 128 tables enabled and FORCE RLS
+under the non-owner NOSUPERUSER/NOBYPASSRLS application role. All 52 migration
+ledger entries were complete. Actual canonical class/primary assignments retain
+the current staff-identity constraints. No constraint, deadline or cap changed.
+
+Usage rollup and Digital Usage were on. Shared teaching resources and PassPilot
+Rules, appointments and reports were off; precise and Focus switches were false
+with explicit off rollout entries. The compiled production parsers verified
+those gates. The existing daily-rollup mode was configured/effective `shadow`
+with `SCHEDULER_ENABLED=false`, rather than claiming an ineffective `off` mode.
+Offered heartbeat capabilities remained empty.
+
+The original runner still defaults to the historical 127-table inventory.
+Selecting 128 from a source that lacks that inventory fails before output or
+fixture creation. To reproduce this combined proof, use the exact clean source
+above and two different fresh external directories:
+
+```powershell
+pwsh -NoProfile -File scripts/load/usage/run-local-school-day-ai-scale.ps1 -RlsInventory passpilotAppointmentsPostExpand -OutputDirectory C:/Temp/usage-combined-128-ai-fresh
+pwsh -NoProfile -File scripts/load/usage/run-local-school-day-ai-scale.ps1 -RlsInventory passpilotAppointmentsPostExpand -OutputDirectory C:/Temp/usage-combined-128-ai-repeat-fresh
+```
+
+Both kept PostgreSQL 4 CPU/4 GiB memory and swap caps, Node 512 MiB old-space,
+API/worker pools 16/5, the identical two-school million-observation profile,
+10,000 matching AI decisions per school, 84,000-grain arithmetic and supported
+366-date request/365-day retention. Complete worker durations include checkout,
+lock, deletion, attribution, every insert, completion and commit. Both produced
+84,000 grains, 10,002,500 seconds, one million observations and one completion
+row per school. All 64 reports per run returned 200; all independent scope,
+category, ranked-domain, CSV/audit, raw-live, tenant, empty/gap/expired and
+atomicity checks passed. Every measured SQL/acquisition family had zero failures.
+
+| Measured operation | Run20 maximum | Run21 maximum | Existing deadline | Conservative margin |
+| --- | ---: | ---: | ---: | ---: |
+| Complete heavy-day worker | 57,119.885 ms | 34,311.279 ms | 60,000 ms | 2,880.115 ms / 4.80% |
+| Report SQL, full supported range | 12,043.952 ms | 11,404.828 ms | 15,000 ms | 2,956.048 ms / 19.71% |
+| API connection acquisition | 588.973 ms | 2,775.650 ms | 5,000 ms | 2,224.350 ms / 44.49% |
+
+The slowest total HTTP report was 16,029.297 ms in Run20 and 11,774.828 ms in
+Run21, both 200. The existing API gate measures individual SQL statements and
+connection acquisition; it does not promise a 15-second total HTTP response.
+The 4.80% minimum worker margin is tight. No cache, storage or planning cause
+was isolated for the 34-to-57-second variation; the faster repeat does not
+replace the slower observed margin.
+
+Run20 recorded 319 ingest requests, including four preflight calls and 315
+concurrent offerings: 318 returned 200 and one accepted 204. Its live raw oracle
+counted 159 observations per school, including preflights. Run21 recorded 857
+requests, four preflight and 853 concurrent: 856 returned 200 and one accepted
+204, with 428 raw observations per school. These are closed-loop observations,
+not a fixed external arrival-rate guarantee. Peak Node RSS was 280.4/284.1 MiB;
+temporary counters increased by 3,190,135,644/3,191,634,844 bytes across 192/197
+files. Preparation took 237,430/318,977 ms outside the 60,125/60,145 ms concurrent
+phases. Post-phase read-only attribution took 23,608/9,414 ms; the immutable
+original query hit its 60-second timeout in both. Diagnostics are outside
+accepted capacity timing.
+
+The input schema export and actual post-convergence schema are separately
+hashed and preserved before seeding. Between the two runs, source/profile/caps,
+all 128 catalog rows, all 52 migration checksums/statuses and effective flags
+match exactly. Both input and actual schema are byte-equal after UTF8/LF
+normalization and removal of only the dump's generated restrict/unrestrict
+nonce lines. The actual normalized DDL hash is
+`29ed4713ef42073da76b66754800b79129a2172155de12607593b58c8e6df51d`;
+the corresponding input hash is
+`b140706e6085990396094ace00af74cef5c35bd41982ad346140a296ec9b6ba9`.
+This equality was directly checked; raw dumps and hashes remain unchanged.
+
+External evidence is preserved at
+`C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-integrated-school-day-20261001-run20-128-ai`
+and the sibling `schoolpilot-usage-integrated-school-day-20261001-run21-128-ai-repeat`.
+The raw/committed JSON hashes are
+`0f3e16efc591c25c86d28faa93d1da594daf11df09a4fb9d403dce2f22000083` and
+`3f6cad3572e9379c6a3735de5edeefeee505d4ac0df4d46b2bcc77721c1d4b5d`.
+Both runners exited zero, removed their exact generated containers/volumes,
+and independently verified those containers absent. The source stayed clean
+and frozen through cleanup; no production/RDS access or activation occurred.
+
+All earlier school-day/preparation failures and the valid 500,000-grain stress
+failure remain immutable. The 541,500-grain historical range is not a measured
+30.66-million-grain heavy retained year. Dense AI/exclusions, wider fleet/RDS
+I/O, preceding heavy jobs, Redis distribution, managed devices and operational
+rollout remain open. This proof establishes the stated local bounded workload
+with its disclosed minimum margin; it does not establish those larger gates.
