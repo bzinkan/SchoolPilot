@@ -1,0 +1,396 @@
+{
+  "version": 1,
+  "sourceRevision": "ec890bd158268c229fee29961459364c994fe8ff",
+  "startedAt": "2026-09-30T20:55:46.630Z",
+  "passed": false,
+  "productionReadiness": false,
+  "profile": {
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "3f84a03c6a1dd8a1d9bd3d083f486839ed5d1ccfcf40245fae8b877e3fc98e3c",
+    "src/services/classpilotUsageRead.ts": "36850a17ff3b07d7b5a9b12c34799c844c84c1a7613c432d2c6d4736c561dcb2",
+    "src/routes/classpilot/devices.ts": "a4422a3f1a92245560fe1fab88282193a4c740e727a7b1f6cc8e842805bc30ea",
+    "scripts/load/usage/local-usage-scale.mjs": "4f46999b3aa9b7f10ea94773b3eac3aa34ad001f5395a093c147bad07fc127a4",
+    "scripts/load/usage/reference-attribution-20260930.sql": "a39891fdfdd98d2609fef3764883df7c099ef8e9b1f928dcdc98adbd47b0f21a"
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified."
+  ],
+  "writerQueries": [
+    {
+      "durationMs": 60009.45000000001,
+      "schoolId": "884e32e7-a90b-4540-9119-abf5e7819b44"
+    },
+    {
+      "durationMs": 60010.286300000036,
+      "schoolId": "66305f31-eef3-489c-b3ea-a8116ce4c1f3"
+    },
+    {
+      "durationMs": 918.8736999999965,
+      "schoolId": "66305f31-eef3-489c-b3ea-a8116ce4c1f3"
+    },
+    {
+      "durationMs": 794.0272000000114,
+      "schoolId": "884e32e7-a90b-4540-9119-abf5e7819b44"
+    }
+  ],
+  "reads": {
+    "0/school": {
+      "count": 8,
+      "minMs": 4522.058600000048,
+      "p50Ms": 4683.332300000009,
+      "p95Ms": 6196.1634000000195,
+      "maxMs": 6196.1634000000195,
+      "afterLiveMs": 1219.3344999999972,
+      "csvMs": 1235.7077000000281,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 5790,
+        "csvTotalMinutes": "270846.5"
+      }
+    },
+    "0/grade": {
+      "count": 8,
+      "minMs": 1315.9527000000235,
+      "p50Ms": 1656.8947000000044,
+      "p95Ms": 4182.260400000028,
+      "maxMs": 4182.260400000028,
+      "afterLiveMs": 251.9782000000123,
+      "csvMs": 264.28140000003623,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 1170,
+        "csvTotalMinutes": "54169.5"
+      }
+    },
+    "0/class": {
+      "count": 8,
+      "minMs": 274.63469999999506,
+      "p50Ms": 331.69940000004135,
+      "p95Ms": 1243.8631000000169,
+      "maxMs": 1243.8631000000169,
+      "afterLiveMs": 39.89859999995679,
+      "csvMs": 41.96740000002319,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "2709.0"
+      }
+    },
+    "0/student": {
+      "count": 8,
+      "minMs": 228.04790000000503,
+      "p50Ms": 240.5297000000137,
+      "p95Ms": 1206.4711999999708,
+      "maxMs": 1206.4711999999708,
+      "afterLiveMs": 38.2666999999783,
+      "csvMs": 33.20020000002114,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "542.0"
+      }
+    },
+    "1/school": {
+      "count": 8,
+      "minMs": 4441.476399999985,
+      "p50Ms": 4767.411699999997,
+      "p95Ms": 6221.9699000000255,
+      "maxMs": 6221.9699000000255,
+      "afterLiveMs": 1266.4196999999695,
+      "csvMs": 1289.4788000000408,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 5790,
+        "csvTotalMinutes": "270846.5"
+      }
+    },
+    "1/grade": {
+      "count": 8,
+      "minMs": 1350.8973000000115,
+      "p50Ms": 1692.4629000000423,
+      "p95Ms": 4203.028499999957,
+      "maxMs": 4203.028499999957,
+      "afterLiveMs": 246.29109999997308,
+      "csvMs": 255.77490000001853,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 1170,
+        "csvTotalMinutes": "54169.5"
+      }
+    },
+    "1/class": {
+      "count": 8,
+      "minMs": 381.4252999999444,
+      "p50Ms": 475.81020000000717,
+      "p95Ms": 1499.5895000000019,
+      "maxMs": 1499.5895000000019,
+      "afterLiveMs": 39.77720000001136,
+      "csvMs": 41.9716999999946,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "2709.0"
+      }
+    },
+    "1/student": {
+      "count": 8,
+      "minMs": 395.81750000000466,
+      "p50Ms": 556.1193000000203,
+      "p95Ms": 1502.513799999957,
+      "maxMs": 1502.513799999957,
+      "afterLiveMs": 29.200299999967683,
+      "csvMs": 38.42420000000857,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 0,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "542.0"
+      }
+    }
+  },
+  "readFailures": [],
+  "apiDatabase": {
+    "acquisitions": {
+      "count": 5015,
+      "failures": 0,
+      "maxMs": 925.2550000000047
+    },
+    "statements": {
+      "other": {
+        "count": 35242,
+        "failures": 0,
+        "maxMs": 2780.709900000016
+      },
+      "usageReport": {
+        "count": 64,
+        "failures": 0,
+        "maxMs": 4714.123499999987
+      }
+    }
+  },
+  "ingest": {
+    "requests": 773,
+    "insertedHeartbeats": 772,
+    "bySchool": {
+      "0": 386,
+      "1": 387
+    },
+    "statuses": {
+      "200": 772,
+      "204": 1
+    },
+    "bySchoolInserted": {
+      "0": 386,
+      "1": 386
+    },
+    "timings": {
+      "count": 773,
+      "minMs": 116.4326000000001,
+      "p50Ms": 205.0844999999972,
+      "p95Ms": 575.9175000000396,
+      "maxMs": 1813.6758000000264
+    }
+  },
+  "peakRssBytes": 299462656,
+  "rls": [
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "dataset": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 500000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-27",
+    "unavailableDate": "2026-09-25",
+    "heavyDate": "2026-09-28",
+    "today": "2026-09-30",
+    "dateRange": {
+      "from": "2025-09-30",
+      "to": "2026-09-30"
+    }
+  },
+  "seedMs": 256519.82549999998,
+  "fixtureCounts": [
+    {
+      "school_id": "66305f31-eef3-489c-b3ea-a8116ce4c1f3",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    },
+    {
+      "school_id": "884e32e7-a90b-4540-9119-abf5e7819b44",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    }
+  ],
+  "poolMax": {
+    "api": 16,
+    "worker": 5,
+    "apiWaitingPeak": 5,
+    "workerWaitingPeak": 0
+  },
+  "concurrentPhaseMs": 191919.79089999996,
+  "phaseOutcomes": [
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "read_waves",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    }
+  ],
+  "concurrentWriters": [],
+  "attributionPlanFailure": {
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  },
+  "baselineAttributionPlanFailure": {
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  },
+  "currentDayWriters": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 973.998900000006,
+      "rowCount": 385,
+      "seconds": 5790,
+      "heartbeatCount": 386
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 822.7636000000057,
+      "rowCount": 385,
+      "seconds": 5790,
+      "heartbeatCount": 386
+    }
+  ],
+  "heavyDayAtomicity": [
+    {
+      "schoolIndex": 0,
+      "writerCommitted": false,
+      "aggregateRows": 0,
+      "completionRows": 0
+    },
+    {
+      "schoolIndex": 1,
+      "writerCommitted": false,
+      "aggregateRows": 0,
+      "completionRows": 0
+    }
+  ],
+  "databaseBytes": 2334809111,
+  "databaseCountersDelta": {
+    "temp_bytes": 5104386236,
+    "temp_files": 172,
+    "blks_read": 571366,
+    "blks_hit": 14042591
+  },
+  "correctness": {
+    "realMaxRangeAccepted": true,
+    "nextLongerRangeRejected": true,
+    "independentAllScopeTotals": true,
+    "concurrentSchoolWriters": false,
+    "actualHttpIngest": true,
+    "successfulEmptyDay": true,
+    "gapWithheld": true,
+    "expiredDateWithheld": true,
+    "atomicSnapshotReads": true,
+    "currentDayRawOracle": true,
+    "crossSchoolIdsDenied": true,
+    "csvStrictAuditRecorded": true
+  },
+  "finishedAt": "2026-09-30T21:03:24.316Z",
+  "failure": {
+    "name": "error",
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  }
+}

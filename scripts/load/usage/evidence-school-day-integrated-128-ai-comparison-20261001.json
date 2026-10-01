@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "sourceRevision": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+  "scenario": "six-lessons-200-domains-1m-unique-10k-ai",
+  "sameSourceHashes": true,
+  "sameProfileAndLimits": true,
+  "same128ForcedNonOwnerCatalog": true,
+  "same52CompleteMigrations": true,
+  "sameFlagsAndModes": true,
+  "schemaNormalization": "UTF8/LF; remove only pg_dump restrict/unrestrict nonce lines for cross-run equality",
+  "sameInputDdl": true,
+  "normalizedInputDdlSha256": "b140706e6085990396094ace00af74cef5c35bd41982ad346140a296ec9b6ba9",
+  "sameActualPostConvergenceDdl": true,
+  "normalizedPostConvergenceDdlSha256": "29ed4713ef42073da76b66754800b79129a2172155de12607593b58c8e6df51d",
+  "conservativeMargins": {
+    "completeWorker": {
+      "slowestObservedMs": 57119.88460000002,
+      "deadlineMs": 60000,
+      "marginMs": 2880.1153999999806,
+      "marginPercent": 4.8001923333333005
+    },
+    "reportSql": {
+      "slowestObservedMs": 12043.95160000003,
+      "deadlineMs": 15000,
+      "marginMs": 2956.0483999999706,
+      "marginPercent": 19.706989333333137
+    },
+    "apiAcquisition": {
+      "slowestObservedMs": 2775.650399999984,
+      "deadlineMs": 5000,
+      "marginMs": 2224.349600000016,
+      "marginPercent": 44.48699200000032
+    }
+  },
+  "maximumTotalHttpReportMs": 16029.296600000001,
+  "totalHttpReportDeadlineMs": null,
+  "totalHttpReportLimitNote": "Existing acceptance checks individual API statements and connection acquisition, not a 15-second total HTTP response guarantee.",
+  "sourceRecord": {
+    "sourceRevision": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+    "gitClean": true,
+    "createdAt": "2026-10-01T02:41:01.579Z",
+    "runtimeHashes": {
+      "src/services/classpilotUsageRollup.ts": {
+        "rawSha256": "966e5c1e80643811cc48fb805bf7a6e8ad57039a9dfd07359cc75d75e492adb9",
+        "utf8LfSha256": "63c8b5e2b20ae8f1b4a396b9b926523ff38c9cac16f88665865a73838c7f57c0"
+      },
+      "src/services/classpilotUsageRead.ts": {
+        "rawSha256": "48d39398b5ee459436dc32e30be785177641eb7289ff46a0473c9602cd46504a",
+        "utf8LfSha256": "70154cd4947ab9da998fd24d9c4e52a3a7ef0696c27135fa2ecaa3a7dddebc0c"
+      },
+      "src/routes/classpilot/devices.ts": {
+        "rawSha256": "deada272983cae910083ef896667febbb1dedf9ac19fbc2fadbb2429cd223267",
+        "utf8LfSha256": "5468efa95f71885656182a8c456f80a660fbaecb49021f080a61b140b4289daa"
+      },
+      "src/config/rlsRegistry.json": {
+        "rawSha256": "417f3a15aba10c0d01f92c20d6412624f9f915ac5621d08198a63dc14fdad0b5",
+        "utf8LfSha256": "2df75073a4c8eef344ab800ab9b0862a7cb3aaa0e5d736d7096f862db5d316b5"
+      },
+      "src/db/passpilotAppointmentsMigration.ts": {
+        "rawSha256": "277f5794995f3a4d019a24fb91d1ae1c54d8789898c129649985edadb73ef6fc",
+        "utf8LfSha256": "993fe48ba4c3de3fa464973476efe13dc7a3b43f324130d03551c50751a40ee5"
+      },
+      "scripts/load/usage/local-school-day-scale.mjs": {
+        "rawSha256": "5247592dedff1cb08134e46a8e07dd6b784b8273e39543d8cd04061076b86a89",
+        "utf8LfSha256": "05f2295a1397917af31fc723d2ac3495389901d589ee06f189404873e7f1f7fe"
+      },
+      "scripts/load/usage/local-usage-scale.mjs": {
+        "rawSha256": "7a80a3f72f2c8e5361fe5019188228fcc017db78d1a7d36b0f4f75d6b5d721aa",
+        "utf8LfSha256": "75ea16e58dd730e3ec3f256684730e8107af11c5bb3f6bd4bc22dab2e0e9fe03"
+      },
+      "scripts/load/usage/school-day-profile.mjs": {
+        "rawSha256": "54d89f98faa477736bdc5abb5a2607991a85f6281e6f3b0ab68481104156e09a",
+        "utf8LfSha256": "02abcbe8f86e1a61fe9a50f4676c05706b7db60bda6e66d2b34b0981b071620c"
+      },
+      "scripts/load/usage/school-day-ai-profile.mjs": {
+        "rawSha256": "946978730652f7fbef0416c43d5a53daa26816bb72fa9adc6887f344a9f5e2fa",
+        "utf8LfSha256": "16d689229a701e3d753555e84b89bdf5043f7e2264483e2d16ae3078ca102104"
+      },
+      "scripts/load/usage/run-local-usage-scale.ps1": {
+        "rawSha256": "baf38a71e4bd85937fc18eb979e443f348e0da13c2a28e01d45c9a3dd84bc660",
+        "utf8LfSha256": "3254ce76ac0c9c13b9c7751958a1f4684c1f98883b77925b181df207595ad539"
+      },
+      "scripts/load/usage/fixture-rls-contract.mjs": {
+        "rawSha256": "324eea4829a415f4bca72638bfa52fba03f76c88ad4fcbf0bb5c6cff97f98035",
+        "utf8LfSha256": "8540a825f36c1a43b7de629a8d5fafcf59fcea9cc6e99bc5b9f12b5336a6c0b2"
+      }
+    },
+    "readerWriterMatchPriorMeasuredSource": true,
+    "heartbeatRouteMatchesPriorMeasuredSource": false,
+    "selectedInventory": "passpilotAppointmentsPostExpand",
+    "selectedTables": 128,
+    "plannedProfile": "six-lessons-200-domains-1m-unique-10k-ai",
+    "historicalEvidenceUnchanged": true,
+    "capacityMeasured": false,
+    "productionMutations": 0
+  },
+  "runs": [
+    {
+      "externalEvidenceDirectory": "C:\\Users\\zinka\\AppData\\Local\\Temp\\schoolpilot-usage-integrated-school-day-20261001-run20-128-ai",
+      "evidenceFile": "evidence-school-day-integrated-128-ai-passed-20261001.json",
+      "execution": {
+        "sourceRevision": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+        "workloadProfile": "school-day-ai",
+        "rlsInventory": "passpilotAppointmentsPostExpand",
+        "registrySha256": "417f3a15aba10c0d01f92c20d6412624f9f915ac5621d08198a63dc14fdad0b5",
+        "admittedTables": 128,
+        "currentFixtureMigrations": true,
+        "schemaSource": "schoolpilot_redesign_usage_20260930",
+        "schemaOnly": true,
+        "schemaSha256": "d4aabc29d5546886f563f2bc1f896aec212629f5fcadb1f51f2278e4e6636471",
+        "inputSchemaSha256": "d4aabc29d5546886f563f2bc1f896aec212629f5fcadb1f51f2278e4e6636471",
+        "postConvergenceSchemaSha256": "fd9fbb1322cafe9c180c8d5d70f5298d5dbe84e2f7874d962240c4c2d30bb936",
+        "postConvergenceSchemaNormalization": "UTF8/LF; no owner/grants; pg_dump nonce retained",
+        "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6",
+        "container": "schoolpilot-usage-scale-6beaa3558d3a",
+        "database": "schoolpilot_redesign_usage_scale_6beaa3558d3a",
+        "restrictedNonOwnerRole": true,
+        "postgresCpu": 4,
+        "postgresMemoryBytes": 4294967296,
+        "nodeOldSpaceMiB": 512,
+        "productionMutations": 0,
+        "exitCode": 0
+      },
+      "artifacts": {
+        "usage-scale.json": "0f3e16efc591c25c86d28faa93d1da594daf11df09a4fb9d403dce2f22000083",
+        "execution.json": "c4cd265b16f06defa01330e5b9a3ae7285d6a897ca89dc532644236eb09ce91a",
+        "resource-caps.json": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+        "fixture-contract.json": "5f5435fa9b4aba02e1948057490dee616ce125cda08602302053fc45c0cb6518",
+        "schema-only.sql": "d4aabc29d5546886f563f2bc1f896aec212629f5fcadb1f51f2278e4e6636471",
+        "post-convergence-schema.sql": "fd9fbb1322cafe9c180c8d5d70f5298d5dbe84e2f7874d962240c4c2d30bb936",
+        "build.log": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+        "scale.log": "6b7a82307bcf7c2edb6e4cadc37bbe2c9a4404f04a6285aa2359659212278033",
+        "fixture-legacy-convergence.log": "d34eb660f5cb208a13dfa76c4b5540730a39a4dd0e727076f4f02e561c2b4251",
+        "fixture-versioned-migrations.log": "b17100e71a5503993dba866be77960309b041e659b262eaf73c5582cb53e8eab",
+        "schema-restore.log": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+        "container-final-state.json": "433bd2fdede8a66efa7237f534925d804e6b9e0fd47a69e5c64d77569cb5be3d",
+        "container-final-stats.json": "01f963762e3c8cdbb58f1dce5a090b6b74dcef473e6fa03ae456cd9c1b70db2f"
+      },
+      "ownedContainerAbsentAfterCleanup": true,
+      "fullCurrentContractVerified": true,
+      "allIndependentGatesPassed": true,
+      "maximumTotalHttpReportMs": 16029.296600000001
+    },
+    {
+      "externalEvidenceDirectory": "C:\\Users\\zinka\\AppData\\Local\\Temp\\schoolpilot-usage-integrated-school-day-20261001-run21-128-ai-repeat",
+      "evidenceFile": "evidence-school-day-integrated-128-ai-repeat-passed-20261001.json",
+      "execution": {
+        "sourceRevision": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+        "workloadProfile": "school-day-ai",
+        "rlsInventory": "passpilotAppointmentsPostExpand",
+        "registrySha256": "417f3a15aba10c0d01f92c20d6412624f9f915ac5621d08198a63dc14fdad0b5",
+        "admittedTables": 128,
+        "currentFixtureMigrations": true,
+        "schemaSource": "schoolpilot_redesign_usage_20260930",
+        "schemaOnly": true,
+        "schemaSha256": "8f2bc817929a8a90c405bfcf51a2efd562af225bcea0004964682fe48923a40f",
+        "inputSchemaSha256": "8f2bc817929a8a90c405bfcf51a2efd562af225bcea0004964682fe48923a40f",
+        "postConvergenceSchemaSha256": "3f70a10e405d517e822903aa85dd50e3c9b6af24ad349c7e86e9ad48216c56dc",
+        "postConvergenceSchemaNormalization": "UTF8/LF; no owner/grants; pg_dump nonce retained",
+        "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6",
+        "container": "schoolpilot-usage-scale-19baf901579b",
+        "database": "schoolpilot_redesign_usage_scale_19baf901579b",
+        "restrictedNonOwnerRole": true,
+        "postgresCpu": 4,
+        "postgresMemoryBytes": 4294967296,
+        "nodeOldSpaceMiB": 512,
+        "productionMutations": 0,
+        "exitCode": 0
+      },
+      "artifacts": {
+        "usage-scale.json": "3f6cad3572e9379c6a3735de5edeefeee505d4ac0df4d46b2bcc77721c1d4b5d",
+        "execution.json": "6a83dd0835855965645135a2afad1ed2d92433ade1694fc56a312447435ad044",
+        "resource-caps.json": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+        "fixture-contract.json": "5fd47897546544daa044274c16ef978b0bb0f2e34f05b8e22bb87c0bb5075e82",
+        "schema-only.sql": "8f2bc817929a8a90c405bfcf51a2efd562af225bcea0004964682fe48923a40f",
+        "post-convergence-schema.sql": "3f70a10e405d517e822903aa85dd50e3c9b6af24ad349c7e86e9ad48216c56dc",
+        "build.log": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+        "scale.log": "3472352bb6297f52acb3836602a897de41bccaf90f85ab0362c6bff8139789e4",
+        "fixture-legacy-convergence.log": "4bbe255c2985732d98b67fdb22257666dbb758921b9c2a3e81dd10d9c8c6c975",
+        "fixture-versioned-migrations.log": "f3655d9c0cdd0dbf6df7f9ca80f2d3b6ebc7ee801a3f39f0f036bbffe819c668",
+        "schema-restore.log": "a2e83725f0c5d7343be4c64529a03eb95901b19a9a1e56bc0c6a33919443566a",
+        "container-final-state.json": "c825d470608404dd2cea1044c3cf03de7668d5c2b4f3a0838317496e45199217",
+        "container-final-stats.json": "e716e57952053e2a4d5e975c5db38deda969ed2b9b4ce122ee88ae8a5370a8bc"
+      },
+      "ownedContainerAbsentAfterCleanup": true,
+      "fullCurrentContractVerified": true,
+      "allIndependentGatesPassed": true,
+      "maximumTotalHttpReportMs": 11774.828299999994
+    }
+  ],
+  "limitations": [
+    "The 4.8% minimum full-worker margin is tight; timing/cache/storage/planning variation was not isolated.",
+    "Two fresh full-current combined runs do not guarantee fleet, RDS I/O, dense AI/exclusions or managed-device performance.",
+    "The 541500 historical grains per school do not represent a 30660000-grain heavy retained year.",
+    "All previous preparation, school-day and physically valid 500000-grain stress failures remain immutable.",
+    "Historical 127-table measurements remain scoped to their recorded source and DDL."
+  ],
+  "productionReadiness": false,
+  "productionMutations": 0,
+  "sourceRecordSha256": "76b8ac134ece840d26a5d8390884e46a1e79c16882a06d927f0f244a99ba360f",
+  "sourceRecordPurpose": "Immutable pre-run source snapshot. Its capacityMeasured=false describes the snapshot time; both completed outcomes are recorded in runs and their immutable passed=true raw JSON."
+}
