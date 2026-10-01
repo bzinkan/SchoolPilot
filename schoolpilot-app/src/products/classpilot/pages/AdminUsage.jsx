@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Clock, Download, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -80,7 +80,7 @@ function UsagePage({ school, identity }) {
   const [exportError, setExportError] = useState(null);
   const exportController = useRef(null);
   const headers = { 'X-School-Id': school.id };
-  useEffect(() => { const timer = setInterval(() => setClock(new Date()), 60_000); return () => { clearInterval(timer); exportController.current?.abort(); }; }, []);
+  useEffect(() => { const timer = setInterval(() => setClock(new Date()), 60_000); return () => { clearInterval(timer); exportController.current?.controller.abort(); }; }, []);
   const read = (url, signal) => apiRequest('GET', url, undefined, { headers, signal });
   const students = useQuery({ queryKey: ['usage-students', identity], queryFn: ({ signal }) => read('/classpilot/roster/students', signal), enabled: scope === 'student' || scope === 'grade', gcTime: 0 });
   const settings = useQuery({ queryKey: ['usage-grades', identity], queryFn: ({ signal }) => read('/classpilot/admin/settings', signal), enabled: scope === 'grade', gcTime: 0 });
@@ -94,21 +94,36 @@ function UsagePage({ school, identity }) {
   const validSelection = scope === 'school' || (!directoryLoading && !directoryError && options.some(option => option.id === id));
   const range = usageDateRange(period, today, custom);
   const query = validSelection ? usageQuery(scope, id, range) : null;
-  const report = useQuery({ queryKey: [API, identity, query], queryFn: async ({ signal }) => requireUsageReport(await read(`${API}?${query}`, signal)), enabled: query !== null, gcTime: 0, retry: false });
-  const change = callback => { exportController.current?.abort(); setExportError(null); callback(); };
+  // A new token fences even a return to the same query after a scope/date change.
+  const context = useMemo(() => ({ identity, query }), [identity, query]);
+  const currentContext = useRef(context);
+  useLayoutEffect(() => {
+    currentContext.current = context;
+    return () => { currentContext.current = null; exportController.current?.controller.abort(); };
+  }, [context]);
+  const cancelExport = () => { exportController.current?.controller.abort(); exportController.current = null; setExporting(false); };
+  const report = useQuery({ queryKey: [API, identity, query], queryFn: async ({ signal }) => {
+    try { return requireUsageReport(await read(`${API}?${query}`, signal)); }
+    catch (error) {
+      if (!signal.aborted && currentContext.current === context && [401, 403, 409].includes(error.response?.status)) cancelExport();
+      throw error;
+    }
+  }, enabled: query !== null, gcTime: 0, retry: false });
+  const change = callback => { cancelExport(); setExportError(null); callback(); };
+  const refresh = () => { cancelExport(); setExportError(null); setClock(new Date()); void report.refetch(); };
   const download = async () => {
-    const controller = new AbortController(); exportController.current = controller; setExporting(true); setExportError(null);
+    const controller = new AbortController(); exportController.current = { controller, context }; setExporting(true); setExportError(null);
     try {
       const response = await api.get(`${API}?${usageQuery(scope, id, range, 'csv')}`, { headers, signal: controller.signal, responseType: 'blob' });
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || currentContext.current !== context) return;
       const url = URL.createObjectURL(response.data), link = document.createElement('a');
       link.href = url; link.download = `monitored-browser-time-${scope}-${range.from}-to-${range.to}.csv`; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { if (!controller.signal.aborted) setExportError(usageError(error)); }
-    finally { if (exportController.current === controller) { exportController.current = null; setExporting(false); } }
+    finally { if (exportController.current?.controller === controller) { exportController.current = null; setExporting(false); } }
   };
   return <div className="max-w-6xl space-y-6">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div className="max-w-2xl"><h2 className="text-xl font-semibold tracking-tight">Browser activity observed by ClassPilot</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Monitored Browser Time covers browser activity observed on managed Chromebooks. It does not measure total device screen time, engagement, or learning.</p></div><div className="flex gap-2"><Button variant="outline" size="sm" disabled={!query || report.isFetching} onClick={() => { setClock(new Date()); void report.refetch(); }}><RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />Refresh</Button><Button size="sm" disabled={!query || !report.data || report.isFetching || report.isError || exporting || report.data.dataState === 'unavailable'} onClick={() => { void download(); }}><Download className="mr-2 h-4 w-4" aria-hidden="true" />{exporting ? 'Exporting…' : 'Export CSV'}</Button></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div className="max-w-2xl"><h2 className="text-xl font-semibold tracking-tight">Browser activity observed by ClassPilot</h2><p className="mt-2 text-sm leading-6 text-muted-foreground">Monitored Browser Time covers browser activity observed on managed Chromebooks. It does not measure total device screen time, engagement, or learning.</p></div><div className="flex gap-2"><Button variant="outline" size="sm" disabled={!query || report.isFetching} onClick={refresh}><RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />Refresh</Button><Button size="sm" disabled={!query || !report.data || report.isFetching || report.isError || exporting || report.data.dataState === 'unavailable'} onClick={() => { void download(); }}><Download className="mr-2 h-4 w-4" aria-hidden="true" />{exporting ? 'Exporting…' : 'Export CSV'}</Button></div></div>
     <Card><CardContent className="space-y-4 pt-6"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Picker label="Scope" value={scope} onChange={value => change(() => { setScope(value); setId(''); setSearch(''); })}><option value="school">School</option><option value="grade">Grade</option><option value="class">Official class</option><option value="student">Student</option></Picker>
       {scope !== 'school' ? <Picker label={scope === 'class' ? 'Official class' : scope === 'grade' ? 'Grade' : 'Student'} value={id} disabled={directoryLoading || Boolean(directoryError)} onChange={value => change(() => setId(value))}><option value="">{directoryLoading ? 'Loading…' : `Choose a ${scope}`}</option>{options.filter(option => !search || option.id === id || option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase())).map(option => <option value={option.id} key={option.id}>{option.label}</option>)}</Picker> : <div className="grid content-center gap-1"><span className="text-xs text-muted-foreground">Reporting school</span><span className="truncate text-sm font-medium">{school.name}</span></div>}
       <Picker label="Date range" value={period} onChange={value => change(() => setPeriod(value))}><option value="today">Today</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="custom">Custom range</option></Picker><div className="grid content-center gap-1"><span className="text-xs text-muted-foreground">School time zone</span><span className="text-sm">{school.timezone}</span></div></div>
@@ -121,7 +136,7 @@ function UsagePage({ school, identity }) {
     {scope !== 'school' && directoryError && <Notice error>Could not load {scope} choices. {usageError(directoryError)} <Button variant="link" size="sm" onClick={() => { void (scope === 'class' ? classes.refetch() : students.refetch()); if (scope === 'grade') void settings.refetch(); }}>Retry choices</Button></Notice>}
     {scope !== 'school' && !directoryLoading && !directoryError && !validSelection && <p role="status" className="text-sm text-muted-foreground">Choose a {scope} to view its report.</p>}
     {query && report.isPending && <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading Monitored Browser Time…</p>}
-    {query && report.isError && <Notice error>{usageError(report.error)} <Button variant="link" size="sm" onClick={() => { void report.refetch(); }}>Try again</Button></Notice>}
+    {query && report.isError && <Notice error>{usageError(report.error)} <Button variant="link" size="sm" onClick={refresh}>Try again</Button></Notice>}
     {exportError && <Notice error>CSV was not exported. {exportError}</Notice>}
     {query && !report.isError && report.data && <Report report={report.data} />}
   </div>;
@@ -132,6 +147,6 @@ export default function AdminUsage() {
   const { school, currentUser, isAdmin, isLoading } = useClassPilotAuth();
   if (isLoading) return <p role="status">Checking administrator access…</p>;
   if (!(isAdmin || currentUser?.isSuperAdmin) || !school?.id) return <Notice error>Administrator access is required for Monitored Browser Time.</Notice>;
-  const identity = adminIdentityKey(user, activeMembership, activeSchoolId);
+  const identity = JSON.stringify([adminIdentityKey(user, activeMembership, activeSchoolId), user?.authVersion ?? null]);
   return <UsagePage key={`${identity}:${school.timezone}`} school={school} identity={identity} />;
 }
