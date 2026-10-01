@@ -3,7 +3,7 @@
 param(
   [ValidatePattern('^schoolpilot_redesign_usage_[a-z0-9_]+$')][string]$SchemaDatabase = 'schoolpilot_redesign_usage_20260930',
   [Parameter(Mandatory=$true)][string]$OutputDirectory,
-  [ValidateSet('stress','school-day')][string]$Profile = 'stress',
+  [ValidateSet('stress','school-day','school-day-ai')][string]$Profile = 'stress',
   [switch]$PrepareOnly,
   [switch]$HoldFixtureForDiagnostics
 )
@@ -76,7 +76,11 @@ try {
   # Preserve them as evidence without aborting a successful running process.
   $strictPreference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   try {
-    $harness = if ($Profile -eq 'school-day') { 'scripts/load/usage/local-school-day-scale.mjs' } else { 'scripts/load/usage/local-usage-scale.mjs' }
+    $harness = switch ($Profile) {
+      'school-day' { 'scripts/load/usage/local-school-day-scale.mjs' }
+      'school-day-ai' { 'scripts/load/usage/local-school-day-ai-scale.mjs' }
+      'stress' { 'scripts/load/usage/local-usage-scale.mjs' }
+    }
     node --max-old-space-size=512 --import ./tests/test-environment.mjs $harness *> (Join-Path $output 'scale.log')
     $exitCode = $LASTEXITCODE
   } finally { $ErrorActionPreference = $strictPreference }

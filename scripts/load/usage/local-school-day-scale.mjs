@@ -10,21 +10,23 @@ import { summarize } from './local-usage-benchmark.mjs';
 
 import { assertLocalScaleFixture, currentObservationCutoff, usageAttributionDiagnosticSql, apiStatementKind, currentObservationSeconds, measureCall } from './local-usage-scale.mjs';
 import { SCHOOL_DAY_PROFILE, schoolDayOracle, schoolDayRangeDomains, schoolDaySessionRoster, schoolDaySeedStudentWindows } from './school-day-profile.mjs';
+import { SCHOOL_DAY_AI_PROFILE, schoolDayAiDecisionSamples } from './school-day-ai-profile.mjs';
 const wall = value => value.toISOString().replace('T',' ').replace('Z','');
 const sleep = ms => new Promise(done => setTimeout(done,ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 const heavyOracles = Object.fromEntries(['school','grade','class','student'].map(scope => [scope, schoolDayOracle(scope)]));
-export async function runSchoolDayScale() {
+export async function runSchoolDayScale({ aiScenario = false } = {}) {
   assertLocalScaleFixture(process.env);
+  assert.equal(typeof aiScenario, 'boolean');
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const output = process.env.USAGE_SCALE_OUTPUT; assert.ok(output);
   const caps = JSON.parse(readFileSync(process.env.USAGE_SCALE_CAPS, 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(caps.NanoCpus, 4_000_000_000); assert.equal(caps.Memory, 4_294_967_296);
   assert.ok(getHeapStatistics().heap_size_limit <= 600 * 1024 ** 2, 'Node512MiB V8 heap cap required');
   const metrics = { version: 1, sourceRevision: process.env.USAGE_SOURCE_REVISION, startedAt: new Date().toISOString(), passed: false,
-    productionReadiness: false, profile: { workload: SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
+    productionReadiness: false, profile: { workload: aiScenario ? SCHOOL_DAY_AI_PROFILE : SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
-    sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-school-day-scale.mjs', 'scripts/load/usage/school-day-profile.mjs', 'scripts/load/usage/local-usage-scale.mjs', 'scripts/load/usage/reference-attribution-20260930.sql'].map(file => [file, hash(resolve(root, file))])),
+    sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-school-day-scale.mjs', 'scripts/load/usage/school-day-profile.mjs', 'scripts/load/usage/school-day-ai-profile.mjs', 'scripts/load/usage/local-usage-scale.mjs', 'scripts/load/usage/reference-attribution-20260930.sql', ...(aiScenario ? ['scripts/load/usage/local-school-day-ai-scale.mjs'] : [])].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
     writerQueries: [], reads: {}, readFailures: [], apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
     ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
@@ -50,8 +52,9 @@ export async function runSchoolDayScale() {
     assert.equal((await admin.query('SELECT COUNT(*)::int AS count FROM schools')).rows[0].count, 0);
     const role = (await worker.query('SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
     assert.equal(role.rolsuper, false); assert.equal(role.rolbypassrls, false);
-    metrics.rls = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relname IN ('heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days') ORDER BY relname")).rows;
-    assert.equal(metrics.rls.length, 3); assert.ok(metrics.rls.every(row => row.relrowsecurity && row.relforcerowsecurity && !row.owns_table));
+    const rlsTables = ['heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days', ...(aiScenario ? ['classpilot_ai_decisions'] : [])];
+    metrics.rls = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relname=ANY($1::text[]) ORDER BY relname", [rlsTables])).rows;
+    assert.equal(metrics.rls.length, rlsTables.length); assert.ok(metrics.rls.every(row => row.relrowsecurity && row.relforcerowsecurity && !row.owns_table));
     metrics.database = (await admin.query("SELECT version(),current_setting('shared_buffers') AS shared_buffers,current_setting('work_mem') AS work_mem,current_setting('max_connections') AS max_connections")).rows[0];
     const rollup = await import('../../../dist/services/classpilotUsageRollup.js');
     const time = await import('../../../dist/util/schoolTime.js');
@@ -164,6 +167,31 @@ export async function runSchoolDayScale() {
           $3::timestamp+interval '8 hours'+sample.n*interval '10 seconds'
         FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN generate_series(0,1999) sample(n)
         WHERE student.ordinality BETWEEN $6::int AND $7::int`, [school.students, school.id, wall(day.dayStartUtc), school.index, school.devices, batch.from, batch.to]);
+      }
+      if (aiScenario) {
+        metrics.preparationStage = { schoolIndex: school.index, kind: 'sampled-ai-decisions' };
+        await admin.query(`INSERT INTO classpilot_ai_decisions(id,school_id,student_id,device_id,heartbeat_id,url,category,teacher_intent_source,created_at)
+          SELECT 'school-day-ai-'||$3||'-'||lpad(student.ordinality::text,4,'0')||'-'||lpad(sample.n::text,4,'0'),
+            $2,student.id,heartbeat.device_id,heartbeat.id,heartbeat.active_tab_url,heartbeat.ai_category,heartbeat.teacher_intent_source,heartbeat.timestamp+interval '1 second'
+          FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality) CROSS JOIN unnest($4::int[]) sample(n)
+          JOIN heartbeats AS heartbeat ON heartbeat.school_id=$2 AND heartbeat.student_id=student.id
+            AND heartbeat.id='school-day-'||$3||'-'||lpad(student.ordinality::text,4,'0')||'-'||lpad(sample.n::text,4,'0')
+          WHERE heartbeat.timestamp >= $5::timestamp AND heartbeat.timestamp < $6::timestamp`,
+          [school.students, school.id, school.index, schoolDayAiDecisionSamples(), wall(day.dayStartUtc), wall(day.dayEndUtc)]);
+        const binding = (await admin.query(`WITH decisions AS (
+          SELECT * FROM classpilot_ai_decisions WHERE school_id=$1 AND created_at >= $2::timestamp AND created_at < $3::timestamp
+        ), per_student AS (SELECT student_id,COUNT(*)::int AS count FROM decisions GROUP BY student_id)
+        SELECT COUNT(decision.id)::int AS rows,COUNT(DISTINCT decision.student_id)::int AS students,COUNT(DISTINCT decision.heartbeat_id)::int AS observations,
+          COUNT(*) FILTER (WHERE heartbeat.id IS NULL OR heartbeat.school_id IS DISTINCT FROM decision.school_id
+            OR heartbeat.student_id IS DISTINCT FROM decision.student_id OR heartbeat.device_id IS DISTINCT FROM decision.device_id
+            OR heartbeat.active_tab_url IS DISTINCT FROM decision.url OR heartbeat.ai_category IS DISTINCT FROM decision.category
+            OR heartbeat.teacher_intent_source IS DISTINCT FROM decision.teacher_intent_source
+            OR decision.created_at IS DISTINCT FROM heartbeat.timestamp+interval '1 second')::int AS invalid,
+          (SELECT MIN(count) FROM per_student) AS minPerStudent,(SELECT MAX(count) FROM per_student) AS maxPerStudent
+        FROM decisions AS decision LEFT JOIN heartbeats AS heartbeat ON heartbeat.id=decision.heartbeat_id`,
+          [school.id, wall(day.dayStartUtc), wall(day.dayEndUtc)])).rows[0];
+        assert.deepEqual(binding,{rows:10_000,students:500,observations:10_000,invalid:0,minperstudent:20,maxperstudent:20});
+        metrics.aiDecisionBindings ??= []; metrics.aiDecisionBindings.push({schoolIndex:school.index,...binding});
       }
       console.log(JSON.stringify({ event: 'local_school_day_scale_school_seeded', schoolIndex: school.index }));
     }

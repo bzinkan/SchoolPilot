@@ -264,3 +264,31 @@ External repeat evidence is at
 The raw/committed JSON SHA-256 is `f2742ac51cc865f3928f0b1fb9c75f46c7b587389581ec26960e67c7c1f5d39e`,
 execution metadata is `b538d93dfc5fb02c93823c29c6831dcabc7a8dd087046dd6c21bd9b661ebc86e`
 and resource-cap metadata is the same `a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025`.
+
+A separate scenario named `six-lessons-200-domains-1m-unique-10k-ai` is available
+through `scripts/load/usage/run-local-school-day-ai-scale.ps1`, using a fresh
+external output directory. It retains the same raw observations, device
+bindings, sessions, 84,000-grain arithmetic oracle, reader history, concurrent
+work and all resource/deadline/constraint/cleanup gates. The original school-day
+and stress entry points retain their original workloads; both measured empty-AI
+harness revisions remain recoverable in the commits named above.
+
+Before timing, the new scenario inserts exactly 20 decisions per student at
+samples 0, 100, ..., 1900: 10,000 per school, one every 16 minutes 40 seconds.
+Each decision binds that school's exact existing student, device, heartbeat and
+URL, with a created-at timestamp one second after the observation and the same
+category/teacher intent. This deliberately leaves the independent category and
+grain oracle unchanged while making the school's in-window presence predicate
+true. SQL validation requires all 10,000 distinct heartbeat bindings, 500
+students with exactly 20 decisions each, zero mismatched fields and forced RLS
+on the AI table before ANALYZE and the concurrent phase. Counts/bindings and the
+separate scenario name are retained in its result.
+
+This measures matching-category nonempty-AI lookup performance; it does not by
+itself prove overridden-category semantics or negative AI-row visibility. Those
+remain covered by the real SQL/reference and restricted-role regression suites;
+the scheduler worker intentionally uses its established privileged GUC. A sparse
+10,000-row decision history also cannot establish dense AI/exclusion capacity.
+No capacity result for this separately named scenario is claimed before an
+actual capped run completes. Its measurement is held until the next coordinated
+quiet window.
