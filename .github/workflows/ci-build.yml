@@ -171,6 +171,9 @@ jobs:
       - name: Pure unit tests (concurrency 4)
         run: npm run test:unit
 
+      - name: Usage workload fixture guards (no database or load)
+        run: node --test tests/private-load-usage-profiles.test.mjs
+
       - name: Infrastructure and load-safety tests (serial)
         run: npm run test:infrastructure
 
