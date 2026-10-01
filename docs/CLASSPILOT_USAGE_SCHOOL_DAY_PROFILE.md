@@ -54,6 +54,11 @@ counts for the student without a class. A class sees six five-student cohorts
 | Grade monitored seconds / grains | 2,000,500 / 16,800 |
 | Class monitored seconds / grains / distinct students | 85,025 / 720 / 30 |
 
+The historical reader fixture has 541,500 precomputed grains per school. It does
+not measure a retained year repeating this heavy day: 365 such days would have
+30,660,000 grains per school. Passing the offered maximum-range queries cannot
+establish capacity for that denser retained history.
+
 The independent oracle sums the declared observations and nonoverlapping frozen
 windows. It checks category/heartbeat/student counts, grain counts, daily totals
 and ranked domain sums at every scope. Expected domain lists are prepared before
@@ -153,3 +158,19 @@ The eventual observation set, timestamps, domain/categories, valid device
 bindings and measured application queries/concurrency remain unchanged; no
 deadline or cap is extended. ANALYZE and complete cardinality/binding checks
 still precede timing. The original preparation failure is never overwritten.
+
+The bounded-preparation repeat at
+`571de4bb7abfe83db6010582a258474bb964123e` completed preparation and **failed**
+the measured phase. Its immutable record is
+`scripts/load/usage/evidence-school-day-repeat-failed-20260930.json`.
+Both heavy insertions canceled at 60,032 ms and rolled back all heavy aggregates
+and completion rows. Six of 64 reports returned 500: two report-query and four
+transaction-family `57014` errors. Report SQL peaked at 15,140 ms and transaction
+calls at 34,869 ms; API acquisition had no failures and a 208 ms maximum.
+All post-phase independent raw/scope/CSV/audit, tenant and empty/gap/expired checks
+passed. The capped fixture was cleaned up. Preparation batching changed no
+measured application code or offered workload; the production source hashes
+still match the isolated earlier pass. Consequently reproducible school-day
+headroom is **not established**. The pass, both measured failures and the
+separate preparation failure remain visible; subsequent query corrections must
+receive correctness/RLS review and fresh unchanged-cap measurements.
