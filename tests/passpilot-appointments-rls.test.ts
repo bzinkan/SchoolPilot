@@ -48,7 +48,11 @@ describe("appointments under forced tenant RLS", { skip: enabled ? false : "requ
     assert.equal(updated.rowCount, 0);
   });
   it("scopes current teacher reminders and activation under the restricted request role", async () => {
-    const list = await f.call(b, b.teacher, "GET", "/passpilot/appointments"); assert.equal(list.status, 200);
+    // The fixture's open window may begin yesterday when CI crosses midnight.
+    // This authority test requests the window explicitly, as teacher reminders do.
+    const now = Date.now();
+    const params = new URLSearchParams({ from: new Date(now - 86400000).toISOString(), through: new Date(now + 86400000).toISOString() });
+    const list = await f.call(b, b.teacher, "GET", `/passpilot/appointments?${params}`); assert.equal(list.status, 200);
     assert.equal(list.body.appointments.length, 1); assert.equal("staffNotes" in list.body.appointments[0]!, false);
     const id = list.body.appointments[0]!.id;
     assert.equal((await f.activate(b, id, {}, b.outsider)).status, 404);
