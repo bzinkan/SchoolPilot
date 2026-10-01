@@ -191,7 +191,7 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
 async function waitUntil(predicate, message, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.fail(message);
@@ -243,6 +243,7 @@ async function configureDashboard(page, {
   screenshotTiles = { tiles: [] },
   historyTiles = { tiles: [] },
   observationLeaseResponse = { renewAfterSeconds: 30 },
+  beforeParentSessionsRead = null,
   claimedStudents = [],
   availableStudents = [],
   claimResponse = null,
@@ -388,6 +389,7 @@ async function configureDashboard(page, {
     }
     if (pathname === '/api/classpilot/observable-activities') {
       sessionRequests.push(pathname);
+      if (beforeParentSessionsRead) await beforeParentSessionsRead(request);
       const activities = typeof observableActivities === 'function' ? await observableActivities(request) : observableActivities
         || allSessions.filter(session => session.sessionMode === 'live' && !session.endTime && session.rosterSnapshotCompletedAt).map(session => ({
           ...session, name: GROUPS.find(group => group.id === session.groupId)?.name || 'Class', purpose: 'class', source: 'class',
@@ -400,6 +402,7 @@ async function configureDashboard(page, {
     }
     if (pathname === "/api/sessions/all") {
       sessionRequests.push(pathname);
+      if (beforeParentSessionsRead) await beforeParentSessionsRead(request);
       await route.fulfill({ json: { sessions: allSessions } });
       return;
     }
@@ -2451,25 +2454,41 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
     await retainedObservePage.clock.install({ time: fixedTime });
     const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
     let retainedObserveHarness;
+    let holdParentRefresh = false;
+    let releaseParentRefresh;
+    const parentRefresh = new Promise(resolve => { releaseParentRefresh = resolve; });
     retainedObserveHarness = await configureDashboard(retainedObservePage, {
       aggregate: aggregateController({ scoped: success(rows()) }), activeSession: live, allSessions: [live, observed],
+      beforeParentSessionsRead: () => holdParentRefresh ? parentRefresh : undefined,
       observationLeaseResponse: (method, pathname) => {
         if (method === 'PUT' && pathname.includes(OBSERVED_SESSION_ID)) {
           retainedObserveHarness.setAllSessions([live]);
+          holdParentRefresh = true;
           return { status: 404, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } };
         }
         return { renewAfterSeconds: 30 };
       },
     });
-    await retainedObservePage.goto(`${baseURL}/classpilot`);
-    await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-    await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
-    await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
-      'lease denial refreshes the parent list that removes observed A');
-    await settle();
-    await assertObserveEntryPointsUnavailable(retainedObservePage, retainedObserveHarness.commandPosts,
-      [STUDENT_ID], retainedObserveHarness.coverageMutationRequests);
-    assert.deepEqual(retainedObserveHarness.pageErrors, []);
+    try {
+      await retainedObservePage.goto(`${baseURL}/classpilot`);
+      await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+      // Observe denial before releasing the parent response that removes A.
+      // Otherwise the permanent unavailable state may retire this transient banner.
+      await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
+      holdParentRefresh = false;
+      releaseParentRefresh();
+      await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
+        'lease denial refreshes the parent list that removes observed A');
+      await retainedObservePage.getByTestId('select-admin-observe').locator(`option[value="${OBSERVED_SESSION_ID}"]`)
+        .filter({ hasText: 'Activity unavailable' }).waitFor({ state: 'attached' });
+      assert.equal(await retainedObservePage.getByTestId('select-admin-observe').inputValue(), OBSERVED_SESSION_ID);
+      await assertObserveEntryPointsUnavailable(retainedObservePage, retainedObserveHarness.commandPosts,
+        [STUDENT_ID], retainedObserveHarness.coverageMutationRequests);
+      assert.deepEqual(retainedObserveHarness.pageErrors, []);
+    } finally {
+      holdParentRefresh = false;
+      releaseParentRefresh();
+    }
     await retainedObservePage.close();
 
     const aggregatePage = await browser.newPage();
@@ -5384,11 +5403,33 @@ test('Class tools integrates support, activities and manual routines without cov
   await page.setViewportSize({width:900,height:1000});
   await page.getByRole('dialog',{name:'Class tools',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Pin Class tools',exact:true}).count(),0);
-  await waitUntil(async () => (await geometry()).panel.height > 250, 'Responsive drawer must have usable height');
+  try {
+    await waitUntil(async () => (await geometry()).panel.height > 250, 'Responsive drawer must have usable height');
+  } catch (error) {
+    const layout = await page.evaluate(() => {
+      const inspect = selector => {
+        const node = document.querySelector(selector);
+        return node ? { rect: node.getBoundingClientRect().toJSON(), style: node.getAttribute('style'), position: getComputedStyle(node).position } : null;
+      };
+      return { viewport: { width: innerWidth, height: innerHeight, scrollY }, panel: inspect('[data-testid="class-tools-panel"]'), toolbar: inspect('[data-class-tools-toolbar]'), navigation: inspect('[data-class-tools-navigation]') };
+    });
+    await chatEvidence(page, 'class-tools-responsive-failure', layout);
+    error.message += `: ${JSON.stringify(layout)}`;
+    throw error;
+  }
+  assert.deepEqual((await geometry()).covered, [], 'Responsive drawer keeps command buttons visible');
+  await page.evaluate(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  assert.equal(await page.evaluate(() => scrollY), 0, 'Opening the drawer must not keep overriding later user scrolling');
   await page.setViewportSize({width:640,height:900});
   await waitUntil(async () => (await geometry()).panel.height > 200, 'A zoom-sized viewport must keep the drawer usable');
+  assert.deepEqual((await geometry()).covered, [], 'Zoom-sized drawer keeps command buttons visible');
   await page.getByRole('button',{name:'Close Class tools',exact:true}).click();
   await page.getByTestId('class-tools-panel').waitFor({state:'hidden'});
+  await waitUntil(async () => await page.evaluate(() => document.activeElement?.dataset.testid === 'teacher-fab'),
+    'Class tools must return keyboard focus after its native animation frame');
   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
 });
 
