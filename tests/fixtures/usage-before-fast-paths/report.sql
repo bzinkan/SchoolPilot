@@ -9,7 +9,7 @@
     WHERE rollup.school_id = $1
       AND rollup.usage_date >= $2::date
       AND rollup.usage_date <= $3::date
-      
+
       AND ($5::text[] IS NULL OR rollup.student_id=ANY($5::text[]))
       AND ($6::text IS NULL OR rollup.class_id=$6)
     ), student_days AS (
