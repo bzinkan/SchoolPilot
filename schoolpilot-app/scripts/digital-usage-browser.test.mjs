@@ -16,9 +16,9 @@ const entry = `import React,{useState} from 'react';import{createRoot}from'react
 import{QueryClient,QueryClientProvider}from'@tanstack/react-query';import{ThemeProvider}from'/src/contexts/ThemeContext.jsx';import{FixtureAuthContext}from'/src/contexts/AuthContext.jsx';
 import Layout from'/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx';import Usage from'/src/products/classpilot/pages/AdminUsage.jsx';import'/src/index.css';
 const h=React.createElement,params=new URLSearchParams(location.search),zone=params.get('zone')||'America/New_York';history.replaceState(null,'','/classpilot/admin/usage');
-const client=new QueryClient({defaultOptions:{queries:{retry:false}}});function Harness(){const[school,setSchool]=useState('school-a'),[role,setRole]=useState(params.get('role')||'school_admin');
-window.fixtureSchool=setSchool;window.fixtureRole=setRole;const membership={schoolId:school,schoolName:school==='school-a'?'Cedar Grove School':'Maple School',schoolTimezone:zone,roles:[role],role,status:'active'};
-return h(FixtureAuthContext.Provider,{value:{user:{id:'viewer-a',firstName:'Morgan',lastName:'Reed'},activeSchoolId:school,activeMembership:membership,loading:false}},h(Routes,null,h(Route,{element:h(Layout)},h(Route,{path:'/classpilot/admin/usage',element:h(Usage)}))));}
+const client=new QueryClient({defaultOptions:{queries:{retry:false}}});window.fixtureRefetchUsage=()=>client.refetchQueries({queryKey:['/classpilot/admin/usage'],type:'active'});function Harness(){const[school,setSchool]=useState('school-a'),[role,setRole]=useState(params.get('role')||'school_admin'),[authVersion,setAuthVersion]=useState(1);
+window.fixtureSchool=setSchool;window.fixtureRole=setRole;window.fixtureAuthVersion=setAuthVersion;const membership={schoolId:school,schoolName:school==='school-a'?'Cedar Grove School':'Maple School',schoolTimezone:zone,roles:[role],role,status:'active'};
+return h(FixtureAuthContext.Provider,{value:{user:{id:'viewer-a',firstName:'Morgan',lastName:'Reed',authVersion},activeSchoolId:school,activeMembership:membership,loading:false}},h(Routes,null,h(Route,{element:h(Layout)},h(Route,{path:'/classpilot/admin/usage',element:h(Usage)}))));}
 createRoot(document.getElementById('root')).render(h(QueryClientProvider,{client},h(BrowserRouter,null,h(ThemeProvider,null,h(Harness)))));`;
 
 before(async () => {
@@ -198,4 +198,156 @@ test('school change resets selection, binds headers and prevents delayed old-sch
     assert.equal(await page.getByLabel('Scope', { exact: true }).inputValue(), 'school'); assert.equal(await page.getByText('student: school-a-student', { exact: true }).count(), 0);
     assert.equal(requests.at(-1).schoolId, 'school-b'); assert.equal(requests.at(-1).params.scope, 'school'); assert.deepEqual(errors, []);
   } finally { release?.(); await page.close(); }
+});
+
+const isUsageCsv = request => { const url = new URL(request.url()); return url.pathname.endsWith('/admin/usage') && url.searchParams.get('format') === 'csv'; };
+
+// Hold the actual Axios request at the native browser boundary. Drain every held
+// route before closing the page, including when a baseline assertion fails.
+function heldCsv() {
+  let release, held, done, active = false;
+  const started = new Promise(resolve => { held = resolve; });
+  const drained = new Promise(resolve => { done = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  return { started, drained, release: () => { release(); if (!active) done(); }, handle: async route => {
+    active = true;
+    held(route.request());
+    try {
+      await pending;
+      await route.fulfill({ contentType: 'text/csv', body: '\ufeffMeasure,Monitored Browser Time\r\n' }).catch(() => {});
+    } finally { done(); }
+  } };
+}
+
+for (const status of [403, 409]) test(`current report ${status} cancels a held native CSV; a successful refresh permits a new audited export`, async () => {
+    const held = heldCsv(); let denied = false, hold = true;
+    const { page, errors } = await open({ handler: async (route, url) => {
+      if (!url.pathname.endsWith('/admin/usage')) return false;
+      if (url.searchParams.get('format') === 'csv' && hold) { hold = false; await held.handle(route); return true; }
+      if (url.searchParams.get('format') !== 'csv' && denied) { await route.fulfill({ status, json: { error: `Synthetic authority changed (${status})` } }); return true; }
+      return false;
+    } });
+    const downloads = []; page.on('download', item => downloads.push(item));
+    try {
+      await page.getByTestId('usage-report').waitFor();
+      await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await held.started;
+      const canceled = page.waitForEvent('requestfailed', { predicate: isUsageCsv, timeout: 5000 });
+      denied = true; await page.evaluate(() => { void window.fixtureRefetchUsage(); });
+      await page.getByText(status === 403 ? 'Administrator access is required for this report.' : 'Synthetic authority changed (409)', { exact: false }).waitFor();
+      assert.equal(await page.getByTestId('usage-report').count(), 0);
+      try { assert.match((await canceled).failure().errorText, /ABORTED/); }
+      catch (error) {
+        const downloaded = page.waitForEvent('download', { timeout: 5000 }); held.release(); await held.drained;
+        const download = await downloaded;
+        assert.fail(`HTTP ${status} left the old CSV live: native download ${download.suggestedFilename()} after report rejection (${error.message})`);
+      }
+      held.release(); await held.drained; assert.equal(downloads.length, 0);
+      denied = false; await page.getByRole('button', { name: 'Refresh', exact: true }).click(); await page.getByTestId('usage-report').waitFor();
+      const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export CSV', exact: true }).click();
+      assert.match(await readFile(await (await downloaded).path(), 'utf8'), /Monitored Browser Time/);
+      assert.deepEqual(errors, []);
+    } finally { held.release(); await held.drained; await page.close(); }
+});
+
+test('Refresh cancels a held CSV before starting the next report read', async () => {
+  const held = heldCsv(); let hold = true;
+  const { page, errors } = await open({ handler: async (route, url) => {
+    if (!url.pathname.endsWith('/admin/usage') || url.searchParams.get('format') !== 'csv' || !hold) return false;
+    hold = false; await held.handle(route); return true;
+  } });
+  try {
+    await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await held.started;
+    const canceled = page.waitForEvent('requestfailed', { predicate: isUsageCsv, timeout: 5000 });
+    await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+    assert.match((await canceled).failure().errorText, /ABORTED/); held.release(); await held.drained;
+    await page.getByRole('button', { name: 'Export CSV', exact: true }).waitFor({ state: 'visible' });
+    const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await downloaded;
+    assert.deepEqual(errors, []);
+  } finally { held.release(); await held.drained; await page.close(); }
+});
+
+test('school, auth revision, rollover, controls and unmount cancel old CSV bindings and preserve new export context', async () => {
+  for (const context of ['school', 'authVersion', 'schoolDate', 'scope', 'date', 'role', 'navigation']) {
+    const held = heldCsv(); let hold = true;
+    const { page, requests, errors } = await open({ now: '2026-10-01T03:59:30Z', handler: async (route, url) => {
+      if (!url.pathname.endsWith('/admin/usage') || url.searchParams.get('format') !== 'csv' || !hold) return false;
+      hold = false; await held.handle(route); return true;
+    } });
+    try {
+      await page.getByRole('button', { name: 'Export CSV', exact: true }).click();
+      const old = await held.started; assert.equal(new URL(old.url()).searchParams.get('to'), '2026-09-30');
+      const canceled = page.waitForEvent('requestfailed', { predicate: isUsageCsv, timeout: 5000 });
+      if (context === 'school') await page.evaluate(() => window.fixtureSchool('school-b'));
+      else if (context === 'authVersion') await page.evaluate(() => window.fixtureAuthVersion(2));
+      else if (context === 'schoolDate') await page.clock.fastForward(60_000);
+      else if (context === 'scope') await page.getByLabel('Scope', { exact: true }).selectOption('class');
+      else if (context === 'date') await page.getByLabel('Date range').selectOption('today');
+      else if (context === 'role') await page.evaluate(() => window.fixtureRole('teacher'));
+      else await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Admin Panel' }).click();
+      assert.match((await canceled).failure().errorText, /ABORTED/); held.release(); await held.drained;
+      if (context === 'scope') await page.getByLabel('Official class', { exact: true }).selectOption('school-a-class');
+      if (context === 'role') {
+        await page.getByText('Administrator access is required for Monitored Browser Time.').waitFor();
+        await page.evaluate(() => window.fixtureRole('school_admin'));
+      }
+      if (context === 'navigation') { await page.waitForURL('**/classpilot/admin'); await page.goBack(); }
+      await page.getByRole('button', { name: 'Export CSV', exact: true }).waitFor({ state: 'visible' });
+      const downloaded = page.waitForEvent('download'); await page.getByRole('button', { name: 'Export CSV', exact: true }).click();
+      const download = await downloaded, current = requests.at(-1);
+      assert.equal(current.schoolId, context === 'school' ? 'school-b' : 'school-a');
+      assert.equal(current.params.to, context === 'schoolDate' ? '2026-10-01' : '2026-09-30');
+      assert.equal(current.params.scope, context === 'scope' ? 'class' : 'school');
+      if (context === 'scope') assert.equal(current.params.id, 'school-a-class');
+      if (context === 'date') assert.equal(current.params.from, current.params.to);
+      assert.match(download.suggestedFilename(), new RegExp(`to-${current.params.to}\\.csv$`));
+      assert.deepEqual(errors, []);
+    } finally { held.release(); await held.drained; await page.close(); }
+  }
+});
+
+test('a delayed prior-query 403 cannot cancel a newer-context CSV', async () => {
+  const held = heldCsv(); let rejectOld, oldStarted, oldDone, oldActive = false;
+  const oldRead = new Promise(resolve => { oldStarted = resolve; });
+  const oldDrained = new Promise(resolve => { oldDone = resolve; });
+  const pendingOld = new Promise(resolve => { rejectOld = resolve; });
+  const { page, errors } = await open({ handler: async (route, url) => {
+    if (!url.pathname.endsWith('/admin/usage')) return false;
+    if (url.searchParams.get('format') === 'csv') { await held.handle(route); return true; }
+    if (url.searchParams.get('from') === url.searchParams.get('to')) {
+      oldActive = true;
+      oldStarted();
+      try { await pendingOld; await route.fulfill({ status: 403, json: { error: 'Old context denied' } }).catch(() => {}); }
+      finally { oldDone(); }
+      return true;
+    }
+    return false;
+  } });
+  try {
+    await page.getByTestId('usage-report').waitFor(); await page.getByLabel('Date range').selectOption('today'); await oldRead;
+    const canceledOld = page.waitForEvent('requestfailed', { predicate: request => { const url = new URL(request.url()); return url.pathname.endsWith('/admin/usage') && url.searchParams.get('format') === 'json' && url.searchParams.get('from') === url.searchParams.get('to'); } });
+    await page.getByLabel('Date range').selectOption('30d'); assert.match((await canceledOld).failure().errorText, /ABORTED/);
+    await page.getByTestId('usage-report').waitFor(); await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await held.started;
+    rejectOld(); await oldDrained;
+    const downloaded = page.waitForEvent('download'); held.release(); await held.drained;
+    assert.match((await downloaded).suggestedFilename(), /school-2026-09-01-to-2026-09-30\.csv$/);
+    assert.equal(await page.getByText('Old context denied', { exact: true }).count(), 0); assert.deepEqual(errors, []);
+  } finally { rejectOld(); if (oldActive) await oldDrained; held.release(); await held.drained; await page.close(); }
+});
+
+test('a current report 401 uses the actual API login redirect and cancels the held native CSV', async () => {
+  const held = heldCsv(); let denied = false;
+  const { page } = await open({ handler: async (route, url) => {
+    if (!url.pathname.endsWith('/admin/usage')) return false;
+    if (url.searchParams.get('format') === 'csv') { await held.handle(route); return true; }
+    if (denied) { await route.fulfill({ status: 401, json: { error: 'Session expired' } }); return true; }
+    return false;
+  } });
+  try {
+    await page.route('**/login', route => route.fulfill({ contentType: 'text/html', body: '<h1>Login fixture destination</h1>' }));
+    await page.getByRole('button', { name: 'Export CSV', exact: true }).click(); await held.started;
+    const canceled = page.waitForEvent('requestfailed', { predicate: isUsageCsv }); denied = true;
+    await page.evaluate(() => { void window.fixtureRefetchUsage(); });
+    await page.waitForURL('**/login'); await page.getByRole('heading', { name: 'Login fixture destination' }).waitFor();
+    assert.match((await canceled).failure().errorText, /ABORTED/);
+  } finally { held.release(); await held.drained; await page.close(); }
 });
