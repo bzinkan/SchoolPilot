@@ -147,10 +147,10 @@ describe("PassPilot rule enforcement placement", () => {
     ], "issue_pass");
   });
 
-  it("strips a null ruleOverrideCode from every serialized pass row", () => {
-    assert.match(source("src/services/passpilotClasses.ts"), /\.\.\.withoutNullRuleOverride\(pass\),/);
+  it("shapes pass override metadata for the verified viewer while kiosks use the safe default", () => {
+    assert.match(source("src/services/passpilotClasses.ts"), /\.\.\.withoutNullRuleOverride\(pass, viewerRole\),/);
     assert.match(between(source("src/routes/passpilot/passes.ts"), "async function enrichPasses", "// Map legacy passType"),
-      /\.\.\.withoutNullRuleOverride\(pass\),/);
+      /\.\.\.withoutNullRuleOverride\(pass, viewerRole\),/);
     assert.match(source("src/routes/passpilot/kiosk.ts"), /activePasses\.map\(\(pass\) => \[pass\.studentId, withoutNullRuleOverride\(pass\)\]\)/);
   });
 });
