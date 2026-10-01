@@ -240,27 +240,53 @@ async function resolveScope(
   };
 }
 
-async function topDomains(
+async function usageAggregates(
   executor: Executor,
-  options: { schoolId: string; from: string; to: string; filter: SQL; classification: "educational" | "non-educational" }
-): Promise<Array<{ domain: string; seconds: number }>> {
-  const rows = rowsOf(await executor.execute(sql`
-    SELECT rollup.domain, SUM(rollup.seconds)::bigint AS seconds
+  options: { schoolId: string; from: string; to: string; filter: SQL }
+): Promise<Array<Record<string, unknown>>> {
+  // Collapse the retained fine grain during its single ledger-joined scan.
+  // Materialize only student-days and domain totals; reusing all raw grains
+  // across the two reports otherwise spills large histories to temporary I/O.
+  return rowsOf(await executor.execute(sql`
+    WITH grouped AS MATERIALIZED (
+    SELECT rollup.usage_date, rollup.student_id, rollup.domain, rollup.classification,
+      GROUPING(rollup.usage_date, rollup.student_id) AS grain_kind,
+      SUM(rollup.seconds)::bigint AS monitored,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'educational')::bigint AS instructional,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'non-educational')::bigint AS off_task,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'unknown')::bigint AS unknown,
+      SUM(rollup.heartbeat_count)::bigint AS heartbeats
     FROM classpilot_usage_rollups AS rollup
     JOIN classpilot_usage_rollup_days AS day
       ON day.school_id = rollup.school_id AND day.usage_date = rollup.usage_date
     WHERE rollup.school_id = ${options.schoolId}
       AND rollup.usage_date >= ${options.from}::date
       AND rollup.usage_date <= ${options.to}::date
-      AND rollup.classification = ${options.classification}
-      AND rollup.domain <> ''
       ${options.filter}
-    GROUP BY rollup.domain
-    HAVING SUM(rollup.seconds) > 0
-    ORDER BY SUM(rollup.seconds) DESC, rollup.domain ASC
-    LIMIT ${CLASSPILOT_DIGITAL_USAGE_TOP_DOMAINS}
+    GROUP BY GROUPING SETS ((rollup.usage_date, rollup.student_id), (rollup.classification, rollup.domain))
+    ), summary AS (
+      SELECT usage_date::text AS usage_date, GROUPING(usage_date) AS total_row,
+        COALESCE(SUM(monitored), 0)::bigint AS monitored,
+        COALESCE(SUM(instructional), 0)::bigint AS instructional,
+        COALESCE(SUM(off_task), 0)::bigint AS off_task,
+        COALESCE(SUM(unknown), 0)::bigint AS unknown,
+        COUNT(DISTINCT student_id)::int AS students,
+        COALESCE(SUM(heartbeats), 0)::bigint AS heartbeats
+      FROM grouped WHERE grain_kind = 0 GROUP BY GROUPING SETS ((usage_date), ())
+    ), ranked_domains AS (
+      SELECT classification, domain, monitored AS seconds,
+        ROW_NUMBER() OVER (PARTITION BY classification ORDER BY monitored DESC, domain ASC) AS rank
+      FROM grouped
+      WHERE grain_kind = 3 AND classification IN ('educational', 'non-educational') AND domain <> '' AND monitored > 0
+    )
+    SELECT 'summary' AS row_kind, summary.*, NULL::text AS classification,
+      NULL::text AS domain, NULL::bigint AS seconds FROM summary
+    UNION ALL
+    SELECT 'domain', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      classification, domain, seconds FROM ranked_domains
+      WHERE rank <= ${CLASSPILOT_DIGITAL_USAGE_TOP_DOMAINS}
+    ORDER BY row_kind, classification, seconds DESC, domain ASC
   `));
-  return rows.map((row) => ({ domain: String(row.domain), seconds: count(row.seconds) }));
 }
 
 async function readReport(
@@ -336,29 +362,16 @@ async function readReport(
   };
   if (!hasPresented) return report;
 
-  const aggregate = rowsOf(await executor.execute(sql`
-    SELECT rollup.usage_date::text AS usage_date,
-      GROUPING(rollup.usage_date) AS total_row,
-      COALESCE(SUM(rollup.seconds), 0)::bigint AS monitored,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'educational'), 0)::bigint AS instructional,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'non-educational'), 0)::bigint AS off_task,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'unknown'), 0)::bigint AS unknown,
-      COUNT(DISTINCT rollup.student_id)::int AS students,
-      COALESCE(SUM(rollup.heartbeat_count), 0)::bigint AS heartbeats,
-      MAX(rollup.computed_at) AS computed_at
-    FROM classpilot_usage_rollups AS rollup
-    JOIN classpilot_usage_rollup_days AS day
-      ON day.school_id = rollup.school_id AND day.usage_date = rollup.usage_date
-    WHERE rollup.school_id = ${options.schoolId}
-      AND rollup.usage_date >= ${presentedFrom}::date
-      AND rollup.usage_date <= ${presentedTo}::date
-      ${scope.filter}
-    GROUP BY GROUPING SETS ((rollup.usage_date), ())
-  `));
+  const aggregate = await usageAggregates(executor, {
+    schoolId: options.schoolId, from: presentedFrom, to: presentedTo, filter: scope.filter,
+  });
   const byDate = new Map<string, Record<string, unknown>>();
   let totalRow: Record<string, unknown> | undefined;
   for (const row of aggregate) {
-    if (Number(row.total_row) === 1) totalRow = row;
+    if (row.row_kind === "domain") {
+      const target = row.classification === "educational" ? report.topEducationalDomains : report.topNonEducationalDomains;
+      target.push({ domain: String(row.domain), seconds: count(row.seconds) });
+    } else if (Number(row.total_row) === 1) totalRow = row;
     else if (typeof row.usage_date === "string") byDate.set(row.usage_date, row);
   }
   let computedAt: Date | null = null;
@@ -372,9 +385,6 @@ async function readReport(
   report.totals = totalRow ? totalsOf(totalRow) : emptyTotals();
   report.computedAt = computedAt ? computedAt.toISOString() : null;
   report.dataState = report.byDay.some((day) => day.state === "live") ? "live" : "final";
-  const window = { schoolId: options.schoolId, from: presentedFrom, to: presentedTo, filter: scope.filter };
-  report.topEducationalDomains = await topDomains(executor, { ...window, classification: "educational" });
-  report.topNonEducationalDomains = await topDomains(executor, { ...window, classification: "non-educational" });
   return report;
 }
 

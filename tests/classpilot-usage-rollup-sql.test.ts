@@ -163,7 +163,9 @@ describe("Monitored Browser Time rollup SQL", () => {
     const observed = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "observed", "excluded");
     assert.match(observed, /heartbeat\.student_id IS NOT NULL/);
     assert.match(observed, /heartbeat\."timestamp" >= \$2::timestamp\s+AND heartbeat\."timestamp" < \$3::timestamp/);
-    assert.match(observed, /student\.school_id = \$1 AND student\.id = heartbeat\.student_id/);
+    assert.match(observed, /heartbeat\.student_id = student_scope\.id/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /FROM students AS student_scope\s+CROSS JOIN LATERAL/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /WHERE student_scope\.school_id = \$1/);
     for (const statement of Object.values(ROLLUP_STATEMENTS)) {
       assert.doesNotMatch(statement, /"timestamp"\s+AT TIME ZONE|observed_at\s+AT TIME ZONE/i);
     }
@@ -185,18 +187,22 @@ describe("Monitored Browser Time rollup SQL", () => {
     assert.match(normalized, /'\^www\\\.'/);
     assert.match(normalized, /COALESCE\(NULLIF\(ai_decision\.category, ''\), observation\.ai_category\)/);
     assert.match(normalized, /NULLIF\(ai_decision\.teacher_intent_source, ''\) IS NOT NULL\s+OR NULLIF\(observation\.teacher_intent_source, ''\) IS NOT NULL/);
-    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY decision\.heartbeat_id, decision\.created_at DESC, decision\.id DESC/);
+    const decisions = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "ai_decision", "normalized");
+    assert.match(decisions, /newest\.school_id = \$1\s+AND newest\.heartbeat_id = observation\.id/);
+    assert.match(decisions, /ORDER BY newest\.created_at DESC, newest\.id DESC\s+LIMIT 1/);
     const classified = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "classified", "roster_window");
     assert.match(classified, /normalized\.category = 'non-educational' AND NOT normalized\.teacher_intent_exempt\s+AND normalized\.domain <> '' THEN 'non-educational'/);
   });
 
   it("attributes each observation to the newest session on its frozen roster", () => {
-    const roster = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "roster_window", "attributed");
-    assert.match(roster, /FROM classpilot_session_students AS roster/);
+    const roster = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "school_roster_window", "grains");
+    assert.match(roster, /JOIN classpilot_session_students AS roster/);
     assert.match(roster, /roster\.group_id AS class_id/);
     assert.match(roster, /GREATEST\(session\.start_time, roster\.captured_at AT TIME ZONE 'UTC'\)/);
     assert.match(roster, /session\.start_time \+ interval '12 hours'/);
-    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY classified\.id, roster_window\.start_time DESC NULLS LAST/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /roster_window AS MATERIALIZED \(\s+SELECT \* FROM school_roster_window\s+WHERE student_id = student_scope\.id/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /roster_intervals AS MATERIALIZED/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY roster_intervals\.student_id, roster_intervals\.starts_at,\s+roster_window\.start_time DESC, roster_window\.session_id DESC/);
     // Supervision contexts are not a class dimension in v1.
     assert.doesNotMatch(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /supervision/i);
   });
