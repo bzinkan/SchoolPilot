@@ -5,6 +5,8 @@ import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
   buildStudentSignOutCommandRequest,
+  commandRecipientsHeadline,
+  commandRecipientsSummary,
   commandSupportsLateSignInRestriction,
   combineCommandSettlements,
   CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
@@ -27,8 +29,16 @@ import {
   parseTabSelectionKey,
   partitionCoverageCurrentPageWaypointTargets,
   partitionCurrentPageWaypointTargets,
+  partitionSnapshotRecipients,
+  planRecipientSend,
+  RECIPIENTS_UNAVAILABLE_MESSAGE,
+  recipientDialogRefusalMessage,
+  recipientSnapshotLabel,
+  recipientsRestoredMessage,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  snapshotCommandRecipients,
+  snapshotRecipientNames,
   studentSignOutSelectionBinding,
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
@@ -41,8 +51,10 @@ import {
   tabSelectionKey,
   toolbarScreenCommand,
   uniqueStudentsById,
+  unavailableRecipientsMessage,
 } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { commandDeliveryFeedback } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
+import { compareStudentsByLastName, studentLastName } from '../src/products/classpilot/lib/studentOrder.js';
 
 const classStudents = [
   { studentId: 'a', commandable: true },
@@ -976,4 +988,177 @@ test('a settings response folds the stored row and the effective state into one 
   assert.deepEqual(mergeFabSettingsResponse({ settings: { chatEnabled: false, lifecycleRevision: 1 } }), { chatEnabled: false, lifecycleRevision: 1 });
   assert.deepEqual(mergeFabSettingsResponse({ teachingSessionId: 's', messagingEnabled: true }), { teachingSessionId: 's', messagingEnabled: true }, 'a bare state passes through');
   assert.equal(mergeFabSettingsResponse(null), null);
+});
+
+const recipientRoster = [
+  { studentId: 'a', studentName: 'Zed Alpha', commandable: true },
+  { studentId: 'b', studentName: 'Ann Zulu', commandable: true },
+  { studentId: 'c', studentName: 'Cy Beta', commandable: true },
+];
+
+test('a classroom dialog freezes its recipients by last name and refuses an empty list', () => {
+  const target = resolveCommandTargets({ mode: 'owned-class', sessionStudents: recipientRoster });
+  const snapshot = snapshotCommandRecipients({
+    target, students: recipientRoster, label: 'Whole class', scopeKey: 'scope-a', view: 'class',
+  });
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.ids), true);
+  assert.equal(Object.isFrozen(snapshot.names), true);
+  assert.throws(() => { snapshot.ids.push('d'); }, TypeError, 'a frozen list cannot grow after the dialog opens');
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b'], 'ids stay aligned with names in last-name order');
+  assert.deepEqual(snapshot.names, ['Zed Alpha', 'Cy Beta', 'Ann Zulu']);
+  assert.deepEqual([snapshot.label, snapshot.scopeKey, snapshot.view], ['Whole class', 'scope-a', 'class']);
+
+  const unnamed = snapshotCommandRecipients({
+    target: { targetStudentIds: ['x', 'y', 'y', ' '] },
+    students: [{ studentId: 'y', studentEmail: 'y@example.edu' }],
+  });
+  assert.deepEqual(unnamed.ids, ['x', 'y'], 'ids are trimmed and de-duplicated');
+  assert.deepEqual(unnamed.names, ['Student unavailable', 'y@example.edu']);
+
+  for (const empty of [{ target: { targetStudentIds: [] } }, { target: null }, {}, undefined]) {
+    assert.throws(() => snapshotCommandRecipients(empty), /^Error: Choose at least one student\.$/);
+  }
+});
+
+test('a frozen send keeps only recipients who can still receive it and never adds anyone', () => {
+  const snapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster });
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b']);
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, ['b', 'a', 'c']), { sendIds: ['a', 'c', 'b'], unavailableIds: [] });
+  assert.deepEqual(
+    partitionSnapshotRecipients(snapshot, ['b', 'z', 'everyone-else']),
+    { sendIds: ['b'], unavailableIds: ['a', 'c'] },
+    'a currently commandable student outside the snapshot is never added',
+  );
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, new Set(['c'])), { sendIds: ['c'], unavailableIds: ['a', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, []), { sendIds: [], unavailableIds: ['a', 'c', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, null), { sendIds: [], unavailableIds: ['a', 'c', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(null, ['a']), { sendIds: [], unavailableIds: [] });
+  assert.deepEqual(snapshotRecipientNames(snapshot, ['b', 'a', 'z']), ['Zed Alpha', 'Ann Zulu'], 'names follow the frozen order');
+  assert.deepEqual(snapshotRecipientNames(snapshot, null), []);
+});
+
+test('Send only ever sends what the dialog shows, and a partial send needs a separate confirmation', () => {
+  const snapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster });
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b']);
+  const plan = (commandableIds, options = {}) => planRecipientSend({ snapshot, commandableIds, ...options });
+
+  assert.deepEqual(plan(['b', 'c', 'a', 'outsider']), { action: 'send', studentIds: ['a', 'c', 'b'] }, 'a student outside the frozen list is never added');
+  assert.deepEqual(plan(['a', 'b', 'c'], { repeatGesture: true }), { action: 'send', studentIds: ['a', 'c', 'b'] }, 'a repeat only matters while confirming');
+  assert.deepEqual(plan(['c', 'b']), { action: 'ask', unavailableIds: ['a'], confirmIds: ['c', 'b'] }, 'a lost recipient is named first');
+  assert.deepEqual(plan([]), { action: 'ask', unavailableIds: ['a', 'c', 'b'], confirmIds: null }, 'no one left: nothing to confirm');
+
+  // Waiting on "Send to 2 available" (c and b).
+  const confirming = { confirmIds: ['c', 'b'] };
+  assert.deepEqual(plan(['c', 'b'], confirming), { action: 'send', studentIds: ['c', 'b'] }, 'the confirmation sends exactly the named students');
+  assert.deepEqual(plan(['c', 'b'], { ...confirming, repeatGesture: true }), { action: 'ignore' }, 'a double click or held key cannot confirm');
+  assert.deepEqual(plan(['a', 'c', 'b'], confirming), { action: 'restored', restoredIds: ['a'] }, 'a returning student is not silently skipped');
+  assert.deepEqual(plan(['c'], confirming), { action: 'ask', unavailableIds: ['a', 'b'], confirmIds: ['c'] }, 'a confirmed student who drops is asked about again');
+  assert.deepEqual(plan(['a', 'c'], confirming), { action: 'ask', unavailableIds: ['b'], confirmIds: ['a', 'c'] }, 'a changed subset is asked about again');
+  assert.deepEqual(plan(['outsider'], confirming), { action: 'ask', unavailableIds: ['a', 'c', 'b'], confirmIds: null });
+});
+
+test('a dialog that cannot open says why without claiming a send', () => {
+  const thrown = (fn) => { try { fn(); } catch (error) { return error; } assert.fail('expected a throw'); };
+  const noClassTarget = thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: [] }));
+  const noClaimedTarget = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: [] }));
+  const ticksUnavailable = new Error(RECIPIENTS_UNAVAILABLE_MESSAGE);
+
+  assert.equal(recipientDialogRefusalMessage(noClassTarget), 'No students in this class can receive this right now.');
+  assert.equal(recipientDialogRefusalMessage(noClassTarget, { subgroupSelected: true }), 'No students in this group can receive this right now.');
+  assert.equal(recipientDialogRefusalMessage(noClaimedTarget, { view: 'claimed' }), 'No claimed students can receive this right now.');
+  assert.equal(
+    recipientDialogRefusalMessage(noClassTarget, { blockedNames: ['Ada Student'] }),
+    "Ada Student can't receive this right now. Untick them and try again.",
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(ticksUnavailable, { blockedNames: ['Ada Student', 'Ben Student'] }),
+    "Ada Student and Ben Student can't receive this right now. Untick them and try again.",
+  );
+  assert.equal(recipientDialogRefusalMessage(ticksUnavailable), "Some selected students can't receive this right now. Untick them and try again.");
+  const loading = 'Student targets are unavailable until the class roster finishes loading.';
+  assert.equal(recipientDialogRefusalMessage(new Error(loading), { blockedNames: ['Ada Student'] }), loading, 'other reasons pass through');
+  assert.equal(recipientDialogRefusalMessage(null), 'This is not available right now.');
+  for (const error of [noClassTarget, noClaimedTarget, ticksUnavailable]) {
+    assert.doesNotMatch(recipientDialogRefusalMessage(error), /sent/i, 'nothing was attempted when a dialog does not open');
+  }
+});
+
+test('recipient copy names the frozen audience and who was left out', () => {
+  assert.equal(recipientSnapshotLabel({ selectedCount: 2 }), '2 selected students');
+  assert.equal(recipientSnapshotLabel({ selectedCount: 1, subgroupName: 'Reading table' }), '1 selected student', 'ticks win over a subgroup');
+  assert.equal(recipientSnapshotLabel({ subgroupName: ' Reading table ' }), 'Group: Reading table');
+  assert.equal(recipientSnapshotLabel({}), 'Whole class');
+  assert.equal(recipientSnapshotLabel(), 'Whole class');
+  assert.equal(recipientSnapshotLabel({ view: 'claimed' }), 'All claimed students');
+
+  const one = snapshotCommandRecipients({ target: { targetStudentIds: ['a'] }, students: recipientRoster, label: '1 selected student' });
+  const three = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster, label: 'Group: Reading table' });
+  const classSnapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b'] }, students: recipientRoster, label: 'Whole class' });
+  assert.equal(commandRecipientsHeadline(one), 'Send to 1 selected student', 'a tick label already states the count');
+  assert.equal(commandRecipientsHeadline(three), 'Send to 3 students — Group: Reading table');
+  assert.equal(commandRecipientsHeadline(classSnapshot), 'Send to 2 students — Whole class');
+  assert.equal(commandRecipientsHeadline(null), 'Send to 0 students');
+
+  // The toast line names the audience; its title and outcome text report delivery.
+  assert.equal(commandRecipientsSummary({ count: 2, label: '2 selected students' }), 'Recipients: 2 selected students.');
+  assert.equal(commandRecipientsSummary({ count: 2, frozenCount: 2, label: 'Whole class' }), 'Recipients: 2 students (Whole class).');
+  assert.equal(
+    commandRecipientsSummary({ count: 1, frozenCount: 2, label: '2 selected students' }),
+    'Recipients: 1 of 2 selected students.',
+    'a confirmed partial send says how many of the frozen list it addressed',
+  );
+  assert.equal(commandRecipientsSummary({ count: 1, frozenCount: 3, label: 'Group: Reading table' }), 'Recipients: 1 of 3 students (Group: Reading table).');
+  assert.equal(commandRecipientsSummary({ count: 1 }), 'Recipients: 1 student.');
+  assert.equal(commandRecipientsSummary({ count: 1, label: '10 selected students' }), 'Recipients: 1 student (10 selected students).');
+  for (const summary of [
+    commandRecipientsSummary({ count: 2, label: 'Whole class' }),
+    commandRecipientsSummary({ count: 1, frozenCount: 2, label: '2 selected students' }),
+  ]) {
+    assert.doesNotMatch(summary, /sent|deliver/i, 'a failed delivery toast must not read as sent');
+  }
+
+  assert.equal(unavailableRecipientsMessage(['Ada Student']), "Ada Student can't receive this right now. Nothing was sent.");
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student'], { availableCount: 1 }),
+    `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them, or Cancel.`,
+    'a partial send says what to do next',
+  );
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student', 'Ben Student'], { nothingSent: false }),
+    "Ada Student and Ben Student can't receive this right now.",
+  );
+  assert.equal(
+    unavailableRecipientsMessage(['A One', 'B Two', 'C Three', 'D Four', 'E Five', 'F Six']),
+    "A One, B Two, C Three, D Four, and 2 more students can't receive this right now. Nothing was sent.",
+  );
+  assert.equal(
+    recipientsRestoredMessage(['Ada Student']),
+    'Ada Student can receive this again. Nothing was sent. Send again to include them.',
+  );
+  assert.equal(RECIPIENTS_UNAVAILABLE_MESSAGE, "Some selected students can't receive this right now. Nothing was sent.");
+});
+
+test('the shared last-name comparator is the Dashboard grid rule', () => {
+  // The rule the grid has always used inline: last word, lower-cased, localeCompare.
+  const gridLastName = (fullName) => {
+    if (!fullName) return '';
+    const nameParts = fullName.trim().split(/\s+/);
+    if (nameParts.length === 1) return nameParts[0].toLowerCase();
+    return nameParts[nameParts.length - 1].toLowerCase();
+  };
+  const names = ['Ada Student', 'ben  zed', 'Cher', '  ', '', undefined, 'Dee de la Cruz', 'Émile Zola', 'zoe adams', 'Ann Student'];
+  for (const left of names) {
+    assert.equal(studentLastName(left), gridLastName(left));
+    for (const right of names) {
+      assert.equal(
+        Math.sign(compareStudentsByLastName({ studentName: left }, { studentName: right })),
+        Math.sign(gridLastName(left).localeCompare(gridLastName(right))),
+        `${JSON.stringify(left)} vs ${JSON.stringify(right)}`,
+      );
+    }
+  }
+  const sorted = [{ studentName: 'Ben Student', id: 1 }, { studentName: 'zoe adams', id: 2 }, { studentName: 'Ada Student', id: 3 }]
+    .sort(compareStudentsByLastName);
+  assert.deepEqual(sorted.map((row) => row.id), [2, 1, 3], 'equal last names keep their incoming order');
 });
