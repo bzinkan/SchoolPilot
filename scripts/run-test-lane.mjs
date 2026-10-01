@@ -116,6 +116,7 @@ const DB_SERIAL = new Set([
   "classpilot-student-session-auth-kind-guard.test.ts",
   "classpilot-student-session-lease-clock.integration.test.ts",
   "classpilot-student-session-recovery.integration.test.ts",
+  "classpilot-device-upsert.integration.test.ts",
   "classpilot-student-data-contract.test.ts",
   "classpilot-teaching-sessions-recent.test.ts",
   "classpilot-tile-history-lateral.test.ts",
