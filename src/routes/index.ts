@@ -16,6 +16,7 @@ import passpilotSettingsRoutes, {
   passpilotLegacySettingsCompatibilityRouter,
 } from "./passpilot/settings.js";
 import passpilotRulesRoutes from "./passpilot/rules.js";
+import passpilotAppointmentRoutes from "./passpilot/appointments.js";
 import homeroomRoutes from "./gopilot/homerooms.js";
 import dismissalRoutes from "./gopilot/dismissal.js";
 import changeRoutes from "./gopilot/changes.js";
@@ -379,6 +380,7 @@ router.use("/passpilot/admin/class-migration", passpilotClassMigrationRoutes);
 router.use("/passpilot/admin/settings", passpilotSettingsRoutes);
 // Steps aside (unknown-route 404) unless PASSPILOT_RULES_MODE is on and admitted.
 router.use("/passpilot/admin/rules", passpilotRulesRoutes);
+router.use("/passpilot/appointments", passpilotAppointmentRoutes);
 // Compatibility alias used by the existing PassPilot web client. Keep this
 // pointed at the same strict handler; do not reintroduce the legacy broad
 // school-update schema here.

@@ -347,7 +347,18 @@ run "usage_computation_ledger_target" {
     rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupDaysPostExpand.tables)
   }
   assert {
-    condition     = length(local.rls_post_expand_tables) == 127 && contains(local.rls_post_expand_tables, "classpilot_usage_rollup_days")
+    condition     = length(setsubtract(toset(jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupDaysPostExpand.tables), local.rls_post_expand_tables)) == 0 && contains(local.rls_post_expand_tables, "classpilot_usage_rollup_days")
     error_message = "The complete target must retain prior admissions and add the computation ledger."
+  }
+}
+run "passpilot_appointments_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.passpilotAppointmentsPostExpand.tables)
+  }
+  assert {
+    condition     = length(local.rls_post_expand_tables) == 128 && contains(local.rls_post_expand_tables, "passpilot_appointments")
+    error_message = "The complete target must retain all 127 prior admissions and append appointments."
   }
 }

@@ -269,6 +269,25 @@ function Assert-ProductPreconditions {
     # Admission checks apply to activation; source compatibility applies while
     # usage remains on. Turning both usage flags off stays available.
     $activations = Get-ProductActivations $Prior $Desired
+    if ($Desired['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on') {
+        # Both stable services are bound to AppSha/digest. The singleton table
+        # alone cannot make a pre-atomic issuer or older admission image safe.
+        $compatibilityError = 'PASSPILOT_APPOINTMENTS_MODE=on requires RLS_GUC_ENABLED=true and an RLS_ENABLED_TABLES allowlist with the complete preserved 128-table admission, plus atomic writer contract version 1 on both API and worker.'
+        try {
+            $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotAppointmentsMode.ts") -RepositoryRoot $RepositoryRoot
+            $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
+            $inventory = $registry.inventories.passpilotAppointmentsPostExpand
+        } catch { throw $compatibilityError }
+        if ($source -cnotmatch 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 1;' -or
+            $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
+            @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or 'passpilot_appointments' -cnotin @($inventory.tables)) { throw $compatibilityError }
+        foreach ($environment in $Snapshot.Environments) {
+            if (-not $environment.ContainsKey('RLS_GUC_ENABLED') -or $environment['RLS_GUC_ENABLED'] -cne 'true' -or
+                -not $environment.ContainsKey('RLS_ENABLED_TABLES')) { throw $compatibilityError }
+            $tables = $environment['RLS_ENABLED_TABLES'].Split(',')
+            if (@($inventory.tables | Where-Object { $_ -cnotin $tables }).Count) { throw $compatibilityError }
+        }
+    }
     if ($Desired['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on' -or $Desired['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on') {
         # The snapshot binds BOTH serving task definitions to AppSha and digest.
         # Inspect that release's source, never the local working tree: admitting
