@@ -192,7 +192,14 @@ export async function runLocalScale() {
       await admin.query("INSERT INTO users(id,email,first_name,last_name) SELECT id,'scale-'||id||'@example.test','Synthetic','Scale' FROM unnest($1::text[]) id", [[school.staff, ...school.teachers]]);
       await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) SELECT $1,id,CASE WHEN id=$2 THEN 'school_admin' ELSE 'teacher' END,'active' FROM unnest($3::text[]) id", [school.id, school.staff, [school.staff, ...school.teachers]]);
       await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status,grade_level,email) SELECT id,$2,'Synthetic','Scale','active',(6+(ordinality-1)%5)::text,'scale-'||id||'@example.test' FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.id]);
-      await admin.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,($3::text[])[ordinality::int],'Synthetic Class '||ordinality,'admin_class' FROM unnest($1::text[]) WITH ORDINALITY class(id,ordinality)", [school.groups, school.id, school.teachers]);
+      const classWriter = await admin.connect();
+      try {
+        await classWriter.query('BEGIN');
+        await classWriter.query("INSERT INTO groups(id,school_id,teacher_id,name,group_type) SELECT id,$2,($3::text[])[ordinality::int],'Synthetic Class '||ordinality,'admin_class' FROM unnest($1::text[]) WITH ORDINALITY class(id,ordinality)", [school.groups, school.id, school.teachers]);
+        await classWriter.query("INSERT INTO group_teachers(group_id,teacher_id,role) SELECT id,($2::text[])[ordinality::int],'primary' FROM unnest($1::text[]) WITH ORDINALITY class(id,ordinality)", [school.groups, school.teachers]);
+        await classWriter.query('COMMIT');
+      } catch (error) { await classWriter.query('ROLLBACK'); throw error; }
+      finally { classWriter.release(); }
       await admin.query("INSERT INTO group_students(student_id,group_id) SELECT id,($2::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY student(id,ordinality)", [school.students, school.groups]);
       await admin.query("INSERT INTO devices(device_id,school_id,class_id) SELECT id,$2,($3::text[])[((ordinality-1)/5)::int+1] FROM unnest($1::text[]) WITH ORDINALITY device(id,ordinality)", [school.devices, school.id, school.groups]);
       await admin.query("INSERT INTO student_sessions(id,student_id,device_id,auth_kind,is_active) SELECT id,($2::text[])[ordinality::int],($3::text[])[ordinality::int],'managed_profile',true FROM unnest($1::text[]) WITH ORDINALITY session(id,ordinality)", [school.studentSessions, school.students, school.devices]);
