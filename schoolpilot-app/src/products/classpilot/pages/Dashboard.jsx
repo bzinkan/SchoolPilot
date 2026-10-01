@@ -33,6 +33,8 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
+import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
@@ -769,13 +771,13 @@ export default function Dashboard() {
   });
 
   const { data: flightPaths = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
+    queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: selectFlightPathOptions,
   });
   const { data: preciseRestrictionResourcesEnabled = false } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
+    queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: selectPreciseRestrictionResourcesEnabled,
   });
 
@@ -5192,7 +5194,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setShowLockScreenDialog(true);
   };
 
+  const waypointPreview = useRestrictionScopePreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
+    enabled: showLockScreenDialog && lockScreenMode === 'url',
+    input: { purpose: 'waypoint', boundary: preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website', url: lockScreenUrl.trim() },
+    context: [preciseRestrictionResourcesEnabled, Array.from(selectedStudentIds).sort(), activityScopeKey, effectiveAuthorityKey],
+  });
+  const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled;
   const handleConfirmLockScreen = () => {
+    if (waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
     const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
     if (!command || !exactSelectedTargetsResolved) {
       toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
@@ -5203,7 +5212,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     let skippedSignedOutCount = 0;
     if (lockScreenMode === "url") {
       if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set as the waypoint" }); return; }
-      url = lockScreenUrl.trim();
+      url = waypointPreview.preview?.authoring.url || lockScreenUrl.trim();
       if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
     } else {
       const partition = partitionCurrentPageWaypointTargets(
@@ -7237,7 +7246,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
       {/* Waypoint (lock-screen) Dialog */}
       <Dialog open={showLockScreenDialog} onOpenChange={setShowLockScreenDialog}>
-        <DialogContent data-testid="dialog-lock-screen">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto" data-testid="dialog-lock-screen">
           <DialogHeader>
             <DialogTitle>Set Waypoint</DialogTitle>
             <DialogDescription className="space-y-1">
@@ -7263,11 +7272,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 {selectedLateSignInRestrictionStudentIds.length} signed-out student{selectedLateSignInRestrictionStudentIds.length === 1 ? '' : 's'} will be skipped because no current page exists before sign-in. Choose a specific URL to save their Waypoint.
               </p>
             )}
+            {lockScreenMode === 'current' && <p className="text-xs text-muted-foreground">Each signed-in student's current page is the starting point. Browsing stays on that student's website, which may differ for each student. Choose a specific link to review one shared resource or Section.</p>}
             {lockScreenMode === "url" && (
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
-                <p className="text-xs text-muted-foreground">{DOMAIN_RESTRICTION_URL_HELP}</p>
+                <p className="text-xs text-muted-foreground">{preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
+                  ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
+                  : DOMAIN_RESTRICTION_URL_HELP}</p>
                 {preciseRestrictionResourcesEnabled && (
                   <fieldset className="space-y-2 pt-1" data-testid="lock-screen-boundary">
                     <legend className="text-sm font-medium">Students can use</legend>
@@ -7277,16 +7289,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </label>
                     <label className="flex items-start gap-2 text-sm">
                       <input type="radio" name="lock-screen-boundary" value="resource" checked={lockScreenBoundary === "resource"} onChange={() => setLockScreenBoundary("resource")} data-testid="radio-lock-screen-boundary-resource" />
-                      <span>This resource only<span className="block text-xs text-muted-foreground">Students stay on this video, document, form or page. Students whose ClassPilot extension needs an update are listed and keep their current restriction.</span></span>
+                      <span>This resource only<span className="block text-xs text-muted-foreground">One video, document or form; other links define a Section and paths below it. Review its scope first. Students whose ClassPilot extension needs an update are listed and keep their current restriction.</span></span>
                     </label>
                   </fieldset>
                 )}
+                <RestrictionScopeReview review={waypointPreview} disabled={!lockScreenUrl.trim() || lockScreenMutation.isPending} />
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowLockScreenDialog(false)} data-testid="button-cancel-lock-screen">Cancel</Button>
-            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
+            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
