@@ -102,6 +102,15 @@ async function waitFor(fn, label, timeout = 15_000) {
   while (Date.now() < deadline) { const value = await fn(); if (value) return value; await delay(250); }
   throw new Error(`Timed out: ${label}`);
 }
+async function settleLessonCapturePhase() {
+  await studentPage.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+  // A native capture may acquire prior pixels and return after the new paint.
+  // Finish that producer before the phase's timestamp fence is established.
+  await waitFor(() => worker.evaluate(() => !screenshotCaptureInFlight),
+    'previous native screenshot operation settles after lesson paint');
+}
 async function staffRequest(path, body, method = 'POST', actor = admin, revision = '0') {
   const response = await fetch(`${baseUrl}${path}`, { method, headers: {
     'content-type': 'application/json', 'x-school-id': school.id,
@@ -352,11 +361,13 @@ try {
     }
     await studentPage.bringToFront();
     await studentPage.evaluate(name => { document.body.textContent = `${name}: FIRST`; document.body.style.background = '#075985'; }, scenario.name);
+    await settleLessonCapturePhase();
     resetClasspilotScreenshotPolicyRefreshForTests(); frames.length = 0;
     if (scenario.dropHint) {
       await worker.evaluate(() => scheduleHeartbeat(0.5));
       await waitFor(() => tile(scenario.authority), 'initial background capture before missed hint');
       await studentPage.evaluate(() => { document.body.textContent = 'MISSED HINT: CHANGED AFTER BACKGROUND'; });
+      await settleLessonCapturePhase();
     }
     const parent = scenario.authority.supervisionContextId ? `supervision-contexts/${scenario.authority.supervisionContextId}` : `teaching-sessions/${scenario.authority.teachingSessionId}`;
     const started = Date.now();
@@ -384,8 +395,9 @@ try {
     if (scenario.scheduledClaim) await repeatScheduledCoverage();
     await studentPage.bringToFront();
     await studentPage.evaluate(name => { document.body.textContent = `${name}: SECOND`; document.body.style.background = '#9d174d'; }, scenario.name);
+    await settleLessonCapturePhase();
     const secondStarted = Date.now();
-    const second = await waitFor(async () => { const frame = await tile(scenario.authority); return frame?.screenshot !== first.screenshot ? frame : null; }, `${scenario.name} active cadence capture`, captureTimeout);
+    const second = await waitFor(async () => { const frame = await tile(scenario.authority); return frame?.screenshot !== first.screenshot && Number(frame.timestamp) >= secondStarted ? frame : null; }, `${scenario.name} active cadence capture`, captureTimeout);
     assert.notEqual(second.screenshot, first.screenshot);
     await renderTile(scenario.authority, second, [157, 23, 77]);
     if (scenario.unattended) {
