@@ -1027,3 +1027,138 @@ test('sign-out-only selection closes command dialogs and cannot fall back to cla
     /pollPending=\{nonRestrictionSelectionActive \|\| subgroupCommandsDisabled/,
   );
 });
+
+test('classroom dialogs freeze recipients when they open and send them as explicit studentIds', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const between = (startMarker, endMarker) => {
+    const start = dashboard.indexOf(startMarker);
+    assert.ok(start >= 0, `missing ${startMarker}`);
+    const end = dashboard.indexOf(endMarker, start + startMarker.length);
+    assert.ok(end > start, `missing ${endMarker} after ${startMarker}`);
+    return dashboard.slice(start, end);
+  };
+
+  for (const [testId, kind] of [
+    ['dialog-send-message', 'message'],
+    ['dialog-attention-mode', 'attention'],
+    ['dialog-timer', 'timer'],
+    ['dialog-poll', 'poll'],
+    ['dialog-open-tab', 'open-tab'],
+  ]) {
+    const dialog = between(`data-testid="${testId}"`, '</Dialog>');
+    assert.doesNotMatch(dialog, /selectedStudentIds\.size/, `${testId} must not describe live ticks`);
+    assert.doesNotMatch(dialog, /targetBannerLabel/, `${testId} must not describe the live target banner`);
+    assert.match(
+      dialog,
+      new RegExp(`<CommandRecipients summaryAs=\\{DialogDescription\\} \\{\\.\\.\\.recipientDialogProps\\('${kind}'\\)\\} />`),
+      `${testId} must list its frozen recipients`,
+    );
+    assert.match(dialog, /data-recipient-send=""/, `${testId} must mark the button that confirms a partial send`);
+    assert.match(
+      dialog,
+      /onKeyDown=\{ignoreHeldEnter\}[^\n]*data-recipient-send=""/,
+      `${testId} must not let a held Enter confirm a partial send`,
+    );
+    assert.match(dialog, /data-recipient-autofocus=""/, `${testId} must open in its first field, not on the recipient list`);
+    assert.match(
+      dashboard,
+      new RegExp(`onOpenChange=\\{\\(open\\) => \\(open \\? setShow\\w+Dialog\\(true\\) : closeRecipientDialog\\('${kind}'\\)\\)\\}>\\s*<DialogContent[^>]*data-testid="${testId}"`),
+      `closing ${testId} must discard its frozen recipients`,
+    );
+    const [, contentProps] = dashboard.match(new RegExp(`<DialogContent([^>]*)data-testid="${testId}"`));
+    assert.match(contentProps, /onOpenAutoFocus=\{focusRecipientDialogField\}/, `${testId} must focus its marked field when it opens`);
+    assert.match(contentProps, /max-h-\[calc\(100dvh-2rem\)\][^"]*overflow-y-auto/, `${testId} must scroll on a short screen instead of clipping its buttons`);
+  }
+  const recipients = await readFile(
+    new URL('../src/products/classpilot/components/CommandRecipients.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    recipients,
+    /<ul\s[^>]*aria-label="Recipients"\s+tabIndex=\{0\}/,
+    'a long recipient list must be reachable, and scrollable, by keyboard',
+  );
+  assert.match(
+    between('const ignoreHeldEnter = (event) => {', '\n  };'),
+    /if \(event\.key === 'Enter' && event\.repeat\) event\.preventDefault\(\);/,
+  );
+  assert.match(
+    between('const focusRecipientDialogField = (event) => {', '\n  };'),
+    /querySelector\?\.\('\[data-recipient-autofocus\]'\);\s*if \(!field\) return;\s*event\.preventDefault\(\);\s*field\.focus\(/,
+  );
+
+  for (const [mutation, post] of [
+    ['const sendMessageMutation = useMutation', /postClassroomCommand\('teacher-message', \{ message \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const attentionModeMutation = useMutation', /postClassroomCommand\('attention-mode', \{ active, message \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const timerMutation = useMutation', /postClassroomCommand\('timer', payload, snapshotRecipientOptions\(recipients\)\)/],
+    ['const pollMutation = useMutation', /postClassroomCommand\('poll', \{ action: 'start', question, options \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const openTabMutation = useMutation', /postActiveCommand\('open-tab', \{ url \}, snapshotRecipientOptions\(recipients\)\)/],
+  ]) {
+    assert.match(between(mutation, 'onSuccess'), post, `${mutation} must post the frozen recipients`);
+  }
+  assert.match(
+    between('const snapshotRecipientOptions = (recipients) => {', '\n  };'),
+    /throw new Error\(RECIPIENTS_MISSING_MESSAGE\)[\s\S]{0,200}recipients\.scopeKey !== activityScopeRef\.current\) throw new Error\(RECIPIENTS_SCOPE_CHANGED_MESSAGE\)[\s\S]{0,80}return \{ studentIds: \[\.\.\.recipients\.studentIds\] \}/,
+    'a send without recipients, or after the class changed, must fail closed instead of resolving a class target',
+  );
+  // Release, stop/pause/resume/extend and close keep their server-derived audience.
+  assert.match(dashboard, /: postClassroomCommand\('attention-mode', \{ active, message \}\)\)/);
+  assert.match(dashboard, /: postClassroomCommand\('timer', payload\)\)/);
+  assert.match(dashboard, /postClassroomCommand\('poll', \{ action: 'close', pollId \}\)/);
+
+  const opener = between('const openRecipientDialog = (kind, commandType, commandPayload = {}) => {', 'const clearRecipientSnapshot');
+  assert.match(opener, /assertClassroomCommandSelectionIsolation\(commandType, selectedServerSignOutStudentIds\.size\)/);
+  assert.match(opener, /dashboardCapabilities\.allows\(commandType\)/);
+  assert.match(opener, /resolveActiveCommandTarget\(null, \{ commandType, commandPayload \}\)/);
+  assert.match(opener, /snapshotCommandRecipients\(\{[\s\S]{0,500}scopeKey: activityScopeKey,\s*view: studentView,/);
+  const refusal = opener.slice(opener.indexOf('} catch (error) {'));
+  assert.match(refusal, /^\} catch \(error\) \{[\s\S]{0,700}toast\(\{\s*variant: 'destructive',[\s\S]{0,120}description: recipientDialogRefusalMessage\(error, \{[\s\S]{0,400}return false;\s*\}\s*\};/, 'an unavailable target must explain itself and not open the dialog');
+  assert.doesNotMatch(refusal, /recipientDialogSetters|setRecipientSnapshot/, 'a refused dialog must not open or keep recipients');
+  assert.match(opener, /setRecipientSnapshot\(\{ kind, snapshot, unavailableIds: null, confirmIds: null, notice: '' \}\);\s*recipientDialogSetters\[kind\]\(true\);\s*return true;/);
+  assert.match(dashboard, /onClick=\{\(\) => openRecipientDialog\('open-tab', 'open-tab', \{ url: '' \}\)\} disabled=\{subgroupCommandsDisabled \|\| nonRestrictionSelectionActive\} data-testid="button-open-tab"/);
+  assert.match(dashboard, /onSendMessage=\{subgroupCommandsDisabled \|\| !dashboardCapabilities\.allows\('teacher-message'\) \? undefined : \(\) => openRecipientDialog\('message', 'teacher-message'/);
+  assert.match(dashboard, /onPollClick=\{\(\) => activePoll \? setShowPollResultsDialog\(true\) : openRecipientDialog\('poll', 'poll'/);
+  assert.match(dashboard, /onPreset=\{\(preset\) => \{\s*if \(!openRecipientDialog\('poll', 'poll'/);
+  assert.match(dashboard, /onTimerClick=\{\(\) => timerActive \? handleStopTimer\(\) : openRecipientDialog\('timer', 'timer'/);
+  assert.match(dashboard, /onAttentionClick=\{\(\) => attentionActive \? setShowAttentionDialog\(true\) : openRecipientDialog\('attention', 'attention-mode'/);
+
+  const take = between('const takeSnapshotRecipients = ', 'const snapshotRecipientOptions');
+  assert.match(take, /snapshot\.scopeKey !== activityScopeRef\.current \|\| snapshot\.view !== studentView/);
+  assert.match(take, /planRecipientSend\(\{\s*snapshot,\s*confirmIds: entry\.confirmIds,\s*commandableIds: commandableRecipientIds\(commandType, commandPayload\),\s*repeatGesture,\s*\}\)/);
+  assert.match(take, /if \(step\.action === 'ignore'\) return null;/);
+  assert.match(take, /if \(step\.action === 'ask'\) \{[^}]*\}\);\s*return null;\s*\}/, 'a lost recipient needs a second explicit send');
+  assert.match(take, /if \(step\.action === 'restored'\) \{[\s\S]{0,300}return null;\s*\}/, 'a returning recipient is asked about, not silently skipped');
+  assert.equal(take.match(/studentIds:/g)?.length, 1, 'only the planned send returns studentIds');
+  assert.match(take, /studentIds: \[\.\.\.step\.studentIds\],/);
+
+  for (const [handler, mutation, kind, send] of [
+    ['const handleSendMessage = (event) => {', 'sendMessageMutation', 'message', 'sendMessageMutation.mutate({ message, recipients });'],
+    ['const handleAttentionMode = (active, event) => {', 'attentionModeMutation', 'attention', 'attentionModeMutation.mutate({ active: true, message: attentionMessage, recipients });'],
+    ['const handleStartTimer = (event) => {', 'timerMutation', 'timer', "timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage, recipients });"],
+    ['const handleCreatePoll = (event) => {', 'pollMutation', 'poll', 'pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions, recipients });'],
+    ['const handleOpenTab = (event) => {', 'openTabMutation', 'open-tab', 'openTabMutation.mutate({ url: normalizedUrl, recipients });'],
+  ]) {
+    const source = between(handler, send);
+    assert.match(source, new RegExp(`if \\(${mutation}\\.isPending \\|\\| recipientSendBusyRef\\.current === '${kind}'\\) return;`), `${handler} must ignore a second send while one is in flight`);
+    assert.match(source, new RegExp(`takeSnapshotRecipients\\('${kind}'`), `${handler} must send only frozen recipients`);
+    assert.match(source, new RegExp(`if \\(!recipients\\) return;\\s*recipientSendBusyRef\\.current = '${kind}';\\s*$`), `${handler} must mark the send busy before mutating`);
+    assert.match(between(`const ${mutation} = useMutation`, '\n  });'), new RegExp(`onSettled: [^\\n]*releaseRecipientSend\\('${kind}'\\)`), `${mutation} must release its busy mark when it settles`);
+  }
+  assert.match(between('data-testid="dialog-send-message"', 'data-testid="input-send-message"'), /e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s*e\.preventDefault\(\);\s*if \(e\.repeat\) return;/);
+  assert.match(between('data-testid="dialog-open-tab"', 'data-testid="input-open-tab-url"'), /e\.key !== 'Enter' \|\| e\.nativeEvent\.isComposing \|\| openTabMutation\.isPending\) return;\s*if \(e\.repeat\) \{ e\.preventDefault\(\); return; \}/);
+  assert.match(between('const recipientDeliveryToast = ', '\n  };'), /commandRecipientsSummary\(/, 'the toast names the audience without claiming delivery');
+
+  for (const marker of [
+    'if (!signOutOnlySelectionActive) return;',
+    'if (!lateSignInRestrictionSelectionActive) return;',
+    'if (!scheduledClassEnabled) return;',
+  ]) {
+    assert.match(between(marker, '}, ['), /setRecipientSnapshot\(null\);/, `${marker} must discard frozen recipients with the dialogs it closes`);
+  }
+  assert.match(between('const handleAdminObservedSessionChange', 'const handleStopLiveView'), /setSkipTodayGroup\(null\);\s*setRecipientSnapshot\(null\);/);
+  assert.match(dashboard, /throw new Error\(RECIPIENTS_UNAVAILABLE_MESSAGE\);/);
+  assert.doesNotMatch(dashboard, /Clear the selection and try again/);
+});

@@ -819,10 +819,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       await cachedEmptyPage.getByTestId(menu.close).click();
       await cachedEmptyPage.getByTestId(menu.dialog).waitFor({ state: "hidden" });
     }
+    // Open URL freezes its recipients when it opens. An empty roster has none,
+    // so it explains that instead of opening a dialog that could send to no one.
     await cachedEmptyPage.getByTestId("button-open-tab").click();
-    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor();
-    await cachedEmptyPage.getByTestId("button-cancel-open-tab").click();
-    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor({ state: "hidden" });
+    await cachedEmptyPage.getByText("No students in this class can receive this right now.", { exact: true }).waitFor();
+    assert.equal(await cachedEmptyPage.getByTestId("dialog-open-tab").count(), 0, "Open URL must not open without recipients");
     assert.deepEqual(cachedEmptyHarness.commandPosts, [], "opening the menus and viewers must not issue a command");
     cachedEmptyAggregate.setScopedResponse(failure({ requestId: "req-cached-empty" }));
     await cachedEmptyHarness.authenticateWebSocket();
@@ -5147,6 +5148,256 @@ test('scheduled classroom tools retain passive previews without Live View and cl
   assert.deepEqual(harness.pageErrors, []);
 });
 
+// Send Message, Attention, Timer, Poll and Open URL freeze their recipients
+// when they open. Before this, Send re-resolved the target from live state: a
+// ticked student whose device stopped reporting lost the tick, and the
+// message or URL went to every other reporting student instead.
+const RECIPIENT_CLOCK = '2026-09-18T14:05:00.000Z';
+const RECIPIENT_SUBGROUP_ID = 'abcdabcd-abcd-4bcd-8bcd-abcdabcdabcd';
+
+function recipientRow(studentId, studentName, observedAt, realtimeRevision) {
+  const firstName = studentName.split(' ')[0].toLowerCase();
+  return student({
+    studentId, studentName, studentEmail: `${firstName}@example.edu`, realtimeBinding: `binding-${firstName}`,
+    realtimeRevision, lastSeenAt: observedAt, realtimeObservedAt: observedAt,
+  });
+}
+
+async function recipientDialogPage(context, browser, baseURL, { subgroups = [], subgroupMembers = {} } = {}) {
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.install({ time: new Date(RECIPIENT_CLOCK) });
+  const reports = {
+    [STUDENT_ID]: { name: 'Ada Student', at: RECIPIENT_CLOCK, revision: 1 },
+    [SECOND_STUDENT_ID]: { name: 'Ben Student', at: RECIPIENT_CLOCK, revision: 1 },
+  };
+  const roster = () => success(Object.entries(reports).map(([studentId, row]) => recipientRow(studentId, row.name, row.at, row.revision)));
+  const aggregate = aggregateController({ scoped: roster() });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, {
+    aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+    subgroups, subgroupMembers,
+  });
+  const commands = [];
+  let hold = null;
+  let releaseHold = () => {};
+  context.after(() => releaseHold());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON();
+    commands.push(body);
+    if (hold) await hold;
+    const targetStudentIds = body.targetStudentIds || [];
+    await route.fulfill({ status: 201, json: {
+      command: { id: `recipient-command-${commands.length}`, commandType: body.commandType,
+        targets: targetStudentIds.map(studentId => ({ studentId, status: 'sent' })) },
+      summary: { requested: targetStudentIds.length, attempted: targetStudentIds.length, pending: targetStudentIds.length },
+    } });
+  });
+  // A report re-reads the class with the listed students observed now.
+  const reportNow = async (...studentIds) => {
+    const now = new Date(await page.evaluate(() => Date.now())).toISOString();
+    for (const studentId of studentIds) reports[studentId] = { ...reports[studentId], at: now, revision: reports[studentId].revision + 1 };
+    aggregate.setScopedResponse(roster());
+    await page.evaluate(async () => {
+      const { queryClient } = await import('/src/lib/queryClient.js');
+      await queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+    });
+  };
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${SECOND_STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  // However long the page took to load, both students are reporting now.
+  await reportNow(STUDENT_ID, SECOND_STUDENT_ID);
+  await page.waitForFunction(ids => ids.every(id => document.querySelector(`[data-testid="card-student-${id}"]`)
+    && !document.querySelector(`[data-testid="preview-unavailable-${id}"]`)), [STUDENT_ID, SECOND_STUDENT_ID]);
+  return {
+    page, harness, commands,
+    holdCommands() { hold = new Promise(resolve => { releaseHold = resolve; }); },
+    releaseCommands() { hold = null; releaseHold(); },
+    // Ada's last report passes the 60-second signal window while Ben keeps reporting.
+    async stopAdaReporting() {
+      await page.clock.fastForward(40_000);
+      await reportNow(SECOND_STUDENT_ID);
+      await page.clock.fastForward(25_000);
+      // Running the dashboard's own timers paints the lost signal now instead
+      // of on a later real-time tick (up to 7 s of wall clock per wait). Ben's
+      // report is still well inside his 60-second window afterwards.
+      await page.clock.runFor(10_000);
+      await page.getByTestId(`preview-unavailable-${STUDENT_ID}`).waitFor({ state: 'attached' });
+      assert.equal(await page.getByTestId(`preview-unavailable-${SECOND_STUDENT_ID}`).count(), 0, 'Ben is still reporting');
+    },
+  };
+}
+
+async function openSendMessageDialog(page) {
+  await openChatPanel(page);
+  await page.getByTestId('chat-broadcast').click();
+  await page.getByTestId('dialog-send-message').waitFor();
+}
+
+async function frozenRecipients(page, dialogTestId) {
+  const dialog = page.getByTestId(dialogTestId);
+  return {
+    summary: await dialog.getByTestId('command-recipients-summary').innerText(),
+    names: await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(),
+  };
+}
+
+async function waitForTestIdText(page, testId, expected) {
+  await page.waitForFunction(([id, text]) => document.querySelector(`[data-testid="${id}"]`)?.textContent === text, [testId, expected]);
+}
+
+function focusedTestId(page) {
+  return page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null);
+}
+
+async function waitForFocus(page, testId) {
+  await page.waitForFunction(id => document.activeElement?.getAttribute('data-testid') === id, testId);
+}
+
+test('classroom dialogs never re-target a frozen recipient list when a ticked student stops reporting', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+
+  // One ticked student, then that student's device stops reporting: nothing is sent, to anyone.
+  const single = await recipientDialogPage(context, browser, baseURL);
+  await single.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await openSendMessageDialog(single.page);
+  assert.deepEqual(await frozenRecipients(single.page, 'dialog-send-message'), { summary: 'Send to 1 selected student', names: ['Ada Student'] });
+  await single.page.getByTestId('input-send-message').fill('Only for Ada');
+  await single.stopAdaReporting();
+  assert.deepEqual((await frozenRecipients(single.page, 'dialog-send-message')).names, ['Ada Student'], 'the frozen list does not follow the trimmed tick');
+  await single.page.getByTestId('button-confirm-send-message').click();
+  await waitForTestIdText(single.page, 'command-recipients-unavailable', "Ada Student can't receive this right now. Nothing was sent.");
+  await single.page.waitForTimeout(250);
+  assert.deepEqual(single.commands, [], 'a frozen message is never re-targeted to the students who are still reporting');
+  assert.deepEqual(single.harness.commandPosts, [], 'nor sent through another command endpoint');
+  assert.equal(await single.page.getByTestId('button-confirm-send-message').innerText(), 'Send Message');
+  await single.page.getByTestId('dialog-send-message').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await single.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  assert.deepEqual(single.harness.pageErrors, []);
+  await single.page.close();
+
+  // Two ticked students and one stops reporting: the first Send only explains, a second explicit Send reaches the other.
+  const partial = await recipientDialogPage(context, browser, baseURL);
+  await partial.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await partial.page.getByTestId(`checkbox-select-student-${SECOND_STUDENT_ID}`).click();
+  await openSendMessageDialog(partial.page);
+  assert.deepEqual(await frozenRecipients(partial.page, 'dialog-send-message'), { summary: 'Send to 2 selected students', names: ['Ada Student', 'Ben Student'] });
+  await partial.page.getByTestId('input-send-message').fill('For both of you');
+  await partial.stopAdaReporting();
+  await partial.page.getByTestId('button-confirm-send-message').click();
+  await waitForTestIdText(partial.page, 'command-recipients-unavailable', `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them, or Cancel.`);
+  await waitForTestIdText(partial.page, 'button-confirm-send-message', 'Send to 1 available');
+  assert.equal(await partial.page.getByTestId(`command-recipient-${STUDENT_ID}`).getAttribute('data-unavailable'), 'true');
+  assert.equal(await partial.page.getByTestId('send-message-hint').innerText(), 'Press Enter to go to "Send to 1 available", Shift+Enter for new line');
+  await chatEvidence(partial.page, 'frozen-recipients-partial', { frozen: ['Ada Student', 'Ben Student'], unavailable: ['Ada Student'], posted: partial.commands.length });
+  // Enter in the message box only moves to the confirm button, and holding Enter cannot press it.
+  await partial.page.getByTestId('input-send-message').focus();
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.up('Enter');
+  assert.equal(await focusedTestId(partial.page), 'button-confirm-send-message');
+  await partial.page.waitForTimeout(250);
+  assert.deepEqual(partial.commands, [], 'losing a recipient needs a second, explicit Send');
+  assert.equal(await partial.page.getByTestId('input-send-message').inputValue(), 'For both of you', 'a held Enter adds no blank lines');
+  // A fresh press on the focused button is that second, explicit Send.
+  await partial.page.keyboard.press('Enter');
+  await waitUntil(() => partial.commands.length === 1, 'the confirmed send posts once');
+  await partial.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  const [confirmed] = partial.commands;
+  assert.equal(confirmed.commandType, 'teacher-message');
+  assert.equal(confirmed.teachingSessionId, OWN_SESSION_ID);
+  assert.equal(confirmed.targetScope, 'students');
+  assert.deepEqual(confirmed.targetStudentIds, [SECOND_STUDENT_ID]);
+  assert.deepEqual(confirmed.commandPayload, { message: 'For both of you' });
+  // Radix also mirrors a new toast into a transient aria-live announcer.
+  await partial.page.getByText(/Recipients: 1 of 2 selected students\./).first().waitFor();
+  assert.deepEqual(partial.harness.commandPosts, []);
+  assert.deepEqual(partial.harness.pageErrors, []);
+  await partial.page.close();
+
+  // Open URL freezes the same way.
+  const url = await recipientDialogPage(context, browser, baseURL);
+  await url.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await url.page.getByTestId('button-open-tab').click();
+  await url.page.getByTestId('dialog-open-tab').waitFor();
+  assert.deepEqual(await frozenRecipients(url.page, 'dialog-open-tab'), { summary: 'Send to 1 selected student', names: ['Ada Student'] });
+  await url.page.getByTestId('input-open-tab-url').fill('reading.example.edu/chapter-3');
+  await url.stopAdaReporting();
+  await url.page.getByTestId('button-confirm-open-tab').click();
+  await waitForTestIdText(url.page, 'command-recipients-unavailable', "Ada Student can't receive this right now. Nothing was sent.");
+  await url.page.getByTestId('input-open-tab-url').press('Enter');
+  await url.page.waitForTimeout(250);
+  assert.deepEqual(url.commands, [], 'a frozen URL is never re-targeted to the students who are still reporting');
+  assert.deepEqual(url.harness.commandPosts, [], 'nor sent through another command endpoint');
+  assert.deepEqual(url.harness.pageErrors, []);
+});
+
+test('classroom dialogs send once on a double Enter, always as explicit students, and name a selected subgroup', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+
+  const wholeClass = await recipientDialogPage(context, browser, baseURL);
+  // Open URL for the whole class reaches the frozen students in one explicit-id POST.
+  await wholeClass.page.getByTestId('button-open-tab').click();
+  await wholeClass.page.getByTestId('dialog-open-tab').waitFor();
+  assert.deepEqual(await frozenRecipients(wholeClass.page, 'dialog-open-tab'), { summary: 'Send to 2 students — Whole class', names: ['Ada Student', 'Ben Student'] });
+  await waitForFocus(wholeClass.page, 'input-open-tab-url');
+  await wholeClass.page.getByTestId('input-open-tab-url').fill('reading.example.edu/chapter-3');
+  await wholeClass.page.getByTestId('button-confirm-open-tab').click();
+  await waitUntil(() => wholeClass.commands.length === 1, 'the URL is sent');
+  await wholeClass.page.getByTestId('dialog-open-tab').waitFor({ state: 'hidden' });
+  const [openTab] = wholeClass.commands;
+  assert.equal(openTab.commandType, 'open-tab');
+  assert.equal(openTab.targetScope, 'students', 'a whole-class URL is sent as the frozen student list, never as targetScope class');
+  assert.deepEqual([...openTab.targetStudentIds].sort(), [STUDENT_ID, SECOND_STUDENT_ID].sort());
+  assert.deepEqual(openTab.commandPayload, { url: 'https://reading.example.edu/chapter-3' });
+  await wholeClass.page.getByText(/Recipients: 2 students \(Whole class\)\./).first().waitFor();
+
+  await openSendMessageDialog(wholeClass.page);
+  assert.deepEqual(await frozenRecipients(wholeClass.page, 'dialog-send-message'), { summary: 'Send to 2 students — Whole class', names: ['Ada Student', 'Ben Student'] });
+  // The dialog opens in the message box; the recipient list is one Shift+Tab away for keyboard users.
+  await waitForFocus(wholeClass.page, 'input-send-message');
+  await wholeClass.page.keyboard.press('Shift+Tab');
+  assert.equal(await focusedTestId(wholeClass.page), 'command-recipients-list');
+  const input = wholeClass.page.getByTestId('input-send-message');
+  await input.fill('Eyes on the board');
+  wholeClass.holdCommands();
+  await input.press('Enter');
+  await input.press('Enter');
+  await waitUntil(() => wholeClass.commands.length > 1, 'the first Enter sends the message');
+  await wholeClass.page.waitForTimeout(250);
+  assert.equal(wholeClass.commands.length, 2, 'a second Enter while the first is sending must not send again');
+  wholeClass.releaseCommands();
+  await wholeClass.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  const [, announcement] = wholeClass.commands;
+  assert.equal(announcement.commandType, 'teacher-message');
+  assert.equal(announcement.targetScope, 'students', 'a whole-class message is sent as the frozen student list, never as targetScope class');
+  assert.deepEqual([...announcement.targetStudentIds].sort(), [STUDENT_ID, SECOND_STUDENT_ID].sort());
+  assert.equal(Object.hasOwn(announcement, 'subgroupId'), false);
+  assert.equal(wholeClass.commands.length, 2);
+  assert.deepEqual(wholeClass.harness.commandPosts, []);
+  assert.deepEqual(wholeClass.harness.pageErrors, []);
+  await wholeClass.page.close();
+
+  const subgroup = await recipientDialogPage(context, browser, baseURL, {
+    subgroups: [{ id: RECIPIENT_SUBGROUP_ID, name: 'Reading table' }],
+    subgroupMembers: { [RECIPIENT_SUBGROUP_ID]: [SECOND_STUDENT_ID] },
+  });
+  await subgroup.page.getByTestId('select-subgroup-filter').selectOption(RECIPIENT_SUBGROUP_ID);
+  await subgroup.page.getByTestId('badge-selection-count').getByText(/Reading table - 1 student/).waitFor();
+  await openSendMessageDialog(subgroup.page);
+  assert.deepEqual(await frozenRecipients(subgroup.page, 'dialog-send-message'), { summary: 'Send to 1 student — Group: Reading table', names: ['Ben Student'] });
+  await chatEvidence(subgroup.page, 'frozen-recipients-subgroup', { label: 'Group: Reading table', frozen: ['Ben Student'] });
+  await subgroup.page.getByTestId('input-send-message').fill('Reading table, check in');
+  await subgroup.page.getByTestId('button-confirm-send-message').click();
+  await waitUntil(() => subgroup.commands.length === 1, 'the subgroup message is sent');
+  await subgroup.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  assert.equal(subgroup.commands[0].targetScope, 'students');
+  assert.deepEqual(subgroup.commands[0].targetStudentIds, [SECOND_STUDENT_ID]);
+  assert.equal(Object.hasOwn(subgroup.commands[0], 'subgroupId'), false);
+  assert.deepEqual(subgroup.harness.commandPosts, []);
+  assert.deepEqual(subgroup.harness.pageErrors, []);
+});
 
 test('scheduled classroom restores acknowledged timer and poll after reload and gates older extensions', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);

@@ -2,6 +2,7 @@ import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
 import { activityAuthority, activityAuthorityKey } from './dashboardActivity.js';
 import { activeFlightPathAllowedDomains } from './teachingResourceLibrary.js';
 import { isUrlAllowedByStudentPreciseRestrictions } from './restrictionResourceMatcher.js';
+import { compareStudentsByLastName } from './studentOrder.js';
 
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
@@ -507,6 +508,9 @@ export function deriveDashboardCapabilities({
   };
 }
 
+const NO_CONTROLLABLE_TARGET_MESSAGE = 'No controllable students are in this target.';
+const NO_CLAIMED_TARGET_MESSAGE = 'Select at least one claimed student.';
+
 export function resolveCommandTargets({
   mode,
   sessionStudents = [],
@@ -545,7 +549,7 @@ export function resolveCommandTargets({
     }
 
     const targetStudentIds = normalizedIds(rows.map(studentId));
-    if (targetStudentIds.length === 0) throw new Error('No controllable students are in this target.');
+    if (targetStudentIds.length === 0) throw new Error(NO_CONTROLLABLE_TARGET_MESSAGE);
 
     if (mode === 'scheduled-supervision') targetScope = 'students';
     return {
@@ -566,7 +570,7 @@ export function resolveCommandTargets({
     : selectedIds.length > 0
       ? studentRowsByIds(cohort, selectedIds)
       : cohort;
-  if (rows.length === 0) throw new Error('Select at least one claimed student.');
+  if (rows.length === 0) throw new Error(NO_CLAIMED_TARGET_MESSAGE);
 
   const contextsByStudent = new Map();
   const groups = new Map();
@@ -600,6 +604,178 @@ export function resolveCommandTargets({
     targetCount: targetStudentIds.length,
     contextCount: groups.size,
   };
+}
+
+// Classroom dialogs (Send Message, Attention, Timer, Poll, Open URL) freeze
+// their recipients when they open. Sending uses exactly those students, minus
+// any who can no longer receive the command, as explicit studentIds. A lost or
+// emptied list never widens to a subgroup or the whole class.
+export const RECIPIENTS_UNAVAILABLE_MESSAGE = "Some selected students can't receive this right now. Nothing was sent.";
+export const RECIPIENTS_SCOPE_CHANGED_MESSAGE = 'The class changed after this opened. Nothing was sent. Close it and try again.';
+export const RECIPIENTS_MISSING_MESSAGE = 'No recipients are set for this. Nothing was sent. Close it and try again.';
+
+const RECIPIENT_ALERT_NAME_LIMIT = 5;
+
+function studentCountText(count) {
+  return `${count} student${count === 1 ? '' : 's'}`;
+}
+
+export function recipientSnapshotLabel({ selectedCount = 0, subgroupName = null, view = 'class' } = {}) {
+  const selected = Number(selectedCount);
+  if (Number.isSafeInteger(selected) && selected > 0) {
+    return `${selected} selected student${selected === 1 ? '' : 's'}`;
+  }
+  const group = String(subgroupName || '').trim();
+  if (group) return `Group: ${group}`;
+  return view === 'claimed' ? 'All claimed students' : 'Whole class';
+}
+
+export function snapshotCommandRecipients({ target, students = [], label = '', scopeKey = null, view = null } = {}) {
+  const ids = normalizedIds(target?.targetStudentIds);
+  if (ids.length === 0) throw new Error('Choose at least one student.');
+  const rowsById = new Map();
+  for (const row of [
+    ...(Array.isArray(students) ? students : []),
+    ...(Array.isArray(target?.targetStudents) ? target.targetStudents : []),
+  ]) {
+    const id = studentId(row);
+    if (id && !rowsById.has(id)) rowsById.set(id, row);
+  }
+  const entries = ids.map((id) => {
+    const row = rowsById.get(id);
+    const studentName = String(row?.studentName || '').trim();
+    return {
+      id,
+      studentName,
+      name: studentName || String(row?.studentEmail || '').trim() || 'Student unavailable',
+    };
+  }).sort(compareStudentsByLastName);
+  return Object.freeze({
+    ids: Object.freeze(entries.map((entry) => entry.id)),
+    names: Object.freeze(entries.map((entry) => entry.name)),
+    label: String(label || '').trim(),
+    scopeKey,
+    view,
+  });
+}
+
+export function partitionSnapshotRecipients(snapshot, commandableIds) {
+  const available = new Set(normalizedIds(
+    commandableIds instanceof Set ? [...commandableIds] : commandableIds,
+  ));
+  const sendIds = [];
+  const unavailableIds = [];
+  for (const id of Array.isArray(snapshot?.ids) ? snapshot.ids : []) {
+    if (available.has(id)) sendIds.push(id);
+    else unavailableIds.push(id);
+  }
+  return { sendIds, unavailableIds };
+}
+
+function sameIdSet(left, right) {
+  if (left.length !== right.length) return false;
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+// What Send does with a dialog's frozen recipients, given who can receive the
+// command now. It sends only what the dialog shows: the whole frozen list, or,
+// on a separate confirmation, exactly the subset its "Send to N available"
+// button named. Any other change updates the dialog and sends nothing.
+//   { action: 'send', studentIds }
+//   { action: 'ask', unavailableIds, confirmIds }  confirmIds is null when no one can receive it
+//   { action: 'restored', restoredIds }            everyone left out is back; the next Send includes them
+//   { action: 'ignore' }                           the repeat of a gesture that would confirm a partial send
+export function planRecipientSend({ snapshot, confirmIds = null, commandableIds = [], repeatGesture = false } = {}) {
+  const confirming = Array.isArray(confirmIds) && confirmIds.length > 0;
+  if (confirming && repeatGesture) return { action: 'ignore' };
+  const { sendIds, unavailableIds } = partitionSnapshotRecipients(snapshot, commandableIds);
+  if (confirming && sameIdSet(sendIds, confirmIds)) return { action: 'send', studentIds: sendIds };
+  if (sendIds.length === 0 || unavailableIds.length > 0) {
+    return { action: 'ask', unavailableIds, confirmIds: sendIds.length > 0 ? sendIds : null };
+  }
+  if (confirming) {
+    const confirmed = new Set(confirmIds);
+    return { action: 'restored', restoredIds: sendIds.filter((id) => !confirmed.has(id)) };
+  }
+  return { action: 'send', studentIds: sendIds };
+}
+
+// The frozen names of `ids`, in the snapshot's last-name order.
+export function snapshotRecipientNames(snapshot, ids) {
+  const wanted = new Set(ids || []);
+  const names = Array.isArray(snapshot?.names) ? snapshot.names : [];
+  return (Array.isArray(snapshot?.ids) ? snapshot.ids : [])
+    .flatMap((id, index) => (wanted.has(id) ? [names[index] || 'Student unavailable'] : []));
+}
+
+// A tick label ("2 selected students") already states its count; a group or
+// the whole class does not.
+function labelStatesCount(label, count) {
+  return label.startsWith(`${count} `);
+}
+
+export function commandRecipientsHeadline(snapshot) {
+  const count = Array.isArray(snapshot?.ids) ? snapshot.ids.length : 0;
+  const label = String(snapshot?.label || '').trim();
+  if (label && labelStatesCount(label, count)) return `Send to ${label}`;
+  return `Send to ${studentCountText(count)}${label ? ` — ${label}` : ''}`;
+}
+
+// Who a send was addressed to. It never claims delivery: the toast's own title
+// and outcome text report what the devices did.
+export function commandRecipientsSummary({ count = 0, frozenCount = count, label = '' } = {}) {
+  const trimmed = String(label || '').trim();
+  const total = Math.max(count, frozenCount);
+  const audience = trimmed && labelStatesCount(trimmed, total)
+    ? trimmed
+    : `${studentCountText(total)}${trimmed ? ` (${trimmed})` : ''}`;
+  return `Recipients: ${count < total ? `${count} of ` : ''}${audience}.`;
+}
+
+function recipientNameList(names) {
+  const list = (Array.isArray(names) ? names : [])
+    .map((name) => String(name || '').trim() || 'Student unavailable');
+  if (list.length === 0) return '';
+  const shown = list.length > RECIPIENT_ALERT_NAME_LIMIT
+    ? [
+        ...list.slice(0, RECIPIENT_ALERT_NAME_LIMIT - 1),
+        `${list.length - (RECIPIENT_ALERT_NAME_LIMIT - 1)} more students`,
+      ]
+    : list;
+  return new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(shown);
+}
+
+// With `availableCount`, the dialog is waiting for "Send to N available", so
+// the alert says how to send without the named students.
+export function unavailableRecipientsMessage(names, { nothingSent = true, availableCount = 0 } = {}) {
+  const subject = recipientNameList(names);
+  if (!subject) return nothingSent ? 'Nothing was sent.' : '';
+  const next = availableCount > 0
+    ? ` Choose "Send to ${availableCount} available" to send without them, or Cancel.`
+    : nothingSent ? ' Nothing was sent.' : '';
+  return `${subject} can't receive this right now.${next}`;
+}
+
+export function recipientsRestoredMessage(names) {
+  const subject = recipientNameList(names) || 'Everyone on this list';
+  return `${subject} can receive this again. Nothing was sent. Send again to include them.`;
+}
+
+// Why a classroom dialog did not open. Nothing was attempted, so it never says
+// "Nothing was sent", and it names the ticked students who can't receive it.
+export function recipientDialogRefusalMessage(error, { blockedNames = [], view = 'class', subgroupSelected = false } = {}) {
+  const message = String(error?.message || '').trim();
+  if (![NO_CONTROLLABLE_TARGET_MESSAGE, NO_CLAIMED_TARGET_MESSAGE, RECIPIENTS_UNAVAILABLE_MESSAGE].includes(message)) {
+    return message || 'This is not available right now.';
+  }
+  const blocked = recipientNameList(blockedNames);
+  if (blocked) return `${blocked} can't receive this right now. Untick them and try again.`;
+  if (message === RECIPIENTS_UNAVAILABLE_MESSAGE) return "Some selected students can't receive this right now. Untick them and try again.";
+  if (view === 'claimed') return 'No claimed students can receive this right now.';
+  return subgroupSelected
+    ? 'No students in this group can receive this right now.'
+    : 'No students in this class can receive this right now.';
 }
 
 export function resolveStudentSignOutTargets({
