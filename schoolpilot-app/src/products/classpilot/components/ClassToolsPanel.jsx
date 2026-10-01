@@ -83,6 +83,25 @@ export default function ClassToolsPanel({ storageKey, open, tab, onOpen, onClose
     return () => { observer.disconnect(); window.removeEventListener('scroll', measure, true); window.removeEventListener('resize', measure); };
   }, [visible, pinned]);
   useEffect(() => {
+    if (!visible || !narrow) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        const toolbar = document.querySelector('[data-class-tools-toolbar]');
+        if (!toolbar) return;
+        const rect = toolbar.getBoundingClientRect();
+        const navigation = Math.max(8,
+          document.querySelector('[data-class-tools-navigation]')?.getBoundingClientRect().bottom + 8 || 72);
+        // Make room below visible commands after opening or resizing. Avoid
+        // repeating this adjustment when the user subsequently scrolls.
+        const minimumDrawerHeight = Math.min(480, Math.max(0,
+          viewport.height - navigation - rect.height - 8));
+        const overflow = rect.bottom + 8 - (viewport.height - minimumDrawerHeight);
+        if (overflow > 1) window.scrollBy({ top: overflow, behavior: 'instant' });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible, narrow, viewport.width, viewport.height]);
+  useEffect(() => {
     const toolbar = document.querySelector('[data-class-tools-toolbar]');
     if (!toolbar) return;
     // Floating tools may cover tiles, but command buttons always reflow into
