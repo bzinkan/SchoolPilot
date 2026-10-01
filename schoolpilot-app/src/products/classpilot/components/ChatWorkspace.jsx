@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, MoreHorizontal, PauseCircle, Send } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../../components/ui/dropdown-menu';
 import { Switch } from '../../../components/ui/switch';
 import { cn } from '../../../lib/utils';
 import { deriveStudentMonitoringDisplay } from '../lib/studentMonitoringDisplay';
-import { describeChatDeviceReadiness, describeChatPause } from '../lib/chatThreads';
+import { chatStudentName, describeChatDeviceReadiness, describeChatPause, emptyConversation } from '../lib/chatThreads';
 import ChatConversationList from './ChatConversationList';
 import ChatThread from './ChatThread';
 import ChatComposer from './ChatComposer';
@@ -14,6 +14,11 @@ const SINGLE_PANE_BELOW = 640;
 /**
  * Reusable inbox content. Keep mounted across tool tabs; remount only at the
  * authenticated classroom boundary. Hidden threads never mark arrivals read.
+ * Selecting a student on the roster who has no messages yet opens an empty
+ * thread, so the teacher can start the conversation, but only while the class
+ * chat is available (`chatAvailable`): a disabled or denied chat can send
+ * nothing, so it offers no composer. Each new `focusSignal` (an open request
+ * from a student tile) moves focus to the reply box once.
  */
 export default function ChatWorkspace({
   visible = true,
@@ -37,14 +42,32 @@ export default function ChatWorkspace({
   onTogglePause,
   fabSettingsPending = false,
   onSendMessage,
+  focusSignal = 0,
+  chatAvailable = true,
 }) {
   const pause = describeChatPause(fabState);
   const [drafts, setDrafts] = useState({});
   const singlePane = width < SINGLE_PANE_BELOW;
-  const selected = useMemo(
-    () => conversations.find((conversation) => conversation.studentId === selectedStudentId) || null,
-    [conversations, selectedStudentId]
-  );
+  const selected = useMemo(() => {
+    const conversation = conversations.find((row) => row.studentId === selectedStudentId);
+    if (conversation || !selectedStudentId || !chatAvailable) return conversation || null;
+    const student = (students || []).find((row) => (row.studentId || row.id) === selectedStudentId);
+    return student ? emptyConversation(selectedStudentId, chatStudentName(student)) : null;
+  }, [conversations, selectedStudentId, students, chatAvailable]);
+  // The record of the last handled open request lives here, not in the
+  // composer, so it survives the composer unmounting between threads.
+  const handledFocusSignalRef = useRef(focusSignal);
+  const claimFocusSignal = useCallback((signal) => {
+    if (signal === handledFocusSignalRef.current) return false;
+    handledFocusSignalRef.current = signal;
+    return true;
+  }, []);
+  const hasSelection = Boolean(selected);
+  useEffect(() => {
+    // With no thread to open, the request lapses rather than waiting to take
+    // focus from whatever the teacher does next.
+    if (!hasSelection) claimFocusSignal(focusSignal);
+  }, [hasSelection, focusSignal, claimFocusSignal]);
   const monitoringByStudent = useMemo(() => {
     const map = new Map();
     for (const student of students || []) {
@@ -65,6 +88,10 @@ export default function ChatWorkspace({
   }, [students, monitoringByStudent, authority]);
   const showList = !singlePane || !selected;
   const showThread = !singlePane || Boolean(selected);
+  const selectedMonitoring = selected ? monitoringByStudent.get(selected.studentId) || null : null;
+  // Signed out, not merely stale: the server holds the message until the
+  // student signs in, so say so instead of "Sending".
+  const waitingFor = selectedMonitoring?.kind === 'signed_out' ? selected.studentName : null;
 
   return (
     <section hidden={!visible} className={visible ? "flex flex-1 min-h-[360px] flex-col" : "hidden"} data-testid="chat-drawer" aria-label="Messages">
@@ -149,8 +176,9 @@ export default function ChatWorkspace({
                   visible={visible}
                   onOpenStudentDetails={onOpenStudentDetails}
                   conversation={selected}
-                  monitoring={monitoringByStudent.get(selected.studentId) || null}
+                  monitoring={selectedMonitoring}
                   readiness={readinessByStudent.get(selected.studentId) || null}
+                  waitingFor={waitingFor}
                   onClearThread={onClearThread}
                   onEndChat={onEndChat}
                   onMarkThreadRead={onMarkThreadRead}
@@ -158,10 +186,14 @@ export default function ChatWorkspace({
                 >
                   <ChatComposer
                     studentId={selected.studentId}
+                    studentName={selected.studentName}
                     value={drafts[selected.studentId] || ''}
                     onChange={(text) => setDrafts((current) => ({ ...current, [selected.studentId]: text }))}
                     onReplyToMessage={onReplyToMessage}
                     disabled={pendingReplyStudentIds?.has(selected.studentId) || !studentMessagingEnabled}
+                    studentHasWritten={selected.items.some((item) => item.sender === 'student')}
+                    focusSignal={focusSignal}
+                    claimFocusSignal={claimFocusSignal}
                   />
                 </ChatThread>
               ) : (

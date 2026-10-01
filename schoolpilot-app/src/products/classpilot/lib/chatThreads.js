@@ -3,16 +3,25 @@ export const CHAT_REPLY_MAX_CHARS = 500;
 /**
  * Teacher replies that cost one tap. `ack` marks the reply that is sent
  * immediately from its own button; the others fill the composer so the teacher
- * can adjust before sending.
+ * can adjust before sending. `replyOnly` marks an answer that reads oddly as a
+ * first message.
  */
 export const CANNED_REPLIES = Object.freeze([
   Object.freeze({ id: 'got-it', text: 'Got it', ack: true }),
-  Object.freeze({ id: 'yes', text: 'Yes' }),
-  Object.freeze({ id: 'one-moment', text: 'One moment' }),
+  Object.freeze({ id: 'yes', text: 'Yes', replyOnly: true }),
+  Object.freeze({ id: 'one-moment', text: 'One moment', replyOnly: true }),
   Object.freeze({ id: 'come-see-me', text: 'Come see me' }),
-  Object.freeze({ id: 'not-now', text: 'Not right now' }),
+  Object.freeze({ id: 'not-now', text: 'Not right now', replyOnly: true }),
   Object.freeze({ id: 'check-board', text: 'Check the board' }),
 ]);
+
+/**
+ * The one-tap replies a thread offers. Until the student has written, only
+ * openers fit: no acknowledgement and no answers.
+ */
+export function cannedRepliesFor(studentHasWritten) {
+  return studentHasWritten ? CANNED_REPLIES : CANNED_REPLIES.filter((reply) => !reply.ack && !reply.replyOnly);
+}
 
 /**
  * The server never distinguishes questions from other messages, so the
@@ -46,11 +55,70 @@ export function mergeDeliveryStatus(current, incoming) {
   return (DELIVERY_RANK[incoming] || 0) < (DELIVERY_RANK[current] || 0) ? current : incoming;
 }
 
-export function deliveryLabel(status, errorMessage) {
+/**
+ * The server holds a message for a signed-out student until their device
+ * connects, so an undelivered message to them names the wait instead of
+ * reading as a stuck "Sending". `waitingFor` is that student's display name.
+ */
+export function deliveryLabel(status, errorMessage, options) {
   if (status === 'seen') return 'Seen';
   if (status === 'delivered') return 'Delivered';
   if (status === 'failed') return errorMessage || 'Failed';
+  if (options?.waitingFor) return `Waits until ${options.waitingFor} signs in`;
   return 'Sending';
+}
+
+/** The display name a dashboard student row carries, or '' when it has none. */
+export function chatStudentName(student) {
+  if (!student) return '';
+  const name = student.studentName || student.name
+    || [student.firstName, student.lastName].filter(Boolean).join(' ');
+  return typeof name === 'string' ? name.trim() : '';
+}
+
+/**
+ * A thread the teacher is about to start: the student has no messages yet,
+ * so it renders the reply box with nothing above it.
+ */
+export function emptyConversation(studentId, studentName) {
+  return { studentId, studentName: studentName || 'Unknown', studentEmail: '', items: [], unreadCount: 0 };
+}
+
+/**
+ * Plain words for a reply the server refused, from the error code the API
+ * returns. The dashboard shows it under "Message not sent", so each sentence
+ * says only why. Anything unrecognised keeps the server's own message.
+ */
+export function describeChatReplyError(error, studentName) {
+  const name = (typeof studentName === 'string' && studentName.trim()) || 'This student';
+  const response = error?.response;
+  switch (response?.data?.code) {
+    case 'chat_authority_stale':
+      return `${name} is with another teacher right now.`;
+    case 'ACTIVE_SESSION_NOT_FOUND':
+    case 'CLASSROOM_ACTIVITY_UNAVAILABLE':
+      return 'This class has ended.';
+    case 'FAB_FEATURE_DISABLED':
+      return 'Messaging is turned off for this class.';
+    case 'CHAT_STUDENT_NOT_IN_SESSION':
+    case 'CLASSROOM_ACTIVITY_STALE':
+      return `${name} isn\u2019t in this class right now.`;
+    case 'MESSAGE_TOO_LONG':
+    case 'MESSAGE_INVALID':
+    case 'teacher_reply_invalid':
+      return `Messages can be up to ${CHAT_REPLY_MAX_CHARS} characters.`;
+    case 'CLASSROOM_AUTHORITY_CHANGED':
+      return 'This class changed. Refresh the page and try again.';
+    default:
+      break;
+  }
+  // A bare 404 comes from either the class session check (the class ended or
+  // is no longer yours) or the roster check, so the sentence names both.
+  if (response?.status === 404 && !response?.data?.code) {
+    return `${name} isn\u2019t in this class, or the class has ended. Refresh the page to check.`;
+  }
+  const serverMessage = response?.data?.error;
+  return (typeof serverMessage === 'string' && serverMessage) || error?.message || 'Something went wrong.';
 }
 
 /** What the drawer should say about a paused channel, or null when it is not paused. */
@@ -77,20 +145,30 @@ function timeValue(timestamp) {
   return Number.isFinite(value) ? value : 0;
 }
 
+function knownStudentName(nameById, studentId) {
+  const name = nameById instanceof Map
+    ? nameById.get(studentId)
+    : nameById && Object.prototype.hasOwnProperty.call(nameById, studentId) ? nameById[studentId] : '';
+  return typeof name === 'string' ? name.trim() : '';
+}
+
 /**
  * One inbox row per student: the merged timeline of their messages and the
  * teacher's replies (oldest first), the unread count, and the last item for the
  * preview line. Rows are ordered unread first, then newest activity.
+ * `nameById` (a Map or plain object of studentId to display name) names a
+ * thread only the teacher has written in; 'Unknown' means no name is known.
  */
-export function deriveChatConversations(studentMessages, chatReplies) {
+export function deriveChatConversations(studentMessages, chatReplies, nameById) {
   const byStudent = new Map();
   const conversationFor = (studentId, studentName, studentEmail) => {
+    const name = studentName || knownStudentName(nameById, studentId);
     let conversation = byStudent.get(studentId);
     if (!conversation) {
-      conversation = { studentId, studentName: studentName || 'Unknown', studentEmail: studentEmail || '', items: [], unreadCount: 0 };
+      conversation = { studentId, studentName: name || 'Unknown', studentEmail: studentEmail || '', items: [], unreadCount: 0 };
       byStudent.set(studentId, conversation);
-    } else if (conversation.studentName === 'Unknown' && studentName) {
-      conversation.studentName = studentName;
+    } else if (conversation.studentName === 'Unknown' && name) {
+      conversation.studentName = name;
     }
     return conversation;
   };
@@ -125,6 +203,9 @@ export function deriveChatConversations(studentMessages, chatReplies) {
 }
 
 const OFFLINE_NOTE = 'Device isn\u2019t reporting \u2014 replies deliver when it reconnects.';
+// The server holds a message for a signed-out student until they sign in, and
+// only while this class lasts: the delivery expires when the class ends.
+const SIGNED_OUT_NOTE = 'Messages wait until the student signs in during this class.';
 
 /**
  * Why a student's device may not be able to chat right now, from data the
@@ -137,7 +218,9 @@ const OFFLINE_NOTE = 'Device isn\u2019t reporting \u2014 replies deliver when it
  */
 export function describeChatDeviceReadiness({ student, monitoring, authority } = {}) {
   if (monitoring && !monitoring.telemetryCurrent) {
-    return { kind: 'offline', label: OFFLINE_NOTE, detail: null, testId: 'chat-thread-offline-note' };
+    // A signed-out student is reached by signing in, not by a device reconnecting.
+    const label = monitoring.kind === 'signed_out' ? SIGNED_OUT_NOTE : OFFLINE_NOTE;
+    return { kind: 'offline', label, detail: null, testId: 'chat-thread-offline-note' };
   }
   if (!authority || !student) return null;
   const classroomState = student.classroomState;

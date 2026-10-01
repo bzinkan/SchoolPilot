@@ -610,6 +610,11 @@ async function assertCommandEntryPointsUnavailable(page, commandPosts) {
     assert.equal(await page.getByTestId(testId).count(), 0, `${testId} must not be reachable`);
   }
   assert.equal(await page.getByLabel("Quick Classroom Tools").count(), 0, "Teacher FAB must be unavailable");
+  assert.equal(
+    await page.locator('[data-testid^="button-message-student-"]').count(),
+    0,
+    "read-only views must not offer Message on any tile",
+  );
   assert.deepEqual(commandPosts, [], "no command POST may be issued");
 }
 
@@ -646,6 +651,11 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
       await page.getByTestId(`button-manage-tabs-${studentId}`).count(),
       0,
       `Observe must not expose tab commands for ${studentId}`,
+    );
+    assert.equal(
+      await page.getByTestId(`button-message-student-${studentId}`).count(),
+      0,
+      `Observe must not offer Message for ${studentId}`,
     );
     const lockToggle = page.getByTestId(`button-lock-toggle-${studentId}`);
     if (await lockToggle.count() > 0) {
@@ -3292,7 +3302,7 @@ async function chatBrowserFixture(context, options = {}) {
   if (options.clockTime) await page.clock.install({ time: new Date(options.clockTime) });
   const socketConsole = [];
   page.on('console', message => { if (message.text().startsWith('[Dashboard]')) socketConsole.push(message.text()); });
-  const aggregate = aggregateController({ scoped: success([student()]) });
+  const aggregate = aggregateController({ scoped: success(options.students || [student()]) });
   const live = teachingSession();
   const harness = await configureDashboard(page, {
     aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
@@ -3324,11 +3334,17 @@ async function chatBrowserFixture(context, options = {}) {
         : url.pathname.endsWith('/read')
           ? { readAt: new Date().toISOString(), updatedIds: body?.messageIds || [] }
           : { ok: true };
+      // A responder refuses with { status, body }, as the history responder does.
+      if (response?.status >= 400) {
+        await route.fulfill({ status: response.status, json: response.body });
+        return;
+      }
       await route.fulfill({ status: url.pathname.endsWith('/reply') ? 202 : 200, json: response });
       return;
     }
     await route.fallback();
   });
+  if (options.beforeGoto) await options.beforeGoto(page);
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await waitUntil(() => reads.length > 0, 'The canonical chat history must be requested');
@@ -3644,6 +3660,170 @@ test('chat drawer: it is non-modal, so a tile badge switches threads without clo
   // The grid behind the drawer is still interactive: opening a tile's details works while chat is open.
   await page.getByTestId(`card-student-${STUDENT_ID}`).click();
   assert.equal(await page.getByTestId('chat-drawer').count(), 1);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+const FIRST_MESSAGE_TEXT = 'Synthetic first message from the teacher';
+
+async function startConversationFromTile(page, studentId = STUDENT_ID) {
+  await page.getByTestId(`button-message-student-${studentId}`).click();
+  const thread = page.getByTestId('chat-thread');
+  await thread.waitFor();
+  assert.equal(await thread.getAttribute('data-student-id'), studentId);
+  await page.getByTestId('chat-thread-empty').waitFor();
+}
+
+test('chat start: a tile Message button opens an empty thread with the reply box focused, and the first message names the student', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  // The fixture student has not reported for weeks; an offline student can still be messaged.
+  await startConversationFromTile(page);
+  await page.getByTestId('chat-thread').getByText('Ada Student', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-thread-clear').count(), 0, 'An empty thread has nothing to clear');
+  assert.equal(await page.getByTestId('chat-thread-menu').count(), 0, 'An empty thread has no chat to end');
+  assert.equal(await page.getByTestId('chat-ack').count(), 0, '"Got it" waits until the student has written');
+  for (const answer of ['yes', 'one-moment', 'not-now']) {
+    assert.equal(await page.getByTestId(`chat-canned-${answer}`).count(), 0, `"${answer}" answers a student, so it is no opener`);
+  }
+  await page.getByTestId('chat-canned-come-see-me').waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'chat-composer-input');
+  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Message Ada Student', 'Focus lands in a box named for its recipient');
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: FIRST_MESSAGE_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
+  await page.keyboard.type(FIRST_MESSAGE_TEXT);
+  await page.keyboard.press('Enter');
+  await threadText(page, FIRST_MESSAGE_TEXT).waitFor();
+  const replies = fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply');
+  assert.equal(replies.length, 1, 'Exactly one message is posted');
+  assert.equal(replies[0].body.studentId, STUDENT_ID);
+  assert.equal(replies[0].body.message, FIRST_MESSAGE_TEXT);
+  assert.equal(replies[0].body.sessionId, OWN_SESSION_ID);
+  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).getByText('Ada Student', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-conversations').getByText('Unknown', { exact: true }).count(), 0, 'A thread the teacher started is never Unknown');
+  await page.getByTestId('chat-thread-clear').waitFor();
+  await page.getByText('Message sent', { exact: true }).first().waitFor();
+  await page.getByText('Waiting for the device to confirm.', { exact: true }).first().waitFor();
+  // A sent message clears the draft once the POST settles.
+  await page.waitForFunction(() => document.querySelector('[data-testid="chat-composer-input"]')?.value === '');
+  // Once the student writes back, the box replies and every quick reply fits.
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await page.getByTestId('chat-ack').waitFor();
+  await page.getByTestId('chat-canned-yes').waitFor();
+  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Reply to Ada Student');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: a refused message says why in plain words and keeps the draft', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  fixture.setReplyResponder(async () => ({ status: 409, body: { error: 'Student classroom authority changed', code: 'chat_authority_stale' } }));
+  await replyInput(page).fill(FIRST_MESSAGE_TEXT);
+  await replyInput(page).press('Enter');
+  await page.getByText('Ada Student is with another teacher right now.', { exact: true }).waitFor();
+  await page.getByText('Message not sent', { exact: true }).first().waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  assert.equal(await replyInput(page).inputValue(), FIRST_MESSAGE_TEXT, 'The draft survives a refusal');
+  assert.equal(await page.getByText('Request failed with status code 409', { exact: true }).count(), 0, 'No transport jargon');
+  // A codeless 404 is either an ended class or a student off the roster.
+  fixture.setReplyResponder(async () => ({ status: 404, body: { error: 'Session not found' } }));
+  await replyInput(page).press('Enter');
+  await page.getByText('Ada Student isn’t in this class, or the class has ended. Refresh the page to check.', { exact: true }).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  assert.equal(await replyInput(page).inputValue(), FIRST_MESSAGE_TEXT);
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 2, 'One POST per send, never a retry');
+  assert.equal(await page.getByTestId('chat-thread-empty').count(), 1, 'Nothing refused lands in the thread');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: a message to a signed-out student waits until they sign in, then reads Delivered', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, {
+    openPanel: false, students: [student({ loginState: 'not_logged_in', isLoggedIn: false, status: 'offline' })],
+  });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  // The thread note says the same as the bubble: signing in, not a reconnect.
+  await page.getByTestId('chat-thread-offline-note')
+    .getByText('Messages wait until the student signs in during this class.', { exact: true }).waitFor();
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: FIRST_MESSAGE_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
+  await replyInput(page).fill(FIRST_MESSAGE_TEXT);
+  await replyInput(page).press('Enter');
+  const status = page.getByTestId(`chat-delivery-${CHAT_REPLY_ID}`);
+  await status.getByText('Waits until Ada Student signs in', { exact: true }).waitFor();
+  await page.getByText('It waits until Ada Student signs in.', { exact: true }).first().waitFor();
+  await harness.sendWebSocketMessage({
+    type: 'chat-message-delivery', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID, messageId: CHAT_REPLY_ID, studentId: STUDENT_ID, deliveryStatus: 'delivered',
+  });
+  await status.getByText('Delivered', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: with messaging turned off a tile offers no Message, and its unread badge still opens the thread to read', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, {
+    openPanel: false,
+    beforeGoto: page => page.route('**/api/settings', route => route.fulfill({ json: { settings: {
+      activeSessionId: OWN_SESSION_ID, handRaisingEnabled: true, studentMessagingEnabled: true,
+      sessionStudentMessagingEnabled: false, sessionFabRevision: 1, blockedDomains: [],
+    } } })),
+  });
+  const { page, harness } = fixture;
+  await openChatPanel(page);
+  await page.getByTestId('chat-off-banner').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0, 'No new conversation while messaging is off');
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  const badge = page.getByTestId(`chat-unread-${STUDENT_ID}`);
+  await badge.getByText('1', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0, 'Unread messages open through the badge; the tile still starts nothing');
+  await badge.click();
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true, 'The thread opens to read, but the reply box stays off');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: a tile request focuses the reply box once, so a composer that mounts later never takes focus for it', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  const composerFocused = () => page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'chat-composer-input');
+  await startConversationFromTile(page);
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'chat-composer-input');
+  // Clearing the thread unmounts its composer; choosing a later thread mounts a new one.
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await page.getByTestId('chat-thread-clear').click();
+  await expectChatEmpty(page);
+  const next = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', content: 'Synthetic question after clearing' });
+  await harness.sendWebSocketMessage(studentChatEvent(next));
+  const row = page.getByTestId(`chat-conversation-${STUDENT_ID}`);
+  await row.click();
+  await threadText(page, next.content).waitFor();
+  await replyInput(page).waitFor();
+  // Long enough for the composer's mount effect and its animation frame to run.
+  await page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }));
+  assert.equal(await composerFocused(), false, 'The spent tile request does not pull focus out of the conversation list');
+  assert.equal(await row.evaluate(element => element === document.activeElement), true, 'Focus stays on the chosen conversation');
+  // A new tile request focuses the reply box again.
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).click();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'chat-composer-input');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: while the class chat is unavailable a tile offers no Message, and an open empty thread closes', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  fixture.setHistoryResponder(async () => ({ status: 403, body: { error: 'Access denied' } }));
+  await fixture.refetch('/api/teacher/messages');
+  await chatHistorySettled(page);
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByTestId('chat-thread').waitFor({ state: 'detached' });
+  await page.getByTestId('chat-no-selection').waitFor();
+  assert.equal(await replyInput(page).count(), 0, 'No reply box is offered when nothing can be sent');
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 0);
   assert.deepEqual(harness.pageErrors, []);
 });
 
