@@ -2,7 +2,8 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql, type SQL } from 
 import db from "../db.js";
 import { schools, users, schoolMemberships, productLicenses, type User } from "../schema/core.js";
 import { students } from "../schema/students.js";
-import { passes, passpilotPassDenials as denials, grades } from "../schema/passpilot.js";
+import { passes, passpilotPassDenials as denials, grades, teacherGrades, passpilotGradeStudents } from "../schema/passpilot.js";
+import { groups, groupTeachers, groupStudents } from "../schema/classpilot.js";
 import { passpilotAppointments as appointments } from "../schema/passpilotAppointments.js";
 import { settings, auditLogs } from "../schema/shared.js";
 import { readPasspilotReportsMode } from "../config/passpilotReportsMode.js";
@@ -124,6 +125,58 @@ function currentAppointmentStudent(ctx: Context, classId?: string, gradeId?: str
     AND current_student.id=${studentId} AND current_student.status='active') AND ${roster}`;
 }
 
+function appointmentConditions(ctx: Context, filters: PasspilotReportFilters) {
+  return and(eq(appointments.schoolId, ctx.schoolId), gte(appointments.startsAt, filters.from), lt(appointments.startsAt, filters.through),
+    currentAppointmentStudent(ctx, filters.classId, filters.gradeId),
+    ...(filters.studentId ? [eq(appointments.studentId, filters.studentId)] : []),
+    ...(filters.destination ? [eq(appointments.destination, filters.destination)] : []));
+}
+
+async function lockReportAuthority(tx: Transaction, ctx: Context, filters: PasspilotReportFilters) {
+  // The repeatable-read snapshot can precede a wait on the school lock. A
+  // lifecycle writer may change only its class/roster rows, leaving the school
+  // tuple unchanged. Lock every actual row supplying the established scope:
+  // a changed/deleted snapshot row raises 40001 before any report or audit.
+  // New grants can only make this snapshot narrower, never grant more access.
+  const classIds = [...new Set([...(ctx.access?.classIds ?? []), ...(filters.classId ? [filters.classId] : [])])].sort();
+  const gradeIds = new Set([...(ctx.access?.gradeIds ?? []), ...(filters.gradeId ? [filters.gradeId] : [])]);
+  if (classIds.length) {
+    const mapped = await tx.select({ id: grades.id }).from(grades).where(and(eq(grades.schoolId, ctx.schoolId), inArray(grades.classpilotGroupId, classIds)));
+    for (const row of mapped) gradeIds.add(row.id);
+  }
+  const scopedGrades = [...gradeIds].sort(), studentIds = new Set(ctx.access?.studentIds ?? []);
+  if (filters.studentId) studentIds.add(filters.studentId);
+  const passStudents = await tx.selectDistinct({ id: passes.studentId }).from(passes).where(await historicalConditions(ctx, filters, passes));
+  const denialStudents = await tx.selectDistinct({ id: denials.studentId }).from(denials).where(await historicalConditions(ctx, filters, denials));
+  for (const row of [...passStudents, ...denialStudents]) studentIds.add(row.id);
+  if (!filters.teacherId && !filters.issuedVia) {
+    const appointmentStudents = await tx.selectDistinct({ id: appointments.studentId }).from(appointments).where(appointmentConditions(ctx, filters));
+    for (const row of appointmentStudents) studentIds.add(row.id);
+  }
+  // Preserve the canonical student-before-class order. Managers lock only the
+  // report cohort/selected classes; this does not lock unrelated school students.
+  if (studentIds.size) await tx.select({ id: students.id }).from(students)
+    .where(and(eq(students.schoolId, ctx.schoolId), inArray(students.id, [...studentIds].sort()))).orderBy(asc(students.id)).for("share");
+  if (classIds.length) await tx.select({ id: groups.id }).from(groups)
+    .where(and(eq(groups.schoolId, ctx.schoolId), inArray(groups.id, classIds))).orderBy(asc(groups.id)).for("share");
+  if (scopedGrades.length) await tx.select({ id: grades.id }).from(grades)
+    .where(and(eq(grades.schoolId, ctx.schoolId), inArray(grades.id, scopedGrades))).orderBy(asc(grades.id)).for("share");
+  if (ctx.access) {
+    await tx.select({ id: groupTeachers.id }).from(groupTeachers).innerJoin(groups, eq(groups.id, groupTeachers.groupId))
+      .where(and(eq(groups.schoolId, ctx.schoolId), eq(groupTeachers.teacherId, ctx.user.id)))
+      .orderBy(asc(groupTeachers.groupId), asc(groupTeachers.id)).for("share", { of: groupTeachers });
+    await tx.select({ id: teacherGrades.id }).from(teacherGrades).innerJoin(grades, eq(grades.id, teacherGrades.gradeId))
+      .where(and(eq(grades.schoolId, ctx.schoolId), eq(teacherGrades.teacherId, ctx.user.id)))
+      .orderBy(asc(teacherGrades.gradeId), asc(teacherGrades.id)).for("share", { of: teacherGrades });
+  }
+  if (classIds.length) await tx.select({ id: groupStudents.id }).from(groupStudents).innerJoin(groups, eq(groups.id, groupStudents.groupId))
+    .where(and(eq(groups.schoolId, ctx.schoolId), inArray(groupStudents.groupId, classIds)))
+    .orderBy(asc(groupStudents.groupId), asc(groupStudents.studentId)).for("share", { of: groupStudents });
+  if (scopedGrades.length) await tx.select({ id: passpilotGradeStudents.id }).from(passpilotGradeStudents)
+    .where(and(eq(passpilotGradeStudents.schoolId, ctx.schoolId), inArray(passpilotGradeStudents.gradeId, scopedGrades)))
+    .orderBy(asc(passpilotGradeStudents.gradeId), asc(passpilotGradeStudents.studentId)).for("share");
+}
+
 const completed = sql`${passes.status}='returned' AND ${passes.returnedAt} IS NOT NULL AND ${passes.returnedAt}>=${passes.issuedAt}`;
 const validDeadline = sql`${passes.expiresAt}>=${passes.issuedAt}`;
 const seconds = sql`extract(epoch FROM (${passes.returnedAt}-${passes.issuedAt}))`;
@@ -138,6 +191,7 @@ export async function getPasspilotReportCapabilities(schoolId: string, actor: Pa
 }
 
 async function summary(tx: Transaction, ctx: Context, filters: PasspilotReportFilters, asOf: Date) {
+  await lockReportAuthority(tx, ctx, filters);
   await validateAccess(ctx, filters);
   const condition = await historicalConditions(ctx, filters, passes);
   const [stats] = await tx.select({
@@ -183,10 +237,7 @@ async function summary(tx: Transaction, ctx: Context, filters: PasspilotReportFi
       futureWindowCount: sql<number>`count(*) FILTER(WHERE ${appointments.startsAt}>${asOf.toISOString()})::int`,
       maturedWindowCount: sql<number>`count(*) FILTER(WHERE ${appointments.endsAt}<=${asOf.toISOString()} AND ${appointments.status}<>'cancelled')::int`,
       maturedMissedCount: sql<number>`count(*) FILTER(WHERE ${appointments.endsAt}<=${asOf.toISOString()} AND ${effective}='missed')::int`,
-    }).from(appointments).where(and(eq(appointments.schoolId, ctx.schoolId), gte(appointments.startsAt, filters.from), lt(appointments.startsAt, filters.through),
-      currentAppointmentStudent(ctx, filters.classId, filters.gradeId),
-      ...(filters.studentId ? [eq(appointments.studentId, filters.studentId)] : []),
-      ...(filters.destination ? [eq(appointments.destination, filters.destination)] : [])));
+    }).from(appointments).where(appointmentConditions(ctx, filters));
     const { maturedMissedCount, ...publicRow } = row!;
     appointmentMetrics = { ...publicRow, missedRate: ratio(maturedMissedCount, publicRow.maturedWindowCount), attribution: "current_student_roster" as const };
   }
@@ -205,10 +256,14 @@ async function summary(tx: Transaction, ctx: Context, filters: PasspilotReportFi
 }
 
 export async function getPasspilotReportSummary(schoolId: string, actor: PasspilotReportActor, filters: PasspilotReportFilters) {
-  return db.transaction(async tx => summary(tx, await context(tx, schoolId, actor), filters, new Date()), { isolationLevel: "repeatable read" });
+  return db.transaction(async tx => {
+    const asOf = new Date();
+    return summary(tx, await context(tx, schoolId, actor), filters, asOf);
+  }, { isolationLevel: "repeatable read" });
 }
 
 async function page(tx: Transaction, ctx: Context, filters: PasspilotReportFilters, limit: number, encoded?: string, asOf = new Date()) {
+  await lockReportAuthority(tx, ctx, filters);
   await validateAccess(ctx, filters);
   const scope = reportScopeFingerprint(ctx.schoolId, ctx.user.id, ctx.role, filters);
   const cursor = encoded ? decodeReportCursor(encoded, scope) : null;
@@ -234,7 +289,10 @@ async function page(tx: Transaction, ctx: Context, filters: PasspilotReportFilte
     nextCursor: hasMore && last ? encodeReportCursor({ issuedAtMs: last.cursorIssuedAtMs, id: last.id, scope }) : null, hasMore };
 }
 export async function getPasspilotReportPage(schoolId: string, actor: PasspilotReportActor, filters: PasspilotReportFilters, limit: number, cursor?: string) {
-  return db.transaction(async tx => page(tx, await context(tx, schoolId, actor), filters, limit, cursor), { isolationLevel: "repeatable read" });
+  return db.transaction(async tx => {
+    const asOf = new Date();
+    return page(tx, await context(tx, schoolId, actor), filters, limit, cursor, asOf);
+  }, { isolationLevel: "repeatable read" });
 }
 
 function summaryCsv(result: Awaited<ReturnType<typeof summary>>) {
@@ -259,7 +317,7 @@ function summaryCsv(result: Awaited<ReturnType<typeof summary>>) {
 
 export async function exportPasspilotReport(schoolId: string, actor: PasspilotReportActor, filters: PasspilotReportFilters, kind: "passes" | "summary") {
   return db.transaction(async tx => {
-    const ctx = await context(tx, schoolId, actor), asOf = new Date();
+    const asOf = new Date(), ctx = await context(tx, schoolId, actor);
     let rows: unknown[][];
     if (kind === "summary") rows = summaryCsv(await summary(tx, ctx, filters, asOf));
     else {

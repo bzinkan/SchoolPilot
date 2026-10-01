@@ -4,8 +4,9 @@ Reports v2 reads retained pass, best-effort denial and appointment records. It
 does not create student labels, disciplinary conclusions, new retention periods
 or another source of truth. `PASSPILOT_REPORTS_MODE=off|v2` defaults off. Version 2
 requires RLS request binding and the complete preserved 128-table admission. The
-governed product runtime setter verifies the serving source contract before
-activation; this change performs no production activation.
+governed product runtime setter verifies the v2 serving source contract and
+authority-fence version 1 before activation; this change performs no production
+activation.
 
 ## Authority and filters
 
@@ -16,6 +17,23 @@ teachers use the existing pass-history scope, including their own historical
 issuance and currently authorized class-attributed history. Appointment metrics
 use current student/class access only. No GoPilot role inheritance is accepted.
 Every response is `no-store`.
+
+Report/page/export transactions lock the actual class, teacher assignment,
+roster and student rows supplying the established authority. A reassignment,
+roster removal, membership change or student deletion committed while a
+repeatable-read snapshot waits on the school lock invalidates that snapshot,
+returning 409 `PASSPILOT_REPORT_SNAPSHOT_CHANGED` rather than stale data or CSV.
+Refresh starts a new authorized snapshot; historical own issuance remains
+available under the existing history rules. `asOf` is captured at transaction
+start, before any lock wait.
+
+The reader takes school `FOR SHARE` before student rows, class/grade rows and
+assignment/roster rows. Canonical primary/co-teacher and roster mutations,
+legacy teacher assignments and guided staff reassignment take the existing
+school lifecycle `FOR UPDATE` before their product rows. These writers cannot
+overlap the reader's later student/class lock sequence. No new advisory or
+global lock is introduced; any transaction failure rolls back before exporting
+data or committing an export audit.
 
 `GET /capabilities` returns `{ enabled: true, version: 2, schoolTimezone,
 scope: "school" | "teacher_history", administratorEvidence: boolean,

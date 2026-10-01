@@ -5,6 +5,7 @@ import { Client } from "pg";
 import { appointmentFixture, type AppointmentFixture, type AppointmentTenant } from "./helpers/passpilotAppointmentFixture.js";
 import type { getPasspilotReportSummary, getPasspilotReportPage, getPasspilotReportCapabilities } from "../src/services/passpilotReports.js";
 import registry from "../src/config/rlsRegistry.json" with { type: "json" };
+import { isDatabaseErrorCode } from "../src/util/databaseError.js";
 
 process.env.NODE_ENV = "test"; process.env.REDIS_URL = "";
 process.env.PASSPILOT_REPORTS_MODE = "v2"; process.env.RLS_GUC_ENABLED = "true";
@@ -217,6 +218,78 @@ describe("PassPilot Reports v2 HTTP, audit and retained confidentiality", { conc
         assert.equal(result.headers.get("content-type")?.includes("text/csv"), false);
         assert.equal((await f.sql("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='passpilot.report.exported'", [legacy.schoolId])).rows[0].count, 0);
       } finally { await privileged.query("ROLLBACK"); await pending; await f.reset(); }
+    }
+  });
+  it("invalidates stale class, roster, student and membership authority at the exact service snapshot boundary", async () => {
+    const { getPasspilotReportSummary, exportPasspilotReport } = await import("../src/services/passpilotReports.js");
+    const changes = ["primary", "co-teacher", "legacy-teacher", "canonical-roster", "legacy-roster", "inactive-student", "deleted-student", "membership"] as const;
+    for (const change of changes) {
+      const tenant = change.startsWith("legacy") || change === "membership" ? legacy : canonical, studentId = tenant.students[10]!;
+      if (change === "co-teacher") {
+        await f.assignTeacher(tenant, tenant.outsider);
+        await f.sql("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'co-teacher')", [tenant.classId, tenant.teacher.id]);
+      }
+      const unattributed = ["canonical-roster", "legacy-roster", "inactive-student", "deleted-student"].includes(change);
+      await pass(tenant, 10, { teacherId: tenant.outsider.id,
+        ...(unattributed ? { gradeId: null, classId: null } : {}) });
+      const actor = (await f.sql('SELECT id,auth_version AS "authVersion" FROM users WHERE id=$1', [tenant.teacher.id])).rows[0];
+      await privileged.query("BEGIN");
+      const blocker = await privileged.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      await privileged.query("SELECT id FROM schools WHERE id=$1 FOR UPDATE", [tenant.schoolId]);
+      const filters = { from: new Date(Date.now() - 86_400_000), through: new Date(Date.now() + 86_400_000) };
+      const pending = f.runWithTenantContext<Summary | Awaited<ReturnType<typeof exportPasspilotReport>>>({ schoolId: tenant.schoolId }, () => change === "primary"
+        ? getPasspilotReportSummary(tenant.schoolId, actor, filters)
+        : exportPasspilotReport(tenant.schoolId, actor, filters, "passes"));
+      // Observe rejection immediately while retaining the original promise for
+      // the assertion, avoiding an unhandled rejection after writer commit.
+      void pending.catch(() => {});
+      try {
+        const deadline = Date.now() + 5000; let waiting = false;
+        while (Date.now() < deadline) {
+          await privileged.query("SELECT pg_stat_clear_snapshot()");
+          const result = await privileged.query<{ waiting: boolean }>(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+            WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))) AS waiting`, [blocker.rows[0]!.pid]);
+          if (result.rows[0]!.waiting) { waiting = true; break; }
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        assert.equal(waiting, true, `${change} must wait inside the Reports repeatable-read transaction`);
+        if (change === "primary") {
+          await privileged.query("UPDATE groups SET teacher_id=$2 WHERE id=$1", [tenant.classId, tenant.outsider.id]);
+          await privileged.query("DELETE FROM group_teachers WHERE group_id=$1 AND role='primary'", [tenant.classId]);
+          await privileged.query("INSERT INTO group_teachers(group_id,teacher_id,role) VALUES($1,$2,'primary')", [tenant.classId, tenant.outsider.id]);
+        } else if (change === "co-teacher") await privileged.query("DELETE FROM group_teachers WHERE group_id=$1 AND teacher_id=$2", [tenant.classId, tenant.teacher.id]);
+        else if (change === "legacy-teacher") await privileged.query("DELETE FROM teacher_grades WHERE grade_id=$1 AND teacher_id=$2", [tenant.classId, tenant.teacher.id]);
+        else if (change === "canonical-roster") await privileged.query("DELETE FROM group_students WHERE group_id=$1 AND student_id=$2", [tenant.classId, studentId]);
+        else if (change === "legacy-roster") {
+          await privileged.query("DELETE FROM passpilot_grade_students WHERE grade_id=$1 AND student_id=$2", [tenant.classId, studentId]);
+          await privileged.query("UPDATE students SET grade_id=NULL WHERE id=$1", [studentId]);
+        } else if (change === "inactive-student") await privileged.query("UPDATE students SET status='inactive' WHERE id=$1", [studentId]);
+        else if (change === "deleted-student") await privileged.query("DELETE FROM students WHERE id=$1", [studentId]);
+        else {
+          await privileged.query("DELETE FROM teacher_grades WHERE teacher_id=$1", [tenant.teacher.id]);
+          await privileged.query("UPDATE school_memberships SET status='inactive' WHERE school_id=$1 AND user_id=$2", [tenant.schoolId, tenant.teacher.id]);
+        }
+        await privileged.query("COMMIT");
+        await assert.rejects(pending, error => isDatabaseErrorCode(error, "40001"), `${change} must fail before returning stale records or CSV`);
+        assert.equal((await f.sql("SELECT count(*)::int AS count FROM audit_logs WHERE school_id=$1 AND action='passpilot.report.exported'", [tenant.schoolId])).rows[0].count, 0);
+        const refreshed = () => f.runWithTenantContext({ schoolId: tenant.schoolId }, () => getPasspilotReportSummary(tenant.schoolId, actor, filters));
+        if (change === "membership") {
+          await assert.rejects(refreshed, /No PassPilot access for this school/, "a fresh snapshot must reject revoked membership");
+        } else {
+          assert.equal((await refreshed()).counts.total, 0, `${change} must stop exposing the removed authority in a fresh service request`);
+          await pass(tenant, 11);
+          const ownFilters = { ...filters, studentId: tenant.students[11]!, ...(tenant.canonical ? { classId: tenant.classId } : { gradeId: tenant.classId }) };
+          const ownHistory = await f.runWithTenantContext({ schoolId: tenant.schoolId }, () => getPasspilotReportSummary(tenant.schoolId, actor, ownFilters));
+          assert.equal(ownHistory.counts.total, 1, `${change} must preserve filtered historical own issuance in a fresh service request`);
+        }
+      } finally {
+        await privileged.query("ROLLBACK"); await Promise.allSettled([pending]);
+        if (change === "deleted-student") await f.sql("INSERT INTO students(id,school_id,first_name,last_name,status,grade_id) VALUES($1,$2,'Student10','Fixture','active',NULL)", [studentId, tenant.schoolId]);
+        await f.sql("UPDATE students SET status='active',grade_id=$2 WHERE id=$1", [studentId, tenant.canonical ? null : tenant.classId]);
+        if (tenant.canonical) await f.sql("INSERT INTO group_students(group_id,student_id) VALUES($1,$2) ON CONFLICT DO NOTHING", [tenant.classId, studentId]);
+        else await f.sql("INSERT INTO passpilot_grade_students(school_id,grade_id,student_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", [tenant.schoolId, tenant.classId, studentId]);
+        await f.reset();
+      }
     }
   });
   it("refuses oversized CSV without truncation or audit and reflects student deletion", async () => {

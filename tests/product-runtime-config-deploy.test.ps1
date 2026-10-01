@@ -70,7 +70,10 @@ function Get-ServingState([string]$Role) {
 function Invoke-GitText {
     param([string[]]$Arguments, [string]$RepositoryRoot)
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotReportsMode.ts') {
-        if ($script:Mock.CompatibleReportsWriter) { return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;' }
+        if ($script:Mock.CompatibleReportsWriter) {
+            if ($script:Mock.CompatibleReportAuthority) { return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2; export const PASSPILOT_REPORTS_AUTHORITY_FENCE_VERSION = 1;' }
+            return 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;'
+        }
         return '// earlier report projection'
     }
     if ($Arguments[0] -ceq 'show' -and $Arguments[1] -clike '*:src/config/passpilotAppointmentsMode.ts') {
@@ -102,7 +105,7 @@ function Reset-ProductMock {
         Services = [pscustomobject]@{ Api = (New-TestService api $script:TestApiArn 3); Worker = (New-TestService worker $script:TestWorkerArn 1) }
         Scaling = [pscustomobject]@{ Min = 3; Max = 6; DynamicIn = $false; DynamicOut = $false; Scheduled = $false }
         Calls = [Collections.Generic.List[string]]::new(); Requests = [Collections.Generic.List[object]]::new()
-        CompatibleUsageWriter = $true; CompatibleAppointmentWriter = $true; CompatibleReportsWriter = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
+        CompatibleUsageWriter = $true; CompatibleAppointmentWriter = $true; CompatibleReportsWriter = $true; CompatibleReportAuthority = $true; Revision = 200; FailWorkerOnce = $false; FailRecovery = $false; FailedWorker = $false; FailStart = $false; InjectWorkerFlag = $false
     }
     $script:CurrentToolSha = $script:TestSha
     $script:ApiServiceMutationStarted = $false; $script:WorkerServiceMutationStarted = $false
@@ -419,6 +422,12 @@ try {
     Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } 'report contract version 2' 'Plan must reject a pre-contract report projection.'
     Assert-ThrowsMatch { Invoke-ProductApply $reportsPlan.plan $reportsPlan.sha256 $script:TestDirectory } 'report contract version 2' 'Apply must recheck report compatibility.'
     Assert-NoMutation 'An incompatible report image cannot mutate task definitions.'
+    $script:Mock.CompatibleReportsWriter = $true; $script:Mock.CompatibleReportAuthority = $false
+    Assert-ThrowsMatch { New-TestProductPlan $reportsConfig } 'authority-fence version 1' 'Plan must reject pre-fix 7c/d01 report source with only the v2 wire marker.'
+    Assert-ThrowsMatch { Invoke-ProductApply $reportsPlan.plan $reportsPlan.sha256 $script:TestDirectory } 'authority-fence version 1' 'Apply must reject loss of the verified authority fence.'
+    Assert-NoMutation 'A pre-fix v2 report image cannot mutate task definitions.'
+    Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = 'on' }) } 'authority-fence version 1' 'Continuing v2 must reject pre-fix source as well as first activation.'
     Set-BothEnvironment 'PASSPILOT_REPORTS_MODE' 'v2'; Set-BothEnvironment 'RLS_GUC_ENABLED' 'false'
     Assert-Condition ($null -ne (New-TestProductPlan (New-TestConfig @{ PASSPILOT_REPORTS_MODE = 'off' }))) 'Reports emergency turn-off must remain available.'
     foreach ($role in @('api', 'worker')) {

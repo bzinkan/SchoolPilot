@@ -2933,6 +2933,7 @@ test('Applying onto a date that already has custom schedules needs an explicit a
     await workspace.waitFor({ state: 'hidden' });
     assert.equal(applies.length, 1);
     assert.equal(applies[0].acknowledgeExistingApplications, true, 'The server re-checks, so the acknowledgement must be sent');
+    assert.equal(applies[0].previewToken, 'occupied-2', 'Apply uses the newly reviewed token');
     assert.deepEqual(applies[0].dates, ['2026-09-08', '2026-09-11']);
     assert.ok(previews.length >= 2);
     assert.deepEqual(errors, []);

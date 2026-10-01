@@ -30,11 +30,16 @@ matured-window denominator and explain current-roster attribution.
 Queries are keyed by school, viewer, auth version and roles. Requests carry an
 explicit school and canonical class-contract header. Context changes unmount
 the interface, abort pending downloads and remove private report cache. Known
-authority failure immediately removes summary/rows and disables further work.
+authority failure immediately removes summary/rows, aborts any pending export
+and disables further work. A snapshot conflict also cancels the pending export
+and blocks old-cursor pagination. Conflict-cleared rows cannot imply an empty
+history. Refresh clears only the preceding conflict before starting its reads;
+a new conflict learned during those reads remains authoritative.
 
-Validation: five date/filter/pagination model tests and seven actual Chromium
+Validation: five date/filter/pagination model tests and ten actual Chromium
 interface tests cover DST, separate overdue metrics, privacy, complete pages,
 shared export filters, no truncated export, late previous-school responses,
 capability denial, actual adapter auth-version changes during held export,
-snapshot conflict recovery and 390px containment. Mobile and desktop screenshots are
+snapshot conflict recovery, held-export cancellation on access/snapshot failure,
+login-boundary cancellation and 390px containment. Mobile and desktop screenshots are
 reviewed. These synthetic checks do not verify production activation or data.

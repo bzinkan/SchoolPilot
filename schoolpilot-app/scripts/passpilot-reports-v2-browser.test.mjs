@@ -12,6 +12,7 @@ const entry = `import React from'react';import{createRoot}from'react-dom/client'
 before(async () => {
   vite = await createServer({ root, logLevel: 'error', cacheDir: `node_modules/.vite-reports-v2-${process.pid}`, server: { host: '127.0.0.1', port: 0 }, plugins: [{ name: 'reports-v2-test',
     configureServer(server) { server.middlewares.use(async (req, res, next) => {
+      if (req.url === '/login') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><main>Sign in</main>'); return; }
       if (!req.url?.startsWith('/__reports')) return next();
       res.setHeader('Content-Type', 'text/html'); res.end(await server.transformIndexHtml(req.url, '<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><body><div id="root"></div><script type="module" src="/__report-entry.jsx"></script></body></html>'));
     }); }, resolveId(id) { if (id === '/__report-entry.jsx') return '\0report-entry'; }, load(id) {
@@ -49,6 +50,7 @@ async function setup(options = {}) {
     if (url.pathname.endsWith('/passes/issuers')) return json({ issuers: [{ id: 'teacher-a', displayName: 'Synthetic Teacher' }] });
     if (url.pathname.endsWith('/reports/summary')) {
       if (school === 'school-a' && state.holdSummary) await new Promise(resolve => { state.releaseSummary = resolve; });
+      if (state.summaryFailure) return json({ error: 'Report request could not be authorized consistently.', ...state.summaryFailure.body }, state.summaryFailure.status);
       return json(school === 'school-b' ? summary({ counts: { total: 0, canceled: 0 }, completedDuration: { averageSeconds: null }, completedOverdueRate: { numerator: 0, denominator: 0, ratio: null }, destinations: [], periods: { buckets: [] }, coverage: { state: 'no_data', codes: [] } }) : summary());
     }
     if (url.pathname.endsWith('/reports/passes')) return json({ version: 2, passes: school === 'school-b' ? [] : [url.searchParams.has('cursor') ? pass('b', 'Second Student') : pass('a', 'Synthetic Student')], hasMore: school !== 'school-b' && !url.searchParams.has('cursor'), nextCursor: school !== 'school-b' && !url.searchParams.has('cursor') ? 'next-page' : null });
@@ -123,6 +125,40 @@ test('a changed export snapshot removes displayed rows and requires a fresh cons
   try {
     await page.getByRole('button', { name: 'Export passes CSV' }).click(); await page.getByText('Report records changed during the request.', { exact: false }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Filter to Synthetic Student' }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Load more passes' }).isDisabled(), true);
+    assert.equal(await page.getByText('No retained pass history for these filters.', { exact: true }).count(), 0, 'A snapshot conflict cannot establish an empty history');
     state.snapshotChanged = false; await page.getByRole('button', { name: 'Refresh report', exact: true }).click(); await page.getByRole('button', { name: 'Filter to Synthetic Student' }).waitFor();
   } finally { await close(page); }
 });
+
+for (const failure of [{ status: 401 }, { status: 403 }, { status: 409, body: { code: 'PASSPILOT_REPORT_SNAPSHOT_CHANGED' } }]) {
+test(`a known ${failure.status} report failure aborts a held export before it can download`, async () => {
+  const { page, state, errors } = await setup({ holdExport: true });
+  let downloaded = false; page.on('download', () => { downloaded = true; });
+  try {
+    await page.getByRole('button', { name: 'Export passes CSV' }).click();
+    await state.exportReady;
+    state.summaryFailure = failure;
+    const exportAborted = page.waitForEvent('requestfailed', { predicate: request => new URL(request.url()).pathname.endsWith('/reports/export.csv'), timeout: 10_000 });
+    void exportAborted.catch(() => {});
+    await page.getByRole('button', { name: 'Refresh report', exact: true }).click();
+    if (failure.status === 401) await page.waitForURL('**/login');
+    else await page.getByText(failure.status === 409
+      ? 'Report records changed during the request. Refresh the report to load a consistent snapshot.'
+      : 'Report access changed. Refresh this page before continuing.', { exact: true }).waitFor();
+    await exportAborted;
+    state.releaseExport();
+    await page.waitForLoadState('networkidle');
+    assert.equal(downloaded, false, 'a verified authority or snapshot failure must retire the pending export');
+    assert.equal(await page.getByText('CSV downloaded. The server recorded this export.', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Filter to Synthetic Student' }).count(), 0);
+    if (failure.status === 409) {
+      state.summaryFailure = null;
+      await page.getByRole('button', { name: 'Refresh report', exact: true }).click();
+      await page.getByText('33.3% (1/3)', { exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Export passes CSV' }).isEnabled(), true, 'an aborted export must not keep the refreshed interface busy');
+    }
+    assert.deepEqual(errors, []);
+  } finally { await close(page); }
+});
+}

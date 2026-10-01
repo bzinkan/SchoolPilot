@@ -3,6 +3,7 @@ import registry from "./rlsRegistry.json" with { type: "json" };
 
 export const PASSPILOT_REPORTS_MODE_KEY = "PASSPILOT_REPORTS_MODE";
 export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;
+export const PASSPILOT_REPORTS_AUTHORITY_FENCE_VERSION = 1;
 export const PASSPILOT_REPORTS_RLS_TABLES = Object.freeze([...registry.inventories.passpilotAppointmentsPostExpand.tables]);
 export type PasspilotReportsMode = "off" | "v2";
 type Environment = Readonly<Record<string, string | undefined>>;
