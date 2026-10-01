@@ -7,11 +7,11 @@ import { students } from "../schema/students.js";
 import {
   devices,
   studentSessions,
+  type Device,
   type StudentSession,
 } from "../schema/classpilot.js";
 import {
   endStudentSessionExact,
-  getDeviceById,
   getSettingsForSchool,
   startStudentSessionWithReplacements,
   type StudentSessionIssuanceAuthKind,
@@ -29,6 +29,7 @@ import {
 } from "./classpilotStudentSessionAuthority.js";
 import type { ClasspilotManagedDeviceContinuityProof } from "./classpilotManagedDeviceContinuity.js";
 import { safeOperationalErrorCode } from "../util/operationalErrors.js";
+import { getDatabaseErrorDetails } from "../util/databaseError.js";
 export {
   studentAuthenticationFailureCause,
   isDatabaseAuthenticationFailure,
@@ -117,20 +118,39 @@ export async function ensureClassPilotDeviceForSchool(options: {
   deviceName?: string | null;
   schoolId: string;
   classId?: string | null;
-}) {
-  let device = await getDeviceById(options.deviceId);
+}, connection: Pick<typeof db, "select" | "transaction"> = db) {
+  const readDevice = async () => (await connection
+    .select()
+    .from(devices)
+    .where(eq(devices.deviceId, options.deviceId))
+    .limit(1))[0];
+  let device = await readDevice();
   if (!device) {
-    const [created] = await db
-      .insert(devices)
-      .values({
-        deviceId: options.deviceId,
-        deviceName: options.deviceName || null,
-        schoolId: options.schoolId,
-        classId: options.classId || options.schoolId,
-      })
-      .onConflictDoNothing({ target: devices.deviceId })
-      .returning();
-    device = created ?? await getDeviceById(options.deviceId);
+    let created: Device | undefined;
+    try {
+      // A concurrent speculative INSERT can lose on the redundant tenant-FK
+      // parent index instead of the explicit primary-key arbiter. Isolate that
+      // statement so its known conflict cannot abort a caller's transaction;
+      // Drizzle uses a savepoint when the supplied connection is already a tx.
+      [created] = await connection.transaction(tx => tx
+        .insert(devices)
+        .values({
+          deviceId: options.deviceId,
+          deviceName: options.deviceName || null,
+          schoolId: options.schoolId,
+          classId: options.classId || options.schoolId,
+        })
+        .onConflictDoNothing({ target: devices.deviceId })
+        .returning());
+    } catch (error) {
+      const details = getDatabaseErrorDetails(error);
+      if (details.code !== "23505" || details.constraint !== "cp_monitoring_device_parent_unique") {
+        throw error;
+      }
+    }
+    // Read the exact winner and retain the original school check. Unrelated
+    // constraints are never swallowed, and creation cannot rebind another row.
+    device = created ?? await readDevice();
   }
   if (!device || device.schoolId !== options.schoolId) {
     throw Object.assign(new Error("Student device is unavailable"), {

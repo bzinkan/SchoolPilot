@@ -56,6 +56,7 @@ function flightPath(overrides: Partial<FlightPath> = {}): FlightPath {
     publishedAt: null,
     publishedBy: null,
     createdAt: CREATED,
+    updatedAt: CREATED,
     ...overrides,
   };
 }
@@ -245,7 +246,7 @@ describe("School Library projections", () => {
     const legacy = withFlightPathResourcesVisibility(withoutTeachingResourcePublication(row), false);
     assert.deepEqual(Object.keys(legacy), [
       "id", "schoolId", "teacherId", "flightPathName", "description", "allowedDomains", "blockedDomains", "isDefault",
-      "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt",
+      "sourceType", "sourceCourseId", "sourceResourceIds", "sourceUpdatedAt", "createdAt", "updatedAt",
     ]);
     assert.deepEqual(Object.keys(withoutTeachingResourcePublication(blockList())), [
       "id", "schoolId", "teacherId", "name", "description", "blockedDomains", "isDefault", "createdAt",
@@ -272,6 +273,7 @@ describe("School Library projections", () => {
       official: false,
       publishedAt: PUBLISHED,
       createdAt: CREATED,
+      updatedAt: CREATED,
       ownerName: "Avery Teacher",
       canEdit: false,
       canShare: false,
