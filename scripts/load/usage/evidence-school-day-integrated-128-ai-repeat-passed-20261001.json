@@ -1,0 +1,3171 @@
+{
+  "version": 1,
+  "sourceRevision": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+  "startedAt": "2026-10-01T02:53:35.489Z",
+  "passed": true,
+  "productionReadiness": false,
+  "rlsContract": {
+    "name": "passpilotAppointmentsPostExpand",
+    "registrySha256": "417f3a15aba10c0d01f92c20d6412624f9f915ac5621d08198a63dc14fdad0b5",
+    "tables": [
+      "activity_log",
+      "audit_logs",
+      "block_lists",
+      "bus_routes",
+      "chat_messages",
+      "classpilot_active_hands",
+      "classpilot_ai_decisions",
+      "classpilot_classroom_states",
+      "classpilot_command_targets",
+      "classpilot_commands",
+      "classpilot_coverage_assignments",
+      "classpilot_coverage_scope_group_members",
+      "classpilot_coverage_scope_groups",
+      "classpilot_scheduled_conflicts",
+      "classpilot_session_students",
+      "classpilot_session_usage",
+      "classpilot_supervision_contexts",
+      "classpilot_supervision_students",
+      "classroom_course_students",
+      "classroom_courses",
+      "daily_usage",
+      "dashboard_tabs",
+      "devices",
+      "dismissal_sessions",
+      "email_alerts",
+      "email_scan_log",
+      "error_logs",
+      "evidence_artifacts",
+      "family_groups",
+      "flight_paths",
+      "google_roster_connectors",
+      "grades",
+      "groups",
+      "heartbeats",
+      "homerooms",
+      "import_runs",
+      "mailpilot_watches",
+      "messages",
+      "parent_student",
+      "passes",
+      "security_events",
+      "settings",
+      "student_attendance",
+      "student_groups",
+      "student_safety_cases",
+      "student_timeline_events",
+      "students",
+      "subgroups",
+      "teacher_students",
+      "teaching_sessions",
+      "walker_zones",
+      "classpilot_session_summary_deliveries",
+      "passpilot_grade_students",
+      "authorized_pickups",
+      "custody_alerts",
+      "dismissal_changes",
+      "dismissal_overrides",
+      "dismissal_queue",
+      "family_group_students",
+      "homeroom_teachers",
+      "classpilot_monitoring_events",
+      "classpilot_session_reports",
+      "classpilot_session_staff",
+      "classpilot_session_student_reports",
+      "classpilot_student_control_states",
+      "classpilot_schedule_change_pairs",
+      "classpilot_schedule_changes",
+      "classpilot_schedule_change_legs",
+      "classpilot_chat_deliveries",
+      "poll_responses",
+      "polls",
+      "session_settings",
+      "classpilot_evidence_capture_requests",
+      "passpilot_kiosk_devices",
+      "passpilot_kiosk_sessions",
+      "student_safety_alerts",
+      "student_safety_case_events",
+      "safety_url_exceptions",
+      "safety_notification_outbox",
+      "classpilot_school_schedules",
+      "roster_integration_connections",
+      "roster_integration_runs",
+      "roster_integration_identities",
+      "roster_integration_memberships",
+      "classpilot_school_website_policies",
+      "classpilot_school_website_deliveries",
+      "classpilot_monitoring_expectations",
+      "classpilot_monitoring_interruptions",
+      "classpilot_monitoring_interruption_settings",
+      "classpilot_monitoring_interruption_digests",
+      "classpilot_coverage_group_categories",
+      "classpilot_supervision_report_segments",
+      "classpilot_supervision_student_reports",
+      "classpilot_supervision_summary_deliveries",
+      "classpilot_timers",
+      "classpilot_lesson_activities",
+      "classpilot_lesson_progress",
+      "classpilot_questions",
+      "classpilot_picker_rounds",
+      "classpilot_tool_templates",
+      "classpilot_routine_runs",
+      "classpilot_tool_history",
+      "passpilot_teacher_kiosk_settings",
+      "mydesk_attachments",
+      "mydesk_notes",
+      "mydesk_seating_charts",
+      "mydesk_import_assets",
+      "mydesk_import_items",
+      "mydesk_imports",
+      "mydesk_preferences",
+      "school_discipline_records",
+      "school_discipline_versions",
+      "school_discipline_attachments",
+      "school_discipline_access",
+      "student_contact_profiles",
+      "student_contact_profile_versions",
+      "student_information_imports",
+      "student_information_import_items",
+      "student_information_import_assets",
+      "classpilot_teacher_preferences",
+      "import_processing_stages",
+      "passpilot_destination_policies",
+      "passpilot_pass_limits",
+      "passpilot_encounter_restrictions",
+      "passpilot_pass_denials",
+      "classpilot_usage_rollups",
+      "classpilot_usage_rollup_days",
+      "passpilot_appointments"
+    ],
+    "effectiveModes": {
+      "CLASSPILOT_USAGE_ROLLUP_MODE": "on",
+      "CLASSPILOT_DIGITAL_USAGE_MODE": "on",
+      "CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE": "off",
+      "PASSPILOT_RULES_MODE": "off",
+      "PASSPILOT_APPOINTMENTS_MODE": "off",
+      "PASSPILOT_REPORTS_MODE": "off",
+      "CLASSPILOT_DAILY_USAGE_ROLLUP_MODE": "shadow"
+    },
+    "dailyUsageRollup": {
+      "configured": "shadow",
+      "effective": "shadow"
+    },
+    "schedulerEnabled": false,
+    "newCapabilityGates": {
+      "preciseRestrictionResourcesV1": {
+        "configuredSwitch": "false",
+        "configuredRollout": {
+          "mode": "off"
+        },
+        "effectiveRollout": "off",
+        "active": false
+      },
+      "focusTabV1": {
+        "configuredSwitch": "false",
+        "configuredRollout": {
+          "mode": "off"
+        },
+        "effectiveRollout": "off",
+        "active": false
+      }
+    },
+    "heartbeatOfferedCapabilities": [],
+    "productionParserVerified": true
+  },
+  "profile": {
+    "workload": {
+      "name": "six-lessons-200-domains-1m-unique-10k-ai",
+      "students": 500,
+      "classes": 100,
+      "studentsPerClass": 5,
+      "periods": 6,
+      "lessonMinutes": 50,
+      "passingMinutes": 10,
+      "observationsPerStudent": 2000,
+      "cadenceSeconds": 10,
+      "domainDwellSeconds": 200,
+      "domainsPerStudent": 8,
+      "domainsSchoolWide": 200,
+      "rawPerSchool": 1000000,
+      "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+      "aiDecisionRowsPerSchool": 10000,
+      "aiDecisionsPerStudent": 20,
+      "aiDecisionEveryObservations": 100,
+      "aiDecisionCadenceSeconds": 1000,
+      "aiDecisionCategory": "matches the selected heartbeat"
+    },
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "966e5c1e80643811cc48fb805bf7a6e8ad57039a9dfd07359cc75d75e492adb9",
+    "src/services/classpilotUsageRead.ts": "48d39398b5ee459436dc32e30be785177641eb7289ff46a0473c9602cd46504a",
+    "src/routes/classpilot/devices.ts": "deada272983cae910083ef896667febbb1dedf9ac19fbc2fadbb2429cd223267",
+    "scripts/load/usage/local-school-day-scale.mjs": "5247592dedff1cb08134e46a8e07dd6b784b8273e39543d8cd04061076b86a89",
+    "scripts/load/usage/school-day-profile.mjs": "54d89f98faa477736bdc5abb5a2607991a85f6281e6f3b0ab68481104156e09a",
+    "scripts/load/usage/school-day-ai-profile.mjs": "946978730652f7fbef0416c43d5a53daa26816bb72fa9adc6887f344a9f5e2fa",
+    "scripts/load/usage/local-usage-scale.mjs": "7a80a3f72f2c8e5361fe5019188228fcc017db78d1a7d36b0f4f75d6b5d721aa",
+    "scripts/load/usage/reference-attribution-20260930.sql": "a39891fdfdd98d2609fef3764883df7c099ef8e9b1f928dcdc98adbd47b0f21a",
+    "scripts/load/usage/local-school-day-ai-scale.mjs": "f0910a5a9150b92cfb5eda265f6f58dbedaa8aa65fa307f33bbbf1fa5d126488"
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified."
+  ],
+  "writerQueries": [
+    {
+      "durationMs": 34119.504399999976,
+      "schoolId": "ea23cdc9-cc26-408e-8e9c-26463f9addb2"
+    },
+    {
+      "durationMs": 34190.77149999997,
+      "schoolId": "3b439994-99ca-4c5b-bbdc-5683cf8ac491"
+    },
+    {
+      "durationMs": 106.30500000005122,
+      "schoolId": "3b439994-99ca-4c5b-bbdc-5683cf8ac491"
+    },
+    {
+      "durationMs": 91.97830000001704,
+      "schoolId": "ea23cdc9-cc26-408e-8e9c-26463f9addb2"
+    }
+  ],
+  "reads": {
+    "0/school": {
+      "count": 8,
+      "minMs": 3302.2738000000245,
+      "p50Ms": 3540.682999999961,
+      "p95Ms": 11748.431099999987,
+      "maxMs": 11748.431099999987,
+      "afterLiveMs": 981.4789999999921,
+      "csvMs": 1001.857799999998,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 10002500,
+        "currentObservedSeconds": 6420,
+        "csvTotalMinutes": "437565.3"
+      }
+    },
+    "0/grade": {
+      "count": 8,
+      "minMs": 2112.0612000000547,
+      "p50Ms": 2169.8747999999905,
+      "p95Ms": 5636.293000000005,
+      "maxMs": 5636.293000000005,
+      "afterLiveMs": 219.53669999999693,
+      "csvMs": 253.37709999998333,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 2000500,
+        "currentObservedSeconds": 1305,
+        "csvTotalMinutes": "87513.4"
+      }
+    },
+    "0/class": {
+      "count": 8,
+      "minMs": 253.47409999999218,
+      "p50Ms": 460.6628000000492,
+      "p95Ms": 4175.022400000016,
+      "maxMs": 4175.022400000016,
+      "afterLiveMs": 66.41289999999572,
+      "csvMs": 46.8864000000176,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 85025,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "4126.1"
+      }
+    },
+    "0/student": {
+      "count": 8,
+      "minMs": 335.1779999999562,
+      "p50Ms": 513.5639000000083,
+      "p95Ms": 4156.108099999954,
+      "maxMs": 4156.108099999954,
+      "afterLiveMs": 35.162799999990966,
+      "csvMs": 29.990400000009686,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 20005,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "875.4"
+      }
+    },
+    "1/school": {
+      "count": 8,
+      "minMs": 3347.2831000000006,
+      "p50Ms": 3591.120500000019,
+      "p95Ms": 11774.828299999994,
+      "maxMs": 11774.828299999994,
+      "afterLiveMs": 965.7729999999865,
+      "csvMs": 1019.9657000000007,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 16245000,
+        "heavyDaySeconds": 10002500,
+        "currentObservedSeconds": 6420,
+        "csvTotalMinutes": "437565.3"
+      }
+    },
+    "1/grade": {
+      "count": 8,
+      "minMs": 1762.3849000000046,
+      "p50Ms": 1955.130700000038,
+      "p95Ms": 5633.358300000022,
+      "maxMs": 5633.358300000022,
+      "afterLiveMs": 212.30010000005132,
+      "csvMs": 217.63449999998556,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 3249000,
+        "heavyDaySeconds": 2000500,
+        "currentObservedSeconds": 1305,
+        "csvTotalMinutes": "87513.4"
+      }
+    },
+    "1/class": {
+      "count": 8,
+      "minMs": 298.73809999995865,
+      "p50Ms": 764.4177999999956,
+      "p95Ms": 4178.007699999958,
+      "maxMs": 4178.007699999958,
+      "afterLiveMs": 45.60700000001816,
+      "csvMs": 52.51929999998538,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 162450,
+        "heavyDaySeconds": 85025,
+        "currentObservedSeconds": 90,
+        "csvTotalMinutes": "4126.1"
+      }
+    },
+    "1/student": {
+      "count": 8,
+      "minMs": 322.2850000000326,
+      "p50Ms": 649.8055000000168,
+      "p95Ms": 4206.776400000032,
+      "maxMs": 4206.776400000032,
+      "afterLiveMs": 24.528200000000652,
+      "csvMs": 30.128700000001118,
+      "expected": {
+        "completedHistoricalDays": 361,
+        "historySeconds": 32490,
+        "heavyDaySeconds": 20005,
+        "currentObservedSeconds": 30,
+        "csvTotalMinutes": "875.4"
+      }
+    }
+  },
+  "readFailures": [],
+  "apiDatabase": {
+    "acquisitions": {
+      "count": 5467,
+      "failures": 0,
+      "maxMs": 2775.650399999984
+    },
+    "statements": {
+      "other": {
+        "count": 11197,
+        "failures": 0,
+        "maxMs": 191.8698999999906
+      },
+      "settings": {
+        "count": 2672,
+        "failures": 0,
+        "maxMs": 504.3428000000422
+      },
+      "transaction": {
+        "count": 13226,
+        "failures": 0,
+        "maxMs": 6919.492499999993
+      },
+      "school": {
+        "count": 3489,
+        "failures": 0,
+        "maxMs": 486.1903999999631
+      },
+      "usageCoverage": {
+        "count": 64,
+        "failures": 0,
+        "maxMs": 101.43510000000242
+      },
+      "heartbeat": {
+        "count": 1112,
+        "failures": 0,
+        "maxMs": 4401.74569999997
+      },
+      "studentDirectory": {
+        "count": 5129,
+        "failures": 0,
+        "maxMs": 100.6193000000203
+      },
+      "teachingSession": {
+        "count": 1704,
+        "failures": 0,
+        "maxMs": 426.1091000000015
+      },
+      "usageReport": {
+        "count": 64,
+        "failures": 0,
+        "maxMs": 11404.828399999999
+      },
+      "audit": {
+        "count": 0,
+        "failures": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  "ingest": {
+    "requests": 857,
+    "insertedHeartbeats": 856,
+    "bySchool": {
+      "0": 428,
+      "1": 429
+    },
+    "statuses": {
+      "200": 856,
+      "204": 1
+    },
+    "bySchoolInserted": {
+      "0": 428,
+      "1": 428
+    },
+    "timings": {
+      "count": 857,
+      "minMs": 81.03680000000168,
+      "p50Ms": 130.203600000008,
+      "p95Ms": 457.2074000000139,
+      "maxMs": 5853.5384000000195
+    }
+  },
+  "peakRssBytes": 297861120,
+  "selectedInventoryCatalog": [
+    {
+      "relname": "activity_log",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "audit_logs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "authorized_pickups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "block_lists",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "bus_routes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "chat_messages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_active_hands",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_ai_decisions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_chat_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_classroom_states",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_command_targets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_commands",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_coverage_assignments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_coverage_group_categories",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_coverage_scope_group_members",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_coverage_scope_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_evidence_capture_requests",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_lesson_activities",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_lesson_progress",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_monitoring_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_monitoring_expectations",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_monitoring_interruption_digests",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_monitoring_interruption_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_monitoring_interruptions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_picker_rounds",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_questions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_routine_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_schedule_change_legs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_schedule_change_pairs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_schedule_changes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_scheduled_conflicts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_school_schedules",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_school_website_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_school_website_policies",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_staff",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_student_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_summary_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_session_usage",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_student_control_states",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_supervision_contexts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_supervision_report_segments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_supervision_student_reports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_supervision_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_supervision_summary_deliveries",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_teacher_preferences",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_timers",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_tool_history",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_tool_templates",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classroom_course_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classroom_courses",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "custody_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "daily_usage",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "dashboard_tabs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "devices",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "dismissal_changes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "dismissal_overrides",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "dismissal_queue",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "dismissal_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "email_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "email_scan_log",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "error_logs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "evidence_artifacts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "family_group_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "family_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "flight_paths",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "google_roster_connectors",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "grades",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "homeroom_teachers",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "homerooms",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "import_processing_stages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "import_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mailpilot_watches",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "messages",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_attachments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_import_assets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_import_items",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_imports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_notes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_preferences",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "mydesk_seating_charts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "parent_student",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passes",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_appointments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_destination_policies",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_encounter_restrictions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_grade_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_kiosk_devices",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_kiosk_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_pass_denials",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_pass_limits",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "passpilot_teacher_kiosk_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "poll_responses",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "polls",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "roster_integration_connections",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "roster_integration_identities",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "roster_integration_memberships",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "roster_integration_runs",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "safety_notification_outbox",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "safety_url_exceptions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "school_discipline_access",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "school_discipline_attachments",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "school_discipline_records",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "school_discipline_versions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "security_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "session_settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "settings",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_attendance",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_contact_profile_versions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_contact_profiles",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_groups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_information_import_assets",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_information_import_items",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_information_imports",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_safety_alerts",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_safety_case_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_safety_cases",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "student_timeline_events",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "subgroups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "teacher_students",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "teaching_sessions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "walker_zones",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "currentContractMigrations": [
+    {
+      "id": "20260822_classpilot_2_7_expand",
+      "checksum": "c95caa534651c96c59b5688c9bb584e5bb02f5b1cdab68502ede558d13cb66e2",
+      "status": "complete"
+    },
+    {
+      "id": "20260822_classpilot_evidence_authority_expand",
+      "checksum": "2008c810d222e4ed65952277040374d309349c380ea035a1ba0254545ef7ec2e",
+      "status": "complete"
+    },
+    {
+      "id": "20260822_classpilot_safety_capture_expand",
+      "checksum": "2df4c662055a1fef32bc27233d8655aa2f9b52cbc4846a92741f2012c84dd880",
+      "status": "complete"
+    },
+    {
+      "id": "20260824_staff_identity_auth_version_expand",
+      "checksum": "de5192a0a27e3253105d214a63322294d814111076fd3751716c4f46c72731f8",
+      "status": "complete"
+    },
+    {
+      "id": "20260824_staff_identity_integrity_contract",
+      "checksum": "03a9e138e4fa0e6bbacdff374730d7c848fa6e08e5b7a52286cfdcf5ca6133ab",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_expand",
+      "checksum": "efd67ff366977cfb386ce11b2419d70512bab9d15eefff236cccb8b17001b44d",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_indexes_online",
+      "checksum": "fb598bbd758e7eb62b440bd6ef1b1d31ec570066b2cc713bb1df8fbddd018e92",
+      "status": "complete"
+    },
+    {
+      "id": "20260827_classpilot_student_session_recovery_validate",
+      "checksum": "4b700391903be42fc91a378bd909ca074ae5855a332f58e6842906aaab9071a4",
+      "status": "complete"
+    },
+    {
+      "id": "20260828_classpilot_stale_legacy_student_session_cleanup",
+      "checksum": "5c5790c6df64a7dfeb09154c5f310758d82bbeb9bee84402347b4a77ceb9a4b7",
+      "status": "complete"
+    },
+    {
+      "id": "20260828_classpilot_student_data_top_activities_expand",
+      "checksum": "95b329113e3df1d5c7354b9972090db3e49ddd4574c563692458f731f094449b",
+      "status": "complete"
+    },
+    {
+      "id": "20260901_classpilot_sso_policy_expand",
+      "checksum": "d310d3aafa87939d2b9964c1894f65344413f722b07d5114554a876c15defe1e",
+      "status": "complete"
+    },
+    {
+      "id": "20260902_schools_staff_password_login_expand",
+      "checksum": "b4582122c802128dcf0953b8334791679486c5f799a54d9660f2ac0124132b89",
+      "status": "complete"
+    },
+    {
+      "id": "20260905-mailpilot-safety-durability-v1",
+      "checksum": "90a2c9371191bad4799ea3ec398e9e225f1cdc355085c14d1f8267a4f398cb2c",
+      "status": "complete"
+    },
+    {
+      "id": "20260905-roster-integrations-v1",
+      "checksum": "99f284ef1287d85788fa5fba500ee5eb970d91d5e37a31169f2ae197cfe27636",
+      "status": "complete"
+    },
+    {
+      "id": "20260928_import_processing_stages",
+      "checksum": "16a1499823c645fa5ab175f56adae9da066ecfebd85e6f24230252f1524d4d8b",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_flight_path_resources_expand",
+      "checksum": "6c0013db090a91b7950a1a156c0ccf88c8567a58bf460ab8a261c019a8cc9067",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_microsoft_sign_in_expand",
+      "checksum": "1f330d7a1128f5c985ea50537e96618d1ceaa5c00aa3d2984970e6251471c908",
+      "status": "complete"
+    },
+    {
+      "id": "20260929_shared_teaching_resources_expand",
+      "checksum": "e139825f273842f861fa8fbdd8a9281abc7adc5a0c21a0364d7191c980f8c5b2",
+      "status": "complete"
+    },
+    {
+      "id": "20260930_flight_path_content_revision_expand",
+      "checksum": "97737e5dc30f95509469007589b180f12883b9a58f1d71d2c172645c722665f0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-channel-control-20260918",
+      "checksum": "b22bc274bacee23ed1fb25c848e9f1023db007770c32ca54ae6308c62605f631",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-oversight-20260918",
+      "checksum": "bdd553b3287a162020044e744ecc7543c067b0df251cfafd7b4c82238893d6d0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-seen-state-20260918",
+      "checksum": "462730472fb38e56f41b8f43600b90f73d643dfabdccccd33034810606f3dbff",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-chat-transcript-index-online-20260918",
+      "checksum": "1ecc033f479ddb1331ce1219fa5c3d0d5f4cefbeed16014efdeb78f2b4c2c22d",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-class-tools-expand-20260922",
+      "checksum": "c9782b8ccf190193ca580759199c53b385d64176a319683741a0cb5030f7b07b",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-content-categories-20260905",
+      "checksum": "93e4d136ae9ae1a3be2926c8e2bbe6f5e906079c2720a61482a686fcea45f074",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-coverage-categories-20260908",
+      "checksum": "977d4d61899418cecab947099105587c9b092fd8a0fb232690f70be276296a27",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-monitoring-interruptions-20260905",
+      "checksum": "8c2d4bca6bf94dfb50591dbb0048932bee4b1427c4e673afaf6d3dea9c7554c8",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-safety-center-20260905",
+      "checksum": "6547e45a9867d05b0051402a29ec29be005d3fddaf98268cb45f70099c77d470",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-boundaries-20260915",
+      "checksum": "5d3f49dcab3328c2af52e33b0a07fa930ba0a730aa5da08f9927db7e7ba6e0e0",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-config-repair-20260916",
+      "checksum": "903439830083c18639f1fa65e344cc14b393e26ff5cc25efea848b6c857a6b8e",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-schedule-profile-supervision-20260905",
+      "checksum": "bcd6f3c6def43b35768f3e84434064cdbd442c76957bd022bc1b9e2c39df4d61",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-scheduled-classroom-20260915",
+      "checksum": "6a660578a41e58cab0b931963f2345a0013307908d7412901e2fb3bb9cef057e",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-scheduling-20260905",
+      "checksum": "a2bdcf861be6bd7899b43f13cb5e0027a470d09025a249642085d9e4dc2c69e8",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-school-website-policy-20260905",
+      "checksum": "12d948a3712627604918bbea1ec88a49e16285caa9ba225a924debb2050416c7",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-supervision-activity-reports-20260910",
+      "checksum": "af8503cd7bbbe1023fe8aef6a91205c8353809dad47d1a09f001283a92314124",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-teacher-preferences-20260927",
+      "checksum": "16f6b98348868ce93223e055ee526e0a33fc8c24d33876e6b7b67dd2e12cf369",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-usage-rollup-days-20260930",
+      "checksum": "b1f5c28252b4f65697012429428fdeb6712235a3a540243bb31fdeb47f4d6479",
+      "status": "complete"
+    },
+    {
+      "id": "classpilot-usage-rollups-20260929",
+      "checksum": "5a9a063460509afe46bb420b35fc3683c3b8fec6553b3bab0e60b4ac77ff79aa",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-ai-imports-20260925",
+      "checksum": "5c84b762517199c61b635c0b044a554bd6a5cad576dddf4b374536279e2362a7",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-grade-filing-20260927",
+      "checksum": "80c364983576decdfdbaf6cce48ac753c0a51a90ba6cb0fe32d3fcc8a613999f",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-import-destination-20260928",
+      "checksum": "01fb875d1d7d94bdf89ff8de4224ea8ca34deaf61effa7813cd6e6bcc7a5edb2",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-measured-seating-20260926",
+      "checksum": "0abfa94953d706c683a08260b429e43c03a69f382013fc94c8328cc5f8daa7d9",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-private-notebook-20260925",
+      "checksum": "752810f0b4a7f5ddd9e56c50b229794ea92d28e43b83da723643f75e5569e71f",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-private-seating-20260925",
+      "checksum": "8c33a451afda3b60712ee15ece6c79f6f5ca7a625ae1f9abc8b02c19fe4a1bce",
+      "status": "complete"
+    },
+    {
+      "id": "mydesk-workspace-expansion-20260926",
+      "checksum": "08818041d94669eaf7f9db3fd9cc3e44160a15122a8f510a2bb3878b5d89ea06",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-appointments-expand-20260930",
+      "checksum": "7b5df3374af276f436af30b5fb009b06c8589407fceebd728e2997e0a1895f33",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-kiosk-schedule-20260924",
+      "checksum": "997daca033bfff4e6722b77b8c4291ea4c2a87c8d65e1162f6782e1ef61732a1",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-rules-20260929",
+      "checksum": "f1aaf39b92b5ba09eecd437dfd955c7c88ab4255ba62fa7a36238642846d4681",
+      "status": "complete"
+    },
+    {
+      "id": "passpilot-rules-indexes-online-20260929",
+      "checksum": "998633be1f430071a2752f06d2199387b4f861db3241a232be33a6ffdc6f3fac",
+      "status": "complete"
+    },
+    {
+      "id": "school-discipline-records-20260927",
+      "checksum": "24e234c8d2363c55aaad01baa42d7903dc478eb0bb849a1e038b3de212269f09",
+      "status": "complete"
+    },
+    {
+      "id": "school-discipline-redesign-20260928",
+      "checksum": "9e42fed5b5dfb44f7fd3cc414577da47ae881f5bfddea63868e6c9ce0fc380f2",
+      "status": "complete"
+    },
+    {
+      "id": "student-information-redesign-20260928",
+      "checksum": "743fb8bf72607f3f083a3eb78479d7b842e405ab444d10ed8839546425a36533",
+      "status": "complete"
+    }
+  ],
+  "rls": [
+    {
+      "relname": "classpilot_ai_decisions",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "fixtureContractSnapshotSha256": "5fd47897546544daa044274c16ef978b0bb0f2e34f05b8e22bb87c0bb5075e82",
+  "dataset": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 1000000,
+    "expectedHeavyGrainsPerSchool": 84000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-27",
+    "unavailableDate": "2026-09-25",
+    "heavyDate": "2026-09-28",
+    "today": "2026-09-30",
+    "dateRange": {
+      "from": "2025-09-30",
+      "to": "2026-09-30"
+    }
+  },
+  "preparationStage": {
+    "kind": "complete"
+  },
+  "aiDecisionBindings": [
+    {
+      "schoolIndex": 0,
+      "rows": 10000,
+      "students": 500,
+      "observations": 10000,
+      "invalid": 0,
+      "minperstudent": 20,
+      "maxperstudent": 20
+    },
+    {
+      "schoolIndex": 1,
+      "rows": 10000,
+      "students": 500,
+      "observations": 10000,
+      "invalid": 0,
+      "minperstudent": 20,
+      "maxperstudent": 20
+    }
+  ],
+  "seedMs": 318976.8734,
+  "fixtureCounts": [
+    {
+      "school_id": "3b439994-99ca-4c5b-bbdc-5683cf8ac491",
+      "raw": "1000001",
+      "sessions": "36800",
+      "frozen_roster_rows": "184000",
+      "aggregates": "541500"
+    },
+    {
+      "school_id": "ea23cdc9-cc26-408e-8e9c-26463f9addb2",
+      "raw": "1000001",
+      "sessions": "36800",
+      "frozen_roster_rows": "184000",
+      "aggregates": "541500"
+    }
+  ],
+  "heavyDeviceBindings": [
+    {
+      "schoolIndex": 0,
+      "pairs": 500,
+      "devices": 500,
+      "invalid": 0
+    },
+    {
+      "schoolIndex": 1,
+      "pairs": 500,
+      "devices": 500,
+      "invalid": 0
+    }
+  ],
+  "poolMax": {
+    "api": 16,
+    "worker": 5,
+    "apiWaitingPeak": 8,
+    "workerWaitingPeak": 0
+  },
+  "concurrentPhaseMs": 60144.72449999995,
+  "phaseOutcomes": [
+    {
+      "kind": "writer",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "writer",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "read_waves",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    }
+  ],
+  "concurrentWriters": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 34311.27880000003,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 34242.89850000001,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000
+    }
+  ],
+  "deadlineAcceptance": {
+    "fullWorkerOperations": true,
+    "apiStatements": true,
+    "apiAcquisitions": true
+  },
+  "attributionPlan": [
+    {
+      "QUERY PLAN": [
+        {
+          "Plan": {
+            "Node Type": "Aggregate",
+            "Strategy": "Plain",
+            "Partial Mode": "Simple",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 16347.52,
+            "Total Cost": 16347.53,
+            "Plan Rows": 1,
+            "Plan Width": 28,
+            "Actual Rows": 1,
+            "Actual Loops": 1,
+            "Shared Hit Blocks": 2023366,
+            "Shared Read Blocks": 34262,
+            "Shared Dirtied Blocks": 45,
+            "Shared Written Blocks": 3331,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Limit",
+                "Parent Relationship": "InitPlan",
+                "Subplan Name": "CTE school_ai_available",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 0.29,
+                "Total Cost": 7.25,
+                "Plan Rows": 1,
+                "Plan Width": 4,
+                "Actual Rows": 1,
+                "Actual Loops": 1,
+                "Shared Hit Blocks": 0,
+                "Shared Read Blocks": 3,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Index Only Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Scan Direction": "Forward",
+                    "Index Name": "classpilot_ai_decisions_school_created_idx",
+                    "Relation Name": "classpilot_ai_decisions",
+                    "Alias": "classpilot_ai_decisions",
+                    "Startup Cost": 0.29,
+                    "Total Cost": 348.23,
+                    "Plan Rows": 50,
+                    "Plan Width": 4,
+                    "Actual Rows": 1,
+                    "Actual Loops": 1,
+                    "Index Cond": "((school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text) AND (created_at >= '2026-09-28 04:00:00'::timestamp without time zone))",
+                    "Rows Removed by Index Recheck": 0,
+                    "Filter": "((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text))",
+                    "Rows Removed by Filter": 0,
+                    "Heap Fetches": 0,
+                    "Shared Hit Blocks": 0,
+                    "Shared Read Blocks": 3,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0
+                  }
+                ]
+              },
+              {
+                "Node Type": "Function Scan",
+                "Parent Relationship": "InitPlan",
+                "Subplan Name": "CTE school_excluded",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Function Name": "jsonb_array_elements",
+                "Alias": "item",
+                "Startup Cost": 0,
+                "Total Cost": 3,
+                "Plan Rows": 100,
+                "Plan Width": 48,
+                "Actual Rows": 0,
+                "Actual Loops": 1,
+                "Shared Hit Blocks": 0,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              },
+              {
+                "Node Type": "Index Scan",
+                "Parent Relationship": "InitPlan",
+                "Subplan Name": "CTE school_sessions",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Scan Direction": "Forward",
+                "Index Name": "teaching_sessions_school_id_idx",
+                "Relation Name": "teaching_sessions",
+                "Alias": "teaching_sessions",
+                "Startup Cost": 0.29,
+                "Total Cost": 2312.88,
+                "Plan Rows": 2,
+                "Plan Width": 61,
+                "Actual Rows": 600,
+                "Actual Loops": 1,
+                "Index Cond": "(school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text)",
+                "Rows Removed by Index Recheck": 0,
+                "Filter": "((start_time < '2026-09-29 04:00:00'::timestamp without time zone) AND (start_time >= '2026-09-27 16:00:00'::timestamp without time zone) AND ((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text)))",
+                "Rows Removed by Filter": 36200,
+                "Shared Hit Blocks": 964,
+                "Shared Read Blocks": 62,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 1,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0
+              },
+              {
+                "Node Type": "Nested Loop",
+                "Parent Relationship": "InitPlan",
+                "Subplan Name": "CTE school_roster_window",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Join Type": "Inner",
+                "Startup Cost": 0.69,
+                "Total Cost": 20.96,
+                "Plan Rows": 1,
+                "Plan Width": 130,
+                "Actual Rows": 3000,
+                "Actual Loops": 1,
+                "Inner Unique": true,
+                "Shared Hit Blocks": 11885,
+                "Shared Read Blocks": 541,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 269,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Nested Loop",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Join Type": "Inner",
+                    "Startup Cost": 0.42,
+                    "Total Cost": 20.52,
+                    "Plan Rows": 1,
+                    "Plan Width": 138,
+                    "Actual Rows": 3000,
+                    "Actual Loops": 1,
+                    "Inner Unique": false,
+                    "Shared Hit Blocks": 2886,
+                    "Shared Read Blocks": 540,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 269,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0,
+                    "Plans": [
+                      {
+                        "Node Type": "CTE Scan",
+                        "Parent Relationship": "Outer",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "CTE Name": "school_sessions",
+                        "Alias": "session",
+                        "Startup Cost": 0,
+                        "Total Cost": 0.04,
+                        "Plan Rows": 2,
+                        "Plan Width": 56,
+                        "Actual Rows": 600,
+                        "Actual Loops": 1,
+                        "Shared Hit Blocks": 964,
+                        "Shared Read Blocks": 62,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 1,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      },
+                      {
+                        "Node Type": "Index Scan",
+                        "Parent Relationship": "Inner",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Scan Direction": "Forward",
+                        "Index Name": "classpilot_session_students_school_session_idx",
+                        "Relation Name": "classpilot_session_students",
+                        "Alias": "roster",
+                        "Startup Cost": 0.42,
+                        "Total Cost": 10.23,
+                        "Plan Rows": 1,
+                        "Plan Width": 119,
+                        "Actual Rows": 5,
+                        "Actual Loops": 600,
+                        "Index Cond": "((school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text) AND ((teaching_session_id)::text = (session.id)::text))",
+                        "Rows Removed by Index Recheck": 0,
+                        "Filter": "((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text))",
+                        "Rows Removed by Filter": 0,
+                        "Shared Hit Blocks": 1922,
+                        "Shared Read Blocks": 478,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 268,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      }
+                    ]
+                  },
+                  {
+                    "Node Type": "Index Scan",
+                    "Parent Relationship": "Inner",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Scan Direction": "Forward",
+                    "Index Name": "groups_pkey",
+                    "Relation Name": "groups",
+                    "Alias": "class",
+                    "Startup Cost": 0.27,
+                    "Total Cost": 0.34,
+                    "Plan Rows": 1,
+                    "Plan Width": 37,
+                    "Actual Rows": 1,
+                    "Actual Loops": 3000,
+                    "Index Cond": "((id)::text = roster.group_id)",
+                    "Rows Removed by Index Recheck": 0,
+                    "Filter": "((school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text) AND ((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text)))",
+                    "Rows Removed by Filter": 0,
+                    "Shared Hit Blocks": 8999,
+                    "Shared Read Blocks": 1,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0
+                  }
+                ]
+              },
+              {
+                "Node Type": "Nested Loop",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Join Type": "Inner",
+                "Startup Cost": 6984.2,
+                "Total Cost": 14003.38,
+                "Plan Rows": 8,
+                "Plan Width": 8,
+                "Actual Rows": 84000,
+                "Actual Loops": 1,
+                "Inner Unique": false,
+                "Shared Hit Blocks": 2023366,
+                "Shared Read Blocks": 34262,
+                "Shared Dirtied Blocks": 45,
+                "Shared Written Blocks": 3331,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Index Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Scan Direction": "Forward",
+                    "Index Name": "students_school_id_idx",
+                    "Relation Name": "students",
+                    "Alias": "student_scope",
+                    "Startup Cost": 0.15,
+                    "Total Cost": 34.9,
+                    "Plan Rows": 2,
+                    "Plan Width": 37,
+                    "Actual Rows": 500,
+                    "Actual Loops": 1,
+                    "Index Cond": "(school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text)",
+                    "Rows Removed by Index Recheck": 0,
+                    "Filter": "((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text))",
+                    "Rows Removed by Filter": 0,
+                    "Shared Hit Blocks": 3,
+                    "Shared Read Blocks": 12,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 2,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0
+                  },
+                  {
+                    "Node Type": "Aggregate",
+                    "Strategy": "Hashed",
+                    "Partial Mode": "Simple",
+                    "Parent Relationship": "Inner",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Startup Cost": 6984.05,
+                    "Total Cost": 6984.16,
+                    "Plan Rows": 4,
+                    "Plan Width": 168,
+                    "Actual Rows": 168,
+                    "Actual Loops": 500,
+                    "Group Key": [
+                      "observation.student_id",
+                      "winning_roster.class_id",
+                      "winning_roster.session_id",
+                      "(CASE WHEN (observation.active_tab_url ~* '^https?://'::text) THEN \"left\"(regexp_replace(lower(COALESCE(\"substring\"(observation.active_tab_url, '(?i)^https?://(?:[^/?#@]*@)?([^:/?#]*)'::text), ''::text)), '^www\\.'::text, ''::text), 253) ELSE ''::text END)",
+                      "CASE WHEN (((CASE WHEN (COALESCE(NULLIF(ai_decision.category, ''::text), observation.ai_category) = ANY ('{educational,non-educational}'::text[])) THEN COALESCE(NULLIF(ai_decision.category, ''::text), observation.ai_category) ELSE 'unknown'::text END) = 'non-educational'::text) AND (NOT (((NULLIF(ai_decision.teacher_intent_source, ''::text) IS NOT NULL) OR (NULLIF(observation.teacher_intent_source, ''::text) IS NOT NULL)))) AND ((CASE WHEN (observation.active_tab_url ~* '^https?://'::text) THEN \"left\"(regexp_replace(lower(COALESCE(\"substring\"(observation.active_tab_url, '(?i)^https?://(?:[^/?#@]*@)?([^:/?#]*)'::text), ''::text)), '^www\\.'::text, ''::text), 253) ELSE ''::text END) <> ''::text)) THEN 'non-educational'::text WHEN ((CASE WHEN (COALESCE(NULLIF(ai_decision.category, ''::text), observation.ai_category) = ANY ('{educational,non-educational}'::text[])) THEN COALESCE(NULLIF(ai_decision.category, ''::text), observation.ai_category) ELSE 'unknown'::text END) = ANY ('{educational,non-educational}'::text[])) THEN 'educational'::text ELSE 'unknown'::text END"
+                    ],
+                    "Planned Partitions": 0,
+                    "HashAgg Batches": 1,
+                    "Peak Memory Usage": 168,
+                    "Disk Usage": 0,
+                    "Shared Hit Blocks": 2023363,
+                    "Shared Read Blocks": 34250,
+                    "Shared Dirtied Blocks": 45,
+                    "Shared Written Blocks": 3329,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0,
+                    "Plans": [
+                      {
+                        "Node Type": "Bitmap Heap Scan",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE observed",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Relation Name": "heartbeats",
+                        "Alias": "heartbeat",
+                        "Startup Cost": 32.45,
+                        "Total Cost": 6946.66,
+                        "Plan Rows": 5,
+                        "Plan Width": 126,
+                        "Actual Rows": 2000,
+                        "Actual Loops": 500,
+                        "Recheck Cond": "((student_id IS NOT NULL) AND (student_id = (student_scope.id)::text))",
+                        "Rows Removed by Index Recheck": 0,
+                        "Filter": "((\"timestamp\" >= '2026-09-28 04:00:00'::timestamp without time zone) AND (\"timestamp\" < '2026-09-29 04:00:00'::timestamp without time zone) AND (school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text) AND ((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text)))",
+                        "Rows Removed by Filter": 1,
+                        "Exact Heap Blocks": 33181,
+                        "Lossy Heap Blocks": 0,
+                        "Shared Hit Blocks": 1879,
+                        "Shared Read Blocks": 33302,
+                        "Shared Dirtied Blocks": 45,
+                        "Shared Written Blocks": 2844,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "Bitmap Index Scan",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Index Name": "heartbeats_student_id_idx",
+                            "Startup Cost": 0,
+                            "Total Cost": 32.45,
+                            "Plan Rows": 2002,
+                            "Plan Width": 0,
+                            "Actual Rows": 2001,
+                            "Actual Loops": 500,
+                            "Index Cond": "((student_id IS NOT NULL) AND (student_id = (student_scope.id)::text))",
+                            "Shared Hit Blocks": 1000,
+                            "Shared Read Blocks": 1000,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 81,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "CTE Scan",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE excluded",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "CTE Name": "school_excluded",
+                        "Alias": "school_excluded",
+                        "Startup Cost": 0,
+                        "Total Cost": 2.25,
+                        "Plan Rows": 1,
+                        "Plan Width": 48,
+                        "Actual Rows": 0,
+                        "Actual Loops": 500,
+                        "Filter": "((student_id IS NULL) OR (student_id = (student_scope.id)::text))",
+                        "Rows Removed by Filter": 0,
+                        "Shared Hit Blocks": 0,
+                        "Shared Read Blocks": 0,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 0,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      },
+                      {
+                        "Node Type": "CTE Scan",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE eligible",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "CTE Name": "observed",
+                        "Alias": "observed",
+                        "Startup Cost": 0.02,
+                        "Total Cost": 0.26,
+                        "Plan Rows": 4,
+                        "Plan Width": 168,
+                        "Actual Rows": 2000,
+                        "Actual Loops": 500,
+                        "Filter": "((NOT $9) OR (NOT (SubPlan 8)))",
+                        "Rows Removed by Filter": 0,
+                        "Shared Hit Blocks": 1879,
+                        "Shared Read Blocks": 33302,
+                        "Shared Dirtied Blocks": 45,
+                        "Shared Written Blocks": 2844,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "CTE Scan",
+                            "Parent Relationship": "InitPlan",
+                            "Subplan Name": "InitPlan 7 (returns $9)",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "CTE Name": "excluded",
+                            "Alias": "excluded",
+                            "Startup Cost": 0,
+                            "Total Cost": 0.02,
+                            "Plan Rows": 1,
+                            "Plan Width": 0,
+                            "Actual Rows": 0,
+                            "Actual Loops": 500,
+                            "Shared Hit Blocks": 0,
+                            "Shared Read Blocks": 0,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 0,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0
+                          },
+                          {
+                            "Node Type": "CTE Scan",
+                            "Parent Relationship": "SubPlan",
+                            "Subplan Name": "SubPlan 8",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "CTE Name": "excluded",
+                            "Alias": "excluded_1",
+                            "Startup Cost": 0,
+                            "Total Cost": 0.03,
+                            "Plan Rows": 1,
+                            "Plan Width": 0,
+                            "Actual Rows": 0,
+                            "Actual Loops": 0,
+                            "Filter": "(((student_id IS NULL) OR (student_id = observed.student_id)) AND (observed.observed_at >= start_at) AND (observed.observed_at < end_at))",
+                            "Rows Removed by Filter": 0,
+                            "Shared Hit Blocks": 0,
+                            "Shared Read Blocks": 0,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 0,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "Unique",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE deduplicated",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Startup Cost": 0.13,
+                        "Total Cost": 0.16,
+                        "Plan Rows": 4,
+                        "Plan Width": 176,
+                        "Actual Rows": 2000,
+                        "Actual Loops": 500,
+                        "Shared Hit Blocks": 1879,
+                        "Shared Read Blocks": 33302,
+                        "Shared Dirtied Blocks": 45,
+                        "Shared Written Blocks": 2844,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "Sort",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 0.13,
+                            "Total Cost": 0.14,
+                            "Plan Rows": 4,
+                            "Plan Width": 176,
+                            "Actual Rows": 2000,
+                            "Actual Loops": 500,
+                            "Sort Key": [
+                              "eligible.student_id",
+                              "(date_trunc('second'::text, eligible.observed_at))",
+                              "eligible.observed_at",
+                              "eligible.id"
+                            ],
+                            "Sort Method": "quicksort",
+                            "Sort Space Used": 353,
+                            "Sort Space Type": "Memory",
+                            "Shared Hit Blocks": 1879,
+                            "Shared Read Blocks": 33302,
+                            "Shared Dirtied Blocks": 45,
+                            "Shared Written Blocks": 2844,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "CTE Scan",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "CTE Name": "eligible",
+                                "Alias": "eligible",
+                                "Startup Cost": 0,
+                                "Total Cost": 0.09,
+                                "Plan Rows": 4,
+                                "Plan Width": 176,
+                                "Actual Rows": 2000,
+                                "Actual Loops": 500,
+                                "Shared Hit Blocks": 1879,
+                                "Shared Read Blocks": 33302,
+                                "Shared Dirtied Blocks": 45,
+                                "Shared Written Blocks": 2844,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "Result",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE ai_decision",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Startup Cost": 8.35,
+                        "Total Cost": 33.52,
+                        "Plan Rows": 4,
+                        "Plan Width": 67,
+                        "Actual Rows": 20,
+                        "Actual Loops": 500,
+                        "One-Time Filter": "$14",
+                        "Shared Hit Blocks": 2009596,
+                        "Shared Read Blocks": 407,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 216,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "CTE Scan",
+                            "Parent Relationship": "InitPlan",
+                            "Subplan Name": "InitPlan 11 (returns $14)",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "CTE Name": "school_ai_available",
+                            "Alias": "school_ai_available",
+                            "Startup Cost": 0,
+                            "Total Cost": 0.02,
+                            "Plan Rows": 1,
+                            "Plan Width": 0,
+                            "Actual Rows": 1,
+                            "Actual Loops": 1,
+                            "Shared Hit Blocks": 0,
+                            "Shared Read Blocks": 3,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 0,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0
+                          },
+                          {
+                            "Node Type": "Nested Loop",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Join Type": "Inner",
+                            "Startup Cost": 8.35,
+                            "Total Cost": 33.52,
+                            "Plan Rows": 4,
+                            "Plan Width": 67,
+                            "Actual Rows": 20,
+                            "Actual Loops": 500,
+                            "Inner Unique": false,
+                            "Shared Hit Blocks": 2009596,
+                            "Shared Read Blocks": 404,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 216,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "CTE Scan",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "CTE Name": "deduplicated",
+                                "Alias": "observation_1",
+                                "Startup Cost": 0,
+                                "Total Cost": 0.08,
+                                "Plan Rows": 4,
+                                "Plan Width": 32,
+                                "Actual Rows": 2000,
+                                "Actual Loops": 500,
+                                "Shared Hit Blocks": 0,
+                                "Shared Read Blocks": 0,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 0,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0
+                              },
+                              {
+                                "Node Type": "Limit",
+                                "Parent Relationship": "Inner",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "Startup Cost": 8.33,
+                                "Total Cost": 8.34,
+                                "Plan Rows": 1,
+                                "Plan Width": 101,
+                                "Actual Rows": 0,
+                                "Actual Loops": 1000000,
+                                "Shared Hit Blocks": 2009596,
+                                "Shared Read Blocks": 404,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 216,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0,
+                                "Plans": [
+                                  {
+                                    "Node Type": "Sort",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "Startup Cost": 8.33,
+                                    "Total Cost": 8.34,
+                                    "Plan Rows": 1,
+                                    "Plan Width": 101,
+                                    "Actual Rows": 0,
+                                    "Actual Loops": 1000000,
+                                    "Sort Key": [
+                                      "newest.created_at DESC",
+                                      "newest.id DESC"
+                                    ],
+                                    "Sort Method": "quicksort",
+                                    "Sort Space Used": 25,
+                                    "Sort Space Type": "Memory",
+                                    "Shared Hit Blocks": 2009596,
+                                    "Shared Read Blocks": 404,
+                                    "Shared Dirtied Blocks": 0,
+                                    "Shared Written Blocks": 216,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0,
+                                    "Plans": [
+                                      {
+                                        "Node Type": "Index Scan",
+                                        "Parent Relationship": "Outer",
+                                        "Parallel Aware": false,
+                                        "Async Capable": false,
+                                        "Scan Direction": "Forward",
+                                        "Index Name": "classpilot_ai_decisions_heartbeat_idx",
+                                        "Relation Name": "classpilot_ai_decisions",
+                                        "Alias": "newest",
+                                        "Startup Cost": 0.29,
+                                        "Total Cost": 8.32,
+                                        "Plan Rows": 1,
+                                        "Plan Width": 101,
+                                        "Actual Rows": 0,
+                                        "Actual Loops": 1000000,
+                                        "Index Cond": "(heartbeat_id = (observation_1.id)::text)",
+                                        "Rows Removed by Index Recheck": 0,
+                                        "Filter": "((created_at >= '2026-09-28 04:00:00'::timestamp without time zone) AND (school_id = '3b439994-99ca-4c5b-bbdc-5683cf8ac491'::text) AND ((school_id = current_setting('app.school_id'::text, true)) OR (current_setting('app.is_super'::text, true) = 'on'::text)))",
+                                        "Rows Removed by Filter": 0,
+                                        "Shared Hit Blocks": 2009596,
+                                        "Shared Read Blocks": 404,
+                                        "Shared Dirtied Blocks": 0,
+                                        "Shared Written Blocks": 216,
+                                        "Local Hit Blocks": 0,
+                                        "Local Read Blocks": 0,
+                                        "Local Dirtied Blocks": 0,
+                                        "Local Written Blocks": 0,
+                                        "Temp Read Blocks": 0,
+                                        "Temp Written Blocks": 0
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "CTE Scan",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE roster_window",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "CTE Name": "school_roster_window",
+                        "Alias": "school_roster_window",
+                        "Startup Cost": 0,
+                        "Total Cost": 0.02,
+                        "Plan Rows": 1,
+                        "Plan Width": 120,
+                        "Actual Rows": 6,
+                        "Actual Loops": 500,
+                        "Filter": "(student_id = (student_scope.id)::text)",
+                        "Rows Removed by Filter": 2994,
+                        "Shared Hit Blocks": 11885,
+                        "Shared Read Blocks": 541,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 269,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      },
+                      {
+                        "Node Type": "WindowAgg",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE roster_intervals",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Startup Cost": 0.07,
+                        "Total Cost": 0.12,
+                        "Plan Rows": 2,
+                        "Plan Width": 48,
+                        "Actual Rows": 12,
+                        "Actual Loops": 500,
+                        "Shared Hit Blocks": 10936,
+                        "Shared Read Blocks": 477,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 269,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "Unique",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 0.07,
+                            "Total Cost": 0.08,
+                            "Plan Rows": 2,
+                            "Plan Width": 40,
+                            "Actual Rows": 12,
+                            "Actual Loops": 500,
+                            "Shared Hit Blocks": 10936,
+                            "Shared Read Blocks": 477,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 269,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "Sort",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "Startup Cost": 0.07,
+                                "Total Cost": 0.07,
+                                "Plan Rows": 2,
+                                "Plan Width": 40,
+                                "Actual Rows": 12,
+                                "Actual Loops": 500,
+                                "Sort Key": [
+                                  "roster_window.student_id",
+                                  "roster_window.starts_at"
+                                ],
+                                "Sort Method": "quicksort",
+                                "Sort Space Used": 25,
+                                "Sort Space Type": "Memory",
+                                "Shared Hit Blocks": 10936,
+                                "Shared Read Blocks": 477,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 269,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0,
+                                "Plans": [
+                                  {
+                                    "Node Type": "Append",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "Startup Cost": 0,
+                                    "Total Cost": 0.06,
+                                    "Plan Rows": 2,
+                                    "Plan Width": 40,
+                                    "Actual Rows": 12,
+                                    "Actual Loops": 500,
+                                    "Shared Hit Blocks": 10936,
+                                    "Shared Read Blocks": 477,
+                                    "Shared Dirtied Blocks": 0,
+                                    "Shared Written Blocks": 269,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0,
+                                    "Subplans Removed": 0,
+                                    "Plans": [
+                                      {
+                                        "Node Type": "CTE Scan",
+                                        "Parent Relationship": "Member",
+                                        "Parallel Aware": false,
+                                        "Async Capable": false,
+                                        "CTE Name": "roster_window",
+                                        "Alias": "roster_window",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 0.02,
+                                        "Plan Rows": 1,
+                                        "Plan Width": 40,
+                                        "Actual Rows": 6,
+                                        "Actual Loops": 500,
+                                        "Filter": "(starts_at < ends_at)",
+                                        "Rows Removed by Filter": 0,
+                                        "Shared Hit Blocks": 10936,
+                                        "Shared Read Blocks": 477,
+                                        "Shared Dirtied Blocks": 0,
+                                        "Shared Written Blocks": 269,
+                                        "Local Hit Blocks": 0,
+                                        "Local Read Blocks": 0,
+                                        "Local Dirtied Blocks": 0,
+                                        "Local Written Blocks": 0,
+                                        "Temp Read Blocks": 0,
+                                        "Temp Written Blocks": 0
+                                      },
+                                      {
+                                        "Node Type": "CTE Scan",
+                                        "Parent Relationship": "Member",
+                                        "Parallel Aware": false,
+                                        "Async Capable": false,
+                                        "CTE Name": "roster_window",
+                                        "Alias": "roster_window_1",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 0.02,
+                                        "Plan Rows": 1,
+                                        "Plan Width": 40,
+                                        "Actual Rows": 6,
+                                        "Actual Loops": 500,
+                                        "Filter": "(starts_at < ends_at)",
+                                        "Rows Removed by Filter": 0,
+                                        "Shared Hit Blocks": 0,
+                                        "Shared Read Blocks": 0,
+                                        "Shared Dirtied Blocks": 0,
+                                        "Shared Written Blocks": 0,
+                                        "Local Hit Blocks": 0,
+                                        "Local Read Blocks": 0,
+                                        "Local Dirtied Blocks": 0,
+                                        "Local Written Blocks": 0,
+                                        "Temp Read Blocks": 0,
+                                        "Temp Written Blocks": 0
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "Unique",
+                        "Parent Relationship": "InitPlan",
+                        "Subplan Name": "CTE winning_roster",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Startup Cost": 0.11,
+                        "Total Cost": 0.12,
+                        "Plan Rows": 1,
+                        "Plan Width": 120,
+                        "Actual Rows": 6,
+                        "Actual Loops": 500,
+                        "Shared Hit Blocks": 11885,
+                        "Shared Read Blocks": 541,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 269,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "Sort",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 0.11,
+                            "Total Cost": 0.11,
+                            "Plan Rows": 1,
+                            "Plan Width": 120,
+                            "Actual Rows": 6,
+                            "Actual Loops": 500,
+                            "Sort Key": [
+                              "roster_intervals.student_id",
+                              "roster_intervals.starts_at",
+                              "roster_window_2.start_time DESC",
+                              "roster_window_2.session_id DESC"
+                            ],
+                            "Sort Method": "quicksort",
+                            "Sort Space Used": 25,
+                            "Sort Space Type": "Memory",
+                            "Shared Hit Blocks": 11885,
+                            "Shared Read Blocks": 541,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 269,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "Nested Loop",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "Join Type": "Inner",
+                                "Startup Cost": 0,
+                                "Total Cost": 0.1,
+                                "Plan Rows": 1,
+                                "Plan Width": 120,
+                                "Actual Rows": 6,
+                                "Actual Loops": 500,
+                                "Inner Unique": false,
+                                "Join Filter": "((roster_intervals.starts_at >= roster_window_2.starts_at) AND (roster_intervals.starts_at < roster_window_2.ends_at) AND (roster_intervals.student_id = roster_window_2.student_id))",
+                                "Rows Removed by Join Filter": 60,
+                                "Shared Hit Blocks": 11885,
+                                "Shared Read Blocks": 541,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 269,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0,
+                                "Plans": [
+                                  {
+                                    "Node Type": "CTE Scan",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "CTE Name": "roster_window",
+                                    "Alias": "roster_window_2",
+                                    "Startup Cost": 0,
+                                    "Total Cost": 0.02,
+                                    "Plan Rows": 1,
+                                    "Plan Width": 120,
+                                    "Actual Rows": 6,
+                                    "Actual Loops": 500,
+                                    "Shared Hit Blocks": 949,
+                                    "Shared Read Blocks": 64,
+                                    "Shared Dirtied Blocks": 0,
+                                    "Shared Written Blocks": 0,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0
+                                  },
+                                  {
+                                    "Node Type": "CTE Scan",
+                                    "Parent Relationship": "Inner",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "CTE Name": "roster_intervals",
+                                    "Alias": "roster_intervals",
+                                    "Startup Cost": 0,
+                                    "Total Cost": 0.04,
+                                    "Plan Rows": 2,
+                                    "Plan Width": 48,
+                                    "Actual Rows": 11,
+                                    "Actual Loops": 3000,
+                                    "Filter": "(ends_at IS NOT NULL)",
+                                    "Rows Removed by Filter": 1,
+                                    "Shared Hit Blocks": 10936,
+                                    "Shared Read Blocks": 477,
+                                    "Shared Dirtied Blocks": 0,
+                                    "Shared Written Blocks": 269,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "Node Type": "Merge Join",
+                        "Parent Relationship": "Outer",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Join Type": "Left",
+                        "Startup Cost": 0.36,
+                        "Total Cost": 0.87,
+                        "Plan Rows": 4,
+                        "Plan Width": 192,
+                        "Actual Rows": 2000,
+                        "Actual Loops": 500,
+                        "Inner Unique": false,
+                        "Merge Cond": "(observation.student_id = winning_roster.student_id)",
+                        "Join Filter": "((observation.observed_at >= winning_roster.starts_at) AND (observation.observed_at < winning_roster.ends_at))",
+                        "Rows Removed by Join Filter": 10300,
+                        "Shared Hit Blocks": 2023363,
+                        "Shared Read Blocks": 34250,
+                        "Shared Dirtied Blocks": 45,
+                        "Shared Written Blocks": 3329,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0,
+                        "Plans": [
+                          {
+                            "Node Type": "WindowAgg",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 0.33,
+                            "Total Cost": 0.74,
+                            "Plan Rows": 4,
+                            "Plan Width": 169,
+                            "Actual Rows": 2000,
+                            "Actual Loops": 500,
+                            "Shared Hit Blocks": 2011478,
+                            "Shared Read Blocks": 33709,
+                            "Shared Dirtied Blocks": 45,
+                            "Shared Written Blocks": 3060,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "CTE Scan",
+                                "Parent Relationship": "InitPlan",
+                                "Subplan Name": "InitPlan 16 (returns $20)",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "CTE Name": "excluded",
+                                "Alias": "excluded_2",
+                                "Startup Cost": 0,
+                                "Total Cost": 0.02,
+                                "Plan Rows": 1,
+                                "Plan Width": 0,
+                                "Actual Rows": 0,
+                                "Actual Loops": 500,
+                                "Shared Hit Blocks": 0,
+                                "Shared Read Blocks": 0,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 0,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0
+                              },
+                              {
+                                "Node Type": "Sort",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "Startup Cost": 0.31,
+                                "Total Cost": 0.32,
+                                "Plan Rows": 4,
+                                "Plan Width": 232,
+                                "Actual Rows": 2000,
+                                "Actual Loops": 500,
+                                "Sort Key": [
+                                  "observation.student_id",
+                                  "observation.observed_at",
+                                  "observation.id"
+                                ],
+                                "Sort Method": "quicksort",
+                                "Sort Space Used": 338,
+                                "Sort Space Type": "Memory",
+                                "Shared Hit Blocks": 2011478,
+                                "Shared Read Blocks": 33709,
+                                "Shared Dirtied Blocks": 45,
+                                "Shared Written Blocks": 3060,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0,
+                                "Plans": [
+                                  {
+                                    "Node Type": "Hash Join",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "Join Type": "Left",
+                                    "Startup Cost": 0.13,
+                                    "Total Cost": 0.27,
+                                    "Plan Rows": 4,
+                                    "Plan Width": 232,
+                                    "Actual Rows": 2000,
+                                    "Actual Loops": 500,
+                                    "Inner Unique": false,
+                                    "Hash Cond": "((observation.id)::text = ai_decision.heartbeat_id)",
+                                    "Shared Hit Blocks": 2011475,
+                                    "Shared Read Blocks": 33709,
+                                    "Shared Dirtied Blocks": 45,
+                                    "Shared Written Blocks": 3060,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0,
+                                    "Plans": [
+                                      {
+                                        "Node Type": "CTE Scan",
+                                        "Parent Relationship": "Outer",
+                                        "Parallel Aware": false,
+                                        "Async Capable": false,
+                                        "CTE Name": "deduplicated",
+                                        "Alias": "observation",
+                                        "Startup Cost": 0,
+                                        "Total Cost": 0.08,
+                                        "Plan Rows": 4,
+                                        "Plan Width": 168,
+                                        "Actual Rows": 2000,
+                                        "Actual Loops": 500,
+                                        "Shared Hit Blocks": 1879,
+                                        "Shared Read Blocks": 33302,
+                                        "Shared Dirtied Blocks": 45,
+                                        "Shared Written Blocks": 2844,
+                                        "Local Hit Blocks": 0,
+                                        "Local Read Blocks": 0,
+                                        "Local Dirtied Blocks": 0,
+                                        "Local Written Blocks": 0,
+                                        "Temp Read Blocks": 0,
+                                        "Temp Written Blocks": 0
+                                      },
+                                      {
+                                        "Node Type": "Hash",
+                                        "Parent Relationship": "Inner",
+                                        "Parallel Aware": false,
+                                        "Async Capable": false,
+                                        "Startup Cost": 0.08,
+                                        "Total Cost": 0.08,
+                                        "Plan Rows": 4,
+                                        "Plan Width": 96,
+                                        "Actual Rows": 20,
+                                        "Actual Loops": 500,
+                                        "Hash Buckets": 1024,
+                                        "Original Hash Buckets": 1024,
+                                        "Hash Batches": 1,
+                                        "Original Hash Batches": 1,
+                                        "Peak Memory Usage": 10,
+                                        "Shared Hit Blocks": 2009596,
+                                        "Shared Read Blocks": 407,
+                                        "Shared Dirtied Blocks": 0,
+                                        "Shared Written Blocks": 216,
+                                        "Local Hit Blocks": 0,
+                                        "Local Read Blocks": 0,
+                                        "Local Dirtied Blocks": 0,
+                                        "Local Written Blocks": 0,
+                                        "Temp Read Blocks": 0,
+                                        "Temp Written Blocks": 0,
+                                        "Plans": [
+                                          {
+                                            "Node Type": "CTE Scan",
+                                            "Parent Relationship": "Outer",
+                                            "Parallel Aware": false,
+                                            "Async Capable": false,
+                                            "CTE Name": "ai_decision",
+                                            "Alias": "ai_decision",
+                                            "Startup Cost": 0,
+                                            "Total Cost": 0.08,
+                                            "Plan Rows": 4,
+                                            "Plan Width": 96,
+                                            "Actual Rows": 20,
+                                            "Actual Loops": 500,
+                                            "Shared Hit Blocks": 2009596,
+                                            "Shared Read Blocks": 407,
+                                            "Shared Dirtied Blocks": 0,
+                                            "Shared Written Blocks": 216,
+                                            "Local Hit Blocks": 0,
+                                            "Local Read Blocks": 0,
+                                            "Local Dirtied Blocks": 0,
+                                            "Local Written Blocks": 0,
+                                            "Temp Read Blocks": 0,
+                                            "Temp Written Blocks": 0
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "Node Type": "Aggregate",
+                                "Strategy": "Plain",
+                                "Partial Mode": "Simple",
+                                "Parent Relationship": "SubPlan",
+                                "Subplan Name": "SubPlan 17",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "Startup Cost": 0.03,
+                                "Total Cost": 0.04,
+                                "Plan Rows": 1,
+                                "Plan Width": 8,
+                                "Actual Rows": 0,
+                                "Actual Loops": 0,
+                                "Shared Hit Blocks": 0,
+                                "Shared Read Blocks": 0,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 0,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0,
+                                "Plans": [
+                                  {
+                                    "Node Type": "CTE Scan",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "CTE Name": "excluded",
+                                    "Alias": "excluded_3",
+                                    "Startup Cost": 0,
+                                    "Total Cost": 0.03,
+                                    "Plan Rows": 1,
+                                    "Plan Width": 8,
+                                    "Actual Rows": 0,
+                                    "Actual Loops": 0,
+                                    "Filter": "(((student_id IS NULL) OR (student_id = observation.student_id)) AND (start_at > observation.observed_at))",
+                                    "Rows Removed by Filter": 0,
+                                    "Shared Hit Blocks": 0,
+                                    "Shared Read Blocks": 0,
+                                    "Shared Dirtied Blocks": 0,
+                                    "Shared Written Blocks": 0,
+                                    "Local Hit Blocks": 0,
+                                    "Local Read Blocks": 0,
+                                    "Local Dirtied Blocks": 0,
+                                    "Local Written Blocks": 0,
+                                    "Temp Read Blocks": 0,
+                                    "Temp Written Blocks": 0
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "Node Type": "Sort",
+                            "Parent Relationship": "Inner",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 0.03,
+                            "Total Cost": 0.04,
+                            "Plan Rows": 1,
+                            "Plan Width": 112,
+                            "Actual Rows": 10001,
+                            "Actual Loops": 500,
+                            "Sort Key": [
+                              "winning_roster.student_id"
+                            ],
+                            "Sort Method": "quicksort",
+                            "Sort Space Used": 25,
+                            "Sort Space Type": "Memory",
+                            "Shared Hit Blocks": 11885,
+                            "Shared Read Blocks": 541,
+                            "Shared Dirtied Blocks": 0,
+                            "Shared Written Blocks": 269,
+                            "Local Hit Blocks": 0,
+                            "Local Read Blocks": 0,
+                            "Local Dirtied Blocks": 0,
+                            "Local Written Blocks": 0,
+                            "Temp Read Blocks": 0,
+                            "Temp Written Blocks": 0,
+                            "Plans": [
+                              {
+                                "Node Type": "CTE Scan",
+                                "Parent Relationship": "Outer",
+                                "Parallel Aware": false,
+                                "Async Capable": false,
+                                "CTE Name": "winning_roster",
+                                "Alias": "winning_roster",
+                                "Startup Cost": 0,
+                                "Total Cost": 0.02,
+                                "Plan Rows": 1,
+                                "Plan Width": 112,
+                                "Actual Rows": 6,
+                                "Actual Loops": 500,
+                                "Shared Hit Blocks": 11885,
+                                "Shared Read Blocks": 541,
+                                "Shared Dirtied Blocks": 0,
+                                "Shared Written Blocks": 269,
+                                "Local Hit Blocks": 0,
+                                "Local Read Blocks": 0,
+                                "Local Dirtied Blocks": 0,
+                                "Local Written Blocks": 0,
+                                "Temp Read Blocks": 0,
+                                "Temp Written Blocks": 0
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 951,
+            "Shared Read Blocks": 98,
+            "Shared Dirtied Blocks": 1,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 7.376,
+          "Triggers": [],
+          "Execution Time": 9413.856
+        }
+      ]
+    }
+  ],
+  "baselineAttributionPlanFailure": {
+    "code": "57014",
+    "message": "canceling statement due to statement timeout"
+  },
+  "currentDayWriters": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 158.5102000000188,
+      "rowCount": 427,
+      "seconds": 6420,
+      "heartbeatCount": 428
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 114.37160000001313,
+      "rowCount": 427,
+      "seconds": 6420,
+      "heartbeatCount": 428
+    }
+  ],
+  "heavyDayAtomicity": [
+    {
+      "schoolIndex": 0,
+      "writerCommitted": true,
+      "aggregateRows": 84000,
+      "completionRows": 1
+    },
+    {
+      "schoolIndex": 1,
+      "writerCommitted": true,
+      "aggregateRows": 84000,
+      "completionRows": 1
+    }
+  ],
+  "databaseBytes": 3168050199,
+  "databaseCountersDelta": {
+    "temp_bytes": 3191634844,
+    "temp_files": 197,
+    "blks_read": 980508,
+    "blks_hit": 19447036
+  },
+  "correctness": {
+    "realMaxRangeAccepted": true,
+    "nextLongerRangeRejected": true,
+    "independentAllScopeTotals": true,
+    "concurrentSchoolWriters": true,
+    "actualHttpIngest": true,
+    "successfulEmptyDay": true,
+    "gapWithheld": true,
+    "expiredDateWithheld": true,
+    "atomicSnapshotReads": true,
+    "currentDayRawOracle": true,
+    "crossSchoolIdsDenied": true,
+    "csvStrictAuditRecorded": true
+  },
+  "finishedAt": "2026-10-01T03:01:20.379Z"
+}

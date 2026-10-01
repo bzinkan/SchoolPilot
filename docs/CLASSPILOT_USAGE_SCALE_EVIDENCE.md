@@ -143,3 +143,28 @@ every 20 seconds with ten restarts of the same class is an extreme write stress
 case. Its failed result remains an explicit capacity limitation. A separate
 school-day profile must justify dwell and frozen class/session windows and
 cannot change this workload or claim stress acceptance.
+
+The separate school-day evidence now includes two passing fresh-fixture runs
+of the final combined source `cc7b3b05ae42172b8b2389600cb184f1165ffa54`, explicitly
+using the complete current 128-table contract, all 52 migration entries and
+off precise/Focus rollout gates. Both kept the original 4 CPU/4 GiB PostgreSQL,
+512 MiB Node old-space, 60-second complete worker, 15-second SQL and 5-second
+acquisition limits. Each school retained one million unique observations,
+10,000 matching-category AI decisions and the independent 84,000-grain oracle.
+All 64 reports per run and every correctness/deadline gate passed.
+
+Conservative margins across Runs20/21 are 2,880 ms / 4.80% for the complete
+worker, 2,956 ms / 19.71% for report SQL, and 2,224 ms / 44.49% for connection
+acquisition. The minimum worker margin is tight. The maximum total HTTP report
+was 16,029 ms (200); individual SQL/acquisition gates do not promise a
+15-second total response. Source, caps, catalog, migration ledger and flags
+match exactly, and actual post-convergence DDL equality was checked after
+removing only generated dump nonce lines. Raw JSON, schema/contract snapshots,
+hashes, cleanup and timing variation are preserved in
+`docs/CLASSPILOT_USAGE_SCHOOL_DAY_PROFILE.md` and the three
+`evidence-school-day-integrated-128-ai-*20261001.json` files.
+
+Historical 127-table runs remain scoped to their recorded source and DDL.
+These passing 84,000-grain school-day runs do not change this document's
+failed 500,000-grain stress result or establish a full heavy retained year,
+dense AI/exclusions, fleet/RDS/Redis, managed devices or operational activation.
