@@ -227,3 +227,40 @@ the nonempty lookup's capacity. A separately named 10,000-decision-per-school
 scenario is required to measure that path. Dense AI/exclusion histories, the
 30.66-million-grain retained year, RDS, fleet, device and operational gates
 remain open.
+
+An unchanged repeat at `01bf34bc8c4522e9393c66033187f5546e859912` also passed,
+preserved byte-for-byte in
+`scripts/load/usage/evidence-school-day-fast-paths-repeat-passed-20261001.json`.
+It ran from `2026-10-01T01:06:59.660Z` to `01:12:28.820Z`; preparation
+took 185,448 ms outside the 60,106 ms concurrent phase. All production and
+measured harness hashes, declared workload, limits, constraints and caps match
+the preceding fast-path pass. The intervening commit adds only that run's
+immutable evidence and documentation. The schema-only dump differs solely in
+its generated psql restrict/unrestrict nonce; its DDL is identical.
+
+Both complete workers committed the same 84,000 grains, 10,002,500 seconds,
+one million observations and one completion row per school in 28,042/28,387 ms.
+All 64 reports returned 200, every measured SQL/acquisition succeeded and all
+independent correctness/CSV/audit/tenant/atomicity gates passed. Report SQL
+peaked at 4,160 ms; 6,546 acquisitions peaked at 414 ms. The four ingest clients
+offered 1,039 requests (1,038 returned 200 and one accepted 204), with 519
+observations per school stored through the post-phase cutoffs. Peak Node RSS
+was 287.6 MiB. Temporary counters increased by 3,134,741,916 bytes across 196
+files. Subsequent read-only attribution took 7,375 ms; the frozen original
+baseline again reached the 60-second timeout. Cleanup completed with exit zero.
+
+Across these two passes, the conservative observed margins remain those of
+the slower run: worker 7,136 ms / 11.9%, report SQL 5,969 ms / 39.8% and
+acquisition 4,358 ms / 87.2%. The worker range is 28,042–52,864 ms and fixture
+preparation also varied substantially. Identical source/DDL and fresh capped
+containers do not isolate a cause; storage, cache and planning variation remain
+possible. These are two successful local repeats of the empty-AI school-day
+profile, not a guarantee for a broader workload or RDS/fleet environment.
+Every earlier failure and the 500,000-grain/dense-year limits remain explicit;
+the separately named nonempty-AI scenario has not yet been measured.
+
+External repeat evidence is at
+`C:/Users/zinka/AppData/Local/Temp/schoolpilot-usage-school-day-20260930-run18-fast-paths-repeat`.
+The raw/committed JSON SHA-256 is `f2742ac51cc865f3928f0b1fb9c75f46c7b587389581ec26960e67c7c1f5d39e`,
+execution metadata is `b538d93dfc5fb02c93823c29c6831dcabc7a8dd087046dd6c21bd9b661ebc86e`
+and resource-cap metadata is the same `a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025`.
