@@ -305,7 +305,10 @@ test("scheduled testing waits for activation, uses mixed offline roster, follows
   assert.equal((await resolve(f)).current?.classId, f.classId); assert.equal((await resolve(f)).roster.length, 1);
 });
 
-for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${source}: testing passes retain activity snapshots, restrict history, and return during schedule failure`, async () => {
+for (const source of ["legacy_grades", "classpilot_groups"] as const) test(`${source}: testing passes retain activity snapshots, restrict history, and return during schedule failure`, async (context) => {
+  // Issuance needs an active window; 23:59 is the exclusive end of this fixture.
+  const now = new Date(); now.setUTCHours(13, 30, 0, 0);
+  context.mock.timers.enable({ apis: ["Date"], now });
   const f = await fixture(source); await save(f, 0, "classpilot"); const t = await testingContext(f, true); await t.activate();
   const assignment = await resolve(f, new Date()); const pass = await checkout(f, assignment.revision);
   assert.equal(pass.gradeId, null); assert.equal(pass.classpilotGroupId, null); assert.equal(pass.activityNameSnapshot, "MAP testing"); assert.equal(pass.issuingKioskSessionId, f.session.id);
@@ -369,7 +372,9 @@ test("a teacher with an additional office role can edit their schedule; office-o
   assert.equal((await fetch(baseUrl + "/preferences", { headers })).status, 403);
 });
 
-test("a checkout waiting for a supervision release or roster edit cannot issue from its displayed revision", async () => {
+test("a checkout waiting for a supervision release or roster edit cannot issue from its displayed revision", async (context) => {
+  const now = new Date(); now.setUTCHours(13, 30, 0, 0);
+  context.mock.timers.enable({ apis: ["Date"], now });
   const f = await fixture("classpilot_groups"); await save(f); const t = await testingContext(f, true); await t.activate();
   const old = await resolve(f, new Date());
   const blocker = await pool.connect();
