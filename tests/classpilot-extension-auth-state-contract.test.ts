@@ -151,7 +151,7 @@ test("heartbeat and WebSocket reconciliation carry authoritative explicit-null s
   );
   assert.match(
     heartbeat,
-    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: prepared\.classroomState\?\.revision \?\? 0/,
+    /exactBinding: classpilotControlStateExactBinding\(\{[\s\S]*?schoolId,[\s\S]*?deviceId,[\s\S]*?studentId,[\s\S]*?studentSessionId,[\s\S]*?controlRevision: prepared\.classroomState\?\.revision \?\? prepared\.focusCleanup\?\.exactBinding\.controlRevision \?\? 0/,
     "heartbeat must bind the delivered revision to the exact authenticated tuple"
   );
 });

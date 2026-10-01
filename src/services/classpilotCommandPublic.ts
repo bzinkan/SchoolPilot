@@ -1,4 +1,7 @@
 import { classpilotCommandDeliveryPolicy } from "./classpilotCommandDelivery.js";
+import { readFocusOpenIntent } from "./classpilotFocus.js";
+
+const protectedFocusKeys = new Set(["focusAssignmentV1", "focusOpenIntentV1", "focusStatusV1", "focusExactAuthorityV1", "focusCleanupV1"]);
 
 function isInternalTargetKey(key: string): boolean {
   const normalized = key.replace(/[_-]/g, "").toLowerCase();
@@ -16,11 +19,24 @@ function stripInternalTargetIdentifiers(value: unknown): unknown {
     return value;
   }
 
+  const record = value as Record<string, unknown>;
   const safe: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, entry] of Object.entries(record)) {
+    // These are structured private authority objects; exclude the complete
+    // object before recursively projecting any teacher DTO.
+    if (protectedFocusKeys.has(key)) {
+      continue;
+    }
+    // Public continuation status is derived only from the private persisted
+    // intent. Ignore any old or incoming client field regardless of key order.
+    if (key === "followUp") continue;
     if (isInternalTargetKey(key)) continue;
     safe[key] = stripInternalTargetIdentifiers(entry);
   }
+  const intent = readFocusOpenIntent(record);
+  if (intent) safe.followUp = { kind: "focus", state: intent.state,
+    ...(intent.state === "committed" ? { commandId: intent.childCommandId } : {}),
+    ...(intent.errorCode ? { errorCode: intent.errorCode } : {}) };
   return safe;
 }
 

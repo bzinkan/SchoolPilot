@@ -24,6 +24,8 @@ import {
   type ResolvedClasspilotCommandTarget,
 } from "../../services/classpilotCommandDispatcher.js";
 import { publicClasspilotCommand } from "../../services/classpilotCommandPublic.js";
+import { assertExactFocusTargetScope, type ClasspilotExactTabTarget } from "../../services/classpilotFocus.js";
+import { validateClasspilotCommandPayload } from "../../services/classpilotCommandValidation.js";
 import { requestHasAnySchoolRole } from "../../services/schoolAuthorization.js";
 import {
   classpilotRealtimeFresh,
@@ -216,6 +218,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
       // queued. Persistent controls remain fail-closed unless the exact device
       // is reachable or the signed-out target passed the school-scoped gate.
       stateAuthorized: available
+        || commandType === "stop-focus"
         || classpilotCommandDeliveryPolicy(commandType) !== "persistent_control"
         || deferredAuthorized,
       lateSignInEligible: deferredAuthorized,
@@ -261,6 +264,11 @@ router.post("/commands", ...auth, async (req, res, next) => {
     // while still using the class resolver for staff/session authorization.
     const targetScope = isPollClose ? "class" : normalizeTargetScope(req.body.targetScope);
     if (!targetScope) return res.status(400).json({ error: "targetScope must be class, subgroup, or students" });
+    if (commandType === "activate-tab" || commandType === "focus-tab") {
+      const payload = validateClasspilotCommandPayload(commandType, req.body.commandPayload);
+      assertExactFocusTargetScope(commandType, targetScope, req.body.targetStudentIds,
+        payload.tabTargets as ClasspilotExactTabTarget[]);
+    }
     if (commandType === "student-sign-out" && targetScope !== "students") {
       return res.status(400).json({ error: "student-sign-out requires explicit targetStudentIds" });
     }
