@@ -20025,10 +20025,11 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           ...authority,
         }, transactionDb)
       ) {
-        const lifecycleRequired = (await lockPrivateChatChannel({...options,...authority},transactionDb)).required;
+        const channel = await lockPrivateChatChannel({...options,...authority},transactionDb);
+        const lifecycleRequired = channel.required;
         const [stamped] = await tx.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
         const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
-        const capable = !lifecycle?.required || await privateChatBindingSupported(options,transactionDb);
+        const capable = channel.enabled && (!lifecycle?.required || await privateChatBindingSupported(options,transactionDb));
         const now = new Date();
         await tx
           .update(classpilotChatDeliveries)

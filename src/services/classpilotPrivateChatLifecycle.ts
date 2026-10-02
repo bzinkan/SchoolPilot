@@ -186,7 +186,7 @@ export async function isPrivateChatMessageCurrent(message: ChatMessage, database
   if (!token) {
     const channel = await lockPrivateChatChannel({schoolId:message.schoolId,studentId:message.studentId,
       teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId},database);
-    if (!channel.required) return true;
+    if (!channel.required) return channel.enabled;
   }
   const state = await lockPrivateChatLifecycle({schoolId:message.schoolId,studentId:message.studentId,
     teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId},database);
