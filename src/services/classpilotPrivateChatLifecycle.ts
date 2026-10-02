@@ -46,6 +46,7 @@ export function privateChatMessageFields(token: PrivateChatLifecycle) {
  * latches enforcement without upgrading a settings SHARE lock mid-transaction. */
 export async function latchPrivateChatLifecycle(schoolId: string): Promise<void> {
   if (!isClasspilotCapabilityActive("privateChatLifecycleV1", { schoolId })) return;
+  await db.insert(settings).values({schoolId,privateChatLifecycleRequired:true}).onConflictDoNothing();
   await db.update(settings).set({ privateChatLifecycleRequired: true })
     .where(and(eq(settings.schoolId,schoolId),eq(settings.privateChatLifecycleRequired,false)));
 }
@@ -66,12 +67,14 @@ export async function lockPrivateChatChannel(scope: PrivateChatScope, database: 
       eq(classpilotSupervisionContexts.schoolId,scope.schoolId),eq(classpilotSupervisionContexts.id,scope.supervisionContextId!))).for("key share");
   }
   const [school] = await database.select().from(settings).where(eq(settings.schoolId,scope.schoolId)).limit(1).for("share");
-  if (!school) throw lifecycleError("PRIVATE_CHAT_SETTINGS_UNAVAILABLE", "School messaging settings are unavailable");
+  if (!school && isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId})) {
+    throw lifecycleError("PRIVATE_CHAT_SETTINGS_UNAVAILABLE", "School messaging settings are unavailable");
+  }
   const parent = scope.teachingSessionId ? eq(sessionSettings.sessionId,scope.teachingSessionId)
     : eq(sessionSettings.supervisionContextId,scope.supervisionContextId!);
   const [activity] = await database.select().from(sessionSettings).where(and(eq(sessionSettings.schoolId,scope.schoolId),parent)).limit(1).for("share");
-  return {required:school.privateChatLifecycleRequired || isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId}),
-    enabled:school.studentMessagingEnabled !== false && activity?.chatEnabled !== false};
+  return {required:school?.privateChatLifecycleRequired === true || isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId}),
+    enabled:school?.studentMessagingEnabled !== false && activity?.chatEnabled !== false};
 }
 
 /** Caller owns entitlement + student authority locks. Parent -> school settings
