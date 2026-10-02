@@ -1,3 +1,5 @@
+import { privateChatMessageLifecycle } from "../../services/classpilotPrivateChatLifecycle.js";
+import { classpilotCommandAuthorityEnvelope } from "../../services/classpilotCommandAuthority.js";
 import crypto from "crypto";
 import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
 import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
@@ -4682,6 +4684,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           id: message.id,
           message: message.message,
           commandId: message.commandId,
+          ...(message.commandId ? {messageKind:"announcement"} : {}),
           studentId,
           studentSessionId,
           teachingSessionId: message.teachingSessionId,
@@ -4741,14 +4744,15 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
           { schoolId },
           () => withClasspilotStudentWebSocketBootstrapAuthority(
             { schoolId, studentId, studentSessionId, deviceId },
-            () => undefined,
-            (teacherReplies) => teacherReplies.map(({ message }) => {
+            (transactionDb) => getClasspilotStudentControlState(schoolId,studentId,transactionDb),
+            (teacherReplies,control) => teacherReplies.map(({ message }) => {
               const replyPayload = {
                 type: "teacher-message",
                 _msgId: message.id,
                 chatMessageId: message.id,
+                messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(message),
                 messageId: message.id,
-                sessionId: message.sessionId,
+                ...(message.supervisionContextId ? {...classpilotCommandAuthorityEnvelope({supervisionContextId:message.supervisionContextId}),studentControlRevision:control?.revision} : {sessionId:message.sessionId,teachingSessionId:message.sessionId}),
                 studentId,
                 studentSessionId,
                 message: message.content,

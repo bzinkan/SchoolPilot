@@ -1,3 +1,4 @@
+import { expirePrivateChatDeliveries } from "./classpilotPrivateChatLifecycle.js";
 import { claimStudentInformationJobs, processStudentInformationClaim, cleanupStudentInformationImports } from "./studentInformationWorker.js";
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
@@ -756,6 +757,7 @@ async function expireClasspilotSupervisionContexts() {
 async function expireClasspilotTransientCommands() {
   try {
     await expireClasspilotTransientCommandTargets({}, schedulerDb);
+    await expirePrivateChatDeliveries(schedulerDb,250);
   } catch (err) {
     console.error("[ClassPilot] Failed to expire transient commands");
     errorMonitor.trackError("scheduler_failure", err as Error, {

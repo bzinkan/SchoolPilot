@@ -12,6 +12,9 @@ import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle,
+  privateChatMessageLifecycle, samePrivateChatLifecycle, parsePrivateChatLifecycle, privateChatLifecycleRequired, privateChatBindingSupported, isPrivateChatMessageCurrent, isPrivateChatMessageExpired,
+  type PrivateChatLifecycle } from "./classpilotPrivateChatLifecycle.js";
 import {
   dispatchCacheInvalidation,
   invalidateUserCredentialConnections,
@@ -19201,6 +19204,7 @@ export async function withAuthorizedStudentFabMutation<T>(options: {
     ) {
       throw classpilotFabMutationError(409, "fab_authority_stale", "Student classroom authority changed");
     }
+    await tx.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,options.schoolId),eq(teachingSessions.id,owner.session.id))).for("key share");
     const [schoolSettings] = await tx
       .select({
         studentMessagingEnabled: settings.studentMessagingEnabled,
@@ -19254,7 +19258,9 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
   content: string;
   clientMessageId?: string | null;
   teachingSessionId?: string | null;
+  expectedPrivateChatLifecycle?: unknown;
 }): Promise<{ student: Student; teachingSession: TeachingSession; message: ChatMessage; created: boolean }> {
+  await latchPrivateChatLifecycle(options.schoolId);
   return withAuthorizedStudentFabMutation({ ...options, feature: "chat" }, async (transactionDb, authority) => {
     if (!isCurrentClasspilotStudentMessageSession(
       options.teachingSessionId,
@@ -19266,7 +19272,9 @@ export async function createAuthorizedClasspilotStudentMessage(options: {
         "Student message belongs to a teaching session that is no longer active"
       );
     }
+    const lifecycle = await preparePrivateChatMessage({...options,teachingSessionId:authority.teachingSession.id},options.expectedPrivateChatLifecycle,transactionDb);
     const [message] = await transactionDb.insert(chatMessages).values({
+      ...lifecycle,
       schoolId: options.schoolId,
       sessionId: authority.teachingSession.id,
       studentId: options.studentId,
@@ -19512,8 +19520,11 @@ export async function authorizeClasspilotTeacherCloseChat(options: {
   teachingSessionId: string;
   studentId: string;
   actorId: string;
-}): Promise<AuthorizedClasspilotTeacherStudentAction> {
-  return withAuthorizedClasspilotTeacherStudentAction(options, async (_transactionDb, authority) => authority);
+  expectedPrivateChatLifecycle?: unknown;
+}): Promise<AuthorizedClasspilotTeacherStudentAction & {privateChatLifecycle:PrivateChatLifecycle}> {
+  await latchPrivateChatLifecycle(options.schoolId);
+  return withAuthorizedClasspilotTeacherStudentAction(options, async (transactionDb, authority) => ({...authority,
+    privateChatLifecycle:await closePrivateChatLifecycle(options,options.expectedPrivateChatLifecycle,options.actorId,transactionDb)}));
 }
 
 export async function getChatMessages(
@@ -19628,11 +19639,13 @@ export async function createTeacherChatReplyWithDelivery(options: {
   studentId: string;
   teacherId: string;
   content: string;
+  expectedPrivateChatLifecycle?: unknown;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery }> {
   const content = String(options.content || "").trim();
   if (!content || content.length > 500) {
     throw classpilotFabMutationError(400, "teacher_reply_invalid", "Message must contain 1 to 500 characters");
   }
+  await latchPrivateChatLifecycle(options.schoolId);
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
     await assertClasspilotEntitled(options.schoolId, transactionDb, { lock: true });
@@ -19725,7 +19738,9 @@ export async function createTeacherChatReplyWithDelivery(options: {
     if (schoolSettings?.studentMessagingEnabled === false || classSettings?.chatEnabled === false) {
       throw classpilotFabMutationError(403, "FAB_FEATURE_DISABLED", "Messaging is turned off");
     }
+    const lifecycle = await preparePrivateChatMessage(options,options.expectedPrivateChatLifecycle,transactionDb);
     const [message] = await tx.insert(chatMessages).values({
+      ...lifecycle,
       schoolId: options.schoolId,
       sessionId: options.teachingSessionId,
       studentId: options.studentId,
@@ -19769,7 +19784,7 @@ export async function markTeacherChatDeliveryAttempt(options: {
     );
     if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) return undefined;
     const [deliveryAuthority] = await tx
-      .select({ teachingSessionId: classpilotChatDeliveries.teachingSessionId })
+      .select({ teachingSessionId: classpilotChatDeliveries.teachingSessionId, supervisionContextId: classpilotChatDeliveries.supervisionContextId })
       .from(classpilotChatDeliveries)
       .where(and(
         eq(classpilotChatDeliveries.schoolId, options.schoolId),
@@ -19783,7 +19798,10 @@ export async function markTeacherChatDeliveryAttempt(options: {
       schoolId: options.schoolId,
       studentId: options.studentId,
       teachingSessionId: deliveryAuthority.teachingSessionId,
+      supervisionContextId: deliveryAuthority.supervisionContextId,
     }, transactionDb))) return undefined;
+    const [pending] = await tx.select().from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.id,options.chatMessageId))).limit(1);
+    if (!pending || !(await isPrivateChatMessageCurrent(pending,transactionDb))) return undefined;
     const now = new Date();
     const [delivery] = await tx
       .update(classpilotChatDeliveries)
@@ -19831,6 +19849,7 @@ export async function acknowledgeTeacherChatDelivery(options: {
   status: TeacherChatAckStatus;
   errorMessage?: string | null;
   studentControlRevision?: number;
+  privateChatLifecycle?: unknown;
 }): Promise<{ message: ChatMessage; delivery: ClasspilotChatDelivery } | undefined> {
   return db.transaction(async (tx) => {
     const transactionDb = tx as unknown as typeof db;
@@ -19870,6 +19889,9 @@ export async function acknowledgeTeacherChatDelivery(options: {
       eq(chatMessages.studentId, options.studentId)
     )).limit(1);
     if (!existingMessage) return undefined;
+    if (delivery.state === "expired" || delivery.expiresAt <= new Date() || !(await isPrivateChatMessageCurrent(existingMessage,transactionDb))) return undefined;
+    if (!delivery.supervisionContextId && !(await hasCurrentClasspilotStudentControlAuthority({...options,teachingSessionId:delivery.teachingSessionId},transactionDb))) return undefined;
+    if (await privateChatLifecycleRequired(options.schoolId,transactionDb) && !samePrivateChatLifecycle(parsePrivateChatLifecycle(options.privateChatLifecycle),privateChatMessageLifecycle(existingMessage))) return undefined;
     const now = new Date();
     const transition = nextTeacherChatDeliveryState(existingMessage, { status: options.status, at: now, errorMessage: options.errorMessage });
     if (!transition.changed) return { message: existingMessage, delivery };
@@ -19914,9 +19936,9 @@ export async function classpilotTeacherChatAckRejection(options: {
   schoolId: string;
   chatMessageId: string;
   studentId: string;
-}): Promise<"CHAT_MESSAGE_NOT_FOUND" | "CHAT_ACK_STALE"> {
+}): Promise<"CHAT_MESSAGE_NOT_FOUND" | "CHAT_ACK_STALE" | "PRIVATE_CHAT_EXPIRED"> {
   const [delivery] = await db
-    .select({ id: classpilotChatDeliveries.id })
+    .select({ id: classpilotChatDeliveries.id, state:classpilotChatDeliveries.state, expiresAt:classpilotChatDeliveries.expiresAt })
     .from(classpilotChatDeliveries)
     .where(and(
       eq(classpilotChatDeliveries.schoolId, options.schoolId),
@@ -19924,7 +19946,9 @@ export async function classpilotTeacherChatAckRejection(options: {
       eq(classpilotChatDeliveries.studentId, options.studentId)
     ))
     .limit(1);
-  return delivery ? "CHAT_ACK_STALE" : "CHAT_MESSAGE_NOT_FOUND";
+  if (!delivery) return "CHAT_MESSAGE_NOT_FOUND";
+  return delivery.state === "expired" || delivery.expiresAt <= new Date() || await isPrivateChatMessageExpired(options.chatMessageId,options.schoolId)
+    ? "PRIVATE_CHAT_EXPIRED" : "CHAT_ACK_STALE";
 }
 
 type ClasspilotTeacherChatBinding = {
@@ -19962,6 +19986,7 @@ export async function withClasspilotStudentControlDeliveryAuthority<
     prepared: Prepared
   ) => T
 ): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  if (options.claimTeacherChatDeliveries) await latchPrivateChatLifecycle(options.schoolId);
   const limit = Math.max(1, Math.min(20, options.limit ?? 10));
   try {
     return await db.transaction(async (tx) => {
@@ -20000,6 +20025,10 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           ...authority,
         }, transactionDb)
       ) {
+        const lifecycleRequired = await privateChatLifecycleRequired(options.schoolId,transactionDb);
+        const [stamped] = await tx.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
+        const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
+        const capable = !lifecycle?.required || await privateChatBindingSupported(options,transactionDb);
         const now = new Date();
         await tx
           .update(classpilotChatDeliveries)
@@ -20033,6 +20062,13 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           .limit(limit)
           .for("update", { skipLocked: true });
         for (const row of due) {
+          const messageToken = privateChatMessageLifecycle(row.message);
+          const current = !(await isPrivateChatMessageExpired(row.message.id,options.schoolId,transactionDb)) && (!lifecycle || lifecycle.enabled && (messageToken ? samePrivateChatLifecycle(messageToken,lifecycle.token) : !lifecycle.required && lifecycle.token.threadGeneration === 1 && lifecycle.token.schoolEpoch === 1 && lifecycle.token.activityEpoch === 1));
+          if (!current) {
+            await tx.update(classpilotChatDeliveries).set({state:"expired",updatedAt:now,lastError:"Private chat ended or messaging was switched off"}).where(eq(classpilotChatDeliveries.id,row.delivery.id));
+            continue;
+          }
+          if (!capable) continue;
           const [delivery] = await tx
             .update(classpilotChatDeliveries)
             .set({
@@ -26682,6 +26718,7 @@ export async function getPendingMessagesForStudent(options: {
       // control scope and the exact target has not reached a terminal state.
       sql`(
         (${messages.commandId} IS NULL
+          AND NOT EXISTS (SELECT 1 FROM settings legacy_guard WHERE legacy_guard.school_id=${options.schoolId} AND legacy_guard.private_chat_lifecycle_required)
           AND ${messages.timestamp} >= now() - interval '5 minutes')
         OR EXISTS (
           SELECT 1

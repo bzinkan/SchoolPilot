@@ -26,6 +26,7 @@ const tabLimit = z.number().int().min(1).max(100).nullable();
 const rules = z.array(z.string().trim().min(1).max(2048)).max(1000).transform(values => [...new Set(values)]);
 const version = z.string().regex(/^[a-f0-9]{64}$/);
 const schemas = {
+  messaging: z.object({ expectedVersion: version, studentMessagingEnabled: z.boolean() }).strict(),
   retention: z.object({ expectedVersion: version, retentionHours: z.union([z.string(), z.number()]) }).strict(),
   classroom: z.object({ expectedVersion: version, maxTabsPerStudent: tabLimit, allowedDomains: rules }).strict(),
   monitoring: z.object({ expectedVersion: version, enableTrackingHours: z.boolean(),
@@ -114,6 +115,7 @@ export function updateClasspilotTeacherPreferences(scope: SettingsActor, body: u
 
 function valuesFor(section: SchoolSettingsSection, row: Settings) {
   switch (section) {
+    case "messaging": return { studentMessagingEnabled: row.studentMessagingEnabled !== false, privateChatEpoch:row.privateChatEpoch };
     case "retention": return { retentionHours: row.retentionHours };
     case "classroom": return { maxTabsPerStudent: readTabLimit(row.maxTabsPerStudent), allowedDomains: row.allowedDomains ?? [] };
     case "monitoring": return { enableTrackingHours: row.enableTrackingHours === true, trackingStartTime: row.trackingStartTime ?? "08:00",
@@ -177,6 +179,7 @@ export async function updateClasspilotSchoolSettings(scope: SettingsActor, secti
     }
     let patch: Partial<InsertSettings>;
     switch (key) {
+      case "messaging": { const value = parse(schemas.messaging,body); patch = {studentMessagingEnabled:value.studentMessagingEnabled}; break; }
       case "retention": { const value = parse(schemas.retention, body); patch = { retentionHours: String(assertClasspilotRetentionHours(value.retentionHours)) }; break; }
       case "classroom": { const value = parse(schemas.classroom, body); patch = { maxTabsPerStudent: value.maxTabsPerStudent === null ? null : String(value.maxTabsPerStudent), allowedDomains: value.allowedDomains }; break; }
       case "monitoring": {

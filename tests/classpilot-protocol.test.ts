@@ -7,6 +7,7 @@ import {
   classpilotCapabilityRolloutMode,
   isClasspilotCapabilityActive,
   negotiateClasspilotProtocol,
+  assertClasspilotCapabilityRolloutsEnv,
 } from "../src/services/classpilotProtocol.js";
 import {
   classpilotObservationStatus,
@@ -32,6 +33,33 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "restrictionAuthPassThroughV1",
   "restrictionPortalFirstV1",
 ] as const;
+
+test("private chat requires reviewed tenancy admission and both advertised parent capabilities", () => {
+  const env: NodeJS.ProcessEnv = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED:"true",CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1:"true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1:"true",CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1:"true",
+    RLS_GUC_ENABLED:"true",RLS_ENABLED_TABLES:"classpilot_private_chat_threads",
+  };
+  const advertisedCapabilities=["scopedAuthorityChecksV1","studentChatIdempotencyV1","privateChatLifecycleV1"];
+  const accepted=(candidate:NodeJS.ProcessEnv,advertised=advertisedCapabilities)=>negotiateClasspilotProtocol({
+    clientProtocolVersion:3,advertisedCapabilities:advertised,scope:{schoolId:"school-a"},env:candidate,
+  }).acceptedCapabilities.includes("privateChatLifecycleV1");
+  assert.equal(accepted(env),true);
+  assert.doesNotThrow(()=>assertClasspilotCapabilityRolloutsEnv(env));
+  for(const parent of ["scopedAuthorityChecksV1","studentChatIdempotencyV1"]) {
+    assert.equal(accepted(env,advertisedCapabilities.filter(value=>value!==parent)),false);
+  }
+  for(const missing of ["RLS_GUC_ENABLED","RLS_ENABLED_TABLES"]) {
+    const candidate={...env,[missing]:""};
+    assert.equal(accepted(candidate),false);
+    assert.throws(()=>assertClasspilotCapabilityRolloutsEnv(candidate),/RLS admission/);
+  }
+  assert.equal(accepted({...env,CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1:"false"}),false);
+  assert.equal(accepted({...env,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({
+    scopedAuthorityChecksV1:{mode:"on"},studentChatIdempotencyV1:{mode:"on"},
+    privateChatLifecycleV1:{mode:"on",schoolIds:["school-b"]},
+  })}),false);
+});
 
 test("supervision capability follows either enabled classroom origin without bypassing capability controls", () => {
   const base = { CLASSPILOT_PROTOCOL_V3_ENABLED: "true", CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1: "true",

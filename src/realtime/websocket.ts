@@ -1,3 +1,4 @@
+import { privateChatMessageLifecycle } from "../services/classpilotPrivateChatLifecycle.js";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
@@ -1412,6 +1413,7 @@ export function setupWebSocket(
                           type: "teacher-message",
                           _msgId: teacherMessage.id,
                           chatMessageId: teacherMessage.id,
+                messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(teacherMessage),
                           messageId: teacherMessage.id,
                           ...(teacherMessage.supervisionContextId
                             ? { ...classpilotCommandAuthorityEnvelope({ supervisionContextId: teacherMessage.supervisionContextId }),
@@ -1838,6 +1840,7 @@ export function setupWebSocket(
           const acknowledged = await runWithTenantContext({ schoolId: client.schoolId }, () =>
             acknowledgeTeacherChatDelivery({
               chatMessageId: messageId,
+              privateChatLifecycle:message.privateChatLifecycle,
               schoolId: client.schoolId!,
               studentId: client.studentId!,
               studentSessionId: client.studentSessionId!,
@@ -1851,6 +1854,7 @@ export function setupWebSocket(
           if (acknowledged?.message.supervisionContextId) {
             const payload = { type: "chat-message-delivery", supervisionContextId: acknowledged.message.supervisionContextId,
               messageId, studentId: acknowledged.message.studentId, deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message),
               seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage };
             const context = await runWithTenantContext({ schoolId: client.schoolId }, () =>
               requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: acknowledged.message.supervisionContextId! })
@@ -1871,6 +1875,7 @@ export function setupWebSocket(
               messageId,
               studentId: acknowledged.message.studentId,
               deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message),
               seenAt: acknowledged.message.seenAt,
               errorMessage: acknowledged.message.errorMessage,
             };

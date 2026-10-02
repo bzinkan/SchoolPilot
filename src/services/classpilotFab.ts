@@ -1,3 +1,4 @@
+import { readPrivateChatLifecycleState } from "./classpilotPrivateChatLifecycle.js";
 import { readStudentToolsSnapshot } from "./classpilotClassTools.js";
 import { classToolsPhase } from "../config/classpilotClassTools.js";
 import crypto from "crypto";
@@ -156,6 +157,9 @@ export async function buildStudentFabState(
     options.dbInstance
   );
   const supervision = authority.supervision;
+  const privateChatLifecycleState = await readPrivateChatLifecycleState({schoolId,studentId,
+    teachingSessionId:supervision ? null : authority.teachingSession?.id,
+    supervisionContextId:supervision && scheduledContextHasClassroomTools(supervision.context) ? supervision.context.id : null},options.dbInstance);
   const studentSessionId = options.studentSessionId !== undefined
     ? options.studentSessionId
     : authority.studentSession?.id ?? null;
@@ -174,7 +178,7 @@ export async function buildStudentFabState(
       const context = supervision.context;
       const toggles = await scheduledClassroomToggles(schoolId, context, options.dbInstance);
       const hands = (await getActiveHandsForStudent(schoolId, studentId, options.dbInstance)).filter((hand) => hand.supervisionContextId === context.id);
-      return { schemaVersion: 1, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id,
+      return { schemaVersion: 1, privateChatLifecycleState, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id,
         contextSource: scheduledSupervisionSource(context), contextName: context.name, activeSessionIds: [],
         contextAuthorityRevision: String(context.classroomAuthorityRevision),
         activeContexts: [{ supervisionContextId: context.id }], lifecycleRevision: toggles.lifecycleRevision, revision: toggles.lifecycleRevision,
@@ -190,6 +194,7 @@ export async function buildStudentFabState(
     }
     return {
       schemaVersion: 1,
+      privateChatLifecycleState,
       studentId,
       studentSessionId,
       ownershipRevision,
@@ -266,6 +271,7 @@ export async function buildStudentFabState(
 
   return {
     schemaVersion: 1,
+    privateChatLifecycleState,
     studentId,
     studentSessionId,
     ownershipRevision,

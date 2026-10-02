@@ -7,6 +7,7 @@ import { importProcessingStagesMigration } from "./importProcessingStagesMigrati
 import { passpilotRulesMigration, passpilotRulesIndexesMigration } from "./passpilotRulesMigration.js";
 import { classpilotUsageRollupsMigration } from "./classpilotUsageRollupsMigration.js";
 import { classpilotUsageRollupDaysMigration } from "./classpilotUsageRollupDaysMigration.js";
+import { classpilotPrivateChatLifecycleMigration } from "./classpilotPrivateChatLifecycleMigration.js";
 import { passpilotAppointmentsMigration } from "./passpilotAppointmentsMigration.js";
 import { createHash } from "node:crypto";
 import type { SchoolPilotMigration } from "./migrationLedger.js";
@@ -535,6 +536,7 @@ export const schoolPilot27Migrations: readonly SchoolPilotMigration[] = [
   flightPathResourcesMigration,
   staffIdentityIntegrityMigration,
   flightPathContentRevisionMigration,
+  classpilotPrivateChatLifecycleMigration,
 ];
 
 export const STAFF_IDENTITY_CONTRACT_MIGRATION_IDS = [

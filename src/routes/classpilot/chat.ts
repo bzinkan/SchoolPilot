@@ -1,3 +1,4 @@
+import { privateChatMessageLifecycle, teacherPrivateChatLifecycles, projectPrivateChatMessages } from "../../services/classpilotPrivateChatLifecycle.js";
 import { classToolsPhase } from "../../config/classpilotClassTools.js";
 import { publishClassToolsChanged } from "../../services/classpilotToolsEvents.js";
 import crypto from "crypto";
@@ -183,9 +184,10 @@ function publicChatMessage<T extends Record<string, any>>(message: T) {
     deviceId: _deviceId,
     studentSessionId: _studentSessionId,
     recipientId: _recipientId,
+    privateChatThreadId: _thread, privateChatSchoolEpoch: _schoolEpoch, privateChatActivityEpoch: _activityEpoch, privateChatGeneration: _generation,
     ...safe
   } = message;
-  return safe;
+  return {...safe,messageKind:"private",privateChatLifecycle:privateChatMessageLifecycle({privateChatThreadId:message.privateChatThreadId,privateChatSchoolEpoch:message.privateChatSchoolEpoch,privateChatActivityEpoch:message.privateChatActivityEpoch,privateChatGeneration:message.privateChatGeneration})};
 }
 
 function scheduledStudentAction(req: any, res: any): ScheduledStudentAction {
@@ -212,7 +214,7 @@ router.get("/chat/:sessionId", ...staffAuth, async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
     const messages = await getChatMessages(sessionId, res.locals.schoolId!);
-    return res.json({ messages: messages.map(publicChatMessage) });
+    return res.json({ messages: (await projectPrivateChatMessages(messages)).map(publicChatMessage) });
   } catch (err) {
     next(err);
   }
@@ -310,7 +312,7 @@ router.post("/student/send-message", requireDeviceAuth, studentChatBurstLimiter,
   try {
     if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
       const options = scheduledStudentAction(req, res);
-      const result = await createScheduledStudentMessage({ ...options, content: String(req.body.message || "").trim(), clientMessageId: String(req.body.clientMessageId || "") });
+      const result = await createScheduledStudentMessage({ ...options, expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle, content: String(req.body.message || "").trim(), clientMessageId: String(req.body.clientMessageId || "") });
       const message = publicChatMessage(result.message);
       if (result.created) {
         const fanOut = await publishScheduledClassroomEvent(result.context, { type: "student-message", data: message });
@@ -352,6 +354,7 @@ router.post("/student/send-message", requireDeviceAuth, studentChatBurstLimiter,
     const teachingSessionId = parsedTeachingSessionId.teachingSessionId;
 
     const { student, teachingSession, message: msg, created } = await createAuthorizedClasspilotStudentMessage({
+      expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle,
       schoolId,
       studentId,
       studentSessionId,
@@ -430,6 +433,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
         deviceId,
         status,
         studentControlRevision: raw?.studentControlRevision,
+        privateChatLifecycle:raw?.privateChatLifecycle,
         errorMessage: typeof (raw?.errorMessage ?? raw?.error) === "string"
           ? String(raw.errorMessage ?? raw.error).slice(0, 500)
           : null,
@@ -444,6 +448,7 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
           messageId,
           studentId,
           deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message),
           seenAt: acknowledged.message.seenAt,
           errorMessage: acknowledged.message.errorMessage,
         };
@@ -452,7 +457,8 @@ router.post("/device/chat-acks", ...studentAuth, async (req, res, next) => {
       } else if (acknowledged?.message.supervisionContextId) {
         const context = await requireScheduledClassroomContext({ schoolId, supervisionContextId: acknowledged.message.supervisionContextId });
         await publishScheduledClassroomEvent(context, { type: "chat-message-delivery", messageId, studentId,
-          deliveryStatus: acknowledged.message.deliveryStatus, seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage });
+          deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message), seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage });
       }
     }
     return res.json({ receipts });
@@ -477,7 +483,8 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
         actorId: req.authUser!.id, allowObserve: isClasspilotAdmin(req, res) });
       const messages = await db.select().from(chatMessages).where(and(eq(chatMessages.schoolId, context.schoolId), eq(chatMessages.supervisionContextId, context.id),
         isNull(chatMessages.deletedAt))).orderBy(chatMessages.createdAt).limit(500);
-      return res.json({ messages: messages.map(publicChatMessage) });
+      return res.json({ messages: (await projectPrivateChatMessages(messages)).map(publicChatMessage),
+        ...await teacherPrivateChatLifecycles({schoolId:context.schoolId,supervisionContextId:context.id}) });
     }
     const sessionId = String(req.query.sessionId || "").trim();
     if (!sessionId) {
@@ -488,7 +495,8 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
       return res.status(404).json({ error: "Session not found" });
     }
     const messages = await getChatMessages(sessionId, schoolId);
-    return res.json({ messages: messages.map(publicChatMessage) });
+    return res.json({ messages: (await projectPrivateChatMessages(messages)).map(publicChatMessage),
+      ...await teacherPrivateChatLifecycles({schoolId,teachingSessionId:sessionId}) });
   } catch (err) {
     next(err);
   }
@@ -541,7 +549,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
     if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
       const authority = parseClasspilotActivityAuthority(req.body);
       if (!authority?.supervisionContextId || req.body.sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
-      const result = await createScheduledTeacherReply({ schoolId: res.locals.schoolId!, contextId: authority.supervisionContextId,
+      const result = await createScheduledTeacherReply({ expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle, schoolId: res.locals.schoolId!, contextId: authority.supervisionContextId,
         contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")),
         actorId: req.authUser!.id, studentId: String(req.body.studentId || req.body.toStudentId || ""), content: String(req.body.message || "").trim() });
       const binding = (await getActiveSessionsForStudents(result.context.schoolId, [result.message.studentId!]))[0];
@@ -551,7 +559,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
         const delivery = await withClasspilotStudentControlDeliveryAuthority({ ...target, claimTeacherChatDeliveries: true, limit: 20 },
           (database) => getClasspilotStudentControlState(target.schoolId, target.studentId, database),
           (claimed, control) => claimed.map(({ message }) => {
-            const payload = { type: "teacher-message", _msgId: message.id, chatMessageId: message.id, messageId: message.id,
+            const payload = { type: "teacher-message", messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(message), _msgId: message.id, chatMessageId: message.id, messageId: message.id,
               supervisionContextId: message.supervisionContextId, studentId: target.studentId, studentSessionId: binding.id,
               studentControlRevision: control?.revision, message: message.content, fromName: "Teacher" };
             sendToStudentBindingLocal(target, payload);
@@ -589,6 +597,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
     }
 
     const { message: msg } = await createTeacherChatReplyWithDelivery({
+      expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle,
       schoolId,
       teachingSessionId: session.id,
       studentId: targetStudentId,
@@ -616,6 +625,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
         (claimed) => claimed.map(({ message: claimedMessage }) => {
           const replyPayload = {
             type: "teacher-message",
+            messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(claimedMessage),
             _msgId: claimedMessage.id,
             chatMessageId: claimedMessage.id,
             messageId: claimedMessage.id,
@@ -723,7 +733,7 @@ router.get("/students/:studentId/messages", ...staffAuth, async (req, res, next)
     return res.json({
       student: { id: student.id, firstName: student.firstName, lastName: student.lastName },
       window: { from: window.from.toISOString(), to: window.to.toISOString() },
-      messages: page.messages.map(publicChatMessage),
+      messages: (await projectPrivateChatMessages(page.messages)).map(publicChatMessage),
       nextCursor: page.nextCursor ? encodeChatTranscriptCursor(page.nextCursor) : null,
     });
   } catch (err) {
@@ -812,7 +822,7 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
     if (req.body.supervisionContextId !== undefined && req.body.supervisionContextId !== null) {
       const authority = parseClasspilotActivityAuthority(req.body);
       if (!authority?.supervisionContextId || sessionId) return res.status(400).json({ error: "Exactly one classroom authority is required" });
-      const result = await authorizeScheduledTeacherStudentAction({ schoolId, contextId: authority.supervisionContextId,
+      const result = await authorizeScheduledTeacherStudentAction({ schoolId, closeChat:true,expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle, contextId: authority.supervisionContextId,
         contextAuthorityRevision: requireScheduledClassroomRequestRevision(req.get("X-ClassPilot-Context-Authority-Revision")),
         actorId: req.authUser!.id, studentId: String(studentId || "") });
       if (result.binding) {
@@ -821,14 +831,12 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
           studentSessionId: binding.id, deviceId: binding.deviceId, controlRevision: result.controlRevision,
           scheduledClassroomOnly: true, actorId: req.authUser!.id }, async () => {
             const target = { kind: "student-binding" as const, schoolId, studentId, studentSessionId: binding.id, deviceId: binding.deviceId };
-            const payload = { type: "chat-closed", _msgId: crypto.randomUUID(), studentId, studentSessionId: binding.id,
+            const payload = { type: "chat-closed", privateChatLifecycle:result.privateChatLifecycle, _msgId: crypto.randomUUID(), studentId, studentSessionId: binding.id,
               ...classpilotCommandAuthorityEnvelope({ supervisionContextId: result.context.id }), studentControlRevision: result.controlRevision };
             sendToStudentBindingLocal(target, payload); await publishWS(target, payload);
           });
       }
-      await logAudit({ schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.chat.closed",
-        entityType: "student", entityId: String(studentId || ""), metadata: { supervisionContextId: result.context.id } });
-      return res.json({ ok: true });
+      return res.json({ ok: true,privateChatLifecycle:result.privateChatLifecycle });
     }
 
     if (!sessionId) {
@@ -837,7 +845,8 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
     if (!studentId) {
       return res.status(400).json({ error: "studentId required" });
     }
-    const { teachingSession, binding } = await authorizeClasspilotTeacherCloseChat({
+    const { teachingSession, binding, privateChatLifecycle } = await authorizeClasspilotTeacherCloseChat({
+      expectedPrivateChatLifecycle:req.body.expectedPrivateChatLifecycle,
       schoolId,
       teachingSessionId: sessionId,
       studentId,
@@ -846,7 +855,7 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
 
     if (binding) {
       const payload = {
-        type: "chat-closed",
+        type: "chat-closed", privateChatLifecycle,
         _msgId: crypto.randomUUID(),
         sessionId: teachingSession.id,
         studentId,
@@ -856,13 +865,12 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
           supervisionContextId: null,
         }),
       };
-      sendToDeviceLocal(schoolId, binding.deviceId, payload);
-      await publishWS({ kind: "device", schoolId, deviceId: binding.deviceId }, payload);
+      const target = {kind:"student-binding" as const,schoolId,studentId,studentSessionId:binding.id,deviceId:binding.deviceId};
+      sendToStudentBindingLocal(target, payload);
+      await publishWS(target, payload);
     }
 
-    await logAudit({ schoolId, userId: req.authUser!.id, userRole: res.locals.membershipRole, action: "classpilot.chat.closed",
-      entityType: "student", entityId: String(studentId), metadata: { teachingSessionId: teachingSession.id } });
-    return res.json({ ok: true });
+    return res.json({ ok: true,privateChatLifecycle });
   } catch (err) {
     if (handleFabContractError(err, res)) return;
     next(err);

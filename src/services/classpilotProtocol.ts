@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassroom.js";
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
+import { parseRlsEnabledTables } from "../db/rlsPolicies.js";
 
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
@@ -34,6 +35,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   // Path entries. Index 25, inside the 32-name realtime capability cache.
   "preciseRestrictionResourcesV1",
   "focusTabV1",
+  "privateChatLifecycleV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -75,6 +77,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   exitTicketsV1: "CLASSPILOT_CAP_EXIT_TICKETS_V1",
   preciseRestrictionResourcesV1: "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1",
   focusTabV1: "CLASSPILOT_CAP_FOCUS_TAB_V1",
+  privateChatLifecycleV1: "CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -103,6 +106,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "exitTicketsV1",
   "preciseRestrictionResourcesV1",
   "focusTabV1",
+  "privateChatLifecycleV1",
 ]);
 
 function enabled(value: string | undefined): boolean {
@@ -216,6 +220,10 @@ function parseCapabilityRollouts(source: string | undefined): ParsedRollouts {
  * silent extension regression. Refuse to start instead.
  */
 export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = process.env): void {
+  if (enabled(env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1) &&
+    (!enabled(env.RLS_GUC_ENABLED) || !parseRlsEnabledTables(env.RLS_ENABLED_TABLES).has("classpilot_private_chat_threads"))) {
+    throw new Error("FATAL: privateChatLifecycleV1 requires tenant GUC and the reviewed classpilotPrivateChatLifecycle RLS admission on API and worker.");
+  }
   const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
   if (parsed.configured && !parsed.valid) {
     throw new Error(
@@ -310,6 +318,10 @@ export function isClasspilotCapabilityActive(
   scope: ClasspilotProtocolScope,
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
+  if (capability === "privateChatLifecycleV1" &&
+    (!enabled(env.RLS_GUC_ENABLED) || !parseRlsEnabledTables(env.RLS_ENABLED_TABLES).has("classpilot_private_chat_threads")
+      || !isClasspilotCapabilityActive("scopedAuthorityChecksV1",scope,env)
+      || !isClasspilotCapabilityActive("studentChatIdempotencyV1",scope,env))) return false;
   if (capability === "scheduledClassroomV1"
     && !isScheduledClassroomEnabled(scope.schoolId ?? "", env)
     && !classpilotSupervisionPreviewObserved(scope.schoolId ?? "", env)) return false;
@@ -391,6 +403,7 @@ export function negotiateClasspilotProtocol(options: {
           || trackingWindowLeaseAccepted
         )
         && (capability !== "restrictionPortalFirstV1" || restrictionAuthAccepted)
+        && (capability !== "privateChatLifecycleV1" || advertised.has("studentChatIdempotencyV1") && serverEnabled.has("studentChatIdempotencyV1"))
         && (capability !== "screenshotReadOnlyObservationV1" || activeCadenceAccepted)
     ),
   };

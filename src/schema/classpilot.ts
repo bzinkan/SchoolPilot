@@ -1242,6 +1242,7 @@ export const sessionSettings = pgTable("session_settings", {
   chatEnabled: boolean("chat_enabled").default(true),
   raiseHandEnabled: boolean("raise_hand_enabled").default(true),
   chatPaused: boolean("chat_paused").notNull().default(false),
+  privateChatEpoch: integer("private_chat_epoch").notNull().default(1),
   lifecycleRevision: integer("lifecycle_revision").notNull().default(1),
   toolsRevision: integer("tools_revision").notNull().default(0),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -1261,6 +1262,28 @@ export const sessionSettings = pgTable("session_settings", {
 export type SessionSetting = typeof sessionSettings.$inferSelect;
 export type InsertSessionSetting = typeof sessionSettings.$inferInsert;
 
+export const classpilotPrivateChatThreads = pgTable("classpilot_private_chat_threads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  schoolId: text("school_id").notNull(),
+  studentId: text("student_id").notNull(),
+  teachingSessionId: varchar("teaching_session_id"),
+  supervisionContextId: varchar("supervision_context_id"),
+  authorityAssignmentId: varchar("authority_assignment_id").notNull(),
+  generation: integer("generation").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("cp_private_chat_school_id_unique").on(table.schoolId, table.id),
+  uniqueIndex("cp_private_chat_assignment_unique").on(table.schoolId, table.studentId, table.authorityAssignmentId),
+  index("cp_private_chat_session_idx").on(table.schoolId, table.teachingSessionId, table.studentId),
+  index("cp_private_chat_context_idx").on(table.schoolId, table.supervisionContextId, table.studentId),
+  check("cp_private_chat_parent_check", sql`num_nonnulls(${table.teachingSessionId},${table.supervisionContextId})=1`),
+  check("cp_private_chat_generation_check", sql`${table.generation}>0`),
+  foreignKey({columns:[table.schoolId,table.studentId],foreignColumns:[students.schoolId,students.id],name:"cp_private_chat_student_fk"}).onDelete("cascade"),
+  foreignKey({columns:[table.schoolId,table.teachingSessionId],foreignColumns:[teachingSessions.schoolId,teachingSessions.id],name:"cp_private_chat_session_fk"}).onDelete("cascade"),
+  foreignKey({columns:[table.schoolId,table.supervisionContextId],foreignColumns:[classpilotSupervisionContexts.schoolId,classpilotSupervisionContexts.id],name:"cp_private_chat_context_fk"}).onDelete("cascade"),
+]);
+
 // ============================================================================
 // Chat Messages - Session-scoped messaging
 // ============================================================================
@@ -1275,6 +1298,10 @@ export const chatMessages = pgTable(
     studentSessionId: varchar("student_session_id"),
     deviceId: text("device_id"),
     clientMessageId: varchar("client_message_id", { length: 128 }),
+    privateChatThreadId: varchar("private_chat_thread_id"),
+    privateChatSchoolEpoch: integer("private_chat_school_epoch"),
+    privateChatActivityEpoch: integer("private_chat_activity_epoch"),
+    privateChatGeneration: integer("private_chat_generation"),
     senderId: text("sender_id").notNull(),
     senderType: text("sender_type").notNull().$type<"teacher" | "student">(),
     recipientId: text("recipient_id"), // null = broadcast
