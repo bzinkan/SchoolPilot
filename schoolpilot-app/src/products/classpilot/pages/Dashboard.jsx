@@ -16,6 +16,7 @@ import SupervisionSessionDialog from '../components/SupervisionSessionDialog';
 import SessionMonitoringReportDialog from '../components/SessionMonitoringReportDialog';
 import ClassToolsPanel from '../components/ClassToolsPanel';
 import ChatWorkspace from '../components/ChatWorkspace';
+import CommandRecipients from '../components/CommandRecipients';
 import { ClassHelp, ClassActivityShortcuts, ClassToolShortcuts } from '../components/ClassToolsContent';
 import {
   Dialog,
@@ -103,8 +104,11 @@ import {
 import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
+  buildSelectionScopeKey,
   buildStudentSignOutCommandRequest,
   combineCommandSettlements,
+  commandAudienceIsServerDerived,
+  commandRecipientsSummary,
   DOMAIN_RESTRICTION_URL_HELP,
   commandSupportsLateSignInRestriction,
   deriveDashboardCapabilities,
@@ -118,8 +122,22 @@ import {
   normalizeSessionFabState,
   parseTabSelectionKey,
   partitionCurrentPageWaypointTargets,
+  planRecipientSend,
+  RECIPIENTS_MISSING_MESSAGE,
+  RECIPIENTS_SCOPE_CHANGED_MESSAGE,
+  RECIPIENTS_UNAVAILABLE_MESSAGE,
+  recipientDialogRefusalMessage,
+  recipientSnapshotLabel,
+  recipientsRestoredMessage,
+  recordSelectionLoss,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  selectionLossActionLabel,
+  selectionLossBlocksFallback,
+  selectionLostMessage,
+  selectionScopeKeepsBoundary,
+  snapshotCommandRecipients,
+  snapshotRecipientNames,
   studentSignOutSelectionBinding,
   studentSupportsCapability,
   studentSupportsScheduledClassroom,
@@ -511,6 +529,23 @@ export default function Dashboard() {
   const [activePoll, setActivePoll] = useState(null);
   const [pollResults, setPollResults] = useState([]);
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
+  // Send Message, Attention, Timer, Poll, Open URL, Apply Flight Path, Apply
+  // Block List and toolbar Manage Tabs freeze their recipients when they open:
+  // { kind, snapshot, unavailableIds, confirmIds, confirmAction, notice }.
+  // Sending never re-resolves ticks, a subgroup or the class from live state.
+  const [recipientSnapshot, setRecipientSnapshot] = useState(null);
+  const recipientSendBusyRef = useRef(null);
+  // Ticks (or a chosen group) removed by something other than the teacher: a
+  // device stopped reporting, a session changed, the supervision groups shown
+  // changed, the class became unavailable: { lostIds, count, scopeKey, reason }.
+  // While it stands and nothing is ticked, commands refuse the subgroup, class
+  // or claimed fallback instead of silently widening.
+  const [selectionLoss, setSelectionLoss] = useState(null);
+  const selectedStudentIdsRef = useRef(selectedStudentIds);
+  useLayoutEffect(() => { selectedStudentIdsRef.current = selectedStudentIds; }, [selectedStudentIds]);
+  const selectionLossScopeRef = useRef(null);
+  // The Target badge; it takes focus when the selection-lost notice closes.
+  const selectionTargetRef = useRef(null);
   const {
     studentView, setStudentView, summaryQueryKey,
     scheduledClassEnabled, scheduledActivity, scheduledTransitionKey,
@@ -519,9 +554,14 @@ export default function Dashboard() {
     ownSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
     showOwnSupervision, supervisionSummaryError, supervisionSummaryRefreshing,
     pendingSupervisionConfirmation, retrySupervisionSummary, refreshSupervisionSummary,
+    studentViewChosen,
   } = useScheduledTestingView({
     schoolId: activeSchoolId, viewerId: currentUser?.id, enabled: isAdmin || isTeacher,
   });
+  // Whether staff picked the view shown, for the effect that records a
+  // selection lost to an automatic Class/Claimed switch.
+  const studentViewChosenRef = useRef(studentViewChosen);
+  useLayoutEffect(() => { studentViewChosenRef.current = studentViewChosen; }, [studentViewChosen]);
   const [ownActivitySelection, setOwnActivitySelection] = useState(null);
   const selectedOwnActivityId = ownActivitySelection?.scope === classReaderKey
     && ownActivitySelection.transitionKey === scheduledTransitionKey ? ownActivitySelection.id : null;
@@ -553,6 +593,8 @@ export default function Dashboard() {
   const [confirmedOwnStart, setConfirmedOwnStart] = useState(null);
   const [showRerouteDialog, setShowRerouteDialog] = useState(false);
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
+  const selectedSubgroupIdRef = useRef(selectedSubgroupId);
+  useLayoutEffect(() => { selectedSubgroupIdRef.current = selectedSubgroupId; }, [selectedSubgroupId]);
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [sessionFabState, setSessionFabState] = useState(null);
   const [startGroupId, setStartGroupId] = useState(() => readClassroomSelection(teacherClassroomSelectionKey));
@@ -995,6 +1037,21 @@ export default function Dashboard() {
   const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
   const activityScopeRef = useRef(activityScopeKey);
   useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
+  // A lost selection belongs to the school and viewer, the scheduled boundary,
+  // the view and, in the Class view, the class (or supervision) authority and
+  // revision. A change to any of them resets the ticks itself, so it drops the
+  // loss and is never recorded as one, except an automatic Class/Claimed switch
+  // (the supervision-groups effect below). The Claimed view's scope leaves out
+  // the class session: its students are commanded through their own groups.
+  const selectionScopeKey = buildSelectionScopeKey({
+    readerKey: classReaderKey, transitionKey: scheduledTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,
+  });
+  const selectionScopeKeyRef = useRef(selectionScopeKey);
+  useLayoutEffect(() => { selectionScopeKeyRef.current = selectionScopeKey; }, [selectionScopeKey]);
+  const activeSelectionLoss = selectionLoss?.scopeKey === selectionScopeKey ? selectionLoss : null;
+  const selectionLossActive = selectionLossBlocksFallback(activeSelectionLoss, selectedStudentIds);
+  // What the refused fallback would have reached.
+  const selectionLossScope = studentView === 'claimed' ? 'claimed' : selectedSubgroupId ? 'group' : 'class';
   const requestActivityApi = useCallback(async (method, path, body, options = {}) => {
     // A Claimed-view preview read is fenced by its own supervision context
     // revision, not the Class activity's.
@@ -1066,6 +1123,26 @@ export default function Dashboard() {
     void queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
   }, [effectiveActivity?.id]);
   useEffect(() => {
+    const scopeKey = selectionScopeKeyRef.current;
+    if (selectionLossScopeRef.current === scopeKey) {
+      // The selection's scope is unchanged. Claimed students are commanded
+      // through their own supervision groups, so a class session starting or
+      // ending under the Claimed view leaves their ticks alone.
+      if (studentViewRef.current === 'claimed') return;
+      // The class became unavailable (read-only) in the same view: the teacher
+      // did not clear these ticks, so they are recorded and stay refused when
+      // it comes back.
+      const previousIds = [...selectedStudentIdsRef.current];
+      if (previousIds.length > 0) {
+        setSelectionLoss((current) => recordSelectionLoss(current, {
+          previousIds, keptIds: [], scopeKey, reason: 'class-unavailable',
+        }));
+      }
+    } else {
+      // A new class, school or command mode starts with no lost selection,
+      // except one recorded for the view now shown (an automatic switch).
+      setSelectionLoss((current) => (current?.scopeKey === scopeKey ? current : null));
+    }
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -1087,6 +1164,7 @@ export default function Dashboard() {
     setShowPollDialog(false);
     setShowPollResultsDialog(false);
     setShowRerouteDialog(false);
+    setRecipientSnapshot(null);
   }, [signOutOnlySelectionActive]);
   useEffect(() => {
     if (scheduledSupervisionId && dashboardCapabilities.canUseTeacherFab) {
@@ -1458,19 +1536,6 @@ export default function Dashboard() {
   ]);
 
   useEffect(() => {
-    if (studentView !== 'class') return;
-    setSelectedStudentIds((current) => {
-      let changed = false;
-      const next = new Set();
-      for (const studentId of current) {
-        if (monitoringDisplaysByStudent.get(studentId)?.telemetryCurrent) next.add(studentId);
-        else changed = true;
-      }
-      return changed ? next : current;
-    });
-  }, [monitoringDisplaysByStudent, studentView]);
-
-  useEffect(() => {
     const activeStudentId = activeLiveViewStudentIdRef.current;
     if (!activeStudentId || studentView !== 'class') return;
     if (monitoringDisplaysByStudent.get(activeStudentId)?.telemetryCurrent) return;
@@ -1558,11 +1623,32 @@ export default function Dashboard() {
     setShowPollResultsDialog(false); setEndTestingTarget(null); setEndClassTarget(null);
     setRaisedHands(new Map());
     setSelectedTabsToClose(new Set()); setManageTabsStudentIds(null); setManageTabsTargetSnapshot('');
+    setRecipientSnapshot(null);
+    setSelectionLoss(null);
     clearStudentDetails(); cleanupLiveViews();
     const frame = requestAnimationFrame(() => activityBannerRef.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
   }, [classReaderKey, scheduledClassEnabled, scheduledTransitionKey, clearStudentDetails, cleanupLiveViews]);
   useLayoutEffect(() => {
+    // The supervision groups shown changed (one ended, or one was assigned),
+    // and with them maybe the view: with no view picked, the Dashboard
+    // switches between Class and Claimed by itself. The teacher did not clear
+    // these ticks or the chosen group, so they, and a selection already lost,
+    // are recorded for the view now shown, and its fallback (every claimed
+    // student, or the whole class) is refused. A school or schedule change,
+    // or a view staff picked, records nothing.
+    const previousScopeKey = selectionLossScopeRef.current;
+    const scopeKey = selectionScopeKeyRef.current;
+    const automaticViewSwitch = previousScopeKey !== scopeKey && !studentViewChosenRef.current
+      && selectionScopeKeepsBoundary(previousScopeKey, scopeKey);
+    if (previousScopeKey === scopeKey || automaticViewSwitch) {
+      const previousIds = [...selectedStudentIdsRef.current];
+      if (selectedSubgroupIdRef.current) previousIds.push(selectedSubgroupIdRef.current);
+      setSelectionLoss((current) => recordSelectionLoss(current, {
+        previousIds: current?.scopeKey === previousScopeKey ? [...(current.lostIds || []), ...previousIds] : previousIds,
+        keptIds: [], scopeKey, reason: 'groups-changed',
+      }));
+    }
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -1715,6 +1801,17 @@ export default function Dashboard() {
       selectedSubgroupId
       && !subgroups.some((subgroup) => subgroup.id === selectedSubgroupId)
     ) {
+      // The chosen group was removed (deleted elsewhere) while the class and
+      // view stayed the same, so the teacher's target is recorded as lost: the
+      // group itself and any ticks in it. A class change replaces the group
+      // list in the same commit as its scope and records nothing.
+      const previousIds = [...selectedStudentIdsRef.current, selectedSubgroupId];
+      const scopeKey = selectionScopeKeyRef.current;
+      if (selectionLossScopeRef.current === scopeKey) {
+        setSelectionLoss((current) => recordSelectionLoss(current, {
+          previousIds, keptIds: [], scopeKey, reason: 'group-removed',
+        }));
+      }
       setSelectedSubgroupId("");
       setSelectedStudentIds(new Set());
       setSelectedServerSignOutStudentIds(new Set());
@@ -2676,12 +2773,14 @@ export default function Dashboard() {
     student,
   });
 
-  // Selection handlers
+  // Selection handlers. Any selection the teacher makes replaces a selection
+  // that was lost automatically (selectionLoss).
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
     if (studentView === "class" && !isStudentCommandable(student)) {
       if (isStudentLateSignInRestrictionEligible(student)) {
         const wasSelected = selectedStudentIds.has(studentId);
+        setSelectionLoss(null);
         setSelectedStudentIds((current) => {
           const next = new Set(current);
           if (next.has(studentId)) next.delete(studentId);
@@ -2713,6 +2812,7 @@ export default function Dashboard() {
           return;
         }
         const wasSelectedForSignOutOnly = selectedServerSignOutStudentIds.has(studentId);
+        setSelectionLoss(null);
         setSelectedStudentIds((current) => {
           if (!current.has(studentId)) return current;
           const next = new Set(current);
@@ -2750,6 +2850,7 @@ export default function Dashboard() {
       return;
     }
     if (selectedServerSignOutStudentIds.has(studentId)) {
+      setSelectionLoss(null);
       setSelectedServerSignOutStudentIds((current) => {
         if (!current.has(studentId)) return current;
         const next = new Set(current);
@@ -2768,6 +2869,7 @@ export default function Dashboard() {
     const bindingSnapshot = studentView === 'class'
       ? signOutSelectionBindingFor(student)
       : null;
+    setSelectionLoss(null);
     setSelectedStudentIds((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) { newSet.delete(studentId); } else { newSet.add(studentId); }
@@ -2782,6 +2884,7 @@ export default function Dashboard() {
   };
   const selectAll = () => {
     const allStudentIds = selectableStudents.map((s) => s.studentId);
+    setSelectionLoss(null);
     setSelectedStudentIds(new Set(allStudentIds));
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map(
@@ -2793,9 +2896,47 @@ export default function Dashboard() {
     ));
   };
   const clearSelection = () => {
+    setSelectionLoss(null);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
+  };
+  // Returning or releasing students unticks only them. The other ticks stay an
+  // explicit target, and a selection already lost stays refused.
+  const deselectStudents = (studentIds = []) => {
+    const removed = new Set(studentIds);
+    if (removed.size === 0) return;
+    setSelectedStudentIds((prev) => {
+      const next = new Set([...prev].filter((studentId) => !removed.has(studentId)));
+      return next.size === prev.size ? prev : next;
+    });
+    setSelectedServerSignOutStudentIds((prev) => {
+      const next = new Set([...prev].filter((studentId) => !removed.has(studentId)));
+      return next.size === prev.size ? prev : next;
+    });
+    setSelectedStudentBindingSnapshots((prev) => {
+      const next = new Map([...prev].filter(([studentId]) => !removed.has(studentId)));
+      return next.size === prev.size ? prev : next;
+    });
+  };
+  // The selection-lost notice. "Choose again" only puts focus on the first
+  // student the teacher can tick: commands stay refused until they tick
+  // someone, pick a group or choose the whole class. "Use whole class" (or
+  // group) accepts the wider target and moves focus to the target it names,
+  // since the notice and its buttons go away.
+  const focusSelectionTarget = () => {
+    selectionTargetRef.current?.focus({ preventScroll: true });
+  };
+  const chooseStudentsAgain = () => {
+    const selectableIds = new Set(selectableStudents.map((student) => student.studentId));
+    const checkbox = [...document.querySelectorAll('[data-testid^="checkbox-select-student-"]:not([disabled])')]
+      .find((element) => selectableIds.has(element.getAttribute('data-testid').slice('checkbox-select-student-'.length)));
+    if (checkbox) checkbox.focus();
+    else focusSelectionTarget();
+  };
+  const acceptSelectionLossFallback = () => {
+    focusSelectionTarget();
+    setSelectionLoss(null);
   };
   const handleStudentViewChange = (view) => {
     if (dashboardCapabilities.observedOtherClass && view !== 'class') return;
@@ -2804,6 +2945,7 @@ export default function Dashboard() {
     }
     setOwnActivitySelection(null);
     setStudentView(view);
+    setSelectionLoss(null);
     setSelectedStudentIds(new Set());
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map());
@@ -2842,6 +2984,7 @@ export default function Dashboard() {
       setClassResyncOverlap(null);
       setEndClassTarget(null);
       setSkipTodayGroup(null);
+      setRecipientSnapshot(null);
     }
   };
 
@@ -3036,6 +3179,36 @@ export default function Dashboard() {
     () => new Set(JSON.parse(lateSignInRestrictionEligibleStudentIdsKey)),
     [lateSignInRestrictionEligibleStudentIdsKey],
   );
+  // Ticks of students whose device stopped reporting are dropped. A signed-out
+  // student ticked for restrictions that apply after sign-in never reports;
+  // the binding check below validates that tick instead.
+  useEffect(() => {
+    if (studentView !== 'class') return;
+    const keepTick = (studentId) => (
+      monitoringDisplaysByStudent.get(studentId)?.telemetryCurrent
+      || lateSignInRestrictionEligibleStudentIds.has(studentId)
+    );
+    setSelectedStudentIds((current) => {
+      let changed = false;
+      const next = new Set();
+      for (const studentId of current) {
+        if (keepTick(studentId)) next.add(studentId);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+    // The teacher did not remove these ticks. Record them, so an emptied
+    // selection is refused rather than widened to the subgroup or class. A
+    // trim during a class, assignment or view change is not a loss: those
+    // clear the selection themselves (selectionLossScopeRef, below).
+    const previousIds = [...selectedStudentIdsRef.current];
+    const keptIds = previousIds.filter(keepTick);
+    if (keptIds.length < previousIds.length && selectionLossScopeRef.current === selectionScopeKey) {
+      setSelectionLoss((current) => recordSelectionLoss(current, {
+        previousIds, keptIds, scopeKey: selectionScopeKey, reason: 'stopped-reporting',
+      }));
+    }
+  }, [lateSignInRestrictionEligibleStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);
   useEffect(() => {
     if (!(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) || studentView !== 'class') return;
     const selectedIds = new Set([
@@ -3067,15 +3240,33 @@ export default function Dashboard() {
       );
       return next.size === current.size ? current : next;
     });
+    const previousCommandIds = [...selectedStudentIds];
+    const keptCommandIds = previousCommandIds.filter((studentId) => !invalidStudentIds.has(studentId));
+    if (keptCommandIds.length < previousCommandIds.length && selectionLossScopeRef.current === selectionScopeKey) {
+      setSelectionLoss((current) => recordSelectionLoss(current, {
+        previousIds: previousCommandIds, keptIds: keptCommandIds, scopeKey: selectionScopeKey, reason: 'session-changed',
+      }));
+    }
   }, [
     dashboardCapabilities.ownedClassSession, dashboardCapabilities.scheduledSupervision,
     lateSignInRestrictionEligibleStudentIds,
     selectedServerSignOutStudentIds,
     selectedStudentBindingSnapshots,
     selectedStudentIds,
+    selectionScopeKey,
     signOutEligibleBindingsByStudent,
     studentView,
   ]);
+  // A selection loss is recorded only in the scope it happened in. Declared
+  // after every effect that records one: during a class, authority, revision,
+  // schedule boundary or view change they see the previous scope here and
+  // record nothing, and the old scope's loss is dropped. A loss already
+  // recorded for the new scope (an automatic Class/Claimed switch) stays.
+  useEffect(() => {
+    if (selectionLossScopeRef.current === selectionScopeKey) return;
+    selectionLossScopeRef.current = selectionScopeKey;
+    setSelectionLoss((current) => (current?.scopeKey === selectionScopeKey ? current : null));
+  }, [selectionScopeKey]);
   // Previews follow the claim, for every group the staff member holds. A lease is
   // per context, so each claimed context gets its own; a teacher running two tests
   // sees both rather than neither.
@@ -4184,6 +4375,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       selectedSubgroupId: selectedSubgroupId || null,
       subgroupStudentIds: Array.from(subgroupMembers),
       overrideStudentIds,
+      // Stopping a timer or closing a poll goes to that tool's original
+      // recipients on the server, so a lost selection does not block it.
+      selectionLoss: commandType && commandAudienceIsServerDerived(commandType, commandPayload)
+        ? null
+        : activeSelectionLoss,
     });
     const selectedIds = overrideStudentIds === null
       ? Array.from(selectedStudentIds)
@@ -4193,7 +4389,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       && selectedIds.length > 0
       && target.targetStudentIds.length !== new Set(selectedIds).size
     ) {
-      throw new Error('One or more selected students are unavailable for this command. Clear the selection and try again.');
+      throw new Error(RECIPIENTS_UNAVAILABLE_MESSAGE);
     }
     return target;
   };
@@ -4204,6 +4400,28 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     } catch {
       return EMPTY_LIST;
     }
+  };
+  // Who a classroom dialog's frozen recipients are drawn from (the class, or
+  // the claimed students in Claimed view), and which of them can receive a
+  // command now.
+  const recipientStudents = () => (studentView === 'claimed' ? claimedPickupStudents : sessionFilteredStudents);
+  const commandableRecipientIds = (commandType, commandPayload = {}) => (
+    dashboardCapabilities.mode === 'claimed-coverage'
+      ? claimedPickupStudents.filter((student) => isStudentCommandable(student))
+      : sessionFilteredStudents.filter((student) => (
+          isStudentCommandableForCommand(student, commandType, commandPayload)
+        ))
+  ).map((student) => student.studentId);
+  // The roster rows of an open dialog's frozen recipients, in frozen order;
+  // with a command, only those who can receive it now. Never anyone else.
+  const recipientSnapshotRows = (kind, commandType = null, commandPayload = {}) => {
+    if (recipientSnapshot?.kind !== kind) return EMPTY_LIST;
+    const rowsById = new Map(recipientStudents().map((student) => [student.studentId, student]));
+    const available = commandType ? new Set(commandableRecipientIds(commandType, commandPayload)) : null;
+    return recipientSnapshot.snapshot.ids
+      .filter((studentId) => !available || available.has(studentId))
+      .map((studentId) => rowsById.get(studentId))
+      .filter(Boolean);
   };
   const resolveActiveStudentSignOutTarget = (studentIds) => {
     if (classStudentTargetsUnavailable) {
@@ -4251,6 +4469,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setShowPollDialog(false);
     setShowPollResultsDialog(false);
     setShowRerouteDialog(false);
+    // Apply Flight Path and Apply Block List stay open for a signed-out
+    // selection, so they keep their frozen recipients.
+    setRecipientSnapshot((current) => (['flight-path', 'block-list'].includes(current?.kind) ? current : null));
   }, [lateSignInRestrictionSelectionActive]);
   const screenToolbarRosterUnavailable = studentView === 'class'
     ? studentsLoading || studentsQueryError
@@ -4291,7 +4512,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     ),
   );
   const waypointDomainRestrictionMessage = restrictionMessageForStudents(explicitlySelectedStudents);
-  const flightPathDomainRestrictionMessage = restrictionMessageForStudents(targetStudents);
+  // Apply Flight Path describes the recipients it froze when it opened.
+  const flightPathDomainRestrictionMessage = restrictionMessageForStudents(recipientSnapshotRows('flight-path'));
   const activeClassName = studentView === "available"
     ? "Available"
     : studentView === "claimed"
@@ -4364,6 +4586,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     : '';
   const targetBannerLabel = subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
+    : selectionLossActive && selectedServerSignOutStudentIds.size === 0
+    ? 'Selection cleared · choose students again'
     : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
@@ -4494,7 +4718,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         { allowSafetyUnlock },
       )
     ));
-    const requestTargetScope = Boolean(scheduledSupervisionId) || hasUnavailableCommandTarget
+    // `explicitTargets` sends the students resolved now (a one-click Class
+    // tools start), never a class or subgroup for the server to resolve later.
+    const requestTargetScope = Boolean(scheduledSupervisionId) || options.explicitTargets === true || hasUnavailableCommandTarget
       && (target.targetScope === 'class' || target.targetScope === 'subgroup')
       ? 'students'
       : target.targetScope;
@@ -4526,7 +4752,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setTabLimitDraft((current) => (current === seededDraft ? String(teacherLimit) : current));
   }, [showCloseTabsDialog, teacherSettings]);
 
-  const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
+  // A tile's Manage Tabs lists its one student. The toolbar's lists only the
+  // recipients frozen when it opened who can still receive a tab command; it
+  // never re-resolves the ticks, subgroup or class while it is open.
+  const manageTabsStudents = manageTabsStudentIds
+    ? getActiveCommandStudents(manageTabsStudentIds)
+    : recipientSnapshotRows('manage-tabs', 'close-tabs', { closeAll: true });
+  const manageTabsRecipients = !manageTabsStudentIds && recipientSnapshot?.kind === 'manage-tabs'
+    ? recipientSnapshot.snapshot
+    : null;
   const openTabs = manageTabsStudents
     .flatMap(s => {
       if (!monitoringDisplayFor(s).telemetryCurrent) return [];
@@ -4555,9 +4789,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     groups[key].tabs.push(tab);
     return groups;
   }, {});
-  const manageTabsTargetLabel = manageTabsTargetSnapshot || (manageTabsStudentIds?.length === 1
-    ? (students.find((student) => student.studentId === manageTabsStudentIds[0])?.studentName || "Selected student")
-    : targetBannerLabel);
+  const manageTabsTargetLabel = manageTabsRecipients
+    ? manageTabsRecipients.label || 'these students'
+    : manageTabsTargetSnapshot || (manageTabsStudentIds?.length === 1
+      ? (students.find((student) => student.studentId === manageTabsStudentIds[0])?.studentName || "Selected student")
+      : targetBannerLabel);
 
   // Check for blocked domain violations
   useEffect(() => {
@@ -4872,21 +5108,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
-      setSelectedStudentIds((prev) => {
-        const next = new Set(prev);
-        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
-        return next;
-      });
-      setSelectedServerSignOutStudentIds((prev) => {
-        const next = new Set(prev);
-        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
-        return next;
-      });
-      setSelectedStudentBindingSnapshots((prev) => {
-        const next = new Map(prev);
-        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
-        return next;
-      });
+      deselectStudents(variables?.studentIds);
       toast({ title: "Returned to class", description: "The student can now be monitored in this class session." });
     },
     onError: (error, variables) => {
@@ -5037,48 +5259,271 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     if (!dashboardCapabilities.allows(commandType)) {
       throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
     }
+    // Every caller names its students: a dialog's frozen list, a tile, or the
+    // selection resolved when a one-click action was pressed. A missing list
+    // is refused, never resolved from whatever happens to be selected by now.
+    if (!Array.isArray(options.studentIds) || options.studentIds.length === 0) {
+      throw new Error(RECIPIENTS_MISSING_MESSAGE);
+    }
     return studentView === "claimed"
       ? postClaimedCommand(commandType, commandPayload, options)
       : postClassroomCommand(commandType, commandPayload, options);
   };
 
+  // One-click actions (Remove Flight Path, Remove Block List) go to the
+  // visible selection as it is when pressed, as explicit studentIds. A
+  // selection that was cleared automatically is refused rather than widened.
+  const clickRecipientIds = (commandType, commandPayload = {}) => {
+    try {
+      assertClassroomCommandSelectionIsolation(commandType, selectedServerSignOutStudentIds.size);
+      if (!dashboardCapabilities.allows(commandType)) {
+        throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
+      }
+      return resolveActiveCommandTarget(null, { commandType, commandPayload }).targetStudentIds;
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Not available right now', description: error.message });
+      return null;
+    }
+  };
+
+  // Send Message, Attention, Timer, Poll, Open URL, Apply Flight Path, Apply
+  // Block List and toolbar Manage Tabs freeze their recipients when they open.
+  // A send partitions that frozen list against who can receive the command now
+  // and posts explicit studentIds, so a dropped tick, an offline student or a
+  // changed subgroup can never widen it. Missing targets never mean broadcast
+  // (AGENTS.md).
+  const recipientDialogSetters = {
+    message: setShowSendMessageDialog,
+    attention: setShowAttentionDialog,
+    timer: setShowTimerDialog,
+    poll: setShowPollDialog,
+    'open-tab': setShowOpenTabDialog,
+    'flight-path': setShowApplyFlightPathDialog,
+    'block-list': setShowApplyBlockListDialog,
+    'manage-tabs': setShowCloseTabsDialog,
+  };
+  const openRecipientDialog = (kind, commandType, commandPayload = {}) => {
+    try {
+      assertClassroomCommandSelectionIsolation(commandType, selectedServerSignOutStudentIds.size);
+      if (!dashboardCapabilities.allows(commandType)) {
+        throw new Error(dashboardCapabilities.reason || 'This classroom command is not available in the current view.');
+      }
+      if (studentView !== 'claimed' && !effectiveAuthority) {
+        throw new Error('Start or select an active class session before sending classroom commands.');
+      }
+      const target = resolveActiveCommandTarget(null, { commandType, commandPayload });
+      const snapshot = snapshotCommandRecipients({
+        target,
+        students: recipientStudents(),
+        label: recipientSnapshotLabel({
+          selectedCount: selectedStudentIds.size,
+          subgroupName: studentView === 'class' && selectedSubgroupId ? subgroupName || 'Selected group' : null,
+          view: studentView,
+        }),
+        scopeKey: activityScopeKey,
+        view: studentView,
+      });
+      setRecipientSnapshot({ kind, snapshot, unavailableIds: null, confirmIds: null, notice: '' });
+      recipientDialogSetters[kind](true);
+      return true;
+    } catch (error) {
+      // Nothing was attempted: say why the dialog did not open, naming any
+      // ticked student who can't receive this command.
+      const commandable = new Set(commandableRecipientIds(commandType, commandPayload));
+      const blockedIds = [...selectedStudentIds].filter((studentId) => !commandable.has(studentId));
+      toast({
+        variant: 'destructive',
+        title: 'Not available right now',
+        description: recipientDialogRefusalMessage(error, {
+          blockedNames: blockedIds.length > 0
+            ? snapshotCommandRecipients({ target: { targetStudentIds: blockedIds }, students: recipientStudents() }).names
+            : [],
+          view: studentView,
+          subgroupSelected: studentView === 'class' && Boolean(selectedSubgroupId),
+        }),
+      });
+      return false;
+    }
+  };
+  const clearRecipientSnapshot = (kind) => {
+    setRecipientSnapshot((current) => (current?.kind === kind ? null : current));
+  };
+  const closeRecipientDialog = (kind) => {
+    recipientDialogSetters[kind](false);
+    clearRecipientSnapshot(kind);
+  };
+  const releaseRecipientSend = (kind) => {
+    if (recipientSendBusyRef.current === kind) recipientSendBusyRef.current = null;
+  };
+  // Manage Tabs has several sends (close all, limit, clear limit); a pending
+  // "Send to N available" belongs to the one that asked for it.
+  const recipientConfirmPending = (kind, action = kind) => (
+    recipientSnapshot?.kind === kind && recipientSnapshot.confirmIds?.length > 0
+    && (recipientSnapshot.confirmAction ?? kind) === action
+  );
+  const recipientDialogOpen = {
+    message: showSendMessageDialog,
+    attention: showAttentionDialog,
+    timer: showTimerDialog,
+    poll: showPollDialog,
+    'open-tab': showOpenTabDialog,
+    'flight-path': showApplyFlightPathDialog,
+    'block-list': showApplyBlockListDialog,
+    'manage-tabs': showCloseTabsDialog,
+  };
+  // `open` hides the list while a closing dialog animates out, so a cleared
+  // snapshot is never drawn as "no recipients" after a successful send.
+  const recipientDialogProps = (kind) => (recipientSnapshot?.kind === kind ? {
+    open: recipientDialogOpen[kind],
+    snapshot: recipientSnapshot.snapshot,
+    unavailableIds: recipientSnapshot.unavailableIds,
+    confirmIds: recipientSnapshot.confirmIds,
+    notice: recipientSnapshot.notice,
+  } : { open: recipientDialogOpen[kind], snapshot: null });
+  const recipientSendLabel = (kind, label, action = kind) => (
+    recipientConfirmPending(kind, action) ? `Send to ${recipientSnapshot.confirmIds.length} available` : label
+  );
+  // Enter in a dialog field never confirms a partial send: it moves focus to
+  // the "Send to N available" button, which then needs its own activation.
+  // A held Enter repeats keydown, so repeats are ignored in those fields and
+  // on every send button; only a fresh press can confirm.
+  const focusRecipientSendButton = (event) => {
+    event.currentTarget.closest('[role="dialog"]')?.querySelector('[data-recipient-send]')?.focus();
+  };
+  const ignoreHeldEnter = (event) => {
+    if (event.key === 'Enter' && event.repeat) event.preventDefault();
+  };
+  // The recipient list is a keyboard stop, so a long list can be scrolled.
+  // Each dialog still opens in the field marked data-recipient-autofocus.
+  const focusRecipientDialogField = (event) => {
+    const field = event.currentTarget?.querySelector?.('[data-recipient-autofocus]');
+    if (!field) return;
+    event.preventDefault();
+    field.focus({ preventScroll: true });
+    if (field instanceof HTMLInputElement) field.select();
+  };
+  // Returns { studentIds, frozenCount, recipientLabel, scopeKey } to send, or
+  // null after saying in the dialog why nothing was sent. A partial send needs
+  // a second, separate activation of "Send to N available" and sends exactly
+  // the students that button named (planRecipientSend). `action` names the
+  // send in a dialog with more than one (Manage Tabs).
+  const takeSnapshotRecipients = (kind, commandType, commandPayload = {}, { repeatGesture = false, action = kind } = {}) => {
+    const stored = recipientSnapshot?.kind === kind ? recipientSnapshot : null;
+    // The open dialog already shows RECIPIENTS_MISSING_MESSAGE inline.
+    if (!stored) return null;
+    // Another send's pending confirmation does not confirm this one.
+    const entry = stored.confirmIds && (stored.confirmAction ?? kind) !== action
+      ? { ...stored, unavailableIds: null, confirmIds: null }
+      : stored;
+    const { snapshot } = entry;
+    if (snapshot.scopeKey !== activityScopeRef.current || snapshot.view !== studentView) {
+      setRecipientSnapshot({ ...entry, unavailableIds: null, confirmIds: null, notice: RECIPIENTS_SCOPE_CHANGED_MESSAGE });
+      return null;
+    }
+    const step = planRecipientSend({
+      snapshot,
+      confirmIds: entry.confirmIds,
+      commandableIds: commandableRecipientIds(commandType, commandPayload),
+      repeatGesture,
+    });
+    if (step.action === 'ignore') return null;
+    if (step.action === 'ask') {
+      setRecipientSnapshot({ ...entry, unavailableIds: step.unavailableIds, confirmIds: step.confirmIds, confirmAction: action, notice: '' });
+      return null;
+    }
+    if (step.action === 'restored') {
+      setRecipientSnapshot({
+        ...entry,
+        unavailableIds: null,
+        confirmIds: null,
+        notice: recipientsRestoredMessage(snapshotRecipientNames(snapshot, step.restoredIds)),
+      });
+      return null;
+    }
+    if (entry !== stored || (!entry.confirmIds && (entry.unavailableIds || entry.notice))) {
+      setRecipientSnapshot({ ...entry, unavailableIds: null, confirmIds: null, notice: '' });
+    }
+    return {
+      studentIds: [...step.studentIds],
+      frozenCount: snapshot.ids.length,
+      recipientLabel: snapshot.label,
+      scopeKey: snapshot.scopeKey,
+    };
+  };
+  // Inside a mutation: the frozen recipients become explicit studentIds, and
+  // nothing is posted once the class has changed since the dialog opened.
+  const snapshotRecipientOptions = (recipients) => {
+    if (!Array.isArray(recipients?.studentIds) || recipients.studentIds.length === 0) {
+      throw new Error(RECIPIENTS_MISSING_MESSAGE);
+    }
+    if (recipients.scopeKey !== activityScopeRef.current) throw new Error(RECIPIENTS_SCOPE_CHANGED_MESSAGE);
+    return { studentIds: [...recipients.studentIds] };
+  };
+  const recipientDeliveryToast = (feedback, recipients) => {
+    const count = recipients?.studentIds?.length || 0;
+    if (!count) return feedback;
+    const summary = commandRecipientsSummary({ count, frozenCount: recipients.frozenCount, label: recipients.recipientLabel });
+    return {
+      ...feedback,
+      description: !feedback?.description || typeof feedback.description === 'string'
+        ? [summary, feedback?.description].filter(Boolean).join(' ')
+        : <div className="space-y-1"><p>{summary}</p>{feedback.description}</div>,
+    };
+  };
+
   const openTabMutation = useMutation({
-    mutationFn: async ({ url }) => postActiveCommand('open-tab', { url }),
+    mutationFn: async ({ url, recipients }) => postActiveCommand('open-tab', { url }, snapshotRecipientOptions(recipients)),
     onSuccess: (data, variables) => {
-      toast(data.deliveryFeedback); setShowOpenTabDialog(false);
+      toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients)); setShowOpenTabDialog(false); clearRecipientSnapshot('open-tab');
       // Auto-allow the opened domain so it's not flagged as off-task
       try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       setOpenTabUrl(""); refreshScreenshotsForDevices();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: () => { releaseRecipientSend('open-tab'); },
   });
 
+  // Exact tab rows and a tile's Manage Tabs name their students directly; the
+  // toolbar's bulk close and tab limit send the dialog's frozen recipients.
   const closeTabsMutation = useMutation({
-    mutationFn: async ({ closeAll, tabsToClose, studentIds }) => {
+    mutationFn: async ({ closeAll, tabsToClose, studentIds, recipients }) => {
       const payload = closeAll ? { closeAll: true } : { tabsToClose };
-      return postActiveCommand('close-tabs', payload, { studentIds });
+      return postActiveCommand('close-tabs', payload, recipients ? snapshotRecipientOptions(recipients) : { studentIds });
     },
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
+    onSuccess: (data, variables) => {
+      toast(variables?.recipients ? recipientDeliveryToast(data.deliveryFeedback, variables.recipients) : data.deliveryFeedback);
       setShowCloseTabsDialog(false);
       setSelectedTabsToClose(new Set());
       setManageTabsStudentIds(null);
       setManageTabsTargetSnapshot("");
+      clearRecipientSnapshot('manage-tabs');
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('manage-tabs'); },
   });
 
   const limitTabsMutation = useMutation({
-    mutationFn: async ({ maxTabs, studentIds }) => postActiveCommand('limit-tabs', { maxTabs }, { studentIds }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
+    mutationFn: async ({ maxTabs, studentIds, recipients }) => postActiveCommand('limit-tabs', { maxTabs }, recipients ? snapshotRecipientOptions(recipients) : { studentIds }),
+    onSuccess: (data, variables) => {
+      toast(variables?.recipients ? recipientDeliveryToast(data.deliveryFeedback, variables.recipients) : data.deliveryFeedback);
       queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
+      // A clear that went through shows "No limit", unless the teacher has
+      // typed another limit since pressing it.
+      if (variables?.maxTabs === null) setTabLimitDraft((current) => (current === variables.draft ? '' : current));
+      // Manage Tabs stays open with its frozen list; only the last send's
+      // alerts are cleared.
+      if (variables?.recipients) {
+        setRecipientSnapshot((current) => (current?.kind === 'manage-tabs'
+          ? { ...current, unavailableIds: null, confirmIds: null, notice: '' }
+          : current));
+      }
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('manage-tabs'); },
   });
 
   const lockScreenMutation = useMutation({
@@ -5128,11 +5573,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
-  const handleOpenTab = () => {
+  const handleOpenTab = (event) => {
+    if (openTabMutation.isPending || recipientSendBusyRef.current === 'open-tab') return;
     if (!openTabUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Please enter a valid URL" }); return; }
     let normalizedUrl = openTabUrl.trim();
     if (!normalizedUrl.match(/^https?:\/\//i)) normalizedUrl = 'https://' + normalizedUrl;
-    openTabMutation.mutate({ url: normalizedUrl });
+    const recipients = takeSnapshotRecipients('open-tab', 'open-tab', { url: normalizedUrl }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'open-tab';
+    openTabMutation.mutate({ url: normalizedUrl, recipients });
   };
 
   const handleCloseTabs = () => {
@@ -5166,18 +5615,46 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     });
   };
 
-  const handleApplyTabLimit = () => {
+  // A tile's Manage Tabs names its one student; the toolbar's sends the
+  // recipients frozen when it opened. `draft` is the field as it was pressed.
+  const sendTabLimit = (maxTabs, event, action) => {
+    const draft = tabLimitDraft;
+    if (manageTabsStudentIds) {
+      limitTabsMutation.mutate({ maxTabs, studentIds: manageTabsStudentIds, draft });
+      return;
+    }
+    if (limitTabsMutation.isPending || recipientSendBusyRef.current === 'manage-tabs') return;
+    const recipients = takeSnapshotRecipients('manage-tabs', 'limit-tabs', { maxTabs }, { repeatGesture: event?.detail > 1, action });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'manage-tabs';
+    limitTabsMutation.mutate({ maxTabs, recipients, draft });
+  };
+
+  const handleApplyTabLimit = (event) => {
     const payload = tabLimitCommandPayload(tabLimitDraft);
     if (!payload || payload.maxTabs === null) {
       toast({ variant: "destructive", title: "Invalid tab limit", description: `Enter a whole number between 1 and 100.` });
       return;
     }
-    limitTabsMutation.mutate({ maxTabs: payload.maxTabs, studentIds: manageTabsStudentIds });
+    sendTabLimit(payload.maxTabs, event, 'limit-tabs');
   };
 
-  const handleClearTabLimit = () => {
-    setTabLimitDraft("");
-    limitTabsMutation.mutate({ maxTabs: null, studentIds: manageTabsStudentIds });
+  // The field shows "No limit" only once a clear has gone through
+  // (limitTabsMutation); a refused, pending or failed clear leaves it alone.
+  const handleClearTabLimit = (event) => {
+    sendTabLimit(null, event, 'clear-tab-limit');
+  };
+
+  const handleCloseAllTabs = (event) => {
+    if (closeTabsMutation.isPending || recipientSendBusyRef.current === 'manage-tabs') return;
+    if (manageTabsStudentIds) {
+      closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) });
+      return;
+    }
+    const recipients = takeSnapshotRecipients('manage-tabs', 'close-tabs', { closeAll: true }, { repeatGesture: event?.detail > 1, action: 'close-all-tabs' });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'manage-tabs';
+    closeTabsMutation.mutate({ closeAll: true, recipients });
   };
 
   const handleLockScreen = () => {
@@ -5241,7 +5718,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     unlockScreenMutation.mutate({ studentIds: command.studentIds });
   };
 
+  // The toolbar's Manage Tabs (studentIds null) freezes the current target
+  // when it opens; a tile's opens for exactly that one student.
   const openManageTabs = (studentIds = null) => {
+    if (studentIds === null) {
+      if (!openRecipientDialog('manage-tabs', 'close-tabs', { closeAll: true })) return;
+    } else {
+      clearRecipientSnapshot('manage-tabs');
+    }
     const namedStudent = studentIds?.length === 1
       ? [...students, ...claimedPickupStudents].find((student) => student.studentId === studentIds[0])
       : null;
@@ -5254,15 +5738,23 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setTabLimitDraft(tabLimitSeed);
     setShowCloseTabsDialog(true);
   };
+  const closeManageTabsDialog = () => {
+    setShowCloseTabsDialog(false);
+    setManageTabsStudentIds(null);
+    setManageTabsTargetSnapshot("");
+    setSelectedTabsToClose(new Set());
+    setTabLimitDraft("");
+    clearRecipientSnapshot('manage-tabs');
+  };
 
   const applyFlightPathMutation = useMutation({
-    mutationFn: async ({ flightPathId, allowedDomains, flightPathName }) => {
-      const data = await postActiveCommand('apply-flight-path', { flightPathId });
+    mutationFn: async ({ flightPathId, allowedDomains, flightPathName, recipients }) => {
+      const data = await postActiveCommand('apply-flight-path', { flightPathId }, snapshotRecipientOptions(recipients));
       return { ...data, flightPathName, allowedDomains };
     },
     onSuccess: (data, variables) => {
-      toast(data.deliveryFeedback);
-      setShowApplyFlightPathDialog(false); setSelectedFlightPathId("");
+      toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients));
+      setShowApplyFlightPathDialog(false); setSelectedFlightPathId(""); clearRecipientSnapshot('flight-path');
       // Auto-allow all domains in the flight path so they're not flagged as off-task
       (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
       refreshScreenshotsForDevices();
@@ -5271,6 +5763,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (error?.name === 'AbortError') return;
       toast({ variant: "destructive", title: "Error", description: error.message });
     },
+    onSettled: () => { releaseRecipientSend('flight-path'); },
   });
 
   const removeFlightPathMutation = useMutation({
@@ -5285,7 +5778,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
   });
 
-  const handleApplyFlightPath = () => {
+  const handleApplyFlightPath = (event) => {
+    if (applyFlightPathMutation.isPending || recipientSendBusyRef.current === 'flight-path') return;
     if (!selectedFlightPathId) { toast({ variant: "destructive", title: "No Flight Path Selected", description: "Please select a flight path to apply" }); return; }
     const flightPath = flightPaths.find(fp => fp.id === selectedFlightPathId);
     if (!flightPath) { toast({ variant: "destructive", title: "Error", description: "Selected flight path not found" }); return; }
@@ -5294,20 +5788,29 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       toast({ variant: "destructive", title: "Flight Path Cannot Be Applied", description: applicability.reason });
       return;
     }
-    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName });
+    const recipients = takeSnapshotRecipients('flight-path', 'apply-flight-path', { flightPathId: flightPath.id }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'flight-path';
+    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });
   };
 
   const handleRemoveFlightPath = (studentId) => { removeFlightPathMutation.mutate({ studentIds: [studentId] }); };
+  // Toolbar Remove Flight Path: the visible selection, resolved now.
+  const handleRemoveFlightPathFromTarget = () => {
+    const studentIds = clickRecipientIds('remove-flight-path');
+    if (studentIds) removeFlightPathMutation.mutate({ studentIds });
+  };
 
   const applyBlockListMutation = useMutation({
-    mutationFn: async ({ blockListId }) => postActiveCommand('apply-block-list', { blockListId }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
-      setShowApplyBlockListDialog(false); setSelectedBlockListId("");
+    mutationFn: async ({ blockListId, recipients }) => postActiveCommand('apply-block-list', { blockListId }, snapshotRecipientOptions(recipients)),
+    onSuccess: (data, variables) => {
+      toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients));
+      setShowApplyBlockListDialog(false); setSelectedBlockListId(""); clearRecipientSnapshot('block-list');
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: () => { releaseRecipientSend('block-list'); },
   });
 
   const removeBlockListMutation = useMutation({
@@ -5320,12 +5823,21 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
-  const handleApplyBlockList = () => {
+  const handleApplyBlockList = (event) => {
+    if (applyBlockListMutation.isPending || recipientSendBusyRef.current === 'block-list') return;
     if (!selectedBlockListId) { toast({ variant: "destructive", title: "No Block List Selected", description: "Please select a block list to apply" }); return; }
-    applyBlockListMutation.mutate({ blockListId: selectedBlockListId });
+    const recipients = takeSnapshotRecipients('block-list', 'apply-block-list', { blockListId: selectedBlockListId }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'block-list';
+    applyBlockListMutation.mutate({ blockListId: selectedBlockListId, recipients });
   };
 
-  const handleRemoveBlockList = () => { removeBlockListMutation.mutate({}); };
+  // Toolbar Remove Block List and Block List Status "Remove": the visible
+  // selection (the current target), resolved now.
+  const handleRemoveBlockList = () => {
+    const studentIds = clickRecipientIds('remove-block-list');
+    if (studentIds) removeBlockListMutation.mutate({ studentIds });
+  };
 
   const handleTileCommand = async ({ commandType, commandPayload = {}, studentIds = [] }) => {
     const studentId = studentIds[0];
@@ -5352,20 +5864,42 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const attentionModeMutation = useMutation({
-    mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
+    // Activation goes to the frozen dialog recipients. Release keeps its
+    // original path: the server derives its audience from the activation.
+    mutationFn: async ({ active, message, recipients }) => (active
+      ? postClassroomCommand('attention-mode', { active, message }, snapshotRecipientOptions(recipients))
+      : postClassroomCommand('attention-mode', { active, message })),
     onSuccess: (data, variables) => {
-      toast(data.deliveryFeedback);
+      toast(variables.active ? recipientDeliveryToast(data.deliveryFeedback, variables.recipients) : data.deliveryFeedback);
       queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
-      if (!variables.active) setShowAttentionDialog(false);
+      if (!variables.active) {
+        setShowAttentionDialog(false);
+        clearRecipientSnapshot('attention');
+      } else {
+        // The dialog stays open to show the saved state and Release. It keeps
+        // its frozen recipients; only the last send's alerts are cleared.
+        setRecipientSnapshot((current) => (current?.kind === 'attention'
+          ? { ...current, unavailableIds: null, confirmIds: null, notice: '' }
+          : current));
+      }
       refreshScreenshotsForDevices();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: (_data, _error, variables) => { if (variables?.active) releaseRecipientSend('attention'); },
   });
 
+  // A tool started from Class tools (lesson activity, exit ticket, volunteers)
+  // goes to the visible selection as it is when pressed, as explicit
+  // studentIds; a selection cleared automatically is refused, never widened.
+  // Controls for a running tool (end, close, stop) keep its original
+  // recipients, which the server derives.
   const runClassToolsCommand = async (type, payload, options = {}) => {
     try {
-      const result = await postClassroomCommand(type, payload, options);
+      const result = await postClassroomCommand(type, payload, {
+        ...options,
+        explicitTargets: !commandAudienceIsServerDerived(type, payload),
+      });
       toast(result.deliveryFeedback);
       await classTools.refresh();
       return result;
@@ -5377,34 +5911,51 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const timerMutation = useMutation({
-    mutationFn: async (payload) => postClassroomCommand('timer', payload),
+    // Start goes to the frozen dialog recipients. Stop, pause, resume and
+    // extend keep their original path; the server derives their audience.
+    mutationFn: async ({ recipients, ...payload }) => (payload.action === 'start'
+      ? postClassroomCommand('timer', payload, snapshotRecipientOptions(recipients))
+      : postClassroomCommand('timer', payload)),
     onSuccess: (data, variables) => {
-      toast(data.deliveryFeedback);
-      if (variables.action === 'start') setShowTimerDialog(false);
+      toast(variables.action === 'start' ? recipientDeliveryToast(data.deliveryFeedback, variables.recipients) : data.deliveryFeedback);
+      if (variables.action === 'start') { setShowTimerDialog(false); clearRecipientSnapshot('timer'); }
       classTools.refresh();
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: (_data, _error, variables) => { if (variables?.action === 'start') releaseRecipientSend('timer'); },
   });
 
-  const handleAttentionMode = (active) => { attentionModeMutation.mutate({ active, message: attentionMessage }); };
+  const handleAttentionMode = (active, event) => {
+    if (!active) { attentionModeMutation.mutate({ active, message: attentionMessage }); return; }
+    if (attentionModeMutation.isPending || recipientSendBusyRef.current === 'attention') return;
+    const recipients = takeSnapshotRecipients('attention', 'attention-mode', { active: true, message: attentionMessage }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'attention';
+    attentionModeMutation.mutate({ active: true, message: attentionMessage, recipients });
+  };
 
-  const handleStartTimer = () => {
+  const handleStartTimer = (event) => {
+    if (timerMutation.isPending || recipientSendBusyRef.current === 'timer') return;
     const totalSeconds = (timerMinutes * 60) + timerSeconds;
     if (totalSeconds <= 0) { toast({ variant: "destructive", title: "Invalid Timer", description: "Please set a time greater than 0" }); return; }
-    timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage });
+    const recipients = takeSnapshotRecipients('timer', 'timer', { action: 'start', seconds: totalSeconds, message: timerMessage }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'timer';
+    timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage, recipients });
   };
 
   const handleStopTimer = () => { timerMutation.mutate({ action: 'stop' }); };
 
   const pollMutation = useMutation({
-    mutationFn: async ({ question, options }) => postClassroomCommand('poll', { action: 'start', question, options }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
-      setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
+    mutationFn: async ({ question, options, recipients }) => postClassroomCommand('poll', { action: 'start', question, options }, snapshotRecipientOptions(recipients)),
+    onSuccess: (data, variables) => {
+      toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients));
+      setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]); clearRecipientSnapshot('poll');
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: () => { releaseRecipientSend('poll'); },
   });
 
   const closePollMutation = useMutation({
@@ -5446,13 +5997,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: async ({ message }) => postClassroomCommand('teacher-message', { message }),
-    onSuccess: (data) => {
-      toast(data.deliveryFeedback);
-      setShowSendMessageDialog(false); setSendMessageText("");
+    mutationFn: async ({ message, recipients }) => postClassroomCommand('teacher-message', { message }, snapshotRecipientOptions(recipients)),
+    onSuccess: (data, variables) => {
+      toast(recipientDeliveryToast(data.deliveryFeedback, variables.recipients));
+      setShowSendMessageDialog(false); setSendMessageText(""); clearRecipientSnapshot('message');
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onSettled: () => { releaseRecipientSend('message'); },
   });
 
   const signOutStudentsMutation = useMutation({
@@ -5519,7 +6071,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       const failed = results.filter(result => result.status === 'rejected');
       if (failed.length) throw new Error(`${results.length - failed.length} supervision groups released; ${failed.length} could not be released. Refresh before retrying.`);
     },
-    onSuccess: (_data, variables) => { if (variables.scope === supervisionScopeRef.current) { clearSelection(); toast({ title: 'Students released', description: 'Students follow their current scheduled assignments.' }); } },
+    // Only the released students lose their ticks. If that ends a supervision
+    // group, the groups-changed effect records the rest as a lost selection.
+    onSuccess: (_data, variables) => { if (variables.scope === supervisionScopeRef.current) { deselectStudents(variables.students.map((student) => student.studentId)); toast({ title: 'Students released', description: 'Students follow their current scheduled assignments.' }); } },
     onError: (error, variables) => { if (variables.scope === supervisionScopeRef.current) toast({ variant: 'destructive', title: 'Could not release all students', description: error.response?.data?.error || error.message }); },
     onSettled: (_data, _error, variables) => {
       if (variables.scope !== supervisionScopeRef.current) return;
@@ -5556,9 +6110,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     onSettled: () => { endTestingBusyRef.current = false; },
   });
 
-  const handleSendMessage = () => {
-    if (!sendMessageText.trim()) { toast({ variant: "destructive", title: "Empty Message", description: "Please enter a message" }); return; }
-    sendMessageMutation.mutate({ message: sendMessageText.trim() });
+  const handleSendMessage = (event) => {
+    if (sendMessageMutation.isPending || recipientSendBusyRef.current === 'message') return;
+    const message = sendMessageText.trim();
+    if (!message) { toast({ variant: "destructive", title: "Empty Message", description: "Please enter a message" }); return; }
+    const recipients = takeSnapshotRecipients('message', 'teacher-message', { message }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'message';
+    sendMessageMutation.mutate({ message, recipients });
   };
 
   // Read receipts are teacher-side only. They are batched so a burst of
@@ -5710,11 +6269,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     };
   }, [activePoll?.id, requestActivityApi]);
 
-  const handleCreatePoll = () => {
+  const handleCreatePoll = (event) => {
+    if (pollMutation.isPending || recipientSendBusyRef.current === 'poll') return;
     const validOptions = pollOptions.filter(opt => opt.trim() !== '');
     if (!pollQuestion.trim()) { toast({ variant: "destructive", title: "Invalid Poll", description: "Please enter a question" }); return; }
     if (validOptions.length < 2) { toast({ variant: "destructive", title: "Invalid Poll", description: "Please enter at least 2 options" }); return; }
-    pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions });
+    const recipients = takeSnapshotRecipients('poll', 'poll', { action: 'start', question: pollQuestion.trim(), options: validOptions }, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'poll';
+    pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions, recipients });
   };
 
   const handleClosePoll = () => {
@@ -6203,7 +6766,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
             <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
             <div className="flex items-center gap-3">
-              <div className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900" data-testid="badge-selection-count">
+              <div ref={selectionTargetRef} tabIndex={-1} className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" data-testid="badge-selection-count">
                 <div className="text-[13px] font-semibold">{dashboardCapabilities.observedOtherClass ? 'Viewing' : 'Target'}: {activeClassName} - {displayedTargetBannerLabel}</div>
                 <div className="text-[11px] font-medium opacity-80">{displayedTargetConnectionLabel}</div>
               </div>
@@ -6226,16 +6789,33 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           </div>
         )}
 
+        {/* Ticks cleared automatically: commands refuse the group or class
+            until the teacher chooses students again or accepts the wider target.
+            The status region stays mounted so the notice is announced. */}
+        {canShowStudentWorkspace && !dashboardCapabilities.observedOtherClass ? (
+          <div role="status" data-testid="selection-lost-region">
+            {selectionLossActive ? (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100" data-testid="selection-lost-notice">
+                <p className="min-w-[200px] flex-1" data-testid="selection-lost-message">{selectionLostMessage(activeSelectionLoss.count, { scope: selectionLossScope, reason: activeSelectionLoss.reason })}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={chooseStudentsAgain} data-testid="button-selection-lost-choose-again">Choose again</Button>
+                  <Button type="button" size="sm" variant="outline" onClick={acceptSelectionLossFallback} data-testid="button-selection-lost-use-all">{selectionLossActionLabel(selectionLossScope)}</Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Control Buttons */}
         {canUseRemoteControls && studentView !== "available" && (
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
-            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('open-tab', 'open-tab', { url: '' })} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
             {(dashboardCapabilities.allows('apply-flight-path') || flightPathMenuAvailable) && (
               <div className="inline-flex items-center" role="group" aria-label="Flight Path">
-                {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
+                {dashboardCapabilities.allows('apply-flight-path') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('flight-path', 'apply-flight-path')} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-flight-path" className={`relative focus-visible:z-10 text-purple-600 dark:text-purple-400${flightPathMenuAvailable ? ' rounded-r-none' : ''}`}><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>}
                 {flightPathMenuAvailable && (
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
@@ -6251,7 +6831,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {dashboardCapabilities.allows('remove-flight-path') && <DropdownMenuItem onSelect={() => removeFlightPathMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeFlightPathMutation.isPending} data-testid="button-remove-flight-path" className="text-purple-600 dark:text-purple-400"><X />Remove Flight Path</DropdownMenuItem>}
+                      {dashboardCapabilities.allows('remove-flight-path') && <DropdownMenuItem onSelect={handleRemoveFlightPathFromTarget} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeFlightPathMutation.isPending} data-testid="button-remove-flight-path" className="text-purple-600 dark:text-purple-400"><X />Remove Flight Path</DropdownMenuItem>}
                       {studentView === "class" && <DropdownMenuItem onSelect={() => setShowFlightPathViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye />Flight Path Status</DropdownMenuItem>}
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -6260,7 +6840,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             )}
             {(dashboardCapabilities.allows('apply-block-list') || blockListMenuAvailable) && (
               <div className="inline-flex items-center" role="group" aria-label="Block List">
-                {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className={`relative focus-visible:z-10 text-red-600 dark:text-red-400${blockListMenuAvailable ? ' rounded-r-none' : ''}`}><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
+                {dashboardCapabilities.allows('apply-block-list') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('block-list', 'apply-block-list')} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive} data-testid="button-apply-block-list" className={`relative focus-visible:z-10 text-red-600 dark:text-red-400${blockListMenuAvailable ? ' rounded-r-none' : ''}`}><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>}
                 {blockListMenuAvailable && (
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
@@ -6276,7 +6856,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {dashboardCapabilities.allows('remove-block-list') && <DropdownMenuItem onSelect={() => removeBlockListMutation.mutate({})} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeBlockListMutation.isPending} data-testid="button-remove-block-list" className="text-red-600 dark:text-red-400"><X />Remove Block List</DropdownMenuItem>}
+                      {dashboardCapabilities.allows('remove-block-list') && <DropdownMenuItem onSelect={handleRemoveBlockList} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || removeBlockListMutation.isPending} data-testid="button-remove-block-list" className="text-red-600 dark:text-red-400"><X />Remove Block List</DropdownMenuItem>}
                       {studentView === "class" && <DropdownMenuItem onSelect={() => setShowBlockListViewerDialog(true)} disabled={signOutOnlySelectionActive} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield />Block List Status</DropdownMenuItem>}
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -6307,6 +6887,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               <select
                 value={selectedSubgroupId}
                 onChange={(event) => {
+                  setSelectionLoss(null);
                   setSelectedSubgroupId(event.target.value);
                   setSelectedStudentIds(new Set());
                   setSelectedServerSignOutStudentIds(new Set());
@@ -6830,7 +7411,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     actionContextKey={`${activeSchoolId || ''}:${effectiveActivity?.id || ''}:${studentView}:${selectedSubgroupId}:${canUseRemoteControls}:${dashboardCapabilities.canUseLiveView}`}
                   />}
                   {studentView === 'claimed' && !dashboardCapabilities.observedOtherClass ? <Button variant="outline" size="sm" className="mt-2 w-full"
-                    disabled={releaseClaimMutation.isPending} onClick={() => releaseClaimMutation.mutate({ students: [student], scope: classReaderKey })}>Release student</Button> : null}
+                    disabled={releaseClaimMutation.isPending} onClick={() => releaseClaimMutation.mutate({ students: [student], scope: classReaderKey })}
+                    data-testid={`button-release-student-${student.studentId}`}>Release student</Button> : null}
                 </div>
               );
             })}
@@ -7219,18 +7801,24 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       </Dialog>
 
       {/* Open Tab Dialog */}
-      <Dialog open={showOpenTabDialog} onOpenChange={setShowOpenTabDialog}>
-        <DialogContent data-testid="dialog-open-tab">
-          <DialogHeader><DialogTitle>Open Tab on Student Devices</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
+      <Dialog open={showOpenTabDialog} onOpenChange={(open) => (open ? setShowOpenTabDialog(true) : closeRecipientDialog('open-tab'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-open-tab">
+          <DialogHeader><DialogTitle>Open Tab on Student Devices</DialogTitle></DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('open-tab')} />
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="open-tab-url">URL to Open</Label>
-              <Input id="open-tab-url" type="url" placeholder="https://example.com" value={openTabUrl} onChange={(e) => setOpenTabUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !openTabMutation.isPending) handleOpenTab(); }} data-testid="input-open-tab-url" />
+              <Input id="open-tab-url" type="url" placeholder="https://example.com" value={openTabUrl} onChange={(e) => setOpenTabUrl(e.target.value)} onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.nativeEvent.isComposing || openTabMutation.isPending) return;
+                if (e.repeat) { e.preventDefault(); return; }
+                if (recipientConfirmPending('open-tab')) { e.preventDefault(); focusRecipientSendButton(e); return; }
+                handleOpenTab();
+              }} data-recipient-autofocus="" data-testid="input-open-tab-url" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowOpenTabDialog(false)} data-testid="button-cancel-open-tab">Cancel</Button>
-            <Button onClick={handleOpenTab} disabled={openTabMutation.isPending} data-testid="button-confirm-open-tab"><MonitorPlay className="h-4 w-4 mr-2" />Open Tab</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('open-tab')} data-testid="button-cancel-open-tab">Cancel</Button>
+            <Button onClick={handleOpenTab} onKeyDown={ignoreHeldEnter} disabled={openTabMutation.isPending} data-recipient-send="" data-testid="button-confirm-open-tab"><MonitorPlay className="h-4 w-4 mr-2" />{recipientSendLabel('open-tab', 'Open Tab')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -7292,24 +7880,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       </Dialog>
 
       {/* Tabs Dialog */}
-      <Dialog open={showCloseTabsDialog} onOpenChange={(open) => {
-        setShowCloseTabsDialog(open);
-        if (!open) {
-          setManageTabsStudentIds(null);
-          setManageTabsTargetSnapshot("");
-          setSelectedTabsToClose(new Set());
-          setTabLimitDraft("");
-        }
-      }}>
-        <DialogContent className="max-w-2xl" data-testid="dialog-tabs">
-          <DialogHeader><DialogTitle>Manage Tabs ({openTabs.length})</DialogTitle><DialogDescription>{manageTabsTargetLabel}</DialogDescription></DialogHeader>
+      <Dialog open={showCloseTabsDialog} onOpenChange={(open) => (open ? setShowCloseTabsDialog(true) : closeManageTabsDialog())}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-tabs">
+          <DialogHeader><DialogTitle>Manage Tabs ({openTabs.length})</DialogTitle>{manageTabsStudentIds ? <DialogDescription>{manageTabsTargetLabel}</DialogDescription> : null}</DialogHeader>
+          {manageTabsStudentIds ? null : <CommandRecipients summaryAs={DialogDescription} offerCancel={false} {...recipientDialogProps('manage-tabs')} />}
           <div className="space-y-4 py-4">
             {openTabs.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">No tabs are currently open for this target</p>
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.filter((tab) => exactTabCloseCapability(tab).enabled).map(tabSelectionKey)))} data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select Exact-Close Tabs</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.filter((tab) => exactTabCloseCapability(tab).enabled).map(tabSelectionKey)))} data-recipient-autofocus="" data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select Exact-Close Tabs</Button>
                   <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set())} data-testid="button-clear-tabs" className="h-8"><XSquare className="h-3 w-3 mr-1" />Clear</Button>
                   <span className="text-xs text-muted-foreground ml-auto">{selectedTabsToClose.size} selected</span>
                 </div>
@@ -7360,38 +7941,37 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   value={tabLimitDraft}
                   onChange={(event) => setTabLimitDraft(event.target.value)}
                   className="mt-1 h-8"
+                  data-recipient-autofocus=""
                   data-testid="input-tab-limit"
                 />
               </div>
-              <Button type="button" size="sm" onClick={handleApplyTabLimit} disabled={limitTabsMutation.isPending || !tabLimitCommandPayload(tabLimitDraft)?.maxTabs} title="Cap how many tabs these students can keep open" data-testid="button-apply-tab-limit">Limit tabs</Button>
-              <Button type="button" size="sm" variant="ghost" onClick={handleClearTabLimit} disabled={limitTabsMutation.isPending} title="Remove the tab limit for these students" data-testid="button-clear-tab-limit">Clear limit</Button>
+              <Button type="button" size="sm" onClick={handleApplyTabLimit} onKeyDown={ignoreHeldEnter} disabled={limitTabsMutation.isPending || !tabLimitCommandPayload(tabLimitDraft)?.maxTabs} title="Cap how many tabs these students can keep open" data-testid="button-apply-tab-limit">{recipientSendLabel('manage-tabs', 'Limit tabs', 'limit-tabs')}</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={handleClearTabLimit} onKeyDown={ignoreHeldEnter} disabled={limitTabsMutation.isPending} title="Remove the tab limit for these students" data-testid="button-clear-tab-limit">{recipientSendLabel('manage-tabs', 'Clear limit', 'clear-tab-limit')}</Button>
             </div>
           )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setShowCloseTabsDialog(false)} data-testid="button-close-tabs-dialog">Done</Button>
+            <Button variant="outline" onClick={closeManageTabsDialog} data-testid="button-close-tabs-dialog">Done</Button>
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
-            {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) }); }} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs (bulk)</Button>}
+            {openTabs.length > 0 && <Button variant="destructive" onClick={handleCloseAllTabs} onKeyDown={ignoreHeldEnter} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />{recipientSendLabel('manage-tabs', 'Close All Tabs (bulk)', 'close-all-tabs')}</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Apply Flight Path Dialog */}
-      <Dialog open={showApplyFlightPathDialog} onOpenChange={setShowApplyFlightPathDialog}>
-        <DialogContent data-testid="dialog-apply-flight-path">
+      <Dialog open={showApplyFlightPathDialog} onOpenChange={(open) => (open ? setShowApplyFlightPathDialog(true) : closeRecipientDialog('flight-path'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-apply-flight-path">
           <DialogHeader>
             <DialogTitle>Apply Flight Path to Students</DialogTitle>
-            <DialogDescription className="space-y-1">
-              <span className="block">Target: {targetBannerLabel}.</span>
-              <span className="block" data-testid="flight-path-domain-preservation-message">
-                {flightPathDomainRestrictionMessage}
-              </span>
-            </DialogDescription>
           </DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('flight-path')} />
+          <p className="text-sm text-muted-foreground" data-testid="flight-path-domain-preservation-message">
+            {flightPathDomainRestrictionMessage}
+          </p>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="flight-path-select">Select Flight Path</Label>
               <Select value={selectedFlightPathId} onValueChange={setSelectedFlightPathId}>
-                <SelectTrigger id="flight-path-select" data-testid="select-flight-path"><SelectValue placeholder="Choose a flight path" /></SelectTrigger>
+                <SelectTrigger id="flight-path-select" data-recipient-autofocus="" data-testid="select-flight-path"><SelectValue placeholder="Choose a flight path" /></SelectTrigger>
                 <SelectContent>
                   {flightPaths.map((fp) => {
                     const applicability = flightPathApplyCapability(fp);
@@ -7423,15 +8003,16 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowApplyFlightPathDialog(false)} data-testid="button-cancel-apply-flight-path">Cancel</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('flight-path')} data-testid="button-cancel-apply-flight-path">Cancel</Button>
             <Button
               onClick={handleApplyFlightPath}
               disabled={
                 applyFlightPathMutation.isPending
                 || !flightPathApplyCapability(flightPaths.find((fp) => fp.id === selectedFlightPathId)).enabled
               }
+              onKeyDown={ignoreHeldEnter} data-recipient-send=""
               data-testid="button-confirm-apply-flight-path"
-            ><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
+            ><Layers className="h-4 w-4 mr-2" />{recipientSendLabel('flight-path', 'Apply Flight Path')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -7473,14 +8054,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       </Dialog>
 
       {/* Apply Block List Dialog */}
-      <Dialog open={showApplyBlockListDialog} onOpenChange={setShowApplyBlockListDialog}>
-        <DialogContent data-testid="dialog-apply-block-list">
-          <DialogHeader><DialogTitle>Apply Block List to Students</DialogTitle><DialogDescription>Target: {targetBannerLabel}</DialogDescription></DialogHeader>
+      <Dialog open={showApplyBlockListDialog} onOpenChange={(open) => (open ? setShowApplyBlockListDialog(true) : closeRecipientDialog('block-list'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-apply-block-list">
+          <DialogHeader><DialogTitle>Apply Block List to Students</DialogTitle></DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('block-list')} />
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="block-list-select">Select Block List</Label>
               <Select value={selectedBlockListId} onValueChange={setSelectedBlockListId}>
-                <SelectTrigger id="block-list-select" data-testid="select-block-list"><SelectValue placeholder="Choose a block list" /></SelectTrigger>
+                <SelectTrigger id="block-list-select" data-recipient-autofocus="" data-testid="select-block-list"><SelectValue placeholder="Choose a block list" /></SelectTrigger>
                 <SelectContent>
                   {blockLists.map((bl) => {
                     const badge = teachingResourceBadge(bl);
@@ -7506,8 +8088,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowApplyBlockListDialog(false)} data-testid="button-cancel-apply-block-list">Cancel</Button>
-            <Button onClick={handleApplyBlockList} disabled={applyBlockListMutation.isPending || !selectedBlockListId} data-testid="button-confirm-apply-block-list"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('block-list')} data-testid="button-cancel-apply-block-list">Cancel</Button>
+            <Button onClick={handleApplyBlockList} onKeyDown={ignoreHeldEnter} disabled={applyBlockListMutation.isPending || !selectedBlockListId} data-recipient-send="" data-testid="button-confirm-apply-block-list"><ShieldBan className="h-4 w-4 mr-2" />{recipientSendLabel('block-list', 'Apply Block List')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -7518,8 +8100,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <DialogHeader><DialogTitle>Block List Status</DialogTitle><DialogDescription>{lateSignInRestrictionsEnabled ? 'Manage teacher-applied block lists. Saved restrictions may remain pending until a signed-out student returns.' : 'Manage active block lists for your online students.'}</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 bg-muted/30 rounded-md">
-              <div><p className="text-sm font-medium">Remove Block List from All Students</p><p className="text-xs text-muted-foreground">{lateSignInRestrictionsEnabled ? 'This removes the teacher-applied block list from eligible online and signed-out students.' : 'This removes the teacher-applied block list from eligible online students.'}</p></div>
-              <Button variant="outline" size="sm" onClick={handleRemoveBlockList} disabled={removeBlockListMutation.isPending} className="text-destructive hover:text-destructive" data-testid="button-remove-all-block-lists"><X className="h-4 w-4 mr-2" />Remove All</Button>
+              {/* It removes the block list from the current target (ticks, then group, then class), so it names that target. */}
+              <div><p className="text-sm font-medium">Remove Block List from the current target</p><p className="text-xs text-muted-foreground"><span data-testid="text-remove-block-list-target">Target: {displayedTargetBannerLabel}.</span> {lateSignInRestrictionsEnabled ? 'This removes the teacher-applied block list from eligible online and signed-out students.' : 'This removes the teacher-applied block list from eligible online students.'}</p></div>
+              <Button variant="outline" size="sm" onClick={handleRemoveBlockList} disabled={removeBlockListMutation.isPending} className="text-destructive hover:text-destructive" data-testid="button-remove-all-block-lists"><X className="h-4 w-4 mr-2" />Remove</Button>
             </div>
             <div className="border-t pt-4">
               <p className="text-sm font-medium mb-2">{blockLists.some((bl) => bl.fromSchoolLibrary) ? 'Your Block Lists and School Library' : 'Your Block Lists'}</p>
@@ -7534,7 +8117,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                           {(bl.blockedDomains?.length || 0) > 3 && <Badge variant="secondary" className="text-xs">+{(bl.blockedDomains?.length || 0) - 3} more</Badge>}
                         </div>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => { setSelectedBlockListId(bl.id); setShowBlockListViewerDialog(false); setShowApplyBlockListDialog(true); }} data-testid={`button-quick-apply-${bl.id}`}><ShieldBan className="h-4 w-4 mr-2" />Apply</Button>
+                      <Button variant="outline" size="sm" onClick={() => { if (!openRecipientDialog('block-list', 'apply-block-list')) return; setSelectedBlockListId(bl.id); setShowBlockListViewerDialog(false); }} data-testid={`button-quick-apply-${bl.id}`}><ShieldBan className="h-4 w-4 mr-2" />Apply</Button>
                     </div>
                   ))}
                 </div>
@@ -7546,36 +8129,48 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       </Dialog>
 
       {/* Send Message Dialog */}
-      <Dialog open={showSendMessageDialog} onOpenChange={setShowSendMessageDialog}>
-        <DialogContent data-testid="dialog-send-message">
+      <Dialog open={showSendMessageDialog} onOpenChange={(open) => (open ? setShowSendMessageDialog(true) : closeRecipientDialog('message'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-send-message">
           <DialogHeader>
             <DialogTitle>Send Message</DialogTitle>
-            <DialogDescription>{selectedStudentIds.size > 0 ? `Send a message to ${selectedStudentIds.size} selected student(s)` : "Send a message to all online students"}</DialogDescription>
           </DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('message')} />
           <div className="space-y-4">
             <textarea
               className="w-full min-h-[100px] p-3 border rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder="Type your message..."
               value={sendMessageText}
               onChange={(e) => setSendMessageText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                if (e.repeat) return;
+                if (recipientConfirmPending('message')) focusRecipientSendButton(e);
+                else handleSendMessage();
+              }}
+              data-recipient-autofocus=""
               data-testid="input-send-message"
             />
-            <p className="text-xs text-muted-foreground">Press Enter to send, Shift+Enter for new line</p>
+            <p className="text-xs text-muted-foreground" data-testid="send-message-hint">
+              {recipientConfirmPending('message')
+                ? `Press Enter to go to "Send to ${recipientSnapshot.confirmIds.length} available", Shift+Enter for new line`
+                : 'Press Enter to send, Shift+Enter for new line'}
+            </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSendMessageDialog(false)}>Cancel</Button>
-            <Button onClick={handleSendMessage} disabled={sendMessageMutation.isPending || !sendMessageText.trim()} data-testid="button-confirm-send-message">
-              <Send className="h-4 w-4 mr-2" />Send Message
+            <Button variant="outline" onClick={() => closeRecipientDialog('message')}>Cancel</Button>
+            <Button onClick={handleSendMessage} onKeyDown={ignoreHeldEnter} disabled={sendMessageMutation.isPending || !sendMessageText.trim()} data-recipient-send="" data-testid="button-confirm-send-message">
+              <Send className="h-4 w-4 mr-2" />{recipientSendLabel('message', 'Send Message')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Attention Mode Dialog */}
-      <Dialog open={showAttentionDialog} onOpenChange={setShowAttentionDialog}>
-        <DialogContent data-testid="dialog-attention-mode">
-          <DialogHeader><DialogTitle>{attentionActive ? "Attention Restriction Saved" : "Attention Mode"}</DialogTitle><DialogDescription>{attentionActive ? "The attention restriction is saved. Delivery may still be pending for some students." : selectedStudentIds.size > 0 ? `Get the attention of ${selectedStudentIds.size} selected student(s)` : "Get the attention of all students"}</DialogDescription></DialogHeader>
+      <Dialog open={showAttentionDialog} onOpenChange={(open) => (open ? setShowAttentionDialog(true) : closeRecipientDialog('attention'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-attention-mode">
+          <DialogHeader><DialogTitle>{attentionActive ? "Attention Restriction Saved" : "Attention Mode"}</DialogTitle>{attentionActive ? <DialogDescription>The attention restriction is saved. Delivery may still be pending for some students.</DialogDescription> : null}</DialogHeader>
+          {attentionActive ? null : <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('attention')} />}
           {attentionActive ? (
             <div className="space-y-4 py-4">
               <div className="flex items-center justify-center p-6 bg-indigo-50 rounded-lg">
@@ -7590,31 +8185,32 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label htmlFor="attention-message">Message to Display</Label>
-                <Input id="attention-message" value={attentionMessage} onChange={(e) => setAttentionMessage(e.target.value)} placeholder="Please look up!" data-testid="input-attention-message" />
+                <Input id="attention-message" value={attentionMessage} onChange={(e) => setAttentionMessage(e.target.value)} placeholder="Please look up!" data-recipient-autofocus="" data-testid="input-attention-message" />
                 <p className="text-xs text-muted-foreground">This message will be shown full-screen on student devices until you release them.</p>
               </div>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAttentionDialog(false)} data-testid="button-cancel-attention">{attentionActive ? "Close" : "Cancel"}</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('attention')} data-testid="button-cancel-attention">{attentionActive ? "Close" : "Cancel"}</Button>
             {attentionActive ? (
-              <Button onClick={() => { handleAttentionMode(false); setShowAttentionDialog(false); }} disabled={attentionModeMutation.isPending} variant="destructive" data-testid="button-release-attention"><EyeOff className="h-4 w-4 mr-2" />Release Students</Button>
+              <Button onClick={() => { handleAttentionMode(false); closeRecipientDialog('attention'); }} disabled={attentionModeMutation.isPending} variant="destructive" data-testid="button-release-attention"><EyeOff className="h-4 w-4 mr-2" />Release Students</Button>
             ) : (
-              <Button onClick={() => handleAttentionMode(true)} disabled={attentionModeMutation.isPending} className="bg-indigo-600 hover:bg-indigo-700" data-testid="button-activate-attention"><Eye className="h-4 w-4 mr-2" />Activate Attention Mode</Button>
+              <Button onClick={(event) => handleAttentionMode(true, event)} onKeyDown={ignoreHeldEnter} disabled={attentionModeMutation.isPending} className="bg-indigo-600 hover:bg-indigo-700" data-recipient-send="" data-testid="button-activate-attention"><Eye className="h-4 w-4 mr-2" />{recipientSendLabel('attention', 'Activate Attention Mode')}</Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Timer Dialog */}
-      <Dialog open={showTimerDialog} onOpenChange={setShowTimerDialog}>
-        <DialogContent data-testid="dialog-timer">
-          <DialogHeader><DialogTitle>Start Timer</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Display a countdown timer for ${selectedStudentIds.size} selected student(s)` : "Display a countdown timer for all students"}</DialogDescription></DialogHeader>
+      <Dialog open={showTimerDialog} onOpenChange={(open) => (open ? setShowTimerDialog(true) : closeRecipientDialog('timer'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-timer">
+          <DialogHeader><DialogTitle>Start Timer</DialogTitle></DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('timer')} />
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Quick Presets</Label>
               <div className="flex gap-2 flex-wrap">
-                <Button variant="outline" size="sm" onClick={() => { setTimerMinutes(1); setTimerSeconds(0); }} data-testid="button-timer-1min">1 min</Button>
+                <Button variant="outline" size="sm" onClick={() => { setTimerMinutes(1); setTimerSeconds(0); }} data-recipient-autofocus="" data-testid="button-timer-1min">1 min</Button>
                 <Button variant="outline" size="sm" onClick={() => { setTimerMinutes(3); setTimerSeconds(0); }} data-testid="button-timer-3min">3 min</Button>
                 <Button variant="outline" size="sm" onClick={() => { setTimerMinutes(5); setTimerSeconds(0); }} data-testid="button-timer-5min">5 min</Button>
                 <Button variant="outline" size="sm" onClick={() => { setTimerMinutes(10); setTimerSeconds(0); }} data-testid="button-timer-10min">10 min</Button>
@@ -7636,20 +8232,21 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowTimerDialog(false)} data-testid="button-cancel-timer">Cancel</Button>
-            <Button onClick={handleStartTimer} disabled={timerMutation.isPending || timerDeliveryPending} className="bg-teal-600 hover:bg-teal-700" data-testid="button-start-timer"><Timer className="h-4 w-4 mr-2" />Start Timer</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('timer')} data-testid="button-cancel-timer">Cancel</Button>
+            <Button onClick={handleStartTimer} onKeyDown={ignoreHeldEnter} disabled={timerMutation.isPending || timerDeliveryPending} className="bg-teal-600 hover:bg-teal-700" data-recipient-send="" data-testid="button-start-timer"><Timer className="h-4 w-4 mr-2" />{recipientSendLabel('timer', 'Start Timer')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Create Poll Dialog */}
-      <Dialog open={showPollDialog} onOpenChange={setShowPollDialog}>
-        <DialogContent className="max-w-lg" data-testid="dialog-poll">
-          <DialogHeader><DialogTitle>Create Poll</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Send a poll to ${selectedStudentIds.size} selected student(s)` : "Send a poll to all students"}</DialogDescription></DialogHeader>
+      <Dialog open={showPollDialog} onOpenChange={(open) => (open ? setShowPollDialog(true) : closeRecipientDialog('poll'))}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-lg overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-poll">
+          <DialogHeader><DialogTitle>Create Poll</DialogTitle></DialogHeader>
+          <CommandRecipients summaryAs={DialogDescription} {...recipientDialogProps('poll')} />
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="poll-question">Question</Label>
-              <Input id="poll-question" value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} placeholder="What do you think about...?" data-testid="input-poll-question" />
+              <Input id="poll-question" value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} placeholder="What do you think about...?" data-recipient-autofocus="" data-testid="input-poll-question" />
             </div>
             <div className="space-y-2">
               <Label>Options (2-5)</Label>
@@ -7666,8 +8263,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPollDialog(false)} data-testid="button-cancel-poll">Cancel</Button>
-            <Button onClick={handleCreatePoll} disabled={pollMutation.isPending || pollDeliveryPending} className="bg-violet-600 hover:bg-violet-700" data-testid="button-create-poll"><BarChart3 className="h-4 w-4 mr-2" />Create Poll</Button>
+            <Button variant="outline" onClick={() => closeRecipientDialog('poll')} data-testid="button-cancel-poll">Cancel</Button>
+            <Button onClick={handleCreatePoll} onKeyDown={ignoreHeldEnter} disabled={pollMutation.isPending || pollDeliveryPending} className="bg-violet-600 hover:bg-violet-700" data-recipient-send="" data-testid="button-create-poll"><BarChart3 className="h-4 w-4 mr-2" />{recipientSendLabel('poll', 'Create Poll')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -7726,7 +8323,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           onClose={closeChatDrawer} onTabChange={(tab) => setChatView(current => ({ ...current, tab }))}
           onReserveWidth={setClassToolsReservedWidth}
           contextLabel={effectiveActivity?.groupName || effectiveActivity?.name || groups.find(group => group.id === effectiveActivity?.groupId)?.name || 'Current class'}
-          recipientLabel={selectedStudentIds.size ? `${selectedStudentIds.size} selected students` : selectedSubgroupId ? `${subgroupMembers.size} students in selected group` : `all ${students.length} students`}
+          recipientLabel={selectedStudentIds.size ? `${selectedStudentIds.size} selected students` : selectionLossActive ? 'no one until you choose students again' : selectedSubgroupId ? `${subgroupMembers.size} students in selected group` : `all ${students.length} students`}
           helpCount={classTools.data?.help?.length ?? raisedHands.size} unreadConversationCount={chatConversations.conversations.filter(conversation => conversation.unreadCount > 0).length}
           timer={classTools.data?.timer || (timerActive ? timerSnapshot : null)}
           renderMessages={({ width, visible }) => <ChatWorkspace
@@ -7749,21 +8346,25 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           fabState={sessionFabState}
           onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}
           fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
-          onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
+          onSendMessage={subgroupCommandsDisabled || !dashboardCapabilities.allows('teacher-message') ? undefined : () => openRecipientDialog('message', 'teacher-message', { message: '' })}
           />}
           help={<ClassHelp tools={classTools} raisedHands={raisedHands} handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
             onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}
             pending={!sessionFabState || toggleHandRaisingMutation.isPending} onDismissHand={(studentId) => dismissHandMutation.mutate(studentId)} />}
           activities={<ClassActivityShortcuts tools={classTools} onCommand={runClassToolsCommand} activePoll={activePoll} responseCount={pollTotalResponses}
             flightPaths={flightPaths} getRecipients={() => buildCommandRequest('timer', { action: 'start', seconds: 60 }).target.targetStudentIds}
-            onPollClick={() => activePoll ? setShowPollResultsDialog(true) : setShowPollDialog(true)}
-            onPreset={(preset) => { setPollQuestion(preset.question); setPollOptions([...preset.options]); setShowPollDialog(true); }}
+            onPollClick={() => activePoll ? setShowPollResultsDialog(true) : openRecipientDialog('poll', 'poll', { action: 'start' })}
+            onPreset={(preset) => {
+              if (!openRecipientDialog('poll', 'poll', { action: 'start' })) return;
+              setPollQuestion(preset.question); setPollOptions([...preset.options]);
+            }}
             pollPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || pollMutation.isPending || closePollMutation.isPending || pollDeliveryPending} />}
           tools={<ClassToolShortcuts tools={classTools} onCommand={runClassToolsCommand} onPresentation={openClassPresentation} onTimerAction={(payload) => timerMutation.mutate(payload)} timer={classTools.data?.timer || (timerActive ? timerSnapshot : null)} timerActive={timerActive}
             timerPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || timerMutation.isPending || timerDeliveryPending}
-            onTimerClick={() => timerActive ? handleStopTimer() : setShowTimerDialog(true)}
+            onTimerClick={() => timerActive ? handleStopTimer() : openRecipientDialog('timer', 'timer', { action: 'start' })}
             attentionActive={attentionActive} attentionPending={nonRestrictionSelectionActive || subgroupCommandsDisabled || attentionModeMutation.isPending}
-            onAttentionClick={() => setShowAttentionDialog(true)} onReleaseAttention={() => handleAttentionMode(false)} />}
+            onAttentionClick={() => attentionActive ? setShowAttentionDialog(true) : openRecipientDialog('attention', 'attention-mode', { active: true, message: attentionMessage })}
+            onReleaseAttention={() => handleAttentionMode(false)} />}
         />
       )}
     </div>
