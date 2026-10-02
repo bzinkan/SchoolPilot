@@ -65,9 +65,13 @@ export async function privateChatLifecycleRequired(schoolId: string, database: t
   return row?.required === true || isClasspilotCapabilityActive("privateChatLifecycleV1", { schoolId });
 }
 
+export async function lockPrivateChatAdoption(schoolId: string, database: typeof db) {
+  await database.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${"private-chat-adoption:"+schoolId},0))`);
+}
+
 export async function lockPrivateChatChannel(scope: PrivateChatScope, database: typeof db) {
   if (!!scope.teachingSessionId === !!scope.supervisionContextId) throw lifecycleError("PRIVATE_CHAT_SCOPE_INVALID", "One classroom authority is required",400);
-  await database.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${"private-chat-adoption:"+scope.schoolId},0))`);
+  await lockPrivateChatAdoption(scope.schoolId,database);
   if (scope.teachingSessionId) {
     await database.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,scope.schoolId),
       eq(teachingSessions.id,scope.teachingSessionId))).for("key share");

@@ -12,7 +12,7 @@ import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel,
+import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel, lockPrivateChatAdoption,
   privateChatMessageLifecycle, samePrivateChatLifecycle, parsePrivateChatLifecycle, privateChatLifecycleRequired, privateChatBindingSupported, isPrivateChatMessageCurrent, isPrivateChatMessageExpired,
   type PrivateChatLifecycle } from "./classpilotPrivateChatLifecycle.js";
 import {
@@ -19204,6 +19204,7 @@ export async function withAuthorizedStudentFabMutation<T>(options: {
     ) {
       throw classpilotFabMutationError(409, "fab_authority_stale", "Student classroom authority changed");
     }
+    if (options.feature === "chat") await lockPrivateChatAdoption(options.schoolId,transactionDb);
     await tx.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,options.schoolId),eq(teachingSessions.id,owner.session.id))).for("key share");
     const [schoolSettings] = await tx
       .select({
@@ -19711,6 +19712,7 @@ export async function createTeacherChatReplyWithDelivery(options: {
     // school-wide one and this class's own) stop replies. Locks follow the
     // class switch writer's order (teaching session, then its settings row);
     // the inserts below take this same key-share lock on their parent.
+    await lockPrivateChatAdoption(options.schoolId,transactionDb);
     await tx
       .select({ id: teachingSessions.id })
       .from(teachingSessions)
