@@ -205,6 +205,10 @@ export function drainWebSocketWork(): Promise<void> {
  * task and perform the local send while that same lock is held; socket-local
  * binding metadata alone can describe a retired same-device session.
  */
+// Admission/rollback tooling requires this receiving-side lifecycle fence in
+// addition to the durable writer and reversible dark-deployment bridge.
+export const PRIVATE_CHAT_RELAY_VERSION = 1;
+
 export async function deliverClasspilotStudentBindingRedisMessage(
   target: Extract<WsRedisTarget, { kind: "student-binding" }>,
   message: unknown

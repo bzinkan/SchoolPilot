@@ -19985,6 +19985,7 @@ export async function classpilotStudentRelayMessageAllowed(
     && !("privateChatLifecycle" in frame)) return { expiresAt: null };
   if (typeof frame.chatMessageId !== "string" || !frame.chatMessageId
     || frame.studentId !== binding.studentId || frame.studentSessionId !== binding.studentSessionId
+    || (frame._msgId !== undefined && frame._msgId !== frame.chatMessageId)
     || (frame.messageId !== undefined && frame.messageId !== frame.chatMessageId)) return null;
   const [message] = await database.select().from(chatMessages).where(and(
     eq(chatMessages.schoolId,binding.schoolId), eq(chatMessages.studentId,binding.studentId),
