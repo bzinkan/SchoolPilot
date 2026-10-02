@@ -136,7 +136,7 @@ function UsagePage({ school, identity }) {
     {scope !== 'school' && directoryError && <Notice error>Could not load {scope} choices. {usageError(directoryError)} <Button variant="link" size="sm" onClick={() => { void (scope === 'class' ? classes.refetch() : students.refetch()); if (scope === 'grade') void settings.refetch(); }}>Retry choices</Button></Notice>}
     {scope !== 'school' && !directoryLoading && !directoryError && !validSelection && <p role="status" className="text-sm text-muted-foreground">Choose a {scope} to view its report.</p>}
     {query && report.isPending && <p role="status" className="py-8 text-center text-sm text-muted-foreground">Loading Monitored Browser Time…</p>}
-    {query && report.isError && <Notice error>{usageError(report.error)} <Button variant="link" size="sm" onClick={refresh}>Try again</Button></Notice>}
+    {query && report.isError && <Notice error>{usageError(report.error)} <Button variant="link" size="sm" disabled={report.isFetching} onClick={refresh}>Try again</Button></Notice>}
     {exportError && <Notice error>CSV was not exported. {exportError}</Notice>}
     {query && !report.isError && report.data && <Report report={report.data} />}
   </div>;

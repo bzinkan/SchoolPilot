@@ -245,7 +245,7 @@ test("deferred ACK requires gate, capability, exact active binding, and a live m
   const heartbeatAck = section(
     devices,
     "const [heartbeat, initialControlState] = await Promise.all",
-    "const screenshotTrackingAuthority",
+    'outcome: "recorded"',
   );
   assert.match(
     heartbeatAck,
@@ -310,7 +310,7 @@ test("mixed-version delivery and every unauthenticated fallback hide deferred re
   );
   assert.match(
     devices,
-    /trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl\([\s\S]*deliveredControlRevision: classroomState\?\.revision \?\? 0/,
+    /trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl\([\s\S]*deliveredControlRevision: finalClassroomState\?\.revision \?\? 0/,
   );
   // Safety findings now enter administrator review without authoring a device
   // command. The runtime publish-gate suite verifies that legacy auto-close

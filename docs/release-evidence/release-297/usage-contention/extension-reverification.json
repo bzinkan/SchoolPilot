@@ -1,0 +1,18 @@
+{
+  "capturedAt": "2026-10-02T22:44:59.9603183Z",
+  "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "packagedSource": "065be165b5df704d84eb716e3fb914c1fed17f98",
+  "version": "2.9.7",
+  "packageSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "verifierCommand": "node scripts/verify-extension-package.mjs dist/ClassPilot-v2.9.7.zip --verify-only",
+  "exitCode": 0,
+  "packagedFiles": 24,
+  "sourceUnchanged": true,
+  "sourceAncestor": true,
+  "rebuilt": false,
+  "nativeBrowserRerun": false,
+  "priorNativeEvidence": "ClassPilot CI run37048485018; five required jobs passed on same extension bytes",
+  "managedChromebookGate": "waived_not_passed",
+  "storePublication": false,
+  "rawLogSha256": "785af861ef052245acc9455fcf33be1672c14da0696294993f006fa9383e6593"
+}

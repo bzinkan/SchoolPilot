@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "Human-readable reconstruction from retained agent-session tool results, not original stdout/stderr.",
+  "exactSourceRecorded": false,
+  "exactTimestampsRecorded": false,
+  "reason": "These earlier development invocations wrote only to tool output. No raw on-disk logs were captured. They must not be presented as machine-log archives or final-source acceptance.",
+  "attempts": [
+    {
+      "id": 1,
+      "command": "node --import tsx --test tests/classpilot-usage-admission.test.ts tests/classpilot-usage-execution.test.ts",
+      "status": "failed",
+      "tests": 6,
+      "passed": 5,
+      "failed": 1,
+      "finding": "Post-release query correctly rejected, but the assertion matched the outer Drizzle message instead of its wrapped cause. Asserted Busy on the cause in the correction."
+    },
+    {
+      "id": 2,
+      "command": "Same two-file unit command after assertion correction.",
+      "status": "passed",
+      "tests": 6,
+      "passed": 6,
+      "failed": 0
+    },
+    {
+      "id": 3,
+      "command": "node --import tsx --test tests/classpilot-usage-admission.test.ts tests/classpilot-usage-execution.test.ts tests/classpilot-usage-request.test.ts",
+      "status": "passed_with_later_identified_gap",
+      "tests": 10,
+      "passed": 10,
+      "failed": 0,
+      "finding": "The early-denial fixture did not yet exercise the guarded Express response path; the first native attempt subsequently found the 403-to-500 error."
+    },
+    {
+      "id": 4,
+      "command": "Request deadline unit test after adding guarded early denial.",
+      "status": "interrupted_hang",
+      "completedPassingCases": 3,
+      "incompleteCase": "Guarded early denial",
+      "completeTestResult": false,
+      "finding": "Correcting the Express app wrapper exposed a second facade bug: Node end used proxy identity and the response did not reach the client. The hanging invocation was interrupted; it was not a passing run."
+    },
+    {
+      "id": 5,
+      "command": "Ad hoc local HTTP denial probe with a one-second fetch abort.",
+      "status": "failed_probe",
+      "finding": "Server response flags indicated completion while the client timed out. Corrected response-writing methods to use the actual Node response receiver."
+    },
+    {
+      "id": 6,
+      "command": "node --import tsx --test tests/classpilot-usage-request.test.ts",
+      "status": "passed",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "id": 7,
+      "command": "Final five-file focused unit command in reports-commands.json (console-only invocation).",
+      "status": "passed",
+      "tests": 45,
+      "passed": 45,
+      "failed": 0,
+      "note": "Repeated with durable raw capture; use reports-unit-final.log.gz for machine-verifiable results rather than summing the two invocations."
+    },
+    {
+      "id": 8,
+      "command": "npm run check; npm run check:tests; npm run check:test-casts (separate development invocations).",
+      "status": "passed_development_only",
+      "note": "No original on-disk transcripts captured here. Existing test diagnostic ratchet reported 438/534 with zero syntax/application diagnostics; cast ratchet reported asAny 689, asUnknownAs 7, tsIgnore 0 and tsExpectError 0. Final combined-source checks remain separately required."
+    }
+  ]
+}

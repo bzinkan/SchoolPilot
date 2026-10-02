@@ -5,6 +5,7 @@ import { users } from "../schema/core.js";
 import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
 import { clearSessionCookie } from "../config/sessionCookie.js";
+import { runWithUsageCapacityOperation } from "../services/usageCapacityDiagnostics.js";
 
 const loadUserSingleFlight = createSingleFlight<
   string,
@@ -12,14 +13,14 @@ const loadUserSingleFlight = createSingleFlight<
 >({ maxPendingKeys: 2_048 });
 
 function loadUserById(userId: string): Promise<typeof users.$inferSelect | undefined> {
-  return loadUserSingleFlight(userId, async () => {
+  return loadUserSingleFlight(userId, () => runWithUsageCapacityOperation("auth", async () => {
     const [user] = await db
       .select()
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
     return user;
-  });
+  }));
 }
 
 function sessionCredentialMatches(

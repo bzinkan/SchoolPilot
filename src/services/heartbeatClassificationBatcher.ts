@@ -273,7 +273,7 @@ export class HeartbeatClassificationBatcher {
 
 const defaultBatcher = new HeartbeatClassificationBatcher({
   async persistImmediate(entry) {
-    await runWithTenantContext({ schoolId: entry.schoolId }, () =>
+    await runWithTenantContext({ schoolId: entry.schoolId, operation: "heartbeat_background" }, () =>
       updateHeartbeatClassification(
         entry.heartbeatId,
         entry.aiCategory,
@@ -284,7 +284,7 @@ const defaultBatcher = new HeartbeatClassificationBatcher({
     );
   },
   async persistBatch(schoolId, entries) {
-    await runWithTenantContext({ schoolId }, () =>
+    await runWithTenantContext({ schoolId, operation: "heartbeat_background" }, () =>
       db.transaction(async (transaction) => {
         await updateHeartbeatClassifications(schoolId, entries, transaction);
       })

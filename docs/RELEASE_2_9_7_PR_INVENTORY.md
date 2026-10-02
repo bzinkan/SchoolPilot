@@ -4,6 +4,17 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
+The [October 2, 22:59 UTC review-container observation](release-evidence/release-297/usage-contention/pr-review-checkpoint.json)
+records SchoolPilot #603 open/draft at `08802d020a3c51beea504140f923126ab518aac6`
+with 20 successful reported checks. That source predates the current Usage
+contention correction; final frozen-source checks and capacity acceptance remain
+pending. ClassPilot #123 remains open/draft at
+`8069a9c9bd50352e187847158b356a69edc4e45d`: all five jobs in run `37048485018`
+passed, while five cancelled sibling-run entries remain visible and GitHub reports
+`UNSTABLE`. Check required-check status before merge. Neither container is merged.
+The 60 source PR records below retain their historical reviewed heads and inclusion
+proofs; this observation does not independently refresh every source PR's state.
+
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|
 | [SchoolPilot #547](https://github.com/bzinkan/SchoolPilot/pull/547) | already merged | `45dd3333ffb043c797ac095387c0c87e5d31a238` | main | Keep the AI assistant's Flight Path list to the teacher's own paths |

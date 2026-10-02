@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { runWithUsageCapacityOperation } from "../services/usageCapacityDiagnostics.js";
 import {
   resolveClasspilotEntitlement,
   type ClasspilotEntitlement,
@@ -27,7 +28,7 @@ export function createRequireClasspilotEntitlement(
           code: "CLASSPILOT_SCHOOL_CONTEXT_REQUIRED",
         });
       }
-      const entitlement = await resolveEntitlement(schoolId);
+      const entitlement = await runWithUsageCapacityOperation("auth", () => resolveEntitlement(schoolId));
       if (!entitlement.entitled) {
         return res.status(403).json({
           error: "school_not_entitled",

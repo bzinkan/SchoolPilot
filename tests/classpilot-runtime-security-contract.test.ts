@@ -177,10 +177,13 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       heartbeat,
       /canShortCircuitAcceptedHeartbeat\(\{[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities,[\s\S]*?\}\)/
     );
-    assert.match(
-      heartbeat,
-      /const screenshotTrackingAuthority = trackingWindowScreenshotLeaseNegotiated[\s\S]*?getClasspilotScreenshotAuthorityProjection/
-    );
+    assert.equal((heartbeat.match(/getClasspilotScreenshotAuthorityProjection\(/g) ?? []).length, 1,
+      "negotiated heartbeat authority must be computed once at locked delivery, never in the earlier persistence lease");
+    assert.match(heartbeat, /const screenshotPolicyPromise = trackingWindowScreenshotLeaseNegotiated\s*\? Promise\.resolve\(undefined\)\s*:\s*resolveClasspilotScreenshotPolicy/);
+    const delivery = heartbeat.slice(heartbeat.indexOf("const finalDelivery ="));
+    assert.match(delivery, /withClasspilotStudentControlDeliveryAuthority[\s\S]*lockClasspilotSsoPolicyDeliveryAuthority[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*getClasspilotScreenshotAuthorityProjection\([\s\S]*?\}, transactionDb\)/);
+    assert.match(delivery, /deliveredControlRevision: finalClassroomState\?\.revision \?\? 0/);
+    assert.match(delivery, /: screenshotPolicy/);
   });
 
   it("linearizes exact authority, uncached settings, and storage in one transaction", async () => {

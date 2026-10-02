@@ -74,6 +74,12 @@ export function usageGrades(students, configured = []) {
 
 export function usageError(error) {
   const status = error?.response?.status;
+  // CSV uses a Blob response, so its structured error body is unavailable here.
+  // The endpoint's overload response also carries the bounded Retry-After hint.
+  if (status === 503 && (error?.response?.data?.code === 'CLASSPILOT_USAGE_BUSY'
+    || error?.response?.headers?.['retry-after'] === '1')) {
+    return 'Reports are busy. Wait a moment, then try again.';
+  }
   if (status === 404 && !error?.response?.data?.code) return 'Monitored Browser Time is not available for this school yet.';
   if (status === 403) return 'Administrator access is required for this report.';
   return error?.response?.data?.error || error?.message || 'The report could not be loaded.';

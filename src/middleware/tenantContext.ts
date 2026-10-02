@@ -11,10 +11,15 @@ import {
 import errorMonitor from "../services/errorMonitor.js";
 import { getRuntimeMetadata } from "../services/runtimeMetadata.js";
 import { markTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
+import {
+  getUsageCapacityOperation, recordUsageCapacityCounter, recordUsageCapacityTiming,
+  runWithUsageCapacityOperation, startUsageCapacityCheckout, type UsageCapacityOperation,
+} from "../services/usageCapacityDiagnostics.js";
 
 export { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
 
 const pendingTenantReleases = new Set<Promise<void>>();
+const checkoutDiagnostics = new WeakMap<PoolClient, () => void>();
 
 export function getTenantContextReleaseSnapshot(): { pending: number } {
   return { pending: pendingTenantReleases.size };
@@ -43,23 +48,34 @@ async function resetAndReleaseTenantClient(client: PoolClient): Promise<void> {
     // possibly still-scoped session to the shared pool.
     resetError = error instanceof Error ? error : new Error("Tenant context reset failed");
   } finally {
-    client.release(resetError);
+    try { client.release(resetError); }
+    finally {
+      checkoutDiagnostics.get(client)?.();
+      checkoutDiagnostics.delete(client);
+    }
   }
 }
 
-function releaseTenantClient(client: PoolClient): Promise<void> {
+export function releaseTenantClient(client: PoolClient): Promise<void> {
   return trackTenantRelease(resetAndReleaseTenantClient(client));
 }
 
-async function acquireTenantClient() {
+export async function acquireTenantClient() {
   const startedAt = performance.now();
+  const operation = getUsageCapacityOperation();
+  recordUsageCapacityCounter("checkoutAttempts", operation);
   try {
     const client = await pool.connect();
+    checkoutDiagnostics.set(client, startUsageCapacityCheckout(operation));
+    recordUsageCapacityCounter("checkoutSuccess", operation);
+    recordUsageCapacityTiming("checkoutMs", performance.now() - startedAt, operation);
     recordRuntimePerformanceCounter("poolAcquisitionSuccess");
     recordRuntimePerformanceCounter("tenantCheckouts");
     recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
     return client;
   } catch (error) {
+    recordUsageCapacityCounter("checkoutFailure", operation);
+    recordUsageCapacityTiming("checkoutMs", performance.now() - startedAt, operation);
     apiPoolReadiness.recordAcquisitionFailure();
     recordRuntimePerformanceCounter("poolAcquisitionFailure");
     recordRuntimePerformanceTiming("poolAcquisitionMs", performance.now() - startedAt);
@@ -128,7 +144,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   let initializationFailed = false;
   let initializationError: unknown;
   try {
-    client = await acquireTenantClient();
+    client = await runWithUsageCapacityOperation("tenant_request", acquireTenantClient);
     // set_config(name, value, is_local=false) = session-level SET, but safely
     // parameterized (SET ... = $1 is not allowed in Postgres).
     if (!isResponseEnded()) {
@@ -169,25 +185,28 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
 // Pass `schoolId` to scope to one school (the common case — keeps writes isolated
 // to that school), or `isSuper` for genuinely cross-school work.
 export async function runWithTenantContext<T>(
-  opts: { schoolId?: string; isSuper?: boolean },
+  opts: { schoolId?: string; isSuper?: boolean; operation?: UsageCapacityOperation },
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (!rlsGucEnabled()) return fn();
+  const inherited = getUsageCapacityOperation();
+  return runWithUsageCapacityOperation(opts.operation ?? (inherited === "unclassified" ? "tenant_background" : inherited), async () => {
+    if (!rlsGucEnabled()) return fn();
 
-  const client = await acquireTenantClient();
-  try {
-    await client.query(
-      "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
-      [opts.isSuper ? "on" : "off", opts.schoolId ?? ""]
-    );
-    const store: TenantStore = {
-      client,
-      db: drizzle(client, { schema }),
-      schoolId: opts.schoolId,
-      isSuper: opts.isSuper,
-    };
-    return await tenantALS.run(store, fn);
-  } finally {
-    await releaseTenantClient(client);
-  }
+    const client = await acquireTenantClient();
+    try {
+      await client.query(
+        "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
+        [opts.isSuper ? "on" : "off", opts.schoolId ?? ""]
+      );
+      const store: TenantStore = {
+        client,
+        db: drizzle(client, { schema }),
+        schoolId: opts.schoolId,
+        isSuper: opts.isSuper,
+      };
+      return await tenantALS.run(store, fn);
+    } finally {
+      await releaseTenantClient(client);
+    }
+  });
 }

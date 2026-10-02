@@ -188,7 +188,31 @@ attempt and current student binding under the delivery locks, then checks expiry
 again immediately before synchronous send. A writer/bridge-only image predating
 that fence is not a compatible rollback artifact.
 
-## Capacity acceptance remains separate
+## Usage contention repair and capacity acceptance
+
+The current release decision requires all development and synthetic capacity
+acceptance before requesting release execution. Deployed Usage observation is
+still a later activation gate. Passing worker timings alone is insufficient.
+
+The Usage route now admits at most two reports per API process and one per
+school. A round-robin queue holds at most 32 requests overall and 16 per school,
+without retaining a database connection. Its 20-second deadline starts before
+authentication. After waiting, current credentials, membership, role, school
+status and entitlement are checked on the same narrowly scoped tenant lease
+used for the repeatable-read report and strict CSV audit. The lease ends before
+formatting or transmitting the result. Cancellation discards a running SQL
+connection only after its callback and cleanup settle; it never returns an
+active connection to the pool. Student Data retains its caller-owned transaction
+path. Successful JSON and CSV schemas are unchanged.
+
+Admission overload returns `503`, `CLASSPILOT_USAGE_BUSY` and `Retry-After: 1`.
+The interface presents a manual retry action; overload is never a measured zero
+and does not cause continuous retries. Negotiated screenshot tracking clients
+skip only the preliminary authority/policy calculation whose result was replaced
+by the final locked calculation. Legacy behavior and final delivery checks stay
+in place. Fixed-label diagnostics contain timings/counters, without identifiers,
+URLs, SQL text or message content. No new pool, cache, aggregate table, timeout
+increase or infrastructure expansion is part of this correction.
 
 Historical million-observation runs remain immutable. They measured SQL-stored
 observations and concurrent sampled HTTP requests, not one million live HTTP
@@ -214,11 +238,12 @@ finished in 22.623/22.753 seconds, but 32 of 64 JSON reports failed and only 1,5
 of 6,000 offered heartbeats succeeded; connection-pool acquisition failures
 persisted. Post-run correctness passed. These results establish neither the
 required three passing runs nor a lower supported arrival-rate envelope. New
-Usage aggregation/reporting remain off, without blocking an independently
-accepted classroom release. Existing daily-rollup shadow mode is a separate
+Usage aggregation/reporting remain off. The current user decision requires Usage
+synthetic acceptance before requesting this coordinated release. Existing
+daily-rollup shadow mode is a separate
 pre-existing setting; do not describe every usage worker as disabled.
 
-Run the separately named scenario with
+The retained comparison scenario runs with
 `scripts/load/usage/run-local-cold-open-loop-scale.ps1`, selecting an isolated
 full-current-schema database and a new empty external evidence directory for
 each run. It requires the explicit 129-table inventory before creating the
@@ -229,7 +254,7 @@ identity snapshot. No JWTs or database passwords are stored in that snapshot.
 This resets PostgreSQL shared buffers; it does not flush host filesystem caches.
 Ordinary authentication/range preflights still precede concurrent timing.
 
-The new profile advertises the exact 39-capability 2.9.7 list captured from the
+That comparison profile advertises the exact 39-capability 2.9.7 list captured from the
 extension candidate, records its source commit plus raw/LF source hashes, and
 hashes the canonical list alongside the harness. Historical profiles keep their
 original empty capability offerings. New precise, Focus and private lifecycle
@@ -248,3 +273,21 @@ The actual persisted-heartbeat count is recorded separately and the existing
 raw-current-day oracle verifies its attribution. Seeded observations, preflight
 HTTP requests, scheduled offers, completed responses and persisted rows are
 distinct measurements.
+
+The stronger `release-enabled-isolated-100rps-v1` acceptance profile runs through
+`scripts/load/usage/run-release-enabled-scale.ps1`. It separates the API, worker
+and arrival generator, performs actual API pool prewarming/readiness, uses staff
+session cookies and its own Redis instance, and enables precise restrictions,
+Focus and private-chat lifecycle. Representative commands, acknowledgements,
+closures and reconnects accompany the workload. These acknowledgements are
+synthetic protocol checks, not proof of managed-browser enforcement.
+
+It preserves one API's 16-connection application pool, the worker scheduler's
+five-connection pool, the existing PostgreSQL resource limits and production
+timeouts. Each run records topology, resource use, source/schema bindings,
+connection ownership, PostgreSQL wait categories and event-loop delay. Cold
+means a fresh measurement process after restarting the owned PostgreSQL
+container; host filesystem caches are not claimed cleared. Diagnostic phases
+cannot count as capacity acceptance. Three consecutive successful combined runs
+must use unchanged final application source/schema; the original comparison
+profile also runs once. Every failed attempt remains evidence.

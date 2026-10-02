@@ -83,7 +83,7 @@ describe("ClassPilot classroom-state ACK surfaces share one gate", () => {
     const heartbeatAck = section(
       devices,
       "const [heartbeat, initialControlState] = await Promise.all",
-      "const screenshotTrackingAuthority",
+      'outcome: "recorded"',
     );
     assert.match(
       heartbeatAck,

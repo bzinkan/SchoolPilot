@@ -1367,7 +1367,7 @@
     {
       "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
       "number": 603,
-      "head": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "head": "08802d020a3c51beea504140f923126ab518aac6",
       "base": {
         "branch": "main",
         "sha": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04"
@@ -1376,7 +1376,8 @@
       "draft": true,
       "mergedAt": null,
       "role": "consolidated_release_review_container",
-      "note": "Remote head at capture; current local checkpoint and later CI records are separate. Not counted as an included source PR."
+      "note": "Remote head from releaseReviewCapturedAt; exact check entries and cancelled sibling runs are preserved in releaseReviewEvidence. Not a final local source, deployed artifact or included source PR.",
+      "mergeStateStatus": "CLEAN"
     },
     {
       "url": "https://github.com/bzinkan/ClassPilot/pull/123",
@@ -1390,7 +1391,8 @@
       "draft": true,
       "mergedAt": null,
       "role": "consolidated_release_review_container",
-      "note": "Remote head at capture; current local checkpoint and later CI records are separate. Not counted as an included source PR."
+      "note": "Remote head from releaseReviewCapturedAt; exact check entries and cancelled sibling runs are preserved in releaseReviewEvidence. Not a final local source, deployed artifact or included source PR.",
+      "mergeStateStatus": "UNSTABLE"
     }
   ],
   "extensionArtifact": {
@@ -1399,5 +1401,8 @@
     "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
     "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
     "evidence": "https://github.com/bzinkan/ClassPilot/blob/8069a9c9bd50352e187847158b356a69edc4e45d/docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
-  }
+  },
+  "releaseReviewCapturedAt": "2026-10-02T22:59:53.3225712Z",
+  "releaseReviewEvidence": "release-297/usage-contention/pr-review-checkpoint.json",
+  "reviewCheckpointNote": "The top-level SchoolPilot review checkpoint and 60 source PR records retain the earlier inclusion snapshot. Current remote review-container heads below are a later read-only observation; neither they nor old passing CI certify the uncommitted Usage contention work or a later freeze."
 }

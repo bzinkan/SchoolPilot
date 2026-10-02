@@ -9,9 +9,12 @@ its 2.10.0 package results do not certify this successor.
 The latest [read-only production snapshot](release-evidence/release-297/readonly-production-20261002.json)
 records existing-service health, the bounded metrics window and verification
 limits. It is not candidate capacity evidence or approval for an operational window.
-The [combined CI checkpoint](release-evidence/release-297/ci-app-checkpoint-d69322ef.json)
+The historical [combined CI checkpoint](release-evidence/release-297/ci-app-checkpoint-d69322ef.json)
 preserves exact successful logs, test counts, conditional skips, source-tree
-equivalence and deployment-tool results. A conditional skip is not a passed test.
+equivalence and deployment-tool results. The current Usage contention changes
+have separate [incremental evidence](release-evidence/release-297/usage-contention/README.md)
+and still require frozen-source acceptance. Earlier CI does not cover them.
+A conditional skip is not a passed test.
 
 The owner approved 2.9.7 and explicitly replaced the two-managed-Chromebook
 prerequisite with documented live validation. Record that prerequisite as
@@ -29,14 +32,14 @@ recipient, enforcement, tenancy or deployment health checks.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Combined application source / CI | `d69322ef7a2c56a9fb353f59c3c72b882042e41c`; [combined CI](https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557). Later evidence/checklist commits do not change application bytes. Require all applicable checks on the final review head before merge and green main before execution. |
-| API / worker artifacts | Pending compatible digest-pinned serving and rollback artifacts; record image digest, source SHA and task definitions |
+| Remote review source / CI | #603 at `08802d020a3c51beea504140f923126ab518aac6`; [20 reported checks passed](release-evidence/release-297/usage-contention/pr-review-checkpoint.json). This predates the current Usage correction. Final freeze, applicable final-head checks and green merged main are pending. |
+| API / worker artifacts | Final corrected candidate image and deployable registry/task-definition bindings pending. A local compatible rollback image from `08802d02` is prepared and scanned; [exact image/archive/scan proof](release-evidence/release-297/usage-contention/rollback-artifact/index.json). Both Usage modes must remain off on that older image. |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
-| Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five required jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable; packaged source and ZIP above unchanged |
-| Frontend aggregate | [Exact full-command log and manifest](release-evidence/release-297/frontend-aggregate-60bb2338.json): exit 0; 738 Node-runner cases passed with zero skips, plus successful direct browser scripts. Frontend tree matches combined CI exactly. |
+| Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable. Five cancelled sibling-run entries remain and GitHub reports `UNSTABLE`; reconcile required-check status before merge. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes. |
+| Frontend aggregate | [Historical full-command log](release-evidence/release-297/frontend-aggregate-60bb2338.json): 738 Node-runner cases passed with zero skips, plus direct browser scripts. Current Usage overload/retry interface changes require their own final combined frontend gates. |
 | Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
-| Usage capacity | Held off. [Corrected-source cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) at `60bb2338157a9f0c313ebffae3f42a69ac3e3345` failed concurrent reports and authenticated arrivals despite full workers finishing in 22.623 / 22.753 seconds. No three-run acceptance or supported 100-request/second envelope is claimed. |
+| Usage capacity | Held off. [Retained cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) failed concurrent reports and authenticated arrivals despite workers finishing in 22.623 / 22.753 seconds. The current admission/deadline/heartbeat correction has incremental tests only; diagnostic preflights do not establish three-run acceptance or a supported 100-request/second envelope. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)
@@ -91,14 +94,20 @@ tag, and no 2.9.7 tag or merged status is claimed here.
 - Run source and exact-ZIP checks across the existing supported Chrome matrix,
   including pages already open across an update. Record source, manifest version,
   extension ID, ZIP hash and actual outcomes together.
-- Keep Usage activation off unless three cold final-schema runs each complete
-  within 48 seconds at unchanged 60-second limits. Use two schools, one million
-  stored observations per school, concurrent reports and separately measured
-  authenticated open-loop arrivals at the declared device cadence. Preserve
-  failed stress results and state the measured capacity envelope explicitly.
+- Require three consecutive cold, release-enabled final-source/schema runs
+  before requesting release execution. Every complete worker operation must
+  finish within 48 seconds at the unchanged 60-second limit. Use two schools,
+  one million stored observations per school, all 64 concurrent reports across
+  four waves, and all 6,000 authenticated offers at 100/second with complete drain
+  and no rejected, failed or excessively late traffic. Require no database
+  acquisition failures and agreement on independent totals, stored observations,
+  coverage, tenant isolation and audited CSV. Rerun the retained comparison
+  profile once. Preserve all failed attempts and the measured capacity envelope.
 
-Usage capacity/observation does not hold up an otherwise accepted classroom
-release. A failed confidentiality, authority, recipient or enforcement check does.
+The current release decision requires completed Usage development and synthetic
+acceptance before requesting execution. Its deployed shadow/rollup observation
+still gates later reporting activation. A failed confidentiality, authority,
+recipient or enforcement check always blocks the affected release.
 
 ## Read actual production before execution
 
@@ -141,6 +150,16 @@ pending-submission state** immediately before upload. If a higher version preven
 2.9.7, stop and report it. Publication does not prove client installation.
 
 ## Migration and deployment order
+
+Image preparation does not require merging. Build and scan a local candidate
+from the frozen review source, bind its image/archive hashes, and rehearse the
+additive migrations plus compatible rollback re-entry locally. Keep those proofs
+distinct from registry publication and production task-definition bindings.
+Before execution, reconcile the artifact source with approved merged main and
+passing checks; if the merge changes application bytes, regenerate affected
+artifacts and acceptance. The prepared rollback image is local only: no ECR
+publication or live task-definition compatibility is established by its synthetic
+release-floor proof. Keep both Usage modes off when using that rollback source.
 
 Use a separate clean main worktree after the integration PR is reviewed and
 merged; original checkouts and draft Observe work remain untouched. Main must

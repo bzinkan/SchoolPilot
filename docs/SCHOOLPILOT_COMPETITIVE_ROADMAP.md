@@ -9,8 +9,10 @@ and [PR inventory](RELEASE_2_9_7_PR_INVENTORY.md) supersede the earlier candidat
 version, independent stack-merging order and two-Chromebook prerequisite. Managed
 validation is `waived_not_passed`; actual sample-bearing live acceptance is still
 required before global promotion. No implementation or test status here implies
-deployment or activation. Usage retains its independent capacity and deployed
-observation gates. SFU implementation and legacy media changes remain excluded.
+deployment or activation. The owner's subsequent decision requires all Usage
+development and synthetic capacity acceptance before requesting coordinated
+release execution. Usage's deployed observation remains a later activation
+gate. SFU implementation and legacy media changes remain excluded.
 
 The October 2 corrected-source capacity retry is a retained failure: each full
 worker finished below 48 seconds, but concurrent reports and authenticated
@@ -18,8 +20,21 @@ heartbeat arrivals exhausted the API connection pool. Usage remains off; neither
 three passing cold runs nor a supported 100-request/second envelope is established.
 The [Run 02 evidence](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json)
 preserves the unchanged limits, exact schema/source, failures and successful
-post-run correctness checks. This independent gate does not certify or prevent
-an otherwise accepted classroom release.
+post-run correctness checks. The correction now adds bounded fair report
+admission, narrowly scoped tenant connections, complete request deadlines,
+content-free ownership diagnostics and removal of a redundant modern heartbeat
+authority calculation. A separate release-enabled harness uses isolated API,
+worker and traffic-generator processes, real staff sessions and Redis, with
+precise restrictions, Focus and private-chat lifecycle active. Implementation
+alone does not satisfy the required three consecutive final-source capacity
+runs. See the [contention and acceptance record](RELEASE_297_USAGE_AND_RUNTIME_EVIDENCE.md).
+
+The [latest review-container snapshot](release-evidence/release-297/usage-contention/pr-review-checkpoint.json)
+is separate from the pending Usage source freeze: SchoolPilot #603's green
+`08802d02` head does not cover these later changes. Local compatible rollback
+preparation is [recorded separately](release-evidence/release-297/usage-contention/rollback-artifact/index.json),
+with both Usage modes required off; it is not registry publication, deployment
+or final candidate acceptance.
 
 This document turns the product owner's eight-phase master plan into a sequence of safe, independently deployable pull requests. It records the product model, the engineering rules every PR follows, the PR order and its hard constraints, the capabilities and flags each PR adds, and the Phase 0/0A status. The retired Live View and parked TURN inventory, with its A–E classification and deletion order, is in `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`.
 

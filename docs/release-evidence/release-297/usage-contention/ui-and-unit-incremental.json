@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-02T22:19:39.803Z",
+  "status": "incremental_uncommitted_checks_not_final_acceptance",
+  "baseHead": "08802d020a3c51beea504140f923126ab518aac6",
+  "sourceState": "Worktree was being developed during these runs; no frozen-source or capacity acceptance is asserted.",
+  "productionMutations": 0,
+  "runs": [
+    {
+      "id": "usage-ui-suite",
+      "rawFileName": "release297-usage-ui-fix.log",
+      "command": "npm run test:digital-usage",
+      "commandWorkingDirectory": "schoolpilot-app",
+      "exitCode": 0,
+      "passed": 22,
+      "skipped": 0,
+      "limitation": "Passed before the subsequent CSV Blob-error case was added.",
+      "rawSha256": "af7cc813da462cb317433477ef73282ac6b55e423ce564facbf127ce6166c1ed",
+      "sanitizedSha256": "b959ae0e6d3ee1a4d52afa213c36705c860940126452174bd21ce2ea3ec50b72"
+    },
+    {
+      "id": "usage-busy-json-and-csv",
+      "rawFileName": "release297-usage-busy-csv.log",
+      "command": "node --test --test-name-pattern=\"busy reports\" scripts/digital-usage-browser.test.mjs",
+      "commandWorkingDirectory": "schoolpilot-app",
+      "exitCode": 0,
+      "passed": 1,
+      "skipped": 0,
+      "limitation": "Explicit retry, no automatic retry or numeric zero, successful retry, CSV overload refusal.",
+      "rawSha256": "597bfde87288936acc1930f255c318f2d4fb9cda311cfec78dee35610c2337ef",
+      "sanitizedSha256": "c01b9fdf47c4743bdc93be8827e8c9bf89469e32ad08c02eab24baa910a354f0"
+    },
+    {
+      "id": "frontend-lint",
+      "rawFileName": "release297-usage-final-frontend-lint.log",
+      "command": "npm run lint",
+      "commandWorkingDirectory": "schoolpilot-app",
+      "exitCode": 0,
+      "passed": null,
+      "skipped": 0,
+      "limitation": "Passed with existing warnings; predates final CSV-header fallback change.",
+      "rawSha256": "83c07bc50febc27a2da0f75518d8688bb4ca6f38d29b7be8b83e4b2f3f6cb426",
+      "sanitizedSha256": "60ec581fd4176b2dcccc597ac9de95517f42cfcfc7829ee70e6e427498b396b8"
+    },
+    {
+      "id": "frontend-build",
+      "rawFileName": "release297-usage-final-frontend-build.log",
+      "command": "npm run build",
+      "commandWorkingDirectory": "schoolpilot-app",
+      "exitCode": 0,
+      "passed": null,
+      "skipped": 0,
+      "limitation": "Passed with existing chunk warnings; predates final CSV-header fallback change.",
+      "rawSha256": "1b0e733ddcb2708100631326efa02752c7b866d9dbde4d98381886986cc9e985",
+      "sanitizedSha256": "5556e19edfecdfe4225964fa3801804553ca58f41f92c9fa99350904de7db0d3"
+    },
+    {
+      "id": "backend-unit-checkpoint",
+      "rawFileName": "release297-usage-unit.log",
+      "command": "npm run test:unit",
+      "commandWorkingDirectory": "repository root",
+      "exitCode": 0,
+      "passed": 1696,
+      "skipped": 4,
+      "limitation": "1700 cases, 1696 passed, four existing conditional skips; predates later report/deadline regressions.",
+      "rawSha256": "2e23f6793d6c998a6f9a26ff1c859e7b6f620fd65e74c2b1e3f488ba9a5d80df",
+      "sanitizedSha256": "870a8b47176bf774c955604d8f06d8afa4bb0c4cb3156db3b7211d0397182b09"
+    }
+  ],
+  "archive": {
+    "file": "ui-and-unit-incremental.logs.ndjson.gz",
+    "sha256": "8d9c413216d6dbab08cf3c49c47d71ba61e5ce5eccfd0e487394257151ed3eab",
+    "decodedSha256": "2daa1f9caed3d7eaffbfc99e8b91baef86029b3f28d51f452454706d2679c554",
+    "sanitation": "Release checkout path, credential-bearing database URLs, JWT-shaped tokens, and line endings."
+  },
+  "initialRedProof": "The new browser retry assertion failed against the earlier UI in the tool transcript (missing Try again control); no separate raw-log file was persisted for that attempt."
+}

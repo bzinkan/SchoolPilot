@@ -1,0 +1,6 @@
+{
+  "rawSha256": "50067b088043647f90b4be79d56facc3e565baf190520b506e638dac510ec943",
+  "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+  "normalization": "Remove only pg_dump restrict/unrestrict nonce lines; normalize BOM and CRLF to UTF8/LF; retain all SQL and schema names.",
+  "populatedDataCopied": false
+}

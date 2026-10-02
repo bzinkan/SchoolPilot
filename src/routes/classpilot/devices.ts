@@ -3824,7 +3824,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     const lastAcceptedBindingMatches = lastHb?.studentId === studentId
       && lastHb.studentSessionId === studentSessionId;
     const refreshExactSessionAuthority = () => runWithTenantContext(
-      { schoolId },
+      { schoolId, operation: "heartbeat_persistence" },
       () => refreshStudentSessionAuthorityWithoutTelemetry({
         schoolId,
         studentId,
@@ -3891,7 +3891,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     // WebSocket fan-out, classification, and response serialization must not
     // occupy one of the task's 18 PostgreSQL pool slots.
     const heartbeatDatabaseStartedAt = Date.now();
-    const heartbeatDbResult = await runWithTenantContext({ schoolId }, async () => {
+    const heartbeatDbResult = await runWithTenantContext({ schoolId, operation: "heartbeat_persistence" }, async () => {
       // Cache only the non-secret tracking projection. Enrollment and other
       // security settings are always read through the uncached full-row helper.
       const trackingSettings = await getHeartbeatTrackingSettingsForSchool(schoolId);
@@ -4035,15 +4035,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         }
       }
 
-      const screenshotTrackingAuthority = trackingWindowScreenshotLeaseNegotiated
-        ? await getClasspilotScreenshotAuthorityProjection({
-            schoolId,
-            studentId,
-            studentSessionId,
-            deviceId,
-          })
-        : undefined;
-
       return {
         outcome: "recorded",
         heartbeat,
@@ -4051,7 +4042,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         controlState,
         ssoPolicy,
         trackingSettings,
-        screenshotTrackingAuthority,
       } as const;
     });
     recordHeartbeatHotPathTiming(
@@ -4123,7 +4113,6 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       controlState,
       ssoPolicy,
       trackingSettings,
-      screenshotTrackingAuthority,
     } = heartbeatDbResult;
     if (heartbeat.leaseRenewed) {
       recordHeartbeatHotPathCounter("manualSessionLeaseRenewed");
@@ -4223,16 +4212,18 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         ),
       };
     };
-    const screenshotPolicyPromise = resolveClasspilotScreenshotPolicy({
+    // Negotiated clients receive their only screenshot authority/policy below,
+    // inside the final binding and policy locks. Computing an unlocked copy here
+    // discarded its result and doubled the authority reads on every heartbeat.
+    // Legacy clients retain their existing policy and observation path.
+    const screenshotPolicyPromise = trackingWindowScreenshotLeaseNegotiated
+      ? Promise.resolve(undefined)
+      : resolveClasspilotScreenshotPolicy({
       schoolId,
       teachingSessionId: controlState?.teachingSessionId,
       studentId,
       acceptedCapabilities: protocol.acceptedCapabilities,
       trackingSettings,
-      trackingAuthority: classpilotScreenshotAuthorityForDeliveredControl({
-        projection: screenshotTrackingAuthority,
-        deliveredControlRevision: classroomState?.revision ?? 0,
-      }),
       observationStatus: heartbeatObservationStatus,
     });
     const studentEmail = heartbeat.studentEmail;
@@ -4439,7 +4430,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         }
 
         if (classification.safetyAlert) {
-          const suppressed = await runWithTenantContext({ schoolId }, () => isSafetyUrlSuppressed(schoolId, activeTabUrl));
+          const suppressed = await runWithTenantContext({ schoolId, operation: "heartbeat_background" }, () => isSafetyUrlSuppressed(schoolId, activeTabUrl));
           if (suppressed) classification = { ...classification, safetyAlert: null };
         }
 
@@ -4521,7 +4512,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
 
           // The request's original RLS checkout is already released. Rebind
           // the exact school for the timeline and evidence-request transaction.
-          const safetyRecord = await runWithTenantContext({ schoolId }, async () => {
+          const safetyRecord = await runWithTenantContext({ schoolId, operation: "heartbeat_background" }, async () => {
             const timelineRecord = await recordBrowserSafetyTimeline({
               schoolId,
               studentId,
@@ -4653,7 +4644,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     if (shouldCheckPendingMessages) {
       try {
         const recent = await runWithTenantContext(
-          { schoolId },
+          { schoolId, operation: "heartbeat_final_delivery" },
           () => getPendingMessagesForStudent({
             schoolId,
             studentId,
@@ -4741,7 +4732,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       );
       try {
         const teacherReplyDelivery = await runWithTenantContext(
-          { schoolId },
+          { schoolId, operation: "heartbeat_final_delivery" },
           () => withClasspilotStudentWebSocketBootstrapAuthority(
             { schoolId, studentId, studentSessionId, deviceId },
             (transactionDb) => getClasspilotStudentControlState(schoolId,studentId,transactionDb),
@@ -4784,7 +4775,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     // response before releasing that lock. This closes the post-check gap in
     // which a retired binding could otherwise receive the old student's state.
     const finalDelivery = await runWithTenantContext(
-      { schoolId },
+      { schoolId, operation: "heartbeat_final_delivery" },
       () => withClasspilotStudentControlDeliveryAuthority(
         { schoolId, studentId, studentSessionId, deviceId },
         async (transactionDb) => {

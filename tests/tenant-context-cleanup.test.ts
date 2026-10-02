@@ -19,6 +19,7 @@ const {
   runWithTenantContext,
 } = await import("../src/middleware/tenantContext.js");
 const { getTenantStore } = await import("../src/db/tenantContext.js");
+const { getUsageCapacityDiagnostics, resetUsageCapacityDiagnostics } = await import("../src/services/usageCapacityDiagnostics.js");
 
 function deferred() {
   let resolve!: () => void;
@@ -394,6 +395,43 @@ describe("tenant request disconnect races", { timeout: 5_000 }, () => {
 });
 
 describe("tenant context cleanup during drain", () => {
+  it("attributes the actual connection owner until its RESET completes", async (t) => {
+    enableRls(t);
+    resetUsageCapacityDiagnostics();
+    const resetStarted = deferred();
+    const resetAllowed = deferred();
+    let released = false;
+    const client: FixtureClient = {
+      async query(sql) {
+        if (isReset(sql)) { resetStarted.resolve(); await resetAllowed.promise; }
+        return { rows: [] };
+      },
+      release() { released = true; },
+    };
+    t.mock.method(pool, "connect", async () => client);
+    const work = runWithTenantContext({ schoolId: "private-school", operation: "heartbeat_persistence" }, async () => {
+      assert.equal(getTenantStore()?.schoolId, "private-school");
+    });
+    try {
+      await resetStarted.promise;
+      const pending = getUsageCapacityDiagnostics().operations.heartbeat_persistence!;
+      assert.equal(pending.counters.checkoutSuccess, 1);
+      assert.equal(pending.activeCheckouts, 1);
+      assert.equal(pending.timings.holdMs!.count, 0);
+      assert.equal(released, false);
+      resetAllowed.resolve();
+      await work;
+      const complete = getUsageCapacityDiagnostics();
+      assert.equal(complete.operations.heartbeat_persistence!.activeCheckouts, 0);
+      assert.equal(complete.operations.heartbeat_persistence!.timings.holdMs!.count, 1);
+      assert.equal(complete.operations.heartbeat_persistence!.timings.operationMs!.count, 1);
+      assert.doesNotMatch(JSON.stringify(complete), /private-school/);
+    } finally {
+      resetAllowed.resolve();
+      await work;
+      await drainTenantContextReleases();
+    }
+  });
   it("reports an acquisition failure once without creating another database write", async (t) => {
     const previous = process.env.RLS_GUC_ENABLED;
     process.env.RLS_GUC_ENABLED = "true";

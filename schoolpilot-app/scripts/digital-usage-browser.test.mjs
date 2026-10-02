@@ -121,6 +121,38 @@ test('unavailable and feature-off responses expose no numeric totals/export; com
   }
 });
 
+test('busy reports stay nonnumeric and retry only on an explicit request', async () => {
+  let busy = true;
+  const { page, errors, requests } = await open({ handler: async (route, url) => {
+    if (!url.pathname.endsWith('/admin/usage') || !busy) return false;
+    await route.fulfill({ status: 503, headers: { 'Retry-After': '1' }, json: {
+      error: 'Report admission unavailable', code: 'CLASSPILOT_USAGE_BUSY',
+    } }); return true;
+  } });
+  try {
+    await page.getByText('Reports are busy. Wait a moment, then try again.', { exact: false }).waitFor();
+    const count = () => requests.filter(row => row.path.endsWith('/admin/usage')).length;
+    assert.equal(count(), 1);
+    await page.clock.fastForward(5_000);
+    await page.waitForLoadState('networkidle');
+    assert.equal(count(), 1, 'Retry-After must not create a client retry loop');
+    assert.equal(await page.getByTestId('usage-total').count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Export CSV', exact: true }).isDisabled(), true);
+    busy = false;
+    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByTestId('usage-total').waitFor();
+    assert.equal(count(), 2);
+    const downloads = [];
+    page.on('download', download => downloads.push(download));
+    busy = true;
+    await page.getByRole('button', { name: 'Export CSV', exact: true }).click();
+    await page.getByText('CSV was not exported. Reports are busy. Wait a moment, then try again.', { exact: false }).waitFor();
+    assert.equal(count(), 3);
+    assert.deepEqual(downloads, []);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
 test('school-local presets and invalid custom ranges do not issue malformed requests', async () => {
   const { page, requests, errors } = await open({ zone: 'America/Los_Angeles', now: '2026-03-09T03:00Z' });
   try {
