@@ -2878,16 +2878,26 @@ test('A delayed history deletion response cannot alter the new school after a sc
 
 test('Applying onto a date that already has custom schedules needs an explicit acknowledgement', { timeout: 120_000 }, async context => {
   const { browser, vite, page, catalog, control, previews, applies, errors } = await createClassPlacementFixture(context);
+  let releasePreview;
+  let previewStarted;
+  const secondPreviewStarted = new Promise(resolve => { previewStarted = resolve; });
   try {
     catalog.profiles = [classPlacementProfile()];
     // A varying token models a genuinely new preview; an identical one would
     // legitimately keep the acknowledgement, because nothing changed.
-    control.previewResponse = () => ({ json: { previewToken: `occupied-${previews.length}`, schoolTimezone: catalog.schoolTimezone,
+    control.previewResponse = async () => {
+      if (previews.length === 2) {
+        const held = new Promise(resolve => { releasePreview = resolve; });
+        previewStarted();
+        await held;
+      }
+      return { json: { previewToken: `occupied-${previews.length}`, schoolTimezone: catalog.schoolTimezone,
       affectedClasses: 1, blockers: [], changes: [], testingWindows: [],
       warnings: [
         { code: 'SCHEDULE_APPLICATION_ALREADY_APPLIED', message: 'Fall MAP Day 1 is already applied to this date.',
           date: '2026-09-11', applicationId: 'application_existing', profileName: 'Fall MAP Day 1', testingBlockNames: ['MAP Reading'] },
-      ] } });
+      ] } };
+    };
     await page.reload(); await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: 'Choose dates & apply Class placement day', exact: true }).click();
     const workspace = page.getByRole('region', { name: 'Schedule profile workspace', exact: true });
@@ -2908,8 +2918,14 @@ test('Applying onto a date that already has custom schedules needs an explicit a
     await acknowledgement.check();
     assert.equal(await applyButton.isDisabled(), false);
     // Re-previewing must clear the acknowledgement: it is keyed to the token.
+    const refreshed = page.waitForResponse(response => response.url().endsWith('/schedule-profiles/preview') && response.status() === 200);
     await workspace.getByRole('button', { name: 'Preview application', exact: true }).click();
-    await warning.waitFor();
+    await secondPreviewStarted;
+    assert.equal(await warning.getByRole('checkbox').isChecked(), true, 'The existing warning remains visible while its replacement is pending');
+    assert.equal(await applyButton.isDisabled(), true, 'A pending preview cannot apply the old acknowledged token');
+    releasePreview();
+    await (await refreshed).finished();
+    await page.waitForFunction(() => document.querySelector('[aria-label="Custom schedules already applied"] input[type="checkbox"]')?.checked === false);
     assert.equal(await warning.getByRole('checkbox').isChecked(), false, 'A fresh preview must be acknowledged again');
     assert.equal(await applyButton.isDisabled(), true);
     await warning.getByRole('checkbox').check();
@@ -2917,8 +2933,9 @@ test('Applying onto a date that already has custom schedules needs an explicit a
     await workspace.waitFor({ state: 'hidden' });
     assert.equal(applies.length, 1);
     assert.equal(applies[0].acknowledgeExistingApplications, true, 'The server re-checks, so the acknowledgement must be sent');
+    assert.equal(applies[0].previewToken, 'occupied-2', 'Apply uses the newly reviewed token');
     assert.deepEqual(applies[0].dates, ['2026-09-08', '2026-09-11']);
     assert.ok(previews.length >= 2);
     assert.deepEqual(errors, []);
-  } finally { await browser.close(); await vite.close(); }
+  } finally { releasePreview?.(); await browser.close(); await vite.close(); }
 });

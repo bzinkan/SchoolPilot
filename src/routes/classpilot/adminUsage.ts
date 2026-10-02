@@ -19,7 +19,7 @@ import {
  * GET /api/classpilot/admin/usage?scope=school|grade|class|student&id&from&to&format=json|csv
  *
  * Digital Usage ("Monitored Browser Time") for administrators. With
- * CLASSPILOT_DIGITAL_USAGE_MODE off, or classpilot_usage_rollups not
+ * CLASSPILOT_DIGITAL_USAGE_MODE off, or either usage table not
  * RLS-admitted, this router steps aside before authentication and every
  * request receives the same JSON 404 as any unknown API path.
  */

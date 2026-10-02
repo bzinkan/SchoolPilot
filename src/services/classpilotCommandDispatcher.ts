@@ -15,6 +15,7 @@ import {
   getClasspilotStudentControlState,
   getClasspilotSsoPolicyForSchool,
   getFlightPathById,
+  isAuthorizedClasspilotSessionStaff,
   getPollById,
   lockClasspilotSsoPolicyDeliveryAuthority,
   markClasspilotCommandTargetsUnavailable,
@@ -81,6 +82,7 @@ import type {
   ClasspilotStudentControlState,
 } from "../schema/classpilot.js";
 import { classpilotCommandAuthorityEnvelope } from "./classpilotCommandAuthority.js";
+import { prepareClasspilotFocusCleanupFrame } from "./classpilotFocusCleanup.js";
 import { classpilotExactTabCloseVersion } from "./classpilotExactTabCapability.js";
 import { classpilotControlStateExactBinding } from "./classpilotControlStateFrame.js";
 import {
@@ -91,6 +93,8 @@ import { nudgeClasspilotScreenshotPolicyRefresh } from "./classpilotScreenshotPo
 import { classpilotSsoPolicyApprovesObservedUrl } from "./classpilotHeartbeatSsoSanitizer.js";
 import { classpilotTransientCurrentPageCommandEnvelope } from "./classpilotTransientCurrentPage.js";
 import { requireScheduledClassroomContext } from "./classpilotActivityAuthority.js";
+import { assertExactFocusTargetScope, focusAuthoringEnabled, focusCapabilityAccepted, focusRecord,
+  FOCUS_TAB_CAPABILITY, type ClasspilotExactTabTarget } from "./classpilotFocus.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -122,6 +126,9 @@ export const COVERAGE_COMMAND_TYPES = new Set([
   "remove-flight-path",
   "apply-block-list",
   "remove-block-list",
+  "activate-tab",
+  "focus-tab",
+  "stop-focus",
 ]);
 
 export function normalizeStudentIds(value: unknown): string[] {
@@ -205,6 +212,10 @@ export async function normalizeCommandPayload(
   switch (commandType) {
     case "open-tab":
       return { extensionType: "open-tab", payload: validated };
+    case "activate-tab":
+    case "focus-tab":
+    case "stop-focus":
+      return { extensionType: commandType, payload: validated };
     case "lock-screen":
       // "This resource only" needs the school's precise-restriction rollout.
       if (validated.resource !== undefined) requirePreciseRestrictionResourcesActive(schoolId);
@@ -264,7 +275,8 @@ export async function normalizeCommandPayload(
       // (and only with the school's precise rollout active).
       const payload = classpilotFlightPathApplyPayload({ schoolId, flightPath });
       requireRuleListWithinExtensionLimit(payload.allowedDomains, "Flight Path");
-      return { extensionType: "apply-flight-path", payload };
+      return { extensionType: "apply-flight-path", payload: { ...payload,
+        ...(validated.expectedFlightPathUpdatedAt ? { expectedFlightPathUpdatedAt: validated.expectedFlightPathUpdatedAt } : {}) } };
     }
     case "apply-block-list": {
       const blockListId = String(validated.blockListId || "").trim();
@@ -595,6 +607,7 @@ function applyOfflineRestrictionPolicy(options: {
   if (options.deliveryPolicy !== "persistent_control") {
     return { targets: options.targets, deferredStudentIds };
   }
+  if (options.commandType === "stop-focus") return { targets: options.targets, deferredStudentIds };
   const gateActive = isClasspilotCapabilityActive(
     "lateSignInRestrictionSsoV1",
     { schoolId: options.schoolId }
@@ -628,7 +641,8 @@ function restrictionsAreEmpty(value: unknown): boolean {
     && !restrictions.blockList.active
     && !restrictions.attentionMode.active
     && restrictions.tabLimit === null
-    && restrictions.temporaryAllows.length === 0;
+    && restrictions.temporaryAllows.length === 0
+    && restrictions.focus?.active !== true;
 }
 
 /**
@@ -665,9 +679,10 @@ export function classpilotCommandFrameForTarget(
     requiredCapability?:
       | "lateSignInRestrictionSsoV1"
       | "restrictionAuthPassThroughV1"
-      | "preciseRestrictionResourcesV1";
+      | "preciseRestrictionResourcesV1"
+      | "focusTabV1";
     requiredCapabilities?: Array<
-      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1" | "preciseRestrictionResourcesV1"
+      "lateSignInRestrictionSsoV1" | "restrictionAuthPassThroughV1" | "preciseRestrictionResourcesV1" | "focusTabV1"
     >;
     exactBindingControlRevision?: number;
     authPassThrough?: ClasspilotRestrictionAuthPassThroughEnvelope;
@@ -708,11 +723,12 @@ export function classpilotCommandFrameForTarget(
     ...(target.contextAuthorityRevision !== undefined ? { contextAuthorityRevision: target.contextAuthorityRevision } : {}),
   };
   const exactBindingControlRevision = classroomState?.revision
-    ?? delivery.exactBindingControlRevision;
+    ?? delivery.exactBindingControlRevision ?? target.controlRevision;
   const deferredExactBindingEnvelope = (
     delivery.requiredCapability
     || delivery.requiredCapabilities?.length
     || Number.isSafeInteger(delivery.exactBindingControlRevision)
+    || (commandType === "open-tab" && typeof payload.afterRestrictionCommandId === "string")
   )
     && target.deviceId
     && target.studentSessionId
@@ -727,6 +743,19 @@ export function classpilotCommandFrameForTarget(
         }),
       }
     : {};
+  if (commandType === "activate-tab" || commandType === "focus-tab") {
+    const own = Array.isArray(payload.tabTargets)
+      ? payload.tabTargets.find((row: ClasspilotExactTabTarget) => row.studentId === target.studentId) : null;
+    if (!own || !("exactBinding" in deferredExactBindingEnvelope)
+      || !delivery.requiredCapabilities?.includes(FOCUS_TAB_CAPABILITY)
+      || (commandType === "focus-tab" && !classroomState?.restrictions.focus?.active)) return null;
+    return { type: "remote-control", _msgId: crypto.randomUUID(), commandId: payload.commandId,
+      ...bindingEnvelope, ...deferredExactBindingEnvelope, ...deliveryEnvelope,
+      command: { type: extensionType, commandId: payload.commandId, ...bindingEnvelope,
+        ...deferredExactBindingEnvelope, ...deliveryEnvelope, ...commandAuthority,
+        data: { tabRef: own.tabRef, observedRevision: own.observedRevision } },
+      ...(classroomState ? { classroomState } : {}) };
+  }
   if (commandType === "close-tabs" && Array.isArray(payload?.tabsToClose)) {
     const ownTabs = payload.tabsToClose.filter((tab: any) =>
       String(tab.studentId || "") === target.studentId
@@ -806,7 +835,8 @@ export function classpilotCommandFrameForTarget(
       ...deliveryEnvelope,
       ...commandAuthority,
       ...classpilotTransientCurrentPageCommandEnvelope(delivery),
-      data: { ...payload },
+      data: commandType === "open-tab" ? { url: payload.url }
+        : Object.fromEntries(Object.entries(payload).filter(([key]) => !["focusAfterOpen", "afterRestrictionCommandId", "expectedFlightPathUpdatedAt"].includes(key))),
     },
     ...(classroomState ? { classroomState } : {}),
   };
@@ -1183,7 +1213,14 @@ export async function executeClasspilotCommand(options: {
   if (options.replayCommand && options.routineReservation?.replayCommandId === options.replayCommand.id) {
     normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
   }
-  const commandPayload = { ...normalized.payload };
+  let commandPayload = { ...normalized.payload };
+  const focusExact = options.commandType === "focus-tab" || options.commandType === "activate-tab";
+  const focusNewAction = focusExact || (options.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
+  const lessonOpen = options.commandType === "open-tab" && typeof commandPayload.afterRestrictionCommandId === "string";
+  if (lessonOpen && (options.targetScope !== "students" || !options.targets.length))
+    throw Object.assign(new Error("Lesson opening requires explicit student recipients"), { status: 400, code: "LESSON_RECIPIENTS_REQUIRED" });
+  if (focusExact) assertExactFocusTargetScope(options.commandType, options.targetScope,
+    options.targets.map(target => target.studentId), commandPayload.tabTargets as ClasspilotExactTabTarget[]);
   // Poll close is bound to the immutable start-command target rows. Dashboard
   // selection is presentation state and must never widen, narrow, or redirect
   // the students whose poll overlay is being closed.
@@ -1205,15 +1242,18 @@ export async function executeClasspilotCommand(options: {
   const requiredToolsCapability = options.commandType === "lesson-activity" ? "lessonActivitiesV1"
     : options.commandType === "timer" && ["pause", "resume", "extend"].includes(String(commandPayload.action)) ? "timerControlsV1"
       : options.commandType === "poll" && commandPayload.responseType === "short_text" ? "exitTicketsV1" : null;
-  if (requiredToolsCapability) {
+  if (requiredToolsCapability || focusNewAction) {
     const evidence = await readClasspilotRealtimeStatusBatch(options.schoolId, effectiveTargets.filter(target => target.available && target.studentSessionId && target.deviceId)
       .map(target => ({ studentId: target.studentId, studentSessionId: target.studentSessionId!, deviceId: target.deviceId! })));
     for (let index = 0; index < effectiveTargets.length; index++) {
       const target = effectiveTargets[index]!;
       if (!target.available) continue;
       const snapshot = evidence.get(target.studentId);
-      if (snapshot?.status !== "hit" || !classpilotRealtimeFresh(snapshot.snapshot) || !snapshot.snapshot.acceptedCapabilities?.includes(requiredToolsCapability)) {
-        effectiveTargets[index] = { ...target, available: false, stateAuthorized: false, unavailableReason: `Unsupported client: ${requiredToolsCapability} is required` };
+      if (snapshot?.status !== "hit" || !classpilotRealtimeFresh(snapshot.snapshot)
+        || (requiredToolsCapability && !snapshot.snapshot.acceptedCapabilities?.includes(requiredToolsCapability))
+        || (focusNewAction && (!focusAuthoringEnabled(options.schoolId) || !focusCapabilityAccepted(snapshot.snapshot.acceptedCapabilities ?? [])))) {
+        effectiveTargets[index] = { ...target, available: false, stateAuthorized: false,
+          unavailableReason: focusNewAction ? "TAB_ACTIVATE_CAPABILITY_REQUIRED" : `Unsupported client: ${requiredToolsCapability} is required` };
       }
     }
   }
@@ -1370,6 +1410,7 @@ export async function executeClasspilotCommand(options: {
     && !Array.isArray(created.commandPayload)
     ? created.commandPayload as Record<string, unknown>
     : storedCommandPayload;
+  commandPayload = { ...committedCommandPayload };
 
   const committedTargetByStudent = new Map(
     created.targets.map((target) => [target.studentId, target])
@@ -1473,7 +1514,13 @@ export async function executeClasspilotCommand(options: {
     rejectedStudentIds: string[];
   };
   try {
-    persistence = shouldPersistBeforeDelivery
+    persistence = ["focus-tab", "stop-focus"].includes(options.commandType)
+      ? { rows: (await Promise.all(committedTargets.map(target => getClasspilotStudentControlState(options.schoolId, target.studentId))))
+        .filter((row): row is ClasspilotStudentControlState => !!row
+          && row.teachingSessionId === (options.teachingSessionId || null)
+          && row.supervisionContextId === (options.supervisionContextId || null)
+          && (options.commandType === "stop-focus" || row.sourceCommandId === created.id)), rejectedStudentIds: [] }
+      : shouldPersistBeforeDelivery
       && options.persistClassroomState !== false
       && options.teachingSessionId
       ? await persistActiveState({
@@ -1573,6 +1620,10 @@ export async function executeClasspilotCommand(options: {
     }
   }
   const capabilityObservedIds = new Set([...deferredIds, ...authRelevantIds]);
+  if (focusNewAction || lessonOpen || options.commandType === "stop-focus"
+    || controlStateRows.some(row => normalizeClasspilotRestrictions(
+      focusRecord(row.desiredState).restrictions).focus?.active))
+    for (const target of committedTargets) if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);
   if (requiredToolsCapability) for (const target of committedTargets) {
     if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);
   }
@@ -1627,6 +1678,7 @@ export async function executeClasspilotCommand(options: {
     });
     if (
       delivered.withheldReason === "restriction_auth_update_required"
+      && options.commandType !== "stop-focus"
       && target?.studentSessionId
       && target.deviceId
     ) {
@@ -1641,6 +1693,7 @@ export async function executeClasspilotCommand(options: {
     // "requested": mark it unavailable with the capability it needs.
     if (
       delivered.withheldReason === "precise_restriction_capability_required"
+      && options.commandType !== "stop-focus"
       && target?.studentSessionId
       && target.deviceId
     ) {
@@ -1732,6 +1785,7 @@ export async function executeClasspilotCommand(options: {
           if (
             controlStateIds.has(target.studentId)
             && !classroomStateByStudent.has(target.studentId)
+            && options.commandType !== "stop-focus"
           ) {
             return null;
           }
@@ -1752,8 +1806,39 @@ export async function executeClasspilotCommand(options: {
           const deliveryAuthority = await withClasspilotStudentControlDeliveryAuthority(
             baseExactTarget,
             async (transactionDb) => {
+              if (lessonOpen) {
+                if (created.teachingSessionId && !await isAuthorizedClasspilotSessionStaff(created.schoolId, created.teachingSessionId, created.teacherId, transactionDb))
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false };
+                const { classpilotRestrictionPrerequisiteCurrent } = await import("./classpilotLessonPrerequisites.js");
+                if (!Number.isSafeInteger(target.controlRevision)
+                  || !(await classpilotRestrictionPrerequisiteCurrent(transactionDb, created,
+                    { ...target, status: "requested" }, String(commandPayload.afterRestrictionCommandId), target.contextAuthorityRevision)))
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false };
+                if (created.supervisionContextId) {
+                  try { await requireScheduledClassroomContext({ schoolId: created.schoolId, supervisionContextId: created.supervisionContextId,
+                    actorId: created.teacherId, contextAuthorityRevision: target.contextAuthorityRevision, lock: true }, transactionDb); }
+                  catch { return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false }; }
+                }
+                await lockClasspilotSsoPolicyDeliveryAuthority(created.schoolId, transactionDb);
+                const current = await getClasspilotStudentControlState(created.schoolId, target.studentId, transactionDb);
+                const policy = await getClasspilotSsoPolicyForSchool(created.schoolId, transactionDb);
+                const delivered = current && serializeClasspilotStudentControlStateForDelivery({ state: current, gateActive,
+                  acceptedCapabilities: capabilitySnapshot?.acceptedCapabilities ?? [], exactBinding: baseExactTarget,
+                  authPassThrough: { gateActive: isClasspilotCapabilityActive("restrictionAuthPassThroughV1", { schoolId: created.schoolId }),
+                    policyRevision: policy.revision, policy: policy.policy } });
+                if (!delivered?.classroomState || delivered.withheld)
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_SNAPSHOT_UNSUPPORTED", authCapabilityMissing: false };
+              }
               if (requiredToolsCapability && !capabilitySnapshot?.acceptedCapabilities?.includes(requiredToolsCapability)) {
                 return { kind: "unavailable" as const, reason: `Unsupported client: ${requiredToolsCapability} is required`, authCapabilityMissing: false };
+              }
+              if (focusNewAction && (!focusAuthoringEnabled(options.schoolId)
+                || !focusCapabilityAccepted(capabilitySnapshot?.acceptedCapabilities ?? [])
+                || !(await hasCurrentClasspilotStudentControlAuthority({ schoolId: options.schoolId,
+                  studentId: target.studentId, teachingSessionId: created.teachingSessionId,
+                  supervisionContextId: created.supervisionContextId,
+                  ownershipRevision: target.controlRevision }, transactionDb)))) {
+                return { kind: "unavailable" as const, reason: "Focus authority changed before delivery", authCapabilityMissing: false };
               }
               if (target.scheduledAuthorityRevision !== undefined && created.supervisionContextId) {
                 try {
@@ -1791,7 +1876,8 @@ export async function executeClasspilotCommand(options: {
                 ]);
                 if (
                   !currentControlState
-                  || currentControlState.revision !== classroomState?.revision
+                  || currentControlState.revision !== (classroomState?.revision
+                    ?? (options.commandType === "stop-focus" ? controlStateRows.find(row => row.studentId === target.studentId)?.revision : undefined))
                 ) {
                   return {
                     kind: "unavailable" as const,
@@ -1813,6 +1899,12 @@ export async function executeClasspilotCommand(options: {
                   },
                 });
                 if (!delivered.classroomState || delivered.withheld) {
+                  if (options.commandType === "stop-focus") {
+                    const cleanup = await prepareClasspilotFocusCleanupFrame(transactionDb, currentControlState,
+                      baseExactTarget, capabilitySnapshot?.acceptedCapabilities ?? []);
+                    if (cleanup) return { kind: "focus_cleanup" as const, message: { ...cleanup,
+                      commandId: created.id, command: { ...cleanup.command, commandId: created.id } } };
+                  }
                   return {
                     kind: "unavailable" as const,
                     reason: delivered.withheldReason === "restriction_auth_update_required"
@@ -1934,6 +2026,8 @@ export async function executeClasspilotCommand(options: {
           }
           if (!deliveryAuthority.authorized) return null;
           const currentPageAuthority = deliveryAuthority.value;
+          if (currentPageAuthority.kind === "focus_cleanup") return { target,
+            publication: { target: baseExactTarget, message: currentPageAuthority.message } };
           if (currentPageAuthority.kind === "unavailable") {
             authUnavailableReasons.set(target.studentId, currentPageAuthority.reason);
             lateAuthUnavailableStudentIds.add(target.studentId);
@@ -1960,6 +2054,8 @@ export async function executeClasspilotCommand(options: {
             ...(classpilotControlStateRequiresPreciseCapability(authoritativeClassroomState)
               ? [PRECISE_RESTRICTION_RESOURCES_CAPABILITY]
               : []),
+            ...(focusNewAction || authoritativeClassroomState?.restrictions.focus?.active
+              ? [FOCUS_TAB_CAPABILITY] : []),
           ];
           const deduplicatedRequiredCapabilities = [...new Set(requiredCapabilities)];
           const requiredCapability = deduplicatedRequiredCapabilities.at(-1);
@@ -2154,6 +2250,15 @@ export async function executeClasspilotCommand(options: {
         ),
       }
     : null;
+  const focusTabOutcomes: ExactTabOutcome[] = ["focus-tab", "activate-tab"].includes(options.commandType)
+    ? command.targets.map((target) => ({ studentId: target.studentId,
+      tabRef: ((commandPayload.tabTargets as ClasspilotExactTabTarget[] | undefined) ?? [])
+        .find(row => row.studentId === target.studentId)!.tabRef,
+      status: target.status !== "unavailable" ? "accepted"
+        : target.errorMessage === "STALE_TAB_REF" ? "stale_tab_ref"
+        : ["TAB_ACTIVATE_CAPABILITY_REQUIRED", "FOCUS_RESTRICTION_SNAPSHOT_UNSUPPORTED"].includes(target.errorMessage || "")
+          ? "unsupported" : "unavailable",
+    })) : [];
   return {
     command,
     deliveryPolicy,
@@ -2165,8 +2270,8 @@ export async function executeClasspilotCommand(options: {
       revision: state.revision,
       health: state.enforcementHealth,
     })),
-    ...(exactTabAuthorization.outcomes.length > 0
-      ? { tabOutcomes: exactTabAuthorization.outcomes }
+    ...((focusTabOutcomes.length || exactTabAuthorization.outcomes.length) > 0
+      ? { tabOutcomes: focusTabOutcomes.length ? focusTabOutcomes : exactTabAuthorization.outcomes }
       : {}),
     ...(currentPageRequested
       ? {

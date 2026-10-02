@@ -12,7 +12,7 @@ param(
 # transport, private files, task cloning, operation fence (the same DynamoDB
 # lease as the ClassPilot and My Desk tools, so one runtime-config operation
 # runs at a time), autoscaling hold, health checks and exact convergence. It
-# never invokes the capability workflow and writes no name outside the seven
+# never invokes the capability workflow and writes no name outside the eight
 # below: every other environment entry, secret and task field is fingerprinted
 # and must survive each clone unchanged.
 . "$PSScriptRoot/deploy-classpilot-runtime-config.ps1"
@@ -21,6 +21,7 @@ $script:ProductModeValues = [ordered]@{
     CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE = @('off', 'on')
     PASSPILOT_RULES_MODE = @('off', 'on')
     PASSPILOT_APPOINTMENTS_MODE = @('off', 'on')
+    PASSPILOT_REPORTS_MODE = @('off', 'v2')
     # src/services/scheduler.ts dailyUsageRollupMode(): unset reads as shadow,
     # and `on` is the alias of set_based added by the PR 10a hardening.
     CLASSPILOT_DAILY_USAGE_ROLLUP_MODE = @('legacy', 'shadow', 'set_based', 'on')
@@ -28,7 +29,7 @@ $script:ProductModeValues = [ordered]@{
     CLASSPILOT_DIGITAL_USAGE_MODE = @('off', 'on')
 }
 $script:RuntimeEnvironmentNames = @('CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE', $script:ProductSchoolIdsName, 'PASSPILOT_RULES_MODE',
-    'PASSPILOT_APPOINTMENTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
+    'PASSPILOT_APPOINTMENTS_MODE', 'PASSPILOT_REPORTS_MODE', 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE', 'CLASSPILOT_USAGE_ROLLUP_MODE', 'CLASSPILOT_DIGITAL_USAGE_MODE')
 $script:AllowedEnvironmentNames = @($script:RuntimeEnvironmentNames)
 $script:AllowedSecretNames = @()
 # These features' mode readers stay off unless their whole table bundle is RLS
@@ -37,8 +38,8 @@ $script:ProductRlsGates = @(
     [pscustomobject]@{ Feature = 'passpilotRules'; Name = 'PASSPILOT_RULES_MODE'
         Tables = @('passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials') },
     [pscustomobject]@{ Feature = 'passpilotAppointments'; Name = 'PASSPILOT_APPOINTMENTS_MODE'; Tables = @('passpilot_appointments') },
-    [pscustomobject]@{ Feature = 'usageRollup'; Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Tables = @('classpilot_usage_rollups') },
-    [pscustomobject]@{ Feature = 'digitalUsage'; Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Tables = @('classpilot_usage_rollups') }
+    [pscustomobject]@{ Feature = 'usageRollup'; Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days') },
+    [pscustomobject]@{ Feature = 'digitalUsage'; Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days') }
 )
 $script:ProductSchoolIdPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 $script:ProductPlanTool = 'deploy-product-runtime-config'
@@ -191,6 +192,7 @@ function Get-ProductExposure {
         AllSchools = $allSchools; Schools = $schools
         passpilotRules = $State['PASSPILOT_RULES_MODE'] -ceq 'on'
         passpilotAppointments = $State['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on'
+        passpilotReports = $State['PASSPILOT_REPORTS_MODE'] -ceq 'v2'
         dailyUsageRollupPromotion = $State['CLASSPILOT_DAILY_USAGE_ROLLUP_MODE'] -cin @('set_based', 'on')
         usageRollup = $State['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on'
         digitalUsage = $State['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on'
@@ -207,7 +209,7 @@ function Get-ProductActivations {
     if (-not $before.AllSchools -and ($after.AllSchools -or @($after.Schools | Where-Object { $_ -cnotin $before.Schools }).Count)) {
         $activations.Add('sharedTeachingResources')
     }
-    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage')) {
+    foreach ($feature in @('passpilotRules', 'passpilotAppointments', 'passpilotReports', 'dailyUsageRollupPromotion', 'usageRollup', 'digitalUsage')) {
         if ($after.$feature -and -not $before.$feature) { $activations.Add($feature) }
     }
     return ,$activations.ToArray()
@@ -265,9 +267,57 @@ function Assert-DailyUsagePromotionEvidence {
 }
 
 function Assert-ProductPreconditions {
-    param([Collections.IDictionary]$Prior, [Collections.IDictionary]$Desired, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot)
-    # Only activations carry preconditions, so a turn-off is never blocked.
+    param([Collections.IDictionary]$Prior, [Collections.IDictionary]$Desired, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot, [string]$AppSha)
+    # Admission checks apply to activation; source compatibility applies while
+    # usage remains on. Turning both usage flags off stays available.
     $activations = Get-ProductActivations $Prior $Desired
+    if ($Desired['PASSPILOT_REPORTS_MODE'] -ceq 'v2') {
+        $compatibilityError = 'PASSPILOT_REPORTS_MODE=v2 requires complete preserved 128-table admission, RLS_GUC_ENABLED=true, and report contract version 2 with authority-fence version 1 in the exact source SHA serving both API and worker.'
+        try {
+            $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotReportsMode.ts") -RepositoryRoot $RepositoryRoot
+            $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
+            $inventory = $registry.inventories.passpilotAppointmentsPostExpand
+        } catch { throw $compatibilityError }
+        if ($source -cnotmatch 'export const PASSPILOT_REPORTS_CONTRACT_VERSION = 2;' -or
+            $source -cnotmatch 'export const PASSPILOT_REPORTS_AUTHORITY_FENCE_VERSION = 1;' -or
+            $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
+            @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or
+            @('students', 'passes', 'passpilot_pass_denials', 'passpilot_appointments' | Where-Object { $_ -cnotin @($inventory.tables) }).Count) { throw $compatibilityError }
+        foreach ($environment in $Snapshot.Environments) {
+            if (-not $environment.ContainsKey('RLS_GUC_ENABLED') -or $environment['RLS_GUC_ENABLED'] -cne 'true' -or
+                -not $environment.ContainsKey('RLS_ENABLED_TABLES')) { throw $compatibilityError }
+            $tables = $environment['RLS_ENABLED_TABLES'].Split(',')
+            if (@($inventory.tables | Where-Object { $_ -cnotin $tables }).Count) { throw $compatibilityError }
+        }
+    }
+    if ($Desired['PASSPILOT_APPOINTMENTS_MODE'] -ceq 'on') {
+        # Both stable services are bound to AppSha/digest. The singleton table
+        # alone cannot make a pre-atomic issuer or older admission image safe.
+        $compatibilityError = 'PASSPILOT_APPOINTMENTS_MODE=on requires RLS_GUC_ENABLED=true and an RLS_ENABLED_TABLES allowlist with the complete preserved 128-table admission, plus atomic writer contract version 2 on both API and worker.'
+        try {
+            $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/passpilotAppointmentsMode.ts") -RepositoryRoot $RepositoryRoot
+            $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
+            $inventory = $registry.inventories.passpilotAppointmentsPostExpand
+        } catch { throw $compatibilityError }
+        if ($source -cnotmatch 'export const PASSPILOT_APPOINTMENTS_ATOMIC_WRITER_CONTRACT_VERSION = 2;' -or
+            $inventory.count -ne 128 -or @($inventory.tables).Count -ne 128 -or
+            @($inventory.tables | Sort-Object -Unique).Count -ne 128 -or 'passpilot_appointments' -cnotin @($inventory.tables)) { throw $compatibilityError }
+        foreach ($environment in $Snapshot.Environments) {
+            if (-not $environment.ContainsKey('RLS_GUC_ENABLED') -or $environment['RLS_GUC_ENABLED'] -cne 'true' -or
+                -not $environment.ContainsKey('RLS_ENABLED_TABLES')) { throw $compatibilityError }
+            $tables = $environment['RLS_ENABLED_TABLES'].Split(',')
+            if (@($inventory.tables | Where-Object { $_ -cnotin $tables }).Count) { throw $compatibilityError }
+        }
+    }
+    if ($Desired['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on' -or $Desired['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on') {
+        # The snapshot binds BOTH serving task definitions to AppSha and digest.
+        # Inspect that release's source, never the local working tree: admitting
+        # the table alone cannot make a pre-ledger writer coverage-compatible.
+        $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/classpilotUsageModes.ts") -RepositoryRoot $RepositoryRoot
+        if ($source -cnotmatch 'export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;') {
+            throw 'Monitored Browser Time requires a serving source SHA with usage coverage contract version 1 on both API and worker.'
+        }
+    }
     foreach ($gate in $script:ProductRlsGates) {
         if ($gate.Feature -cnotin $activations) { continue }
         foreach ($environment in $Snapshot.Environments) {
@@ -360,7 +410,7 @@ function New-ProductPlan {
     $snapshot = Get-ProductSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha
     $prior = Get-ProductManagedState $snapshot.Environments[0]
     $desired = Resolve-ProductDesiredState $prior $changes
-    $evidence = Assert-ProductPreconditions $prior $desired $snapshot $EvidencePath $Digest $repo
+    $evidence = Assert-ProductPreconditions $prior $desired $snapshot $EvidencePath $Digest $repo $ReleaseSha
     $scaling = Get-ScalingSnapshot
     if ($scaling.DynamicIn -or $scaling.DynamicOut -or $scaling.Scheduled) { throw 'Another operation holds autoscaling.' }
     Assert-ScheduledScalingContract
@@ -411,7 +461,7 @@ function Invoke-ProductApply {
     }
     $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $evidencePath = if ($null -ne $Plan.dailyUsageEvidence) { [string]$Plan.dailyUsageEvidence.path } else { $null }
-    $evidence = Assert-ProductPreconditions $state.Prior $state.Desired $snapshot $evidencePath $Plan.imageDigest $repo
+    $evidence = Assert-ProductPreconditions $state.Prior $state.Desired $snapshot $evidencePath $Plan.imageDigest $repo $Plan.appSha
     if ($null -ne $evidence -and $evidence.sha256 -cne $Plan.dailyUsageEvidence.sha256) { throw 'Daily-usage evidence changed after planning.' }
     foreach ($check in @(
         @((Get-TaskFingerprint $snapshot.ApiTask.taskDefinition 'api'), $Plan.apiFingerprint),

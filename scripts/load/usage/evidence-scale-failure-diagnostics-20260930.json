@@ -1,0 +1,260 @@
+{
+  "version": 1,
+  "sourceRevision": "3108f871a5abf2a66cf4828151453755009ddb00",
+  "startedAt": "2026-09-30T20:33:05.908Z",
+  "passed": false,
+  "productionReadiness": false,
+  "profile": {
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "3eb0261850745bcf021121b66c2d92bac47ea8c05f7ace38a3acd52aeda9cd96",
+    "src/services/classpilotUsageRead.ts": "1137559a6b2d79272af2c6b3a58cad5ba939b6fae59a20e0b646bed147fc7059",
+    "src/routes/classpilot/devices.ts": "a4422a3f1a92245560fe1fab88282193a4c740e727a7b1f6cc8e842805bc30ea",
+    "scripts/load/usage/local-usage-scale.mjs": "29f9d867618d99878583ed78546d9a6d27ace086e674419694a97f9443a2536a"
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified."
+  ],
+  "writerQueries": [
+    {
+      "durationMs": 60016.70129999996,
+      "schoolId": "1e0b048f-5631-4254-92d3-b3c9a795f279"
+    },
+    {
+      "durationMs": 60020.01529999997,
+      "schoolId": "337ad1cc-bfb1-441b-92d5-b9efaaef6b46"
+    },
+    {
+      "durationMs": 1847.4040999999852,
+      "schoolId": "337ad1cc-bfb1-441b-92d5-b9efaaef6b46"
+    }
+  ],
+  "reads": {
+    "0/school": {
+      "count": 4,
+      "minMs": 7492.92220000003,
+      "p50Ms": 12610.23940000002,
+      "p95Ms": 16191.336600000039,
+      "maxMs": 16191.336600000039
+    },
+    "0/grade": {
+      "count": 6,
+      "minMs": 4831.220399999991,
+      "p50Ms": 5665.342300000018,
+      "p95Ms": 14617.169600000023,
+      "maxMs": 14617.169600000023
+    },
+    "0/class": {
+      "count": 6,
+      "minMs": 560.233899999992,
+      "p50Ms": 1497.8013999999966,
+      "p95Ms": 2669.914999999979,
+      "maxMs": 2669.914999999979
+    },
+    "0/student": {
+      "count": 6,
+      "minMs": 751.5559999999823,
+      "p50Ms": 1485.6763999999966,
+      "p95Ms": 2172.6562999999733,
+      "maxMs": 2172.6562999999733
+    },
+    "1/school": {
+      "count": 4,
+      "minMs": 12056.960999999952,
+      "p50Ms": 12459.503999999957,
+      "p95Ms": 16689.7831,
+      "maxMs": 16689.7831
+    },
+    "1/grade": {
+      "count": 6,
+      "minMs": 4163.061799999967,
+      "p50Ms": 12441.31899999996,
+      "p95Ms": 16293.141400000022,
+      "maxMs": 16293.141400000022
+    },
+    "1/class": {
+      "count": 6,
+      "minMs": 886.5681999999797,
+      "p50Ms": 1270.1345999999903,
+      "p95Ms": 1553.6315000000177,
+      "maxMs": 1553.6315000000177
+    },
+    "1/student": {
+      "count": 6,
+      "minMs": 983.4251999999979,
+      "p50Ms": 1269.8905999999843,
+      "p95Ms": 1949.474600000016,
+      "maxMs": 1949.474600000016
+    }
+  },
+  "ingest": {
+    "requests": 98,
+    "insertedHeartbeats": 49,
+    "bySchool": {
+      "0": 49,
+      "1": 49
+    },
+    "statuses": {
+      "200": 97,
+      "204": 1
+    },
+    "bySchoolInserted": {
+      "0": 49
+    },
+    "timings": {
+      "count": 98,
+      "minMs": 206.91460000001825,
+      "p50Ms": 880.7085999999545,
+      "p95Ms": 10030.581799999985,
+      "maxMs": 10813.826800000039
+    }
+  },
+  "peakRssBytes": 277098496,
+  "rls": [
+    {
+      "relname": "classpilot_usage_rollup_days",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "classpilot_usage_rollups",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    },
+    {
+      "relname": "heartbeats",
+      "relrowsecurity": true,
+      "relforcerowsecurity": true,
+      "owns_table": false
+    }
+  ],
+  "database": {
+    "version": "PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "shared_buffers": "128MB",
+    "work_mem": "4MB",
+    "max_connections": "100"
+  },
+  "dataset": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 500000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-27",
+    "unavailableDate": "2026-09-25",
+    "heavyDate": "2026-09-28",
+    "today": "2026-09-30",
+    "dateRange": {
+      "from": "2025-09-30",
+      "to": "2026-09-30"
+    }
+  },
+  "seedMs": 318811.6041,
+  "fixtureCounts": [
+    {
+      "school_id": "337ad1cc-bfb1-441b-92d5-b9efaaef6b46",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    },
+    {
+      "school_id": "1e0b048f-5631-4254-92d3-b3c9a795f279",
+      "raw": "1000001",
+      "sessions": "37200",
+      "frozen_roster_rows": "186000",
+      "aggregates": "541500"
+    }
+  ],
+  "poolMax": {
+    "api": 16,
+    "worker": 5,
+    "apiWaitingPeak": 7,
+    "workerWaitingPeak": 0
+  },
+  "concurrentPhaseMs": 67460.53650000005,
+  "phaseOutcomes": [
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "writer",
+      "status": "rejected",
+      "error": {
+        "name": "error",
+        "code": "57014",
+        "message": "canceling statement due to statement timeout"
+      }
+    },
+    {
+      "kind": "read_waves",
+      "status": "rejected",
+      "error": {
+        "name": "AssertionError",
+        "code": "ERR_ASSERTION",
+        "message": "Expected values to be strictly equal:\n\n500 !== 200\n"
+      }
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    },
+    {
+      "kind": "ingest",
+      "status": "fulfilled"
+    }
+  ],
+  "concurrentWriters": [],
+  "currentDayWriters": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 1922.8024999999907,
+      "rowCount": 48,
+      "seconds": 536,
+      "heartbeatCount": 49
+    }
+  ],
+  "heavyDayAtomicity": [
+    {
+      "schoolIndex": 0,
+      "writerCommitted": false,
+      "aggregateRows": 0,
+      "completionRows": 0
+    }
+  ],
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Expected values to be strictly equal:\n\n536 !== 547\n"
+  }
+}

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { prepareClasspilotFocusCleanupFrame } from "./classpilotFocusCleanup.js";
 import { sendToStudentBindingLocal } from "../realtime/ws-broadcast.js";
 import { publishWSBatch, type PublishWSBatchItem } from "../realtime/ws-redis.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -101,6 +102,8 @@ export async function syncClasspilotControlStatesToActiveDevices(
           ]);
           const lateSignInRequired = !!state
             && classpilotControlStateHasLateSignInOrigin(state.desiredState);
+          const focusCleanup = await prepareClasspilotFocusCleanupFrame(transactionDb, state,
+            exactTarget, realtime?.acceptedCapabilities ?? []);
           // Provenance is immutable, including after expiry or a clear. Gate-off
           // must therefore withhold the entire revision-bearing transition, while
           // gate-on may send it only through capability-filtered exact bindings.
@@ -110,6 +113,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           )) {
             return {
               state,
+              focusCleanup,
               ssoPolicy,
               fabState: null,
               lateSignInRequired,
@@ -142,6 +146,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
           }
           return {
             state,
+            focusCleanup,
             ssoPolicy,
             fabState,
             lateSignInRequired,
@@ -150,6 +155,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
         },
         (_claimed, prepared) => {
           const authorizedPublications: PublishWSBatchItem[] = [];
+          if (prepared.focusCleanup) authorizedPublications.push({ target: exactTarget, message: prepared.focusCleanup });
           if (prepared.deferredOriginWithheld) {
             return { publications: authorizedPublications };
           }
@@ -204,6 +210,8 @@ export async function syncClasspilotControlStatesToActiveDevices(
                 ...(classpilotControlStateRequiresPreciseCapability(deliveredState.classroomState)
                   ? ["preciseRestrictionResourcesV1" as const]
                   : []),
+                ...(deliveredState.classroomState.restrictions.focus?.active
+                  ? ["focusTabV1" as const] : []),
               ];
               const classroomRequiredCapability = classroomRequiredCapabilities.at(-1);
               const classroomTarget = classroomRequiredCapability

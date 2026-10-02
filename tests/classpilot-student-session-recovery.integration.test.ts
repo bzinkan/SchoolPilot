@@ -80,12 +80,10 @@ const {
   heartbeats,
   productLicenses,
   schoolMemberships,
-  schools,
   studentDevices,
   studentSessions,
   students,
   teachingSessions,
-  users,
 } = schema;
 const {
   createStudentSessionRecovery,
@@ -343,13 +341,13 @@ after(async () => {
       await db.delete(devices).where(eq(devices.schoolId, schoolId));
       await db.delete(students).where(eq(students.schoolId, schoolId));
       await db.delete(productLicenses).where(eq(productLicenses.schoolId, schoolId));
-      await db.delete(schools).where(eq(schools.id, schoolId));
+      await storage.softDeleteSchool(schoolId);
       if (foreignStudentId) {
         await db.delete(studentSessions).where(eq(studentSessions.studentId, foreignStudentId));
         await db.delete(students).where(eq(students.id, foreignStudentId));
       }
       if (foreignSchoolId) {
-        await db.delete(schools).where(eq(schools.id, foreignSchoolId));
+        await storage.softDeleteSchool(foreignSchoolId);
       }
     });
   } finally {
@@ -657,15 +655,16 @@ describe("ClassPilot manual-session recovery authority", () => {
         );
         await db.delete(teachingSessions).where(eq(teachingSessions.id, teachingSession.id));
         await db.delete(groupStudents).where(eq(groupStudents.groupId, group.id));
-        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+        // Remove the parent first so assignment cleanup cannot leave an active class without its primary teacher.
         await db.delete(groups).where(eq(groups.id, group.id));
+        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
         await db.delete(studentSessions).where(eq(studentSessions.deviceId, transferDeviceId));
         await db.delete(studentDevices).where(eq(studentDevices.deviceId, transferDeviceId));
         await db.delete(devices).where(eq(devices.deviceId, transferDeviceId));
         await db.delete(students).where(eq(students.id, sourceStudent.id));
         await db.delete(students).where(eq(students.id, destinationStudent.id));
         await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacher.id));
-        await db.delete(users).where(eq(users.id, teacher.id));
+        // Staff identity roots remain retained after their fixture membership is removed.
       });
     }
   });
@@ -929,15 +928,16 @@ describe("ClassPilot manual-session recovery authority", () => {
         );
         await db.delete(teachingSessions).where(eq(teachingSessions.id, teachingSession.id));
         await db.delete(groupStudents).where(eq(groupStudents.groupId, group.id));
-        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+        // Remove the parent first so assignment cleanup cannot leave an active class without its primary teacher.
         await db.delete(groups).where(eq(groups.id, group.id));
+        await db.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
         await db.delete(studentSessions).where(eq(studentSessions.deviceId, transferDeviceId));
         await db.delete(studentDevices).where(eq(studentDevices.deviceId, transferDeviceId));
         await db.delete(devices).where(eq(devices.deviceId, transferDeviceId));
         await db.delete(students).where(eq(students.id, sourceStudent.id));
         await db.delete(students).where(eq(students.id, destinationStudent.id));
         await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacher.id));
-        await db.delete(users).where(eq(users.id, teacher.id));
+        // Staff identity roots remain retained after their fixture membership is removed.
       });
     }
   });
@@ -2360,8 +2360,9 @@ describe("ClassPilot manual-session recovery authority", () => {
         }
         if (groupId) {
           await db.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
-          await db.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
+          // Remove the parent first so assignment cleanup cannot leave an active class without its primary teacher.
           await db.delete(groups).where(eq(groups.id, groupId));
+          await db.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
         }
         await db.delete(heartbeats).where(eq(heartbeats.deviceId, handoffDeviceId));
         await db.delete(studentSessions).where(eq(studentSessions.deviceId, handoffDeviceId));
@@ -2372,7 +2373,7 @@ describe("ClassPilot manual-session recovery authority", () => {
         }
         if (teacherId) {
           await db.delete(schoolMemberships).where(eq(schoolMemberships.userId, teacherId));
-          await db.delete(users).where(eq(users.id, teacherId));
+          // Staff identity roots remain retained after their fixture membership is removed.
         }
       });
     }
@@ -2626,7 +2627,7 @@ describe("ClassPilot manual-session recovery authority", () => {
         await db.delete(devices).where(eq(devices.schoolId, foreignSchool.id));
         await db.delete(students).where(eq(students.schoolId, foreignSchool.id));
         await db.delete(productLicenses).where(eq(productLicenses.schoolId, foreignSchool.id));
-        await db.delete(schools).where(eq(schools.id, foreignSchool.id));
+        await storage.softDeleteSchool(foreignSchool.id);
       });
     }
 

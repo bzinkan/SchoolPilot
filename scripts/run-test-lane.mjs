@@ -8,6 +8,10 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const testsRoot = join(root, "tests");
 
 const RLS_SERIAL = new Set([
+  "classpilot-focus.integration.test.ts",
+  "classpilot-lesson-prerequisites.integration.test.ts",
+  "passpilot-reports-v2.integration.test.ts",
+  "passpilot-appointments-rls.test.ts",
   "classpilot-settings.test.ts",
   "student-information.integration.test.ts",
   "school-discipline.integration.test.ts",
@@ -34,6 +38,10 @@ const RLS_SERIAL = new Set([
 ]);
 
 const DB_SERIAL = new Set([
+  "classpilot-lesson-prerequisite-frame.test.ts",
+  "passpilot-appointments.integration.test.ts",
+  "passpilot-appointment-eligibility-races.integration.test.ts",
+  "passpilot-school-year.integration.test.ts",
   "classpilot-teacher-preferences-schema.integration.test.ts",
   "mydesk-redesign-schema.integration.test.ts",
   "mydesk-workspace-schema.integration.test.ts",
@@ -108,6 +116,7 @@ const DB_SERIAL = new Set([
   "classpilot-student-session-auth-kind-guard.test.ts",
   "classpilot-student-session-lease-clock.integration.test.ts",
   "classpilot-student-session-recovery.integration.test.ts",
+  "classpilot-device-upsert.integration.test.ts",
   "classpilot-student-data-contract.test.ts",
   "classpilot-teaching-sessions-recent.test.ts",
   "classpilot-tile-history-lateral.test.ts",

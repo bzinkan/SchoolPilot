@@ -1,9 +1,16 @@
 import crypto from "crypto";
+import { prepareClasspilotFocusCleanupFrame } from "../../services/classpilotFocusCleanup.js";
 import { requireScheduledClassroomContext, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import type { ClasspilotStudentControlState, Heartbeat } from "../../schema/classpilot.js";
 import { authenticate } from "../../middleware/authenticate.js";
+import {
+  focusStatusChanged,
+  focusRecord,
+  focusStatusSchema,
+  readFocusOpenIntent,
+} from "../../services/classpilotFocus.js";
 import {
   requireSchoolContext,
   requireSchoolContextWithoutTenantBinding,
@@ -1059,6 +1066,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     aiClassification: snapshot.aiClassification ?? null,
     screenshotHealth: snapshot.screenshotHealth,
     classroomState: snapshot.classroomState,
+    focus: focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
     enforcementHealth: snapshot.enforcementHealth,
     appliedFabRevision: snapshot.appliedFabRevision ?? null,
   };
@@ -3575,6 +3583,8 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
       return res.status(400).json({ error: "acks must contain between 1 and 50 items", code: "INVALID_COMMAND_ACK_BATCH" });
     }
     const receipts = [];
+    const focusCapabilityRead = (await readClasspilotRealtimeStatusBatch(schoolId,
+      [{ studentId, studentSessionId, deviceId }])).get(studentId);
     for (const raw of acks) {
       const ackId = typeof raw?.ackId === "string" ? raw.ackId.trim().slice(0, 128) : "";
       const commandId = typeof raw?.commandId === "string" ? raw.commandId.trim().slice(0, 128) : "";
@@ -3612,6 +3622,7 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
         studentSessionId,
         deviceId,
         ackState,
+        acceptedCapabilities: focusCapabilityRead?.status === "hit" ? focusCapabilityRead.snapshot.acceptedCapabilities ?? [] : [],
         controlRevision: classpilotAckControlRevision(raw),
         appliedAuthPolicyRevision: classpilotAckAppliedAuthPolicyRevision(raw),
         result,
@@ -3620,6 +3631,10 @@ router.post("/device/command-acks", requireDeviceAuth, requireClasspilotEntitlem
           : null,
       });
       if (outcome.target) scheduleClasspilotCommandUpdate(schoolId, commandId);
+      if (outcome.target && readFocusOpenIntent(outcome.target.result)?.state === "committed") {
+        const { syncClasspilotControlStatesToActiveDevices } = await import("../../services/classpilotControlStateDelivery.js");
+        await syncClasspilotControlStatesToActiveDevices(schoolId, [studentId]).catch(() => 0);
+      }
       receipts.push(classpilotCommandAckReceipt(ackId, commandId, outcome));
     }
     return res.json({ receipts });
@@ -3923,7 +3938,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       allOpenTabs = safeNavigation.allOpenTabs;
 
       // --- Save heartbeat and throttled presence in one DB round trip ---
-      const [heartbeat, controlState] = await Promise.all([
+      const [heartbeat, initialControlState] = await Promise.all([
         createHeartbeatAndRefreshPresence({
         deviceId,
         studentId,
@@ -3942,6 +3957,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         }, res.locals.studentSessionId as string),
         Promise.resolve(privacyControlState),
       ]);
+      let controlState = initialControlState;
       if (heartbeat.outcome === "replaced_session") {
         return { outcome: "replaced_session" } as const;
       }
@@ -3989,6 +4005,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             lateSignInOriginPending: !deferredBindingAlreadyApplied
               && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
             restrictionAuthRevisionMismatch,
+            focusStatusChanged: focusStatusChanged(controlState.desiredState, req.body.focus),
           })
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
@@ -4000,7 +4017,9 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             appliedAuthPolicyRevision,
             outcome: ackOutcome,
             acceptedCapabilities: protocol.acceptedCapabilities,
+            focusStatus: req.body.focus,
           });
+          if (acknowledgedState) controlState = acknowledgedState;
           if (acknowledgedState?.sourceCommandId) {
             scheduleClasspilotCommandUpdate(schoolId, acknowledgedState.sourceCommandId);
           }
@@ -4274,6 +4293,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       extensionCapabilities: extensionCapabilities ?? capabilities,
       chromeVersion,
       classroomState: classroomState || undefined,
+      focus: focusRecord(controlState?.desiredState).focusStatusV1,
       enforcementHealth,
       restrictionAuthState,
       appliedAuthPolicyRevision,
@@ -4792,6 +4812,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               })
             : { classroomState: null, withheld: false };
           const finalClassroomState = serialized.classroomState;
+          const focusCleanup = serialized.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
+            finalControlState, { schoolId, studentId, studentSessionId, deviceId }, protocol.acceptedCapabilities) : null;
           const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated
             ? await resolveClasspilotScreenshotPolicy({
                 schoolId,
@@ -4820,6 +4842,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             : undefined;
           return {
             classroomState: finalClassroomState,
+            focusCleanup,
             screenshotPolicy: finalScreenshotPolicy,
             deliveredFab: finalFab
               ? {
@@ -4852,10 +4875,11 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
               deviceId,
               studentId,
               studentSessionId,
-              controlRevision: prepared.classroomState?.revision ?? 0,
+              controlRevision: prepared.classroomState?.revision ?? prepared.focusCleanup?.exactBinding.controlRevision ?? 0,
             }),
             planStatus: school.planStatus || "active",
             classroomState: prepared.classroomState,
+            ...(prepared.focusCleanup ? { focusCleanup: prepared.focusCleanup } : {}),
             ...protocol,
             screenshotPolicy: prepared.screenshotPolicy,
             ...(prepared.deliveredFab ? { fab: prepared.deliveredFab } : {}),

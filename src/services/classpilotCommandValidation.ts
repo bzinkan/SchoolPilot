@@ -1,6 +1,7 @@
 import { timerCommand, lessonCommand, promptStart, toolId } from "./classpilotToolsValidation.js";
 import { z } from "zod";
 import { normalizePreciseWaypointResource, waypointLandingUrl } from "./restrictionResources.js";
+import { exactTabTargetSchema } from "./classpilotFocus.js";
 
 const id = z.string().trim().min(1).max(128);
 const message = z.string().trim().min(1).max(2_000);
@@ -93,9 +94,20 @@ export function validateClasspilotCommandPayload(
   try {
     switch (commandType) {
       case "open-tab": {
-        const value = strictObject({ url: z.unknown() }).parse(raw);
-        return { url: httpUrl(value.url) };
+        const value = strictObject({ url: z.unknown(), focusAfterOpen: z.literal(true).optional(), afterRestrictionCommandId: id.optional() }).parse(raw);
+        return { url: httpUrl(value.url), ...(value.focusAfterOpen ? { focusAfterOpen: true } : {}),
+          ...(value.afterRestrictionCommandId ? { afterRestrictionCommandId: value.afterRestrictionCommandId } : {}) };
       }
+      case "activate-tab":
+      case "focus-tab":
+        return strictObject({ tabTargets: z.array(exactTabTargetSchema).min(1).max(50) })
+          .superRefine((value, ctx) => {
+            const students = value.tabTargets.map(row => row.studentId);
+            if (new Set(students).size !== students.length) ctx.addIssue({ code: "custom",
+              path: ["tabTargets"], message: "Select exactly one tab per student" });
+          }).parse(raw);
+      case "stop-focus":
+        return strictObject({}).parse(raw);
       case "lock-screen": {
         const value = strictObject({
           url: z.unknown(),
@@ -151,7 +163,8 @@ export function validateClasspilotCommandPayload(
       case "remove-block-list":
         return strictObject({}).parse(raw);
       case "apply-flight-path":
-        return strictObject({ flightPathId: id }).parse(raw);
+        return strictObject({ flightPathId: id, expectedFlightPathUpdatedAt: z.string().datetime({ offset: true })
+          .refine(value => Number.isFinite(Date.parse(value)), "Expected a valid ISO instant").optional() }).parse(raw);
       case "apply-block-list":
         return strictObject({ blockListId: id }).parse(raw);
       case "attention-mode":

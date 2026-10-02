@@ -1,4 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
 import AppShell from '../components/AppShell';
 import PassesTab from '../components/tabs/PassesTab';
@@ -8,6 +9,7 @@ import ReportsTab from '../components/tabs/ReportsTab';
 import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
 import KioskScheduleSettings from '../components/KioskScheduleSettings';
+const Appointments = lazy(() => import('./Appointments'));
 
 export default function Dashboard() {
   const { isLoading, user, isAdmin, isSchoolwideManager, isTeacher } = usePassPilotAuth();
@@ -39,6 +41,7 @@ export default function Dashboard() {
     setup: 'setup',
     billing: 'billing',
     settings: 'settings',
+    appointments: 'appointments',
   };
   const currentTab = tabBySegment[routeSegment];
   if (!currentTab) return <Navigate to="/passpilot/my-class" replace />;
@@ -58,6 +61,7 @@ export default function Dashboard() {
       case 'setup': return <SetupView />;
       case 'billing': return <BillingView />;
       case 'settings': return isTeacher || isAdmin ? <KioskScheduleSettings /> : <Navigate to="/passpilot/my-class" replace />;
+      case 'appointments': return <Suspense fallback={<p role="status" className="p-4">Loading appointments…</p>}><Appointments /></Suspense>;
       default: return <PassesTab user={user} />;
     }
   };

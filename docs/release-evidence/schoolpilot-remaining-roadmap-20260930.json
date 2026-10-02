@@ -1,0 +1,2174 @@
+{
+  "schemaVersion": 1,
+  "scopeDate": "2026-09-30",
+  "state": "implementation-and-release-preparation",
+  "repository": "bzinkan/SchoolPilot",
+  "originalBaseline": "60f33dbcf93b6901ac038c2d0066f79fbd9632a4",
+  "recheckedMain": "d4f3f232be7529ac4d584c2559768e6ad1b5421a",
+  "correctedFoundation": "e789eab8f7758871a4169be95019c957a61f6abe",
+  "combinedVerification": {
+    "branch": "codex/remaining-roadmap-integration",
+    "measuredCommit": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+    "finalFrontendAmendment": "c97c4403d2e250e799c85409c9f7a75306365141",
+    "notMerged": true,
+    "checkpoints": [
+      {
+        "commit": "9758a546d0f18fef1aacbf9b0b013f1218c6605e",
+        "checks": [
+          "backend build",
+          "application type check",
+          "test-type and cast ratchets",
+          "frontend build",
+          "frontend lint"
+        ],
+        "result": "passed",
+        "testTypeRatchet": {
+          "actual": 438,
+          "maximum": 534
+        },
+        "testCasts": {
+          "asAny": 689,
+          "doubleCast": 7,
+          "tsIgnore": 0,
+          "tsExpectError": 0
+        },
+        "lint": {
+          "errors": 0,
+          "existingWarnings": 32
+        },
+        "subsequentBackendApplicationChanges": false
+      },
+      {
+        "commit": "9940bf51631e09d7b89fc93d8c5cd970858d4802",
+        "checks": [
+          "complete unit lane",
+          "test-type and cast ratchets"
+        ],
+        "result": "passed",
+        "passed": 1653,
+        "existingSkipped": 4,
+        "failed": 0,
+        "suites": 171
+      },
+      {
+        "commit": "02fddfe7ff941a2aa4aae0fae1a73c30514b3fef",
+        "checks": [
+          "complete frontend shard 1"
+        ],
+        "result": "passed",
+        "passed": 122,
+        "skipped": 0,
+        "failed": 0,
+        "includesModelAndNativeBrowserChecks": true,
+        "frontendMatchesMeasuredCommit": true,
+        "doesNotCoverLaterFrontendAmendments": true
+      },
+      {
+        "commit": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+        "checks": [
+          "pure workload fixture guards"
+        ],
+        "result": "passed",
+        "passed": 21,
+        "skipped": 0,
+        "failed": 0,
+        "ciExplicitlyRunsMjsGuardSuite": true
+      },
+      {
+        "commit": "9940bf51631e09d7b89fc93d8c5cd970858d4802",
+        "checks": [
+          "native device-upsert races",
+          "student-session recovery"
+        ],
+        "result": "passed",
+        "passed": 35,
+        "skipped": 0,
+        "failed": 0,
+        "nativeConcurrentRounds": 48,
+        "schemaPush": true,
+        "completeLegacyConvergence": true,
+        "versionedAdmissionTables": 128,
+        "privilegedFixture": true,
+        "forcedRoleIsolationClaim": false,
+        "allCleanupHooksPassed": true,
+        "ownedScratchDatabaseAndRolesRemoved": true
+      },
+      {
+        "commit": "c97c4403d2e250e799c85409c9f7a75306365141",
+        "checks": [
+          "Usage browser/model suite",
+          "administrator shell suite",
+          "frontend build",
+          "frontend lint"
+        ],
+        "result": "passed",
+        "usage": {
+          "passed": 21,
+          "skipped": 0,
+          "model": 7,
+          "failed": 0,
+          "actualBrowser": 14
+        },
+        "adminShell": {
+          "passed": 19,
+          "skipped": 0,
+          "failed": 0
+        },
+        "lint": {
+          "existingWarnings": 32,
+          "errors": 0
+        },
+        "noBackendApplicationChanges": true
+      },
+      {
+        "commit": "954685aeec179bb143b0c65372d30e70ffceca1a",
+        "checks": [
+          "actual401 login/document-retirement browser case"
+        ],
+        "result": "passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "onlyBrowserFixtureChangedSinceFinalFrontendAmendment": true,
+        "applicationSourceUnchanged": true
+      }
+    ],
+    "finalFrontendAmendmentUrl": "https://github.com/bzinkan/SchoolPilot/tree/c97c4403d2e250e799c85409c9f7a75306365141",
+    "onlyFrontendAndEvidenceChangedSinceMeasuredCommit": true,
+    "allMeasuredRuntimeAndHarnessLfHashesMatch": true,
+    "comparedMeasuredPaths": [
+      "src/services/classpilotUsageRollup.ts",
+      "src/services/classpilotUsageRead.ts",
+      "src/routes/classpilot/devices.ts",
+      "src/config/rlsRegistry.json",
+      "src/db/passpilotAppointmentsMigration.ts",
+      "scripts/load/usage/local-school-day-scale.mjs",
+      "scripts/load/usage/local-usage-scale.mjs",
+      "scripts/load/usage/school-day-profile.mjs",
+      "scripts/load/usage/school-day-ai-profile.mjs",
+      "scripts/load/usage/run-local-usage-scale.ps1",
+      "scripts/load/usage/fixture-rls-contract.mjs"
+    ],
+    "finalVerificationHead": "954685aeec179bb143b0c65372d30e70ffceca1a",
+    "finalVerificationHeadUrl": "https://github.com/bzinkan/SchoolPilot/tree/954685aeec179bb143b0c65372d30e70ffceca1a"
+  },
+  "usageCapacity": {
+    "measuredCommit": "cc7b3b05ae42172b8b2389600cb184f1165ffa54",
+    "comparisonUrl": "https://github.com/bzinkan/SchoolPilot/blob/5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7/scripts/load/usage/evidence-school-day-integrated-128-ai-comparison-20261001.json",
+    "result": "two-unchanged-local-runs-passed",
+    "inventory": "passpilotAppointmentsPostExpand",
+    "forcedRlsNonOwnerTables": 128,
+    "completeMigrationManifestEntries": 52,
+    "schools": 2,
+    "studentsPerSchool": 500,
+    "uniqueDailyObservationsPerSchool": 1000000,
+    "matchingAiDecisionsPerSchool": 10000,
+    "dailyAggregateGrainsPerSchool": 84000,
+    "monitoredSecondsPerSchool": 10002500,
+    "historicalGrainsPerSchool": 541500,
+    "concurrentReportsPerRun": 64,
+    "postgresCpu": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeOldSpaceMiB": 512,
+    "workerBudgetMs": 60000,
+    "reportSqlBudgetMs": 15000,
+    "apiAcquisitionBudgetMs": 5000,
+    "minimumObservedMarginsPercent": {
+      "completeWorker": 4.8001923333333005,
+      "reportSql": 19.706989333333137,
+      "apiAcquisition": 44.48699200000032
+    },
+    "maximumWholeHttpReportMs": 16029.296600000001,
+    "wholeHttp15SecondGuarantee": false,
+    "rawEvidenceSha256": [
+      "0f3e16efc591c25c86d28faa93d1da594daf11df09a4fb9d403dce2f22000083",
+      "3f6cad3572e9379c6a3735de5edeefeee505d4ac0df4d46b2bcc77721c1d4b5d"
+    ],
+    "schemaComparison": "UTF8/LF, removing only pg_dump restrict/unrestrict nonce lines",
+    "normalizedActualSchemaSha256": "29ed4713ef42073da76b66754800b79129a2172155de12607593b58c8e6df51d",
+    "limitations": [
+      "Tight 4.80% worker margin",
+      "500000-grain stress writing remains unaccepted",
+      "Dense retained-year capacity is unmeasured",
+      "Dense AI/exclusion populations are unmeasured",
+      "No fleet scheduler or RDS I/O guarantee",
+      "Historical 127-table measurements retain their separate source and schema scope"
+    ],
+    "capsTimeoutsAndConstraintsUnchanged": true,
+    "syntheticDataOnly": true,
+    "ownedContainersAndVolumesRemoved": true,
+    "evidencePublicationCommit": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7"
+  },
+  "classpilotCandidate": {
+    "repository": "bzinkan/ClassPilot",
+    "main": "55bb531cb5f130cebec9d994daa957e82e87a13b",
+    "testedCommit": "b187af42d97f63eff31da9a1c9cf7535f853bb6f",
+    "documentationCommit": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+    "version": "2.10.0",
+    "package": "dist/ClassPilot-v2.10.0.zip",
+    "packageBytes": 363097,
+    "verifiedFiles": 24,
+    "packageSha256": "84808cfc8b900d0fe29f2e682f4211c84510bff72afcf3e969b4b8794c94557e",
+    "sharedPreciseFixtureSha256": "4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243",
+    "localSourceAndExactPackageChecks": "passed",
+    "unitTestsPassed": 199,
+    "expectedOldReleaseRegressions": 20,
+    "currentHeadCi": "ten-checks-passed",
+    "ciRuns": [
+      "https://github.com/bzinkan/ClassPilot/actions/runs/36796826297",
+      "https://github.com/bzinkan/ClassPilot/actions/runs/36796822346"
+    ],
+    "evidenceUrl": "https://github.com/bzinkan/ClassPilot/blob/3a9ece517d521632f1accbb5a51ff3fcf1934162/docs/release-evidence/classpilot-2.10.0-candidate-20260930.json",
+    "candidateEvidenceCiPendingFieldWasCapturedBeforeThoseRuns": true,
+    "storeObservationDate": "2026-09-30",
+    "storeObservedVersion": "2.9.6",
+    "storeObservedUpdatedDate": "2026-09-27",
+    "storePublishedPackageSha256": null,
+    "twoManagedChromebooks": "pending",
+    "managedDeviceResults": [],
+    "managedReleaseValidationBound": false,
+    "recheckStoreImmediatelyBeforeAnyAuthorizedUpload": true
+  },
+  "releaseGates": {
+    "liveApiAndWorkerSource": "unknown",
+    "liveRlsAdmission": "unknown",
+    "liveRuntimeModes": "unknown",
+    "threeCleanDeployedShadowSchoolDays": "pending",
+    "subsequentUsageObservationSchoolDay": "pending",
+    "approvedAmericaNewYorkFreezeBoundaries": null,
+    "appointmentsAtomicWriterVersionRequired": 2,
+    "reportsWireVersionRequired": 2,
+    "reportsAuthorityFenceVersionRequired": 1,
+    "reportsMode": "PASSPILOT_REPORTS_MODE=off|v2",
+    "usageRequiresAggregateAndCompletionLedgerOnApiAndWorker": true,
+    "olderUsageRollbackRequiresBothModesOffAndCoverageInvalidation": true,
+    "preciseRollbackRequiresDisableThenClearThenCompatibleImage": true,
+    "sfuHostingPrivacyBudgetDecision": "unapproved",
+    "newCapabilitiesAndModesDefaultOff": true
+  },
+  "operationsPerformed": {
+    "merge": false,
+    "productionDeploy": false,
+    "runtimeActivation": false,
+    "storeUpload": false,
+    "turnChange": false,
+    "paidMediaProvisioning": false,
+    "legacyDeletion": false
+  },
+  "originalCheckoutsAndObserveDraftPreserved": true,
+  "ciSnapshot": {
+    "firstObservedAtUtc": "2026-10-01T03:11:28.1663905Z",
+    "amendedHeadsObservedAtUtc": "2026-10-01T03:38:12.7931506Z",
+    "selectionRule": "Latest created workflow/event run at each exact head; pending and failed checks remain distinct from success; superseded same-head cancellations are retained separately.",
+    "currentResultsLocation": "Each PR status and description; this immutable dated snapshot does not claim subsequent checks have passed.",
+    "documentationPR": {
+      "oldFailure": "load-harness startup/cohort fixture",
+      "finalHeadCi": "pending-at-record-creation",
+      "reviewedTestOnlyCorrection": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+      "number": 560,
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/560",
+      "oldFailedHead": "e1c3e3007c2ad81c293834204c174043bdf14d64"
+    },
+    "pullRequests": [
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 561,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/561",
+        "headSha": "2798431612be182aeca42a5bf3fe65be20cfada6",
+        "base": "main",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:30.7669675Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "2798431612be182aeca42a5bf3fe65be20cfada6",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795411927"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "2798431612be182aeca42a5bf3fe65be20cfada6",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795411810"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "2798431612be182aeca42a5bf3fe65be20cfada6",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795411808"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36795411927,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795411927/job/110162097877",
+            "startedAt": "2026-10-01T00:34:17Z",
+            "completedAt": "2026-10-01T00:34:16Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 563,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/563",
+        "headSha": "69a191ddd50af030ceee6a7490016a263143ff28",
+        "base": "codex/roadmap-stacked-ci",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:31.752056Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "69a191ddd50af030ceee6a7490016a263143ff28",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796404750"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "69a191ddd50af030ceee6a7490016a263143ff28",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796404727"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "69a191ddd50af030ceee6a7490016a263143ff28",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796404757"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 564,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/564",
+        "headSha": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+        "base": "main",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:32.7844336Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791205736"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791205707"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791205679"
+          },
+          {
+            "name": "Trivy Container Scan",
+            "event": "pull_request",
+            "headSha": "157da0c1249ad279628b48e78f0f23a0e2b6b320",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791205710"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 565,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/565",
+        "headSha": "7f413fd564f6370e4374570486dd208daefc1f6a",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:33.6182202Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "7f413fd564f6370e4374570486dd208daefc1f6a",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799748815"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "7f413fd564f6370e4374570486dd208daefc1f6a",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799748835"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "7f413fd564f6370e4374570486dd208daefc1f6a",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799748813"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36799748815,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799748815/job/110173310077",
+            "startedAt": "2026-10-01T01:18:04Z",
+            "completedAt": "2026-10-01T01:18:04Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 566,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/566",
+        "headSha": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+        "base": "codex/roadmap-stacked-ci",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:34.4968744Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795485459"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795485504"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "9055393d016d21ca96703a3ff90e0caeee1d7e90",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795485475"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36795485459,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795485459/job/110158669454",
+            "startedAt": "2026-10-01T00:21:17Z",
+            "completedAt": "2026-10-01T00:21:17Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 567,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/567",
+        "headSha": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:35.3582309Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792460407"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792460402"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "ccdbb755f079fd2ebc9dd4e3156ba99e32a7cfb1",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792460458"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36792460407,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792460407/job/110151603804",
+            "startedAt": "2026-09-30T23:55:00Z",
+            "completedAt": "2026-09-30T23:55:00Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 568,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/568",
+        "headSha": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:38:10.8106614Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+            "status": "in_progress",
+            "conclusion": null,
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+            "status": "in_progress",
+            "conclusion": null,
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209614"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209594"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206473549",
+            "startedAt": "2026-10-01T03:35:35Z",
+            "completedAt": "2026-10-01T03:35:35Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [
+          {
+            "name": "Analyze (javascript-typescript)",
+            "workflowName": "CodeQL",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209614,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209614/job/110206446942",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Backend (TypeScript + Build)",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448038",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Cross-tenant isolation tests",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448164",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "RLS-enabled cross-tenant tests",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448142",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Frontend (Vite Build)",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206447946",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Frontend release-focused gates (shard 1)",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448198",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Frontend release-focused gates (shard 2)",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448290",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          },
+          {
+            "name": "Frontend release-focused gates (shard 3)",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "runId": 36811209756,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36811209756/job/110206448139",
+            "startedAt": "2026-10-01T03:35:31Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+            "supersededSameHead": false
+          }
+        ],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 569,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/569",
+        "headSha": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:37.5446802Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796403605"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796403654"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "16a50cd33f5acff85a0de101c96076bc4d4e934d",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796403663"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 570,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/570",
+        "headSha": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:38.5354501Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775283280"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775283180"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "b47355358a5d9bc7e29cc047104c2b281c538dbb",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775283424"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 571,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/571",
+        "headSha": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+        "base": "codex/precise-restriction-previews",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:39.6978987Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796719201"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796719293"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "ae2dc2fa9e62906b4d76227d174c8278ae04b570",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796719236"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36796719201,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796719201/job/110173329126",
+            "startedAt": "2026-10-01T01:18:08Z",
+            "completedAt": "2026-10-01T01:18:08Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 572,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/572",
+        "headSha": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+        "base": "codex/focus-command-contract",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:40.6837971Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792464839"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792464787"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "cae164a2a578c4a0886531d6dd0a25e6878d6769",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792464799"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 573,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/573",
+        "headSha": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+        "base": "codex/passpilot-appointments-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:41.7823635Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777293083"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777293088"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "91eead05e8a3d5c822426bcd4b5279dd55f05011",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777293092"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 574,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/574",
+        "headSha": "9250fab903d16b41769d86ec12086dfef21f9a12",
+        "base": "codex/passpilot-appointments-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:42.7373638Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "9250fab903d16b41769d86ec12086dfef21f9a12",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777298226"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "9250fab903d16b41769d86ec12086dfef21f9a12",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777298483"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "9250fab903d16b41769d86ec12086dfef21f9a12",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777298291"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36777298226,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36777298226/job/110117101678",
+            "startedAt": "2026-09-30T21:59:07Z",
+            "completedAt": "2026-09-30T21:07:31Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 575,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/575",
+        "headSha": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+        "base": "codex/focus-commands-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:43.6495186Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792518257"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792518258"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "e7d0a7b470d8e8b95c7936a14cb43c98dd4e602b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792518268"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36792518257,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792518257/job/110158147481",
+            "startedAt": "2026-10-01T00:19:20Z",
+            "completedAt": "2026-10-01T00:19:19Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 576,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/576",
+        "headSha": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:44.5909006Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775439074"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775439039"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "0f58534af0ec8c168ebcd9fba271e7f8acf3bd22",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775439071"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36775439074,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36775439074/job/110092308600",
+            "startedAt": "2026-09-30T20:51:14Z",
+            "completedAt": "2026-09-30T20:51:14Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 577,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/577",
+        "headSha": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+        "base": "codex/classroom-actions-interface-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:45.377014Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806076021"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806075984"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "173f768a9f8ca83ca641eb6496cf17ef92921c45",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806076100"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36806076021,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806076021/job/110190618371",
+            "startedAt": "2026-10-01T02:29:34Z",
+            "completedAt": "2026-10-01T02:29:34Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 579,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/579",
+        "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+        "base": "codex/passpilot-staff-interface-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:46.4813253Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791697820"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791697902"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791697915"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": [
+          {
+            "canceledRun": {
+              "id": 36791697556,
+              "workflowId": 242098549,
+              "name": "CI",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "cancelled",
+              "attempt": 1,
+              "createdAt": "2026-09-30T23:33:29Z",
+              "updatedAt": "2026-09-30T23:46:10Z",
+              "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791697556"
+            },
+            "canonicalReplacement": {
+              "id": 36791697820,
+              "workflowId": 242098549,
+              "name": "CI",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "success",
+              "attempt": 1,
+              "createdAt": "2026-09-30T23:33:29Z",
+              "updatedAt": "2026-10-01T01:14:08Z",
+              "headSha": "6efc27f4de187b4e43c923df31d6139c081727f7",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36791697820"
+            },
+            "sameHead": true,
+            "replacementPassed": true
+          }
+        ]
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 581,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/581",
+        "headSha": "5e2fb408413abe50be6e79a5dd43071286de077b",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:47.4081183Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "5e2fb408413abe50be6e79a5dd43071286de077b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36782809411"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "5e2fb408413abe50be6e79a5dd43071286de077b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36782809410"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "5e2fb408413abe50be6e79a5dd43071286de077b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36782809423"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36782809411,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36782809411/job/110117128238",
+            "startedAt": "2026-09-30T21:59:12Z",
+            "completedAt": "2026-09-30T21:59:11Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 582,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/582",
+        "headSha": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+        "base": "codex/focus-commands-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:48.3551182Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792475517"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792475578"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "7b2ecdfaf9f5b38c89bb7a2fb974067843c92a83",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792475483"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36792475517,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36792475517/job/110169188607",
+            "startedAt": "2026-10-01T01:01:48Z",
+            "completedAt": "2026-10-01T01:01:48Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 583,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/583",
+        "headSha": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+        "base": "codex/passpilot-staff-interface-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:49.2868935Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795301075"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795301003"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "d1069bdd55e8a5b52231aef08dda5fdd257a229c",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795301127"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 584,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/584",
+        "headSha": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+        "base": "codex/passpilot-reports-v2-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:50.2221485Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801095855"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801095825"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "b1e4e6ea1e13ef81349a18bf697338c3b48ff8bd",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801095850"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36801095855,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801095855/job/110177365804",
+            "startedAt": "2026-10-01T01:34:26Z",
+            "completedAt": "2026-10-01T01:34:25Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 585,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/585",
+        "headSha": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+        "base": "codex/passpilot-reports-v2-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:51.0740245Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795216843"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795216863"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "a65a82283c4c44fcb8d1e32746010117ac7d6810",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795216859"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36795216843,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36795216843/job/110166071663",
+            "startedAt": "2026-10-01T00:49:37Z",
+            "completedAt": "2026-10-01T00:49:36Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 586,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/586",
+        "headSha": "157c47baef24f65176da5bbc694309fe6cdeff03",
+        "base": "codex/usage-synthetic-load",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:38:11.7931834Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "157c47baef24f65176da5bbc694309fe6cdeff03",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36810124890"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "157c47baef24f65176da5bbc694309fe6cdeff03",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36810125011"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "157c47baef24f65176da5bbc694309fe6cdeff03",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36810124912"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36810124890,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36810124890/job/110203149339",
+            "startedAt": "2026-10-01T03:21:32Z",
+            "completedAt": "2026-10-01T03:21:32Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 587,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/587",
+        "headSha": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:53.5663738Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796668300"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796668310"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "b9fdbf3a46d0eda49b6c3d6e69eed8b1efd47eb9",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796668382"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36796668300,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36796668300/job/110170306806",
+            "startedAt": "2026-10-01T01:06:11Z",
+            "completedAt": "2026-10-01T01:06:10Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 588,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/588",
+        "headSha": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:54.4306458Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799593554"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799593660"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "328a814993e9c6ce79c172817e6d8e83c58b426b",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799593567"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36799593554,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36799593554/job/110173402518",
+            "startedAt": "2026-10-01T01:18:26Z",
+            "completedAt": "2026-10-01T01:18:25Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 589,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/589",
+        "headSha": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:55.2531003Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804902534"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804902609"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "ed03deef647c80f59c9e9b35d56d66d0d08aecab",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804902525"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36804902534,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804902534/job/110187396126",
+            "startedAt": "2026-10-01T02:16:25Z",
+            "completedAt": "2026-10-01T02:16:24Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 590,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/590",
+        "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:56.3193127Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376335"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376286"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376351"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36801376335,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376335/job/110178888229",
+            "startedAt": "2026-10-01T01:40:38Z",
+            "completedAt": "2026-10-01T01:40:37Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": [
+          {
+            "canceledRun": {
+              "id": 36801374588,
+              "workflowId": 242098549,
+              "name": "CI",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "cancelled",
+              "attempt": 1,
+              "createdAt": "2026-10-01T01:29:55Z",
+              "updatedAt": "2026-10-01T01:33:01Z",
+              "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801374588"
+            },
+            "canonicalReplacement": {
+              "id": 36801376335,
+              "workflowId": 242098549,
+              "name": "CI",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "success",
+              "attempt": 1,
+              "createdAt": "2026-10-01T01:29:56Z",
+              "updatedAt": "2026-10-01T01:52:14Z",
+              "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376335"
+            },
+            "sameHead": true,
+            "replacementPassed": true
+          },
+          {
+            "canceledRun": {
+              "id": 36801374582,
+              "workflowId": 266666882,
+              "name": "CodeQL",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "cancelled",
+              "attempt": 1,
+              "createdAt": "2026-10-01T01:29:55Z",
+              "updatedAt": "2026-10-01T01:30:56Z",
+              "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801374582"
+            },
+            "canonicalReplacement": {
+              "id": 36801376286,
+              "workflowId": 266666882,
+              "name": "CodeQL",
+              "event": "pull_request",
+              "status": "completed",
+              "conclusion": "success",
+              "attempt": 1,
+              "createdAt": "2026-10-01T01:29:56Z",
+              "updatedAt": "2026-10-01T01:35:42Z",
+              "headSha": "f4742aaa87c1c8decc6c0b2a8dd368958a82a66f",
+              "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36801376286"
+            },
+            "sameHead": true,
+            "replacementPassed": true
+          }
+        ]
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 591,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/591",
+        "headSha": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+        "base": "codex/usage-query-performance-api",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:38:12.7926018Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36809535787"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36809535727"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "5d628383f6df9c7fad6d27e7a11e4d7af4ec28e7",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36809535746"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 592,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/592",
+        "headSha": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+        "base": "codex/usage-school-day-profile",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:58.3407244Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804076715"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804076700"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "53e9a426d642046ec042d0cd157a8ca01b0062b3",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804076699"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 593,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/593",
+        "headSha": "deecce0c3478b8b34424fef5748fd8df826515e5",
+        "base": "codex/roadmap-corrected-base",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:11:59.3852816Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "deecce0c3478b8b34424fef5748fd8df826515e5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804362134"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "deecce0c3478b8b34424fef5748fd8df826515e5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804362120"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "deecce0c3478b8b34424fef5748fd8df826515e5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804362160"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36804362134,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36804362134/job/110185372179",
+            "startedAt": "2026-10-01T02:08:00Z",
+            "completedAt": "2026-10-01T02:08:00Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/SchoolPilot",
+        "number": 594,
+        "url": "https://github.com/bzinkan/SchoolPilot/pull/594",
+        "headSha": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+        "base": "codex/student-device-upsert-concurrency",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:12:00.3560618Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806841878"
+          },
+          {
+            "name": "CodeQL",
+            "event": "pull_request",
+            "headSha": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806841966"
+          },
+          {
+            "name": "Gitleaks",
+            "event": "pull_request",
+            "headSha": "708bdd6fca9ecfa66ff1cfca97a9d9ce1b929bd5",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806841908"
+          }
+        ],
+        "conditionalSkippedChecks": [
+          {
+            "name": "AWS rollout safety (PowerShell + Terraform)",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SKIPPED",
+            "runId": 36806841878,
+            "detailsUrl": "https://github.com/bzinkan/SchoolPilot/actions/runs/36806841878/job/110193135255",
+            "startedAt": "2026-10-01T02:39:59Z",
+            "completedAt": "2026-10-01T02:39:58Z",
+            "supersededSameHead": false
+          }
+        ],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 119,
+        "url": "https://github.com/bzinkan/ClassPilot/pull/119",
+        "headSha": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+        "base": "main",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:12:01.3491965Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36791092270"
+          },
+          {
+            "name": "CI",
+            "event": "push",
+            "headSha": "fffac0e0dc90704bccafcb9f230b9639ec9bba52",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36791087470"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 120,
+        "url": "https://github.com/bzinkan/ClassPilot/pull/120",
+        "headSha": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+        "base": "codex/precise-focus-candidate",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:12:02.4066178Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36791421105"
+          },
+          {
+            "name": "CI",
+            "event": "push",
+            "headSha": "d6cb334a6546cc06c744870382bdb5710f9d5934",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36791417941"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      },
+      {
+        "repository": "bzinkan/ClassPilot",
+        "number": 121,
+        "url": "https://github.com/bzinkan/ClassPilot/pull/121",
+        "headSha": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+        "base": "codex/focus-enforcement",
+        "isDraft": true,
+        "observedAtUtc": "2026-10-01T03:12:03.4017325Z",
+        "canonicalWorkflows": [
+          {
+            "name": "CI",
+            "event": "pull_request",
+            "headSha": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36796826297"
+          },
+          {
+            "name": "CI",
+            "event": "push",
+            "headSha": "3a9ece517d521632f1accbb5a51ff3fcf1934162",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/bzinkan/ClassPilot/actions/runs/36796822346"
+          }
+        ],
+        "conditionalSkippedChecks": [],
+        "outstandingChecks": [],
+        "supersededSameHeadCanceledRuns": []
+      }
+    ],
+    "native401PriorFailedHead": {
+      "replacementHead": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+      "job": "https://github.com/bzinkan/SchoolPilot/actions/runs/36809973321/job/110202633537",
+      "head": "0608a7f96eabab9f458a176a1bc2c20102dc8ca3",
+      "replacementCiAtCapture": "pending",
+      "testOnlyCorrection": "4ddfff692148653f6307d14b3422867fb73b4e77",
+      "failure": "Old requestfailed notification timed out after successful login navigation"
+    }
+  },
+  "localEvidenceLogs": [
+    {
+      "log": "schoolpilot-final-integration-02fdd-shard1-20261001.log",
+      "bytes": 33301,
+      "sha256": "40aafff6acf40b4325aa6f37541160848010d8dd8f47a69f8f0acfdc75bb3075",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-9758-build-types-20261001.log",
+      "bytes": 491,
+      "sha256": "81fd182b5d34f8b3b789f8cbad051ff6551ebd4943d4cacd23ffae5bd505189f",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-9758-frontend-build-20261001.log",
+      "bytes": 15858,
+      "sha256": "e0eae19007329c47d7f15a4522a43099b0737ae456a93e9d049688ffd1906fe1",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-9758-frontend-lint-20261001.log",
+      "bytes": 37388,
+      "sha256": "3c59b1d7e62dc71166a89443ec615b6bde7af3e2a2ed4e09d55c04ba08a05a66",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-9940-unit-types-20261001.log",
+      "bytes": 436680,
+      "sha256": "b44e9498882b05d80d8985d5b105e40d51c9a6b7fe92b743562138862ab562f0",
+      "retainedLocally": true
+    },
+    {
+      "log": "integrated-auth-9940bf51-validation/validation.json",
+      "bytes": 543,
+      "sha256": "4e91e65a6cb2c97cc2d6b96ebf5b08e888427a5dee1383c00969f8ff516da337",
+      "retainedLocally": true
+    },
+    {
+      "log": "integrated-auth-9940bf51-validation/native-device-upsert.log",
+      "bytes": 1412,
+      "sha256": "df6be0d6925a9dcc9d7a9c7287aeaee2f86aeaf3ca32bbb010ef0f69e933debf",
+      "retainedLocally": true
+    },
+    {
+      "log": "integrated-auth-9940bf51-validation/student-session-recovery.log",
+      "bytes": 13429,
+      "sha256": "8f804c87d036bbfb302e27704f38177ff0f6107a409e74162c4479a1585253d9",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-c97c-frontend-build-20261001.log",
+      "bytes": 15858,
+      "sha256": "64c68860891a2a0c9bdb2724c0da191a29d1fd6e33c8e50beaa2f0ed67023f6b",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-c97c-frontend-lint-20261001.log",
+      "bytes": 37388,
+      "sha256": "3c59b1d7e62dc71166a89443ec615b6bde7af3e2a2ed4e09d55c04ba08a05a66",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-c97c-usage-browser-20261001.log",
+      "bytes": 5680,
+      "sha256": "4ba39214b59a9d5676a1641ff3de3d3eda727f40466a02fdb9b11ccfe5dc4dc7",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-c97c-admin-shell-20261001.log",
+      "bytes": 4894,
+      "sha256": "da90ea9e945d39b2c3f0ab6c8fd26968ee67ffa1e8a8c884a2f4f53a19802eb0",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-export-authority-baseline-red.log",
+      "bytes": 2669,
+      "sha256": "a6796f6841b7621728c1cdcf0538cacbd2b49ce2fdcf23125a39c09fb5eee9d1",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-export-authority-focused-green.log",
+      "bytes": 664,
+      "sha256": "1afe4278d2d0737984eb03b73f469e23ea7806a34d4557557573d95587ce51b1",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-export-authority-suite-final.log",
+      "bytes": 5682,
+      "sha256": "9a412dfffb99f0258107374b03a0dfbf62b05ef1480595639bebb208ca044647",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-export-authority-lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-export-authority-build.log",
+      "bytes": 15423,
+      "sha256": "e4c273ce1de39337113187919af2b8f84decd14ec389ff2931b94ec134d1d436",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-final-integration-401-document-20261001.log",
+      "bytes": 485,
+      "sha256": "9eeb9489fa215a76418c57203a62c53d759671621bf5609f46a005fe9ebfc3bf",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-401-document-native-probe.log",
+      "bytes": 485,
+      "sha256": "bd3cbe22e3432abc5ea60c31b2317e7409ab7c5239fbf87544b1799ecada77dd",
+      "retainedLocally": true
+    },
+    {
+      "log": "usage-401-document-suite-green.log",
+      "bytes": 5783,
+      "sha256": "dc0d844a3c571aa3945785ec994d7c74ec780c155afb2b06bff3810b624cfb9d",
+      "retainedLocally": true
+    },
+    {
+      "log": "schoolpilot-pr-review-20260930/schoolpilot-568-0608-shard3-110202633537.log",
+      "bytes": 189263,
+      "sha256": "34e3a1023f8479ea84fdf382dcc9beb2a543fcdfced7d87bd1fa35a46ef608ff",
+      "retainedLocally": true
+    }
+  ],
+  "usageExportCorrection": {
+    "isolatedCommit": "8416312d7d7193da68422e7410055cf7fe39dbc2",
+    "publishedUsagePageHead": "bb98e813e2a1ce60b464016ee4c989dc5a6e9e61",
+    "baseline": {
+      "command": "node --test --test-name-pattern=\"current report (403|409)\" scripts/digital-usage-browser.test.mjs",
+      "source": "06fe7d3f7f4cf4352bacdce742ac23d63c030c0d",
+      "tests": 2,
+      "pass": 0,
+      "fail": 2,
+      "proof": "Both native browsers downloaded the previously held CSV after the mounted report received HTTP403/409 and its data disappeared."
+    },
+    "corrected": {
+      "command": "npm run test:digital-usage",
+      "tests": 21,
+      "browser": 14,
+      "model": 7,
+      "pass": 21,
+      "fail": 0,
+      "skip": 0,
+      "cancel": 0,
+      "contextCases": [
+        "school",
+        "authVersion",
+        "schoolDate",
+        "scope",
+        "date",
+        "role",
+        "navigation"
+      ],
+      "proof": "Native requestfailed ERR_ABORTED before held route drained, followed by fresh authorized report and actual new CSV download; stale previous-query403 did not cancel current CSV; actual API401 location.replace navigated to login."
+    },
+    "independentReview": [
+      "root",
+      "precise_restrictions"
+    ],
+    "localProofFile": "usage-export-authority-evidence.json",
+    "localProofSha256": "2e4479dfaa868a22c3531382e88b2588ec1905851501453f10d6d72a0bd65651",
+    "publicationAtLocalProofCapture": {
+      "pushed": false,
+      "PR": false,
+      "rootOwnsCherryPick": true
+    },
+    "native401FixtureCorrection": {
+      "isolatedCommit": "4ddfff692148653f6307d14b3422867fb73b4e77",
+      "testOnly": true,
+      "localFullUsageSuitePassed": 21,
+      "actualLoginAndOldDocumentDestruction": true,
+      "noDownloadAfterResponseDrain": true,
+      "mandatoryMounted403And409NativeAbortPreserved": true,
+      "oldCiMissingRequestFailedNotification": "observed after successful login navigation; not reproduced locally",
+      "deadlineIncrease": false
+    }
+  },
+  "mainRecheckedAtUtc": "2026-10-01T03:30:33.5052329Z"
+}

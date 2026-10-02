@@ -68,7 +68,7 @@ describe("PassPilot rule enforcement placement", () => {
       const body = between(storage, `export async function ${name}(`, next);
       inOrder(body, [
         "const ruleEvaluatedAt = new Date();",
-        "db.transaction(",
+        "(transaction ?? db).transaction(",
         "takePasspilotClassLock(",
         "enforcePasspilotIssuanceRules(tx, {",
         "now: ruleEvaluatedAt,",
@@ -113,7 +113,11 @@ describe("PassPilot rule enforcement placement", () => {
       .filter((path) => /\b(createLegacyPass|createCanonicalPass|createActivityKioskPass)\(/.test(readFileSync(path, "utf8")))
       .map((path) => relative(root, path).replaceAll("\\", "/"))
       .sort();
-    assert.deepEqual(callers, ["src/routes/passpilot/kiosk.ts", "src/routes/passpilot/passes.ts", "src/services/chatToolExecutor.ts"]);
+    assert.deepEqual(callers, ["src/routes/passpilot/kiosk.ts", "src/routes/passpilot/passes.ts", "src/services/chatToolExecutor.ts", "src/services/passpilotAppointments.ts"]);
+    const appointments = source("src/routes/passpilot/appointments.ts");
+    assert.match(appointments, /isPasspilotRuleError\(error\)/);
+    assert.match(appointments, /await recordPasspilotRuleDenial\(error.passpilotRule\)/);
+    assert.match(appointments, /res.status\(409\).json\(passpilotRuleTeacherResponse\(error, await getRequestPassPilotRole\(req, res\)\)\)/);
 
     const teacher = between(source("src/routes/passpilot/passes.ts"), 'router.post("/", async', 'router.patch("/:id/return"');
     inOrder(teacher, [
@@ -147,10 +151,10 @@ describe("PassPilot rule enforcement placement", () => {
     ], "issue_pass");
   });
 
-  it("strips a null ruleOverrideCode from every serialized pass row", () => {
-    assert.match(source("src/services/passpilotClasses.ts"), /\.\.\.withoutNullRuleOverride\(pass\),/);
+  it("shapes pass override metadata for the verified viewer while kiosks use the safe default", () => {
+    assert.match(source("src/services/passpilotClasses.ts"), /\.\.\.withoutNullRuleOverride\(pass, viewerRole\),/);
     assert.match(between(source("src/routes/passpilot/passes.ts"), "async function enrichPasses", "// Map legacy passType"),
-      /\.\.\.withoutNullRuleOverride\(pass\),/);
+      /\.\.\.withoutNullRuleOverride\(pass, viewerRole\),/);
     assert.match(source("src/routes/passpilot/kiosk.ts"), /activePasses\.map\(\(pass\) => \[pass\.studentId, withoutNullRuleOverride\(pass\)\]\)/);
   });
 });

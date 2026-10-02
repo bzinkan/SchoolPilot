@@ -71,8 +71,8 @@ test("staff identity migrations keep additive auth version ahead of one atomic c
   );
   assert.deepEqual(
     schoolPilot27ExpandMigrations,
-    schoolPilot27Migrations.slice(0, contractIndex),
-    "pre-contract rollout must never admit migrations appended after a deferred contract"
+    schoolPilot27Migrations.filter((migration) => !STAFF_IDENTITY_CONTRACT_MIGRATION_IDS.some(id => id === migration.id)),
+    "append-only expand migrations remain available without admitting the deferred staff contract"
   );
   assert.deepEqual(
     selectSchoolPilot27MigrationPlan({

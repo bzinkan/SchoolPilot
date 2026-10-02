@@ -8,9 +8,11 @@ const PERSISTENT_COMMANDS = new Set([
   'attention-mode',
   'limit-tabs',
   'temp-unblock',
+  'focus-tab',
+  'stop-focus',
 ]);
 
-const TRANSIENT_COMMANDS = new Set(['open-tab', 'close-tabs', 'timer', 'poll']);
+const TRANSIENT_COMMANDS = new Set(['open-tab', 'close-tabs', 'timer', 'poll', 'activate-tab']);
 
 export const MAX_TRACKED_TRANSIENT_COMMANDS = 200;
 

@@ -67,6 +67,7 @@ import { recordSafetyAlert } from "../../services/safetyCenter.js";
 import { describeClasspilotSafetyReason } from "../../services/classpilotSafetyAction.js";
 import { parseClasspilotActivityAuthority, requireScheduledClassroomRequestRevision } from "../../services/classpilotActivityAuthority.js";
 import { readActivityHistoryScope } from "../../services/classpilotActivityHistory.js";
+import { withoutNullRuleOverride } from "../../services/passpilotRules.js";
 
 const router = Router();
 
@@ -155,6 +156,10 @@ async function canViewStudent(req: any, res: any, studentId: string): Promise<{ 
 
 function redactTimelineEvent(event: any, role: string): any {
   let roleSafeEvent = event;
+  if ((event.sourceType === "passpilot" || event.source_type === "passpilot")
+    && event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)) {
+    roleSafeEvent = { ...event, metadata: withoutNullRuleOverride(event.metadata, role) };
+  }
   if (!isAdminRole(role) && (event.sourceType === "mailpilot" || event.source_type === "mailpilot")) {
     roleSafeEvent = {
       ...event,

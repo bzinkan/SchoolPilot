@@ -82,7 +82,7 @@ describe("ClassPilot classroom-state ACK surfaces share one gate", () => {
     const devices = source("../src/routes/classpilot/devices.ts");
     const heartbeatAck = section(
       devices,
-      "const [heartbeat, controlState] = await Promise.all",
+      "const [heartbeat, initialControlState] = await Promise.all",
       "const screenshotTrackingAuthority",
     );
     assert.match(

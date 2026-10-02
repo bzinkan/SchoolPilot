@@ -191,7 +191,7 @@ function aggregateController({ school = success([]), scoped = success([]) } = {}
 async function waitUntil(predicate, message, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.fail(message);
@@ -243,6 +243,7 @@ async function configureDashboard(page, {
   screenshotTiles = { tiles: [] },
   historyTiles = { tiles: [] },
   observationLeaseResponse = { renewAfterSeconds: 30 },
+  beforeParentSessionsRead = null,
   claimedStudents = [],
   availableStudents = [],
   claimResponse = null,
@@ -253,6 +254,8 @@ async function configureDashboard(page, {
   dashboardActivity = { enabled: false, schoolId: SCHOOL_ID, viewerId: ADMIN_ID },
   observableActivities = null,
   expectedWebsocketRole = null,
+  flightPathResponse = { flightPaths: [] },
+  scopePreviewResponse = null,
 } = {}) {
   let dashboardSocket;
   let websocketAuthenticated = false;
@@ -268,6 +271,7 @@ async function configureDashboard(page, {
   const coverageSummaryRequests = [];
   const activityRequests = [];
   const pageErrors = [];
+  const scopePreviewRequests = [];
 
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript((schoolId) => {
@@ -361,7 +365,13 @@ async function configureDashboard(page, {
       return;
     }
     if (pathname === "/api/flight-paths") {
-      await route.fulfill({ json: { flightPaths: [] } });
+      await route.fulfill({ json: flightPathResponse });
+      return;
+    }
+    if (pathname === '/api/classpilot/flight-paths/preview-resources') {
+      scopePreviewRequests.push({ schoolId: request.headers()['x-school-id'], body: request.postDataJSON() });
+      const response = typeof scopePreviewResponse === 'function' ? await scopePreviewResponse(request) : scopePreviewResponse;
+      await route.fulfill({ json: response || {} });
       return;
     }
     if (pathname === "/api/block-lists") {
@@ -379,6 +389,7 @@ async function configureDashboard(page, {
     }
     if (pathname === '/api/classpilot/observable-activities') {
       sessionRequests.push(pathname);
+      if (beforeParentSessionsRead) await beforeParentSessionsRead(request);
       const activities = typeof observableActivities === 'function' ? await observableActivities(request) : observableActivities
         || allSessions.filter(session => session.sessionMode === 'live' && !session.endTime && session.rosterSnapshotCompletedAt).map(session => ({
           ...session, name: GROUPS.find(group => group.id === session.groupId)?.name || 'Class', purpose: 'class', source: 'class',
@@ -391,6 +402,7 @@ async function configureDashboard(page, {
     }
     if (pathname === "/api/sessions/all") {
       sessionRequests.push(pathname);
+      if (beforeParentSessionsRead) await beforeParentSessionsRead(request);
       await route.fulfill({ json: { sessions: allSessions } });
       return;
     }
@@ -520,6 +532,7 @@ async function configureDashboard(page, {
 
   return {
     commandPosts,
+    scopePreviewRequests,
     coverageMutationRequests,
     observationLeaseRequests,
     pageErrors,
@@ -2228,6 +2241,57 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
   }
 });
 
+test('precise Waypoint review preserves canonical resource commands and discards an edited boundary', { timeout: 60_000 }, async () => {
+  const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  await vite.listen();
+  const baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  const now = new Date('2026-09-30T14:05:00.000Z');
+  await page.clock.install({ time: now });
+  try {
+    const live = teachingSession();
+    const rows = [student({ lastSeenAt: now.toISOString(), realtimeObservedAt: now.toISOString(), capabilities: { preciseRestrictionResourcesV1: true } })];
+    const harness = await configureDashboard(page, { userRole: 'teacher', aggregate: aggregateController({ school: success(rows), scoped: success(rows) }),
+      activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+      flightPathResponse: { flightPaths: [], features: { preciseRestrictionResources: true } },
+      scopePreviewResponse: request => ({ schemaVersion: 1, purpose: 'waypoint', boundary: request.postDataJSON().boundary,
+        scopes: [{ type: 'resource', hostname: 'docs.google.com', label: 'Google Form', url: 'https://docs.google.com/forms/d/reviewed-form/viewform', description: 'Only this Google Form is allowed.' }],
+        warnings: [], skipped: [], authoring: { allowedDomains: [], resources: [], url: 'https://docs.google.com/forms/d/reviewed-form/viewform' },
+      }),
+    });
+    await page.goto(`${baseURL}/classpilot`);
+    await page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+    await page.getByTestId('button-lock-screen').click();
+    assert.match(await page.getByTestId('dialog-lock-screen').innerText(), /website.*may differ/);
+    await page.getByTestId('radio-lock-screen-specific').check();
+    await page.getByTestId('input-lock-screen-url').fill('https://forms.gle/AbCdEfGhIj');
+    await page.getByTestId('radio-lock-screen-boundary-resource').check();
+    const confirm = page.getByTestId('button-confirm-lock-screen');
+    assert.doesNotMatch(await page.getByTestId('dialog-lock-screen').innerText(), /Browsing remains allowed on its hostname/);
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    await page.getByTestId('radio-lock-screen-boundary-website').check();
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('radio-lock-screen-boundary-resource').check();
+    assert.equal(await confirm.isDisabled(), true);
+    await page.getByTestId('button-review-restriction-scope').click();
+    await page.getByRole('region', { name: 'Reviewed allowed scope' }).waitFor();
+    const previewArtifacts = path.resolve(process.env.TEMP || '/tmp', 'schoolpilot-precise-scopes');
+    mkdirSync(previewArtifacts, { recursive: true });
+    await confirm.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(previewArtifacts, 'waypoint-desktop.png'), fullPage: true });
+    await confirm.click();
+    await waitUntil(() => harness.commandPosts.length > 0, 'Reviewed Waypoint must submit through the existing exact student command contract');
+    assert.deepEqual(harness.commandPosts.at(-1).body.commandPayload, { url: 'https://docs.google.com/forms/d/reviewed-form/viewform', boundary: 'resource' });
+    assert.deepEqual(harness.commandPosts.at(-1).body.targetStudentIds, [STUDENT_ID]);
+    assert.equal(harness.scopePreviewRequests.every(row => row.schoolId === SCHOOL_ID), true);
+    assert.equal(JSON.stringify(harness.commandPosts).includes('forms.gle'), false);
+    assert.deepEqual(harness.pageErrors, []);
+  } finally { await page.close(); await browser.close(); await vite.close(); }
+});
+
 test('terminal read denials stop clock and lifecycle replay and recover only after authority or checked retry', { timeout: 120_000 }, async () => {
   const vite = await createServer({ cacheDir: DASHBOARD_CACHE, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
   await vite.listen();
@@ -2390,25 +2454,41 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
     await retainedObservePage.clock.install({ time: fixedTime });
     const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
     let retainedObserveHarness;
+    let holdParentRefresh = false;
+    let releaseParentRefresh;
+    const parentRefresh = new Promise(resolve => { releaseParentRefresh = resolve; });
     retainedObserveHarness = await configureDashboard(retainedObservePage, {
       aggregate: aggregateController({ scoped: success(rows()) }), activeSession: live, allSessions: [live, observed],
+      beforeParentSessionsRead: () => holdParentRefresh ? parentRefresh : undefined,
       observationLeaseResponse: (method, pathname) => {
         if (method === 'PUT' && pathname.includes(OBSERVED_SESSION_ID)) {
           retainedObserveHarness.setAllSessions([live]);
+          holdParentRefresh = true;
           return { status: 404, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } };
         }
         return { renewAfterSeconds: 30 };
       },
     });
-    await retainedObservePage.goto(`${baseURL}/classpilot`);
-    await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-    await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
-    await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
-      'lease denial refreshes the parent list that removes observed A');
-    await settle();
-    await assertObserveEntryPointsUnavailable(retainedObservePage, retainedObserveHarness.commandPosts,
-      [STUDENT_ID], retainedObserveHarness.coverageMutationRequests);
-    assert.deepEqual(retainedObserveHarness.pageErrors, []);
+    try {
+      await retainedObservePage.goto(`${baseURL}/classpilot`);
+      await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+      // Observe denial before releasing the parent response that removes A.
+      // Otherwise the permanent unavailable state may retire this transient banner.
+      await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
+      holdParentRefresh = false;
+      releaseParentRefresh();
+      await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
+        'lease denial refreshes the parent list that removes observed A');
+      await retainedObservePage.getByTestId('select-admin-observe').locator(`option[value="${OBSERVED_SESSION_ID}"]`)
+        .filter({ hasText: 'Activity unavailable' }).waitFor({ state: 'attached' });
+      assert.equal(await retainedObservePage.getByTestId('select-admin-observe').inputValue(), OBSERVED_SESSION_ID);
+      await assertObserveEntryPointsUnavailable(retainedObservePage, retainedObserveHarness.commandPosts,
+        [STUDENT_ID], retainedObserveHarness.coverageMutationRequests);
+      assert.deepEqual(retainedObserveHarness.pageErrors, []);
+    } finally {
+      holdParentRefresh = false;
+      releaseParentRefresh();
+    }
     await retainedObservePage.close();
 
     const aggregatePage = await browser.newPage();
@@ -4109,6 +4189,184 @@ async function assignedTestingBrowser(context, options = {}) {
   return { browser, baseURL: `http://127.0.0.1:${vite.httpServer.address().port}` };
 }
 
+async function focusBrowserFixture(context, overrides = {}) {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+  const page = await browser.newPage();
+  await page.clock.install({ time: new Date('2026-08-25T13:01:00Z') });
+  const row = student({ clientProtocolVersion: 3, tabSnapshotRevision: 7,
+    acceptedCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true, closeTabsExactV2: true },
+    activeTabRef: 'opaque-first', activeTabUrl: 'https://lesson.example.edu/same',
+    allOpenTabs: [{ tabRef: 'opaque-first', url: 'https://lesson.example.edu/same', title: 'First duplicate' },
+      { tabRef: 'opaque-second', url: 'https://lesson.example.edu/same', title: 'Second duplicate' }], ...overrides });
+  const aggregate = aggregateController({ scoped: success([row]) });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, { aggregate, userRole: 'teacher', activeSession: live,
+    allSessions: [live], acknowledgeSessionSubscriptions: true });
+  const posts = [];
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); posts.push(body);
+    await route.fulfill({ json: { command: { id: `focus-${posts.length}`, ...body, schoolId: SCHOOL_ID,
+      targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'received' })) } } });
+  });
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  await page.getByTestId(`button-manage-tabs-${STUDENT_ID}`).click();
+  await page.getByTestId('dialog-tabs').waitFor();
+  return { page, harness, aggregate, row, posts };
+}
+
+test('Classroom picker uses the current Dashboard authority and explicit student targets', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  await page.route('**/api/classroom/courses?*', route => route.fulfill({ json: { courses: [{ id: 'course-a', name: 'Synthetic Classroom course' }] } }));
+  await page.route('**/api/classroom/courses/course-a/resources', route => route.fulfill({ json: { resources: [{ id: 'assignment-a', title: 'Synthetic assignment', links: [{ title: 'Assignment page', url: 'https://lesson.example.edu/task' }] }] } }));
+  const statusReads = [];
+  await page.route('**/api/classpilot/commands/focus-1/status?*', async route => {
+    statusReads.push(route.request().url());
+    await route.fulfill({ json: { command: { id: 'focus-1', ...posts[0], targets: [{ studentId: STUDENT_ID, status: 'completed' }] } } });
+  });
+  await page.getByTestId('button-classroom-assignments').click();
+  await page.getByLabel('Course', { exact: true }).selectOption('course-a');
+  await page.getByLabel('Assignment or material').selectOption('assignment-a');
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await page.getByLabel('Classroom action results').getByText(/Open: Received/).waitFor();
+  await page.clock.fastForward(1000);
+  await page.getByLabel('Classroom action results').getByText(/Open: Confirmed/).waitFor();
+  assert.deepEqual(posts, [{ teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'open-tab', commandPayload: { url: 'https://lesson.example.edu/task' } }]);
+  assert.equal(new URL(statusReads[0]).searchParams.get('teachingSessionId'), OWN_SESSION_ID);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls bind duplicate URLs to the selected opaque tab and keep received pending until completion', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-first`).getByText('Active', { exact: true }).count(), 1);
+  assert.equal(await page.getByTestId(`tab-row-${STUDENT_ID}-opaque-second`).getByText('Active', { exact: true }).count(), 0);
+  if (process.env.FOCUS_UI_QA_DIR) {
+    mkdirSync(process.env.FOCUS_UI_QA_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.FOCUS_UI_QA_DIR, 'focus-desktop.png'), fullPage: true });
+  }
+  await page.getByTestId('button-focus-tab-opaque-second').click();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/received/).waitFor();
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID],
+    commandType: 'focus-tab', commandPayload: { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-second', observedRevision: 7 }] } });
+  await page.getByTestId('focus-command-results').getByText('Focus: awaiting confirmation', { exact: true }).waitFor();
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    command: { id: 'focus-1', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId('button-bring-forward-opaque-first').click();
+  await waitUntil(() => posts.length === 2, 'Bring Forward must post its selected exact target');
+  assert.equal(posts[1].commandType, 'activate-tab');
+  assert.deepEqual(posts[1].commandPayload, { tabTargets: [{ studentId: STUDENT_ID, tabRef: 'opaque-first', observedRevision: 7 }] });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls reject advertised but withdrawn capability and preserve exact Stop cleanup', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context, {
+    acceptedCapabilities: {}, extensionCapabilities: { scopedAuthorityChecksV1: true, focusTabV1: true },
+    focus: { state: 'suspended', assignmentId: 'prior-focus', reason: 'authentication' } });
+  assert.equal(await page.getByTestId('button-focus-tab-opaque-first').isDisabled(), true);
+  assert.equal(await page.getByTestId('button-bring-forward-opaque-first').isDisabled(), true);
+  await page.getByTestId(`focus-status-${STUDENT_ID}`).getByText('Focus paused for sign-in', { exact: true }).waitFor();
+  await page.getByTestId(`button-stop-focus-${STUDENT_ID}`).click();
+  await waitUntil(() => posts.length === 1, 'Stop Focus remains an explicit cleanup request');
+  assert.deepEqual(posts[0], { teachingSessionId: OWN_SESSION_ID, targetScope: 'students', targetStudentIds: [STUDENT_ID], commandType: 'stop-focus', commandPayload: {} });
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls retain a completed acknowledgement that arrives before the HTTP creation response', { timeout: 60_000 }, async context => {
+  const { page, harness } = await focusBrowserFixture(context);
+  let finishResponse;
+  let started = false;
+  const gate = new Promise(resolve => { finishResponse = resolve; });
+  context.after(() => finishResponse());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); started = true;
+    await gate;
+    await route.fulfill({ json: { command: { id: 'early-ack', ...body,
+      targets: [{ studentId: STUDENT_ID, status: 'pending' }] } } });
+  });
+  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await waitUntil(() => started, 'Hold the HTTP response after creating the command');
+  await harness.sendWebSocketMessage({ type: 'classpilot-command-update', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID,
+    command: { id: 'early-ack', schoolId: SCHOOL_ID, teachingSessionId: OWN_SESSION_ID, commandType: 'focus-tab',
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } });
+  finishResponse();
+  await page.getByTestId(`focus-result-${STUDENT_ID}`).getByText(/completed/).waitFor();
+  await page.getByTestId('focus-command-results').getByText('Focus: device confirmation received', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus cleanup includes offline assigned students without a missing-target broadcast', { timeout: 60_000 }, async context => {
+  const { page, harness, posts } = await focusBrowserFixture(context);
+  await page.getByTestId('button-close-tabs-dialog').click();
+  // Current-authority roster updates can withdraw telemetry while saved Focus
+  // still requires cleanup. Query the actual Dashboard through its cache.
+  await page.evaluate(async ({ studentId }) => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    for (const query of queryClient.getQueryCache().getAll()) {
+      if (!String(query.queryKey[0]).includes('aggregated')) continue;
+      queryClient.setQueryData(query.queryKey, previous => {
+        if (!previous) return previous;
+        const rows = Array.isArray(previous) ? previous : previous.students;
+        if (!Array.isArray(rows)) return previous;
+        const next = rows.map(row => row.studentId === studentId ? { ...row, status: 'offline', isLoggedIn: false,
+          loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null, monitoringState: 'not_expected' } : row);
+        return Array.isArray(previous) ? next : { ...previous, students: next };
+      });
+    }
+  }, { studentId: STUDENT_ID });
+  await page.getByTestId('button-tabs').click();
+  await page.getByTestId('dialog-tabs').waitFor();
+  assert.equal(await page.locator('[data-testid^="tab-row-"]').count(), 0, 'Withdrawn telemetry must remove every exact tab action before offline cleanup');
+  await page.getByTestId('button-stop-focus-targets').click();
+  await waitUntil(() => posts.length === 1, 'Offline cleanup must send its explicit student');
+  assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
+  assert.equal(posts[0].targetScope, 'students');
+  assert.deepEqual(posts[0].commandPayload, {});
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('Focus controls discard a late command response after the assignment changes and fit a narrow viewport', { timeout: 60_000 }, async context => {
+  const { page, harness } = await focusBrowserFixture(context);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.getByTestId('dialog-tabs').evaluate(node => node.scrollWidth <= node.clientWidth), true);
+  if (process.env.FOCUS_UI_QA_DIR) {
+    mkdirSync(process.env.FOCUS_UI_QA_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.FOCUS_UI_QA_DIR, 'focus-mobile.png'), fullPage: true });
+  }
+  let finishCommand;
+  let started = false;
+  const gate = new Promise(resolve => { finishCommand = resolve; });
+  context.after(() => finishCommand());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON(); started = true;
+    await gate;
+    await route.fulfill({ json: { command: { id: 'late-focus', ...body,
+      targets: [{ studentId: STUDENT_ID, status: 'completed' }] } } });
+  });
+  await page.getByTestId('button-focus-tab-opaque-first').click();
+  await waitUntil(() => started, 'The original assignment command must be in flight');
+  harness.setActiveSession(null);
+  harness.setAllSessions([]);
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.refetchQueries({ queryKey: ['/api/sessions/active'] });
+    await queryClient.refetchQueries({ queryKey: ['/api/sessions/all'] });
+  });
+  await page.getByTestId('dialog-tabs').waitFor({ state: 'hidden' });
+  finishCommand();
+  await page.waitForFunction(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    return queryClient.getMutationCache().getAll().some(mutation => mutation.state.variables?.type === 'focus-tab'
+      && mutation.state.status === 'error');
+  });
+  assert.equal(await page.getByTestId('focus-command-results').count(), 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('admin Dashboard ignores a persisted grade filter and retains its student controls after reload', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context, { plugins: chatBaselinePlugins() });
   const page = await browser.newPage();
@@ -5145,11 +5403,33 @@ test('Class tools integrates support, activities and manual routines without cov
   await page.setViewportSize({width:900,height:1000});
   await page.getByRole('dialog',{name:'Class tools',exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Pin Class tools',exact:true}).count(),0);
-  await waitUntil(async () => (await geometry()).panel.height > 250, 'Responsive drawer must have usable height');
+  try {
+    await waitUntil(async () => (await geometry()).panel.height > 250, 'Responsive drawer must have usable height');
+  } catch (error) {
+    const layout = await page.evaluate(() => {
+      const inspect = selector => {
+        const node = document.querySelector(selector);
+        return node ? { rect: node.getBoundingClientRect().toJSON(), style: node.getAttribute('style'), position: getComputedStyle(node).position } : null;
+      };
+      return { viewport: { width: innerWidth, height: innerHeight, scrollY }, panel: inspect('[data-testid="class-tools-panel"]'), toolbar: inspect('[data-class-tools-toolbar]'), navigation: inspect('[data-class-tools-navigation]') };
+    });
+    await chatEvidence(page, 'class-tools-responsive-failure', layout);
+    error.message += `: ${JSON.stringify(layout)}`;
+    throw error;
+  }
+  assert.deepEqual((await geometry()).covered, [], 'Responsive drawer keeps command buttons visible');
+  await page.evaluate(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  assert.equal(await page.evaluate(() => scrollY), 0, 'Opening the drawer must not keep overriding later user scrolling');
   await page.setViewportSize({width:640,height:900});
   await waitUntil(async () => (await geometry()).panel.height > 200, 'A zoom-sized viewport must keep the drawer usable');
+  assert.deepEqual((await geometry()).covered, [], 'Zoom-sized drawer keeps command buttons visible');
   await page.getByRole('button',{name:'Close Class tools',exact:true}).click();
   await page.getByTestId('class-tools-panel').waitFor({state:'hidden'});
+  await waitUntil(async () => await page.evaluate(() => document.activeElement?.dataset.testid === 'teacher-fab'),
+    'Class tools must return keyboard focus after its native animation frame');
   assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
 });
 

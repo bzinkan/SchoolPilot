@@ -33,6 +33,9 @@ import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
+import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
+import ClassroomActions from '../components/ClassroomActions';
+import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
 import { useRosterGradeSettings } from '../hooks/useRosterGradeSettings';
 import { activityAuthority, activityAuthorityKey, activityAuthorityQuery, activityLegacyBody, activityParentPath, activityRequestHeaders, activityPurpose, activityPurposeLabel, activityEndLabel, activityTransitionKey, normalizeObservableActivities, matchesActivityAuthority } from '../lib/dashboardActivity';
@@ -143,7 +146,8 @@ import { useObservationLease } from '../hooks/useObservationLease';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
 import { countUnreadByStudent, deriveChatConversations, looksLikeQuestion } from '../lib/chatThreads';
-import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
+import { mergeCommandUpdateIntoBatches, mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
+import { exactFocusPayload, focusCommandFeedback, focusPayloadForStudents, focusStatusLabel, focusTabCapability } from '../lib/focusControls';
 import {
   classpilotObservationSessionEligible,
   claimedPreviewContextsFromRoster,
@@ -769,13 +773,13 @@ export default function Dashboard() {
   });
 
   const { data: flightPaths = EMPTY_LIST } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
+    queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: selectFlightPathOptions,
   });
   const { data: preciseRestrictionResourcesEnabled = false } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
+    queryKey: ['/api/flight-paths', activeSchoolId, currentUser?.id],
+    queryFn: ({ signal }) => apiRequest('GET', '/flight-paths', undefined, { signal, headers: { 'X-School-Id': activeSchoolId } }),
     select: selectPreciseRestrictionResourcesEnabled,
   });
 
@@ -993,6 +997,21 @@ export default function Dashboard() {
   const contextAuthorityRevision = effectiveActivity?.contextAuthorityRevision ?? effectiveActivity?.authority?.contextAuthorityRevision ?? null;
   const effectiveAuthorityKey = JSON.stringify([activityAuthorityKey(effectiveAuthority), contextAuthorityRevision]);
   const activityScopeKey = JSON.stringify([classReaderKey, effectiveAuthorityKey]);
+  const focusControlScopeKey = JSON.stringify([activityScopeKey, studentView,
+    studentView === 'claimed' ? claimedPickupStudents.map((student) => [student.studentId, student.contextId,
+      student.contextAuthorityRevision ?? student.supervisionContext?.contextAuthorityRevision ?? null]).sort() : []]);
+  const focusControlScopeRef = useRef(focusControlScopeKey);
+  const focusCommandUpdatesRef = useRef(new Map());
+  const [lastFocusResult, setLastFocusResult] = useState(null);
+  useLayoutEffect(() => {
+    focusControlScopeRef.current = focusControlScopeKey;
+    focusCommandUpdatesRef.current.clear();
+    setLastFocusResult(null);
+    setShowCloseTabsDialog(false);
+    setSelectedTabsToClose(new Set());
+    setManageTabsStudentIds(null);
+    setManageTabsTargetSnapshot('');
+  }, [focusControlScopeKey]);
   const activityScopeRef = useRef(activityScopeKey);
   useLayoutEffect(() => { activityScopeRef.current = activityScopeKey; }, [activityScopeKey]);
   const requestActivityApi = useCallback(async (method, path, body, options = {}) => {
@@ -2000,6 +2019,13 @@ export default function Dashboard() {
                 messageSessionId
                 && String(messageSessionId) !== String(effectiveActivityIdRef.current)
               ) return;
+              const focusCommandId = message.commandId || publicCommand.id;
+              if (focusCommandId && ['activate-tab', 'focus-tab', 'stop-focus'].includes(publicCommand.commandType)) {
+                const updates = focusCommandUpdatesRef.current;
+                updates.set(focusCommandId, message);
+                if (updates.size > 100) updates.delete(updates.keys().next().value);
+              }
+              setLastFocusResult((current) => current ? mergeCommandUpdateIntoBatches([current], message)[0] : current);
 
               const before = transientCommandOutcomesRef.current;
               const tracked = trackTransientCommandResponse(
@@ -2956,7 +2982,7 @@ export default function Dashboard() {
     commandType,
     commandPayload = {},
     { allowSafetyUnlock = false } = {},
-  ) => (
+  ) => commandType === 'stop-focus' ? isStudentStructurallyCommandable(student) : (
     (!scheduledSupervisionId || ['open-tab', 'close-tabs', 'lock-screen', 'unlock-screen', 'apply-flight-path', 'remove-flight-path', 'apply-block-list', 'remove-block-list', 'teacher-message'].includes(commandType)
       || studentSupportsScheduledClassroom(student))
     && (isStudentCommandable(student, { allowSafetyUnlock })
@@ -4178,7 +4204,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           : isStudentCommandable(student, { allowSafetyUnlock }),
       })),
       claimedStudents: claimedPickupStudents.filter((student) => (
-        isStudentCommandable(student, { allowSafetyUnlock })
+        commandType
+          ? isStudentCommandableForCommand(student, commandType, commandPayload, { allowSafetyUnlock })
+          : isStudentCommandable(student, { allowSafetyUnlock })
       )),
       selectedStudentIds: Array.from(selectedStudentIds),
       selectedSubgroupId: selectedSubgroupId || null,
@@ -4527,6 +4555,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   }, [showCloseTabsDialog, teacherSettings]);
 
   const manageTabsStudents = getActiveCommandStudents(manageTabsStudentIds);
+  const focusCleanupStudents = getActiveCommandStudents(manageTabsStudentIds, { commandType: 'stop-focus' });
   const openTabs = manageTabsStudents
     .flatMap(s => {
       if (!monitoringDisplayFor(s).telemetryCurrent) return [];
@@ -4541,8 +4570,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             observedRevision: tab.observedRevision ?? s.tabSnapshotRevision ?? s.tabSnapshot?.revision,
             clientProtocolVersion: s.clientProtocolVersion,
             capabilities: s.capabilities,
+            acceptedCapabilities: s.acceptedCapabilities,
             extensionCapabilities: s.extensionCapabilities,
-            active: tab.tabRef === s.activeTabRef || tab.url === s.activeTabUrl,
+            active: tab.tabRef && s.activeTabRef ? tab.tabRef === s.activeTabRef : tab.url === s.activeTabUrl,
           }));
       }
       return [];
@@ -5013,15 +5043,20 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
 
   const postClaimedCommand = async (commandType, commandPayload, options = {}) => {
-    const target = resolveActiveCommandTarget(options.studentIds ?? null);
+    const commandScope = activityScopeKey;
+    const target = resolveActiveCommandTarget(options.studentIds ?? null, { commandType, commandPayload });
     const settlements = await Promise.allSettled(target.groups.map((group) =>
       apiRequest('POST', `/coverage/contexts/${group.id}/commands`, {
         targetScope: "students",
         targetStudentIds: group.targetStudentIds,
         commandType,
-        commandPayload,
+        commandPayload: ['activate-tab', 'focus-tab'].includes(commandType)
+          ? focusPayloadForStudents(commandPayload, group.targetStudentIds) : commandPayload,
       })
     ));
+    if (commandScope !== activityScopeRef.current) {
+      throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
+    }
     const combined = combineCommandSettlements(settlements, target.groups, commandType);
     return decorateCommandResponse({
       ...combined,
@@ -5069,6 +5104,29 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return; toast({ variant: "destructive", title: "Error", description: error.message }); },
+  });
+
+  const focusMutation = useMutation({
+    mutationFn: async ({ type, tab, studentIds }) => {
+      const scope = focusControlScopeKey;
+      const ids = type === 'stop-focus' ? studentIds : [tab?.studentId];
+      if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => !id)) {
+        throw new Error('Select a student before sending this command.');
+      }
+      const data = await postActiveCommand(type, type === 'stop-focus' ? {} : exactFocusPayload([tab]), { studentIds: ids });
+      if (scope !== focusControlScopeRef.current) throw new Error('The assignment changed while this command was being sent. Its original result remains in the activity history.');
+      return data;
+    },
+    onSuccess: (data, variables) => {
+      const confirmed = [...focusCommandUpdatesRef.current.values()].reduce((current, message) => mergeCommandUpdateIntoBatches([current], message)[0], data);
+      toast(focusCommandFeedback(confirmed, variables.type));
+      setLastFocusResult({ ...confirmed, type: variables.type });
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
+    },
+    onError: (error) => {
+      if (error?.name === 'AbortError') return;
+      toast({ variant: 'destructive', title: 'Command unavailable', description: error.message });
+    },
   });
 
   const limitTabsMutation = useMutation({
@@ -5192,7 +5250,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     setShowLockScreenDialog(true);
   };
 
+  const waypointPreview = useRestrictionScopePreview({ schoolId: activeSchoolId, viewerId: currentUser?.id,
+    enabled: showLockScreenDialog && lockScreenMode === 'url',
+    input: { purpose: 'waypoint', boundary: preciseRestrictionResourcesEnabled ? lockScreenBoundary : 'website', url: lockScreenUrl.trim() },
+    context: [preciseRestrictionResourcesEnabled, Array.from(selectedStudentIds).sort(), activityScopeKey, effectiveAuthorityKey],
+  });
+  const waypointReviewRequired = lockScreenMode === 'url' && preciseRestrictionResourcesEnabled;
   const handleConfirmLockScreen = () => {
+    if (waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)) return;
     const command = toolbarScreenCommand('lock-screen', selectedStudentIds);
     if (!command || !exactSelectedTargetsResolved) {
       toast({ variant: "destructive", title: "Select students first", description: "Choose one or more students first." });
@@ -5203,7 +5268,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     let skippedSignedOutCount = 0;
     if (lockScreenMode === "url") {
       if (!lockScreenUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Enter a domain or URL to set as the waypoint" }); return; }
-      url = lockScreenUrl.trim();
+      url = waypointPreview.preview?.authoring.url || lockScreenUrl.trim();
       if (!url.match(/^https?:\/\//i)) url = 'https://' + url;
     } else {
       const partition = partitionCurrentPageWaypointTargets(
@@ -6230,6 +6295,21 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         {canUseRemoteControls && studentView !== "available" && (
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
+            {dashboardCapabilities.allows('open-tab') && <ClassroomActions
+              key={JSON.stringify([focusControlScopeKey, selectedSubgroupId, [...selectedStudentIds].sort()])}
+              schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
+              preciseResourcesEnabled={preciseRestrictionResourcesEnabled}
+              students={getActiveCommandStudents(null, { commandType: 'open-tab' })}
+              disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive}
+              assertCurrent={() => { if (focusControlScopeRef.current !== focusControlScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError'); }}
+              postCommand={(type, payload, studentIds) => postActiveCommand(type, payload, { studentIds })}
+              readCommand={(command, signal) => {
+                const authority = activityAuthority(command) || activityAuthority({ teachingSessionId: command.sessionId }) || effectiveAuthority;
+                const context = claimedPreviewContextById.get(authority?.supervisionContextId);
+                return requestActivityApi('GET', `/classpilot/commands/${encodeURIComponent(command.id)}/status?${activityAuthorityQuery(authority)}`, undefined,
+                  { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
+              }}
+            />}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
@@ -7237,7 +7317,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
 
       {/* Waypoint (lock-screen) Dialog */}
       <Dialog open={showLockScreenDialog} onOpenChange={setShowLockScreenDialog}>
-        <DialogContent data-testid="dialog-lock-screen">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto" data-testid="dialog-lock-screen">
           <DialogHeader>
             <DialogTitle>Set Waypoint</DialogTitle>
             <DialogDescription className="space-y-1">
@@ -7263,11 +7343,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 {selectedLateSignInRestrictionStudentIds.length} signed-out student{selectedLateSignInRestrictionStudentIds.length === 1 ? '' : 's'} will be skipped because no current page exists before sign-in. Choose a specific URL to save their Waypoint.
               </p>
             )}
+            {lockScreenMode === 'current' && <p className="text-xs text-muted-foreground">Each signed-in student's current page is the starting point. Browsing stays on that student's website, which may differ for each student. Choose a specific link to review one shared resource or Section.</p>}
             {lockScreenMode === "url" && (
               <div className="space-y-2">
                 <Label htmlFor="lock-screen-url">Domain or URL</Label>
                 <Input id="lock-screen-url" type="url" placeholder="ixl.com" value={lockScreenUrl} onChange={(e) => setLockScreenUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleConfirmLockScreen(); }} data-testid="input-lock-screen-url" />
-                <p className="text-xs text-muted-foreground">{DOMAIN_RESTRICTION_URL_HELP}</p>
+                <p className="text-xs text-muted-foreground">{preciseRestrictionResourcesEnabled && lockScreenBoundary === 'resource'
+                  ? 'The full URL is the landing page. Review below to see the item or Section students can use.'
+                  : DOMAIN_RESTRICTION_URL_HELP}</p>
                 {preciseRestrictionResourcesEnabled && (
                   <fieldset className="space-y-2 pt-1" data-testid="lock-screen-boundary">
                     <legend className="text-sm font-medium">Students can use</legend>
@@ -7277,16 +7360,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                     </label>
                     <label className="flex items-start gap-2 text-sm">
                       <input type="radio" name="lock-screen-boundary" value="resource" checked={lockScreenBoundary === "resource"} onChange={() => setLockScreenBoundary("resource")} data-testid="radio-lock-screen-boundary-resource" />
-                      <span>This resource only<span className="block text-xs text-muted-foreground">Students stay on this video, document, form or page. Students whose ClassPilot extension needs an update are listed and keep their current restriction.</span></span>
+                      <span>This resource only<span className="block text-xs text-muted-foreground">One video, document or form; other links define a Section and paths below it. Review its scope first. Students whose ClassPilot extension needs an update are listed and keep their current restriction.</span></span>
                     </label>
                   </fieldset>
                 )}
+                <RestrictionScopeReview review={waypointPreview} disabled={!lockScreenUrl.trim() || lockScreenMutation.isPending} />
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowLockScreenDialog(false)} data-testid="button-cancel-lock-screen">Cancel</Button>
-            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
+            <Button onClick={handleConfirmLockScreen} disabled={lockScreenMutation.isPending || waypointPreview.pending || (waypointReviewRequired && !waypointPreview.preview)} data-testid="button-confirm-lock-screen"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -7301,7 +7385,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           setTabLimitDraft("");
         }
       }}>
-        <DialogContent className="max-w-2xl" data-testid="dialog-tabs">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="dialog-tabs">
           <DialogHeader><DialogTitle>Manage Tabs ({openTabs.length})</DialogTitle><DialogDescription>{manageTabsTargetLabel}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4">
             {openTabs.length === 0 ? (
@@ -7317,24 +7401,30 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   {Object.values(openTabsByStudent).map((group) => (
                     <div key={group.studentId} className="bg-background">
                       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/40">
-                        <div className="text-sm font-semibold">{group.studentName || "Unnamed Student"}</div>
+                        <div className="min-w-0"><div className="text-sm font-semibold">{group.studentName || "Unnamed Student"}</div><p className="text-xs text-muted-foreground" data-testid={`focus-status-${group.studentId}`}>{focusStatusLabel(manageTabsStudents.find((student) => student.studentId === group.studentId))}</p></div>
+                        {dashboardCapabilities.allows('stop-focus') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => focusMutation.mutate({ type: 'stop-focus', studentIds: [group.studentId] })} disabled={focusMutation.isPending} data-testid={`button-stop-focus-${group.studentId}`}>Stop Focus</Button>}
                         <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => closeTabsMutation.mutate({ closeAll: true, studentIds: [group.studentId] })} disabled={closeTabsMutation.isPending}>
                           Close all (bulk)
                         </Button>
                       </div>
                       {group.tabs.map((tab, tabIndex) => {
                         const exactCapability = exactTabCloseCapability(tab);
+                        const focusCapability = focusTabCapability(tab);
                         const compositeKey = tabSelectionKey(tab);
                         const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
                         return (
-                          <div key={compositeKey || `${tab.studentId}-legacy-${tabIndex}`} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.studentId}-${tab.tabRef || tabIndex}`}>
+                          <div key={compositeKey || `${tab.studentId}-legacy-${tabIndex}`} className="grid grid-cols-[16px_minmax(0,1fr)_28px] sm:grid-cols-[16px_minmax(0,1fr)_auto_28px] items-center gap-2 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.studentId}-${tab.tabRef || tabIndex}`}>
                             <input type="checkbox" className="h-4 w-4 shrink-0" disabled={!exactCapability.enabled} checked={Boolean(compositeKey && selectedTabsToClose.has(compositeKey))} onChange={(e) => { if (!compositeKey) return; const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} title={exactCapability.reason || 'Select this exact tab'} data-testid={`checkbox-tab-${tab.tabRef || tabIndex}`} />
-                            <div className="flex-1 min-w-0">
+                            <div className="min-w-0">
                               <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{tab.title}</span>{tab.active && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Active</Badge>}</div>
                               <div className="text-xs text-muted-foreground truncate">{hostname}</div>
                               {!exactCapability.enabled ? <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{exactCapability.reason}</div> : null}
                             </div>
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending || !exactCapability.enabled} title={exactCapability.reason || 'Close this exact tab'} data-testid={`button-close-tab-${tab.tabRef || tabIndex}`}>
+                            <div className="col-span-2 col-start-2 row-start-2 sm:col-span-1 sm:col-start-3 sm:row-start-1 flex flex-wrap gap-1">
+                              {dashboardCapabilities.allows('activate-tab') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={focusMutation.isPending || !focusCapability.enabled} title={focusCapability.reason || 'Bring this exact tab forward once'} onClick={() => focusMutation.mutate({ type: 'activate-tab', tab })} data-testid={`button-bring-forward-${tab.tabRef || tabIndex}`}>Bring Forward</Button>}
+                              {dashboardCapabilities.allows('focus-tab') && <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={focusMutation.isPending || !focusCapability.enabled} title={focusCapability.reason || 'Keep this exact tab focused until Focus ends'} onClick={() => focusMutation.mutate({ type: 'focus-tab', tab })} data-testid={`button-focus-tab-${tab.tabRef || tabIndex}`}>Focus</Button>}
+                            </div>
+                            <Button type="button" variant="ghost" size="icon" className="col-start-3 row-start-1 sm:col-start-4 h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending || !exactCapability.enabled} title={exactCapability.reason || 'Close this exact tab'} data-testid={`button-close-tab-${tab.tabRef || tabIndex}`}>
                               <X className="h-4 w-4" />
                             </Button>
                           </div>
@@ -7346,6 +7436,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
               </>
             )}
           </div>
+          {lastFocusResult && <div className="rounded-md border p-3 text-sm space-y-1" aria-live="polite" data-testid="focus-command-results">
+            <p className="font-medium">{focusCommandFeedback(lastFocusResult, lastFocusResult.type).title}</p>
+            {(lastFocusResult.command?.targets || lastFocusResult.targets || []).map((target) => <p key={`${target.commandId || ''}:${target.studentId}`} data-testid={`focus-result-${target.studentId}`}>
+              {lastFocusResult.studentNames?.[target.studentId] || 'Student'}: {target.status || 'pending'}{target.errorMessage ? ` — ${target.errorMessage}` : ''}
+            </p>)}
+          </div>}
           {dashboardCapabilities.allows('limit-tabs') && (
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-border/40 bg-muted/20 p-3" data-testid="tab-limit-controls">
               <div className="min-w-[160px] flex-1">
@@ -7369,6 +7465,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setShowCloseTabsDialog(false)} data-testid="button-close-tabs-dialog">Done</Button>
+            {dashboardCapabilities.allows('stop-focus') && <Button variant="outline" disabled={focusMutation.isPending || focusCleanupStudents.length === 0} onClick={() => focusMutation.mutate({ type: 'stop-focus', studentIds: focusCleanupStudents.map((student) => student.studentId) })} title="Clear Focus for these students, including saved Focus awaiting reconnection" data-testid="button-stop-focus-targets">Stop Focus for target</Button>}
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
             {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) }); }} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs (bulk)</Button>}
           </DialogFooter>

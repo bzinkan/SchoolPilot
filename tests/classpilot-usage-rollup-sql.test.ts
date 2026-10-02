@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   CLASSPILOT_USAGE_ROLLUP_BUDGET_END_MINUTE,
   CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL,
+  CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL,
   CLASSPILOT_USAGE_ROLLUP_DELETE_SQL,
   CLASSPILOT_USAGE_ROLLUP_INSERT_SQL,
   CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL,
@@ -36,6 +37,7 @@ import {
   CLASSPILOT_USAGE_ROLLUPS_SQL,
   classpilotUsageRollupsMigration,
 } from "../src/db/classpilotUsageRollupsMigration.ts";
+import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL, classpilotUsageRollupDaysMigration } from "../src/db/classpilotUsageRollupDaysMigration.ts";
 import {
   STAFF_IDENTITY_CONTRACT_MIGRATION_IDS,
   schoolPilot27ExpandMigrations,
@@ -66,6 +68,7 @@ const TENANT_TABLES = [
   "teaching_sessions",
   "groups",
   "classpilot_usage_rollups",
+  "classpilot_usage_rollup_days",
   "classpilot_monitoring_events",
   "settings",
 ];
@@ -76,6 +79,7 @@ const ROLLUP_STATEMENTS = {
   CLASSPILOT_USAGE_ROLLUP_TRACKING_EVENTS_SQL,
   CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL,
   CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL,
+  CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL,
   CLASSPILOT_USAGE_ROLLUP_INSERT_SQL,
 };
 
@@ -84,6 +88,22 @@ function cte(statement: string, name: string, next: string): string {
 }
 
 describe("classpilot_usage_rollups migration", () => {
+  it("adds the separately checksummed forced-RLS computation ledger before the contract", () => {
+    const migration = classpilotUsageRollupDaysMigration;
+    assert.equal(migration.id, "classpilot-usage-rollup-days-20260930");
+    assert.equal(migration.mode, "transactional");
+    assert.equal(migration.checksum, sha256(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL));
+    const ids = schoolPilot27Migrations.map((entry) => entry.id);
+    assert.equal(ids.indexOf(migration.id), ids.indexOf(classpilotUsageRollupsMigration.id) + 1);
+    assert.ok(ids.indexOf(migration.id) < ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]));
+    assert.ok(schoolPilot27ExpandMigrations.includes(migration));
+    const startup = source("src/index.ts");
+    assert.ok(startup.indexOf("await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL)") > startup.indexOf("await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL)"));
+    assert.ok(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL.includes("ALTER TABLE classpilot_usage_rollup_days FORCE ROW LEVEL SECURITY"));
+    assert.ok(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL.includes(`USING (${TENANT_PREDICATE})`));
+    for (const name of ["cp_usage_days_school_fk", "cp_usage_days_school_date_unique", "cp_usage_days_window_check"])
+      assert.ok(source("src/schema/classpilot.ts").includes(`"${name}"`));
+  });
   it("is a checksummed transactional expand migration before the staff identity contract", () => {
     assert.equal(classpilotUsageRollupsMigration.id, "classpilot-usage-rollups-20260929");
     assert.equal(classpilotUsageRollupsMigration.mode, "transactional");
@@ -143,7 +163,9 @@ describe("Monitored Browser Time rollup SQL", () => {
     const observed = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "observed", "excluded");
     assert.match(observed, /heartbeat\.student_id IS NOT NULL/);
     assert.match(observed, /heartbeat\."timestamp" >= \$2::timestamp\s+AND heartbeat\."timestamp" < \$3::timestamp/);
-    assert.match(observed, /student\.school_id = \$1 AND student\.id = heartbeat\.student_id/);
+    assert.match(observed, /heartbeat\.student_id = student_scope\.id/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /FROM students AS student_scope\s+CROSS JOIN LATERAL/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /WHERE student_scope\.school_id = \$1/);
     for (const statement of Object.values(ROLLUP_STATEMENTS)) {
       assert.doesNotMatch(statement, /"timestamp"\s+AT TIME ZONE|observed_at\s+AT TIME ZONE/i);
     }
@@ -165,18 +187,22 @@ describe("Monitored Browser Time rollup SQL", () => {
     assert.match(normalized, /'\^www\\\.'/);
     assert.match(normalized, /COALESCE\(NULLIF\(ai_decision\.category, ''\), observation\.ai_category\)/);
     assert.match(normalized, /NULLIF\(ai_decision\.teacher_intent_source, ''\) IS NOT NULL\s+OR NULLIF\(observation\.teacher_intent_source, ''\) IS NOT NULL/);
-    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY decision\.heartbeat_id, decision\.created_at DESC, decision\.id DESC/);
+    const decisions = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "ai_decision", "normalized");
+    assert.match(decisions, /newest\.school_id = \$1\s+AND newest\.heartbeat_id = observation\.id/);
+    assert.match(decisions, /ORDER BY newest\.created_at DESC, newest\.id DESC\s+LIMIT 1/);
     const classified = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "classified", "roster_window");
     assert.match(classified, /normalized\.category = 'non-educational' AND NOT normalized\.teacher_intent_exempt\s+AND normalized\.domain <> '' THEN 'non-educational'/);
   });
 
   it("attributes each observation to the newest session on its frozen roster", () => {
-    const roster = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "roster_window", "attributed");
-    assert.match(roster, /FROM classpilot_session_students AS roster/);
+    const roster = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "school_roster_window", "grains");
+    assert.match(roster, /JOIN classpilot_session_students AS roster/);
     assert.match(roster, /roster\.group_id AS class_id/);
     assert.match(roster, /GREATEST\(session\.start_time, roster\.captured_at AT TIME ZONE 'UTC'\)/);
     assert.match(roster, /session\.start_time \+ interval '12 hours'/);
-    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY classified\.id, roster_window\.start_time DESC NULLS LAST/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /roster_window AS MATERIALIZED \(\s+SELECT \* FROM school_roster_window\s+WHERE student_id = student_scope\.id/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /roster_intervals AS MATERIALIZED/);
+    assert.match(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /ORDER BY roster_intervals\.student_id, roster_intervals\.starts_at,\s+roster_window\.start_time DESC, roster_window\.session_id DESC/);
     // Supervision contexts are not a class dimension in v1.
     assert.doesNotMatch(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, /supervision/i);
   });
@@ -207,6 +233,7 @@ describe("usage mode readers", () => {
     const on = { CLASSPILOT_USAGE_ROLLUP_MODE: "on", CLASSPILOT_DIGITAL_USAGE_MODE: "on" };
     assert.equal(readClasspilotUsageRollupMode(on), "off");
     assert.equal(readClasspilotUsageRollupMode({ ...on, RLS_GUC_ENABLED: "true", RLS_ENABLED_TABLES: "students" }), "off");
+    assert.equal(readClasspilotUsageRollupMode({ ...on, RLS_GUC_ENABLED: "true", RLS_ENABLED_TABLES: "classpilot_usage_rollups" }), "off", "aggregate admission alone cannot activate the ledger writer");
     assert.equal(readClasspilotUsageRollupMode({ ...on, RLS_GUC_ENABLED: "false", RLS_ENABLED_TABLES: admitted.RLS_ENABLED_TABLES }), "off");
     assert.equal(readClasspilotUsageRollupMode({ ...on, ...admitted }), "on");
     assert.equal(readClasspilotDigitalUsageMode({ ...on, ...admitted }), "on");
@@ -346,13 +373,15 @@ describe("one-day rewrite transaction", () => {
       assert.deepEqual(calls.map((call) => call.text), [
         "BEGIN",
         CLASSPILOT_USAGE_ROLLUP_LOCK_SQL,
+        CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL,
         CLASSPILOT_USAGE_ROLLUP_DELETE_SQL,
         CLASSPILOT_USAGE_ROLLUP_INSERT_SQL,
+        CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL,
         "COMMIT",
       ]);
       assert.deepEqual(calls[1]!.values, ["school-1"]);
-      assert.deepEqual(calls[2]!.values, ["school-1", "2026-09-14"]);
-      assert.deepEqual(calls[3]!.values, [
+      assert.deepEqual(calls[3]!.values, ["school-1", "2026-09-14"]);
+      assert.deepEqual(calls[4]!.values, [
         "school-1",
         "2026-09-14 04:00:00",
         "2026-09-15 04:00:00",
@@ -371,6 +400,14 @@ describe("one-day rewrite transaction", () => {
     await assert.rejects(rollupClasspilotUsageDay(pool, { schoolId: "school-1", day, windowEndUtc: day.dayEndUtc, exclusions: [] }), /insert failed/);
     assert.equal(calls.at(-1)!.text, "ROLLBACK");
     assert.deepEqual(releases, [false]);
+  });
+
+  it("does not let a stale queued cutoff regress newer or final coverage", async () => {
+    const { pool, calls } = recordingPool({ answer: (text) => text === CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL
+      ? [{ processed_through: day.dayEndUtc, is_final: true }] : [] });
+    await rollupClasspilotUsageDay(pool, { schoolId: "school-1", day, windowEndUtc: new Date("2026-09-14T16:00:00Z"), exclusions: [] });
+    assert.equal(calls.some((call) => call.text === CLASSPILOT_USAGE_ROLLUP_DELETE_SQL), false);
+    assert.equal(calls.at(-1)?.text, "COMMIT");
   });
 });
 
@@ -414,7 +451,7 @@ describe("hourly runner", () => {
     assert.deepEqual([...done.complete].sort(), ["school-a:2026-09-14", "school-b:2026-09-14"]);
   });
 
-  it("keeps a partly purged day and marks it handled instead of rewriting it", async () => {
+  it("never records a partly purged day as completed", async () => {
     const { pool, calls } = recordingPool({ answer: answer("24") });
     const done = markers();
     const outcome = await runClasspilotUsageRollup({
@@ -427,7 +464,7 @@ describe("hourly runner", () => {
     });
     assert.equal(outcome.retentionSkippedDays, 1);
     assert.equal(outcome.finalizedDays, 0);
-    assert.ok(done.complete.has("school-a:2026-09-14"));
+    assert.equal(done.complete.has("school-a:2026-09-14"), false);
     assert.deepEqual(
       calls.filter((call) => call.text === CLASSPILOT_USAGE_ROLLUP_DELETE_SQL).map((call) => call.values![1]),
       ["2026-09-15"],
@@ -455,9 +492,9 @@ describe("hourly runner", () => {
 
   it("skips today when no heartbeat arrived since its last computation", async () => {
     const { pool, calls } = recordingPool({
-      answer: (text) => {
+      answer: (text, values) => {
         if (text === CLASSPILOT_USAGE_ROLLUP_SETTINGS_SQL) return [{ retention_hours: "720" }];
-        if (text === CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL) return [{ computed_at: new Date("2026-09-15T15:00:04Z") }];
+        if (text === CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL) return [{ processed_through: new Date("2026-09-15T15:00:04Z"), is_final: values?.[1] === "2026-09-14" }];
         if (text === CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL) return [{ changed: false }];
         return [];
       },
@@ -498,6 +535,29 @@ describe("hourly runner", () => {
     assert.equal(outcome.failedSchools, 1);
     assert.equal(outcome.finalizedDays, 1);
     assert.deepEqual([...new Set(errors)], ["school-a"]);
+  });
+
+  it("refreshes from the actual cutoff when the prior school queued for twenty minutes", async () => {
+    const { pool, calls } = recordingPool({ answer: (text, values) => {
+      if (text === CLASSPILOT_USAGE_ROLLUP_SETTINGS_SQL) return [{ retention_hours: "720" }];
+      if (text === CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL) return [{
+        processed_through: new Date("2026-09-15T14:00:00Z"),
+        computed_at: new Date("2026-09-15T14:20:00Z"),
+        is_final: values?.[1] === "2026-09-14",
+      }];
+      if (text === CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL) {
+        // The only new heartbeat is at 14:10, after the 14:00 cutoff.
+        return [{ changed: String(values?.[1]) <= "2026-09-15 14:10:00" }];
+      }
+      return [];
+    } });
+    const outcome = await runClasspilotUsageRollup({ pool, schools: [schools[0]!], now: new Date("2026-09-15T15:00:00Z"),
+      deadline: new Date("2026-09-15T15:25:00Z"), markers: markers(), clock: () => new Date("2026-09-15T15:00:01Z") });
+    assert.equal(outcome.recomputedDays, 1, "the 14:10 activity must trigger the next refresh");
+    const probe = calls.find((call) => call.text === CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL);
+    assert.deepEqual(probe?.values, ["school-a", "2026-09-15 13:55:00", "2026-09-15 15:00:00"]);
+    const completion = calls.find((call) => call.text === CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL);
+    assert.equal(completion?.values?.[4], "2026-09-15T15:00:00.000Z");
   });
 });
 
