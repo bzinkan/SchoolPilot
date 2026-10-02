@@ -1800,6 +1800,13 @@ export default function Dashboard() {
   // While it is off a tile offers no Message; its unread badge still opens a
   // thread that has unread messages, to read.
   const classMessagingEnabled = sessionFabState?.messagingEnabled !== false;
+  // The school-wide switch arrives only with the dashboard settings, not in the
+  // class state, and applies to scheduled classrooms too. While it is off a
+  // device shows no chat, so no tile offers Message and the reply box stays
+  // off; a class session's reply route does not check it. A missing field
+  // means on.
+  const schoolMessagingEnabled = settings?.schoolStudentMessagingEnabled !== false;
+  const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;
   // The chat drawer is a sibling of the FAB, not a child: the FAB remounts
   // whenever the chat scope changes and would lose the open thread.
   const [chatView, setChatView] = useState({ scopeKey: activityScopeKey, open: false, tab: 'help', studentId: null, nonce: 0 });
@@ -5968,7 +5975,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       const enabled = nextState?.messagingEnabled === true;
-      toast({ title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
+      // The class switch alone cannot open a chat the school keeps off.
+      toast(enabled && !schoolMessagingEnabled
+        ? { title: "Class Messaging Enabled", description: "Students still see no chat while messaging is turned off for your school." }
+        : { title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return;
@@ -7070,10 +7080,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       : (opener) => openStudentDetails(student, opener)}
                     unreadMessageCount={unreadByStudent.get(student.studentId) || 0}
                     onOpenChat={dashboardCapabilities.canUseTeacherFab && !supervisedElsewhere && chat.available
-                      && (classMessagingEnabled || unreadByStudent.has(student.studentId))
+                      && (classAndSchoolMessagingEnabled || unreadByStudent.has(student.studentId))
                       ? (opener) => openChatThread(student.studentId, opener)
                       : undefined}
-                    canStartChat={classMessagingEnabled}
+                    canStartChat={classAndSchoolMessagingEnabled}
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
@@ -8078,6 +8088,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           freshnessNowMs={freshnessNowMs}
           authority={effectiveAuthority}
           studentMessagingEnabled={classMessagingEnabled}
+          schoolMessagingEnabled={schoolMessagingEnabled}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
           fabState={sessionFabState}
           onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}

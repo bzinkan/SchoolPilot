@@ -43,12 +43,15 @@ function rosterRowButton(container, studentId) {
  * in grid order, as primitive rows). Choosing a student opens their thread, or
  * an empty one to start the conversation, through `onOpenThread`, which moves
  * focus to the reply box once (`focusSignal`). Threads with students who are no
- * longer on the roster follow under "Other conversations". While messaging is
- * off for the class, or the class chat is unavailable, nothing new can start:
- * the list shows existing threads only. A thread the server would refuse a
- * reply to is read-only: an existing thread opens to read, with no reply box.
- * That covers a student with another staff member ("With {staff}") and one
- * no longer on the roster. Without a `roster` the list is a plain inbox.
+ * longer on the roster follow under "Other conversations". Teachers can write
+ * only while both the class switch (`studentMessagingEnabled`, which the menu
+ * toggles) and the school-wide switch (`schoolMessagingEnabled`) are on; a
+ * pause still lets them write. While either switch is off, or the class chat
+ * is unavailable, nothing new can start: the list shows existing threads only,
+ * to read. A thread the server would refuse a reply to is read-only: an
+ * existing thread opens to read, with no reply box. That covers a student with
+ * another staff member ("With {staff}") and one no longer on the roster.
+ * Without a `roster` the list is a plain inbox.
  */
 export default function ChatWorkspace({
   visible = true,
@@ -70,6 +73,7 @@ export default function ChatWorkspace({
   freshnessNowMs,
   authority = null,
   studentMessagingEnabled = true,
+  schoolMessagingEnabled = true,
   onToggleStudentMessaging,
   fabState = null,
   onTogglePause,
@@ -79,11 +83,13 @@ export default function ChatWorkspace({
   chatAvailable = true,
 }) {
   const pause = describeChatPause(fabState);
+  const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;
   const [drafts, setDrafts] = useState({});
   const singlePane = width < SINGLE_PANE_BELOW;
-  // A pause still lets the teacher write; messaging off or an unavailable chat
-  // cannot send, so neither offers a way to start a conversation.
-  const canStartConversations = studentMessagingEnabled && chatAvailable;
+  // A pause still lets the teacher write; messaging off (for the class or the
+  // school) or an unavailable chat cannot send, so none of them offers a way to
+  // start a conversation.
+  const canStartConversations = messagingEnabled && chatAvailable;
   const rosterKnown = Array.isArray(roster);
   const rosterRows = rosterKnown ? roster : NO_ROSTER;
   const rosterById = useMemo(() => new Map(rosterRows.map((row) => [row.studentId, row])), [rosterRows]);
@@ -99,7 +105,7 @@ export default function ChatWorkspace({
   // roster. The server refuses either reply, so there is no reply box.
   const readOnly = Boolean(selected) && rosterKnown && !selectedRosterRow?.canMessage;
   const offersComposer = Boolean(selected) && !readOnly;
-  const composerDisabled = !studentMessagingEnabled || Boolean(selectedId && pendingReplyStudentIds?.has(selectedId));
+  const composerDisabled = !messagingEnabled || Boolean(selectedId && pendingReplyStudentIds?.has(selectedId));
   // Only a reply box that is on screen and enabled can take focus.
   const composerTakesFocus = offersComposer && !composerDisabled;
   const listColumnRef = useRef(null);
@@ -184,7 +190,7 @@ export default function ChatWorkspace({
   // cannot show: conversations.
   const emptyText = !chatAvailable
     ? 'Conversations aren’t available in this class right now.'
-    : !studentMessagingEnabled ? 'No messages from students' : 'No students to message yet';
+    : !messagingEnabled ? 'No messages from students' : 'No students to message yet';
   const noSelectionText = !chatAvailable ? emptyText
     : canStartConversations && rosterRows.length > 0 ? 'Choose a student to message'
       : conversations.length === 0 ? 'Student messages will appear here' : 'Select a conversation';
@@ -197,7 +203,7 @@ export default function ChatWorkspace({
             <span>Messages (<span data-testid="chat-drawer-unread-count">{totalUnread}</span> new)</span>
           </h3>
           <div className="flex items-center gap-3">
-            {onTogglePause && studentMessagingEnabled && (
+            {onTogglePause && messagingEnabled && (
               <label className="flex items-center gap-2 text-xs text-white/90">
                 <span data-testid="chat-pause-label">{pause ? (pause.locked ? 'Paused for testing' : 'Messages: Paused') : 'Messages: On'}</span>
                 <Switch
@@ -230,13 +236,17 @@ export default function ChatWorkspace({
             )}
           </div>
         </div>
-        {pause && studentMessagingEnabled && (
+        {pause && messagingEnabled && (
           <div className="px-4 py-2 text-xs bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 border-b border-amber-100 dark:border-amber-900 flex items-start gap-2 shrink-0" data-testid="chat-pause-banner" data-pause-reason={pause.reason}>
             <PauseCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <span><span className="font-semibold">{pause.title}.</span> {pause.detail}</span>
           </div>
         )}
-        {!studentMessagingEnabled && (
+        {!schoolMessagingEnabled ? (
+          <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-school-off-banner">
+            Messaging is turned off for your school. Students do not see a chat.
+          </div>
+        ) : !studentMessagingEnabled && (
           <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-off-banner">
             Messaging is turned off for this class. Students do not see a chat.
           </div>
@@ -258,13 +268,13 @@ export default function ChatWorkspace({
                   onSendMessage={onSendMessage}
                   broadcastLabel={broadcastLabel}
                   emptyText={emptyText}
-                  dimmed={!studentMessagingEnabled}
+                  dimmed={!messagingEnabled}
                 />
               )}
             </div>
           )}
           {showThread && (
-            <div className={cn('flex-1 min-w-0 min-h-0 flex flex-col', !studentMessagingEnabled && 'opacity-60')}>
+            <div className={cn('flex-1 min-w-0 min-h-0 flex flex-col', !messagingEnabled && 'opacity-60')}>
               {selected ? (
                 <ChatThread
                   visible={visible}

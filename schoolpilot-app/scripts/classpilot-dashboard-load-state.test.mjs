@@ -3971,12 +3971,17 @@ test('chat start: a message to a signed-out student waits until they sign in, th
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('chat start: with messaging turned off a tile offers no Message, and its unread badge still opens the thread to read', { timeout: 60_000 }, async context => {
+test('chat start: with messaging turned off for the class or the school a tile offers no Message, and its unread badge still opens the thread to read', { timeout: 60_000 }, async context => {
+  // The default fixture settings carry no school switch, so the other chat-start
+  // tests already cover Message with schoolStudentMessagingEnabled missing.
+  let switches = { sessionStudentMessagingEnabled: false };
+  // Ben has no thread: his roster row exists only while a conversation can start.
+  const ben = student({ studentId: SECOND_STUDENT_ID, studentName: 'Ben Student', studentEmail: 'ben@example.edu', realtimeBinding: 'binding-b' });
   const fixture = await chatBrowserFixture(context, {
-    openPanel: false,
+    openPanel: false, students: [student(), ben],
     beforeGoto: page => page.route('**/api/settings', route => route.fulfill({ json: { settings: {
       activeSessionId: OWN_SESSION_ID, handRaisingEnabled: true, studentMessagingEnabled: true,
-      sessionStudentMessagingEnabled: false, sessionFabRevision: 1, blockedDomains: [],
+      sessionFabRevision: 1, blockedDomains: [], ...switches,
     } } })),
   });
   const { page, harness } = fixture;
@@ -3996,6 +4001,62 @@ test('chat start: with messaging turned off a tile offers no Message, and its un
   await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
   assert.equal(await replyInput(page).isDisabled(), true, 'The thread opens to read, but the reply box stays off');
   assert.equal(await threadListed(page).count(), 1, 'The existing thread is listed');
+  assert.equal(await page.getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).count(), 0, 'Nobody without a thread is listed');
+  switches = { sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: true };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  // Back on, the list is the whole class roster again.
+  await page.getByRole('list', { name: 'Class roster', exact: true }).getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor();
+  // The school-wide switch outranks the class switch: a class session's reply
+  // route never checks it, and the device would show no chat.
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: false };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  // As with the class switch, the roster goes: existing threads stay listed, to read.
+  await page.getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByRole('list', { name: 'Conversations', exact: true }).getByTestId(`chat-conversation-${STUDENT_ID}`).waitFor();
+  // That thread was read, so a new message brings the badge back: the tile's
+  // own gate, not a missing badge, must keep Message away.
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
+  const unread = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', content: 'Synthetic question while school messaging is off' });
+  await harness.sendWebSocketMessage(studentChatEvent(unread));
+  await badge.getByText('1', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-testid^="button-message-student-"]').count(), 0, 'No tile offers Message while the school switch is off');
+  await badge.click();
+  await threadText(page, unread.content).waitFor();
+  await page.getByTestId('chat-school-off-banner')
+    .getByText('Messaging is turned off for your school. Students do not see a chat.', { exact: true }).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true, 'The thread opens to read, but the reply box is off');
+  assert.equal(await page.getByTestId('chat-messaging-switch').count(), 0, 'Nothing to pause while nothing can be sent');
+  // A new thread is listed to read, and nothing "needs reply" that cannot be sent.
+  const benRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question' });
+  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student', studentEmail: 'ben@example.edu' } });
+  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
+  assert.equal(await page.getByTestId('chat-need-reply').count(), 0, 'No "need reply" while the school keeps messaging off');
+  await page.getByTestId('chat-drawer-menu').click();
+  await page.getByTestId('chat-channel-toggle').getByText('Turn off messaging for this class', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-channel-toggle').waitFor({ state: 'detached' });
+  // With both switches off, the school banner stands in for the class banner.
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: false, schoolStudentMessagingEnabled: false };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId('chat-drawer-menu').click();
+  await page.getByTestId('chat-channel-toggle').getByText('Turn on messaging for this class', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-school-off-banner').count(), 1);
+  assert.equal(await page.getByTestId('chat-off-banner').count(), 0, 'One banner: the school switch outranks the class switch');
+  // Turning the class switch back on cannot open a chat the school keeps off.
+  await page.route(`**/api/classpilot/teaching-sessions/${OWN_SESSION_ID}/settings`, route => route.fulfill({ json: {
+    settings: { sessionId: OWN_SESSION_ID, supervisionContextId: null, chatEnabled: true, raiseHandEnabled: true, chatPaused: false, lifecycleRevision: 2 },
+    state: { teachingSessionId: OWN_SESSION_ID, messagingEnabled: false, handRaisingEnabled: true, messagesPaused: false, pauseReason: null, lifecycleRevision: 2 },
+  } }));
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: false };
+  await page.getByTestId('chat-channel-toggle').click();
+  await page.getByText('Students still see no chat while messaging is turned off for your school.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Students can now send messages', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('list', { name: 'Class roster', exact: true }).count(), 0, 'Nor does the roster come back');
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 0);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -4212,7 +4273,7 @@ test('chat trust signals: the Messages tab reads the scoped transcript read-only
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('chat trust signals: the drawer pause switch writes chatPaused and a testing pause shows as locked with no settings request', { timeout: 90_000 }, async context => {
+test('chat trust signals: the drawer pause switch writes chatPaused, a testing pause shows as locked with no settings request, and the school-wide switch turns a scheduled class\'s messaging off', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
@@ -4278,6 +4339,21 @@ test('chat trust signals: the drawer pause switch writes chatPaused and a testin
   await page.getByTestId('chat-drawer-menu').click();
   await page.getByTestId('chat-channel-toggle').getByText('Turn off messaging for this class', { exact: true }).waitFor();
   await page.keyboard.press('Escape');
+  // A scheduled class follows the school-wide switch too; its reply route
+  // already refuses while that switch is off.
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor();
+  await page.route('**/api/settings', route => route.fulfill({ json: { settings: { blockedDomains: [], schoolStudentMessagingEnabled: false } } }));
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+  });
+  await page.getByTestId('chat-school-off-banner').waitFor();
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  assert.equal(await page.getByTestId('chat-messaging-switch').count(), 0, 'Nothing to pause while the school keeps messaging off');
+  assert.equal(await page.getByTestId('chat-pause-banner').count(), 0);
+  // Unlike a pause, the school switch takes the roster away: no thread exists to read.
+  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByTestId('chat-empty').getByText('No messages from students', { exact: true }).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
