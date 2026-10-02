@@ -2,6 +2,7 @@ import { isUrlAllowed } from '../../../lib/classpilot-utils.js';
 import { activityAuthority, activityAuthorityKey } from './dashboardActivity.js';
 import { activeFlightPathAllowedDomains } from './teachingResourceLibrary.js';
 import { isUrlAllowedByStudentPreciseRestrictions } from './restrictionResourceMatcher.js';
+import { compareStudentsByLastName } from './studentOrder.js';
 
 const CLASS_COMMANDS = Object.freeze([
   'open-tab',
@@ -507,6 +508,151 @@ export function deriveDashboardCapabilities({
   };
 }
 
+const NO_CONTROLLABLE_TARGET_MESSAGE = 'No controllable students are in this target.';
+const NO_CLAIMED_TARGET_MESSAGE = 'Select at least one claimed student.';
+
+// Ticks can disappear without the teacher touching them: the Dashboard clears
+// a tick when that student's device stops reporting or their session changes,
+// clears every tick when the supervision groups it shows change (including
+// when that switches it between the Class and Claimed views by itself) or the
+// class becomes unavailable, and clears a chosen subgroup that was removed.
+// The Dashboard records that loss; while it stands and nothing is ticked, a
+// command must not fall back to the subgroup, the whole class or every
+// claimed student. Missing targets never mean broadcast (AGENTS.md).
+export const SELECTION_LOST_CODE = 'SELECTION_LOST';
+
+// What the Target badge, and Class tools' announce button, say while such a
+// loss stands: never the group or class a new action would refuse.
+export const SELECTION_CLEARED_TARGET_LABEL = 'Selection cleared · choose students again';
+
+// What they say while students are ticked only for Student Sign Out. Until
+// those ticks are cleared every other control refuses
+// (assertClassroomCommandSelectionIsolation), whatever else is ticked or lost.
+export function signOutOnlySelectionLabel(count) {
+  return `${count} selected for sign-out only`;
+}
+
+// The scope a selection, and a lost one, belongs to: the school and viewer,
+// the scheduled boundary, the view and, in the Class view, the class
+// authority and its revision. Claimed students are commanded through their
+// own supervision groups, never the class session, so a class starting or
+// ending does not change the Claimed view's scope.
+export function buildSelectionScopeKey({ readerKey = '', transitionKey = '', view = 'class', authorityKey = null } = {}) {
+  return JSON.stringify([readerKey, transitionKey, view, view === 'claimed' ? null : authorityKey]);
+}
+
+function parsedSelectionScope(key) {
+  try {
+    const scope = JSON.parse(key);
+    return Array.isArray(scope) && scope.length === 4 ? scope : null;
+  } catch {
+    return null;
+  }
+}
+
+// True when two selection scopes have the same school, viewer and scheduled
+// boundary: at most the view (and with it the class authority) differs. When
+// the supervision groups shown change, the Dashboard can switch between Class
+// and Claimed by itself; the selection it clears then is recorded as lost, not
+// silently replaced by the new view's whole cohort.
+export function selectionScopeKeepsBoundary(previousKey, nextKey) {
+  const previous = parsedSelectionScope(previousKey);
+  const next = parsedSelectionScope(nextKey);
+  return Boolean(previous && next && previous[0] === next[0] && previous[1] === next[1]);
+}
+
+const SELECTION_LOSS_SCOPES = Object.freeze({
+  class: Object.freeze({ phrase: 'the whole class', action: 'Use whole class' }),
+  group: Object.freeze({ phrase: 'the whole group', action: 'Use whole group' }),
+  claimed: Object.freeze({ phrase: 'all claimed students', action: 'Use all claimed students' }),
+});
+
+function selectionLossScopeCopy(scope) {
+  return SELECTION_LOSS_SCOPES[scope] || SELECTION_LOSS_SCOPES.class;
+}
+
+// Why the Dashboard cleared the selection. A record whose losses had more than
+// one cause is 'changed', and its copy names no cause.
+const SELECTION_LOSS_REASONS = new Set(['stopped-reporting', 'session-changed', 'groups-changed', 'group-removed', 'class-unavailable']);
+
+function selectionLossCause(reason, count) {
+  const students = count > 0 ? `${count} selected student${count === 1 ? '' : 's'}` : '';
+  switch (reason) {
+    case 'stopped-reporting': return students && `${students} stopped reporting`;
+    case 'session-changed': return students && `the session changed for ${students}`;
+    case 'groups-changed': return 'your supervision groups changed';
+    case 'group-removed': return 'the group you chose was removed';
+    case 'class-unavailable': return 'the class was unavailable';
+    default: return '';
+  }
+}
+
+// The next selection-lost state after something other than the teacher
+// removed ticks (or a chosen group: its id counts as one lost target). Losses
+// in the same scope add up until the teacher chooses again; a loss from
+// another scope is replaced. A target already recorded keeps its first cause:
+// a ticked student who signs out both stops reporting and changes session.
+//   { lostIds, count, scopeKey, reason }
+export function recordSelectionLoss(current, {
+  previousIds = [], keptIds = [], scopeKey = null, reason = 'stopped-reporting',
+} = {}) {
+  const kept = new Set(normalizedIds(keptIds));
+  const lost = normalizedIds(previousIds).filter((id) => !kept.has(id));
+  if (lost.length === 0) return current ?? null;
+  const carried = current?.scopeKey === scopeKey && Array.isArray(current?.lostIds) ? current : null;
+  if (carried && lost.every((id) => carried.lostIds.includes(id))) return carried;
+  const lostIds = normalizedIds([...(carried?.lostIds || []), ...lost]);
+  const cause = SELECTION_LOSS_REASONS.has(reason) ? reason : 'changed';
+  return Object.freeze({
+    lostIds: Object.freeze(lostIds),
+    count: lostIds.length,
+    scopeKey,
+    reason: carried && carried.reason !== cause ? 'changed' : cause,
+  });
+}
+
+// True while a recorded loss must stop the subgroup or class fallback: some
+// ticks were lost and none remain. Ticks that remain are an explicit target.
+export function selectionLossBlocksFallback(selectionLoss, selectedStudentIds = []) {
+  const selected = selectedStudentIds instanceof Set ? [...selectedStudentIds] : selectedStudentIds;
+  return Number(selectionLoss?.count) > 0 && normalizedIds(selected).length === 0;
+}
+
+// `scope` is what the fallback would have reached: 'class', 'group' or
+// 'claimed'. `reason` is the recorded loss's reason.
+export function selectionLostMessage(count, { scope = 'class', nothingSent = false, reason = 'stopped-reporting' } = {}) {
+  const lost = Math.max(0, Math.floor(Number(count) || 0));
+  const cause = selectionLossCause(reason, lost);
+  return `Your selection was cleared${cause ? ` because ${cause}` : ''}.${nothingSent ? ' Nothing was sent.' : ''} Choose students again, or use ${selectionLossScopeCopy(scope).phrase}.`;
+}
+
+export function selectionLossActionLabel(scope = 'class') {
+  return selectionLossScopeCopy(scope).action;
+}
+
+function selectionLostError(selectionLoss, scope) {
+  const count = Math.max(0, Math.floor(Number(selectionLoss?.count) || 0));
+  const reason = selectionLoss?.reason ?? 'stopped-reporting';
+  const error = new Error(selectionLostMessage(count, { scope, nothingSent: true, reason }));
+  error.code = SELECTION_LOST_CODE;
+  error.selectionLoss = { count, scope, reason };
+  return error;
+}
+
+const SERVER_DERIVED_TOOL_ACTIONS = new Set(['stop', 'pause', 'resume', 'extend', 'update', 'end']);
+
+// Mirrors POST /api/classpilot/commands: closing a poll, releasing attention
+// and controlling a running timer or lesson activity go to the recipients
+// frozen when that tool started, whatever the Dashboard selection is now.
+export function commandAudienceIsServerDerived(commandType, commandPayload = {}) {
+  if (commandType === 'poll') return String(commandPayload?.action || 'start').trim() === 'close';
+  if (commandType === 'attention-mode') return commandPayload?.active === false;
+  if (commandType === 'timer' || commandType === 'lesson-activity') {
+    return SERVER_DERIVED_TOOL_ACTIONS.has(commandPayload?.action);
+  }
+  return false;
+}
+
 export function resolveCommandTargets({
   mode,
   sessionStudents = [],
@@ -515,6 +661,7 @@ export function resolveCommandTargets({
   selectedSubgroupId = null,
   subgroupStudentIds = [],
   overrideStudentIds = null,
+  selectionLoss = null,
 }) {
   if (!['owned-class', 'scheduled-supervision', 'claimed-coverage'].includes(mode)) {
     throw new Error('Classroom commands are not available in this view.');
@@ -536,6 +683,8 @@ export function resolveCommandTargets({
     } else if (selectedIds.length > 0) {
       rows = studentRowsByIds(cohort, selectedIds);
       targetScope = 'students';
+    } else if (selectionLossBlocksFallback(selectionLoss, selectedIds)) {
+      throw selectionLostError(selectionLoss, selectedSubgroupId ? 'group' : 'class');
     } else if (selectedSubgroupId) {
       rows = studentRowsByIds(cohort, subgroupStudentIds);
       targetScope = 'subgroup';
@@ -545,7 +694,7 @@ export function resolveCommandTargets({
     }
 
     const targetStudentIds = normalizedIds(rows.map(studentId));
-    if (targetStudentIds.length === 0) throw new Error('No controllable students are in this target.');
+    if (targetStudentIds.length === 0) throw new Error(NO_CONTROLLABLE_TARGET_MESSAGE);
 
     if (mode === 'scheduled-supervision') targetScope = 'students';
     return {
@@ -560,13 +709,16 @@ export function resolveCommandTargets({
     };
   }
 
+  if (overrideIds === null && selectionLossBlocksFallback(selectionLoss, selectedIds)) {
+    throw selectionLostError(selectionLoss, 'claimed');
+  }
   const cohort = claimedStudents || [];
   const rows = overrideIds !== null
     ? studentRowsByIds(cohort, overrideIds)
     : selectedIds.length > 0
       ? studentRowsByIds(cohort, selectedIds)
       : cohort;
-  if (rows.length === 0) throw new Error('Select at least one claimed student.');
+  if (rows.length === 0) throw new Error(NO_CLAIMED_TARGET_MESSAGE);
 
   const contextsByStudent = new Map();
   const groups = new Map();
@@ -600,6 +752,208 @@ export function resolveCommandTargets({
     targetCount: targetStudentIds.length,
     contextCount: groups.size,
   };
+}
+
+// Classroom dialogs (Send Message, Attention, Timer, Poll, Open URL, Apply
+// Flight Path, Apply Block List and toolbar Manage Tabs) freeze their
+// recipients when they open. Sending uses exactly those students, minus
+// any who can no longer receive the command, as explicit studentIds. A lost or
+// emptied list never widens to a subgroup or the whole class.
+export const RECIPIENTS_UNAVAILABLE_MESSAGE = "Some selected students can't receive this right now. Nothing was sent.";
+export const RECIPIENTS_SCOPE_CHANGED_MESSAGE = 'The class changed after this opened. Nothing was sent. Close it and try again.';
+export const RECIPIENTS_MISSING_MESSAGE = 'No recipients are set for this. Nothing was sent. Close it and try again.';
+
+const RECIPIENT_ALERT_NAME_LIMIT = 5;
+
+function studentCountText(count) {
+  return `${count} student${count === 1 ? '' : 's'}`;
+}
+
+export function recipientSnapshotLabel({ selectedCount = 0, subgroupName = null, view = 'class' } = {}) {
+  const selected = Number(selectedCount);
+  if (Number.isSafeInteger(selected) && selected > 0) {
+    return `${selected} selected student${selected === 1 ? '' : 's'}`;
+  }
+  const group = String(subgroupName || '').trim();
+  if (group) return `Group: ${group}`;
+  return view === 'claimed' ? 'All claimed students' : 'Whole class';
+}
+
+// Class tools' footer: who a new action from the panel would reach right now,
+// by the same precedence as the dialogs (ticks, then the subgroup, then the
+// class), with a singular for one student. While a selection the Dashboard
+// cleared by itself stands with nothing ticked (`selectionLost`, from
+// selectionLossBlocksFallback), new actions are refused rather than widened,
+// so the footer names no group or class. Students ticked only for Student
+// Sign Out (`signOutOnlyCount`) come first: until they are cleared every new
+// action is refused, whatever else is ticked or lost.
+export function classToolsRecipientLabel({ selectedCount = 0, selectionLost = false, signOutOnlyCount = 0, subgroupSelected = false, subgroupMemberCount = 0, classCount = 0 } = {}) {
+  const count = (value) => {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number > 0 ? number : 0;
+  };
+  if (count(signOutOnlyCount) > 0) return 'no one until you clear the sign-out-only selection';
+  const selected = count(selectedCount);
+  if (selected > 0) return `${selected} selected student${selected === 1 ? '' : 's'}`;
+  if (selectionLost === true) return 'no one until you choose students again';
+  if (subgroupSelected) return `${studentCountText(count(subgroupMemberCount))} in selected group`;
+  const total = count(classCount);
+  if (total === 0) return 'no students';
+  return total === 1 ? '1 student' : `all ${total} students`;
+}
+
+export function snapshotCommandRecipients({ target, students = [], label = '', scopeKey = null, view = null } = {}) {
+  const ids = normalizedIds(target?.targetStudentIds);
+  if (ids.length === 0) throw new Error('Choose at least one student.');
+  const rowsById = new Map();
+  for (const row of [
+    ...(Array.isArray(students) ? students : []),
+    ...(Array.isArray(target?.targetStudents) ? target.targetStudents : []),
+  ]) {
+    const id = studentId(row);
+    if (id && !rowsById.has(id)) rowsById.set(id, row);
+  }
+  const entries = ids.map((id) => {
+    const row = rowsById.get(id);
+    const studentName = String(row?.studentName || '').trim();
+    return {
+      id,
+      studentName,
+      name: studentName || String(row?.studentEmail || '').trim() || 'Student unavailable',
+    };
+  }).sort(compareStudentsByLastName);
+  return Object.freeze({
+    ids: Object.freeze(entries.map((entry) => entry.id)),
+    names: Object.freeze(entries.map((entry) => entry.name)),
+    label: String(label || '').trim(),
+    scopeKey,
+    view,
+  });
+}
+
+export function partitionSnapshotRecipients(snapshot, commandableIds) {
+  const available = new Set(normalizedIds(
+    commandableIds instanceof Set ? [...commandableIds] : commandableIds,
+  ));
+  const sendIds = [];
+  const unavailableIds = [];
+  for (const id of Array.isArray(snapshot?.ids) ? snapshot.ids : []) {
+    if (available.has(id)) sendIds.push(id);
+    else unavailableIds.push(id);
+  }
+  return { sendIds, unavailableIds };
+}
+
+function sameIdSet(left, right) {
+  if (left.length !== right.length) return false;
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
+}
+
+// What Send does with a dialog's frozen recipients, given who can receive the
+// command now. It sends only what the dialog shows: the whole frozen list, or,
+// on a separate confirmation, exactly the subset its "Send to N available"
+// button named. Any other change updates the dialog and sends nothing.
+//   { action: 'send', studentIds }
+//   { action: 'ask', unavailableIds, confirmIds }  confirmIds is null when no one can receive it
+//   { action: 'restored', restoredIds }            everyone left out is back; the next Send includes them
+//   { action: 'ignore' }                           the repeat of a gesture that would confirm a partial send
+export function planRecipientSend({ snapshot, confirmIds = null, commandableIds = [], repeatGesture = false } = {}) {
+  const confirming = Array.isArray(confirmIds) && confirmIds.length > 0;
+  if (confirming && repeatGesture) return { action: 'ignore' };
+  const { sendIds, unavailableIds } = partitionSnapshotRecipients(snapshot, commandableIds);
+  if (confirming && sameIdSet(sendIds, confirmIds)) return { action: 'send', studentIds: sendIds };
+  if (sendIds.length === 0 || unavailableIds.length > 0) {
+    return { action: 'ask', unavailableIds, confirmIds: sendIds.length > 0 ? sendIds : null };
+  }
+  if (confirming) {
+    const confirmed = new Set(confirmIds);
+    return { action: 'restored', restoredIds: sendIds.filter((id) => !confirmed.has(id)) };
+  }
+  return { action: 'send', studentIds: sendIds };
+}
+
+// The frozen names of `ids`, in the snapshot's last-name order.
+export function snapshotRecipientNames(snapshot, ids) {
+  const wanted = new Set(ids || []);
+  const names = Array.isArray(snapshot?.names) ? snapshot.names : [];
+  return (Array.isArray(snapshot?.ids) ? snapshot.ids : [])
+    .flatMap((id, index) => (wanted.has(id) ? [names[index] || 'Student unavailable'] : []));
+}
+
+// A tick label ("2 selected students") already states its count; a group or
+// the whole class does not.
+function labelStatesCount(label, count) {
+  return label.startsWith(`${count} `);
+}
+
+export function commandRecipientsHeadline(snapshot) {
+  const count = Array.isArray(snapshot?.ids) ? snapshot.ids.length : 0;
+  const label = String(snapshot?.label || '').trim();
+  if (label && labelStatesCount(label, count)) return `Send to ${label}`;
+  return `Send to ${studentCountText(count)}${label ? ` — ${label}` : ''}`;
+}
+
+// Who a send was addressed to. It never claims delivery: the toast's own title
+// and outcome text report what the devices did.
+export function commandRecipientsSummary({ count = 0, frozenCount = count, label = '' } = {}) {
+  const trimmed = String(label || '').trim();
+  const total = Math.max(count, frozenCount);
+  const audience = trimmed && labelStatesCount(trimmed, total)
+    ? trimmed
+    : `${studentCountText(total)}${trimmed ? ` (${trimmed})` : ''}`;
+  return `Recipients: ${count < total ? `${count} of ` : ''}${audience}.`;
+}
+
+function recipientNameList(names) {
+  const list = (Array.isArray(names) ? names : [])
+    .map((name) => String(name || '').trim() || 'Student unavailable');
+  if (list.length === 0) return '';
+  const shown = list.length > RECIPIENT_ALERT_NAME_LIMIT
+    ? [
+        ...list.slice(0, RECIPIENT_ALERT_NAME_LIMIT - 1),
+        `${list.length - (RECIPIENT_ALERT_NAME_LIMIT - 1)} more students`,
+      ]
+    : list;
+  return new Intl.ListFormat('en', { style: 'long', type: 'conjunction' }).format(shown);
+}
+
+// With `availableCount`, the dialog is waiting for "Send to N available", so
+// the alert says how to send without the named students. `offerCancel` is
+// false in a dialog that closes with Done rather than Cancel (Manage Tabs).
+export function unavailableRecipientsMessage(names, { nothingSent = true, availableCount = 0, offerCancel = true } = {}) {
+  const subject = recipientNameList(names);
+  if (!subject) return nothingSent ? 'Nothing was sent.' : '';
+  const next = availableCount > 0
+    ? ` Choose "Send to ${availableCount} available" to send without them${offerCancel ? ', or Cancel' : ''}.`
+    : nothingSent ? ' Nothing was sent.' : '';
+  return `${subject} can't receive this right now.${next}`;
+}
+
+export function recipientsRestoredMessage(names) {
+  const subject = recipientNameList(names) || 'Everyone on this list';
+  return `${subject} can receive this again. Nothing was sent. Send again to include them.`;
+}
+
+// Why a classroom dialog did not open. Nothing was attempted, so it never says
+// "Nothing was sent", and it names the ticked students who can't receive it.
+export function recipientDialogRefusalMessage(error, { blockedNames = [], view = 'class', subgroupSelected = false } = {}) {
+  if (error?.code === SELECTION_LOST_CODE) {
+    return selectionLostMessage(error.selectionLoss?.count, {
+      scope: error.selectionLoss?.scope, reason: error.selectionLoss?.reason,
+    });
+  }
+  const message = String(error?.message || '').trim();
+  if (![NO_CONTROLLABLE_TARGET_MESSAGE, NO_CLAIMED_TARGET_MESSAGE, RECIPIENTS_UNAVAILABLE_MESSAGE].includes(message)) {
+    return message || 'This is not available right now.';
+  }
+  const blocked = recipientNameList(blockedNames);
+  if (blocked) return `${blocked} can't receive this right now. Untick them and try again.`;
+  if (message === RECIPIENTS_UNAVAILABLE_MESSAGE) return "Some selected students can't receive this right now. Untick them and try again.";
+  if (view === 'claimed') return 'No claimed students can receive this right now.';
+  return subgroupSelected
+    ? 'No students in this group can receive this right now.'
+    : 'No students in this class can receive this right now.';
 }
 
 export function resolveStudentSignOutTargets({

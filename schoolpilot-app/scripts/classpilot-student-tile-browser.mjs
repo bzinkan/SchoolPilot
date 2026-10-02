@@ -781,6 +781,97 @@ try {
     `badge and stale states must not change tile height: ${tileHeights.join(', ')}`,
   );
 
+  // ── Message: any student can be messaged from their tile, never through a
+  //    supervision lock, and the footer fits every grid tile width.
+  assert.equal(
+    await page.getByTestId('button-message-student-signed-out-student').count(),
+    1,
+    'a signed-out student stays messageable: the message waits for their device',
+  );
+  assert.equal(
+    await page.getByTestId('button-message-student-supervised-student').count(),
+    0,
+    'a student supervised elsewhere must not offer Message',
+  );
+  const messageTile = page.getByTestId('card-student-message-student');
+  await page.getByTestId('screenshot-current-message-student').waitFor();
+  const messageButton = messageTile.getByRole('button', { name: 'Message Message Student', exact: true });
+  assert.equal(await messageButton.getAttribute('data-testid'), 'button-message-student-message-student');
+  assert.equal(await messageButton.getAttribute('title'), 'Message Message Student');
+  // A justify-end row spills past its START edge, which scrollWidth cannot
+  // see, so each button's own rect is measured against the footer box.
+  const footerLayout = () => page.getByTestId('tile-footer-message-student').evaluate((footer) => {
+    const box = footer.getBoundingClientRect();
+    const buttons = [...footer.querySelectorAll('button')].map((button) => {
+      const rect = button.getBoundingClientRect();
+      const label = button.querySelector('span');
+      return {
+        id: button.dataset.testid,
+        inside: rect.left >= box.left - 0.5 && rect.right <= box.right + 0.5,
+        top: Math.round(rect.top),
+        labelWidth: label ? label.getBoundingClientRect().width : null,
+      };
+    });
+    return { footerWidth: Math.round(box.width), buttons };
+  });
+  const messageHost = page.getByTestId('message-tile-host');
+  // Grid tiles start at 224px. The sweep crosses the 21rem label threshold
+  // (a 372px tile), including the 306-344px band where labels once spilled.
+  const footerSweep = [];
+  for (const tileWidth of [224, 272, 306, 312, 320, 330, 340, 344, 356, 360, 368, 372, 380, 400]) {
+    await messageHost.evaluate((element, width) => { element.style.width = `${width}px`; }, tileWidth);
+    const layout = await footerLayout();
+    const labelled = layout.buttons.every((button) => button.labelWidth > 20);
+    const iconOnly = layout.buttons.every((button) => button.labelWidth <= 1);
+    footerSweep.push({ tileWidth, footerWidth: layout.footerWidth, labelled });
+    assert.deepEqual(
+      layout.buttons.map((button) => button.id),
+      ['button-student-details-message-student', 'button-message-student-message-student', 'button-manage-tabs-message-student'],
+    );
+    assert.equal(labelled || iconOnly, true, `a ${tileWidth}px tile labels all footer actions or none: ${JSON.stringify(layout)}`);
+    assert.equal(
+      layout.buttons.every((button) => button.inside),
+      true,
+      `a ${tileWidth}px tile keeps every footer action inside the footer: ${JSON.stringify(layout)}`,
+    );
+    assert.equal(
+      new Set(layout.buttons.map((button) => button.top)).size,
+      1,
+      `a ${tileWidth}px tile keeps its footer actions on one row: ${JSON.stringify(layout)}`,
+    );
+  }
+  assert.equal(footerSweep[0].labelled, false, `a 224px tile drops to icon buttons: ${JSON.stringify(footerSweep)}`);
+  assert.equal(footerSweep.at(-1).labelled, true, `a 400px tile labels every footer action: ${JSON.stringify(footerSweep)}`);
+  await messageHost.evaluate((element) => { element.style.width = '224px'; });
+  assert.equal(
+    await messageTile.getByRole('button', { name: 'View Tabs', exact: true }).count(),
+    1,
+    'icon-only footer buttons keep their accessible names',
+  );
+  const screenshotClicksBeforeMessage = await page.getByTestId('screenshot-clicks').textContent();
+  const detailsClicksBeforeMessage = await page.getByTestId('details-clicks').textContent();
+  await messageButton.click();
+  await page.getByTestId('chat-clicks').filter({ hasText: 'Chat clicks: 1' }).waitFor();
+  assert.equal(
+    await page.getByTestId('screenshot-clicks').textContent(),
+    screenshotClicksBeforeMessage,
+    'Message must not bubble into screenshot enlargement',
+  );
+  assert.equal(await page.getByTestId('details-clicks').textContent(), detailsClicksBeforeMessage, 'Message must not open details');
+  await messageHost.evaluate((element) => { element.style.width = ''; });
+
+  // ── Class messaging off: the unread badge still opens the thread to read,
+  //    but the tile offers no Message to start a conversation.
+  assert.equal(
+    await page.getByTestId('button-message-student-messaging-off-student').count(),
+    0,
+    'with class messaging off a tile offers no Message',
+  );
+  const messagingOffBadge = page.getByTestId('chat-unread-messaging-off-student');
+  assert.equal(await messagingOffBadge.textContent(), '2');
+  await messagingOffBadge.click();
+  await page.getByTestId('chat-clicks').filter({ hasText: 'Chat clicks: 2' }).waitFor();
+
   // ── The stale cue follows the cadence the wall is actually running.
   assert.match(
     await page.getByTestId('screenshot-updating-active-stale-student').textContent(),

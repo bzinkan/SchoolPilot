@@ -307,11 +307,14 @@ export function useClasspilotSessionChat({
     return true;
   }, [currentScope, notify]);
 
+  // Only a current, undenied scope can send: while this is false beginReply
+  // returns null, so the dashboard offers no way to start a conversation.
+  const available = Boolean(scopeKey && scope.key === scopeKey && !scope.denied);
   const studentLookup = new Map(students.map((student) => [student.studentId || student.id, student]));
   const studentMessages = [];
   const chatReplies = {};
   const pendingReplyStudentIds = new Set();
-  if (scopeKey && scope.key === scopeKey && !scope.denied) {
+  if (available) {
     for (const reply of scope.pendingReplies) pendingReplyStudentIds.add(reply.studentId);
     for (const message of scope.messages.values()) {
       if (message.senderType === 'teacher') {
@@ -329,6 +332,6 @@ export function useClasspilotSessionChat({
     }
   }
   studentMessages.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-  return { generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
+  return { available, generation: scope.generation, studentMessages, chatReplies, pendingReplyStudentIds, receiveStudentMessage, receiveDelivery,
     receiveReadReceipt, beginReply, isCurrentReply, receiveReply, finishReply, markRead, markThreadRead, dismiss, closeThread };
 }
