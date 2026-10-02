@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-02T18:55:40.304Z",
+  "capturedAt": "2026-10-02T19:39:06.566Z",
   "status": "release_preparation_not_deployed",
   "schoolPilotBaseline": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
-  "schoolPilotReviewCheckpoint": "8a5cf69ae68a4dc6c45837907297f94b4466f1ca",
+  "schoolPilotReviewCheckpoint": "60bb2338157a9f0c313ebffae3f42a69ac3e3345",
   "classPilotReviewCheckpoint": "8069a9c9bd50352e187847158b356a69edc4e45d",
   "targetVersion": "2.9.7",
   "managedChromebookGate": "waived_not_passed",
@@ -1367,7 +1367,7 @@
     {
       "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
       "number": 603,
-      "head": "37d01a4aab913533bf4fddf1d86265a44741707f",
+      "head": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
       "base": {
         "branch": "main",
         "sha": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04"

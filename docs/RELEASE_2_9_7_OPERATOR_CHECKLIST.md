@@ -1,10 +1,17 @@
 # Coordinated SchoolPilot release and ClassPilot 2.9.7
 
-Status: implementation and release preparation in progress. No deployment green
+Status: release candidate prepared for review. No deployment green
 light, merge, production deployment, capability activation or Store publication
 is recorded by this document. The current release inventory is
 [here](RELEASE_2_9_7_PR_INVENTORY.md). Preserve the historical September 30 evidence;
 its 2.10.0 package results do not certify this successor.
+
+The latest [read-only production snapshot](release-evidence/release-297/readonly-production-20261002.json)
+records existing-service health, the bounded metrics window and verification
+limits. It is not candidate capacity evidence or approval for an operational window.
+The [combined CI checkpoint](release-evidence/release-297/ci-app-checkpoint-d69322ef.json)
+preserves exact successful logs, test counts, conditional skips, source-tree
+equivalence and deployment-tool results. A conditional skip is not a passed test.
 
 The owner approved 2.9.7 and explicitly replaced the two-managed-Chromebook
 prerequisite with documented live validation. Record that prerequisite as
@@ -22,12 +29,13 @@ recipient, enforcement, tenancy or deployment health checks.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Exact release source / CI | Pending final combined-source freeze and required checks; record full SHAs and run URLs |
+| Combined application source / CI | `d69322ef7a2c56a9fb353f59c3c72b882042e41c`; [combined CI](https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557). Later evidence/checklist commits do not change application bytes. Require all applicable checks on the final review head before merge and green main before execution. |
 | API / worker artifacts | Pending compatible digest-pinned serving and rollback artifacts; record image digest, source SHA and task definitions |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five required jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable; packaged source and ZIP above unchanged |
 | Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
+| Usage capacity | Held off. [Corrected-source cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) at `60bb2338157a9f0c313ebffae3f42a69ac3e3345` failed concurrent reports and authenticated arrivals despite full workers finishing in 22.623 / 22.753 seconds. No three-run acceptance or supported 100-request/second envelope is claimed. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)
@@ -115,7 +123,15 @@ Resolve each task definition from the service response; record its digest,
 `GIT_SHA`, GUC/admission, capability registry, product flags, network configuration,
 desired/running/pending counts and deployment status. Inspect target health,
 `/readyz`, recent errors, worker health and CPU/memory/database connection/storage
-headroom. Record backup readiness and a specific approved America/New_York
+headroom. The public website's `/readyz` can return the frontend HTML with status
+200; that is not a readiness result. Confirm the ALB uses `/readyz` and inspect
+its target states. For a task-specific readiness fetch, use the verified API
+origin through the existing permitted network path and require HTTP 200,
+`application/json`, parsed `{ "status": "ok" }` and `Cache-Control: no-store`.
+Do not open origin access to make this check pass. The October 2 workstation
+could read public `/health` but could not directly reach origin readiness; the
+ALB reported three healthy targets against `/readyz`. Record that limitation,
+not an independently fetched readiness body. Record backup readiness and a specific approved America/New_York
 operational interval. Do not infer permission from an old freeze note. Retain the
 weekday 04:45–05:59 deployment safeguards and public-ECS/no-NAT configuration.
 
@@ -127,29 +143,37 @@ pending-submission state** immediately before upload. If a higher version preven
 
 Use a separate clean main worktree after the integration PR is reviewed and
 merged; original checkouts and draft Observe work remain untouched. Main must
-match origin and required CI must pass. Use the existing immutable-image workflow
-and documented `scripts/deploy.sh` procedure; no hand-edited task definitions.
+match origin and required CI must pass. Use the documented `scripts/deploy.sh`
+procedure; no hand-edited task definitions. The immutable-image workflow is
+opt-in and currently disabled. Keep `IMMUTABLE_RELEASE_IMAGE_ENABLED` disabled
+until the `release-image` environment, `AWS_RELEASE_IMAGE_ROLE_ARN` and
+repository-scoped GitHub OIDC trust are provisioned and verified. While disabled,
+use the deploy script's guarded legacy build path and record its resolved source
+SHA and digest. Do not enable the flag merely to obtain a green workflow. An
+enabled immutable path supplies both `--immutable-image-sha` and
+`--immutable-image-digest` for the exact green image.
 
 Reconcile the live catalog and migration ledger before forming admission plans.
 Preserve all historical inventory entries and migration checksums. From the
 observed 121-table baseline, the missing reviewed bundles are:
 
-| Order | `--enable-rls-table` bundle | Resulting table count |
+| Order | Exact `--enable-rls-table` argument | Resulting table count |
 |---|---|---|
-| 1 | `passpilotRules` | 125 |
-| 2 | `classpilotUsageRollups` | 126 |
-| 3 | `classpilotUsageRollupDays` | 127 |
-| 4 | `passpilotAppointments` | 128 |
-| 5 | `classpilotPrivateChatLifecycle` | 129 |
+| 1 | `passpilot_destination_policies,passpilot_pass_limits,passpilot_encounter_restrictions,passpilot_pass_denials` | 125 |
+| 2 | `classpilot_usage_rollups` | 126 |
+| 3 | `classpilot_usage_rollup_days` | 127 |
+| 4 | `passpilot_appointments` | 128 |
+| 5 | `classpilot_private_chat_threads` | 129 |
 
-These are expected deltas, not permission to repeat an already-admitted bundle.
+Registry bundle names are labels, not CLI aliases. Preserve the exact ordered
+CSV above. These are expected deltas, not permission to repeat an already-admitted bundle.
 The tool accepts one reviewed bundle per operation; re-read both services between
-operations. First deploy and fully drain to the compatible dark writer/bridge
+operations. First deploy and fully drain to the compatible dark writer/bridge/relay
 while the private lifecycle capability remains off and the thread table is not
 yet admitted. In this reversible stage, unadopted schools create no private
 thread/token/generation state and have no permanent-expiration guarantee yet.
 Then admit the final thread bundle only when both exact rollback source images
-contain the compatible writer and bridge. The final admission is
+contain the compatible writer, bridge and relay. The final admission is
 `classpilotPrivateChatLifecyclePostExpand`; require identical full admission on
 API and worker before capability activation. Run additive migrations using the
 candidate's exact image before service rollout. Verify health and admission before
@@ -159,7 +183,7 @@ Private lifecycle adoption is a durable compatibility floor. Once admitted,
 capability off does not permit a legacy writer or removal of its migration/table.
 Prepare a known-good compatible containment/rollback image before activation;
 retain it while any offline cleanup is unresolved. The deploy guard verifies each
-source image digest against its exact source SHA, the compatible writer/bridge
+source image digest against its exact source SHA, the compatible writer/bridge/relay
 and full candidate admission. A failed partial rollout retains that compatible
 source pair; the original pre-release image is not a lifecycle rollback target.
 Compatibility must also include the receiving Redis lifecycle fence
@@ -201,7 +225,21 @@ Reports (`PASSPILOT_REPORTS_MODE=v2`). Never set capabilities or RLS through the
 product setter. Generate exact plan manifests only after source/image/serving
 state is final; stale plans must be regenerated.
 
-## Live acceptance record
+## Independent product live checks
+
+Use approved sample records in the current school. Record timestamps, roles,
+opaque record IDs, actual outcomes and evidence hashes privately. Release each
+feature through its own governed gate; the classroom pilot does not certify it.
+Do not place real student identities or confidential test content in public PRs.
+
+| Feature | Required observed outcomes |
+|---|---|
+| Library | Exercise a Flight Path and Block List: another teacher cannot see a private original; after sharing, they can apply it and make a private copy, but cannot edit the original. Verify the administrator Official transition and that an administrator cannot publish another teacher's private item. |
+| Rules and confidentiality | Observe limit/capacity and encounter denials plus an authorized administrator override. Teacher and office override attempts fail. Verify retained overridden passes, reads and returns omit encounter metadata for teacher, office and kiosk in both governed Rules-on and Rules-off states, while authorized administrator evidence remains available. |
+| Appointments | Verify PassPilot-only school-year setup, manager create/edit/cancel, current-teacher reminders and manual activation. Duplicate activation links the same pass; explicit return completes the appointment, overdue remains open and an unused window becomes missed without issuance. An unauthorized teacher cannot read or activate it. Notes are visible to current school managers, including authorized office staff, omitted from teacher DTOs and never copied to the linked pass. |
+| Reports v2 | With teacher, office and administrator roles, compare a known authorized filtered cohort to its CSV and committed export audit. Verify completed-overdue and currently-overdue counts separately, retained-only coverage, exact filters and formula-safe cells. Teacher/office reporting must omit encounter override evidence; permitted administrator audit access remains. Appointment note access follows its separate manager contract. |
+
+## Classroom live acceptance record
 
 Record start/end timestamps, school, exact API/worker task definitions, image and
 source, runtime fingerprints, extension source/version/ID/ZIP and participating

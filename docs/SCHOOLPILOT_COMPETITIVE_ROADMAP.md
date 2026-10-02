@@ -12,6 +12,15 @@ required before global promotion. No implementation or test status here implies
 deployment or activation. Usage retains its independent capacity and deployed
 observation gates. SFU implementation and legacy media changes remain excluded.
 
+The October 2 corrected-source capacity retry is a retained failure: each full
+worker finished below 48 seconds, but concurrent reports and authenticated
+heartbeat arrivals exhausted the API connection pool. Usage remains off; neither
+three passing cold runs nor a supported 100-request/second envelope is established.
+The [Run 02 evidence](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json)
+preserves the unchanged limits, exact schema/source, failures and successful
+post-run correctness checks. This independent gate does not certify or prevent
+an otherwise accepted classroom release.
+
 This document turns the product owner's eight-phase master plan into a sequence of safe, independently deployable pull requests. It records the product model, the engineering rules every PR follows, the PR order and its hard constraints, the capabilities and flags each PR adds, and the Phase 0/0A status. The retired Live View and parked TURN inventory, with its A–E classification and deletion order, is in `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`.
 
 The roadmap was developed in independently reviewable PRs. The owner now authorizes one integration PR to consolidate their reviewed work; automatic deployment/Store publication and permanent legacy TURN deletion remain prohibited.

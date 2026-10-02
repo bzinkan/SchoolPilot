@@ -151,6 +151,7 @@ promotion has `validationLevel=live_pilot`, `managedValidation=not_applicable`
 and no precise/Focus managed-waiver receipt.
 
 All private-chat profiles require the exact serving source's lifecycle writer version 1,
+`PRIVATE_CHAT_BRIDGE_VERSION=1`, `PRIVATE_CHAT_RELAY_VERSION=1`,
 matching immutable migration and sticky `private_chat_lifecycle_required`
 enforcement. Capability withdrawal stops new private issuance; persisted thread
 generations/epochs, expiry and cleanup remain enforced. It neither restores a
@@ -161,7 +162,7 @@ compatible repaired image; capability withdrawal is not data rollback.
 Global eligibility includes qualifying schools added later without manual pins.
 Once either service admits `classpilot_private_chat_threads`, that append-only
 admission is the durable release floor. Unrelated runtime plans must also retain
-the complete 129-table/GUC contract and exact compatible writer/migration after
+the complete 129-table/GUC contract and exact compatible writer/bridge/relay/migration after
 private chat is off. The ordinary backend deploy guard reads the exact candidate
 Git SHA, refuses legacy markers or partial admission before building, and checks
 the registered candidates again before migrations or service updates. Turning
@@ -172,14 +173,20 @@ The first transition has two deployments. First serve the compatible reversible
 dark bridge with private capability off and the existing 128-table admission;
 before adoption it writes no lifecycle tokens, threads or generation fences.
 Let the whole API/worker pair converge and drain every legacy writer. Only then
-admit the singleton thread table. The guard requires lifecycle writer version 1
-and `PRIVATE_CHAT_BRIDGE_VERSION=1` at each rollback source image's exact
+admit the singleton thread table. The guard requires lifecycle writer version 1,
+`PRIVATE_CHAT_BRIDGE_VERSION=1` and `PRIVATE_CHAT_RELAY_VERSION=1` at each rollback source image's exact
 `GIT_SHA`, binds that SHA to its immutable ECR image digest, and requires the
 same compatible markers at the candidate SHA. This ensures both explicit
 rollback and the unchanged ECS circuit-breaker rollback source remain compatible
 after first admission. A legacy source cannot be the automatic rollback target
 for that admission. After the stable full-129 pair, run the current-school pilot
 and its real lifecycle observations before global promotion.
+
+The receiving Redis fence is mandatory even when private issuance is off: it
+rechecks persisted message identity, current lifecycle tokens, exact outbox
+attempt and current student binding under the delivery locks, then checks expiry
+again immediately before synchronous send. A writer/bridge-only image predating
+that fence is not a compatible rollback artifact.
 
 ## Capacity acceptance remains separate
 
@@ -199,6 +206,17 @@ Every complete worker operation must finish within 48 seconds of its 60-second
 budget. Offered, started, completed, failed, delayed and outstanding HTTP work
 must be recorded separately; awaiting responses must not slow the offer rate.
 No passing result is recorded here until those exact measured gates complete.
+
+Both October 2 attempts are retained failures. [Run 01](release-evidence/release-297/usage-cold-open-loop-run-01-4ce644af.json)
+and [corrected-source Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json)
+used the same measured workload and normalized schema. Run 02's full workers
+finished in 22.623/22.753 seconds, but 32 of 64 JSON reports failed and only 1,541
+of 6,000 offered heartbeats succeeded; connection-pool acquisition failures
+persisted. Post-run correctness passed. These results establish neither the
+required three passing runs nor a lower supported arrival-rate envelope. New
+Usage aggregation/reporting remain off, without blocking an independently
+accepted classroom release. Existing daily-rollup shadow mode is a separate
+pre-existing setting; do not describe every usage worker as disabled.
 
 Run the separately named scenario with
 `scripts/load/usage/run-local-cold-open-loop-scale.ps1`, selecting an isolated
