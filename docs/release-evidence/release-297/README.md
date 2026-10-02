@@ -200,3 +200,19 @@ The ordinary capture job uses released ClassPilot 2.9.3; this is separate from
 the recorded exact 2.9.7 package acceptance. CI success does not assert a
 deployment or live acceptance, and does not reopen the failed Usage capacity
 gate.
+
+## Complete frontend release command
+
+The [aggregate manifest](frontend-aggregate-60bb2338.json) and
+[exact stdout/stderr](frontend-aggregate-60bb2338.log.gz) preserve the successful
+`npm run test:release-focused` run from 19:38:39 to 20:06:18 UTC on October 2.
+All 738 Node-runner cases in 40 summaries passed with zero failures or skips;
+the direct browser scripts also succeeded but are not counted in that total.
+Classroom, recipient freezing, Reports, PDF, Usage display and appointments ran
+in the same serial command with no parallel browser chain or relaxed assertions.
+
+Root documentation/evidence changed during the run, from `60bb2338` through
+`5f197857`. The frontend working tree stayed clean and its Git tree remained
+`1f42efe3a088d84c5f92269f478fee13684bd0eb`, identical to the successful combined
+CI source. The archive preserves original bytes and verified raw/gzip hashes;
+it does not claim deployment, live validation or Usage capacity acceptance.

@@ -34,6 +34,7 @@ recipient, enforcement, tenancy or deployment health checks.
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five required jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable; packaged source and ZIP above unchanged |
+| Frontend aggregate | [Exact full-command log and manifest](release-evidence/release-297/frontend-aggregate-60bb2338.json): exit 0; 738 Node-runner cases passed with zero skips, plus successful direct browser scripts. Frontend tree matches combined CI exactly. |
 | Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
 | Usage capacity | Held off. [Corrected-source cold Run 02](release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json) at `60bb2338157a9f0c313ebffae3f42a69ac3e3345` failed concurrent reports and authenticated arrivals despite full workers finishing in 22.623 / 22.753 seconds. No three-run acceptance or supported 100-request/second envelope is claimed. |
 | Deployed / activated | No changes performed by this release preparation |
@@ -213,9 +214,16 @@ retain this fence even with private issuance disabled.
    against stale pages.
 5. Use `scripts/deploy-classpilot-runtime-config.ps1` to prepare current-school
    pilot profiles. Bind precise/Focus waiver receipts to the exact reviewed
-   source, image and ZIP. Pilot and global promotion are separate operations.
-6. Complete the live checklist below, then create fresh global-promotion plans
-   from the actual one-school pilot and its measured evidence. Global availability
+   source, image and ZIP. Enable all three pilots below and let the final
+   API/worker pair converge before starting combined classroom acceptance.
+   Pilot and global promotion are separate operations.
+6. Complete the full live checklist below before **any** global promotion, then
+   promote one capability from the actual current-school pilot and its evidence.
+   Each Apply changes the task definitions/runtime fingerprint and invalidates
+   the prior pair's receipt for subsequent promotion. After convergence, collect
+   a fresh qualifying observation window and receipt before the next promotion;
+   repeat for the third. Do not relabel earlier samples or copy their timestamps.
+   Global availability
    includes future eligible schools; licensing and negotiated client capabilities
    remain mandatory. Observe is not activated by these profiles.
 
@@ -224,6 +232,51 @@ Rules (`PASSPILOT_RULES_MODE`), appointments (`PASSPILOT_APPOINTMENTS_MODE`) and
 Reports (`PASSPILOT_REPORTS_MODE=v2`). Never set capabilities or RLS through the
 product setter. Generate exact plan manifests only after source/image/serving
 state is final; stale plans must be regenerated.
+
+| Capability | Current-school profile | Later global profile |
+|---|---|---|
+| Private chat lifecycle | `private-chat-lifecycle-pilot` | `private-chat-lifecycle-global-on` |
+| Precise restrictions | `precise-restriction-resources-pilot` | `precise-restriction-resources-global-on` |
+| Focus | `focus-tab-pilot` | `focus-tab-global-on` |
+
+Each pilot profile is `{"schemaVersion":7,"mode":"<pilot profile>","pilotSchoolId":"<current-school UUID>"}`.
+Its global successor is `{"schemaVersion":7,"mode":"<global profile>"}` and
+must omit `pilotSchoolId`. There is no combined global profile or generic unpin
+bypass for these capabilities. Each promotion receipt requires at least 30
+minutes of positive, sample-bearing observations on its exact current pair,
+reviewed within 30 minutes after the window and fresh within two hours at
+Plan/Apply. The supported sequential process therefore needs at least three
+qualifying observation windows, including the initial full classroom window.
+All three pilots must pass the combined user acceptance gate before the first
+promotion, even though a per-capability receipt only enforces its own categories.
+
+Require the existing protocol-v3 and repaired-capability prerequisites. Private
+lifecycle also requires global student-chat idempotency and the full 129-table
+writer/bridge/relay floor. Precise/Focus Plan takes release evidence, production
+confirmation and the managed-validation waiver; their global profiles also take
+fresh pilot evidence. Private global takes pilot evidence and production
+confirmation, without the precise/Focus waiver. Apply consumes the plan-bound
+copies; do not substitute evidence files after review.
+
+Product configurations use exactly `{"schemaVersion":1,"environment":{...}}`.
+Values below are strings except JSON `null`; omitted names retain live values.
+Keep each independent change in a separate reviewed configuration.
+
+| Product change | Exact environment entries |
+|---|---|
+| Library current-school pilot | `CLASSPILOT_SHARED_TEACHING_RESOURCES_MODE: "on"`, `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS: "<current-school UUID>"` |
+| Library global availability after its acceptance | `CLASSPILOT_SHARED_TEACHING_RESOURCES_SCHOOL_IDS: null` with mode already `on` |
+| Corrected Rules | `PASSPILOT_RULES_MODE: "on"` |
+| Appointments | `PASSPILOT_APPOINTMENTS_MODE: "on"` |
+| Reports | `PASSPILOT_REPORTS_MODE: "v2"` |
+
+Appointments require the preserved admission, writer-v2/grant checks and a
+configured school year; Reports require report-v2 and authority-fence-v1 serving
+support. The product tool uses `-Action`, `-ConfigPath`, `-OutDir` and Apply's
+`-ManifestHash`. The capability tool uses `-Operation`, `-ProfilePath`,
+`-ExternalEvidenceRoot` and Apply's `-ExpectedPlanSha256`. Use their documented
+exact-source/image/task-definition and confirmation parameters; these are not
+interchangeable CLI contracts and this table is not an approved production plan.
 
 ## Independent product live checks
 
