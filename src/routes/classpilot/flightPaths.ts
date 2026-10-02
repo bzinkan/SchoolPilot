@@ -17,6 +17,7 @@ import {
   withFlightPathResourcesVisibility,
 } from "../../services/classpilotPreciseRestrictions.js";
 import type { PreciseAllowedResource } from "../../services/restrictionResources.js";
+import { previewRestrictionResources } from "../../services/restrictionResourcePreview.js";
 import {
   canViewSharedResource,
   libraryBlockListView,
@@ -464,6 +465,15 @@ router.post("/", ...auth, restrictionResourceResolutionLimiter, async (req, res,
   } catch (err) {
     next(err);
   }
+});
+
+// Read-only authoring preview. The same normalizers enforce the eventual save;
+// this endpoint creates no Flight Path, command or desired student state.
+router.post("/preview-resources", ...auth, restrictionResourceResolutionLimiter, async (req, res, next) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await previewRestrictionResources(res.locals.schoolId!, req.body));
+  } catch (error) { next(error); }
 });
 
 // POST /api/classpilot/flight-paths/from-classroom
