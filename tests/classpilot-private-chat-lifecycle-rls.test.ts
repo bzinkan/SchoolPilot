@@ -59,11 +59,23 @@ test("private thread ownership and old-writer fences hold under a non-owner FORC
       assert.equal((await client.query("UPDATE classpilot_private_chat_threads SET generation=generation WHERE id=$1", [rows[1]!.thread])).rowCount, 0);
       assert.equal((await client.query("DELETE FROM classpilot_private_chat_threads WHERE id=$1", [rows[1]!.thread])).rowCount, 0);
     });
-    await context.test("the invoker parent guard refuses a hidden foreign tenant and immutable ownership refuses reassignment", async () => {
+    await context.test("cross-tenant writes are denied, malformed same-school parents fail and ownership remains immutable", async () => {
       const own = rows[0]!, foreign = rows[1]!;
-      // The BEFORE trigger reads the tenant-filtered assignment and rejects
-      // before PostgreSQL reaches the already catalog-verified WITH CHECK.
-      await assertSqlError("23514", "INSERT INTO classpilot_private_chat_threads(school_id,student_id,teaching_session_id,authority_assignment_id) VALUES($1,$2,$3,$4)", [foreign.school, foreign.student, foreign.teaching, foreign.assignment]);
+      const insert = "INSERT INTO classpilot_private_chat_threads(school_id,student_id,teaching_session_id,authority_assignment_id) VALUES($1,$2,$3,$4)";
+      // Restricted parent policies hide the assignment before the invoker
+      // trigger checks it. The ordinary catalog can instead reach this table's
+      // forced WITH CHECK; both exact denials preserve the same tenant boundary.
+      await client.query("SAVEPOINT expected_failure");
+      try {
+        await assert.rejects(client.query(insert, [foreign.school, foreign.student, foreign.teaching, foreign.assignment]),
+          error => error instanceof Error && "code" in error && (
+            error.code === "23514" && error.message === "Private chat assignment mismatch"
+            || error.code === "42501" && error.message === 'new row violates row-level security policy for table "classpilot_private_chat_threads"'
+          ));
+      } finally { await client.query("ROLLBACK TO SAVEPOINT expected_failure"); }
+      // This malformed parent remains a strict trigger violation in either
+      // catalog, independently of the cross-tenant WITH CHECK rejection above.
+      await assertSqlError("23514", insert, [own.school, own.student, own.teaching, foreign.assignment]);
       await assertSqlError("23514", "UPDATE classpilot_private_chat_threads SET school_id=$1 WHERE id=$2", [foreign.school, own.thread]);
       await assertSqlError("23514", "UPDATE classpilot_private_chat_threads SET authority_assignment_id=$1 WHERE id=$2", [foreign.assignment, own.thread]);
       await assertSqlError("23514", "UPDATE classpilot_private_chat_threads SET generation=generation+2 WHERE id=$1", [own.thread]);
