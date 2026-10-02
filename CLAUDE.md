@@ -953,8 +953,8 @@ Do not add CloudFront `/livez` or `/readyz` behaviors; public synthetic checks s
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path follows the separately verified readiness activation baseline; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses the reviewed 1024 CPU / 2048 MiB (1 vCPU / 2 GiB, the size that passed the My Desk paperwork capacity tests on 2026-09-27) and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. The cost rollout stages tasks from private to public subnets with a public IPv4 only after the baseline gate. |
-| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | 1 desired singleton scheduler worker at the reviewed 512 CPU / 1024 MiB (0.5 vCPU / 1 GiB, sized for paperwork processing), staged to the same public-task egress posture as the API; no ALB target registration. |
+| **ECS API Service** | `schoolpilot-production-api` | ClassPilot 2.7 capacity sizing: ordinary minimum 1 task, weekday 05:45–16:00 America/New_York school-day floor 3 (held all school day because the ALB sticky session pins each device to the task it first reached), autoscaling maximum 6; each API task uses main=16 and session=2 connections, so three API tasks plus the 16-connection worker ceiling hold 70 and six total 124. The selected launch-safe revision uses the reviewed 1024 CPU / 2048 MiB (1 vCPU / 2 GiB, the size that passed the My Desk paperwork capacity tests on 2026-09-27) and the ALB target group. Re-enabling eight tasks requires a separately reviewed RDS Proxy or database-capacity decision. Tasks run in the public subnets with a public IPv4 address (since 2026-09-30); production has no NAT gateway (removed 2026-10-01). |
+| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | 1 desired singleton scheduler worker at the reviewed 512 CPU / 1024 MiB (0.5 vCPU / 1 GiB, sized for paperwork processing), in the same public subnets with a public IPv4 address as the API; no ALB target registration. |
 | **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at the reviewed 1024 CPU / 2048 MiB and **is the family production actually serves** — the launch-safe posture prescribed below uses `--activate-emergency`, so `schoolpilot-production-api` is the family name of the *service*, not of the task definition behind it. Always read the live task definition from `describe-services`, never by assuming the family. |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
 | **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
@@ -964,9 +964,19 @@ Do not add CloudFront `/livez` or `/readyz` behaviors; public synthetic checks s
 | **Account** | `135775632425` | |
 
 Production public traffic must enter through CloudFront at `school-pilot.net`.
-Public IPv4 on launch ECS tasks is for direct outbound egress after NAT removal;
-the ECS security group still accepts the API port only from the ALB security
-group and the worker exposes no public application listener.
+
+**Production has no NAT gateways (removed 2026-10-01).** ECS tasks reach ECR,
+Secrets Manager, CloudWatch Logs and every third-party API through their own
+public IPv4 addresses and the internet gateway.
+
+- Tasks must stay in the public subnets with `assignPublicIp` enabled. Terraform
+  refuses `ecs_tasks_in_public_subnets = false` while
+  `enable_nat_gateway = false`.
+- Only RDS and Redis live in the private subnets. Anything new placed there that
+  needs the internet, such as an in-VPC Lambda or a private task, has no route
+  until NAT or a VPC endpoint is added.
+- The ECS security group accepts the API port only from the ALB security group,
+  and the worker exposes no public application listener.
 Direct local/browser access to `api-origin.school-pilot.net` is intentionally not
 part of the verification path because the ALB security group allows only
 CloudFront origin-facing IP ranges over HTTPS. Use public `/health` through
