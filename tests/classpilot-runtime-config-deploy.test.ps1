@@ -3820,6 +3820,7 @@ try {
                 runtimeConfigurationSha256 = Get-ManagedRuntimeFingerprint -TaskDefinition $roadmapApi -ContainerName 'api'
                 releaseEvidenceSha256 = if ($isWaived) { $releaseSnapshot.Sha256 } else { $null }
                 observedActions = 3; logSha256 = ('e' * 64)
+                samples = [ordered]@{}
                 classPilotTag = 'v2.9.7'; classPilotMergeSha = ('c' * 40); classPilotZipSha256 = ('d' * 64)
                 classPilotExtensionId = $script:ClassPilotExtensionId
                 checks = [ordered]@{
@@ -3829,6 +3830,7 @@ try {
                     apiWorkerAndRosterHealthy = $true; announcementsRemainAvailable = $true
                 }
             }
+            foreach ($name in @(Get-RoadmapPilotSampleNames -Mode "$prefix-global-on")) { $live.samples[$name] = 1 }
             Write-TestJson -Path $livePath -Value $live
             $globalArgs = @{
                 RepositoryRoot = $repositoryRoot; PrivateProfilePath = $globalProfilePath; EvidenceRoot = $evidenceRoot
@@ -3842,6 +3844,7 @@ try {
             foreach ($mutation in @(
                 @{ Name = 'observedActions'; Value = 0 },
                 @{ Name = 'observedFrom'; Value = $now.AddMinutes(-10).ToString('o') },
+                @{ Name = 'observedFrom'; Value = $now.AddMinutes(-34).ToString('o') },
                 @{ Name = 'runtimeConfigurationSha256'; Value = ('f' * 64) },
                 @{ Name = 'apiTaskDefinitionArn'; Value = $apiSourceArn },
                 @{ Name = 'releaseEvidenceSha256'; Value = ('f' * 64) }
@@ -3851,6 +3854,13 @@ try {
                 Write-TestJson -Path $livePath -Value $invalid
                 Assert-Throws { New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
                     "Global promotion must reject changed $($mutation.Name)."
+            }
+            foreach ($name in @($live.samples.Keys)) {
+                $invalid = $live | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.samples.$name = 0
+                Write-TestJson -Path $livePath -Value $invalid
+                Assert-Throws { New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                    "Global promotion must require an actual $name sample."
             }
             Write-TestJson -Path $livePath -Value $live
             $globalPlanResult = New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath
@@ -3911,8 +3921,8 @@ try {
         Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
     }
 
-    # Private chat is a direct global rollout of the durable writer, independent
-    # of school messaging policy. Announcements/settings are never changed here.
+    # Private chat starts at the current school and promotes only after actual
+    # full lifecycle samples. Announcements/settings are never changed here.
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
     Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
     $privateInventory = ([IO.File]::ReadAllText((Join-Path $repositoryRoot 'src/config/rlsRegistry.json')) | ConvertFrom-Json -Depth 30 -DateKind String).inventories.classpilotPrivateChatLifecyclePostExpand
@@ -3922,11 +3932,11 @@ try {
         $container.environment += [pscustomobject]@{name='RLS_ENABLED_TABLES';value=($privateInventory.tables -join ',')}
     }
     $privateProfilePath=Join-Path $testRoot 'private-chat-profile.json'
-    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-pilot';pilotSchoolId=$testSchoolId})
     $privateArgs=@{RepositoryRoot=$repositoryRoot;PrivateProfilePath=$privateProfilePath;EvidenceRoot=$evidenceRoot;AppSha=$appSha;ImageDigest=$digest;
         ApiTaskDefinitionArn=$apiSourceArn;WorkerTaskDefinitionArn=$workerSourceArn;Now=$now}
     $privateSource=New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
-    $privateIntent=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    $privateIntent=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-pilot';pilotSchoolId=$testSchoolId})
     $privateRuntime=Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $privateIntent -SourceTaskDefinition $privateSource -ContainerName 'api'
     foreach ($parent in @('scopedAuthorityChecksV1','studentChatIdempotencyV1')) {
         $invalid=New-TransitionSourceTask -RuntimeConfiguration $privateRuntime
@@ -3957,9 +3967,46 @@ try {
     $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$invalidRegistry | ConvertTo-Json -Depth 30
     Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Partial or duplicated129 inventory must refuse admission.'
     $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$originalRegistry
-    $privatePlanResult=New-RuntimeConfigPlan @privateArgs
+    $privatePilotResult=New-RuntimeConfigPlan @privateArgs
+    $privatePilotPlan=Read-RuntimePlan -Path $privatePilotResult.PlanPath -ExpectedSha256 $privatePilotResult.PlanSha256
+    $privatePilotApply=Invoke-RuntimeConfigApply -Plan $privatePilotPlan -PlanSha256 $privatePilotResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privatePilotApi=$global:RuntimeConfigTestState.TaskResponses[$privatePilotApply.candidateApiTaskDefinitionArn].taskDefinition
+    $privatePilotControls=Get-RuntimeCapabilityControls -Environment $privatePilotApi.containerDefinitions[0].environment
+    Assert-Condition (@($privatePilotControls.privateChatLifecycleV1.schoolIds).Count -eq 1 -and
+        $privatePilotControls.privateChatLifecycleV1.schoolIds[0] -ceq $testSchoolId) 'Private chat activation must begin at the current school.'
+    $pilotOff=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-off'})
+    $pilotOff=Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $pilotOff -SourceTaskDefinition $privatePilotApi -ContainerName 'api'
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $privatePilotApi -ContainerName 'api' -TargetRuntimeConfiguration $pilotOff
+    Assert-Condition (@($pilotOff.EnabledCapabilities) -cnotcontains 'privateChatLifecycleV1') 'The pilot off profile must withdraw issuance while preserving the compatible release floor.'
+    $privateLive=[ordered]@{
+        schemaVersion=1;reviewedAt=$now.ToString('o');observedFrom=$now.AddMinutes(-35).ToString('o');observedThrough=$now.AddMinutes(-5).ToString('o')
+        capability='privateChatLifecycleV1';pilotSchoolId=$testSchoolId;toolSha=$toolSha;appSha=$appSha;imageDigest=$digest
+        apiTaskDefinitionArn=$privatePilotApply.candidateApiTaskDefinitionArn;workerTaskDefinitionArn=$privatePilotApply.candidateWorkerTaskDefinitionArn
+        runtimeConfigurationSha256=Get-ManagedRuntimeFingerprint -TaskDefinition $privatePilotApi -ContainerName 'api'
+        releaseEvidenceSha256=$null;observedActions=3;logSha256=('e'*64);samples=[ordered]@{}
+        classPilotTag='v2.9.7';classPilotMergeSha=('c'*40);classPilotZipSha256=('d'*64);classPilotExtensionId=$script:ClassPilotExtensionId
+        checks=[ordered]@{teachingPeriodObserved=$true;supportedClientNegotiated=$true;exactRecipientsVerified=$true
+            privateChatLifecycleEnforced=$true;completedOutcomeVerified=$true;staleAndOfflineCleanupVerified=$true
+            unsupportedClientsFailClosed=$true;noAuthorizationOrPrivacyDefects=$true;apiWorkerAndRosterHealthy=$true;announcementsRemainAvailable=$true}
+    }
+    foreach($name in @(Get-RoadmapPilotSampleNames -Mode 'private-chat-lifecycle-global-on')){$privateLive.samples[$name]=1}
+    $privateLivePath=Join-Path $testRoot 'private-chat-live.json'
+    Write-TestJson -Path $privateLivePath -Value $privateLive
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    $privateGlobalArgs=$privateArgs.Clone();$privateGlobalArgs.ApiTaskDefinitionArn=$privatePilotApply.candidateApiTaskDefinitionArn
+    $privateGlobalArgs.WorkerTaskDefinitionArn=$privatePilotApply.candidateWorkerTaskDefinitionArn;$privateGlobalArgs.ConfirmProductionMutation=$true
+    Assert-Throws {New-RuntimeConfigPlan @privateGlobalArgs} 'Private chat global promotion requires actual live evidence.'
+    $directGlobal=$privateArgs.Clone();$directGlobal.ConfirmProductionMutation=$true
+    Assert-Throws {New-RuntimeConfigPlan @directGlobal -PrivateRoadmapPilotEvidencePath $privateLivePath} 'Live evidence must not authorize skipping current-school pilot activation.'
+    foreach($name in @($privateLive.samples.Keys)){
+        $invalid=$privateLive | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $invalid.samples.$name=0;Write-TestJson -Path $privateLivePath -Value $invalid
+        Assert-Throws {New-RuntimeConfigPlan @privateGlobalArgs -PrivateRoadmapPilotEvidencePath $privateLivePath} "Private chat promotion requires actual $name coverage."
+    }
+    Write-TestJson -Path $privateLivePath -Value $privateLive
+    $privatePlanResult=New-RuntimeConfigPlan @privateGlobalArgs -PrivateRoadmapPilotEvidencePath $privateLivePath
     $privatePlan=Read-RuntimePlan -Path $privatePlanResult.PlanPath -ExpectedSha256 $privatePlanResult.PlanSha256
-    $privateApply=Invoke-RuntimeConfigApply -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privateApply=Invoke-RuntimeConfigApply -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -ConfirmProductionMutation
     $privateApi=$global:RuntimeConfigTestState.TaskResponses[$privateApply.candidateApiTaskDefinitionArn].taskDefinition
     $privateControls=Get-RuntimeCapabilityControls -Environment $privateApi.containerDefinitions[0].environment
     Assert-Condition ($privateControls.privateChatLifecycleV1.flag -ceq 'true' -and $privateControls.privateChatLifecycleV1.mode -ceq 'on' -and
@@ -3983,8 +4030,24 @@ try {
     Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget} `
         'Cap off must not make a pre-lifecycle image projection safe after enforcement can be latched.'
     $global:RuntimeConfigGitState.ProtocolSourceBySha.Remove($oldTarget)
+    $unrelated=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='school-website-block-off'})
+    $privateSnapshot=[pscustomobject]@{ApiTask=[pscustomobject]@{taskDefinition=$privateOffApi};WorkerTask=[pscustomobject]@{taskDefinition=$global:RuntimeConfigTestState.TaskResponses[$privateOffApply.candidateWorkerTaskDefinitionArn].taskDefinition}}
+    foreach($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts')){
+        $original=$global:RuntimeConfigGitState.SourceByPath[$path];$global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
+        Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'The admitted floor must protect unrelated plans after private chat is off.'
+        $global:RuntimeConfigGitState.SourceByPath[$path]=$original
+    }
+    $offGuc=@($privateOffApi.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_GUC_ENABLED')[0]
+    $offGuc.value='false'
+    Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'Withdrawal cannot bypass129 admission on an unrelated profile.'
+    $offGuc.value='true'
+    $offAdmission=@($privateOffApi.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+    $fullOffAdmission=$offAdmission.value;$offAdmission.value=$fullOffAdmission.Replace(',classpilot_private_chat_threads',', classpilot_private_chat_threads ')
+    Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'Whitespace cannot hide the admitted floor after private chat is off.'
+    $offAdmission.value=$fullOffAdmission
     [void](Invoke-RuntimeConfigRollback -Plan $privateOffPlan -PlanSha256 $privateOffResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
     [void](Invoke-RuntimeConfigRollback -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $privatePilotPlan -PlanSha256 $privatePilotResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
     Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
     # --- Registry projection: never write a capability the serving image cannot parse ---

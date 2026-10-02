@@ -116,11 +116,13 @@ $script:RoadmapProfileCapabilities = @{
     "focus-tab-pilot" = "focusTabV1"
     "focus-tab-global-on" = "focusTabV1"
     "focus-tab-off" = "focusTabV1"
+    "private-chat-lifecycle-pilot" = "privateChatLifecycleV1"
+    "private-chat-lifecycle-off" = "privateChatLifecycleV1"
     "private-chat-lifecycle-global-on" = "privateChatLifecycleV1"
     "private-chat-lifecycle-global-off" = "privateChatLifecycleV1"
 }
 $script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
-$script:RoadmapGlobalModes = @('after-hours-safety-only-global-on', 'school-website-block-global-on', "precise-restriction-resources-global-on", "focus-tab-global-on")
+$script:RoadmapGlobalModes = @('after-hours-safety-only-global-on', 'school-website-block-global-on', "precise-restriction-resources-global-on", "focus-tab-global-on", 'private-chat-lifecycle-global-on')
 $script:RoadmapGlobalCapabilities = @('afterHoursSafetyOnlyV1', 'schoolWebsiteBlockEnforcementV1', "preciseRestrictionResourcesV1", "focusTabV1", 'privateChatLifecycleV1')
 $script:RoadmapCapabilities = @(
     "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
@@ -128,11 +130,11 @@ $script:RoadmapCapabilities = @(
 )
 $script:RoadmapPilotModes = @(
     "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
-    "precise-restriction-resources-pilot", "focus-tab-pilot"
+    "precise-restriction-resources-pilot", "focus-tab-pilot", 'private-chat-lifecycle-pilot'
 )
 $script:RoadmapOffModes = @(
     "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
-    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-global-off'
+    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-off', 'private-chat-lifecycle-global-off'
 )
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
@@ -3082,14 +3084,6 @@ function Assert-AllowedRuntimeTransition {
                 throw "Roadmap activation must begin with one exact school-scoped pilot from off."
             }
         }
-        elseif ($roadmapMode -ceq 'private-chat-lifecycle-global-on') {
-            if ([string]$sourceControls[$selectedCapability].mode -cne 'off' -or
-                [string]$targetControls[$selectedCapability].flag -cne 'true' -or
-                [string]$targetControls[$selectedCapability].mode -cne 'on' -or
-                @($targetControls[$selectedCapability].schoolIds).Count -ne 0) {
-                throw 'Private chat lifecycle global activation must begin from off and preserve every other control.'
-            }
-        }
         elseif ($roadmapMode -cin $script:RoadmapGlobalModes) {
             if ([string]$sourceControls[$selectedCapability].flag -cne 'true' -or
                 [string]$sourceControls[$selectedCapability].mode -cne 'on' -or
@@ -4127,7 +4121,7 @@ function New-RuntimeConfigPlan {
         Assert-RepositoryIdentity -RepositoryRoot $RepositoryRoot
     }
     $roadmapWaiver = $null -ne (Get-RoadmapReleaseCapability -Mode ([string]$runtime.Mode))
-    $roadmapLiveOnly = $runtime.Mode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on')
+    $roadmapLiveOnly = $runtime.Mode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on', 'private-chat-lifecycle-global-on')
     if ($roadmapWaiver -and (-not $ConfirmProductionMutation -or -not $ConfirmRoadmapManagedWaiver -or
         [string]::IsNullOrWhiteSpace($PrivateRoadmapReleaseEvidencePath))) {
         throw 'Precise/Focus activation requires scoped release evidence and explicit production/managed-waiver confirmations.'
@@ -4610,7 +4604,7 @@ function Read-RuntimePlan {
         if ($hasSyntheticValidation -or $hasTurnEvidence -or $plan.validationLevel -cne 'synthetic_only' -or
             $plan.managedValidation -cne 'waived_not_passed') { throw 'Runtime plan scoped managed-waiver authority is invalid.' }
     }
-    elseif ([string]$plan.profileMode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on')) {
+    elseif ([string]$plan.profileMode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on', 'private-chat-lifecycle-global-on')) {
         if ($hasSyntheticValidation -or $hasTurnEvidence -or $plan.validationLevel -cne 'live_pilot' -or
             $plan.managedValidation -cne 'not_applicable') { throw 'Runtime plan live-pilot authority is invalid.' }
     }

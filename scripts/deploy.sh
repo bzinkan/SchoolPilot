@@ -1500,6 +1500,10 @@ TEMP_FILES=(
   .rls-standard-api-registered.json
   .rls-emergency-api-registered.json
   .rls-worker-registered.json
+  .private-chat-api-source.json
+  .private-chat-worker-source.json
+  .private-chat-api-candidate.json
+  .private-chat-worker-candidate.json
   .ecs-network.json
   .tile-auth-plan-task.json
   .tile-auth-plan-result.json
@@ -3862,6 +3866,43 @@ preflight_rls_table_enablement_sources() {
     return 1
   fi
   success "Reviewed RLS allowlist delta: +${ENABLE_RLS_TABLE} (master remains true; no existing table changes)"
+}
+
+preflight_private_chat_release_floor() {
+  if ! describe_exact_classpilot_candidate_task_definition "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .private-chat-api-source.json ||
+      ! describe_exact_classpilot_candidate_task_definition "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .private-chat-worker-source.json; then
+    error "Could not inspect the exact source pair for retained private chat enforcement."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-private-chat-release-floor.mjs" \
+      --repository-root "$PROJECT_ROOT" --app-sha "$LOCAL_SHA" \
+      --expected-repository "$ECR_REPO" --region "$REGION" \
+      --api-source .private-chat-api-source.json --worker-source .private-chat-worker-source.json \
+      --enable-rls-table "${ENABLE_RLS_TABLE:-none}" > /dev/null; then
+    error "Candidate source violates the retained private chat writer/admission floor; capability off does not permit a legacy image."
+    return 1
+  fi
+}
+
+verify_private_chat_release_floor_candidates() {
+  local api_candidate_arn="$API_ROLLOUT_TASK_DEF"
+  if [[ "$api_candidate_arn" != arn:* ]]; then
+    api_candidate_arn="arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${api_candidate_arn}"
+  fi
+  if ! describe_exact_classpilot_candidate_task_definition "$api_candidate_arn" .private-chat-api-candidate.json ||
+      ! describe_exact_classpilot_candidate_task_definition "$WORKER_CANDIDATE_TASK_DEF" .private-chat-worker-candidate.json; then
+    error "Could not inspect private chat candidate admission."
+    return 1
+  fi
+  if ! node "$SCRIPT_DIR/enforce-private-chat-release-floor.mjs" \
+      --repository-root "$PROJECT_ROOT" --app-sha "$LOCAL_SHA" \
+      --expected-repository "$ECR_REPO" --region "$REGION" \
+      --api-source .private-chat-api-source.json --worker-source .private-chat-worker-source.json \
+      --api-candidate .private-chat-api-candidate.json --worker-candidate .private-chat-worker-candidate.json \
+      --enable-rls-table "${ENABLE_RLS_TABLE:-none}" > /dev/null; then
+    error "Registered candidates violate the retained private chat writer/admission floor."
+    return 1
+  fi
 }
 
 preflight_microsoft_sign_in_secret() {
@@ -6249,6 +6290,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     CAPACITY_ACCEPTANCE_NETWORK_SHA256="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
   fi
 
+  resolve_classpilot_candidate_source_task_definitions
+  preflight_private_chat_release_floor
   if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     production_backend_capacity_preflight "before rehearsal receipt consumption"
     if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
@@ -6265,7 +6308,6 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     local_rehearsal_digest="$DIGEST"
     local_rehearsal_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
   else
-  resolve_classpilot_candidate_source_task_definitions
   preflight_rls_table_enablement_sources
   preflight_microsoft_sign_in_secret
 
@@ -6543,6 +6585,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     verify_classpilot_rehearsed_candidates
   fi
   fi
+
+  verify_private_chat_release_floor_candidates
 
   # This opt-in release gate runs the exact digest-pinned reviewed-size revision in
   # the service VPC before the autoscaling hold, migration, or service update.

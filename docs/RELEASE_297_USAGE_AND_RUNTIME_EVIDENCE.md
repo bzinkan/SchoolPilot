@@ -49,12 +49,21 @@ substitutes for those artifacts or a claim that a managed test occurred.
 Global promotion additionally requires private `RoadmapPilotEvidencePath`
 from the currently serving one-school pilot. It binds the exact API/worker task
 definition pair and managed-runtime fingerprint to the release approval. Observe
-a completed teaching period and at least 15 minutes, with nonzero actions and
+a completed teaching period and at least 30 minutes, with nonzero category samples and
 verified exact recipients, enforcement, completed outcomes, stale/offline
 cleanup, unsupported-client refusal, healthy API/worker/roster operation and no
 privacy/authorization defects. Review within 30 minutes after that window.
 This is live validation in the current active school; it imposes no two-device
 enrollment requirement. Global operation still retains the managed waiver label.
+
+The strict `samples` object records supported clients, completed outcomes,
+stale-authority rejections, offline cleanups, unsupported-client rejections and
+delivered announcements. Every required count is a positive integer backed by
+the private observation artifacts. Precise adds exact-resource/section
+enforcement and outside-boundary refusal; Focus adds starts, stops and recipient
+outcomes; after-hours adds safety enforcement and ordinary telemetry withdrawal;
+website blocking adds blocked and unblocked checks. A single successful action
+without the remaining categories cannot authorize promotion.
 
 Plan copies exact evidence bytes into the private run directory. Apply uses
 only those plan-bound files, checks their hashes and freshness again, and repeats
@@ -100,8 +109,9 @@ coverage tables, RLS, compatible writers and retention continue to protect data.
 
 ## Private-chat lifecycle runtime
 
-Schema-7 `private-chat-lifecycle-global-on` and
-`private-chat-lifecycle-global-off` preserve every other capability, school
+Schema-7 `private-chat-lifecycle-pilot`, `private-chat-lifecycle-off`,
+`private-chat-lifecycle-global-on` and `private-chat-lifecycle-global-off`
+preserve every other capability, school
 setting and announcement control. Activation requires global scoped authority
 and student-chat idempotency, the bound reviewed 2.9.7 successor, and the complete
 preserved 129-table GUC admission on both serving services. The singleton
@@ -110,7 +120,17 @@ passed the backend deployment's actual migration/catalog/FORCE-RLS checks.
 The runtime tool does not perform migrations or infer catalog admission merely
 from a table's existence.
 
-Both profiles require the exact serving source's lifecycle writer version 1,
+The current-school pilot begins from off. Global-on requires a fresh exact-source
+live pilot receipt covering at least 30 minutes, using
+`privateChatLifecycleEnforced` rather than resource/Focus enforcement. In
+addition to the common categories, count private threads created, messages
+delivered, threads expired, expired messages refused, replacement threads
+verified, capability withdrawals verified and hard-off refusals. Every category
+must have a real nonzero sample; announcements must remain deliverable. This
+promotion has `validationLevel=live_pilot`, `managedValidation=not_applicable`
+and no precise/Focus managed-waiver receipt.
+
+All private-chat profiles require the exact serving source's lifecycle writer version 1,
 matching immutable migration and sticky `private_chat_lifecycle_required`
 enforcement. Capability withdrawal stops new private issuance; persisted thread
 generations/epochs, expiry and cleanup remain enforced. It neither restores a
@@ -119,6 +139,27 @@ is serving, the tool conservatively refuses registry projection onto an image
 that predates the lifecycle contract, even with the capability off. Use a
 compatible repaired image; capability withdrawal is not data rollback.
 Global eligibility includes qualifying schools added later without manual pins.
+Once either service admits `classpilot_private_chat_threads`, that append-only
+admission is the durable release floor. Unrelated runtime plans must also retain
+the complete 129-table/GUC contract and exact compatible writer/migration after
+private chat is off. The ordinary backend deploy guard reads the exact candidate
+Git SHA, refuses legacy markers or partial admission before building, and checks
+the registered candidates again before migrations or service updates. Turning
+the flag off never authorizes rollback to a pre-lifecycle image. Do not remove
+the thread table from the allowlist or unset retained school fences.
+
+The first transition has two deployments. First serve the compatible reversible
+dark bridge with private capability off and the existing 128-table admission;
+before adoption it writes no lifecycle tokens, threads or generation fences.
+Let the whole API/worker pair converge and drain every legacy writer. Only then
+admit the singleton thread table. The guard requires lifecycle writer version 1
+and `PRIVATE_CHAT_BRIDGE_VERSION=1` at each rollback source image's exact
+`GIT_SHA`, binds that SHA to its immutable ECR image digest, and requires the
+same compatible markers at the candidate SHA. This ensures both explicit
+rollback and the unchanged ECS circuit-breaker rollback source remain compatible
+after first admission. A legacy source cannot be the automatic rollback target
+for that admission. After the stable full-129 pair, run the current-school pilot
+and its real lifecycle observations before global promotion.
 
 ## Capacity acceptance remains separate
 
@@ -149,6 +190,14 @@ container, then starts a fresh measurement process using the hashed synthetic
 identity snapshot. No JWTs or database passwords are stored in that snapshot.
 This resets PostgreSQL shared buffers; it does not flush host filesystem caches.
 Ordinary authentication/range preflights still precede concurrent timing.
+
+The new profile advertises the exact 39-capability 2.9.7 list captured from the
+extension candidate, records its source commit plus raw/LF source hashes, and
+hashes the canonical list alongside the harness. Historical profiles keep their
+original empty capability offerings. New precise, Focus and private lifecycle
+server gates remain explicitly off and are checked through the production
+parsers. Final extension acceptance and a frozen combined-source checkpoint are
+required before measurement; the list alone is no package-acceptance claim.
 
 The arrival generator offers 6,000 requests independently over 60 seconds. Each
 of 1,000 devices receives six offerings, spaced 10 seconds apart. It records

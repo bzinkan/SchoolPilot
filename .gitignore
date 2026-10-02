@@ -39,6 +39,7 @@ infra/secrets.auto.tfvars
 .migration-*.json
 .ecs-network.json
 .worker-*.json
+.private-chat-*.json
 
 # Local load-test identities/session contracts (may contain auth or tenant IDs)
 load-devices*.json

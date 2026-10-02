@@ -110,7 +110,7 @@ function Assert-RoadmapPilotEvidence {
     Assert-RequiredEvidenceProperties -Value $evidence -Names @(
         'schemaVersion', 'reviewedAt', 'observedFrom', 'observedThrough', 'capability', 'pilotSchoolId',
         'toolSha', 'appSha', 'imageDigest', 'apiTaskDefinitionArn', 'workerTaskDefinitionArn',
-        'runtimeConfigurationSha256', 'releaseEvidenceSha256', 'observedActions', 'logSha256', 'checks'
+        'runtimeConfigurationSha256', 'releaseEvidenceSha256', 'observedActions', 'logSha256', 'samples', 'checks'
         'classPilotTag', 'classPilotMergeSha', 'classPilotZipSha256', 'classPilotExtensionId'
     ) -Label 'roadmap live pilot evidence'
     foreach ($name in @('reviewedAt', 'observedFrom', 'observedThrough', 'capability', 'pilotSchoolId', 'toolSha',
@@ -155,16 +155,38 @@ function Assert-RoadmapPilotEvidence {
         $through = [DateTimeOffset]::ParseExact([string]$evidence.observedThrough, 'o', [Globalization.CultureInfo]::InvariantCulture)
     }
     catch { throw 'Live pilot observations require exact ISO-8601 timestamps.' }
-    if (($through - $from).TotalMinutes -lt 15 -or ($through - $from).TotalHours -gt 24 -or
+    if (($through - $from).TotalMinutes -lt 30 -or ($through - $from).TotalHours -gt 24 -or
         ($reviewedAt - $through).TotalMinutes -lt 0 -or ($reviewedAt - $through).TotalMinutes -gt 30) {
-        throw 'Live pilot evidence requires a completed, recent observation window of at least 15 minutes.'
+        throw 'Live pilot evidence requires a completed, recent observation window of at least 30 minutes.'
     }
+    $sampleNames = Get-RoadmapPilotSampleNames -Mode $Mode
+    Assert-RequiredEvidenceProperties -Value $evidence.samples -Names $sampleNames -Label 'roadmap live pilot evidence.samples'
+    foreach ($name in $sampleNames) {
+        if (-not (Test-IsJsonInteger $evidence.samples.$name) -or $evidence.samples.$name -lt 1) {
+            throw "Live pilot evidence requires an actual nonzero $name sample."
+        }
+    }
+    $enforcementCheck = if ($Mode -ceq 'private-chat-lifecycle-global-on') { 'privateChatLifecycleEnforced' } else { 'resourceOrFocusEnforced' }
     Assert-EvidenceChecksPassed -Value $evidence.checks -Names @(
-        'teachingPeriodObserved', 'supportedClientNegotiated', 'exactRecipientsVerified', 'resourceOrFocusEnforced',
+        'teachingPeriodObserved', 'supportedClientNegotiated', 'exactRecipientsVerified', $enforcementCheck,
         'completedOutcomeVerified', 'staleAndOfflineCleanupVerified', 'unsupportedClientsFailClosed',
         'noAuthorizationOrPrivacyDefects', 'apiWorkerAndRosterHealthy', 'announcementsRemainAvailable'
     ) -Label 'roadmap live pilot evidence.checks'
     return [pscustomobject]@{ EvidenceSha256 = [string]$EvidenceSnapshot.Sha256 }
+}
+
+function Get-RoadmapPilotSampleNames {
+    param([string]$Mode)
+    $common = @('supportedClients', 'completedOutcomes', 'staleAuthorityRejections', 'offlineCleanups', 'unsupportedClientRejections', 'announcementsDelivered')
+    $specific = switch -CaseSensitive ($Mode) {
+        'precise-restriction-resources-global-on' { @('exactResourceEnforcements', 'sectionBoundaryEnforcements', 'outsideBoundaryRejections') }
+        'focus-tab-global-on' { @('focusStarts', 'focusStops', 'recipientOutcomes') }
+        'after-hours-safety-only-global-on' { @('afterHoursSafetyEnforcements', 'ordinaryTelemetryWithdrawals') }
+        'school-website-block-global-on' { @('blockedWebsiteEnforcements', 'unblockedWebsiteChecks') }
+        'private-chat-lifecycle-global-on' { @('privateThreadsCreated', 'privateMessagesDelivered', 'privateThreadsExpired', 'expiredMessagesRejected', 'replacementThreadsVerified', 'capabilityWithdrawalsVerified', 'hardOffRejections') }
+        default { throw 'Unknown live pilot category coverage.' }
+    }
+    return @($common) + @($specific)
 }
 
 function Assert-RoadmapActivationEvidence {
@@ -173,7 +195,7 @@ function Assert-RoadmapActivationEvidence {
         [string]$ApiTaskDefinitionArn, [string]$WorkerTaskDefinitionArn,
         [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
     $capability = Get-RoadmapReleaseCapability -Mode ([string]$Runtime.Mode)
-    $liveOnly = [string]$Runtime.Mode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on')
+    $liveOnly = [string]$Runtime.Mode -cin @('after-hours-safety-only-global-on', 'school-website-block-global-on', 'private-chat-lifecycle-global-on')
     if ($null -eq $capability -and -not $liveOnly) {
         if ($null -ne $ReleaseSnapshot -or $null -ne $PilotSnapshot) { throw 'Roadmap evidence cannot authorize another profile.' }
         return
@@ -217,11 +239,16 @@ function Assert-PrivateChatRuntimeCompatibility {
     $sourceContainer = @($api.containerDefinitions | Where-Object name -CEQ 'api')
     if ($sourceContainer.Count -ne 1) { throw 'Private chat source container is ambiguous.' }
     $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
-    $needsFence = [string]$Runtime.Mode -cin @('private-chat-lifecycle-global-on','private-chat-lifecycle-global-off') -or
+    # Admission is append-only and survives capability withdrawal. It is the
+    # durable release floor even when this plan changes an unrelated capability.
+    $admitted = @($api.containerDefinitions + $worker.containerDefinitions | ForEach-Object {
+        @($_.environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES' | ForEach-Object { ([string]$_.value).Split(',') | ForEach-Object { $_.Trim() } })
+    }) -ccontains 'classpilot_private_chat_threads'
+    $needsFence = $admitted -or [string]$Runtime.Mode -cin @('private-chat-lifecycle-pilot','private-chat-lifecycle-off','private-chat-lifecycle-global-on','private-chat-lifecycle-global-off') -or
         $sourceControls['privateChatLifecycleV1'].mode -ceq 'on' -or
         @($Runtime.EnabledCapabilities) -ccontains 'privateChatLifecycleV1'
     if (-not $needsFence) { return }
-    if ([string]$Runtime.Mode -ceq 'private-chat-lifecycle-global-on') { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
+    if ([string]$Runtime.Mode -cin @('private-chat-lifecycle-pilot','private-chat-lifecycle-global-on')) { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
     $message = 'Private chat lifecycle requires the complete preserved129-table GUC admission on both services and a lifecycle-aware sticky writer/migration at the exact serving SHA. Capability off never permits legacy fallback.'
     try {
         $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/services/classpilotPrivateChatLifecycle.ts") -RepositoryRoot $RepositoryRoot
@@ -230,6 +257,7 @@ function Assert-PrivateChatRuntimeCompatibility {
         $inventory = $registry.inventories.classpilotPrivateChatLifecyclePostExpand
         $previous = @($registry.inventories.passpilotAppointmentsPostExpand.tables)
         if ($source -cnotmatch 'export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;' -or
+            $source -cnotmatch 'export const PRIVATE_CHAT_BRIDGE_VERSION = 1;' -or
             $migration -cnotmatch 'id: "classpilot-private-chat-lifecycle-20261002"' -or
             $migration -cnotmatch 'OLD\.private_chat_lifecycle_required\s+AND\s+NOT\s+NEW\.private_chat_lifecycle_required' -or
             $inventory.count -ne 129 -or @($inventory.tables).Count -ne 129 -or
