@@ -212,10 +212,9 @@ test("read-only screenshot observation requires explicit capability and all thre
 test("precise restriction resources negotiate only with scoped authority, the flag and the school rollout", () => {
   const precise = "preciseRestrictionResourcesV1";
   // Index 25: inside the 32-name realtime capability cache, which is the
-  // accepted list delivery reads. Appended last so the order of every
-  // existing accepted name is unchanged.
+  // accepted list delivery reads. Later additive capabilities retain its slot.
   assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.indexOf(precise), 25);
-  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.at(-1), precise);
+  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES[26], "focusTabV1");
   assert.ok(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.length <= 32);
   const env: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",

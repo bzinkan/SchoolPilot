@@ -295,7 +295,16 @@ describe("ClassPilot command authority envelopes", () => {
       dispatcher.indexOf("async function endStudentSessionsForSignOut")
     );
     assert.match(envelopes, /const bindingEnvelope = \{[\s\S]*studentId: target\.studentId,[\s\S]*studentSessionId: target\.studentSessionId/);
-    assert.equal(envelopes.match(/\.\.\.bindingEnvelope/g)?.length, 5);
+    assert.equal(envelopes.match(/\.\.\.bindingEnvelope/g)?.length, 7);
+    const focusFrames = envelopes.slice(envelopes.indexOf('if (commandType === "activate-tab"'),
+      envelopes.indexOf('if (commandType === "close-tabs"'));
+    assert.equal(focusFrames.match(/\.\.\.bindingEnvelope/g)?.length, 2,
+      "Focus and Bring Forward retain frozen binding on both outer frame and inner command");
+    assert.match(focusFrames, /!own[\s\S]*?exactBinding[\s\S]*?FOCUS_TAB_CAPABILITY/);
+    assert.match(focusFrames, /data: \{ tabRef: own\.tabRef, observedRevision: own\.observedRevision \}/);
+    const legacyFrames = envelopes.slice(envelopes.indexOf('if (commandType === "close-tabs"'));
+    assert.equal(legacyFrames.match(/\.\.\.bindingEnvelope/g)?.length, 5,
+      "exact close, teacher message, and ordinary outer/inner bindings remain intact");
     assert.match(chat, /studentSessionId: targetBinding\.id/);
     assert.match(chat, /studentSessionId: binding\.id/);
     assert.doesNotMatch(devices, /classpilotSchoolPolicyAuthorityEnvelope\(schoolId, "ai_safety"\)/);

@@ -16,12 +16,15 @@ const PERSISTENT_CONTROL_COMMAND_TYPES = new Set([
   "attention-mode",
   "limit-tabs",
   "temp-unblock",
+  "focus-tab",
+  "stop-focus",
 ]);
 
 const TRANSIENT_ACTION_COMMAND_TYPES = new Set([
   "open-tab",
   "close-tab",
   "close-tabs",
+  "activate-tab",
   "timer",
   "poll",
 ]);

@@ -434,7 +434,7 @@ try {
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
-        "kioskLaunchTicketV1"
+        "kioskLaunchTicketV1", "focusTabV1"
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
@@ -1466,11 +1466,33 @@ try {
     $script:PreciseRestrictionRequiredMergeSha = "c" * 40
     $script:PreciseRestrictionRequiredZipSha256 = "d" * 64
 
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "focus-tab-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Focus activation must refuse until independent release evidence is bound."
+    [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 7; mode = "focus-tab-off" }))
+    foreach ($partial in @(
+        @{ Tag = ""; Merge = "c" * 40; Zip = "d" * 64 },
+        @{ Tag = "v2.10.1"; Merge = ""; Zip = "d" * 64 },
+        @{ Tag = "v2.10.1"; Merge = "C" * 40; Zip = "d" * 64 }
+    )) {
+        $script:FocusTabRequiredReleaseTag = $partial.Tag
+        $script:FocusTabRequiredMergeSha = $partial.Merge
+        $script:FocusTabRequiredZipSha256 = $partial.Zip
+        Assert-Throws { Assert-FocusTabPilotReleaseEvidenceBound } "Partial or malformed Focus evidence must refuse activation."
+    }
+    # Synthetic binding only, to exercise the generic pilot/off invariants.
+    $script:FocusTabRequiredReleaseTag = "v2.10.1"
+    $script:FocusTabRequiredMergeSha = "c" * 40
+    $script:FocusTabRequiredZipSha256 = "d" * 64
+
     $roadmapCases = @(
         @{ Capability = "afterHoursSafetyOnlyV1"; Prefix = "after-hours-safety-only" },
         @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" },
         @{ Capability = "screenshotReadOnlyObservationV1"; Prefix = "read-only-observation" },
-        @{ Capability = "preciseRestrictionResourcesV1"; Prefix = "precise-restriction-resources" }
+        @{ Capability = "preciseRestrictionResourcesV1"; Prefix = "precise-restriction-resources" },
+        @{ Capability = "focusTabV1"; Prefix = "focus-tab" }
     )
     $roadmapSourceRuntime = $restrictionAuthPilotRuntime
     foreach ($roadmapCase in $roadmapCases) {

@@ -33,6 +33,7 @@ export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
   // Roadmap PR 2: This-resource-only Waypoints and section/resource Flight
   // Path entries. Index 25, inside the 32-name realtime capability cache.
   "preciseRestrictionResourcesV1",
+  "focusTabV1",
 ] as const;
 
 export type ClasspilotProtocolCapability =
@@ -73,6 +74,7 @@ const CAPABILITY_FLAGS: Record<ClasspilotProtocolCapability, string> = {
   lessonActivitiesV1: "CLASSPILOT_CAP_LESSON_ACTIVITIES_V1",
   exitTicketsV1: "CLASSPILOT_CAP_EXIT_TICKETS_V1",
   preciseRestrictionResourcesV1: "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1",
+  focusTabV1: "CLASSPILOT_CAP_FOCUS_TAB_V1",
 };
 
 const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapability>([
@@ -100,6 +102,7 @@ const SCOPED_AUTHORITY_DEPENDENT_CAPABILITIES = new Set<ClasspilotProtocolCapabi
   "lessonActivitiesV1",
   "exitTicketsV1",
   "preciseRestrictionResourcesV1",
+  "focusTabV1",
 ]);
 
 function enabled(value: string | undefined): boolean {

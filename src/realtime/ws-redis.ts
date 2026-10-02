@@ -26,11 +26,13 @@ export type WsRedisTarget =
         | "lateSignInRestrictionSsoV1"
         | "restrictionAuthPassThroughV1"
         | "preciseRestrictionResourcesV1"
+        | "focusTabV1"
         | "screenshotActiveObservationCadenceV1";
       requiredCapabilities?: Array<
         | "lateSignInRestrictionSsoV1"
         | "restrictionAuthPassThroughV1"
         | "preciseRestrictionResourcesV1"
+        | "focusTabV1"
         | "screenshotActiveObservationCadenceV1"
       >;
     }
