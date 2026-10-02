@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { once } from "node:events";
 import { after, before, beforeEach, test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
 import { sql } from "drizzle-orm";
 import pg from "pg";
+import { WebSocket, WebSocketServer } from "ws";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "../src/db/classpilotPrivateChatLifecycleMigration.js";
 import type { PrivateChatLifecycle, PrivateChatScope } from "../src/services/classpilotPrivateChatLifecycle.js";
 
@@ -31,6 +33,8 @@ let lifecycle: typeof import("../src/services/classpilotPrivateChatLifecycle.js"
 let realtime: typeof import("../src/services/classpilotRealtimeStatus.js");
 let fab: typeof import("../src/services/classpilotFab.js");
 let tools: typeof import("../src/services/classpilotScheduledClassroomTools.js");
+let websocket: typeof import("../src/realtime/websocket.js");
+let websocketBroadcast: typeof import("../src/realtime/ws-broadcast.js");
 let tenant: typeof import("../src/middleware/tenantContext.js").runWithTenantContext;
 let live: import("../src/schema/classpilot.js").TeachingSession;
 let context: import("../src/schema/classpilot.js").ClasspilotSupervisionContext;
@@ -87,6 +91,49 @@ const blockedBehind = async (pid: number, settled: () => boolean): Promise<{ pid
   return [];
 };
 
+// Exercise the actual receiving adapter and socket fan-out. A ping/pong
+// barrier drains earlier frames on the same connection before inspecting the
+// inbox; a negative assertion never relies on sleeping for absent traffic.
+const withStudentSocket = async (index: number, acceptedCapabilities: string[],
+  action: (probe: { inbox: string[]; drain: () => Promise<void> }) => Promise<void>) => {
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address(); assert.ok(address && typeof address !== "string");
+  const connected = once(server, "connection");
+  const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  const inbox: string[] = [];
+  client.on("message", data => inbox.push(data.toString()));
+  await once(client, "open");
+  const [socket] = await connected;
+  assert.ok(socket instanceof WebSocket);
+  websocketBroadcast.registerWsClient(socket);
+  websocketBroadcast.authenticateWsClient(socket, { role: "student", ...binding(index), acceptedCapabilities });
+  try {
+    await action({ inbox, drain: async () => {
+      const pong = once(socket, "pong"); socket.ping(randomUUID()); await pong;
+    } });
+  } finally {
+    websocketBroadcast.removeWsClient(socket);
+    client.terminate(); socket.terminate();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+};
+const relayFrame = async (content: string, index = 0) => {
+  const sent = await reply(content, undefined, index);
+  const attempted = await inSchool(() => storage.markTeacherChatDeliveryAttempt({ ...binding(index), chatMessageId: sent.message.id }));
+  assert.ok(attempted, "The real durable outbox must bind an attempted delivery to the exact current session");
+  const control = index === 0 ? undefined : await inSchool(() => storage.getClasspilotStudentControlState(ids.school, ids.students[index]!));
+  if (index !== 0) assert.ok(control, "The scheduled frame must carry its actual captured control revision");
+  return { sent, frame: { type: "teacher-message", messageKind: "private", _msgId: sent.message.id,
+    chatMessageId: sent.message.id, messageId: sent.message.id, studentId: ids.students[index]!,
+    studentSessionId: bindings[index]!, message: sent.message.content, fromName: "Teacher",
+    ...(index === 0 ? { sessionId: live.id } : { supervisionContextId: context.id, studentControlRevision: control!.revision }),
+    privateChatLifecycle: lifecycle.privateChatMessageLifecycle(sent.message) } };
+};
+const relay = (frame: unknown, index = 0) => websocket.deliverClasspilotStudentBindingRedisMessage({
+  kind: "student-binding", ...binding(index), requiredCapabilities: [],
+}, frame);
+
 const legacySchoolFixture = async () => {
   const own = { school: randomUUID(), teacher: randomUUID(), student: randomUUID(), device: randomUUID() };
   const under = <T>(fn: () => Promise<T>) => tenant({ schoolId: own.school }, fn);
@@ -121,6 +168,8 @@ before(async () => {
   realtime = await import("../src/services/classpilotRealtimeStatus.js");
   fab = await import("../src/services/classpilotFab.js");
   tools = await import("../src/services/classpilotScheduledClassroomTools.js");
+  websocket = await import("../src/realtime/websocket.js");
+  websocketBroadcast = await import("../src/realtime/ws-broadcast.js");
   const role = await (await import("../src/db.js")).pool.query("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user");
   if (process.env.RLS_TEST_ROLE) {
     assert.deepEqual(role.rows, [{ rolsuper: false, rolbypassrls: false }]);
@@ -165,6 +214,9 @@ beforeEach(async () => {
 });
 
 after(async () => {
+  websocket?.stopWebSocketWork();
+  await websocket?.drainWebSocketWork();
+  if (websocket) await (await import("../src/realtime/ws-redis.js")).disposeWSRedis();
   realtime?.setClasspilotRealtimeStatusCommandForTests(undefined);
   if (storage) await inSchool(() => storage.softDeleteSchool(ids.school));
   if (database) {
@@ -199,7 +251,19 @@ test("the dark-deployment bridge remains legacy until first adoption, which perm
     assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
     assert.equal(await inSchool(() => storage.acknowledgeTeacherChatDelivery({ ...binding(), chatMessageId: teacherReply.message.id,
       status: "delivered" })), undefined);
+    const legacyFrame = { type: "teacher-message", messageKind: "private", privateChatLifecycle: null,
+      _msgId: teacherReply.message.id, chatMessageId: teacherReply.message.id, messageId: teacherReply.message.id,
+      sessionId: live.id, studentId: ids.students[0]!, studentSessionId: bindings[0]!,
+      message: teacherReply.message.content, fromName: "Teacher" };
+    const legacyCapabilities = capabilities.filter(capability => capability !== "privateChatLifecycleV1");
+    await withStudentSocket(0, legacyCapabilities, async ({ inbox, drain }) => {
+      assert.equal(await relay(legacyFrame), false); await drain(); assert.deepEqual(inbox, []);
+    });
     await admin.query("UPDATE settings SET student_messaging_enabled=true WHERE school_id=$1", [ids.school]);
+    await withStudentSocket(0, legacyCapabilities, async ({ inbox, drain }) => {
+      assert.equal(await relay(legacyFrame), true); await drain();
+      assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [legacyFrame]);
+    });
     assert.equal(await expired(teacherReply.message.id), false);
     const claimed = await claim(); assert.equal(claimed.authorized, true);
     if (claimed.authorized) assert.ok(claimed.value.messages.includes(teacherReply.message.id));
@@ -584,4 +648,161 @@ test("a student binding transfer refuses the old device's ACK and reconnects the
   const claimed = await claim(); assert.equal(claimed.authorized, true);
   if (claimed.authorized) assert.ok(claimed.value.messages.includes(sent.message.id));
   assert.ok(await ack(sent.message.id, initial));
+});
+
+test("Redis private relay delivers a current durable attempt, but End rejects its delayed predecessor on the same live binding", async () => {
+  const old = await relayFrame("Delayed Redis reply before End");
+  const exactBinding = binding();
+  const ended = await close(old.frame.privateChatLifecycle!);
+  assert.deepEqual(binding(), exactBinding);
+  assert.equal(await expired(old.sent.message.id), true);
+  await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+    const allowed = await relay(old.frame); await drain();
+    assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] }, "Committed End must fence a delayed Redis frame even while its student session remains current");
+    const fresh = await relayFrame("Fresh Redis reply after End");
+    assert.equal(fresh.frame.privateChatLifecycle?.threadGeneration, ended.privateChatLifecycle.threadGeneration);
+    assert.equal(await relay(fresh.frame), true); await drain();
+    assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [fresh.frame]);
+  });
+});
+
+for (const index of [0, 1]) test(`Redis private relay positively delivers a current ${index === 0 ? "live" : "scheduled"} durable attempt`, async () => {
+  const current = await relayFrame(`Current relay control for activity ${index}`, index);
+  await withStudentSocket(index, capabilities, async ({ inbox, drain }) => {
+    assert.equal(await relay(current.frame, index), true); await drain();
+    assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [current.frame]);
+  });
+});
+
+for (const channel of ["school", "activity"] as const) test(`Redis private relay refuses delayed ${channel} hard-off/on frames while ANNOUNCEMENTS remain independent`, async () => {
+  const index = channel === "school" ? 0 : 1;
+  const old = await relayFrame(`Delayed Redis reply before ${channel} off`, index);
+  const toggle = (enabled: boolean) => channel === "school"
+    ? admin.query("UPDATE settings SET student_messaging_enabled=$2 WHERE school_id=$1", [ids.school, enabled])
+    : admin.query("UPDATE session_settings SET chat_enabled=$3 WHERE school_id=$1 AND supervision_context_id=$2", [ids.school, context.id, enabled]);
+  await toggle(false);
+  try {
+    await withStudentSocket(index, capabilities, async ({ inbox, drain }) => {
+      assert.equal(await relay(old.frame, index), false); await drain(); assert.deepEqual(inbox, []);
+      const announcement = { type: "teacher-message", commandId: randomUUID(), message: "Separate ANNOUNCEMENT while private off",
+        studentId: ids.students[index]!, studentSessionId: bindings[index]! };
+      assert.equal(await relay(announcement, index), true); await drain();
+      assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [announcement]);
+      await toggle(true);
+      assert.equal(await relay(old.frame, index), false); await drain(); assert.equal(inbox.length, 1);
+      const current = await relayFrame(`Current ${channel} reply after on`, index);
+      assert.equal(await relay(current.frame, index), true); await drain();
+      assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [announcement, current.frame]);
+    });
+  } finally { await toggle(true); }
+});
+
+test("Redis private relay verifies durable message IDs, content, scope, lifecycle and attempted binding rather than trusting its envelope", async t => {
+  const variants = ["missing lifecycle", "forged generation", "wrong lifecycle thread", "private announcement disguise", "unknown message", "conflicting message IDs", "wrong student",
+    "wrong session", "wrong activity", "extra activity", "changed content", "missing message ID", "wrong attempted binding", "expired attempt"] as const;
+  for (const variant of variants) await t.test(variant, async () => {
+    const candidate = await relayFrame(`Synthetic relay integrity: ${variant}`);
+    const frame: Record<string, unknown> = { ...candidate.frame };
+    if (variant === "missing lifecycle") delete frame.privateChatLifecycle;
+    if (variant === "forged generation") {
+      const ended = await close(candidate.frame.privateChatLifecycle!);
+      frame.privateChatLifecycle = ended.privateChatLifecycle;
+    }
+    if (variant === "wrong lifecycle thread") frame.privateChatLifecycle = { ...candidate.frame.privateChatLifecycle!, threadId: randomUUID() };
+    if (variant === "private announcement disguise") {
+      await close(candidate.frame.privateChatLifecycle!);
+      frame.commandId = randomUUID(); frame.messageKind = "announcement";
+    }
+    if (variant === "unknown message") frame.chatMessageId = frame.messageId = randomUUID();
+    if (variant === "conflicting message IDs") frame.messageId = randomUUID();
+    if (variant === "wrong student") frame.studentId = ids.students[1]!;
+    if (variant === "wrong session") frame.studentSessionId = randomUUID();
+    if (variant === "wrong activity") frame.sessionId = randomUUID();
+    if (variant === "extra activity") frame.supervisionContextId = context.id;
+    if (variant === "changed content") frame.message = "Envelope content was substituted";
+    if (variant === "missing message ID") { delete frame.chatMessageId; delete frame.messageId; }
+    if (variant === "wrong attempted binding") await admin.query("UPDATE classpilot_chat_deliveries SET last_attempt_student_session_id=$2 WHERE id=$1", [candidate.sent.delivery.id, randomUUID()]);
+    if (variant === "expired attempt") await admin.query("UPDATE classpilot_chat_deliveries SET expires_at=now()-interval '1 second' WHERE id=$1", [candidate.sent.delivery.id]);
+    await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+      const allowed = await relay(frame); await drain();
+      assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] }, `A ${variant} frame must not override the durable private reply`);
+    });
+  });
+});
+
+test("Redis private relay cannot waive local socket lifecycle capability with an empty envelope requirement", async () => {
+  const current = await relayFrame("Private reply for capability-fenced socket");
+  const olderCapabilities = capabilities.filter(capability => capability !== "privateChatLifecycleV1");
+  await withStudentSocket(0, olderCapabilities, async ({ inbox, drain }) => {
+    const allowed = await relay(current.frame); await drain();
+    assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] });
+    const announcement = { type: "teacher-message", commandId: randomUUID(), message: "ANNOUNCEMENT supports older client",
+      studentId: ids.students[0]!, studentSessionId: bindings[0]! };
+    assert.equal(await relay(announcement), true); await drain();
+    assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [announcement]);
+  });
+  await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+    assert.equal(await relay(current.frame), true); await drain();
+    assert.deepEqual(inbox.map(raw => JSON.parse(raw)), [current.frame]);
+  });
+});
+
+test("Redis private relay waits for a racing school hard-off commit before local delivery", async () => {
+  const current = await relayFrame("Redis frame blocked behind school hard-off");
+  const writer = await admin.connect(); let receiving: Promise<boolean> | undefined;
+  try {
+    await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+      await writer.query("BEGIN"); await writer.query("UPDATE settings SET student_messaging_enabled=false WHERE school_id=$1", [ids.school]);
+      const pid = (await writer.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+      let settled = false;
+      receiving = relay(current.frame); receiving.then(() => { settled = true; }, () => { settled = true; });
+      const waiting = await blockedBehind(pid, () => settled);
+      assert.equal(waiting.length, 1, "The receiver must actually wait behind the uncommitted hard-off authority");
+      await writer.query("COMMIT");
+      assert.equal(await receiving, false); await drain(); assert.deepEqual(inbox, []);
+    });
+  } finally {
+    await writer.query("ROLLBACK").catch(() => {}); await receiving?.catch(() => {}); writer.release();
+    await admin.query("UPDATE settings SET student_messaging_enabled=true WHERE school_id=$1", [ids.school]);
+  }
+});
+
+test("Redis private relay rechecks the real expiry after a held final exact-binding SELECT", async t => {
+  const current = await relayFrame("Private reply expiring across the final binding read");
+  await admin.query("UPDATE classpilot_chat_deliveries SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1", [current.sent.delivery.id]);
+  const query = pg.Client.prototype.query;
+  let bindingReads = 0, announceHeld: () => void = () => {}, release: () => void = () => {};
+  const reached = new Promise<void>(resolve => { announceHeld = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  // Delay transport of one query, not its result: the real query executes
+  // afterward against PostgreSQL with every previously acquired lock held.
+  const mock = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+    const request = args[0];
+    const statement = typeof request === "string" ? request
+      : request && typeof request === "object" && "text" in request ? String(request.text) : "";
+    if (/select "student_sessions"\."id" from "student_sessions" inner join "students"/.test(statement)
+      && /inner join "devices"/.test(statement) && /for share/i.test(statement) && ++bindingReads === 2) {
+      announceHeld(); return held.then(() => Reflect.apply(query, this, args));
+    }
+    return Reflect.apply(query, this, args);
+  });
+  let receiving: Promise<boolean> | undefined;
+  try {
+    await withStudentSocket(0, capabilities, async ({ inbox, drain }) => {
+      receiving = relay(current.frame);
+      await Promise.race([reached, pause(5_000, undefined, { ref: false }).then(() => assert.fail("The final native binding query must reach the controlled hold"))]);
+      assert.equal(bindingReads, 2);
+      const before = await admin.query<{ live: boolean }>("SELECT expires_at>clock_timestamp() AS live FROM classpilot_chat_deliveries WHERE id=$1", [current.sent.delivery.id]);
+      assert.equal(before.rows[0]!.live, true, "The prepared attempt must still be live when its final binding read is held");
+      let expiredAtDatabase = false;
+      for (const deadline = Date.now()+5_000; Date.now()<deadline && !expiredAtDatabase;) {
+        expiredAtDatabase = !(await admin.query<{ live: boolean }>("SELECT expires_at>clock_timestamp() AS live FROM classpilot_chat_deliveries WHERE id=$1", [current.sent.delivery.id])).rows[0]!.live;
+        if (!expiredAtDatabase) await pause(10);
+      }
+      assert.equal(expiredAtDatabase, true);
+      release();
+      const allowed = await receiving; await drain();
+      assert.deepEqual({ allowed, inbox }, { allowed: false, inbox: [] });
+    });
+  } finally { release(); await receiving?.catch(() => {}); mock.mock.restore(); }
 });

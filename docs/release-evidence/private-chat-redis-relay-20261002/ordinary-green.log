@@ -1,0 +1,359 @@
+CREATE ROLE
+TAP version 13
+# Subtest: private thread ownership and old-writer fences hold under a non-owner FORCE-RLS role
+    # Subtest: the actual role cannot bypass or own the forced invoker policy
+    ok 1 - the actual role cannot bypass or own the forced invoker policy
+      ---
+      duration_ms: 13.5808
+      type: 'test'
+      ...
+    # Subtest: no GUC reveals no protected thread, and an explicit school only reveals its own row
+    ok 2 - no GUC reveals no protected thread, and an explicit school only reveals its own row
+      ---
+      duration_ms: 9.09
+      type: 'test'
+      ...
+    # Subtest: cross-tenant writes are denied, malformed same-school parents fail and ownership remains immutable
+    ok 3 - cross-tenant writes are denied, malformed same-school parents fail and ownership remains immutable
+      ---
+      duration_ms: 22.2082
+      type: 'test'
+      ...
+    # Subtest: an old image cannot insert unstamped private rows or clear the sticky writer fence
+    ok 4 - an old image cannot insert unstamped private rows or clear the sticky writer fence
+      ---
+      duration_ms: 9.2361
+      type: 'test'
+      ...
+    # Subtest: current stamped writes succeed but another tenant's tuple and retired epochs fail
+    ok 5 - current stamped writes succeed but another tenant's tuple and retired epochs fail
+      ---
+      duration_ms: 47.0845
+      type: 'test'
+      ...
+    1..5
+ok 1 - private thread ownership and old-writer fences hold under a non-owner FORCE-RLS role
+  ---
+  duration_ms: 222.2712
+  type: 'test'
+  ...
+# [Redis] Instance 9fda85a7 starting, Redis URL: NOT configured
+# Private lifecycle application posture: ordinary privileged fixture
+# Subtest: the dark-deployment bridge remains legacy until first adoption, which permanently expires old unstamped replies
+ok 2 - the dark-deployment bridge remains legacy until first adoption, which permanently expires old unstamped replies
+  ---
+  duration_ms: 6139.0455
+  type: 'test'
+  ...
+# Subtest: first adoption serializes a legacy send with existing settings without a lock-order cycle
+ok 3 - first adoption serializes a legacy send with existing settings without a lock-order cycle
+  ---
+  duration_ms: 327.4459
+  type: 'test'
+  ...
+# Subtest: first adoption serializes a legacy claim with existing settings without a lock-order cycle
+ok 4 - first adoption serializes a legacy claim with existing settings without a lock-order cycle
+  ---
+  duration_ms: 299.3354
+  type: 'test'
+  ...
+# Subtest: first adoption serializes a legacy ack with existing settings without a lock-order cycle
+ok 5 - first adoption serializes a legacy ack with existing settings without a lock-order cycle
+  ---
+  duration_ms: 254.6155
+  type: 'test'
+  ...
+# Subtest: the authorized empty roster exposes tokens and activation rejects old writers and mutable message ownership
+ok 6 - the authorized empty roster exposes tokens and activation rejects old writers and mutable message ownership
+  ---
+  duration_ms: 90.5081
+  type: 'test'
+  ...
+# Subtest: a school without legacy settings stays unstamped in the dark bridge and receives the sticky default row on first adoption
+ok 7 - a school without legacy settings stays unstamped in the dark bridge and receives the sticky default row on first adoption
+  ---
+  duration_ms: 293.0329
+  type: 'test'
+  ...
+# Subtest: End permanently expires pending replies, retains history and allows a new explicit generation
+ok 8 - End permanently expires pending replies, retains history and allows a new explicit generation
+  ---
+  duration_ms: 294.6277
+  type: 'test'
+  ...
+# Subtest: school hard-off/on advances its epoch once and never revives queued or attempted private replies
+ok 9 - school hard-off/on advances its epoch once and never revives queued or attempted private replies
+  ---
+  duration_ms: 547.519
+  type: 'test'
+  ...
+# Subtest: activity hard-off/on has an independent permanent epoch while testing and teacher pauses remain soft
+ok 10 - activity hard-off/on has an independent permanent epoch while testing and teacher pauses remain soft
+  ---
+  duration_ms: 299.8695
+  type: 'test'
+  ...
+# Subtest: the sticky fence survives capability off while cleanup remains available to unsupported recipients
+ok 11 - the sticky fence survives capability off while cleanup remains available to unsupported recipients
+  ---
+  duration_ms: 371.1104
+  type: 'test'
+  ...
+# Subtest: an authorized signed-out recipient can still be ended using its exact token
+ok 12 - an authorized signed-out recipient can still be ended using its exact token
+  ---
+  duration_ms: 218.5888
+  type: 'test'
+  ...
+# Subtest: End preserves already delivered history while expiring another queued reply
+ok 13 - End preserves already delivered history while expiring another queued reply
+  ---
+  duration_ms: 253.6661
+  type: 'test'
+  ...
+# Subtest: student retries echo the current token and an old retry cannot reopen a closed conversation
+ok 14 - student retries echo the current token and an old retry cannot reopen a closed conversation
+  ---
+  duration_ms: 270.889
+  type: 'test'
+  ...
+# Subtest: reconnect snapshots carry the current school/activity/thread generation without replaying expired private deliveries
+ok 15 - reconnect snapshots carry the current school/activity/thread generation without replaying expired private deliveries
+  ---
+  duration_ms: 214.8067
+  type: 'test'
+  ...
+# Subtest: real PG close-first race serializes End and send at the same student/thread fence
+ok 16 - real PG close-first race serializes End and send at the same student/thread fence
+  ---
+  duration_ms: 207.2768
+  type: 'test'
+  ...
+# Subtest: real PG send-first race serializes End and send at the same student/thread fence
+ok 17 - real PG send-first race serializes End and send at the same student/thread fence
+  ---
+  duration_ms: 220.1986
+  type: 'test'
+  ...
+# Subtest: real PG close-first race serializes End and ack at the same student/thread fence
+ok 18 - real PG close-first race serializes End and ack at the same student/thread fence
+  ---
+  duration_ms: 332.7232
+  type: 'test'
+  ...
+# Subtest: real PG ack-first race serializes End and ack at the same student/thread fence
+ok 19 - real PG ack-first race serializes End and ack at the same student/thread fence
+  ---
+  duration_ms: 378.6718
+  type: 'test'
+  ...
+# Subtest: changing the signed-in student on the same device cannot receive or ACK the previous student's private reply
+ok 20 - changing the signed-in student on the same device cannot receive or ACK the previous student's private reply
+  ---
+  duration_ms: 323.8207
+  type: 'test'
+  ...
+# Subtest: a claim already in its native transaction finishes before End commits; its late ACK is permanently refused
+ok 21 - a claim already in its native transaction finishes before End commits; its late ACK is permanently refused
+  ---
+  duration_ms: 233.5279
+  type: 'test'
+  ...
+# Subtest: school hard-off racing send is observed after the actual settings-row lock wait
+ok 22 - school hard-off racing send is observed after the actual settings-row lock wait
+  ---
+  duration_ms: 302.8013
+  type: 'test'
+  ...
+# Subtest: school hard-off racing claim is observed after the actual settings-row lock wait
+ok 23 - school hard-off racing claim is observed after the actual settings-row lock wait
+  ---
+  duration_ms: 283.7255
+  type: 'test'
+  ...
+# Subtest: school hard-off racing ack is observed after the actual settings-row lock wait
+ok 24 - school hard-off racing ack is observed after the actual settings-row lock wait
+  ---
+  duration_ms: 209.5145
+  type: 'test'
+  ...
+# [WS-Local] No exact student-binding socket available for teacher-message
+# Subtest: ANNOUNCEMENTS retain their independent exact-student inbox while the private channel is hard-off
+ok 25 - ANNOUNCEMENTS retain their independent exact-student inbox while the private channel is hard-off
+  ---
+  duration_ms: 331.7845
+  type: 'test'
+  ...
+# Subtest: a released and reclaimed scheduled assignment gets a new protected thread and cannot revive its old queued reply
+ok 26 - a released and reclaimed scheduled assignment gets a new protected thread and cannot revive its old queued reply
+  ---
+  duration_ms: 431.3224
+  type: 'test'
+  ...
+# Subtest: a student binding transfer refuses the old device's ACK and reconnects the current generation to the new exact binding
+ok 27 - a student binding transfer refuses the old device's ACK and reconnects the current generation to the new exact binding
+  ---
+  duration_ms: 233.2206
+  type: 'test'
+  ...
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay delivers a current durable attempt, but End rejects its delayed predecessor on the same live binding
+ok 28 - Redis private relay delivers a current durable attempt, but End rejects its delayed predecessor on the same live binding
+  ---
+  duration_ms: 458.7019
+  type: 'test'
+  ...
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay positively delivers a current live durable attempt
+ok 29 - Redis private relay positively delivers a current live durable attempt
+  ---
+  duration_ms: 233.1599
+  type: 'test'
+  ...
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay positively delivers a current scheduled durable attempt
+ok 30 - Redis private relay positively delivers a current scheduled durable attempt
+  ---
+  duration_ms: 192.4664
+  type: 'test'
+  ...
+# [WS-Local] Sent exact student-binding teacher-message
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay refuses delayed school hard-off/on frames while ANNOUNCEMENTS remain independent
+ok 31 - Redis private relay refuses delayed school hard-off/on frames while ANNOUNCEMENTS remain independent
+  ---
+  duration_ms: 340.1994
+  type: 'test'
+  ...
+# [WS-Local] Sent exact student-binding teacher-message
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay refuses delayed activity hard-off/on frames while ANNOUNCEMENTS remain independent
+ok 32 - Redis private relay refuses delayed activity hard-off/on frames while ANNOUNCEMENTS remain independent
+  ---
+  duration_ms: 487.1643
+  type: 'test'
+  ...
+# Subtest: Redis private relay verifies durable message IDs, content, scope, lifecycle and attempted binding rather than trusting its envelope
+    # Subtest: missing lifecycle
+    ok 1 - missing lifecycle
+      ---
+      duration_ms: 164.4825
+      type: 'test'
+      ...
+    # Subtest: forged generation
+    ok 2 - forged generation
+      ---
+      duration_ms: 237.8569
+      type: 'test'
+      ...
+    # Subtest: wrong lifecycle thread
+    ok 3 - wrong lifecycle thread
+      ---
+      duration_ms: 177.0794
+      type: 'test'
+      ...
+    # Subtest: private announcement disguise
+    ok 4 - private announcement disguise
+      ---
+      duration_ms: 221.5367
+      type: 'test'
+      ...
+    # Subtest: unknown message
+    ok 5 - unknown message
+      ---
+      duration_ms: 222.9807
+      type: 'test'
+      ...
+    # Subtest: conflicting message IDs
+    ok 6 - conflicting message IDs
+      ---
+      duration_ms: 252.7277
+      type: 'test'
+      ...
+    # Subtest: wrong student
+    ok 7 - wrong student
+      ---
+      duration_ms: 220.0154
+      type: 'test'
+      ...
+    # Subtest: wrong session
+    ok 8 - wrong session
+      ---
+      duration_ms: 175.2084
+      type: 'test'
+      ...
+    # Subtest: wrong activity
+    ok 9 - wrong activity
+      ---
+      duration_ms: 143.4937
+      type: 'test'
+      ...
+    # Subtest: extra activity
+    ok 10 - extra activity
+      ---
+      duration_ms: 246.452
+      type: 'test'
+      ...
+    # Subtest: changed content
+    ok 11 - changed content
+      ---
+      duration_ms: 180.5057
+      type: 'test'
+      ...
+    # Subtest: missing message ID
+    ok 12 - missing message ID
+      ---
+      duration_ms: 151.5204
+      type: 'test'
+      ...
+    # Subtest: wrong attempted binding
+    ok 13 - wrong attempted binding
+      ---
+      duration_ms: 211.692
+      type: 'test'
+      ...
+    # Subtest: expired attempt
+    ok 14 - expired attempt
+      ---
+      duration_ms: 255.5484
+      type: 'test'
+      ...
+    1..14
+ok 33 - Redis private relay verifies durable message IDs, content, scope, lifecycle and attempted binding rather than trusting its envelope
+  ---
+  duration_ms: 2871.0673
+  type: 'test'
+  ...
+# [WS-Local] Exact student-binding target unavailable for teacher-message
+# [WS-Local] Sent exact student-binding teacher-message
+# [WS-Local] Sent exact student-binding teacher-message
+# Subtest: Redis private relay cannot waive local socket lifecycle capability with an empty envelope requirement
+ok 34 - Redis private relay cannot waive local socket lifecycle capability with an empty envelope requirement
+  ---
+  duration_ms: 235.1273
+  type: 'test'
+  ...
+# Subtest: Redis private relay waits for a racing school hard-off commit before local delivery
+ok 35 - Redis private relay waits for a racing school hard-off commit before local delivery
+  ---
+  duration_ms: 181.9742
+  type: 'test'
+  ...
+# Subtest: Redis private relay rechecks the real expiry after a held final exact-binding SELECT
+ok 36 - Redis private relay rechecks the real expiry after a held final exact-binding SELECT
+  ---
+  duration_ms: 3115.5315
+  type: 'test'
+  ...
+# {"_aws":{"Timestamp":1790966131638,"CloudWatchMetrics":[{"Namespace":"SchoolPilot/Monitoring","Dimensions":[["Environment","Service"]],"Metrics":[{"Name":"MonitorCapturedInterval","Unit":"Count"},{"Name":"MonitorPersistedInterval","Unit":"Count"},{"Name":"MonitorPersistFailedInterval","Unit":"Count"},{"Name":"MonitorDroppedInterval","Unit":"Count"},{"Name":"MonitorAlertAttemptedInterval","Unit":"Count"},{"Name":"MonitorAlertDeliveredInterval","Unit":"Count"},{"Name":"MonitorAlertFailedInterval","Unit":"Count"},{"Name":"MonitorCooldownSuppressedInterval","Unit":"Count"},{"Name":"FatalProcessErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"ApiErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"ClientErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"SchedulerFailureMonitorCapturedInterval","Unit":"Count"},{"Name":"EmailFailureMonitorCapturedInterval","Unit":"Count"},{"Name":"WebsocketErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"SecurityEventMonitorCapturedInterval","Unit":"Count"},{"Name":"DatabaseConnectivityMonitorCapturedInterval","Unit":"Count"},{"Name":"HealthFailureMonitorCapturedInterval","Unit":"Count"},{"Name":"BrowserRuntimeErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"ExtensionRuntimeErrorMonitorCapturedInterval","Unit":"Count"},{"Name":"StaffIdentityIntegrityMonitorCapturedInterval","Unit":"Count"},{"Name":"StaffLifecycleGuardViolationMonitorCapturedInterval","Unit":"Count"}]}]},"Environment":"development","Service":"scheduler-worker","InstanceId":"b3bc3168-768d-48ac-b11b-f71f3f571bae","Release":"1.0.0","MonitorCaptured":0,"MonitorCapturedInterval":0,"MonitorPersisted":0,"MonitorPersistedInterval":0,"MonitorPersistFailed":0,"MonitorPersistFailedInterval":0,"MonitorDropped":0,"MonitorDroppedInterval":0,"MonitorAlertAttempted":0,"MonitorAlertAttemptedInterval":0,"MonitorAlertDelivered":0,"MonitorAlertDeliveredInterval":0,"MonitorAlertFailed":0,"MonitorAlertFailedInterval":0,"MonitorCooldownSuppressed":0,"MonitorCooldownSuppressedInterval":0,"FatalProcessErrorMonitorCapturedInterval":0,"ApiErrorMonitorCapturedInterval":0,"ClientErrorMonitorCapturedInterval":0,"SchedulerFailureMonitorCapturedInterval":0,"EmailFailureMonitorCapturedInterval":0,"WebsocketErrorMonitorCapturedInterval":0,"SecurityEventMonitorCapturedInterval":0,"DatabaseConnectivityMonitorCapturedInterval":0,"HealthFailureMonitorCapturedInterval":0,"BrowserRuntimeErrorMonitorCapturedInterval":0,"ExtensionRuntimeErrorMonitorCapturedInterval":0,"StaffIdentityIntegrityMonitorCapturedInterval":0,"StaffLifecycleGuardViolationMonitorCapturedInterval":0,"ActiveFingerprints":0}
+1..36
+# tests 55
+# suites 0
+# pass 55
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 29774.3334
+REASSIGN OWNED
+DROP ROLE

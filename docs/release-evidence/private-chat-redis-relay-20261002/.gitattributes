@@ -1,0 +1,2 @@
+# Preserve raw terminal bytes and intentional TAP whitespace exactly.
+*.log -text -whitespace
