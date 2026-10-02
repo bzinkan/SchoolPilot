@@ -610,6 +610,11 @@ async function assertCommandEntryPointsUnavailable(page, commandPosts) {
     assert.equal(await page.getByTestId(testId).count(), 0, `${testId} must not be reachable`);
   }
   assert.equal(await page.getByLabel("Quick Classroom Tools").count(), 0, "Teacher FAB must be unavailable");
+  assert.equal(
+    await page.locator('[data-testid^="button-message-student-"]').count(),
+    0,
+    "read-only views must not offer Message on any tile",
+  );
   assert.deepEqual(commandPosts, [], "no command POST may be issued");
 }
 
@@ -646,6 +651,11 @@ async function assertObserveEntryPointsUnavailable(page, commandPosts, studentId
       await page.getByTestId(`button-manage-tabs-${studentId}`).count(),
       0,
       `Observe must not expose tab commands for ${studentId}`,
+    );
+    assert.equal(
+      await page.getByTestId(`button-message-student-${studentId}`).count(),
+      0,
+      `Observe must not offer Message for ${studentId}`,
     );
     const lockToggle = page.getByTestId(`button-lock-toggle-${studentId}`);
     if (await lockToggle.count() > 0) {
@@ -809,10 +819,11 @@ test("ClassPilot distinguishes empty, failed, cached, Observe, and malformed agg
       await cachedEmptyPage.getByTestId(menu.close).click();
       await cachedEmptyPage.getByTestId(menu.dialog).waitFor({ state: "hidden" });
     }
+    // Open URL freezes its recipients when it opens. An empty roster has none,
+    // so it explains that instead of opening a dialog that could send to no one.
     await cachedEmptyPage.getByTestId("button-open-tab").click();
-    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor();
-    await cachedEmptyPage.getByTestId("button-cancel-open-tab").click();
-    await cachedEmptyPage.getByTestId("dialog-open-tab").waitFor({ state: "hidden" });
+    await cachedEmptyPage.getByText("No students in this class can receive this right now.", { exact: true }).waitFor();
+    assert.equal(await cachedEmptyPage.getByTestId("dialog-open-tab").count(), 0, "Open URL must not open without recipients");
     assert.deepEqual(cachedEmptyHarness.commandPosts, [], "opening the menus and viewers must not issue a command");
     cachedEmptyAggregate.setScopedResponse(failure({ requestId: "req-cached-empty" }));
     await cachedEmptyHarness.authenticateWebSocket();
@@ -3292,7 +3303,7 @@ async function chatBrowserFixture(context, options = {}) {
   if (options.clockTime) await page.clock.install({ time: new Date(options.clockTime) });
   const socketConsole = [];
   page.on('console', message => { if (message.text().startsWith('[Dashboard]')) socketConsole.push(message.text()); });
-  const aggregate = aggregateController({ scoped: success([student()]) });
+  const aggregate = aggregateController({ scoped: success(options.students || [student()]) });
   const live = teachingSession();
   const harness = await configureDashboard(page, {
     aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
@@ -3324,18 +3335,25 @@ async function chatBrowserFixture(context, options = {}) {
         : url.pathname.endsWith('/read')
           ? { readAt: new Date().toISOString(), updatedIds: body?.messageIds || [] }
           : { ok: true };
+      // A responder refuses with { status, body }, as the history responder does.
+      if (response?.status >= 400) {
+        await route.fulfill({ status: response.status, json: response.body });
+        return;
+      }
       await route.fulfill({ status: url.pathname.endsWith('/reply') ? 202 : 200, json: response });
       return;
     }
     await route.fallback();
   });
+  if (options.beforeGoto) await options.beforeGoto(page);
   await page.goto(`${baseURL}/classpilot`);
   await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor();
   await waitUntil(() => reads.length > 0, 'The canonical chat history must be requested');
   await harness.authenticateWebSocket();
   if (options.openPanel !== false) {
     await openChatPanel(page);
-    await page.getByTestId('chat-empty').waitFor();
+    // Messages opens on the class roster: every student, before anyone writes.
+    await page.getByTestId(`chat-conversation-${(options.students || [student()])[0].studentId}`).waitFor();
   }
   const refetch = (prefix, wait = true) => page.evaluate(async ({ prefix, wait }) => {
     const { queryClient } = await import('/src/lib/queryClient.js');
@@ -3343,7 +3361,7 @@ async function chatBrowserFixture(context, options = {}) {
     if (wait) await pending;
   }, { prefix, wait });
   const fixture = {
-    page, harness, reads, mutations, refetch, socketConsole,
+    page, harness, aggregate, reads, mutations, refetch, socketConsole,
     setMessages(next) { messages = next; },
     setHistoryResponder(next) { historyResponder = next; },
     setReplyResponder(next) { replyResponder = next; },
@@ -3384,8 +3402,9 @@ async function openChatPanel(page) {
 }
 
 // Chat selectors live here so a panel redesign changes one place, not every test.
-// The drawer is an inbox: the conversation list previews each thread's last
-// line, and the selected thread shows every bubble. Selecting a thread reads it.
+// The drawer's list is the class roster: one line per student with an unread
+// count and no message text (it may be on a projector). Only the selected
+// thread shows bubbles. Selecting a thread reads it.
 async function expectChatUnread(page, count) {
   await page.getByTestId('chat-drawer-unread-count').getByText(String(count), { exact: true }).waitFor();
 }
@@ -3396,8 +3415,15 @@ async function selectConversation(page, studentId = STUDENT_ID) {
   await page.getByTestId(`chat-conversation-${studentId}`).click();
   await page.getByTestId('chat-thread').waitFor();
 }
-function listText(page, text) {
-  return page.getByTestId('chat-conversations').getByText(text, { exact: true });
+// A student's roster row: its unread count, and whether it lists a thread.
+function rowUnread(page, studentId = STUDENT_ID) {
+  return page.getByTestId(`chat-conversation-unread-${studentId}`);
+}
+async function expectRowUnread(page, count, studentId = STUDENT_ID) {
+  await rowUnread(page, studentId).getByText(String(count), { exact: true }).waitFor();
+}
+function threadListed(page, studentId = STUDENT_ID) {
+  return page.locator(`[data-testid="chat-conversation-${studentId}"][data-has-thread]`);
 }
 function threadText(page, text) {
   return page.getByTestId('chat-thread').getByText(text, { exact: true });
@@ -3410,8 +3436,11 @@ async function endChat(page, studentId = STUDENT_ID) {
   await page.getByTestId('chat-thread-menu').click();
   await page.getByTestId('chat-thread-end').click();
 }
-async function expectChatEmpty(page) {
-  await page.getByTestId('chat-empty').waitFor();
+// A cleared or ended thread leaves the drawer: nothing is open, and the
+// student's roster row lists no conversation.
+async function expectThreadGone(page, studentId = STUDENT_ID) {
+  await page.getByTestId('chat-no-selection').waitFor();
+  await page.locator(`[data-testid="chat-conversation-${studentId}"]:not([data-has-thread])`).waitFor();
 }
 
 test('chat recovery: a live student reply survives roster rehydration with unread and read state intact', { timeout: 60_000 }, async context => {
@@ -3419,24 +3448,25 @@ test('chat recovery: a live student reply survives roster rehydration with unrea
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   await expectChatUnread(page, 1);
   await chatEvidence(page, 'realtime-visible', { visible: true, canonicalHistory: 'empty', messageCount: 1 });
   await fixture.updateRoster({ refetchAggregate: false });
-  const retained = await listText(page, CHAT_MESSAGE_TEXT).count() === 1;
+  const retained = await threadListed(page).count() === 1 && await rowUnread(page).count() === 1
+    && await rowUnread(page).innerText() === '1';
   await chatEvidence(page, 'after-roster-update', { retained, canonicalHistory: 'empty', studentTelemetryChanged: true });
   if (!retained && process.env.CLASSPILOT_CHAT_BASELINE_SOURCE) {
     fixture.setMessages([row]);
     await page.reload();
     await openChatPanel(page);
-    await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+    await threadListed(page).waitFor();
     await chatEvidence(page, 'baseline-reload-restored', { restored: true, canonicalHistory: 'committed reply', noStudentResend: true });
   }
   assert.equal(retained, true, 'A roster update must not replace a live student reply with the older cached empty history');
   await expectChatUnread(page, 1);
   await harness.sendWebSocketMessage(studentChatEvent(row));
   await fixture.updateRoster();
-  assert.equal(await listText(page, CHAT_MESSAGE_TEXT).count(), 1, 'Duplicate WebSocket delivery must not duplicate a reply');
+  assert.equal(await rowUnread(page).innerText(), '1', 'Duplicate WebSocket delivery must not duplicate a reply');
   await expectChatUnread(page, 1);
   await selectConversation(page);
   await expectChatUnread(page, 0);
@@ -3468,7 +3498,7 @@ test('chat safety net: a message that only reaches server history appears while 
   fixture.setMessages([row]);
   await page.clock.fastForward(16_000);
   await waitUntil(() => fixture.reads.length > readsBefore, 'A connected dashboard must re-read chat history on its own interval');
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   await expectChatUnread(page, 1);
   await selectConversation(page);
   const stamp = page.getByTestId('chat-message-time').first();
@@ -3492,17 +3522,21 @@ test('chat quick wins: Clear thread hides the conversation locally and never end
   await harness.sendWebSocketMessage(studentChatEvent(row));
   await selectConversation(page);
   await page.getByTestId('chat-thread-clear').click();
-  await expectChatEmpty(page);
+  await expectThreadGone(page);
   // Clearing is local: canonical history still holds the row and a re-read must not resurrect it.
   fixture.setMessages([row]);
   await fixture.refetch('/api/teacher/messages');
   await chatHistorySettled(page);
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'A cleared thread stays hidden after a history re-read');
+  assert.equal(await threadListed(page).count(), 0, 'A cleared thread stays hidden after a history re-read');
   assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/close-chat').length, 0, 'Clearing never tells the student device the chat ended');
   const next = storedChatMessage({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', content: 'Synthetic follow-up after clearing' });
   await harness.sendWebSocketMessage(studentChatEvent(next));
-  await listText(page, next.content).waitFor();
+  await expectRowUnread(page, 1);
   await expectChatUnread(page, 1);
+  // Reopened, the thread holds only the follow-up: the cleared message stays hidden.
+  await selectConversation(page);
+  await threadText(page, next.content).waitFor();
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 0);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3541,35 +3575,34 @@ test('chat quick wins: the student tile shows an unread count that opens that th
 });
 
 const SECOND_STUDENT_ID = '99999999-9999-4999-8999-999999999999';
+const THIRD_STUDENT_ID = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+const FOURTH_STUDENT_ID = 'efefefef-efef-4fef-8fef-efefefefefef';
+const ROSTER_CLOCK = '2026-09-18T14:05:00.000Z';
 
-test('chat drawer: conversations list unread first, opening one reads it, and the FAB badge tracks the total', { timeout: 60_000 }, async context => {
-  const fixture = await chatBrowserFixture(context, { openPanel: false });
-  const { page, harness } = fixture;
-  const adaRow = storedChatMessage({ createdAt: '2026-09-18T14:00:00.000Z' });
-  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question', createdAt: '2026-09-18T14:02:00.000Z' });
-  await harness.sendWebSocketMessage(studentChatEvent(adaRow));
-  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student', studentEmail: 'ben@example.edu' } });
-  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
-  await page.getByTestId('chat-open').getByText('2', { exact: true }).waitFor();
-  await openChatPanel(page);
-  await expectChatUnread(page, 2);
-  const rows = page.getByTestId('chat-conversations').locator('[data-testid^="chat-conversation-"]:not([data-testid*="unread"])');
-  assert.deepEqual(await rows.evaluateAll(nodes => nodes.map(node => node.dataset.testid)),
-    [`chat-conversation-${SECOND_STUDENT_ID}`, `chat-conversation-${STUDENT_ID}`], 'Both unread: newest activity first');
-  await page.getByTestId(`chat-conversation-unread-${STUDENT_ID}`).getByText('1', { exact: true }).waitFor();
-  await selectConversation(page);
-  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
-  await expectChatUnread(page, 1);
-  await page.getByTestId(`chat-conversation-unread-${STUDENT_ID}`).waitFor({ state: 'hidden' });
-  await page.getByTestId(`chat-conversation-unread-${SECOND_STUDENT_ID}`).getByText('1', { exact: true }).waitFor();
-  assert.deepEqual(await rows.evaluateAll(nodes => nodes.map(node => node.dataset.testid)),
-    [`chat-conversation-${SECOND_STUDENT_ID}`, `chat-conversation-${STUDENT_ID}`], 'The unread thread stays on top of the read one');
-  await page.keyboard.press('Escape');
-  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
-  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
-  await page.getByTestId('chat-open').getByText('1', { exact: true }).waitFor();
-  assert.deepEqual(harness.pageErrors, []);
-});
+// A class with a student in each Messages roster state: Ada reports now, Ben
+// is signed out, Dee is silent, and Cy is with another staff member. The
+// roster's own browser tests (grid order, presence, "need reply", Find, one
+// pane) run in classpilot-messages-roster-browser.test.mjs, release shard 2.
+function rosterClass() {
+  return [
+    student({ lastSeenAt: ROSTER_CLOCK, realtimeObservedAt: ROSTER_CLOCK, enforcementHealth: 'synced', fabSyncPending: false,
+      classroomState: { schemaVersion: 1, revision: 1, teachingSessionId: OWN_SESSION_ID, supervisionContextId: null } }),
+    student({ studentId: THIRD_STUDENT_ID, studentName: 'Cy Zed', studentEmail: 'cy@example.edu', realtimeBinding: 'binding-c',
+      lastSeenAt: ROSTER_CLOCK, realtimeObservedAt: ROSTER_CLOCK, supervisionState: 'temporary_coverage',
+      supervisionContext: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', type: 'supervision', name: 'Study Hall',
+        assignedStaff: { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', displayName: 'Morgan Monitor' } } }),
+    student({ studentId: SECOND_STUDENT_ID, studentName: 'Ben Adams', studentEmail: 'ben@example.edu', realtimeBinding: 'binding-b',
+      status: 'offline', loginState: 'not_logged_in', isLoggedIn: false }),
+    student({ studentId: FOURTH_STUDENT_ID, studentName: 'Dee Vance', studentEmail: 'dee@example.edu', realtimeBinding: 'binding-d' }),
+  ];
+}
+
+// Long enough for a click's state update, effects and a focus frame to land.
+function afterFrames(page) {
+  return page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }));
+}
 
 test('class tools: a real authority change clears drafts and selection before replies in the new classroom', { timeout: 60_000 }, async context => {
   const fixture = await chatBrowserFixture(context);
@@ -3588,6 +3621,7 @@ test('class tools: a real authority change clears drafts and selection before re
   await openChatPanel(page);
   await page.getByTestId('chat-no-selection').waitFor();
   assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'The superseded thread is gone from the open drawer');
+  assert.equal(await threadListed(page).count(), 0, 'and from the roster');
   const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
   await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
   await selectConversation(page);
@@ -3604,12 +3638,24 @@ test('class tools: a real authority change clears drafts and selection before re
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('chat drawer: a pending reply disables only its own composer', { timeout: 60_000 }, async context => {
-  const fixture = await chatBrowserFixture(context);
+test('chat drawer: a pending reply disables only its own composer, and a thread off the roster opens to read', { timeout: 60_000 }, async context => {
+  const ben = student({ studentId: SECOND_STUDENT_ID, studentName: 'Ben Student', studentEmail: 'ben@example.edu', realtimeBinding: 'binding-b' });
+  const fixture = await chatBrowserFixture(context, { students: [student(), ben] });
   const { page, harness } = fixture;
   const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question' });
+  // Cy is no longer on this class roster, so the server would refuse a reply.
+  const cyRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', studentId: THIRD_STUDENT_ID, content: 'Synthetic question from a student who left' });
   await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
   await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student' } });
+  await harness.sendWebSocketMessage({ ...studentChatEvent(cyRow), data: { ...studentChatEvent(cyRow).data, studentName: 'Cy Zed', studentEmail: 'cy@example.edu' } });
+  // Wait for the messages: the roster rows exist before anyone writes, and the
+  // reply below must answer a message already in Ada's thread.
+  await expectRowUnread(page, 1);
+  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
+  // Cy's thread is listed under Other conversations and needs no reply here.
+  await page.getByRole('list', { name: /other conversations/i }).getByTestId(`chat-conversation-${THIRD_STUDENT_ID}`).waitFor();
+  assert.equal(await page.getByRole('list', { name: 'Class roster' }).getByTestId(`chat-conversation-${THIRD_STUDENT_ID}`).count(), 0);
+  await page.getByTestId('chat-need-reply').getByText('2 need reply', { exact: true }).waitFor();
   let finishReply;
   const heldReply = new Promise(resolve => { finishReply = resolve; });
   context.after(() => finishReply());
@@ -3622,6 +3668,10 @@ test('chat drawer: a pending reply disables only its own composer', { timeout: 6
   assert.equal(await replyInput(page).isDisabled(), true, 'The pending thread cannot double-send');
   await selectConversation(page, SECOND_STUDENT_ID);
   assert.equal(await replyInput(page).isDisabled(), false, 'Another thread stays usable while a reply is in flight');
+  await selectConversation(page, THIRD_STUDENT_ID);
+  await threadText(page, cyRow.content).waitFor();
+  assert.equal(await page.getByTestId('chat-thread-read-only').innerText(), 'Cy Zed isn’t in this class right now. You can read this conversation but not reply.');
+  assert.equal(await replyInput(page).count(), 0, 'No reply box for a student off the roster');
   await selectConversation(page);
   assert.equal(await replyInput(page).isDisabled(), true);
   finishReply();
@@ -3647,10 +3697,261 @@ test('chat drawer: it is non-modal, so a tile badge switches threads without clo
   assert.deepEqual(harness.pageErrors, []);
 });
 
+const FIRST_MESSAGE_TEXT = 'Synthetic first message from the teacher';
+
+async function startConversationFromTile(page, studentId = STUDENT_ID) {
+  await page.getByTestId(`button-message-student-${studentId}`).click();
+  const thread = page.getByTestId('chat-thread');
+  await thread.waitFor();
+  assert.equal(await thread.getAttribute('data-student-id'), studentId);
+  await page.getByTestId('chat-thread-empty').waitFor();
+}
+
+test('chat start: a tile Message button opens an empty thread with the reply box focused, and the first message names the student', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  // The fixture student has not reported for weeks; an offline student can still be messaged.
+  await startConversationFromTile(page);
+  await page.getByTestId('chat-thread').getByText('Ada Student', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-thread-clear').count(), 0, 'An empty thread has nothing to clear');
+  assert.equal(await page.getByTestId('chat-thread-menu').count(), 0, 'An empty thread has no chat to end');
+  assert.equal(await page.getByTestId('chat-ack').count(), 0, '"Got it" waits until the student has written');
+  for (const answer of ['yes', 'one-moment', 'not-now']) {
+    assert.equal(await page.getByTestId(`chat-canned-${answer}`).count(), 0, `"${answer}" answers a student, so it is no opener`);
+  }
+  await page.getByTestId('chat-canned-come-see-me').waitFor();
+  await page.waitForFunction(() => document.activeElement?.getAttribute('data-testid') === 'chat-composer-input');
+  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Message Ada Student', 'Focus lands in a box named for its recipient');
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: FIRST_MESSAGE_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
+  await page.keyboard.type(FIRST_MESSAGE_TEXT);
+  await page.keyboard.press('Enter');
+  await threadText(page, FIRST_MESSAGE_TEXT).waitFor();
+  const replies = fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply');
+  assert.equal(replies.length, 1, 'Exactly one message is posted');
+  assert.equal(replies[0].body.studentId, STUDENT_ID);
+  assert.equal(replies[0].body.message, FIRST_MESSAGE_TEXT);
+  assert.equal(replies[0].body.sessionId, OWN_SESSION_ID);
+  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).getByText('Ada Student', { exact: true }).waitFor();
+  // The open thread is now the derived conversation, not the empty one the
+  // roster named: it still carries the student's name, never Unknown.
+  assert.equal(await page.getByTestId('chat-thread').getByText('Unknown', { exact: true }).count(), 0, 'A thread the teacher started is never Unknown');
+  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Message Ada Student');
+  await page.getByTestId('chat-thread-clear').waitFor();
+  await page.getByText('Message sent', { exact: true }).first().waitFor();
+  await page.getByText('Waiting for the device to confirm.', { exact: true }).first().waitFor();
+  // A sent message clears the draft once the POST settles.
+  await page.waitForFunction(() => document.querySelector('[data-testid="chat-composer-input"]')?.value === '');
+  // Once the student writes back, the box replies and every quick reply fits.
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await page.getByTestId('chat-ack').waitFor();
+  await page.getByTestId('chat-canned-yes').waitFor();
+  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Reply to Ada Student');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: a refused message says why in plain words and keeps the draft', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  fixture.setReplyResponder(async () => ({ status: 409, body: { error: 'Student classroom authority changed', code: 'chat_authority_stale' } }));
+  await replyInput(page).fill(FIRST_MESSAGE_TEXT);
+  await replyInput(page).press('Enter');
+  await page.getByText('Ada Student is with another teacher right now.', { exact: true }).waitFor();
+  await page.getByText('Message not sent', { exact: true }).first().waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  assert.equal(await replyInput(page).inputValue(), FIRST_MESSAGE_TEXT, 'The draft survives a refusal');
+  assert.equal(await page.getByText('Request failed with status code 409', { exact: true }).count(), 0, 'No transport jargon');
+  // A codeless 404 is either an ended class or a student off the roster.
+  fixture.setReplyResponder(async () => ({ status: 404, body: { error: 'Session not found' } }));
+  await replyInput(page).press('Enter');
+  await page.getByText('Ada Student isn’t in this class, or the class has ended. Refresh the page to check.', { exact: true }).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  assert.equal(await replyInput(page).inputValue(), FIRST_MESSAGE_TEXT);
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 2, 'One POST per send, never a retry');
+  assert.equal(await page.getByTestId('chat-thread-empty').count(), 1, 'Nothing refused lands in the thread');
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: a message to a signed-out student waits until they sign in, then reads Delivered', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, {
+    openPanel: false, students: [student({ loginState: 'not_logged_in', isLoggedIn: false, status: 'offline' })],
+  });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  // Before anything is sent, the thread note explains the wait: signing in, not a reconnect.
+  const note = page.getByTestId('chat-thread-offline-note');
+  await note.getByText('Messages wait until the student signs in during this class.', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).evaluate(node => node.textContent.replace(/\s+/g, ' ').trim()),
+    'Ada Student, Not signed in', 'The roster row says so too');
+  const reply = storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: FIRST_MESSAGE_TEXT, deliveryStatus: 'sent' });
+  fixture.setReplyResponder(async () => ({ message: reply, queued: true }));
+  await replyInput(page).fill(FIRST_MESSAGE_TEXT);
+  await replyInput(page).press('Enter');
+  const status = page.getByTestId(`chat-delivery-${CHAT_REPLY_ID}`);
+  await status.getByText('Waits until Ada Student signs in', { exact: true }).waitFor();
+  // One clear message: once the bubble says it waits, the note does not repeat it.
+  await note.waitFor({ state: 'detached' });
+  await page.getByText('It waits until Ada Student signs in.', { exact: true }).first().waitFor();
+  await harness.sendWebSocketMessage({
+    type: 'chat-message-delivery', schoolId: SCHOOL_ID, sessionId: OWN_SESSION_ID, messageId: CHAT_REPLY_ID, studentId: STUDENT_ID, deliveryStatus: 'delivered',
+  });
+  await status.getByText('Delivered', { exact: true }).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: with messaging turned off for the class or the school a tile offers no Message, and its unread badge still opens the thread to read', { timeout: 60_000 }, async context => {
+  // The default fixture settings carry no school switch, so the other chat-start
+  // tests already cover Message with schoolStudentMessagingEnabled missing.
+  let switches = { sessionStudentMessagingEnabled: false };
+  // Ben has no thread: his roster row exists only while a conversation can start.
+  const ben = student({ studentId: SECOND_STUDENT_ID, studentName: 'Ben Student', studentEmail: 'ben@example.edu', realtimeBinding: 'binding-b' });
+  const fixture = await chatBrowserFixture(context, {
+    openPanel: false, students: [student(), ben],
+    beforeGoto: page => page.route('**/api/settings', route => route.fulfill({ json: { settings: {
+      activeSessionId: OWN_SESSION_ID, handRaisingEnabled: true, studentMessagingEnabled: true,
+      sessionFabRevision: 1, blockedDomains: [], ...switches,
+    } } })),
+  });
+  const { page, harness } = fixture;
+  await openChatPanel(page);
+  await page.getByTestId('chat-off-banner').waitFor();
+  // No roster to start from: the list holds existing threads only.
+  await page.getByTestId('chat-empty').getByText('No messages from students', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).count(), 0, 'No roster rows while messaging is off');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0, 'No new conversation while messaging is off');
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  const badge = page.getByTestId(`chat-unread-${STUDENT_ID}`);
+  await badge.getByText('1', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0, 'Unread messages open through the badge; the tile still starts nothing');
+  await badge.click();
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true, 'The thread opens to read, but the reply box stays off');
+  assert.equal(await threadListed(page).count(), 1, 'The existing thread is listed');
+  assert.equal(await page.getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).count(), 0, 'Nobody without a thread is listed');
+  switches = { sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: true };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  // Back on, the list is the whole class roster again.
+  await page.getByRole('list', { name: 'Class roster', exact: true }).getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor();
+  // The school-wide switch outranks the class switch: a class session's reply
+  // route never checks it, and the device would show no chat.
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: false };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  // As with the class switch, the roster goes: existing threads stay listed, to read.
+  await page.getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByRole('list', { name: 'Conversations', exact: true }).getByTestId(`chat-conversation-${STUDENT_ID}`).waitFor();
+  // That thread was read, so a new message brings the badge back: the tile's
+  // own gate, not a missing badge, must keep Message away.
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
+  const unread = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', content: 'Synthetic question while school messaging is off' });
+  await harness.sendWebSocketMessage(studentChatEvent(unread));
+  await badge.getByText('1', { exact: true }).waitFor();
+  assert.equal(await page.locator('[data-testid^="button-message-student-"]').count(), 0, 'No tile offers Message while the school switch is off');
+  await badge.click();
+  await threadText(page, unread.content).waitFor();
+  await page.getByTestId('chat-school-off-banner')
+    .getByText('Messaging is turned off for your school. Students do not see a chat.', { exact: true }).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true, 'The thread opens to read, but the reply box is off');
+  assert.equal(await page.getByTestId('chat-messaging-switch').count(), 0, 'Nothing to pause while nothing can be sent');
+  // A new thread is listed to read, and nothing "needs reply" that cannot be sent.
+  const benRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question' });
+  await harness.sendWebSocketMessage({ ...studentChatEvent(benRow), data: { ...studentChatEvent(benRow).data, studentName: 'Ben Student', studentEmail: 'ben@example.edu' } });
+  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
+  assert.equal(await page.getByTestId('chat-need-reply').count(), 0, 'No "need reply" while the school keeps messaging off');
+  await page.getByTestId('chat-drawer-menu').click();
+  await page.getByTestId('chat-channel-toggle').getByText('Turn off messaging for this class', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByTestId('chat-channel-toggle').waitFor({ state: 'detached' });
+  // With both switches off, the school banner stands in for the class banner.
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: false, schoolStudentMessagingEnabled: false };
+  await fixture.refetch('/api/settings');
+  await page.getByTestId('chat-drawer-menu').click();
+  await page.getByTestId('chat-channel-toggle').getByText('Turn on messaging for this class', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-school-off-banner').count(), 1);
+  assert.equal(await page.getByTestId('chat-off-banner').count(), 0, 'One banner: the school switch outranks the class switch');
+  // Turning the class switch back on cannot open a chat the school keeps off.
+  await page.route(`**/api/classpilot/teaching-sessions/${OWN_SESSION_ID}/settings`, route => route.fulfill({ json: {
+    settings: { sessionId: OWN_SESSION_ID, supervisionContextId: null, chatEnabled: true, raiseHandEnabled: true, chatPaused: false, lifecycleRevision: 2 },
+    state: { teachingSessionId: OWN_SESSION_ID, messagingEnabled: false, handRaisingEnabled: true, messagesPaused: false, pauseReason: null, lifecycleRevision: 2 },
+  } }));
+  switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: false };
+  await page.getByTestId('chat-channel-toggle').click();
+  await page.getByText('Students still see no chat while messaging is turned off for your school.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Students can now send messages', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('list', { name: 'Class roster', exact: true }).count(), 0, 'Nor does the roster come back');
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: each open request focuses the reply box once, so a reply box that appears later never takes focus for it', { timeout: 60_000 }, async context => {
+  const [ada, cy] = rosterClass();
+  const fixture = await chatBrowserFixture(context, { openPanel: false, students: [ada, cy] });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  await waitForFocus(page, 'chat-composer-input');
+  // Clearing the thread unmounts its reply box. Choosing the student on the
+  // roster is a new request, so the new reply box takes focus.
+  await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await page.getByTestId('chat-thread-clear').click();
+  await expectThreadGone(page);
+  const next = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', content: 'Synthetic question after clearing' });
+  await harness.sendWebSocketMessage(studentChatEvent(next));
+  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).click();
+  await threadText(page, next.content).waitFor();
+  await waitForFocus(page, 'chat-composer-input');
+  // A read-only thread (Cy is with another staff member) spends its request
+  // with no reply box. When Cy is back in this class the reply box appears,
+  // and focus stays where the teacher put it.
+  const cyRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', studentId: THIRD_STUDENT_ID, content: 'Synthetic question before coverage' });
+  await harness.sendWebSocketMessage(studentChatEvent(cyRow));
+  await page.getByTestId(`chat-conversation-${THIRD_STUDENT_ID}`).click();
+  await page.getByTestId('chat-thread-read-only').waitFor();
+  await page.getByTestId('chat-roster-find').focus();
+  fixture.aggregate.setScopedResponse(success([ada, student({ ...cy, supervisionState: undefined, supervisionContext: undefined })]));
+  await fixture.refetch('/api/students-aggregated');
+  await page.getByTestId('chat-thread-read-only').waitFor({ state: 'detached' });
+  await replyInput(page).waitFor();
+  await afterFrames(page);
+  assert.equal(await focusedTestId(page), 'chat-roster-find', 'The spent request does not pull focus into the new reply box');
+  // A new tile request focuses the reply box again.
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).click();
+  await waitForFocus(page, 'chat-composer-input');
+  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), STUDENT_ID);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('chat start: while the class chat is unavailable a tile offers no Message, and an open empty thread closes', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { openPanel: false });
+  const { page, harness } = fixture;
+  await startConversationFromTile(page);
+  fixture.setHistoryResponder(async () => ({ status: 403, body: { error: 'Access denied' } }));
+  await fixture.refetch('/api/teacher/messages');
+  await chatHistorySettled(page);
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByTestId('chat-thread').waitFor({ state: 'detached' });
+  await page.getByTestId('chat-no-selection').waitFor();
+  assert.equal(await replyInput(page).count(), 0, 'No reply box is offered when nothing can be sent');
+  // Nor a roster to start from: both panes say why instead.
+  await page.getByTestId('chat-empty').getByText('Conversations aren’t available in this class right now.', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('chat-no-selection').innerText(), 'Conversations aren’t available in this class right now.');
+  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).count(), 0);
+  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 0);
+  assert.deepEqual(harness.pageErrors, []);
+});
+
 test('chat trust signals: Sent, Delivered, Seen never regress on a stray delivered or a history re-read', { timeout: 60_000 }, async context => {
   const fixture = await chatBrowserFixture(context);
   const { page, harness } = fixture;
   await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
+  // The roster row is there before anyone writes: wait for the message, so this is a reply.
+  await expectRowUnread(page, 1);
   await selectConversation(page);
   await replyInput(page).fill(CHAT_REPLY_TEXT);
   await replyInput(page).press('Enter');
@@ -3801,7 +4102,7 @@ test('chat trust signals: the Messages tab reads the scoped transcript read-only
   assert.deepEqual(harness.pageErrors, []);
 });
 
-test('chat trust signals: the drawer pause switch writes chatPaused and a testing pause shows as locked with no settings request', { timeout: 90_000 }, async context => {
+test('chat trust signals: the drawer pause switch writes chatPaused, a testing pause shows as locked with no settings request, and the school-wide switch turns a scheduled class\'s messaging off', { timeout: 90_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
   const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
   await page.clock.install({ time: new Date('2026-09-15T13:11:30Z') });
@@ -3843,6 +4144,9 @@ test('chat trust signals: the drawer pause switch writes chatPaused and a testin
   assert.equal(await page.getByTestId('chat-pause-banner').getAttribute('data-pause-reason'), 'teacher');
   await page.getByTestId('chat-pause-label').getByText('Messages: Paused', { exact: true }).waitFor();
   assert.equal(await page.getByTestId('chat-messaging-switch').isDisabled(), false, 'A teacher pause can be resumed');
+  // A pause leaves the roster as it was: the teacher can still start a conversation.
+  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).getAttribute('aria-disabled'), null);
+  await page.getByTestId('chat-roster-find').waitFor();
   await page.keyboard.press('Escape');
   await openToolbarByKeyboard(page);
   await page.getByTestId('chat-open').getByText('Messages', { exact: true }).waitFor();
@@ -3864,6 +4168,21 @@ test('chat trust signals: the drawer pause switch writes chatPaused and a testin
   await page.getByTestId('chat-drawer-menu').click();
   await page.getByTestId('chat-channel-toggle').getByText('Turn off messaging for this class', { exact: true }).waitFor();
   await page.keyboard.press('Escape');
+  // A scheduled class follows the school-wide switch too; its reply route
+  // already refuses while that switch is off.
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor();
+  await page.route('**/api/settings', route => route.fulfill({ json: { settings: { blockedDomains: [], schoolStudentMessagingEnabled: false } } }));
+  await page.evaluate(async () => {
+    const { queryClient } = await import('/src/lib/queryClient.js');
+    await queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
+  });
+  await page.getByTestId('chat-school-off-banner').waitFor();
+  await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  assert.equal(await page.getByTestId('chat-messaging-switch').count(), 0, 'Nothing to pause while the school keeps messaging off');
+  assert.equal(await page.getByTestId('chat-pause-banner').count(), 0);
+  // Unlike a pause, the school switch takes the roster away: no thread exists to read.
+  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).waitFor({ state: 'detached' });
+  await page.getByTestId('chat-empty').getByText('No messages from students', { exact: true }).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3893,7 +4212,7 @@ test('chat recovery: an older in-flight history cannot erase realtime messages, 
   await waitUntil(() => fixture.reads.length > previousReads, 'The older history request must start before the live message');
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   await selectConversation(page);
   await replyInput(page).fill(CHAT_REPLY_TEXT);
   await replyInput(page).press('Enter');
@@ -3920,7 +4239,7 @@ test('chat recovery: closing a thread survives stale history, duplicate events a
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   await selectConversation(page);
   let finishReply;
   const heldReply = new Promise(resolve => { finishReply = resolve; });
@@ -3931,24 +4250,27 @@ test('chat recovery: closing a thread survives stale history, duplicate events a
   await replyInput(page).press('Enter');
   await waitUntil(() => fixture.mutations.some(row => row.pathname === '/api/teacher/reply'), 'The reply POST must be pending before close');
   await endChat(page);
-  await expectChatEmpty(page);
+  await expectThreadGone(page);
   fixture.setMessages([row, reply]);
   await fixture.refetch('/api/teacher/messages');
   await harness.sendWebSocketMessage(studentChatEvent(row));
   await fixture.updateRoster();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.equal(await threadListed(page).count(), 0, 'Stale history and a duplicate event cannot reopen a closed thread');
   const replyResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/teacher/reply');
   finishReply();
   await replyResponse;
   const newRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', content: 'A new synthetic question after close' });
   await harness.sendWebSocketMessage(studentChatEvent(newRow));
-  await listText(page, newRow.content).waitFor();
+  await expectRowUnread(page, 1);
   await fixture.updateRoster();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'Closing must keep the old student item hidden');
-  assert.equal(await page.getByText(CHAT_REPLY_TEXT, { exact: true }).count(), 0, 'A reply submitted before close cannot reappear in a newly opened thread');
   await expectChatUnread(page, 1);
   assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/close-chat').length, 1);
   assert.equal(fixture.mutations.filter(row => row.pathname === '/api/teacher/reply').length, 1);
+  // Reopened, the thread holds only the new question.
+  await selectConversation(page);
+  await threadText(page, newRow.content).waitFor();
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 0, 'Closing must keep the old student item hidden');
+  assert.equal(await threadText(page, CHAT_REPLY_TEXT).count(), 0, 'A reply submitted before close cannot reappear in a newly opened thread');
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3957,7 +4279,7 @@ test('chat recovery: session changes fence old history and realtime data', { tim
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   let finishOldHistory;
   const heldHistory = new Promise(resolve => { finishOldHistory = resolve; });
   context.after(() => finishOldHistory());
@@ -3980,11 +4302,13 @@ test('chat recovery: session changes fence old history and realtime data', { tim
   finishOldHistory();
   await chatHistorySettled(page);
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0, 'A superseded session cannot retain or restore message content');
+  assert.equal(await threadListed(page).count(), 0, 'A superseded session cannot retain or restore message content');
   const replacementRow = storedChatMessage({ id: 'ffffffff-ffff-4fff-8fff-ffffffffffff', sessionId: OBSERVED_SESSION_ID, content: 'Synthetic replacement classroom reply' });
   await harness.sendWebSocketMessage(studentChatEvent(replacementRow));
-  await listText(page, replacementRow.content).waitFor();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  await expectRowUnread(page, 1);
+  await selectConversation(page);
+  await threadText(page, replacementRow.content).waitFor();
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 0, 'The replacement thread holds only its own classroom');
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -3993,11 +4317,14 @@ test('chat recovery: a global authorization denial clears and latches chat until
   const { page, harness } = fixture;
   const row = storedChatMessage();
   await harness.sendWebSocketMessage(studentChatEvent(row));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   fixture.setHistoryResponder(async () => ({ status: 403, body: { error: 'Access denied' } }));
   await fixture.refetch('/api/teacher/messages');
   await chatHistorySettled(page);
-  await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).waitFor({ state: 'hidden' });
+  // Denied: the thread is gone, and so is the roster that would start a new one.
+  const unavailable = page.getByTestId('chat-empty').getByText('Conversations aren’t available in this class right now.', { exact: true });
+  await unavailable.waitFor();
+  assert.equal(await threadListed(page).count(), 0);
   fixture.setHistoryResponder(null);
   fixture.setMessages([row]);
   const readsAfterDenial = fixture.reads.length;
@@ -4009,7 +4336,8 @@ test('chat recovery: a global authorization denial clears and latches chat until
     window.dispatchEvent(new Event('online'));
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.equal(await threadListed(page).count(), 0);
+  assert.equal(await unavailable.isVisible(), true, 'The denial stays latched');
   assert.equal(fixture.reads.length, readsAfterDenial, 'Cache invalidation and browser events do not re-arm denied authority');
   const replacement = teachingSession({ id: OBSERVED_SESSION_ID });
   const replacementRow = storedChatMessage({ sessionId: OBSERVED_SESSION_ID });
@@ -4019,7 +4347,9 @@ test('chat recovery: a global authorization denial clears and latches chat until
   await fixture.refetch('/api/sessions/active');
   await waitUntil(() => fixture.reads.some(read => read.sessionId === OBSERVED_SESSION_ID), 'New authoritative session re-arms its history read');
   await openChatPanel(page);
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await threadListed(page).waitFor();
+  await selectConversation(page);
+  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -4029,9 +4359,9 @@ test('chat recovery: a fast browser clock cannot hide a new reply recovered from
   const { page, harness } = fixture;
   const oldRow = storedChatMessage({ createdAt: new Date(serverNow).toISOString() });
   await harness.sendWebSocketMessage(studentChatEvent(oldRow));
-  await listText(page, CHAT_MESSAGE_TEXT).waitFor();
+  await expectRowUnread(page, 1);
   await endChat(page);
-  await expectChatEmpty(page);
+  await expectThreadGone(page);
   const missedRow = storedChatMessage({
     id: 'abababab-abab-4bab-8bab-abababababab', content: 'Synthetic reply missed during disconnect',
     createdAt: new Date(serverNow + 60_000).toISOString(),
@@ -4041,15 +4371,17 @@ test('chat recovery: a fast browser clock cannot hide a new reply recovered from
   // No student-message event delivers this row. Only a fresh server snapshot
   // can recover it, independently of the browser's wall-clock skew.
   await fixture.refetch('/api/teacher/messages');
-  await listText(page, missedRow.content).waitFor();
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  await threadListed(page).waitFor();
+  await selectConversation(page);
+  await threadText(page, missedRow.content).waitFor();
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 0);
   const previousReads = fixture.reads.length;
   await harness.disconnectWebSocket();
   await harness.authenticateWebSocket();
   await waitUntil(() => fixture.reads.length > previousReads, 'Reconnect reconciles server history after close');
   await chatHistorySettled(page);
-  assert.equal(await listText(page, missedRow.content).count(), 1);
-  assert.equal(await page.getByText(CHAT_MESSAGE_TEXT, { exact: true }).count(), 0);
+  assert.equal(await threadText(page, missedRow.content).count(), 1);
+  assert.equal(await threadText(page, CHAT_MESSAGE_TEXT).count(), 0);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -4094,9 +4426,11 @@ test('chat recovery: reconnect fetches history newer than an empty request begun
     assert.fail(`${error.message}: ${JSON.stringify({ sockets: harness.websocketConnections, console: fixture.socketConsole, queryState, pageErrors: harness.pageErrors })}`);
   }
   await chatHistorySettled(page);
-  await listText(page, offlineRow.content).waitFor();
-  assert.equal(await listText(page, offlineRow.content).count(), 1);
+  await threadListed(page).waitFor();
   assert.deepEqual(fixture.mutations, [], 'Recovery only reads history; no message is resent');
+  await selectConversation(page);
+  await threadText(page, offlineRow.content).waitFor();
+  assert.equal(await threadText(page, offlineRow.content).count(), 1);
   assert.deepEqual(harness.pageErrors, []);
 });
 
@@ -4967,6 +5301,264 @@ test('scheduled classroom tools retain passive previews without Live View and cl
   assert.deepEqual(harness.pageErrors, []);
 });
 
+// Send Message, Attention, Timer, Poll and Open URL freeze their recipients
+// when they open. Before this, Send re-resolved the target from live state: a
+// ticked student whose device stopped reporting lost the tick, and the
+// message or URL went to every other reporting student instead.
+const RECIPIENT_CLOCK = '2026-09-18T14:05:00.000Z';
+const RECIPIENT_SUBGROUP_ID = 'abcdabcd-abcd-4bcd-8bcd-abcdabcdabcd';
+
+function recipientRow(studentId, studentName, observedAt, realtimeRevision) {
+  const firstName = studentName.split(' ')[0].toLowerCase();
+  return student({
+    studentId, studentName, studentEmail: `${firstName}@example.edu`, realtimeBinding: `binding-${firstName}`,
+    realtimeRevision, lastSeenAt: observedAt, realtimeObservedAt: observedAt,
+  });
+}
+
+async function recipientDialogPage(context, browser, baseURL, { subgroups = [], subgroupMembers = {} } = {}) {
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  await page.clock.install({ time: new Date(RECIPIENT_CLOCK) });
+  const reports = {
+    [STUDENT_ID]: { name: 'Ada Student', at: RECIPIENT_CLOCK, revision: 1 },
+    [SECOND_STUDENT_ID]: { name: 'Ben Student', at: RECIPIENT_CLOCK, revision: 1 },
+  };
+  const roster = () => success(Object.entries(reports).map(([studentId, row]) => recipientRow(studentId, row.name, row.at, row.revision)));
+  const aggregate = aggregateController({ scoped: roster() });
+  const live = teachingSession();
+  const harness = await configureDashboard(page, {
+    aggregate, userRole: 'teacher', activeSession: live, allSessions: [live], acknowledgeSessionSubscriptions: true,
+    subgroups, subgroupMembers,
+  });
+  const commands = [];
+  let hold = null;
+  let releaseHold = () => {};
+  context.after(() => releaseHold());
+  await page.route('**/api/commands', async route => {
+    const body = route.request().postDataJSON();
+    commands.push(body);
+    if (hold) await hold;
+    const targetStudentIds = body.targetStudentIds || [];
+    await route.fulfill({ status: 201, json: {
+      command: { id: `recipient-command-${commands.length}`, commandType: body.commandType,
+        targets: targetStudentIds.map(studentId => ({ studentId, status: 'sent' })) },
+      summary: { requested: targetStudentIds.length, attempted: targetStudentIds.length, pending: targetStudentIds.length },
+    } });
+  });
+  // A report re-reads the class with the listed students observed now.
+  const reportNow = async (...studentIds) => {
+    const now = new Date(await page.evaluate(() => Date.now())).toISOString();
+    for (const studentId of studentIds) reports[studentId] = { ...reports[studentId], at: now, revision: reports[studentId].revision + 1 };
+    aggregate.setScopedResponse(roster());
+    await page.evaluate(async () => {
+      const { queryClient } = await import('/src/lib/queryClient.js');
+      await queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+    });
+  };
+  await page.goto(`${baseURL}/classpilot`);
+  await page.getByTestId(`card-student-${SECOND_STUDENT_ID}`).waitFor();
+  await harness.authenticateWebSocket();
+  // However long the page took to load, both students are reporting now.
+  await reportNow(STUDENT_ID, SECOND_STUDENT_ID);
+  await page.waitForFunction(ids => ids.every(id => document.querySelector(`[data-testid="card-student-${id}"]`)
+    && !document.querySelector(`[data-testid="preview-unavailable-${id}"]`)), [STUDENT_ID, SECOND_STUDENT_ID]);
+  return {
+    page, harness, commands,
+    holdCommands() { hold = new Promise(resolve => { releaseHold = resolve; }); },
+    releaseCommands() { hold = null; releaseHold(); },
+    // Ada's last report passes the 60-second signal window while Ben keeps reporting.
+    async stopAdaReporting() {
+      await page.clock.fastForward(40_000);
+      await reportNow(SECOND_STUDENT_ID);
+      await page.clock.fastForward(25_000);
+      // Running the dashboard's own timers paints the lost signal now instead
+      // of on a later real-time tick (up to 7 s of wall clock per wait). Ben's
+      // report is still well inside his 60-second window afterwards.
+      await page.clock.runFor(10_000);
+      await page.getByTestId(`preview-unavailable-${STUDENT_ID}`).waitFor({ state: 'attached' });
+      assert.equal(await page.getByTestId(`preview-unavailable-${SECOND_STUDENT_ID}`).count(), 0, 'Ben is still reporting');
+    },
+  };
+}
+
+// The Messages roster's announce button names the dialog's target before it opens.
+async function openSendMessageDialog(page, label) {
+  await openChatPanel(page);
+  const broadcast = page.getByTestId('chat-broadcast');
+  if (label) {
+    await broadcast.getByText(label, { exact: true }).waitFor();
+    assert.equal(await broadcast.getAttribute('aria-label'), label, 'Its accessible name is its visible label');
+  }
+  await broadcast.click();
+  await page.getByTestId('dialog-send-message').waitFor();
+}
+
+async function frozenRecipients(page, dialogTestId) {
+  const dialog = page.getByTestId(dialogTestId);
+  return {
+    summary: await dialog.getByTestId('command-recipients-summary').innerText(),
+    names: await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(),
+  };
+}
+
+async function waitForTestIdText(page, testId, expected) {
+  await page.waitForFunction(([id, text]) => document.querySelector(`[data-testid="${id}"]`)?.textContent === text, [testId, expected]);
+}
+
+function focusedTestId(page) {
+  return page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? null);
+}
+
+async function waitForFocus(page, testId) {
+  await page.waitForFunction(id => document.activeElement?.getAttribute('data-testid') === id, testId);
+}
+
+test('classroom dialogs never re-target a frozen recipient list when a ticked student stops reporting', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+
+  // One ticked student, then that student's device stops reporting: nothing is sent, to anyone.
+  const single = await recipientDialogPage(context, browser, baseURL);
+  await single.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await openSendMessageDialog(single.page, 'Message 1 selected student');
+  assert.equal(await single.page.getByTestId('class-tools-panel').locator('footer').innerText(),
+    'New actions for 1 selected student. Active tools keep their original recipients.');
+  assert.deepEqual(await frozenRecipients(single.page, 'dialog-send-message'), { summary: 'Send to 1 selected student', names: ['Ada Student'] });
+  await single.page.getByTestId('input-send-message').fill('Only for Ada');
+  await single.stopAdaReporting();
+  assert.deepEqual((await frozenRecipients(single.page, 'dialog-send-message')).names, ['Ada Student'], 'the frozen list does not follow the trimmed tick');
+  await single.page.getByTestId('button-confirm-send-message').click();
+  await waitForTestIdText(single.page, 'command-recipients-unavailable', "Ada Student can't receive this right now. Nothing was sent.");
+  await single.page.waitForTimeout(250);
+  assert.deepEqual(single.commands, [], 'a frozen message is never re-targeted to the students who are still reporting');
+  assert.deepEqual(single.harness.commandPosts, [], 'nor sent through another command endpoint');
+  assert.equal(await single.page.getByTestId('button-confirm-send-message').innerText(), 'Send Message');
+  await single.page.getByTestId('dialog-send-message').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await single.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  assert.deepEqual(single.harness.pageErrors, []);
+  await single.page.close();
+
+  // Two ticked students and one stops reporting: the first Send only explains, a second explicit Send reaches the other.
+  const partial = await recipientDialogPage(context, browser, baseURL);
+  await partial.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await partial.page.getByTestId(`checkbox-select-student-${SECOND_STUDENT_ID}`).click();
+  await openSendMessageDialog(partial.page, 'Message 2 selected students');
+  assert.deepEqual(await frozenRecipients(partial.page, 'dialog-send-message'), { summary: 'Send to 2 selected students', names: ['Ada Student', 'Ben Student'] });
+  await partial.page.getByTestId('input-send-message').fill('For both of you');
+  await partial.stopAdaReporting();
+  await partial.page.getByTestId('button-confirm-send-message').click();
+  await waitForTestIdText(partial.page, 'command-recipients-unavailable', `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them, or Cancel.`);
+  await waitForTestIdText(partial.page, 'button-confirm-send-message', 'Send to 1 available');
+  assert.equal(await partial.page.getByTestId(`command-recipient-${STUDENT_ID}`).getAttribute('data-unavailable'), 'true');
+  assert.equal(await partial.page.getByTestId('send-message-hint').innerText(), 'Press Enter to go to "Send to 1 available", Shift+Enter for new line');
+  await chatEvidence(partial.page, 'frozen-recipients-partial', { frozen: ['Ada Student', 'Ben Student'], unavailable: ['Ada Student'], posted: partial.commands.length });
+  // Enter in the message box only moves to the confirm button, and holding Enter cannot press it.
+  await partial.page.getByTestId('input-send-message').focus();
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.down('Enter');
+  await partial.page.keyboard.up('Enter');
+  assert.equal(await focusedTestId(partial.page), 'button-confirm-send-message');
+  await partial.page.waitForTimeout(250);
+  assert.deepEqual(partial.commands, [], 'losing a recipient needs a second, explicit Send');
+  assert.equal(await partial.page.getByTestId('input-send-message').inputValue(), 'For both of you', 'a held Enter adds no blank lines');
+  // A fresh press on the focused button is that second, explicit Send.
+  await partial.page.keyboard.press('Enter');
+  await waitUntil(() => partial.commands.length === 1, 'the confirmed send posts once');
+  await partial.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  const [confirmed] = partial.commands;
+  assert.equal(confirmed.commandType, 'teacher-message');
+  assert.equal(confirmed.teachingSessionId, OWN_SESSION_ID);
+  assert.equal(confirmed.targetScope, 'students');
+  assert.deepEqual(confirmed.targetStudentIds, [SECOND_STUDENT_ID]);
+  assert.deepEqual(confirmed.commandPayload, { message: 'For both of you' });
+  // Radix also mirrors a new toast into a transient aria-live announcer.
+  await partial.page.getByText(/Recipients: 1 of 2 selected students\./).first().waitFor();
+  assert.deepEqual(partial.harness.commandPosts, []);
+  assert.deepEqual(partial.harness.pageErrors, []);
+  await partial.page.close();
+
+  // Open URL freezes the same way.
+  const url = await recipientDialogPage(context, browser, baseURL);
+  await url.page.getByTestId(`checkbox-select-student-${STUDENT_ID}`).click();
+  await url.page.getByTestId('button-open-tab').click();
+  await url.page.getByTestId('dialog-open-tab').waitFor();
+  assert.deepEqual(await frozenRecipients(url.page, 'dialog-open-tab'), { summary: 'Send to 1 selected student', names: ['Ada Student'] });
+  await url.page.getByTestId('input-open-tab-url').fill('reading.example.edu/chapter-3');
+  await url.stopAdaReporting();
+  await url.page.getByTestId('button-confirm-open-tab').click();
+  await waitForTestIdText(url.page, 'command-recipients-unavailable', "Ada Student can't receive this right now. Nothing was sent.");
+  await url.page.getByTestId('input-open-tab-url').press('Enter');
+  await url.page.waitForTimeout(250);
+  assert.deepEqual(url.commands, [], 'a frozen URL is never re-targeted to the students who are still reporting');
+  assert.deepEqual(url.harness.commandPosts, [], 'nor sent through another command endpoint');
+  assert.deepEqual(url.harness.pageErrors, []);
+});
+
+test('classroom dialogs send once on a double Enter, always as explicit students, and name a selected subgroup', { timeout: 120_000 }, async context => {
+  const { browser, baseURL } = await assignedTestingBrowser(context);
+
+  const wholeClass = await recipientDialogPage(context, browser, baseURL);
+  // Open URL for the whole class reaches the frozen students in one explicit-id POST.
+  await wholeClass.page.getByTestId('button-open-tab').click();
+  await wholeClass.page.getByTestId('dialog-open-tab').waitFor();
+  assert.deepEqual(await frozenRecipients(wholeClass.page, 'dialog-open-tab'), { summary: 'Send to 2 students — Whole class', names: ['Ada Student', 'Ben Student'] });
+  await waitForFocus(wholeClass.page, 'input-open-tab-url');
+  await wholeClass.page.getByTestId('input-open-tab-url').fill('reading.example.edu/chapter-3');
+  await wholeClass.page.getByTestId('button-confirm-open-tab').click();
+  await waitUntil(() => wholeClass.commands.length === 1, 'the URL is sent');
+  await wholeClass.page.getByTestId('dialog-open-tab').waitFor({ state: 'hidden' });
+  const [openTab] = wholeClass.commands;
+  assert.equal(openTab.commandType, 'open-tab');
+  assert.equal(openTab.targetScope, 'students', 'a whole-class URL is sent as the frozen student list, never as targetScope class');
+  assert.deepEqual([...openTab.targetStudentIds].sort(), [STUDENT_ID, SECOND_STUDENT_ID].sort());
+  assert.deepEqual(openTab.commandPayload, { url: 'https://reading.example.edu/chapter-3' });
+  await wholeClass.page.getByText(/Recipients: 2 students \(Whole class\)\./).first().waitFor();
+
+  await openSendMessageDialog(wholeClass.page, 'Announce to class');
+  assert.deepEqual(await frozenRecipients(wholeClass.page, 'dialog-send-message'), { summary: 'Send to 2 students — Whole class', names: ['Ada Student', 'Ben Student'] });
+  // The dialog opens in the message box; the recipient list is one Shift+Tab away for keyboard users.
+  await waitForFocus(wholeClass.page, 'input-send-message');
+  await wholeClass.page.keyboard.press('Shift+Tab');
+  assert.equal(await focusedTestId(wholeClass.page), 'command-recipients-list');
+  const input = wholeClass.page.getByTestId('input-send-message');
+  await input.fill('Eyes on the board');
+  wholeClass.holdCommands();
+  await input.press('Enter');
+  await input.press('Enter');
+  await waitUntil(() => wholeClass.commands.length > 1, 'the first Enter sends the message');
+  await wholeClass.page.waitForTimeout(250);
+  assert.equal(wholeClass.commands.length, 2, 'a second Enter while the first is sending must not send again');
+  wholeClass.releaseCommands();
+  await wholeClass.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  const [, announcement] = wholeClass.commands;
+  assert.equal(announcement.commandType, 'teacher-message');
+  assert.equal(announcement.targetScope, 'students', 'a whole-class message is sent as the frozen student list, never as targetScope class');
+  assert.deepEqual([...announcement.targetStudentIds].sort(), [STUDENT_ID, SECOND_STUDENT_ID].sort());
+  assert.equal(Object.hasOwn(announcement, 'subgroupId'), false);
+  assert.equal(wholeClass.commands.length, 2);
+  assert.deepEqual(wholeClass.harness.commandPosts, []);
+  assert.deepEqual(wholeClass.harness.pageErrors, []);
+  await wholeClass.page.close();
+
+  const subgroup = await recipientDialogPage(context, browser, baseURL, {
+    subgroups: [{ id: RECIPIENT_SUBGROUP_ID, name: 'Reading table' }],
+    subgroupMembers: { [RECIPIENT_SUBGROUP_ID]: [SECOND_STUDENT_ID] },
+  });
+  await subgroup.page.getByTestId('select-subgroup-filter').selectOption(RECIPIENT_SUBGROUP_ID);
+  await subgroup.page.getByTestId('badge-selection-count').getByText(/Reading table - 1 student/).waitFor();
+  await openSendMessageDialog(subgroup.page, 'Message Reading table');
+  assert.deepEqual(await frozenRecipients(subgroup.page, 'dialog-send-message'), { summary: 'Send to 1 student — Group: Reading table', names: ['Ben Student'] });
+  await chatEvidence(subgroup.page, 'frozen-recipients-subgroup', { label: 'Group: Reading table', frozen: ['Ben Student'] });
+  await subgroup.page.getByTestId('input-send-message').fill('Reading table, check in');
+  await subgroup.page.getByTestId('button-confirm-send-message').click();
+  await waitUntil(() => subgroup.commands.length === 1, 'the subgroup message is sent');
+  await subgroup.page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  assert.equal(subgroup.commands[0].targetScope, 'students');
+  assert.deepEqual(subgroup.commands[0].targetStudentIds, [SECOND_STUDENT_ID]);
+  assert.equal(Object.hasOwn(subgroup.commands[0], 'subgroupId'), false);
+  assert.deepEqual(subgroup.harness.commandPosts, []);
+  assert.deepEqual(subgroup.harness.pageErrors, []);
+});
 
 test('scheduled classroom restores acknowledged timer and poll after reload and gates older extensions', { timeout: 60_000 }, async context => {
   const { browser, baseURL } = await assignedTestingBrowser(context);
@@ -5150,7 +5742,8 @@ test('Class tools integrates support, activities and manual routines without cov
   await waitUntil(async () => (await geometry()).panel.height > 200, 'A zoom-sized viewport must keep the drawer usable');
   await page.getByRole('button',{name:'Close Class tools',exact:true}).click();
   await page.getByTestId('class-tools-panel').waitFor({state:'hidden'});
-  assert.equal(await page.evaluate(()=>document.activeElement?.dataset.testid),'teacher-fab');
+  // The panel hides at once; focus returns to the launcher one frame later.
+  await waitForFocus(page,'teacher-fab');
 });
 
 for (const userRole of ['teacher', 'admin']) {

@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw, EyeOff, UserRound, MessageSquare } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import {
   deriveScreenshotDisplay,
@@ -122,6 +122,9 @@ function StudentTile({
   observationActive = false,
   unreadMessageCount = 0,
   onOpenChat,
+  // False while the class's messaging is off: the unread badge still opens a
+  // thread to read, but the tile offers no Message to start one.
+  canStartChat = true,
 }) {
   const videoElementRef = useRef(null);
   const screenshotButtonRef = useRef(null);
@@ -1020,13 +1023,18 @@ function StudentTile({
           </div>
         )}
 
-        {/* Footer Zone - Actions Only */}
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
+        {/* Footer Zone - Actions Only. A size container: below 21rem the
+            buttons drop to their icons and keep their names for screen readers
+            and tooltips. Details, Message and View Tabs with labels need about
+            19.3rem in Segoe UI and 20.2rem in Verdana-wide fonts (DejaVu Sans
+            on Linux), so 21rem keeps them on one row; flex-wrap is only the
+            fallback for a still wider font, so nothing is ever clipped. */}
+        <div className="@container flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-border/20" data-testid={`tile-footer-${student.studentId}`}>
           {onOpenDetails && !monitoringSuppressed && (
             <Button
               variant="outline"
               size="sm"
-              className="h-7 px-2.5 text-xs"
+              className="h-7 px-2.5 text-xs @max-[21rem]:px-2"
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenDetails(event.currentTarget);
@@ -1035,8 +1043,8 @@ function StudentTile({
               aria-label={`Open details and activity for ${student.studentName || 'student'}`}
               data-testid={`button-student-details-${student.studentId}`}
             >
-              <UserRound className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-              Details
+              <UserRound className="mr-1 h-3.5 w-3.5 @max-[21rem]:mr-0" aria-hidden="true" />
+              <span className="@max-[21rem]:sr-only">Details</span>
             </Button>
           )}
           {monitoringSuppressed && onReturnToClass && (
@@ -1056,11 +1064,30 @@ function StudentTile({
               Return to Class
             </Button>
           )}
+          {/* Messaging needs no current telemetry: a message to an offline or
+              signed-out student waits for their device. */}
+          {onOpenChat && canStartChat && !monitoringSuppressed && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2.5 text-xs @max-[21rem]:px-2"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenChat(event.currentTarget);
+              }}
+              title={`Message ${student.studentName || 'this student'}`}
+              aria-label={`Message ${student.studentName || 'this student'}`}
+              data-testid={`button-message-student-${student.studentId}`}
+            >
+              <MessageSquare className="mr-1 h-3.5 w-3.5 @max-[21rem]:mr-0" aria-hidden="true" />
+              <span className="@max-[21rem]:sr-only">Message</span>
+            </Button>
+          )}
           {onManageTabs && !interactionsDisabled && (
             <Button
               variant="outline"
               size="sm"
-              className="h-7 px-3 text-xs"
+              className="h-7 px-3 text-xs @max-[21rem]:px-2"
               onClick={(e) => {
                 e.stopPropagation();
                 onManageTabs();
@@ -1068,8 +1095,8 @@ function StudentTile({
               title="View this student's open tabs"
               data-testid={`button-manage-tabs-${student.studentId}`}
             >
-              <List className="h-3.5 w-3.5 mr-1" />
-              View Tabs
+              <List className="h-3.5 w-3.5 mr-1 @max-[21rem]:mr-0" aria-hidden="true" />
+              <span className="@max-[21rem]:sr-only">View Tabs</span>
             </Button>
           )}
           {onStartLiveView && onStopLiveView && !interactionsDisabled && (
