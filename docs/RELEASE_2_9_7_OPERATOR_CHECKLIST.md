@@ -26,6 +26,7 @@ recipient, enforcement, tenancy or deployment health checks.
 | API / worker artifacts | Pending compatible digest-pinned serving and rollback artifacts; record image digest, source SHA and task definitions |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
+| Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [all five required jobs passed](https://github.com/bzinkan/ClassPilot/actions/runs/37048485018), including Chrome 120, 133, 152 and stable; packaged source and ZIP above unchanged |
 | Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
 | Deployed / activated | No changes performed by this release preparation |
 
