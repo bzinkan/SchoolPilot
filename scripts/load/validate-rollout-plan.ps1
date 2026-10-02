@@ -604,7 +604,11 @@ function Assert-NatRollbackInverse {
                 if ((ConvertTo-PlanComparableJson (Get-PlanObjectValue $before $field)) -cne
                     (ConvertTo-PlanComparableJson (Get-PlanObjectValue $after $field))) { throw "NAT rollback EIP '$address' changed stable field '$field'." }
             }
-            $allowed = @("id","allocation_id","association_id","carrier_ip","customer_owned_ip","network_border_group","private_dns","private_ip","public_dns","public_ip")
+            # The second line is what the current AWS provider computes at create time
+            # with no configuration expression, as seen in the first real production
+            # NatRollback plan (2026-10-02). None of them choose what gets created.
+            $allowed = @("id","allocation_id","association_id","carrier_ip","customer_owned_ip","network_border_group","private_dns","private_ip","public_dns","public_ip",
+                "arn","instance","ipam_pool_id","network_interface","ptr_record","public_ipv4_pool","vpc")
         }
         elseif ($address -match 'aws_nat_gateway\.main') {
             foreach ($field in @("connectivity_type","subnet_id","tags")) {
@@ -613,7 +617,8 @@ function Assert-NatRollbackInverse {
             }
             if ($unknown -notcontains "allocation_id") { throw "NAT rollback gateway '$address' must compute allocation_id from its EIP reference." }
             $subnets += [string](Get-PlanObjectValue $after "subnet_id" "")
-            $allowed = @("id","allocation_id","network_interface_id","private_ip","public_ip","association_id")
+            $allowed = @("id","allocation_id","network_interface_id","private_ip","public_ip","association_id",
+                "secondary_private_ip_address_count","secondary_private_ip_addresses")
         }
         else {
             foreach ($field in @("destination_cidr_block","route_table_id")) {
@@ -622,7 +627,7 @@ function Assert-NatRollbackInverse {
             }
             if ($unknown -notcontains "nat_gateway_id") { throw "NAT rollback route '$address' must compute nat_gateway_id from its NAT reference." }
             $routeTables += [string](Get-PlanObjectValue $after "route_table_id" "")
-            $allowed = @("id","nat_gateway_id","origin","state")
+            $allowed = @("id","nat_gateway_id","origin","state","instance_id","instance_owner_id","network_interface_id")
         }
         $unexpected = @($unknown | Where-Object { $_ -notin $allowed })
         if ($unexpected.Count -gt 0) { throw "NAT rollback '$address' contains unreviewed nested unknown leaves [$($unexpected -join ',')]." }
