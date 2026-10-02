@@ -46,9 +46,17 @@ export function privateChatMessageFields(token: PrivateChatLifecycle) {
  * latches enforcement without upgrading a settings SHARE lock mid-transaction. */
 export async function latchPrivateChatLifecycle(schoolId: string): Promise<void> {
   if (!isClasspilotCapabilityActive("privateChatLifecycleV1", { schoolId })) return;
-  await db.insert(settings).values({schoolId,privateChatLifecycleRequired:true}).onConflictDoNothing();
-  await db.update(settings).set({ privateChatLifecycleRequired: true })
-    .where(and(eq(settings.schoolId,schoolId),eq(settings.privateChatLifecycleRequired,false)));
+  const [existing] = await db.select({required:settings.privateChatLifecycleRequired}).from(settings).where(eq(settings.schoolId,schoolId)).limit(1);
+  if (existing?.required) return;
+  await db.transaction(async tx => {
+    // Shared readers also fence the absent-settings case. Once latched, ordinary
+    // traffic never needs this exclusive lock again.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${"private-chat-adoption:"+schoolId},0))`);
+    await tx.execute(sql`INSERT INTO settings(school_id,school_name,ws_shared_key,private_chat_lifecycle_required)
+      SELECT id,name,'',true FROM schools WHERE id=${schoolId} ON CONFLICT(school_id) DO NOTHING`);
+    await tx.update(settings).set({ privateChatLifecycleRequired: true })
+      .where(and(eq(settings.schoolId,schoolId),eq(settings.privateChatLifecycleRequired,false)));
+  });
 }
 
 export async function privateChatLifecycleRequired(schoolId: string, database: typeof db = db): Promise<boolean> {
@@ -59,6 +67,7 @@ export async function privateChatLifecycleRequired(schoolId: string, database: t
 
 export async function lockPrivateChatChannel(scope: PrivateChatScope, database: typeof db) {
   if (!!scope.teachingSessionId === !!scope.supervisionContextId) throw lifecycleError("PRIVATE_CHAT_SCOPE_INVALID", "One classroom authority is required",400);
+  await database.execute(sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${"private-chat-adoption:"+scope.schoolId},0))`);
   if (scope.teachingSessionId) {
     await database.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,scope.schoolId),
       eq(teachingSessions.id,scope.teachingSessionId))).for("key share");
