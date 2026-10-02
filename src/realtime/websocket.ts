@@ -75,6 +75,7 @@ import {
   acknowledgeTeacherChatDelivery,
   classpilotTeacherChatAckRejection,
   withClasspilotStudentControlDeliveryAuthority,
+  classpilotStudentRelayMessageAllowed,
   withClasspilotStudentWebSocketBootstrapAuthority,
 } from "../services/storage.js";
 import {
@@ -213,8 +214,9 @@ export async function deliverClasspilotStudentBindingRedisMessage(
     return await webSocketWork.track(runWithTenantContext({ schoolId: target.schoolId }, async () => {
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         target,
-        () => undefined,
-        () => sendToStudentBindingLocal(target, message, {
+        (database) => classpilotStudentRelayMessageAllowed(target, message, database),
+        (_claimed, allowed) => !!allowed && (allowed.expiresAt === null || allowed.expiresAt > Date.now())
+          && sendToStudentBindingLocal(target, message, {
           requiredCapability: target.requiredCapability,
           requiredCapabilities: target.requiredCapabilities,
         })

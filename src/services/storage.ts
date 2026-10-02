@@ -19967,6 +19967,61 @@ type ClasspilotClaimedTeacherChatDelivery = {
   delivery: ClasspilotChatDelivery;
 };
 
+/** Receiving a delayed Redis frame is another delivery attempt. The caller
+ * holds the exact student-binding lock and must send synchronously before its
+ * transaction ends, keeping these channel/thread/outbox locks authoritative. */
+export async function classpilotStudentRelayMessageAllowed(
+  binding: ClasspilotTeacherChatBinding,
+  value: unknown,
+  database: typeof db,
+): Promise<{ expiresAt: number | null } | null> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const frame = value as Record<string, unknown>;
+  if (frame.type !== "teacher-message") return { expiresAt: null };
+  // Announcements use the durable command contract. A commandId or a claimed
+  // messageKind cannot exempt a frame that carries private delivery fields.
+  if (typeof frame.commandId === "string" && frame.commandId.length > 0
+    && frame.messageKind !== "private" && !("chatMessageId" in frame)
+    && !("privateChatLifecycle" in frame)) return { expiresAt: null };
+  if (typeof frame.chatMessageId !== "string" || !frame.chatMessageId
+    || frame.studentId !== binding.studentId || frame.studentSessionId !== binding.studentSessionId
+    || (frame.messageId !== undefined && frame.messageId !== frame.chatMessageId)) return null;
+  const [message] = await database.select().from(chatMessages).where(and(
+    eq(chatMessages.schoolId,binding.schoolId), eq(chatMessages.studentId,binding.studentId),
+    eq(chatMessages.id,frame.chatMessageId), eq(chatMessages.senderType,"teacher"),
+  )).limit(1);
+  if (!message || message.deletedAt || frame.message !== message.content
+    || (frame.sessionId ?? frame.teachingSessionId ?? null) !== message.sessionId
+    || (frame.teachingSessionId !== undefined && frame.teachingSessionId !== message.sessionId)
+    || (frame.supervisionContextId ?? null) !== message.supervisionContextId) return null;
+  const scope = {schoolId:binding.schoolId,studentId:binding.studentId,
+    teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId};
+  if (!(await hasCurrentClasspilotStudentControlAuthority({ ...scope,
+    ...(message.supervisionContextId ? {ownershipRevision:Number(frame.studentControlRevision)} : {}),
+  },database))) return null;
+  if (message.supervisionContextId && !Number.isSafeInteger(frame.studentControlRevision)) return null;
+  // This acquires school/activity/thread locks before the outbox row, matching
+  // ordinary claims. It also withholds legacy delivery during a reversible off.
+  if (!(await isPrivateChatMessageCurrent(message,database))) return null;
+  const storedToken = privateChatMessageLifecycle(message);
+  if (storedToken) {
+    if (!samePrivateChatLifecycle(parsePrivateChatLifecycle(frame.privateChatLifecycle),storedToken)
+      || !(await privateChatBindingSupported(binding,database))) return null;
+  } else if (frame.privateChatLifecycle != null || await privateChatLifecycleRequired(binding.schoolId,database)) return null;
+  const [delivery] = await database.select().from(classpilotChatDeliveries).where(and(
+    eq(classpilotChatDeliveries.schoolId,binding.schoolId),eq(classpilotChatDeliveries.studentId,binding.studentId),
+    eq(classpilotChatDeliveries.chatMessageId,message.id),
+  )).limit(1).for("update");
+  const allowed = !!delivery && delivery.teachingSessionId === message.sessionId
+    && delivery.supervisionContextId === message.supervisionContextId
+    && delivery.lastAttemptStudentSessionId === binding.studentSessionId
+    && delivery.lastAttemptDeviceId === binding.deviceId
+    && ["attempted","retry"].includes(delivery.state) && delivery.expiresAt > new Date();
+  // The wrapper performs one final binding read. Retain the deadline so the
+  // synchronous send can reject a frame that expires during that read.
+  return allowed ? { expiresAt: delivery.expiresAt.getTime() } : null;
+}
+
 class ClasspilotTeacherChatBindingLostError extends Error {}
 
 /**
