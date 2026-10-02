@@ -2401,19 +2401,39 @@ test('terminal read denials stop clock and lifecycle replay and recover only aft
     await retainedObservePage.clock.install({ time: fixedTime });
     const observed = teachingSession({ id: OBSERVED_SESSION_ID, groupId: OBSERVED_GROUP_ID, teacherId: OTHER_TEACHER_ID });
     let retainedObserveHarness;
+    // The denial refreshes the observable list, which no longer has A, and
+    // that refresh replaces the denied banner with the unavailable-activity
+    // state, often within ~20 ms. Playwright polls locators with backoff
+    // (0/20/50/100/100/500 ms), so an unheld refresh can remove the banner
+    // between polls (and if it lands first, both commit together and the
+    // banner never renders). Hold the refresh until the banner has been seen.
+    let observedLeaseDenied = false;
+    let releaseObservableRefresh;
+    const observableRefreshHeld = new Promise((resolve) => { releaseObservableRefresh = resolve; });
     retainedObserveHarness = await configureDashboard(retainedObservePage, {
       aggregate: aggregateController({ scoped: success(rows()) }), activeSession: live, allSessions: [live, observed],
       observationLeaseResponse: (method, pathname) => {
         if (method === 'PUT' && pathname.includes(OBSERVED_SESSION_ID)) {
+          observedLeaseDenied = true;
           retainedObserveHarness.setAllSessions([live]);
           return { status: 404, body: { code: 'OBSERVATION_SESSION_UNAVAILABLE' } };
         }
         return { renewAfterSeconds: 30 };
       },
     });
-    await retainedObservePage.goto(`${baseURL}/classpilot`);
-    await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
-    await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
+    // Registered after the harness route, so it runs first and then falls
+    // back to the harness, which answers from the current session list.
+    await retainedObservePage.route('**/api/classpilot/observable-activities', async (route) => {
+      if (observedLeaseDenied) await observableRefreshHeld;
+      await route.fallback();
+    });
+    try {
+      await retainedObservePage.goto(`${baseURL}/classpilot`);
+      await retainedObservePage.getByTestId('select-admin-observe').selectOption(OBSERVED_SESSION_ID);
+      await retainedObservePage.getByTestId('screenshot-observation-denied').waitFor();
+    } finally {
+      releaseObservableRefresh();
+    }
     await waitUntil(() => retainedObserveHarness.sessionRequests.filter((path) => path.endsWith('/all')).length >= 2,
       'lease denial refreshes the parent list that removes observed A');
     await settle();
