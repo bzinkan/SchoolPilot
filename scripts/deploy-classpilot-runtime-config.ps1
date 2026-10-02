@@ -212,15 +212,18 @@ $script:LateSignInBlockedZipSha256s = @(
 $script:FastPreviewRequiredReleaseTag = "v2.8.2"
 $script:FastPreviewRequiredExtensionId = "iggbfegfcjkfieoemeolfmfnapepalca"
 # The user authorized a precise/Focus synthetic-only exception for the exact
-# 2.9.7 successor. Activation remains refused until its reviewed commit and ZIP
-# are pinned below. Receipts always say managedValidation=waived_not_passed.
+# 2.9.7 successor. These pins identify source/artifact bytes only; they do not
+# assert acceptance, merge, tag publication, deployment or Store publication.
+# For these new profiles, the legacy RequiredMergeSha/classPilotMergeSha names
+# mean the exact packaged source commit. Receipts still gate activation and say
+# managedValidation=waived_not_passed. Historical release bindings stay unchanged.
 $script:PreciseRestrictionRequiredReleaseTag = "v2.9.7"
-$script:PreciseRestrictionRequiredMergeSha = ""
-$script:PreciseRestrictionRequiredZipSha256 = ""
+$script:PreciseRestrictionRequiredMergeSha = "065be165b5df704d84eb716e3fb914c1fed17f98"
+$script:PreciseRestrictionRequiredZipSha256 = "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
 
 $script:FocusTabRequiredReleaseTag = "v2.9.7"
-$script:FocusTabRequiredMergeSha = ""
-$script:FocusTabRequiredZipSha256 = ""
+$script:FocusTabRequiredMergeSha = "065be165b5df704d84eb716e3fb914c1fed17f98"
+$script:FocusTabRequiredZipSha256 = "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575"
 function Assert-FocusTabPilotReleaseEvidenceBound {
     if ([string]$script:FocusTabRequiredReleaseTag -cne 'v2.9.7' -or
         [string]$script:FocusTabRequiredMergeSha -cnotmatch '^[0-9a-f]{40}$' -or

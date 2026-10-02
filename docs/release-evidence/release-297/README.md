@@ -9,6 +9,12 @@ and a companion archive retaining the failing proofs and their corrections.
 The integration PR's final-head CI and ClassPilot's exact ZIP acceptance are
 separate evidence sources.
 
+The later [package-binding record](runtime-package-binding-065be165.json) and
+[mocked runtime output](runtime-package-binding-065be165.txt) cover the final
+source/ZIP pins and 1,287 assertions. They identify the tested file hashes before
+commit, preserve the earlier checkpoint below, and assert neither full package
+acceptance nor a merge, release tag, Store publication or production operation.
+
 [The manifest](focused-validation-5f406d8c.json) records exact commands, source
 SHA, timestamps, exit codes, test/assertion counts, raw-log hashes, sanitized-log
 hashes and the local schema scope. Its companion

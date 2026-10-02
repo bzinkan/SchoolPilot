@@ -1459,9 +1459,30 @@ try {
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
-    # The precise-restriction pilot is refused until a reviewed follow-up binds the
-    # exact reviewed ClassPilot 2.9.7 package; the off profile
-    # never needs it.
+    # Check the actual source/artifact identity before replacing it with synthetic
+    # bindings. These pins do not assert merge, publication or release acceptance.
+    $packaged297SourceSha = '065be165b5df704d84eb716e3fb914c1fed17f98'
+    $packaged297ZipSha256 = '82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575'
+    Assert-Condition ($script:PreciseRestrictionRequiredReleaseTag -ceq 'v2.9.7' -and
+        $script:PreciseRestrictionRequiredMergeSha -ceq $packaged297SourceSha -and
+        $script:PreciseRestrictionRequiredZipSha256 -ceq $packaged297ZipSha256) `
+        'Precise must bind the exact packaged 2.9.7 source and ZIP.'
+    Assert-Condition ($script:FocusTabRequiredReleaseTag -ceq 'v2.9.7' -and
+        $script:FocusTabRequiredMergeSha -ceq $packaged297SourceSha -and
+        $script:FocusTabRequiredZipSha256 -ceq $packaged297ZipSha256) `
+        'Focus must bind the same exact packaged 2.9.7 source and ZIP.'
+    $advertised297Path = Join-Path $repositoryRoot 'scripts/load/usage/classpilot-297-advertised-capabilities.json'
+    $advertised297Source = Get-Content -LiteralPath $advertised297Path -Raw | ConvertFrom-Json -Depth 10 -DateKind String
+    Assert-Condition ($advertised297Source.extensionVersion -ceq '2.9.7' -and
+        $advertised297Source.sourceCommit -ceq $packaged297SourceSha -and
+        @($advertised297Source.capabilities).Count -eq 39) `
+        'Cold arrivals must advertise the same exact packaged 2.9.7 source.'
+    Assert-PreciseRestrictionPilotReleaseEvidenceBound
+    Assert-FocusTabPilotReleaseEvidenceBound
+
+    # Empty pins must still refuse activation; the off profile never needs them.
+    $script:PreciseRestrictionRequiredMergeSha = ''
+    $script:PreciseRestrictionRequiredZipSha256 = ''
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
@@ -1486,6 +1507,8 @@ try {
     $script:PreciseRestrictionRequiredMergeSha = "c" * 40
     $script:PreciseRestrictionRequiredZipSha256 = "d" * 64
 
+    $script:FocusTabRequiredMergeSha = ''
+    $script:FocusTabRequiredZipSha256 = ''
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 7; mode = "focus-tab-pilot"; pilotSchoolId = $testSchoolId

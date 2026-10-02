@@ -34,12 +34,27 @@ confirmation, without a managed-waiver receipt. Those records say
 licensing and negotiated capability checks. Read-only Observe receives no new
 global activation profile and is outside this release scope.
 
-Before activation, bind both features to the independently reviewed exact
-`v2.9.7` merge SHA and ZIP SHA-256 in the runtime tool. Empty, partial, uppercase
-or different-version bindings refuse activation. The release receipt must match
+Both features are now bound to packaged source
+`065be165b5df704d84eb716e3fb914c1fed17f98` and ZIP SHA-256
+`82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`
+for `v2.9.7`. This identifies candidate bytes; it asserts no acceptance, merge,
+tag publication, deployment or Store publication. For these new profiles only,
+legacy `RequiredMergeSha` and receipt `classPilotMergeSha` mean the exact packaged
+source commit. Historical release bindings retain their existing meaning.
+Empty, partial, uppercase or different-version bindings refuse activation. The
+release receipt must match
 those pins, the extension ID, serving app SHA/image digest, tool SHA, selected
 capability, pilot school, shared matcher fixture hash and test-evidence hash.
 Package edits invalidate the binding and require a new package and review.
+
+After an authorized history-preserving ClassPilot merge, record its merge SHA
+separately and verify the packaged source is an ancestor of `origin/main` and
+`v2.9.7^{commit}` resolves to that exact source before upload or activation. The
+runtime tool compares pinned identity strings and receipt hashes; it does not
+resolve the ClassPilot tag or prove merge ancestry. Keep those operator proofs
+with the exact package acceptance. A squash/rebase that replaces this source
+requires renewed source binding and acceptance; never silently substitute the
+merge commit for the packaged commit.
 
 For Plan, supply a private `RoadmapReleaseEvidencePath` plus
 `ConfirmProductionMutation` and `ConfirmRoadmapManagedWaiver`. Approval must be
