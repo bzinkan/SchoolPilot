@@ -12,13 +12,17 @@ import { assertLocalScaleFixture, currentObservationCutoff, usageAttributionDiag
 import { SCHOOL_DAY_PROFILE, schoolDayOracle, schoolDayRangeDomains, schoolDaySessionRoster, schoolDaySeedStudentWindows } from './school-day-profile.mjs';
 import { SCHOOL_DAY_AI_PROFILE, schoolDayAiDecisionSamples } from './school-day-ai-profile.mjs';
 import { fixtureRlsContract, assertFixtureRuntimeModes, assertCompleteFixtureCatalog } from './fixture-rls-contract.mjs';
+import { offerOpenLoopHeartbeats } from './open-loop-heartbeats.mjs';
+import { COLD_OPEN_LOOP_PROFILE, assertColdFixtureSnapshot } from './cold-open-loop-profile.mjs';
 const wall = value => value.toISOString().replace('T',' ').replace('Z','');
 const sleep = ms => new Promise(done => setTimeout(done,ms));
 const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
 const heavyOracles = Object.fromEntries(['school','grade','class','student'].map(scope => [scope, schoolDayOracle(scope)]));
-export async function runSchoolDayScale({ aiScenario = false } = {}) {
+export async function runSchoolDayScale({ aiScenario = false, openLoop = false, coldPhase = null } = {}) {
   assertLocalScaleFixture(process.env);
   assert.equal(typeof aiScenario, 'boolean');
+  assert.equal(typeof openLoop, 'boolean');
+  assert.ok(coldPhase === null || (openLoop && aiScenario && ['prepare','measure'].includes(coldPhase)));
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const registryPath = resolve(root,'src/config/rlsRegistry.json');
   const rlsContract = fixtureRlsContract(JSON.parse(readFileSync(registryPath,'utf8')),hash(registryPath),process.env);
@@ -27,13 +31,18 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
   assert.equal(caps.NanoCpus, 4_000_000_000); assert.equal(caps.Memory, 4_294_967_296);
   assert.ok(getHeapStatistics().heap_size_limit <= 600 * 1024 ** 2, 'Node512MiB V8 heap cap required');
   const metrics = { version: 1, sourceRevision: process.env.USAGE_SOURCE_REVISION, startedAt: new Date().toISOString(), passed: false,
-    productionReadiness: false, rlsContract, profile: { workload: aiScenario ? SCHOOL_DAY_AI_PROFILE : SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
+    productionReadiness: false, rlsContract, profile: { workload: openLoop ? COLD_OPEN_LOOP_PROFILE : aiScenario ? SCHOOL_DAY_AI_PROFILE : SCHOOL_DAY_PROFILE, postgresCpus: 4, postgresMemoryBytes: caps.Memory, nodeV8OldSpaceMiB: 512, nodeHeapLimitBytes: getHeapStatistics().heap_size_limit,
       apiStatementDeadlineMs: 15_000, apiAcquisitionDeadlineMs: 5_000, workerStatementDeadlineMs: 60_000, workerAcquisitionDeadlineMs: 10_000 },
     sourceHashes: Object.fromEntries(['src/services/classpilotUsageRollup.ts', 'src/services/classpilotUsageRead.ts', 'src/routes/classpilot/devices.ts', 'scripts/load/usage/local-school-day-scale.mjs', 'scripts/load/usage/school-day-profile.mjs', 'scripts/load/usage/school-day-ai-profile.mjs', 'scripts/load/usage/local-usage-scale.mjs', 'scripts/load/usage/reference-attribution-20260930.sql', ...(aiScenario ? ['scripts/load/usage/local-school-day-ai-scale.mjs'] : [])].map(file => [file, hash(resolve(root, file))])),
     limitations: ['Local DockerCPU/memory caps do not represent RDS I/O.', 'Node heap cap is not a Windows CPU or total RSS quota.', 'The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.'],
     writerQueries: [], reads: {}, readFailures: [], apiDatabase: { acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {} },
     ingest: { requests: 0, insertedHeartbeats: 0, bySchool: {}, timingsMs: [], statuses: {} }, peakRssBytes: process.memoryUsage().rss };
   assert.match(metrics.sourceRevision, /^[a-f0-9]{40}$/);
+  if (openLoop) {
+    assert.equal(resolve(process.env.USAGE_SCALE_COLD_STATE || ''),resolve(dirname(output),'cold-fixture-state.json'),'Cold state must stay in the owned fresh evidence directory');
+    for (const file of ['scripts/load/usage/open-loop-heartbeats.mjs','scripts/load/usage/cold-open-loop-profile.mjs','scripts/load/usage/local-cold-open-loop-scale.mjs']) metrics.sourceHashes[file]=hash(resolve(root,file));
+    assert.equal(rlsContract.name,'classpilotPrivateChatLifecyclePostExpand','Final acceptance requires the reviewed full129 schema');
+  }
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
   const admin = new pg.Pool({ connectionString: process.env.ADMIN_DATABASE_URL, max: 2, statement_timeout: 120_000 });
   const worker = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5, connectionTimeoutMillis: 10_000, statement_timeout: 60_000, options: '-c app.is_super=on' });
@@ -52,15 +61,16 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     return client;
   } };
   try {
-    assert.equal((await admin.query('SELECT COUNT(*)::int AS count FROM schools')).rows[0].count, 0);
+    assert.equal((await admin.query('SELECT COUNT(*)::int AS count FROM schools')).rows[0].count, coldPhase === 'measure' ? 2 : 0);
     const role = (await worker.query('SELECT current_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
     assert.equal(role.rolsuper, false); assert.equal(role.rolbypassrls, false);
     metrics.selectedInventoryCatalog = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname",[rlsContract.tables])).rows;
     assertCompleteFixtureCatalog(rlsContract,metrics.selectedInventoryCatalog);
-    if (rlsContract.name === 'passpilotAppointmentsPostExpand') {
+    if (rlsContract.name !== 'classpilotUsageRollupDaysPostExpand') {
       metrics.currentContractMigrations = (await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
       assert.ok(metrics.currentContractMigrations.length > 0 && metrics.currentContractMigrations.every(row => row.status === 'complete'));
       for (const id of ['20260824_staff_identity_integrity_contract','classpilot-usage-rollup-days-20260930','passpilot-appointments-expand-20260930']) assert.ok(metrics.currentContractMigrations.some(row => row.id === id),'Current constraint/ledger/admission migrations required');
+      if(rlsContract.name==='classpilotPrivateChatLifecyclePostExpand') assert.ok(metrics.currentContractMigrations.some(row=>row.id==='classpilot-private-chat-lifecycle-20261002'),'Current129 lifecycle migration required');
     }
     const rlsTables = ['heartbeats','classpilot_usage_rollups','classpilot_usage_rollup_days', ...(aiScenario ? ['classpilot_ai_decisions'] : [])];
     metrics.rls = (await worker.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relname=ANY($1::text[]) ORDER BY relname", [rlsTables])).rows;
@@ -70,9 +80,9 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     const time = await import('../../../dist/util/schoolTime.js');
     const { createApp } = await import('../../../dist/app.js');
     ({ pool: appPool, sessionPool } = await import('../../../dist/db.js'));
-    if (rlsContract.name === 'passpilotAppointmentsPostExpand') assertFixtureRuntimeModes(rlsContract,await import('../../../dist/services/classpilotDailyUsageRollup.js'),await import('../../../dist/services/classpilotProtocol.js'),process.env);
+    if (rlsContract.name !== 'classpilotUsageRollupDaysPostExpand') assertFixtureRuntimeModes(rlsContract,await import('../../../dist/services/classpilotDailyUsageRollup.js'),await import('../../../dist/services/classpilotProtocol.js'),process.env);
     const contractSnapshot = JSON.stringify({rlsContract,catalog:metrics.selectedInventoryCatalog,migrations:metrics.currentContractMigrations ?? null,role},null,2)+'\n';
-    writeFileSync(resolve(dirname(output),'fixture-contract.json'),contractSnapshot);
+    writeFileSync(resolve(dirname(output),coldPhase === 'prepare' ? 'preparation-fixture-contract.json' : 'fixture-contract.json'),contractSnapshot);
     metrics.fixtureContractSnapshotSha256 = createHash('sha256').update(contractSnapshot).digest('hex');
     const record = (target, durationMs, error) => {
       if (!concurrentMeasurement) return;
@@ -102,7 +112,13 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
       withHeavy: schoolDayRangeDomains(scope, historyDates.length, true, heavyOracles[scope]),
       withoutHeavy: schoolDayRangeDomains(scope, historyDates.length, false, heavyOracles[scope]),
     }]));
-    const schools = Array.from({ length: 2 }, (_, index) => ({ index, id: randomUUID(), staff: randomUUID(), teachers: Array.from({ length: 100 }, () => randomUUID()),
+    const resume = coldPhase === 'measure' ? (()=>{
+      assert.match(process.env.USAGE_SCALE_COLD_STATE_SHA256 || '',/^[a-f0-9]{64}$/);
+      assert.equal(hash(process.env.USAGE_SCALE_COLD_STATE),process.env.USAGE_SCALE_COLD_STATE_SHA256,'Prepared fixture bytes must remain unchanged');
+      return assertColdFixtureSnapshot(JSON.parse(readFileSync(process.env.USAGE_SCALE_COLD_STATE,'utf8')),
+        {sourceRevision:metrics.sourceRevision,sourceHashes:metrics.sourceHashes,today,registrySha256:rlsContract.registrySha256});
+    })() : null;
+    const schools = resume ? resume.schools : Array.from({ length: 2 }, (_, index) => ({ index, id: randomUUID(), staff: randomUUID(), teachers: Array.from({ length: 100 }, () => randomUUID()),
       students: Array.from({ length: 500 }, () => randomUUID()), groups: Array.from({ length: 100 }, () => randomUUID()), devices: Array.from({ length: 500 }, () => `synthetic-scale-${randomUUID()}`),
       studentSessions: Array.from({ length: 500 }, () => randomUUID()) }));
     metrics.dataset = { substantialSchools: 2, studentsPerSchool: 500, rawHeavyDayPerSchool: 1_000_000, uniqueHeavyDayPerSchool: 1_000_000, expectedHeavyGrainsPerSchool: heavyOracles.school.grains,
@@ -117,16 +133,17 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
       const body = format === 'json' ? await response.json() : await response.text();
       return { status: response.status, body, durationMs: performance.now() - started, headers: response.headers };
     };
-    const ingestOne = async (school, index) => {
+    const ingestOne = async (school, index, signal) => {
       const started = performance.now();
-      const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
+      const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', signal, headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: openLoop ? '2.9.7' : '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
       await response.text(); metrics.ingest.requests++; metrics.ingest.timingsMs.push(performance.now() - started);
       metrics.ingest.bySchool[school.index] = (metrics.ingest.bySchool[school.index] || 0) + 1;
       metrics.ingest.statuses[response.status] = (metrics.ingest.statuses[response.status] || 0) + 1;
       assert.ok(response.status === 200 || response.status === 204, `Synthetic heartbeat status ${response.status}`);
     };
     const seedStarted = performance.now();
+    if (!resume) {
     for (const school of schools) {
       metrics.preparationStage = { schoolIndex: school.index, kind: 'identity-and-current-bindings' };
       await admin.query("INSERT INTO schools(id,name,domain,status,is_active,plan_status,school_timezone) VALUES($1,$2,'example.test','active',true,'active',$3)", [school.id, `Synthetic Scale ${school.index}`, zone]);
@@ -236,6 +253,23 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
       metrics.heavyDeviceBindings.push({schoolIndex:school.index,...bindings});
     }
     metrics.preparationStage = { kind: 'complete' };
+    } else {
+      Object.assign(metrics,resume.preparation);
+      for(const school of schools) {
+        school.token=signUserToken({userId:school.staff,email:school.email,isSuperAdmin:false});
+        school.deviceTokens=school.students.map((studentId,i)=>createStudentToken({studentId,schoolId:school.id,deviceId:school.devices[i],sessionId:school.studentSessions[i],studentEmail:`scale-${studentId}@example.test`}));
+      }
+      metrics.coldResume={preparedStateSha256:process.env.USAGE_SCALE_COLD_STATE_SHA256,postgresSharedBuffersReset:true,hostFilesystemCachesFlushed:false};
+    }
+    if(coldPhase === 'prepare') {
+      const preparation=Object.fromEntries(['seedMs','fixtureCounts','heavyDeviceBindings','aiDecisionBindings','preparationStage'].map(key=>[key,metrics[key]]));
+      const state={version:1,sourceRevision:metrics.sourceRevision,sourceHashes:metrics.sourceHashes,today,registrySha256:rlsContract.registrySha256,profileName:COLD_OPEN_LOOP_PROFILE.name,
+        schools:schools.map(({token,deviceTokens,...school})=>school),preparation};
+      writeFileSync(process.env.USAGE_SCALE_COLD_STATE,JSON.stringify(state,null,2));
+      metrics.fixturePreparationOnly=true; metrics.capacityMeasured=false; save();
+      console.log(JSON.stringify({event:'local_school_day_scale_cold_prepared',sourceRevision:metrics.sourceRevision,capacityMeasured:false}));
+      return;
+    }
     if (process.env.USAGE_SCALE_PREPARE_ONLY === '1') {
       metrics.fixturePreparationOnly = true; save();
       console.log(JSON.stringify({ event: 'local_school_day_scale_prepared', sourceRevision: metrics.sourceRevision, capacityMeasured: false }));
@@ -290,7 +324,9 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     sampler = setInterval(() => { metrics.peakRssBytes = Math.max(metrics.peakRssBytes, process.memoryUsage().rss); metrics.poolMax.apiWaitingPeak = Math.max(metrics.poolMax.apiWaitingPeak, appPool.waitingCount); metrics.poolMax.workerWaitingPeak = Math.max(metrics.poolMax.workerWaitingPeak, worker.waitingCount); }, 20); sampler.unref();
     const beforeStats = (await admin.query('SELECT temp_bytes,temp_files,blks_read,blks_hit FROM pg_stat_database WHERE datname=current_database()')).rows[0];
     const started = performance.now(), ingestDeadline = started + 60_000; phaseStarted = started; ingestRunning = true; concurrentMeasurement = true; let nextDevice = 1;
-    ingestion = Array.from({ length: 4 }, async () => {
+    ingestion = openLoop ? [offerOpenLoopHeartbeats((offering,signal)=>ingestOne(schools[offering.schoolIndex],offering.deviceIndex,signal)).then(result=>{
+      result.timings=summarize(result.timingsMs); delete result.timingsMs; metrics.openLoop=result;
+    })] : Array.from({ length: 4 }, async () => {
       while (ingestRunning && performance.now() < ingestDeadline) {
         const sequence = nextDevice++; await ingestOne(schools[sequence % 2], Math.floor(sequence / 2) % 500); await sleep(50);
       }
@@ -331,6 +367,8 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
       apiStatements: Object.values(metrics.apiDatabase.statements).every(row => row.failures === 0 && row.maxMs < 15_000),
       apiAcquisitions: metrics.apiDatabase.acquisitions.failures === 0 && metrics.apiDatabase.acquisitions.maxMs < 5_000,
     };
+    if(openLoop) metrics.performanceAcceptance={fullWorkerTwentyPercentHeadroom:metrics.concurrentWriters.length===2 && metrics.concurrentWriters.every(row=>row.durationMs<=48_000),
+      actualOpenLoop100Rps:metrics.openLoop?.accepted===true};
     metrics.reads = Object.fromEntries([...readTimings].map(([key, timings]) => [key, summarize(timings)]));
     // A bounded, read-only plan isolates attribution/grouping from aggregate
     // insertion/index/FK work. Collect before later diagnostic assertions, so
@@ -399,6 +437,7 @@ export async function runSchoolDayScale({ aiScenario = false } = {}) {
     metrics.finishedAt = new Date().toISOString(); save();
     if (failedPhase) throw failedPhase.reason;
     assert.ok(Object.values(metrics.deadlineAcceptance).every(Boolean), 'Every full writer operation and measured API deadline must pass');
+    if(openLoop) assert.ok(Object.values(metrics.performanceAcceptance).every(Boolean),'Final129 cold/open-loop acceptance requires20% full worker headroom and all100rps offers');
     metrics.finishedAt = new Date().toISOString(); metrics.passed = true; save();
     console.log(JSON.stringify({ event: 'local_school_day_scale_complete', sourceRevision: metrics.sourceRevision, writerMs: metrics.concurrentWriters.map(row => row.durationMs), ingestRequests: metrics.ingest.requests, insertedHeartbeats: metrics.ingest.insertedHeartbeats, productionReadiness: false }));
   } catch (error) {

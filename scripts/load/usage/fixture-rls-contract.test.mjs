@@ -52,3 +52,19 @@ test('combined profile rejects active unrelated modes and missing, unforced or o
   assert.throws(() => assertCompleteFixtureCatalog(contract,rows.slice(1)),/Every selected table/);
   for(const replacement of [{relforcerowsecurity:false},{relrowsecurity:false},{owns_table:true}]) assert.throws(() => assertCompleteFixtureCatalog(contract,[{...rows[0],...replacement},...rows.slice(1)]),/non-owner/);
 });
+test('final129 is explicit, preserves old defaults, and requires private lifecycle off plus the complete catalog',()=>{
+  const current=[...combined,'classpilot_private_chat_threads'];
+  const currentRegistry={inventories:{...registry.inventories,classpilotPrivateChatLifecyclePostExpand:{tables:current}}};
+  const selected={...env('passpilotAppointmentsPostExpand'),USAGE_SCALE_RLS_INVENTORY:'classpilotPrivateChatLifecyclePostExpand',RLS_ENABLED_TABLES:current.join(','),
+    CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1:'false',CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({preciseRestrictionResourcesV1:{mode:'off'},focusTabV1:{mode:'off'},privateChatLifecycleV1:{mode:'off'}})};
+  const contract=fixtureRlsContract(currentRegistry,'a'.repeat(64),selected);
+  assert.equal(contract.tables.length,129); assert.equal(contract.newCapabilityGates.privateChatLifecycleV1.active,false);
+  assert.equal(fixtureRlsContract(currentRegistry,'a'.repeat(64),env()).tables.length,127);
+  assert.equal(fixtureRlsContract(currentRegistry,'a'.repeat(64),env('passpilotAppointmentsPostExpand')).tables.length,128);
+  assert.throws(()=>fixtureRlsContract(registry,'a'.repeat(64),selected),/missing/);
+  for(const value of [undefined,'true','on']) assert.throws(()=>fixtureRlsContract(currentRegistry,'a'.repeat(64),{...selected,CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1:value}),/explicitly off/);
+  assert.throws(()=>fixtureRlsContract(currentRegistry,'a'.repeat(64),{...selected,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({preciseRestrictionResourcesV1:{mode:'off'},focusTabV1:{mode:'off'},privateChatLifecycleV1:{mode:'on'}})}),/explicitly off/);
+  const rows=current.map(relname=>({relname,relrowsecurity:true,relforcerowsecurity:true,owns_table:false}));
+  assertCompleteFixtureCatalog(contract,rows);
+  assert.throws(()=>assertCompleteFixtureCatalog(contract,rows.slice(0,-1)),/Every selected table/);
+});

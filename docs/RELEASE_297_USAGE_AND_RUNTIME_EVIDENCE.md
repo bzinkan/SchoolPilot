@@ -116,3 +116,26 @@ Every complete worker operation must finish within 48 seconds of its 60-second
 budget. Offered, started, completed, failed, delayed and outstanding HTTP work
 must be recorded separately; awaiting responses must not slow the offer rate.
 No passing result is recorded here until those exact measured gates complete.
+
+Run the separately named scenario with
+`scripts/load/usage/run-local-cold-open-loop-scale.ps1`, selecting an isolated
+full-current-schema database and a new empty external evidence directory for
+each run. It requires the explicit 129-table inventory before creating the
+fixture. The preparation process seeds/ANALYZEs the data and closes its server
+and pools. The runner verifies ownership again, restarts only its generated
+container, then starts a fresh measurement process using the hashed synthetic
+identity snapshot. No JWTs or database passwords are stored in that snapshot.
+This resets PostgreSQL shared buffers; it does not flush host filesystem caches.
+Ordinary authentication/range preflights still precede concurrent timing.
+
+The arrival generator offers 6,000 requests independently over 60 seconds. Each
+of 1,000 devices receives six offerings, spaced 10 seconds apart. It records
+per-school offered, started, successful, failed and refused requests, offer
+lateness, maximum in-flight work, response timings and the final drain. A late
+offer over 100 ms, in-flight refusal, request failure or incomplete drain fails
+acceptance instead of silently lowering the rate. A bounded 20-second synthetic
+request cancellation prevents unbounded drain; production timeouts stay intact.
+The actual persisted-heartbeat count is recorded separately and the existing
+raw-current-day oracle verifies its attribution. Seeded observations, preflight
+HTTP requests, scheduled offers, completed responses and persisted rows are
+distinct measurements.

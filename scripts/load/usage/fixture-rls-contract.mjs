@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 export const DEFAULT_USAGE_RLS_INVENTORY = 'classpilotUsageRollupDaysPostExpand';
 export function fixtureRlsContract(registry, registrySha256, env) {
   const name = env.USAGE_SCALE_RLS_INVENTORY || DEFAULT_USAGE_RLS_INVENTORY;
-  assert.ok([DEFAULT_USAGE_RLS_INVENTORY,'passpilotAppointmentsPostExpand'].includes(name), 'Only reviewed usage inventories are permitted');
+  assert.ok([DEFAULT_USAGE_RLS_INVENTORY,'passpilotAppointmentsPostExpand','classpilotPrivateChatLifecyclePostExpand'].includes(name), 'Only reviewed usage inventories are permitted');
   const tables = registry.inventories?.[name]?.tables;
   assert.ok(Array.isArray(tables), 'Requested inventory is missing from this source');
-  assert.equal(tables.length, name === DEFAULT_USAGE_RLS_INVENTORY ? 127 : 128);
+  assert.equal(tables.length, name === DEFAULT_USAGE_RLS_INVENTORY ? 127 : name === 'passpilotAppointmentsPostExpand' ? 128 : 129);
   assert.equal(new Set(tables).size, tables.length);
   assert.ok(tables.every(table => /^[a-z][a-z0-9_]*$/.test(table)));
   assert.match(registrySha256, /^[a-f0-9]{64}$/);
@@ -20,12 +20,14 @@ export function fixtureRlsContract(registry, registrySha256, env) {
   const dailyUsageRollup = {configured:dailyConfigured,effective:dailyValue === 'on' || dailyValue === 'set_based' ? 'set_based' : dailyValue === 'legacy' ? 'legacy' : 'shadow'};
   effectiveModes.CLASSPILOT_DAILY_USAGE_ROLLUP_MODE = dailyUsageRollup.effective;
   const newCapabilityGates = {};
-  if (name === 'passpilotAppointmentsPostExpand') {
+  if (name !== DEFAULT_USAGE_RLS_INVENTORY) {
     for (const [key,value] of Object.entries(effectiveModes)) assert.equal(value, key === 'CLASSPILOT_DAILY_USAGE_ROLLUP_MODE' ? 'shadow' : ['CLASSPILOT_USAGE_ROLLUP_MODE','CLASSPILOT_DIGITAL_USAGE_MODE'].includes(key) ? 'on' : 'off', `${key} must retain the combined usage profile mode`);
     assert.equal(env.SCHEDULER_ENABLED, 'false');
     const rollout = JSON.parse(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON || '{}');
     assert.ok(rollout && typeof rollout === 'object' && !Array.isArray(rollout), 'Combined capability rollout must be an object');
-    for (const [capability,key] of [['preciseRestrictionResourcesV1','CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1'],['focusTabV1','CLASSPILOT_CAP_FOCUS_TAB_V1']]) {
+    const capabilities = [['preciseRestrictionResourcesV1','CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1'],['focusTabV1','CLASSPILOT_CAP_FOCUS_TAB_V1']];
+    if(name==='classpilotPrivateChatLifecyclePostExpand') capabilities.push(['privateChatLifecycleV1','CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1']);
+    for (const [capability,key] of capabilities) {
       assert.equal(env[key], 'false', `${key} must be explicitly off`);
       assert.deepEqual(rollout[capability], {mode:'off'}, `${capability} rollout must be explicitly off`);
       newCapabilityGates[capability] = {configuredSwitch:env[key],configuredRollout:rollout[capability],effectiveRollout:'off',active:false};
