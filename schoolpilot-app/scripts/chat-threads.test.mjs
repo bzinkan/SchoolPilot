@@ -139,7 +139,7 @@ test('a refused reply is described in plain words from its error code', () => {
     [failure(409, { error: 'Student classroom authority changed', code: 'chat_authority_stale' }), 'Ada Student is with another teacher right now.'],
     [failure(404, { error: 'Active class session not found', code: 'ACTIVE_SESSION_NOT_FOUND' }), 'This class has ended.'],
     [failure(404, { error: 'Scheduled classroom activity is unavailable', code: 'CLASSROOM_ACTIVITY_UNAVAILABLE' }), 'This class has ended.'],
-    [failure(403, { error: 'Messaging is disabled', code: 'FAB_FEATURE_DISABLED' }), 'Messaging is turned off for this class.'],
+    [failure(403, { error: 'Messaging is disabled', code: 'FAB_FEATURE_DISABLED' }), 'Messaging is turned off for this class or your school.'],
     [failure(404, { error: 'Student is not in this class session', code: 'CHAT_STUDENT_NOT_IN_SESSION' }), 'Ada Student isn’t in this class right now.'],
     [failure(409, { error: 'Student is no longer in this classroom activity', code: 'CLASSROOM_ACTIVITY_STALE' }), 'Ada Student isn’t in this class right now.'],
     // Codeless: the class ended or is no longer yours, or the student is off the roster.

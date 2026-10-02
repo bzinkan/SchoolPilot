@@ -99,7 +99,7 @@ export function describeChatReplyError(error, studentName) {
     case 'CLASSROOM_ACTIVITY_UNAVAILABLE':
       return 'This class has ended.';
     case 'FAB_FEATURE_DISABLED':
-      return 'Messaging is turned off for this class.';
+      return 'Messaging is turned off for this class or your school.';
     case 'CHAT_STUDENT_NOT_IN_SESSION':
     case 'CLASSROOM_ACTIVITY_STALE':
       return `${name} isn\u2019t in this class right now.`;

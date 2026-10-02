@@ -18,7 +18,9 @@ const SINGLE_PANE_BELOW = 640;
  * thread, so the teacher can start the conversation, but only while the class
  * chat is available (`chatAvailable`): a disabled or denied chat can send
  * nothing, so it offers no composer. Each new `focusSignal` (an open request
- * from a student tile) moves focus to the reply box once.
+ * from a student tile) moves focus to the reply box once. Teachers can write
+ * only while both the class switch (`studentMessagingEnabled`, which the menu
+ * toggles) and the school-wide switch (`schoolMessagingEnabled`) are on.
  */
 export default function ChatWorkspace({
   visible = true,
@@ -37,6 +39,7 @@ export default function ChatWorkspace({
   freshnessNowMs,
   authority = null,
   studentMessagingEnabled = true,
+  schoolMessagingEnabled = true,
   onToggleStudentMessaging,
   fabState = null,
   onTogglePause,
@@ -46,6 +49,7 @@ export default function ChatWorkspace({
   chatAvailable = true,
 }) {
   const pause = describeChatPause(fabState);
+  const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;
   const [drafts, setDrafts] = useState({});
   const singlePane = width < SINGLE_PANE_BELOW;
   const selected = useMemo(() => {
@@ -113,7 +117,7 @@ export default function ChatWorkspace({
                 <Send className="h-4 w-4" />
               </button>
             )}
-            {onTogglePause && studentMessagingEnabled && (
+            {onTogglePause && messagingEnabled && (
               <label className="flex items-center gap-2 text-xs text-white/90">
                 <span data-testid="chat-pause-label">{pause ? (pause.locked ? 'Paused for testing' : 'Messages: Paused') : 'Messages: On'}</span>
                 <Switch
@@ -146,18 +150,22 @@ export default function ChatWorkspace({
             )}
           </div>
         </div>
-        {pause && studentMessagingEnabled && (
+        {pause && messagingEnabled && (
           <div className="px-4 py-2 text-xs bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 border-b border-amber-100 dark:border-amber-900 flex items-start gap-2 shrink-0" data-testid="chat-pause-banner" data-pause-reason={pause.reason}>
             <PauseCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <span><span className="font-semibold">{pause.title}.</span> {pause.detail}</span>
           </div>
         )}
-        {!studentMessagingEnabled && (
+        {!schoolMessagingEnabled ? (
+          <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-school-off-banner">
+            Messaging is turned off for your school. Students do not see a chat.
+          </div>
+        ) : !studentMessagingEnabled && (
           <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-off-banner">
             Messaging is turned off for this class. Students do not see a chat.
           </div>
         )}
-        <div className={cn('flex flex-1 min-h-0', !studentMessagingEnabled && 'opacity-60')}>
+        <div className={cn('flex flex-1 min-h-0', !messagingEnabled && 'opacity-60')}>
           {showList && (
             <div className={cn('min-h-0 overflow-y-auto', singlePane ? 'flex-1' : 'w-72 shrink-0 border-r border-gray-200 dark:border-gray-700')}>
               <ChatConversationList
@@ -190,7 +198,7 @@ export default function ChatWorkspace({
                     value={drafts[selected.studentId] || ''}
                     onChange={(text) => setDrafts((current) => ({ ...current, [selected.studentId]: text }))}
                     onReplyToMessage={onReplyToMessage}
-                    disabled={pendingReplyStudentIds?.has(selected.studentId) || !studentMessagingEnabled}
+                    disabled={pendingReplyStudentIds?.has(selected.studentId) || !messagingEnabled}
                     studentHasWritten={selected.items.some((item) => item.sender === 'student')}
                     focusSignal={focusSignal}
                     claimFocusSignal={claimFocusSignal}
