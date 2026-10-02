@@ -133,6 +133,7 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
   const reads = [];
   const mutations = [];
   const commandPosts = [];
+  const canonicalMessages = new Map();
   let socket = null;
   let settings = { activeSessionId: SESSION_ID, handRaisingEnabled: true, studentMessagingEnabled: true, sessionFabRevision: 1, blockedDomains: [] };
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -156,9 +157,19 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
     if (request.method() === 'POST' && ['/api/teacher/reply', '/api/teacher/close-chat', '/api/teacher/messages/read'].includes(pathname)) {
       const body = request.postDataJSON();
       mutations.push({ pathname, body });
-      if (pathname.endsWith('/read')) return json({ readAt: new Date().toISOString(), updatedIds: body?.messageIds || [] });
+      if (pathname.endsWith('/read')) {
+        const readAt = new Date().toISOString();
+        for (const id of body?.messageIds || []) {
+          const row = canonicalMessages.get(id);
+          if (row) canonicalMessages.set(id, { ...row, readAt });
+        }
+        return json({ readAt, updatedIds: body?.messageIds || [] });
+      }
       if (pathname.endsWith('/reply')) {
-        return json({ message: storedChatMessage({ id: CHAT_REPLY_ID, senderId: TEACHER_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' }), queued: true }, 202);
+        const message = storedChatMessage({ id: CHAT_REPLY_ID, studentId: body.studentId,
+          senderId: TEACHER_ID, senderType: 'teacher', content: body.message, deliveryStatus: 'sent' });
+        canonicalMessages.set(message.id, message);
+        return json({ message, queued: true }, 202);
       }
       return json({ ok: true });
     }
@@ -190,7 +201,7 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
       case '/api/teacher/raised-hands': return json({ raisedHands: [] });
       case '/api/teacher/messages':
         reads.push(pathname);
-        return json({ messages: [] });
+        return json({ messages: [...canonicalMessages.values()] });
       case '/api/admin/attendance': return json({ records: absentIds.map((studentId) => ({ studentId, status: 'absent' })) });
       case '/api/classpilot/tiles/screenshots':
       case '/api/classpilot/tiles/history': return json({ tiles: [] });
@@ -207,6 +218,16 @@ async function messagesPage({ students, absentIds = [], openPanel = true } = {})
     commandPosts,
     async sendWebSocketMessage(message) {
       await waitUntil(() => Boolean(socket), 'The Dashboard WebSocket must authenticate');
+      // A live notification follows durable history. Hard-off now re-reads that
+      // history while retaining conversations; it must not receive a false []
+      // after this fixture has already notified the teacher of a saved message.
+      if (message.type === 'student-message') {
+        const data = message.data;
+        canonicalMessages.set(data.id, storedChatMessage({ id: data.id,
+          schoolId: message.schoolId, sessionId: data.sessionId, studentId: data.studentId,
+          senderId: data.studentId, content: data.message, messageType: data.messageType,
+          createdAt: data.timestamp }));
+      }
       socket.send(JSON.stringify(message));
     },
     async setSettings(patch) {
