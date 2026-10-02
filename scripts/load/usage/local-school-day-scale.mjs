@@ -26,6 +26,10 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const registryPath = resolve(root,'src/config/rlsRegistry.json');
   const rlsContract = fixtureRlsContract(JSON.parse(readFileSync(registryPath,'utf8')),hash(registryPath),process.env);
+  if (openLoop) {
+    rlsContract.heartbeatOfferedCapabilities = [...COLD_OPEN_LOOP_PROFILE.classPilot.capabilities];
+    rlsContract.heartbeatExtensionIdentity = Object.fromEntries(Object.entries(COLD_OPEN_LOOP_PROFILE.classPilot).filter(([key]) => key !== 'capabilities'));
+  }
   const output = process.env.USAGE_SCALE_OUTPUT; assert.ok(output);
   const caps = JSON.parse(readFileSync(process.env.USAGE_SCALE_CAPS, 'utf8').replace(/^\uFEFF/, ''));
   assert.equal(caps.NanoCpus, 4_000_000_000); assert.equal(caps.Memory, 4_294_967_296);
@@ -40,7 +44,7 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
   assert.match(metrics.sourceRevision, /^[a-f0-9]{40}$/);
   if (openLoop) {
     assert.equal(resolve(process.env.USAGE_SCALE_COLD_STATE || ''),resolve(dirname(output),'cold-fixture-state.json'),'Cold state must stay in the owned fresh evidence directory');
-    for (const file of ['scripts/load/usage/open-loop-heartbeats.mjs','scripts/load/usage/cold-open-loop-profile.mjs','scripts/load/usage/local-cold-open-loop-scale.mjs']) metrics.sourceHashes[file]=hash(resolve(root,file));
+    for (const file of ['scripts/load/usage/open-loop-heartbeats.mjs','scripts/load/usage/cold-open-loop-profile.mjs','scripts/load/usage/classpilot-297-advertised-capabilities.json','scripts/load/usage/local-cold-open-loop-scale.mjs']) metrics.sourceHashes[file]=hash(resolve(root,file));
     assert.equal(rlsContract.name,'classpilotPrivateChatLifecyclePostExpand','Final acceptance requires the reviewed full129 schema');
   }
   const save = () => writeFileSync(output, JSON.stringify(metrics, null, 2));
@@ -136,7 +140,7 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
     const ingestOne = async (school, index, signal) => {
       const started = performance.now();
       const response = await fetch(`${base}/device/heartbeat`, { method: 'POST', signal, headers: { Authorization: `Bearer ${school.deviceTokens[index]}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: openLoop ? '2.9.7' : '2.10.0', capabilities: [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
+        body: JSON.stringify({ clientProtocolVersion: 3, extensionVersion: openLoop ? COLD_OPEN_LOOP_PROFILE.classPilot.extensionVersion : '2.10.0', capabilities: openLoop ? COLD_OPEN_LOOP_PROFILE.classPilot.capabilities : [], activeTabUrl: 'https://ixl.com/lesson', activeTabTitle: 'Synthetic current scope' }) });
       await response.text(); metrics.ingest.requests++; metrics.ingest.timingsMs.push(performance.now() - started);
       metrics.ingest.bySchool[school.index] = (metrics.ingest.bySchool[school.index] || 0) + 1;
       metrics.ingest.statuses[response.status] = (metrics.ingest.statuses[response.status] || 0) + 1;

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { SCHOOL_DAY_AI_PROFILE } from './school-day-ai-profile.mjs';
 import { OPEN_LOOP_HEARTBEATS } from './open-loop-heartbeats.mjs';
+import classPilot from './classpilot-297-advertised-capabilities.json' with { type: 'json' };
 
 export const COLD_OPEN_LOOP_PROFILE = Object.freeze({ ...SCHOOL_DAY_AI_PROFILE,
   name: 'six-lessons-200-domains-1m-unique-10k-ai-cold-open-loop-100rps',
   httpOffering: OPEN_LOOP_HEARTBEATS, fullWorkerAcceptanceMs: 48_000,
+  classPilot: Object.freeze({ ...classPilot, capabilities: Object.freeze([...classPilot.capabilities]) }),
   coldDefinition: 'Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.',
 });
 

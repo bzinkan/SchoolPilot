@@ -18,6 +18,12 @@ test('cold profile preserves AI grains, quotas, 100rps and actual48s headroom ga
   assert.equal(COLD_OPEN_LOOP_PROFILE.aiDecisionRowsPerSchool,10_000);
   assert.equal(COLD_OPEN_LOOP_PROFILE.fullWorkerAcceptanceMs,48_000);
   assert.equal(COLD_OPEN_LOOP_PROFILE.httpOffering.requestsPerSecond,100);
+  assert.equal(COLD_OPEN_LOOP_PROFILE.classPilot.extensionVersion,'2.9.7');
+  assert.equal(COLD_OPEN_LOOP_PROFILE.classPilot.capabilities.length,39);
+  assert.equal(new Set(COLD_OPEN_LOOP_PROFILE.classPilot.capabilities).size,39);
+  for(const cap of ['privateChatLifecycleV1','scopedAuthorityChecksV1','studentChatIdempotencyV1']) assert.ok(COLD_OPEN_LOOP_PROFILE.classPilot.capabilities.includes(cap));
+  assert.match(COLD_OPEN_LOOP_PROFILE.classPilot.sourceCommit,/^[a-f0-9]{40}$/);
+  assert.match(COLD_OPEN_LOOP_PROFILE.classPilot.sourceLfSha256,/^[a-f0-9]{64}$/);
   assert.match(COLD_OPEN_LOOP_PROFILE.coldDefinition,/host filesystem caches are not flushed/);
   assert.doesNotThrow(()=>assertColdFixtureSnapshot(fixture(),expected));
 });
