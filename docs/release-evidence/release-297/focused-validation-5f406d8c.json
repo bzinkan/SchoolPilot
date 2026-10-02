@@ -1,0 +1,519 @@
+{
+  "schemaVersion": 1,
+  "scope": "release-297-focused-usage-and-runtime-tools",
+  "recordedAt": "2026-10-02T18:09:29.688Z",
+  "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+  "sourceCleanDuringRuns": true,
+  "rootReviewCheckpoint": "6fe733fbceb4fc0e8ac2443160c01ecf9d6b3c21",
+  "finalCombinedSourceAcceptanceClaimed": false,
+  "operations": {
+    "realPostgresTests": true,
+    "syntheticDataOnly": true,
+    "mockedRuntimeAwsCli": true,
+    "realAwsOperations": false,
+    "productionOperations": false,
+    "capacityMeasurement": false,
+    "managedDevicePass": false,
+    "storePublication": false
+  },
+  "runs": [
+    {
+      "id": "private-floor-deploy",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "node",
+      "arguments": [
+        "--import",
+        "./tests/test-environment.mjs",
+        "--import",
+        "tsx",
+        "--test",
+        "tests/aws-immutable-release-image.test.ts",
+        "tests/deploy-rls-table-enablement.test.ts",
+        "tests/private-chat-release-floor.test.ts"
+      ],
+      "startedAt": "2026-10-02T18:01:27.715Z",
+      "finishedAt": "2026-10-02T18:01:29.278Z",
+      "exitCode": 0,
+      "rawLogFile": "private-floor-deploy.log",
+      "rawLogSha256": "1652487392c8eb5f8b91cfae02ef944ccf2f5706e1db82261ea8727edc7778b5",
+      "result": "passed",
+      "outcome": {
+        "tests": 45,
+        "pass": 45,
+        "fail": 0,
+        "skipped": 0
+      },
+      "archiveEntry": "private-floor-deploy",
+      "sanitizedUtf8LogSha256": "15ce8dcdfaf8ad56d221f98b622070a84ad80cc0c00db5c3a360fa04575eaec4",
+      "rawLogBytes": 10997,
+      "sanitizedUtf8LogBytes": 10703
+    },
+    {
+      "id": "profile-guards",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "node",
+      "arguments": [
+        "--test",
+        "tests/private-load-usage-profiles.test.mjs"
+      ],
+      "startedAt": "2026-10-02T18:01:29.670Z",
+      "finishedAt": "2026-10-02T18:01:32.433Z",
+      "exitCode": 0,
+      "rawLogFile": "profile-guards.log",
+      "rawLogSha256": "ba45347c6fb7117d8a55a2c378797825cea2c8fa2a66a3e92ef1402a6122c96a",
+      "result": "passed",
+      "outcome": {
+        "tests": 29,
+        "pass": 29,
+        "fail": 0,
+        "skipped": 0
+      },
+      "archiveEntry": "profile-guards",
+      "sanitizedUtf8LogSha256": "37111b51e5c4af41a161c42621a12bb495cb1bb1b34bec07f547f70288e05c9a",
+      "rawLogBytes": 7498,
+      "sanitizedUtf8LogBytes": 7314
+    },
+    {
+      "id": "runtime-classpilot",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "tests/classpilot-runtime-config-deploy.test.ps1"
+      ],
+      "startedAt": "2026-10-02T18:01:32.694Z",
+      "finishedAt": "2026-10-02T18:02:32.463Z",
+      "exitCode": 0,
+      "rawLogFile": "runtime-classpilot.log",
+      "rawLogSha256": "a04bb89c8335e175b89e3ef597432f1df9bf012dac158f07cefc6f22bd7c2d67",
+      "result": "passed",
+      "outcome": {
+        "assertions": 1284
+      },
+      "archiveEntry": "runtime-classpilot",
+      "sanitizedUtf8LogSha256": "cc2881f840139af76ceaed2dbab62f09303197357ffb586f861e7be88d58faca",
+      "rawLogBytes": 70,
+      "sanitizedUtf8LogBytes": 69
+    },
+    {
+      "id": "runtime-product",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "tests/product-runtime-config-deploy.test.ps1"
+      ],
+      "startedAt": "2026-10-02T18:02:32.592Z",
+      "finishedAt": "2026-10-02T18:02:42.575Z",
+      "exitCode": 0,
+      "rawLogFile": "runtime-product.log",
+      "rawLogSha256": "9d8f1965626fb517b171a90189ef7566e7f3122848500aef4e16a1c889fb6543",
+      "result": "passed",
+      "outcome": {
+        "assertions": 378
+      },
+      "archiveEntry": "runtime-product",
+      "sanitizedUtf8LogSha256": "0bf378c8ac9e5b029c8054b7c9a719f327ec7cddee9941c17cccc0f4694aa6b4",
+      "rawLogBytes": 1576,
+      "sanitizedUtf8LogBytes": 851
+    },
+    {
+      "id": "datekind",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "tests/powershell-json-datekind-conformance.test.ps1"
+      ],
+      "startedAt": "2026-10-02T18:02:42.719Z",
+      "finishedAt": "2026-10-02T18:02:45.984Z",
+      "exitCode": 0,
+      "rawLogFile": "datekind.log",
+      "rawLogSha256": "32b8fbbada2fc00a8b41ed5934bc4eea4f34df29ef63ef9ccc14b05e0b97b743",
+      "result": "passed",
+      "outcome": {
+        "convertFromJsonCalls": 159,
+        "files": 14
+      },
+      "archiveEntry": "datekind",
+      "sanitizedUtf8LogSha256": "2ca45738f3af8f39d9e3ceeda291bba932b43e7af1c5227276dcae3896aa7043",
+      "rawLogBytes": 90,
+      "sanitizedUtf8LogBytes": 89
+    },
+    {
+      "id": "usage-reference-19",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "scripts/run-local-workspace-tests.ps1",
+        "-Database",
+        "schoolpilot_redesign_release297_usage_20261002",
+        "-TestFiles",
+        "tests/classpilot-usage-rollup.test.ts",
+        "-RlsInventory",
+        "classpilotPrivateChatLifecyclePostExpand"
+      ],
+      "startedAt": "2026-10-02T18:02:46.126Z",
+      "finishedAt": "2026-10-02T18:03:04.352Z",
+      "exitCode": 0,
+      "rawLogFile": "usage-reference-19.log",
+      "rawLogSha256": "de2c65f0cac16bdbea5e4dda7110f782387bb65d64d7fcc84beb557eccd00430",
+      "result": "passed",
+      "outcome": {
+        "tests": 19,
+        "pass": 19,
+        "fail": 0,
+        "skipped": 0,
+        "restrictedApplicationRole": false
+      },
+      "archiveEntry": "usage-reference-19",
+      "sanitizedUtf8LogSha256": "c2785aa21cbaefb16d110e0477575c8ecef07cbe82f6405b5371261eeca0a864",
+      "rawLogBytes": 13139,
+      "sanitizedUtf8LogBytes": 12996
+    },
+    {
+      "id": "usage-restricted-7",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "scripts/run-local-workspace-tests.ps1",
+        "-Database",
+        "schoolpilot_redesign_release297_usage_20261002",
+        "-TestFiles",
+        "tests/classpilot-usage-rollup-rls.test.ts",
+        "-Restricted",
+        "-RlsInventory",
+        "classpilotPrivateChatLifecyclePostExpand"
+      ],
+      "startedAt": "2026-10-02T18:03:04.478Z",
+      "finishedAt": "2026-10-02T18:03:18.208Z",
+      "exitCode": 0,
+      "rawLogFile": "usage-restricted-7.log",
+      "rawLogSha256": "ce89a8edda10ec2424fe62e05624e99023450c838865f9b02a971df40ff10776",
+      "result": "passed",
+      "outcome": {
+        "tests": 7,
+        "pass": 7,
+        "fail": 0,
+        "skipped": 0,
+        "restrictedApplicationRole": true
+      },
+      "archiveEntry": "usage-restricted-7",
+      "sanitizedUtf8LogSha256": "a58f7b9f20c5bd586b3ed48f1ce0e822940db1d66c0d46ed1c8669f5b59fbaa4",
+      "rawLogBytes": 2377,
+      "sanitizedUtf8LogBytes": 2306
+    },
+    {
+      "id": "plain-check",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "npm",
+      "arguments": [
+        "run",
+        "check"
+      ],
+      "startedAt": "2026-10-02T18:04:07.312Z",
+      "finishedAt": "2026-10-02T18:04:08.342Z",
+      "exitCode": 1,
+      "rawLogFile": "plain-check.log",
+      "rawLogSha256": "d5852bb76112fa27cf30b9ea8dfd3240ca57a14749298d5ff127c09ee03384ec",
+      "result": "superseded-invocation-failure",
+      "outcome": {
+        "result": "evidence-wrapper-invocation-failed-before-tsc",
+        "supersededBy": "plain-check-native"
+      },
+      "archiveEntry": "plain-check",
+      "sanitizedUtf8LogSha256": "99518e5cc742b9e7d8fa6fd3e3a6e14ba2cfaf1b21343e8149b899c5034026ce",
+      "rawLogBytes": 84,
+      "sanitizedUtf8LogBytes": 80
+    },
+    {
+      "id": "plain-check-native",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "npm.cmd",
+      "arguments": [
+        "run",
+        "check"
+      ],
+      "startedAt": "2026-10-02T18:04:54.388Z",
+      "finishedAt": "2026-10-02T18:05:40.945Z",
+      "exitCode": 0,
+      "rawLogFile": "plain-check-native.log",
+      "rawLogSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "result": "passed",
+      "outcome": {
+        "applicationTypeErrors": 0
+      },
+      "archiveEntry": "plain-check-native",
+      "sanitizedUtf8LogSha256": "12652975a3b03117abbcc6550586f75df88990995b7237999814218ccc3e0c19",
+      "rawLogBytes": 51,
+      "sanitizedUtf8LogBytes": 47
+    },
+    {
+      "id": "plain-build",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "npm.cmd",
+      "arguments": [
+        "run",
+        "build"
+      ],
+      "startedAt": "2026-10-02T18:05:41.178Z",
+      "finishedAt": "2026-10-02T18:06:37.125Z",
+      "exitCode": 0,
+      "rawLogFile": "plain-build.log",
+      "rawLogSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "result": "passed",
+      "outcome": {
+        "result": "passed"
+      },
+      "archiveEntry": "plain-build",
+      "sanitizedUtf8LogSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c",
+      "rawLogBytes": 55,
+      "sanitizedUtf8LogBytes": 51
+    },
+    {
+      "id": "test-types",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "npm.cmd",
+      "arguments": [
+        "run",
+        "check:tests"
+      ],
+      "startedAt": "2026-10-02T18:06:37.292Z",
+      "finishedAt": "2026-10-02T18:07:55.273Z",
+      "exitCode": 0,
+      "rawLogFile": "test-types.log",
+      "rawLogSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "result": "passed",
+      "outcome": {
+        "testOnlyDiagnostics": 438,
+        "testOnlyMaximum": 534,
+        "syntaxErrors": 0,
+        "applicationErrors": 0
+      },
+      "archiveEntry": "test-types",
+      "sanitizedUtf8LogSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1",
+      "rawLogBytes": 204,
+      "sanitizedUtf8LogBytes": 199
+    },
+    {
+      "id": "test-casts",
+      "sourceCommit": "5f406d8c59e0a72647b78ae9cd1faed4622eba50",
+      "sourceClean": true,
+      "program": "npm.cmd",
+      "arguments": [
+        "run",
+        "check:test-casts"
+      ],
+      "startedAt": "2026-10-02T18:07:55.557Z",
+      "finishedAt": "2026-10-02T18:07:56.624Z",
+      "exitCode": 0,
+      "rawLogFile": "test-casts.log",
+      "rawLogSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "result": "passed",
+      "outcome": {
+        "asAny": 689,
+        "doubleCast": 7
+      },
+      "archiveEntry": "test-casts",
+      "sanitizedUtf8LogSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "rawLogBytes": 181,
+      "sanitizedUtf8LogBytes": 176
+    }
+  ],
+  "historicalRuns": [
+    {
+      "id": "prior129-reference-19",
+      "file": "reference-19-final129.log",
+      "sourceCommit": "7afa9544293f6f5d6513d15db34ed3e2f5fb4e20",
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "scripts/run-local-workspace-tests.ps1",
+        "-Database",
+        "schoolpilot_redesign_release297_usage_20261002",
+        "-TestFiles",
+        "tests/classpilot-usage-rollup.test.ts",
+        "-RlsInventory",
+        "classpilotPrivateChatLifecyclePostExpand"
+      ],
+      "exitCode": 0,
+      "outcome": {
+        "pass": 19,
+        "fail": 0,
+        "skipped": 0
+      },
+      "sourceAttribution": "session-recorded tracked application source; original log contains no embedded HEAD; local helper/runtime changes were later committed at bc09c247 and c0d9fd40. These are historical provenance records; clean5f reruns above provide the exact reproducible proof.",
+      "rawLogFinishedAt": "2026-10-02T17:02:06.614Z",
+      "archiveEntry": "prior129-reference-19",
+      "rawLogSha256": "16524cebc37bdf2882771b3b84b276ee8b031edba8c433f52530df2da4764b85",
+      "sanitizedUtf8LogSha256": "6f0a9b0021c6030846323f14d793759fa32ef500e18536ca66f608c51934d2e4",
+      "rawLogBytes": 13140,
+      "sanitizedUtf8LogBytes": 12997
+    },
+    {
+      "id": "prior129-restricted-7",
+      "file": "restricted-7-final129.log",
+      "sourceCommit": "7afa9544293f6f5d6513d15db34ed3e2f5fb4e20",
+      "program": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "scripts/run-local-workspace-tests.ps1",
+        "-Database",
+        "schoolpilot_redesign_release297_usage_20261002",
+        "-TestFiles",
+        "tests/classpilot-usage-rollup-rls.test.ts",
+        "-Restricted",
+        "-RlsInventory",
+        "classpilotPrivateChatLifecyclePostExpand"
+      ],
+      "exitCode": 0,
+      "outcome": {
+        "pass": 7,
+        "fail": 0,
+        "skipped": 0
+      },
+      "sourceAttribution": "session-recorded tracked application source; original log contains no embedded HEAD; local helper/runtime changes were later committed at bc09c247 and c0d9fd40. These are historical provenance records; clean5f reruns above provide the exact reproducible proof.",
+      "rawLogFinishedAt": "2026-10-02T17:03:29.725Z",
+      "archiveEntry": "prior129-restricted-7",
+      "rawLogSha256": "d39dce564b4c30e3e6cc2eeaa41ed26423d85d147ca46b9d8ae543460b1d0d8c",
+      "sanitizedUtf8LogSha256": "58b89867ef059fc111acb9dfdb0caeee5b71bcfbca0e61aab04cabcf2b06fc2e",
+      "rawLogBytes": 2376,
+      "sanitizedUtf8LogBytes": 2305
+    },
+    {
+      "id": "superseded5cc-application-check",
+      "file": "plain-check-bridge.log",
+      "sourceCommit": "ac27b4d1013318c32e29fe5d416a8448845606ae",
+      "relatedRootCheckpoint": "5cc28ceb3fdf988859db798c16ad508f1f5fff6e",
+      "program": "npm",
+      "arguments": [
+        "run",
+        "check"
+      ],
+      "exitCode": null,
+      "result": "superseded-failure",
+      "sourceAttribution": "session-recorded tracked application source; original log contains no embedded HEAD; local helper/runtime changes were later committed at bc09c247 and c0d9fd40. These are historical provenance records; clean5f reruns above provide the exact reproducible proof.",
+      "rawLogFinishedAt": "2026-10-02T17:41:55.840Z",
+      "archiveEntry": "superseded5cc-application-check",
+      "rawLogSha256": "18ef3fd7bd6d0630ce2c8a51022894bdff7384b6ea08fb0fddaff7af60f2ab1d",
+      "sanitizedUtf8LogSha256": "77f6e7b621e6810ff9336819c2eb4d093bfd08b5220c0b8e7ad5257aa411ac4c",
+      "rawLogBytes": 1993,
+      "sanitizedUtf8LogBytes": 1983
+    },
+    {
+      "id": "superseded5cc-test-type-check",
+      "file": "test-types-private-floor-bridge.log",
+      "sourceCommit": "ac27b4d1013318c32e29fe5d416a8448845606ae",
+      "relatedRootCheckpoint": "5cc28ceb3fdf988859db798c16ad508f1f5fff6e",
+      "program": "npm",
+      "arguments": [
+        "run",
+        "check:tests"
+      ],
+      "exitCode": null,
+      "result": "superseded-failure",
+      "sourceAttribution": "session-recorded tracked application source; original log contains no embedded HEAD; local helper/runtime changes were later committed at bc09c247 and c0d9fd40. These are historical provenance records; clean5f reruns above provide the exact reproducible proof.",
+      "rawLogFinishedAt": "2026-10-02T17:42:46.872Z",
+      "archiveEntry": "superseded5cc-test-type-check",
+      "rawLogSha256": "af9fe37d6711c89205ce2cf43d7bcccb6c776a4e6d2321092d53df2c76c3791a",
+      "sanitizedUtf8LogSha256": "6f1ee7b672e02bec4b31c683e6a920278401c12b894eaa016f1c67ebf7e47c04",
+      "rawLogBytes": 2060,
+      "sanitizedUtf8LogBytes": 2049
+    }
+  ],
+  "supersededCompileIssue": {
+    "introducedInRootCheckpoint": "5cc28ceb3fdf988859db798c16ad508f1f5fff6e",
+    "observedApplicationSource": "ac27b4d1013318c32e29fe5d416a8448845606ae",
+    "error": "TS2769: new settings row omitted required schoolName and wsSharedKey",
+    "repairRootCommit": "d2b4e52f8ce1c7f812243175c7d7bfcc3d09bed9",
+    "repairLocalCommit": "889ac14f6c1af0e3bf0047e543dca51a9fc37c15",
+    "resolvedByExactSourceRuns": [
+      "plain-check-native",
+      "plain-build",
+      "test-types"
+    ]
+  },
+  "schema": {
+    "database": "schoolpilot_redesign_release297_usage_20261002",
+    "inventory": "classpilotPrivateChatLifecyclePostExpand",
+    "catalog": {
+      "inventoryTables": 129,
+      "enabled": 129,
+      "forced": 129,
+      "missingTenantPolicy": 0
+    },
+    "ledger": {
+      "completeMigrationCount": 53,
+      "otherMigrationCount": 0,
+      "privateLifecycleChecksum": "69af4266b22ce3bc2729034e3d580f53caadbd101f6f2fed4ab234eaf1b88dfd"
+    },
+    "archiveEntry": "owned-schema-contract",
+    "rawLogSha256": "d6d5163776351ceade78282299c6d004f6701b89cd61a767f95652425540c9be",
+    "sanitizedUtf8LogSha256": "2ba0a7b733a7b1fd0a0971f5a887fd8fd22f3533f020e4254253a54a904f554c",
+    "scope": "read-only owned local catalog/ledger snapshot; the seven restricted tests prove usage-specific policy behavior, not comprehensive isolation of every table",
+    "cleanup": "Each test helper logged successful generated-role cleanup. Owned schema-only database retained for future load input; no measured container created."
+  },
+  "sourceHashes": {
+    "encoding": "UTF-8/LF",
+    "paths": {
+      "src/services/classpilotUsageRollup.ts": "4c07a8921fcb2b0ebc82972816e528f0462bd76fdaf3128270e1c1f0c880b57d",
+      "src/services/classpilotUsageRead.ts": "70154cd4947ab9da998fd24d9c4e52a3a7ef0696c27135fa2ecaa3a7dddebc0c",
+      "src/config/rlsRegistry.json": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+      "src/db/classpilotPrivateChatLifecycleMigration.ts": "4b468db9681672cd3ac4c9b024e30b7891b35f5ab281f82694c43d4470c791b9",
+      "scripts/deploy-classpilot-runtime-config.ps1": "14d850ff51cc3d5086a03bf5c197263ea628e49cc018f9601b33e03059f1bf2c",
+      "scripts/deploy-product-runtime-config.ps1": "82698951c8a9511a794b78093e5bf0ab983efcd269fdc032292a560760fd9cc3",
+      "scripts/classpilot-roadmap-release-evidence.ps1": "7cb9f689cb3910e3a0e18ba4d74b903ac071f2e85834163c000738071a8f4724",
+      "scripts/enforce-private-chat-release-floor.mjs": "d183d4317a97dc8ab0c99ba1d05699254230e4b2d8cafb208a7a0b24ef903636",
+      "scripts/deploy.sh": "592b66d5970bb15bbf69662839d8a0b2f6089de7428fae51326532c129a0b44e",
+      "tests/classpilot-usage-rollup.test.ts": "492d4cc01da4ec86d452adb195e6d527fd4fbcdb56b3e37ddbbc0260562a93e1",
+      "tests/classpilot-usage-rollup-rls.test.ts": "a5dea7f491d70df6a1625dbcca96b25bb630c4b53d3663afffdca9c9170f40ed",
+      "tests/private-chat-release-floor.test.ts": "5e02f960433c6244f6d5e4ec92db70704b3ceac4438090cabc38fdd07d69bb98",
+      "scripts/load/usage/classpilot-297-advertised-capabilities.json": "3d9b47fef96634bf980668133ab1b2ac76b71e4ae236b6146340a7c614703919"
+    }
+  },
+  "archive": {
+    "file": "focused-validation-5f406d8c.logs.ndjson.gz",
+    "format": "gzip of newline-delimited JSON objects {id,utf8Log}",
+    "compressedBytes": 8774,
+    "uncompressedBytes": 56919,
+    "sha256": "89dad8c111c071ad293f9093cacd6dd6ed221fe1453b394d438e1d88487846bb",
+    "uncompressedSha256": "f2634225492b4114fd1bfb3e6c018f8e8f0153f8c06535599fd4c88f0f4eaeac",
+    "entries": 17
+  },
+  "sanitization": [
+    "CRLF converted to LF",
+    "Disposable product-runtime mock directory replaced with <mock-temp-directory>",
+    "Synthetic mock API/worker ARN values replaced with explicit <mock-...> labels",
+    "Reviewer worktree path replaced with <review-worktree> in the preserved compiler errors",
+    "Unrelated cluster-wide role count omitted from the owned-schema archive entry; role cleanup is evidenced by each helper log",
+    "Connection strings, bearer tokens, secret environment values, student identities, URL browsing history and chat content were not captured"
+  ],
+  "limitations": [
+    "Focused checkpoint evidence is incremental; root owns full combined CI/database/frontend/extension acceptance",
+    "Root private-chat adoption-lock corrections after local 5f are outside this source-bound usage/tool test claim",
+    "No measured throughput or 48-second acceptance is claimed; three final-schema cold/open-loop runs remain pending",
+    "Exact 2.9.7 package acceptance and activation pins remain pending",
+    "Historical 127/128 capacity successes/failures and dense-year/high-cardinality limitations remain immutable",
+    "Managed validation is waived_not_passed only within the authorized precise/Focus scope; live receipts are not fabricated"
+  ]
+}

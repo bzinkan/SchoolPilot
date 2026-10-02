@@ -5,6 +5,11 @@ does not record a deployment, Chrome Web Store upload, managed-device test pass,
 or production capacity result. SchoolPilot and the extension release separately.
 The canonical release checklist remains the operator's release authority.
 
+Focused source-bound SQL, restricted-role and release-tool checks are preserved
+in the [durable validation manifest and sanitized log archive](release-evidence/release-297/README.md).
+They identify their exact incremental checkpoint and retain superseded failures;
+they do not certify a later final combined source or measured capacity.
+
 ## Precise resources and Focus
 
 The user explicitly approved proceeding without the two managed test
