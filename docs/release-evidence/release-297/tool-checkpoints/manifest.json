@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T19:18:26.248Z",
+  "scope": "Durable logs for focused tool corrections; records retain distinct invalid setup attempts.",
+  "sources": [
+    {
+      "file": "docs/release-evidence/release-297-private-chat-relay-floor-20261002.json",
+      "sha256": "55a1e5508518f22d8e796fa268b1ddd92872af8942f46f0937ee9f740e2a8b34"
+    },
+    {
+      "file": "docs/release-evidence/release-297-terraform-inventory-fixture-20261002.json",
+      "sha256": "1e704f5357efeb8f2f15d110b1747d69dddc708b44808c5712ec53e4148dc865"
+    }
+  ],
+  "logs": [
+    {
+      "file": "release-297-relay-floor-js-red.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "084adff3dee284f197a638115f55b4b7c76a5b9f598876e575ebb8a18230a843",
+      "sanitizedSha256": "f81afbcad36053cac95cd7d9eafedbb144aab63066a3c44fd023c380c5e092a0",
+      "archiveSha256": "f52ec2f7541d8ecdf6bfd025d282b21fa77ffe25407b1bbda8499cf6f07012aa",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-js-green.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "50f4ca2dad9d7cb28e3cab63ae9fb512de3b29b1ee15c478dd007380e727ec4b",
+      "sanitizedSha256": "50f4ca2dad9d7cb28e3cab63ae9fb512de3b29b1ee15c478dd007380e727ec4b",
+      "archiveSha256": "95d577fce43157c5af4575d970c0ed5a421cd0ff7e8283d2d16d1131e60aa012",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-powershell-red.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "898c47e3b4ed1b4d0f5970173f8a6eeb35b7eafda420feb906cece4209a34577",
+      "sanitizedSha256": "c8674db53fa7f333fda626e9df5036d0a26832d2dd5c57cacfb946d2c7787b42",
+      "archiveSha256": "6a7636010c256ea6b2845cca1fea7af383aad0672da527905b4061aa48033f62",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-powershell-green.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "089ccb659307c8d97ad23cefd5f9409b10a9e4e10eb5ece5cc4f992867b75403",
+      "sanitizedSha256": "089ccb659307c8d97ad23cefd5f9409b10a9e4e10eb5ece5cc4f992867b75403",
+      "archiveSha256": "bf5875cb125225a92c9f363f3f966e5c1359d55e326c0902a727e2ee22000494",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-focused-types.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-test-casts.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8",
+      "sanitizedSha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8",
+      "archiveSha256": "82fe20e35a8b4570297f431925fdcf44634b5bb58381535127c29bf14dfa2ebc",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-js-invalid-loader.log.gz",
+      "status": "invalid_setup_not_a_test_pass",
+      "rawSha256": "03000447c4efb8f709f84dca3d1f679f8e06be7f7c52e862cf540bffae3fa418",
+      "sanitizedSha256": "03000447c4efb8f709f84dca3d1f679f8e06be7f7c52e862cf540bffae3fa418",
+      "archiveSha256": "2574707badfe40b494415d6a44103ae0302617bb1f46f4504da47baf77a4d28d",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-relay-floor-powershell-invalid-array-fixture.log.gz",
+      "status": "invalid_setup_not_a_test_pass",
+      "rawSha256": "6d5f19d25de8bd465ef1e64a15506401d143e965a6218ddd25bf078301e55682",
+      "sanitizedSha256": "c031926fd421850ed8cddf7e9131672095db7b3a6e748e2f2bac8bcaf213417b",
+      "archiveSha256": "78578e77f128c7ec1ef5569bfdab9b30c5ba6de03680b0a939ed7af8e428c626",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-terraform-inventory-green.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "7688e17848f837eb880dc731524a3bbf62fdc34792aef9f94f897fdeeb831161",
+      "sanitizedSha256": "7688e17848f837eb880dc731524a3bbf62fdc34792aef9f94f897fdeeb831161",
+      "archiveSha256": "5bd96d029fffea6c958bf7156e44264f60a819c1cd8ff37ef05ffc2c5cbc2429",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-terraform-inventory-init.log.gz",
+      "status": "recorded_by_source_manifest",
+      "rawSha256": "4811be1ec28cd0c2894f6a8b7d4f94d522cbea9b4fc07c003919c2841a380f52",
+      "sanitizedSha256": "4811be1ec28cd0c2894f6a8b7d4f94d522cbea9b4fc07c003919c2841a380f52",
+      "archiveSha256": "bf17a99088d13e6c3e45d2185857a48ccee277912e7fd27c16a1c6b2b0fbf4ea",
+      "credentialRedactions": 0
+    },
+    {
+      "file": "release-297-terraform-inventory-unselected-forward-slash.log.gz",
+      "status": "invalid_setup_not_a_test_pass",
+      "rawSha256": "2b248ebc8d290d5a31c125ac5f4608053e12594a5eb2dc769501d13f2b778f8a",
+      "sanitizedSha256": "2b248ebc8d290d5a31c125ac5f4608053e12594a5eb2dc769501d13f2b778f8a",
+      "archiveSha256": "f9a84ea99c23ba84faac201452d03c771365ea9a5ff40890cee85ea322e016c6",
+      "credentialRedactions": 0
+    }
+  ]
+}
