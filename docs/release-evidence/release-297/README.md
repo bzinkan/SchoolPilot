@@ -130,3 +130,39 @@ bytes and the later canonical fixture-retirement assertion.
 These focused checks permit a corrected-source capacity retry. They do not
 establish 100 requests/second acceptance or three passing cold runs, and cannot
 authorize Usage activation. The failed Run 01 record remains unchanged.
+
+## Cold/open-loop Run 02 — corrected source still fails capacity
+
+[Run 02 manifest](usage-cold-open-loop-run-02-60bb2338.json) and
+[unchanged synthetic records](usage-cold-open-loop-run-02-60bb2338.raw.ndjson.gz)
+preserve the first corrected-source retry at frozen clean `60bb2338`. The same
+two-school profile, 129-table/53-migration contract, quotas, cadence, offer
+limits and deadlines were used. Preparation took 309.018 seconds; measured
+concurrent work and request drain took 71.312 seconds. Input and converged DDL
+match Run 01 after removing only each dump's two restrict/unrestrict nonce
+lines and normalizing LF; original dumps remain unchanged in both archives.
+
+Both complete workers passed the 48-second target at 22.623 and 22.753 seconds,
+with the expected 84,000 grains and one million heavy-day observations per
+school. The **full workload failed**: 32 of 64 JSON requests failed (16 returned
+500 and 16 returned 503). Of 6,000 heartbeat offers, 4,405 started, 1,541
+succeeded, 2,864 failed, 1,595 were refused at the in-flight ceiling, and 23 were
+late. The API recorded 2,804 failed acquisitions, a 1,286 waiting peak, and a
+5.154-second maximum checkout. Report statements stayed within 15 seconds;
+successful concurrent JSON response time still reached over 18 seconds.
+
+Final SQL counts were 1,194 and 1,186 current-day observations, including two
+inserted preflights per school; 1,192 and 1,184 came from concurrent traffic.
+Those 2,376 persisted observations are distinct from 1,541 successful HTTP
+responses. Eight subsequent CSV probes and post-run all-scope, coverage,
+tenant and atomicity checks passed; these correctness results do not change
+the capacity failure. Generated-container cleanup was verified, and further
+identical repeats were stopped as instructed.
+
+Usage remains **off**. Three passing cold repeats and the 100 requests/second
+mixed workload are not established, and no lower supported arrival rate is
+inferred from partial successes. Worker margins observed while traffic was
+rejected cannot establish margins with all offers accepted. No additional
+optimization, larger pool, timeout, resource allowance or easier profile was
+introduced. Earlier 4.8-percent worker-margin runs and stress failures retain
+their original, narrower evidence scope.
