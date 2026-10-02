@@ -91,6 +91,39 @@ describe("student chat channel control", () => {
     assert.match(fab, /messagingEnabled: schoolMessagingEnabled && sessionMessagingEnabled && !pause\.messagesPaused/);
   });
 
+  it("refuses a live teacher reply on either hard switch, never on a pause, before anything is stored", async () => {
+    const storage = await source("src/services/storage.ts");
+    const reply = storage.slice(
+      storage.indexOf("export async function createTeacherChatReplyWithDelivery"),
+      storage.indexOf("export async function markTeacherChatDeliveryAttempt")
+    );
+    const authority = reply.indexOf('"chat_authority_stale"');
+    const sessionLock = reply.indexOf('.for("key share")');
+    const classSwitch = reply.indexOf("{ chatEnabled: sessionSettings.chatEnabled }");
+    const refusal = reply.indexOf('classpilotFabMutationError(403, "FAB_FEATURE_DISABLED", "Messaging is turned off")');
+    assert.ok(refusal > 0, "the live reply refuses with the code the dashboard maps");
+    assert.ok(authority > 0 && authority < refusal, "classroom authority is still decided first");
+    assert.ok(refusal < reply.indexOf("tx.insert(chatMessages)"), "nothing is stored before both switches are read");
+    assert.match(reply, /schoolSettings\?\.studentMessagingEnabled === false \|\| classSettings\?\.chatEnabled === false/);
+    // Each switch is share-locked by the statement that reads it: `[^;]` cannot run on into the next read's lock.
+    assert.match(reply, /\{ studentMessagingEnabled: settings\.studentMessagingEnabled \}\)\s*\.from\(settings\)[^;]*?\.for\("share"\)/,
+      "the school switch read is share-locked, the only thing ordering a reply against a school switch-off");
+    assert.match(reply, /\{ chatEnabled: sessionSettings\.chatEnabled \}\)\s*\.from\(sessionSettings\)[^;]*?\.for\("share"\)/,
+      "the class switch read is share-locked");
+    assert.ok(sessionLock > authority && sessionLock < classSwitch,
+      "the class switch writer's lock order: the teaching session, then its settings row");
+    const writer = storage.slice(
+      storage.indexOf("export async function upsertSessionSettings"),
+      storage.indexOf("export async function getScheduledGroupsReadyToStart")
+    );
+    const writerSessionLock = writer.search(/\.from\(teachingSessions\)(?:(?!\.from\()[\s\S])*?\.for\("update"\)/);
+    assert.ok(writerSessionLock > 0 && writerSessionLock < writer.indexOf("sessionSettings"),
+      "and the writer keeps that order: it locks the teaching session for update before it touches the settings row");
+    assert.doesNotMatch(reply, /chatPaused|chat_paused|CHAT_PAUSED/, "a teacher can still reach a paused class");
+    assert.match(storage, /function classpilotFabMutationError\(status: number, code: string, message: string\) \{\s+return Object\.assign\(new Error\(message\), \{ status, code, expose: true \}\);/,
+      "an exposed status and code reach the dashboard unchanged");
+  });
+
   it("rate-limits student sends per student session with Redis-backed burst and sustained windows", async () => {
     const chat = await source("src/routes/classpilot/chat.ts");
     assert.match(chat, /router\.post\("\/student\/send-message", requireDeviceAuth, studentChatBurstLimiter, studentChatSustainedLimiter, requireClasspilotEntitlement/);
