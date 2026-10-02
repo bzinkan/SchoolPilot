@@ -15,7 +15,9 @@ import { createServer } from 'vite';
 // and these actions went to every other reporting student instead. A
 // scheduled boundary, which resets the selection on purpose, is not a loss,
 // and neither a class session starting or ending nor releasing another
-// student touches the Claimed view's ticks.
+// student touches the Claimed view's ticks. Class tools' announce button and
+// footer never name a target the Send Message dialog would refuse: not while
+// such a loss stands, and not while a student is ticked for sign-out only.
 //
 // The fixture is deliberately lean: one Vite server (port 0, pid-suffixed
 // cacheDir, so it can share a runner with the other shard-2 suites) and one
@@ -646,6 +648,87 @@ test('a ticked student who signs out is named as having stopped reporting', { ti
   await toastText(page, `${LOST_ADA} Nothing was sent. Choose students again, or use the whole class.`).waitFor();
   await settle(page);
   assert.deepEqual(commands, [], 'never the students still signed in');
+  assert.deepEqual(pageErrors, []);
+  await page.close();
+});
+
+test('Class tools never names the class a lost selection refuses: the announce button and footer say so, and the announce click explains', { timeout: 120_000 }, async () => {
+  const { page, commands, pageErrors, report, tick } = await classPage([ADA, BEN]);
+  await tick(ADA);
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+  await page.getByTestId('chat-open').click();
+  const broadcast = page.getByTestId('chat-broadcast');
+  const footer = page.getByTestId('class-tools-panel').locator('footer');
+  await broadcast.getByText('Message 1 selected student', { exact: true }).waitFor();
+  assert.equal(await footer.innerText(), 'New actions for 1 selected student. Active tools keep their original recipients.');
+
+  // Ada stops reporting and the Dashboard clears her tick: neither the
+  // announce button nor the footer may fall back to naming the class.
+  await report({ fresh: [BEN], stale: [ADA] });
+  await waitForTick(page, ADA, 'unchecked');
+  const cleared = 'Selection cleared · choose students again';
+  await broadcast.getByText(cleared, { exact: true }).waitFor();
+  assert.equal(await broadcast.getAttribute('aria-label'), cleared, 'its accessible name says the same');
+  assert.match(await page.getByTestId('badge-selection-count').innerText(), new RegExp(cleared), 'as the Target badge does');
+  assert.equal(await footer.innerText(), 'New actions for no one until you choose students again. Active tools keep their original recipients.');
+  await broadcast.click();
+  await toastText(page, `${LOST_ADA} Choose students again, or use the whole class.`).waitFor();
+  await settle(page);
+  assert.equal(await page.getByTestId('dialog-send-message').count(), 0, 'no dialog opens for a lost selection');
+  assert.deepEqual(commands, [], 'nothing is sent');
+
+  // Choosing the whole class names it again.
+  await page.getByTestId('button-selection-lost-use-all').focus();
+  await page.keyboard.press('Enter');
+  await page.getByTestId('selection-lost-notice').waitFor({ state: 'detached' });
+  await broadcast.getByText('Announce to class', { exact: true }).waitFor();
+  assert.equal(await footer.innerText(), 'New actions for all 2 students. Active tools keep their original recipients.');
+  assert.deepEqual(commands, []);
+  assert.deepEqual(pageErrors, []);
+  await page.close();
+});
+
+test('Class tools names a sign-out-only selection as the Target badge does, before any other tick or a lost selection, and the announce click explains', { timeout: 120_000 }, async () => {
+  const { page, commands, pageErrors, report, tick } = await classPage([ADA, BEN]);
+  await tick(ADA);
+  // Ben stops reporting but stays signed in: he can be ticked only for
+  // Student Sign Out, and while he is every other control refuses, Ada's
+  // tick included.
+  await report({ fresh: [ADA], stale: [BEN] });
+  await page.getByTestId(`preview-unavailable-${BEN}`).waitFor();
+  await tick(BEN);
+  const badge = page.getByTestId('badge-selection-count');
+  assert.match(await badge.innerText(), / · 1 selected for sign-out only\n/);
+  await page.getByRole('button', { name: 'Class tools', exact: true }).click();
+  await page.getByTestId('chat-open').click();
+  const broadcast = page.getByTestId('chat-broadcast');
+  const footer = page.getByTestId('class-tools-panel').locator('footer');
+  const signOutOnly = '1 selected for sign-out only';
+  const blocked = 'New actions for no one until you clear the sign-out-only selection. Active tools keep their original recipients.';
+  await broadcast.getByText(signOutOnly, { exact: true }).waitFor();
+  assert.equal(await broadcast.getAttribute('aria-label'), signOutOnly, 'not "Message 1 selected student"');
+  assert.equal(await footer.innerText(), blocked);
+
+  // Ada stops reporting and the Dashboard clears her tick, so a lost
+  // selection stands too. Ben's tick still comes first, as in the badge.
+  await report({ stale: [ADA, BEN] });
+  await waitForTick(page, ADA, 'unchecked');
+  await waitForText(page, 'selection-lost-message', `${LOST_ADA} Choose students again, or use the whole class.`);
+  assert.match(await badge.innerText(), / - 1 selected for sign-out only\n/, 'the badge names the sign-out-only selection');
+  assert.equal(await broadcast.getAttribute('aria-label'), signOutOnly, 'and so does the button, not "Selection cleared"');
+  assert.equal(await footer.innerText(), blocked);
+  await broadcast.click();
+  await toastText(page, 'Clear the sign-out-only selection before using other ClassPilot controls.').waitFor();
+  await settle(page);
+  assert.equal(await page.getByTestId('dialog-send-message').count(), 0, 'no dialog opens for a sign-out-only selection');
+  assert.deepEqual(commands, [], 'nothing is sent');
+
+  // Clear Selection clears both, and the class is the target again.
+  await page.getByTestId('button-clear-selection').focus();
+  await page.keyboard.press('Enter');
+  await broadcast.getByText('Announce to class', { exact: true }).waitFor();
+  assert.equal(await footer.innerText(), 'New actions for all 2 students. Active tools keep their original recipients.');
+  assert.deepEqual(commands, []);
   assert.deepEqual(pageErrors, []);
   await page.close();
 });

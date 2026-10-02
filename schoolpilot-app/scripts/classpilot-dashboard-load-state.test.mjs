@@ -3578,11 +3578,11 @@ const SECOND_STUDENT_ID = '99999999-9999-4999-8999-999999999999';
 const THIRD_STUDENT_ID = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
 const FOURTH_STUDENT_ID = 'efefefef-efef-4fef-8fef-efefefefefef';
 const ROSTER_CLOCK = '2026-09-18T14:05:00.000Z';
-const ROSTER_ORDER = [SECOND_STUDENT_ID, STUDENT_ID, FOURTH_STUDENT_ID, THIRD_STUDENT_ID];
 
-// The class behind the Messages roster: Ada reports now (attendance also marks
-// her absent), Ben is signed out, Dee is absent and silent, and Cy is with
-// another staff member. Grid and roster order: Adams, Student, Vance, Zed.
+// A class with a student in each Messages roster state: Ada reports now, Ben
+// is signed out, Dee is silent, and Cy is with another staff member. The
+// roster's own browser tests (grid order, presence, "need reply", Find, one
+// pane) run in classpilot-messages-roster-browser.test.mjs, release shard 2.
 function rosterClass() {
   return [
     student({ lastSeenAt: ROSTER_CLOCK, realtimeObservedAt: ROSTER_CLOCK, enforcementHealth: 'synced', fabSyncPending: false,
@@ -3597,183 +3597,12 @@ function rosterClass() {
   ];
 }
 
-function markedAbsentToday(page) {
-  return page.route('**/api/admin/attendance**', route => route.fulfill({ json: { records: [
-    { studentId: STUDENT_ID, status: 'absent' }, { studentId: FOURTH_STUDENT_ID, status: 'absent' },
-  ] } }));
-}
-
 // Long enough for a click's state update, effects and a focus frame to land.
 function afterFrames(page) {
   return page.evaluate(() => new Promise(resolve => {
     requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }));
 }
-
-async function rosterOrder(page) {
-  return page.getByTestId('chat-conversations').locator('[data-roster-id]').evaluateAll(nodes => nodes.map(node => node.dataset.rosterId));
-}
-
-test('chat roster: Messages lists the whole class in the grid order with presence and no message text, whatever the grid filter', { timeout: 60_000 }, async context => {
-  const fixture = await chatBrowserFixture(context, { openPanel: false, clockTime: ROSTER_CLOCK, students: rosterClass(), beforeGoto: markedAbsentToday });
-  const { page, harness } = fixture;
-  for (const id of ROSTER_ORDER) await page.getByTestId(`card-student-${id}`).waitFor();
-  assert.deepEqual(await page.locator('[data-testid^="card-student-"]').evaluateAll(nodes => nodes.map(node => node.dataset.testid)),
-    ROSTER_ORDER.map(id => `card-student-${id}`), 'The grid order');
-  // The grid search narrows the tiles; the roster stays the whole class.
-  await page.getByTestId('input-search-students').fill('Zed');
-  await page.getByTestId(`card-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
-  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question', createdAt: '2026-09-18T14:00:00.000Z' });
-  const adaRow = storedChatMessage({ createdAt: '2026-09-18T14:02:00.000Z' });
-  await harness.sendWebSocketMessage(studentChatEvent(benRow));
-  await harness.sendWebSocketMessage(studentChatEvent(adaRow));
-  await openToolbarByKeyboard(page);
-  await page.getByTestId('chat-open').getByText('2', { exact: true }).waitFor();
-  await openChatPanel(page);
-  await expectChatUnread(page, 2);
-  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
-  assert.deepEqual(await rosterOrder(page), ROSTER_ORDER, 'The whole class in the grid order, never newest or unread first');
-  // Each row is a mark, a name, at most one status word and an unread count;
-  // the status is spelled out for screen readers, and each mark has its own shape.
-  const row = id => page.getByTestId(`chat-conversation-${id}`).evaluate(node => ({
-    mark: node.querySelector('[data-mark]')?.dataset.mark ?? null,
-    text: node.textContent.replace(/\s+/g, ' ').trim(),
-  }));
-  assert.deepEqual(await row(SECOND_STUDENT_ID), { mark: 'dash', text: 'Ben Adams, Not signed in, 1 unread' });
-  assert.deepEqual(await row(STUDENT_ID), { mark: 'dot', text: 'Ada Student, On now, 1 unread' }, 'Reporting outranks an absence mark');
-  assert.deepEqual(await row(FOURTH_STUDENT_ID), { mark: 'cross', text: 'Dee Vance, Absent' });
-  assert.deepEqual(await row(THIRD_STUDENT_ID), { mark: 'diamond', text: 'Cy Zed, With Morgan Monitor' });
-  const list = page.getByTestId('chat-conversations');
-  for (const text of [CHAT_MESSAGE_TEXT, benRow.content]) {
-    assert.equal(await list.getByText(text).count(), 0, 'The roster never previews what a student wrote');
-  }
-  assert.equal(await list.locator('time, img').count(), 0, 'No times or avatars');
-  await chatEvidence(page, 'class-roster', { rows: ROSTER_ORDER.length, gridFilter: 'Zed' });
-  await selectConversation(page);
-  await threadText(page, CHAT_MESSAGE_TEXT).waitFor();
-  await expectChatUnread(page, 1);
-  await rowUnread(page).waitFor({ state: 'hidden' });
-  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
-  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).getAttribute('aria-current'), 'true');
-  assert.deepEqual(await rosterOrder(page), ROSTER_ORDER, 'Reading a thread never reorders the roster');
-  // Cy is with another staff member and has no thread: the row opens nothing.
-  const cyRow = page.getByTestId(`chat-conversation-${THIRD_STUDENT_ID}`);
-  assert.equal(await cyRow.getAttribute('aria-disabled'), 'true');
-  // A real click; Playwright would otherwise wait for an aria-disabled row to enable.
-  await cyRow.click({ force: true });
-  await afterFrames(page);
-  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), STUDENT_ID, 'A With-staff row with no thread opens nothing');
-  // Another tab hides Messages: the roster is not rendered behind it.
-  await page.getByTestId('class-tools-tab-help').click();
-  await page.getByTestId('chat-roster-find').waitFor({ state: 'detached' });
-  assert.equal(await page.getByTestId('chat-conversations').count(), 0, 'No roster rows while Messages is hidden');
-  await page.getByTestId('chat-open').click();
-  await expectRowUnread(page, 1, SECOND_STUDENT_ID);
-  await page.keyboard.press('Escape');
-  await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
-  await openToolbarByKeyboard(page);
-  await page.getByTestId('chat-open').getByText('1', { exact: true }).waitFor();
-  assert.deepEqual(harness.pageErrors, []);
-});
-
-test('chat roster: "need reply", Find with Enter and Escape, arrow keys, a read-only With-staff row, and one pane', { timeout: 60_000 }, async context => {
-  const fixture = await chatBrowserFixture(context, { clockTime: ROSTER_CLOCK, students: rosterClass() });
-  const { page, harness } = fixture;
-  // Dee, third in the roster, has waited longest. Cy wrote before Ben but is
-  // with another staff member, so only Dee and Ben need a reply.
-  const deeRow = storedChatMessage({ id: 'abababab-abab-4bab-8bab-abababababab', studentId: FOURTH_STUDENT_ID, content: 'Synthetic question that waited longest', createdAt: '2026-09-18T14:00:00.000Z' });
-  const cyRow = storedChatMessage({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', studentId: THIRD_STUDENT_ID, content: 'Synthetic question before coverage', createdAt: '2026-09-18T14:01:00.000Z' });
-  const benRow = storedChatMessage({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', studentId: SECOND_STUDENT_ID, content: 'Synthetic second student question', createdAt: '2026-09-18T14:03:00.000Z' });
-  await harness.sendWebSocketMessage(studentChatEvent(benRow));
-  await harness.sendWebSocketMessage(studentChatEvent(cyRow));
-  await harness.sendWebSocketMessage(studentChatEvent(deeRow));
-  await expectRowUnread(page, 1, FOURTH_STUDENT_ID);
-  await expectRowUnread(page, 1, THIRD_STUDENT_ID);
-  const needReply = page.getByTestId('chat-need-reply');
-  await needReply.getByText('2 need reply', { exact: true }).waitFor();
-  // The jump opens whoever has waited longest, wherever they sit in the roster, ready to type.
-  await needReply.click();
-  await threadText(page, deeRow.content).waitFor();
-  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), FOURTH_STUDENT_ID);
-  await waitForFocus(page, 'chat-composer-input');
-  await needReply.getByText('1 needs reply', { exact: true }).waitFor();
-  // Find narrows the roster; Enter opens nothing unless one student can be messaged.
-  const find = page.getByTestId('chat-roster-find');
-  await find.fill('zed');
-  await page.getByTestId(`chat-conversation-${STUDENT_ID}`).waitFor({ state: 'detached' });
-  await find.press('Enter');
-  await afterFrames(page);
-  // Escape clears Find and leaves Class tools open.
-  await find.press('Escape');
-  assert.equal(await find.inputValue(), '');
-  assert.equal(await page.getByTestId('class-tools-panel').isVisible(), true, 'Escape in Find must not close Class tools');
-  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), FOURTH_STUDENT_ID, 'Enter on a read-only match opened nothing');
-  assert.deepEqual(await rosterOrder(page), ROSTER_ORDER);
-  // The rows are one Tab stop: arrows move between them, Enter opens one.
-  await find.press('ArrowDown');
-  await waitForFocus(page, `chat-conversation-${FOURTH_STUDENT_ID}`);
-  assert.deepEqual(await page.getByTestId('chat-conversations').locator('[data-roster-id][tabindex="0"]').evaluateAll(nodes => nodes.map(node => node.dataset.rosterId)),
-    [FOURTH_STUDENT_ID], 'Exactly one row is in the Tab order: the open thread');
-  await page.keyboard.press('End');
-  await waitForFocus(page, `chat-conversation-${THIRD_STUDENT_ID}`);
-  // A student with another staff member is read-only: the thread opens to read, with no reply box.
-  await page.keyboard.press('Enter');
-  await threadText(page, cyRow.content).waitFor();
-  assert.equal(await page.getByTestId('chat-thread-read-only').innerText(), 'Cy Zed is with Morgan Monitor right now. You can reply when they’re back in this class.');
-  assert.equal(await replyInput(page).count(), 0, 'No reply box: the server would refuse the reply');
-  assert.equal(await page.getByTestId('chat-thread-menu').count(), 0, 'Nor an End chat that would reach their device');
-  assert.equal(await page.getByTestId('chat-thread').getByRole('button', { name: 'Details', exact: true }).count(), 0, 'Nor Details, which this class cannot open');
-  assert.equal(await focusedTestId(page), `chat-conversation-${THIRD_STUDENT_ID}`, 'Focus stays on the row');
-  await rowUnread(page, THIRD_STUDENT_ID).waitFor({ state: 'detached' });
-  await chatEvidence(page, 'roster-read-only-thread', { student: 'Cy Zed', with: 'Morgan Monitor', composer: false });
-  // Ben still needs a reply. With his thread open, nobody does.
-  await needReply.getByText('1 needs reply', { exact: true }).waitFor();
-  await needReply.click();
-  await threadText(page, benRow.content).waitFor();
-  await waitForFocus(page, 'chat-composer-input');
-  await needReply.waitFor({ state: 'detached' });
-  // Two matches: Enter waits. One match: Enter opens it with the reply box focused.
-  await find.fill('ada');
-  await find.press('Enter');
-  await afterFrames(page);
-  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), SECOND_STUDENT_ID);
-  await find.fill('ada s');
-  await page.getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor({ state: 'detached' });
-  await find.press('Enter');
-  await page.getByTestId('chat-thread-empty').waitFor();
-  assert.equal(await page.getByTestId('chat-thread').getAttribute('data-student-id'), STUDENT_ID);
-  await waitForFocus(page, 'chat-composer-input');
-  assert.equal(await replyInput(page).getAttribute('aria-label'), 'Message Ada Student');
-  assert.equal(await find.inputValue(), '', 'Find clears once it has opened a thread');
-  assert.deepEqual(await rosterOrder(page), ROSTER_ORDER);
-  assert.equal(await page.getByTestId(`chat-conversation-${STUDENT_ID}`).getAttribute('aria-current'), 'true');
-  await chatEvidence(page, 'roster-empty-thread', { student: 'Ada Student', openedBy: 'Find + Enter' });
-  // Below 640 px Messages is one pane: the open thread with Back, or the roster.
-  // The short drawer can tuck the header under its footer, so use the keyboard.
-  await page.setViewportSize({ width: 600, height: 900 });
-  await page.getByTestId('chat-thread-back').focus();
-  await page.keyboard.press('Enter');
-  // Back puts focus on the student's row in the roster that replaces the thread.
-  await waitForFocus(page, `chat-conversation-${STUDENT_ID}`);
-  assert.equal(await page.getByTestId('chat-thread').count(), 0);
-  await page.keyboard.press('Home');
-  await waitForFocus(page, `chat-conversation-${SECOND_STUDENT_ID}`);
-  await page.keyboard.press('Enter');
-  await threadText(page, benRow.content).waitFor();
-  assert.equal(await page.getByTestId('chat-conversations').count(), 0, 'The thread replaces the roster');
-  await waitForFocus(page, 'chat-composer-input');
-  // With no reply box to take it, focus lands on Back rather than the page.
-  await page.getByTestId('chat-thread-back').focus();
-  await page.keyboard.press('Enter');
-  await waitForFocus(page, `chat-conversation-${SECOND_STUDENT_ID}`);
-  await page.keyboard.press('End');
-  await waitForFocus(page, `chat-conversation-${THIRD_STUDENT_ID}`);
-  await page.keyboard.press('Enter');
-  await page.getByTestId('chat-thread-read-only').waitFor();
-  await waitForFocus(page, 'chat-thread-back');
-  assert.equal(fixture.mutations.filter(mutation => mutation.pathname === '/api/teacher/reply').length, 0);
-  assert.deepEqual(harness.pageErrors, []);
-});
 
 test('class tools: a real authority change clears drafts and selection before replies in the new classroom', { timeout: 60_000 }, async context => {
   const fixture = await chatBrowserFixture(context);

@@ -1403,3 +1403,66 @@ test('a selection cleared automatically is refused, never widened, and every cla
   assert.doesNotMatch(blockListStatus, /from All Students/);
   assert.match(dashboard, /onClick=\{handleRemoveBlockList\}[^\n]*data-testid="button-remove-all-block-lists"/);
 });
+
+test('Messages follows the class and school switches together, and Class tools never names a target the Send Message dialog refuses', async () => {
+  const [dashboard, workspace, composer] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatWorkspace.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatComposer.jsx', import.meta.url), 'utf8'),
+  ]);
+  // One effective hard switch (class && school) gates the roster, need reply
+  // and the reply box; a pause (fabState) is not part of it, so a paused class
+  // keeps its roster and the teacher can still write.
+  assert.match(workspace, /const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;/);
+  assert.match(workspace, /const canStartConversations = messagingEnabled && chatAvailable;/);
+  assert.match(workspace, /const composerDisabled = !messagingEnabled \|\| Boolean\(selectedId && pendingReplyStudentIds\?\.has\(selectedId\)\);/);
+  assert.match(workspace, /\(canStartConversations \? rosterRows : rosterRows\.filter\(\(row\) => row\.hasThread\)\)/, 'messaging off lists existing threads only');
+  assert.match(workspace, /answerableConversations\(conversations, \{ rosterById: rosterKnown \? rosterById : null, canStart: canStartConversations \}\)/, 'need reply follows the same switch');
+  assert.doesNotMatch(workspace, /(?:canStartConversations|composerDisabled|messagingEnabled) = [^\n;]*pause/, 'a pause never gates writing');
+  // The school banner outranks the class banner; nothing can be paused while
+  // either switch is off.
+  assert.match(workspace, /\{!schoolMessagingEnabled \? \([\s\S]{0,400}data-testid="chat-school-off-banner"[\s\S]{0,300}\) : !studentMessagingEnabled && \(/);
+  assert.match(workspace, /\{onTogglePause && messagingEnabled && \(/);
+  assert.match(workspace, /\{pause && messagingEnabled && \(/);
+  // Either banner sits in one live region that is always present, so a switch
+  // turned off elsewhere is announced. A conversation that has not started
+  // closes while messaging is off instead of waiting hidden to come back.
+  assert.match(workspace, /<div role="status"[^>]*data-testid="chat-off-region">\s*\{!schoolMessagingEnabled \? \(/);
+  assert.match(workspace, /const unstartedConversationHidden = visible && chatAvailable && !messagingEnabled\s*&& Boolean\(selectedStudentId\) && !selected;/);
+  assert.match(workspace, /if \(unstartedConversationHidden\) onSelectConversation\(null\);/);
+  // Focus a switch takes moves only on turning messaging off, only when the
+  // teacher had it in Messages, and only to the open conversation or a note:
+  // typing on at the announce button would open a message to the whole class,
+  // and at another student's row could open that student's reply box.
+  assert.match(workspace, /const turnedOff = previousMessagingEnabledRef\.current && !messagingEnabled;/);
+  assert.match(workspace, /\(list\?\.querySelector\('\[data-roster-id\]\[aria-current="true"\]'\)\s*\|\| backButtonRef\.current\s*\|\| noSelectionRef\.current\s*\|\| headingRef\.current\)\?\.focus\(\);/);
+  assert.doesNotMatch(workspace, /querySelector\('button'\)/, 'never the first button in the list, the announce button');
+  assert.match(workspace, /onFocus=\{rememberFocus\} onBlur=\{forgetFocusTheTeacherMoved\}>/);
+  assert.match(workspace, /document\.addEventListener\('pointerdown', forgetOnOutsidePointer, true\);/);
+  // The reply box, Send and every quick reply follow the switch, so nothing
+  // replaces the draft it keeps.
+  assert.equal(composer.match(/disabled=\{disabled\}/g)?.length, 3, '"Got it", the other quick replies and the box');
+  assert.match(composer, /disabled=\{!canSend\}/);
+  // A tile starts a conversation only while both switches are on.
+  assert.match(dashboard, /const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;/);
+  assert.match(dashboard, /canStartChat=\{classAndSchoolMessagingEnabled\}/);
+  assert.match(dashboard, /studentMessagingEnabled=\{classMessagingEnabled\}\s*schoolMessagingEnabled=\{schoolMessagingEnabled\}/);
+
+  // While a selection the Dashboard cleared stands, the Class tools footer and
+  // the announce button use the command resolver's own guard, and the Target
+  // badge the same wording; the announce click goes through the dialog
+  // opener, whose SELECTION_LOST refusal explains why nothing opened.
+  assert.match(dashboard, /const selectionLossActive = selectionLossBlocksFallback\(activeSelectionLoss, selectedStudentIds\);/);
+  assert.match(dashboard, /recipientLabel=\{classToolsRecipientLabel\(\{\s*selectedCount: selectedStudentIds\.size,[\s\S]{0,200}?selectionLost: selectionLossActive,/);
+  assert.match(dashboard, /broadcastLabel=\{broadcastButtonLabel\(\{\s*selectedCount: selectedStudentIds\.size,[\s\S]{0,200}?selectionLost: selectionLossActive,/);
+  assert.match(dashboard, /: selectionLossActive && selectedServerSignOutStudentIds\.size === 0\s*\? SELECTION_CLEARED_TARGET_LABEL/);
+  assert.doesNotMatch(dashboard, /'Selection cleared · choose students again'/, 'one copy of the wording');
+  // Students ticked for sign-out only block every other control, the Send
+  // Message dialog included, so the footer and the announce button name that
+  // selection first, in the Target badge's words.
+  assert.match(dashboard, /recipientLabel=\{classToolsRecipientLabel\(\{[\s\S]{0,600}?signOutOnlyCount: selectedServerSignOutStudentIds\.size,/);
+  assert.match(dashboard, /broadcastLabel=\{broadcastButtonLabel\(\{[\s\S]{0,600}?signOutOnlyCount: selectedServerSignOutStudentIds\.size,/);
+  assert.match(dashboard, /: selectedServerSignOutStudentIds\.size > 0\s*\? signOutOnlySelectionLabel\(selectedServerSignOutStudentIds\.size\)/);
+  assert.doesNotMatch(dashboard, /selected for sign-out only/, 'one copy of that wording too');
+  assert.match(dashboard, /onSendMessage=\{[^\n]*\(\) => openRecipientDialog\('message', 'teacher-message', \{ message: '' \}\)\}/);
+});

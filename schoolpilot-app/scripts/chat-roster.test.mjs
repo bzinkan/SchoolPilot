@@ -15,6 +15,7 @@ import {
 } from '../src/products/classpilot/lib/chatRoster.js';
 import { compareStudentsByLastName } from '../src/products/classpilot/lib/studentOrder.js';
 import { deriveChatConversations } from '../src/products/classpilot/lib/chatThreads.js';
+import { SELECTION_CLEARED_TARGET_LABEL, signOutOnlySelectionLabel } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 
 const ON = { kind: 'online', telemetryCurrent: true };
 const IDLE = { kind: 'idle', telemetryCurrent: true };
@@ -211,4 +212,26 @@ test('the announce button names its real target: ticks, then the subgroup, then 
   assert.equal(broadcastButtonLabel({ selectedCount: 1, subgroupName: 'Reading table' }), 'Message 1 selected student');
   assert.equal(broadcastButtonLabel({ selectedCount: 3 }), 'Message 3 selected students');
   assert.equal(broadcastButtonLabel({ subgroupName: 'Reading table' }), 'Message Reading table');
+});
+
+test('while a cleared selection stands, the announce button names no group or class', () => {
+  const cleared = 'Selection cleared · choose students again';
+  assert.equal(SELECTION_CLEARED_TARGET_LABEL, cleared, 'the Target badge wording');
+  assert.equal(broadcastButtonLabel({ selectionLost: true }), cleared, 'never "Announce to class"');
+  assert.equal(broadcastButtonLabel({ selectionLost: true, subgroupName: 'Reading table' }), cleared, 'never the group');
+  assert.equal(broadcastButtonLabel({ selectionLost: true, selectedCount: 2, subgroupName: 'Reading table' }), 'Message 2 selected students', 'new ticks are a target again');
+  assert.equal(broadcastButtonLabel({ selectionLost: 1 }), 'Announce to class', 'only a real loss changes the label');
+});
+
+test('while students are ticked for sign-out only, the announce button names that selection, whatever else is ticked or lost', () => {
+  // Every control but Student Sign Out refuses until those ticks are cleared,
+  // so the dialog never opens for the ticks, the group or the class.
+  assert.equal(signOutOnlySelectionLabel(1), '1 selected for sign-out only', 'the Target badge wording');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: 1 }), '1 selected for sign-out only', 'never "Announce to class"');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: 2, subgroupName: 'Reading table' }), '2 selected for sign-out only', 'never the group');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: 1, selectedCount: 3 }), '1 selected for sign-out only', 'never the other ticks');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: 1, selectionLost: true }), '1 selected for sign-out only', 'the refusal a click meets first');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: 0, selectionLost: true }), SELECTION_CLEARED_TARGET_LABEL);
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: -1 }), 'Announce to class', 'only a count changes the label');
+  assert.equal(broadcastButtonLabel({ signOutOnlyCount: Number.NaN, selectedCount: 2 }), 'Message 2 selected students');
 });

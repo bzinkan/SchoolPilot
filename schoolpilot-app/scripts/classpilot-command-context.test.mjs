@@ -46,6 +46,7 @@ import {
   selectionLossBlocksFallback,
   selectionLostMessage,
   selectionScopeKeepsBoundary,
+  signOutOnlySelectionLabel,
   snapshotCommandRecipients,
   snapshotRecipientNames,
   studentSignOutSelectionBinding,
@@ -1442,4 +1443,19 @@ test('while a cleared selection stands, the Class tools footer never names the g
   const loss = recordSelectionLoss(null, { previousIds: ['ada'], keptIds: [], scopeKey: 'scope', reason: 'stopped-reporting' });
   assert.equal(classToolsRecipientLabel({ selectionLost: selectionLossBlocksFallback(loss, new Set()), classCount: 20 }), lost);
   assert.equal(classToolsRecipientLabel({ selectionLost: selectionLossBlocksFallback(loss, new Set(['ben'])), selectedCount: 1, classCount: 20 }), '1 selected student');
+});
+
+test('while students are ticked for sign-out only, the Class tools footer names no one, as every new action is refused', () => {
+  const blocked = 'no one until you clear the sign-out-only selection';
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, classCount: 20 }), blocked, 'never the class');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 2, subgroupSelected: true, subgroupMemberCount: 4, classCount: 20 }), blocked, 'never the group');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, selectedCount: 3, classCount: 20 }), blocked, 'never the other ticks');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, selectionLost: true, classCount: 20 }), blocked, 'whatever was lost');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 0, selectionLost: true, classCount: 20 }), 'no one until you choose students again');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: -1, classCount: 20 }), 'all 20 students', 'only a count changes the label');
+  // The refusal those new actions meet, and the Target badge's wording.
+  assert.throws(() => assertClassroomCommandSelectionIsolation('teacher-message', 1), /clear the sign-out-only selection/i);
+  assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('student-sign-out', 1));
+  assert.equal(signOutOnlySelectionLabel(1), '1 selected for sign-out only');
+  assert.equal(signOutOnlySelectionLabel(3), '3 selected for sign-out only');
 });

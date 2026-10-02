@@ -10,9 +10,11 @@ const COUNTER_FROM = 400;
 /**
  * Reply box for one thread. Enter sends, Shift+Enter adds a line. One-tap
  * replies fill the draft; "Got it" sends at once. Until the student has
- * written, only openers are offered. `disabled` is true only while this
- * student's own reply is in flight, so other threads stay usable. The box is
- * named for its recipient, so focus landing here says who will receive it.
+ * written, only openers are offered. `disabled` is true while messaging is off
+ * or this student's own reply is in flight (other threads stay usable); it
+ * turns off the box, Send and every one-tap reply, so nothing replaces the
+ * draft it keeps. The box is named for its recipient, so focus landing here
+ * says who will receive it.
  *
  * A new `focusSignal` (an open request from a student tile) moves focus here
  * when `claimFocusSignal` says it has not been handled yet, so a composer that
@@ -67,8 +69,9 @@ function ChatComposer({ studentId, studentName = '', value, onChange, onReplyToM
           <button
             key={reply.id}
             type="button"
+            disabled={disabled}
             onClick={() => { onChange(reply.text); inputRef.current?.focus(); }}
-            className="shrink-0 text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="shrink-0 text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 transition-colors"
             data-testid={`chat-canned-${reply.id}`}
           >
             {reply.text}

@@ -133,10 +133,12 @@ import {
   recordSelectionLoss,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  SELECTION_CLEARED_TARGET_LABEL,
   selectionLossActionLabel,
   selectionLossBlocksFallback,
   selectionLostMessage,
   selectionScopeKeepsBoundary,
+  signOutOnlySelectionLabel,
   snapshotCommandRecipients,
   snapshotRecipientNames,
   studentSignOutSelectionBinding,
@@ -4638,13 +4640,13 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const targetBannerLabel = subgroupCommandsDisabled
     ? `${subgroupName || 'Subgroup'} roster unavailable`
     : selectionLossActive && selectedServerSignOutStudentIds.size === 0
-    ? 'Selection cleared · choose students again'
+    ? SELECTION_CLEARED_TARGET_LABEL
     : studentView === 'claimed' && selectedStudentIds.size === 0
     ? `${targetStudents.length} claimed student${targetStudents.length === 1 ? '' : 's'} in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}${claimedSearchDisclosure}`
     : selectedStudentIds.size > 0
-    ? `${targetStudents.length} selected ${studentView === "class" ? selectedLateSignInRestrictionStudentIds.length > 0 ? "restriction-eligible " : "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedLateSignInRestrictionStudentIds.length > 0 ? ` · ${selectedLateSignInRestrictionStudentIds.length} signed out` : ''}${selectedServerSignOutStudentIds.size > 0 ? ` · ${selectedServerSignOutStudentIds.size} selected for sign-out only` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
+    ? `${targetStudents.length} selected ${studentView === "class" ? selectedLateSignInRestrictionStudentIds.length > 0 ? "restriction-eligible " : "controllable " : "claimed "}student${targetStudents.length === 1 ? "" : "s"}${selectedLateSignInRestrictionStudentIds.length > 0 ? ` · ${selectedLateSignInRestrictionStudentIds.length} signed out` : ''}${selectedServerSignOutStudentIds.size > 0 ? ` · ${signOutOnlySelectionLabel(selectedServerSignOutStudentIds.size)}` : ''}${studentView === 'claimed' ? ` in ${claimedTargetContextCount} supervision group${claimedTargetContextCount === 1 ? '' : 's'}` : ''}`
     : selectedServerSignOutStudentIds.size > 0
-      ? `${selectedServerSignOutStudentIds.size} selected for sign-out only`
+      ? signOutOnlySelectionLabel(selectedServerSignOutStudentIds.size)
     : selectedSubgroupId && studentView === "class"
       ? `${subgroupName || "Subgroup"} - ${ownedClassBannerStudents.length} student${ownedClassBannerStudents.length === 1 ? "" : "s"}`
       : `All ${(dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) ? ownedClassBannerStudents.length : targetStudents.length} student${((dashboardCapabilities.ownedClassSession || dashboardCapabilities.scheduledSupervision) ? ownedClassBannerStudents.length : targetStudents.length) === 1 ? "" : "s"}`;
@@ -8395,6 +8397,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
             selectedCount: selectedStudentIds.size,
             // A selection the Dashboard cleared refuses the group or class fallback.
             selectionLost: selectionLossActive,
+            // Students ticked for sign-out only block every other control.
+            signOutOnlyCount: selectedServerSignOutStudentIds.size,
             subgroupSelected: Boolean(selectedSubgroupId),
             subgroupMemberCount: subgroupMembers.size,
             classCount: students.length,
@@ -8412,6 +8416,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           roster={messagingRoster}
           broadcastLabel={broadcastButtonLabel({
             selectedCount: selectedStudentIds.size,
+            // Like the footer, never the group or class a lost selection
+            // refuses; a click explains the refusal (SELECTION_LOST).
+            selectionLost: selectionLossActive,
+            // Nor while a sign-out-only selection blocks the dialog too.
+            signOutOnlyCount: selectedServerSignOutStudentIds.size,
             subgroupName: selectedSubgroupId ? subgroupName || 'selected group' : null,
           })}
           onClearThread={clearChatThread}

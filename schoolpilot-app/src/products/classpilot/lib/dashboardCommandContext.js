@@ -521,6 +521,17 @@ const NO_CLAIMED_TARGET_MESSAGE = 'Select at least one claimed student.';
 // claimed student. Missing targets never mean broadcast (AGENTS.md).
 export const SELECTION_LOST_CODE = 'SELECTION_LOST';
 
+// What the Target badge, and Class tools' announce button, say while such a
+// loss stands: never the group or class a new action would refuse.
+export const SELECTION_CLEARED_TARGET_LABEL = 'Selection cleared · choose students again';
+
+// What they say while students are ticked only for Student Sign Out. Until
+// those ticks are cleared every other control refuses
+// (assertClassroomCommandSelectionIsolation), whatever else is ticked or lost.
+export function signOutOnlySelectionLabel(count) {
+  return `${count} selected for sign-out only`;
+}
+
 // The scope a selection, and a lost one, belongs to: the school and viewer,
 // the scheduled boundary, the view and, in the Class view, the class
 // authority and its revision. Claimed students are commanded through their
@@ -773,12 +784,15 @@ export function recipientSnapshotLabel({ selectedCount = 0, subgroupName = null,
 // class), with a singular for one student. While a selection the Dashboard
 // cleared by itself stands with nothing ticked (`selectionLost`, from
 // selectionLossBlocksFallback), new actions are refused rather than widened,
-// so the footer names no group or class.
-export function classToolsRecipientLabel({ selectedCount = 0, selectionLost = false, subgroupSelected = false, subgroupMemberCount = 0, classCount = 0 } = {}) {
+// so the footer names no group or class. Students ticked only for Student
+// Sign Out (`signOutOnlyCount`) come first: until they are cleared every new
+// action is refused, whatever else is ticked or lost.
+export function classToolsRecipientLabel({ selectedCount = 0, selectionLost = false, signOutOnlyCount = 0, subgroupSelected = false, subgroupMemberCount = 0, classCount = 0 } = {}) {
   const count = (value) => {
     const number = Number(value);
     return Number.isSafeInteger(number) && number > 0 ? number : 0;
   };
+  if (count(signOutOnlyCount) > 0) return 'no one until you clear the sign-out-only selection';
   const selected = count(selectedCount);
   if (selected > 0) return `${selected} selected student${selected === 1 ? '' : 's'}`;
   if (selectionLost === true) return 'no one until you choose students again';

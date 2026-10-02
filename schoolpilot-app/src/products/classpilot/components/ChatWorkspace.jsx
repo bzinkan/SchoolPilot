@@ -48,10 +48,17 @@ function rosterRowButton(container, studentId) {
  * toggles) and the school-wide switch (`schoolMessagingEnabled`) are on; a
  * pause still lets them write. While either switch is off, or the class chat
  * is unavailable, nothing new can start: the list shows existing threads only,
- * to read. A thread the server would refuse a reply to is read-only: an
- * existing thread opens to read, with no reply box. That covers a student with
- * another staff member ("With {staff}") and one no longer on the roster.
- * Without a `roster` the list is a plain inbox.
+ * to read. While a switch is off the reply box, Send and quick replies are off
+ * too. A switch turned off while Messages is on screen is announced, and a
+ * conversation that has not started closes (its draft stays); focus the switch
+ * takes from the workspace moves to the open conversation or the note in its
+ * place, never to the page, to another conversation, or to a control that acts
+ * on Space or Enter. Focus the teacher has put outside Messages stays there,
+ * and turning messaging back on moves no focus. A thread the server would
+ * refuse a reply to is read-only: an existing thread opens to read, with no
+ * reply box. That covers a student with another staff member ("With {staff}")
+ * and one no longer on the roster. Without a `roster` the list is a plain
+ * inbox.
  */
 export default function ChatWorkspace({
   visible = true,
@@ -108,8 +115,46 @@ export default function ChatWorkspace({
   const composerDisabled = !messagingEnabled || Boolean(selectedId && pendingReplyStudentIds?.has(selectedId));
   // Only a reply box that is on screen and enabled can take focus.
   const composerTakesFocus = offersComposer && !composerDisabled;
+  const sectionRef = useRef(null);
+  const headingRef = useRef(null);
   const listColumnRef = useRef(null);
   const backButtonRef = useRef(null);
+  const noSelectionRef = useRef(null);
+  // The control in this workspace that has focus, or had it until the
+  // workspace itself removed or disabled it (a switch turned off elsewhere
+  // takes the reply box, "need reply", a roster row, the pause switch). Cleared
+  // once the teacher puts focus anywhere else, so a later switch change never
+  // pulls focus back into Messages.
+  const lastFocusedRef = useRef(null);
+  const rememberFocus = useCallback((event) => { lastFocusedRef.current = event.target; }, []);
+  const forgetFocusTheTeacherMoved = useCallback((event) => {
+    const next = event.relatedTarget;
+    if (next) {
+      // Within the workspace, or into a menu it opened (portaled, so outside
+      // this section), onFocus records the new control.
+      if (!event.currentTarget.contains(next)) lastFocusedRef.current = null;
+      return;
+    }
+    // Focus went to the page: a click on something that takes no focus, or the
+    // workspace removed or disabled the control. While this event runs, a
+    // removed control is still connected and enabled, so decide a moment later.
+    // A control that still has focus lost only the window's.
+    const blurred = event.target;
+    queueMicrotask(() => {
+      if (lastFocusedRef.current === blurred && blurred.isConnected && !blurred.disabled
+        && document.activeElement !== blurred) lastFocusedRef.current = null;
+    });
+  }, []);
+  // A click outside Messages also puts the teacher elsewhere, even when focus
+  // was already on the page and so has nothing to leave.
+  useEffect(() => {
+    if (!visible) return undefined;
+    const forgetOnOutsidePointer = (event) => {
+      if (!sectionRef.current?.contains(event.target)) lastFocusedRef.current = null;
+    };
+    document.addEventListener('pointerdown', forgetOnOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', forgetOnOutsidePointer, true);
+  }, [visible]);
   // The record of the last handled open request lives here, not in the
   // composer, so it survives the composer unmounting between threads.
   const handledFocusSignalRef = useRef(focusSignal);
@@ -132,6 +177,45 @@ export default function ChatWorkspace({
     });
     return () => cancelAnimationFrame(frame);
   }, [composerTakesFocus, focusSignal, claimFocusSignal, selectedId]);
+  // Nothing new can start while messaging is off, so a conversation that has
+  // not started (an empty thread, perhaps with a draft) closes rather than
+  // waiting hidden: it would come back the moment messaging did and, in one
+  // pane, replace the list the teacher is on. Its draft stays. Only while the
+  // tab is on screen, where choosing no conversation changes nothing else, and
+  // the chat is available, so the conversations are known.
+  const unstartedConversationHidden = visible && chatAvailable && !messagingEnabled
+    && Boolean(selectedStudentId) && !selected;
+  useEffect(() => {
+    if (unstartedConversationHidden) onSelectConversation(null);
+  }, [unstartedConversationHidden, onSelectConversation]);
+  // A switch turned off elsewhere can take focus from the workspace by
+  // removing or disabling the focused control. Focus then moves to the open
+  // conversation (its row, or Back in one pane), else to the note in its place:
+  // the empty conversation pane, or in one pane the Messages heading. Never to
+  // a control that acts by itself or opens another conversation: on the
+  // announce button the rest of a private message would open a message to the
+  // whole class, and on another student's row it would open their reply box if
+  // messaging came straight back. Focus the teacher has put anywhere else stays
+  // there. Turning messaging on removes and disables nothing, so it moves no
+  // focus.
+  const previousMessagingEnabledRef = useRef(messagingEnabled);
+  useEffect(() => {
+    const turnedOff = previousMessagingEnabledRef.current && !messagingEnabled;
+    previousMessagingEnabledRef.current = messagingEnabled;
+    if (!turnedOff || !visible) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const last = lastFocusedRef.current;
+      if (!last || (last.isConnected && !last.disabled)) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== last) return;
+      const list = listColumnRef.current;
+      (list?.querySelector('[data-roster-id][aria-current="true"]')
+        || backButtonRef.current
+        || noSelectionRef.current
+        || headingRef.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messagingEnabled, visible]);
   // In one pane, Back swaps the thread for the roster: focus returns to the
   // student's row, or to the list's Tab stop when that row is gone.
   const backToRoster = () => {
@@ -191,14 +275,20 @@ export default function ChatWorkspace({
   const emptyText = !chatAvailable
     ? 'Conversations aren’t available in this class right now.'
     : !messagingEnabled ? 'No messages from students' : 'No students to message yet';
+  // With messaging off students cannot write, so nothing promises new messages.
   const noSelectionText = !chatAvailable ? emptyText
+    : !messagingEnabled ? (conversations.length === 0 ? 'No conversations to read' : 'Select a conversation to read it')
     : canStartConversations && rosterRows.length > 0 ? 'Choose a student to message'
       : conversations.length === 0 ? 'Student messages will appear here' : 'Select a conversation';
 
   return (
-    <section hidden={!visible} className={visible ? "flex flex-1 min-h-[360px] flex-col" : "hidden"} data-testid="chat-drawer" aria-label="Messages">
+    <section ref={sectionRef} hidden={!visible} className={visible ? "flex flex-1 min-h-[360px] flex-col" : "hidden"} data-testid="chat-drawer" aria-label="Messages"
+      onFocus={rememberFocus} onBlur={forgetFocusTheTeacherMoved}>
         <div className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-3 pr-12 flex items-center justify-between shrink-0">
-          <h3 className="text-white font-semibold text-base flex items-center gap-2">
+          {/* Out of the Tab order: where focus a switch took lands in one pane
+              when no conversation is open. */}
+          <h3 ref={headingRef} tabIndex={-1} data-testid="chat-drawer-heading"
+            className="text-white font-semibold text-base flex items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-white/80">
             <MessageSquare className="h-4 w-4" />
             <span>Messages (<span data-testid="chat-drawer-unread-count">{totalUnread}</span> new)</span>
           </h3>
@@ -242,15 +332,18 @@ export default function ChatWorkspace({
             <span><span className="font-semibold">{pause.title}.</span> {pause.detail}</span>
           </div>
         )}
-        {!schoolMessagingEnabled ? (
-          <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-school-off-banner">
-            Messaging is turned off for your school. Students do not see a chat.
-          </div>
-        ) : !studentMessagingEnabled && (
-          <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 shrink-0" data-testid="chat-off-banner">
-            Messaging is turned off for this class. Students do not see a chat.
-          </div>
-        )}
+        {/* Always present, so a switch turned off elsewhere is announced. */}
+        <div role="status" className="shrink-0" data-testid="chat-off-region">
+          {!schoolMessagingEnabled ? (
+            <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700" data-testid="chat-school-off-banner">
+              Messaging is turned off for your school. Students do not see a chat.
+            </div>
+          ) : !studentMessagingEnabled && (
+            <div className="px-4 py-2 text-xs bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700" data-testid="chat-off-banner">
+              Messaging is turned off for this class. Students do not see a chat.
+            </div>
+          )}
+        </div>
         <div className="flex flex-1 min-h-0">
           {showList && (
             <div ref={listColumnRef} className={cn('flex min-h-0 flex-col', singlePane ? 'flex-1' : 'w-72 shrink-0 border-r border-gray-200 dark:border-gray-700')}>
@@ -312,7 +405,10 @@ export default function ChatWorkspace({
                   )}
                 </ChatThread>
               ) : (
-                <div data-testid="chat-no-selection" className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 px-6 text-center">
+                // Out of the Tab order, like the heading: in two panes, where
+                // focus a switch took lands when no conversation is open.
+                <div ref={noSelectionRef} tabIndex={-1} data-testid="chat-no-selection"
+                  className="flex-1 flex items-center justify-center text-sm text-gray-500 dark:text-gray-400 px-6 text-center outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
                   {noSelectionText}
                 </div>
               )}

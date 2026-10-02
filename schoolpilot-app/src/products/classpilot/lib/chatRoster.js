@@ -1,4 +1,5 @@
 import { chatStudentName } from './chatThreads.js';
+import { SELECTION_CLEARED_TARGET_LABEL, signOutOnlySelectionLabel } from './dashboardCommandContext.js';
 import { compareStudentsByLastName } from './studentOrder.js';
 
 // The Messages tab's class roster: the whole class in the student grid's order,
@@ -203,13 +204,22 @@ export function splitOffRoster(conversations, rosterIds) {
 
 /**
  * The announce button names who the Send Message dialog will open for: the
- * ticked students, else the selected subgroup, else the class.
+ * ticked students, else the selected subgroup, else the class. Where the
+ * dialog refuses instead, the button uses the Target badge's wording, and a
+ * click explains the refusal. Students ticked only for Student Sign Out
+ * (`signOutOnlyCount`) block it whatever else is ticked or lost. While a
+ * selection the Dashboard cleared by itself stands with nothing ticked
+ * (`selectionLost`), it refuses the subgroup or class rather than widening
+ * to it, so the button names neither.
  */
-export function broadcastButtonLabel({ selectedCount = 0, subgroupName = null } = {}) {
+export function broadcastButtonLabel({ selectedCount = 0, subgroupName = null, selectionLost = false, signOutOnlyCount = 0 } = {}) {
+  const signOutOnly = Number(signOutOnlyCount);
+  if (Number.isSafeInteger(signOutOnly) && signOutOnly > 0) return signOutOnlySelectionLabel(signOutOnly);
   const selected = Number(selectedCount);
   if (Number.isSafeInteger(selected) && selected > 0) {
     return `Message ${selected} selected student${selected === 1 ? '' : 's'}`;
   }
+  if (selectionLost === true) return SELECTION_CLEARED_TARGET_LABEL;
   const group = typeof subgroupName === 'string' ? subgroupName.trim() : '';
   if (group) return `Message ${group}`;
   return 'Announce to class';
