@@ -15,6 +15,7 @@ import {
   getClasspilotStudentControlState,
   getClasspilotSsoPolicyForSchool,
   getFlightPathById,
+  isAuthorizedClasspilotSessionStaff,
   getPollById,
   lockClasspilotSsoPolicyDeliveryAuthority,
   markClasspilotCommandTargetsUnavailable,
@@ -274,7 +275,8 @@ export async function normalizeCommandPayload(
       // (and only with the school's precise rollout active).
       const payload = classpilotFlightPathApplyPayload({ schoolId, flightPath });
       requireRuleListWithinExtensionLimit(payload.allowedDomains, "Flight Path");
-      return { extensionType: "apply-flight-path", payload };
+      return { extensionType: "apply-flight-path", payload: { ...payload,
+        ...(validated.expectedFlightPathUpdatedAt ? { expectedFlightPathUpdatedAt: validated.expectedFlightPathUpdatedAt } : {}) } };
     }
     case "apply-block-list": {
       const blockListId = String(validated.blockListId || "").trim();
@@ -726,6 +728,7 @@ export function classpilotCommandFrameForTarget(
     delivery.requiredCapability
     || delivery.requiredCapabilities?.length
     || Number.isSafeInteger(delivery.exactBindingControlRevision)
+    || (commandType === "open-tab" && typeof payload.afterRestrictionCommandId === "string")
   )
     && target.deviceId
     && target.studentSessionId
@@ -832,7 +835,8 @@ export function classpilotCommandFrameForTarget(
       ...deliveryEnvelope,
       ...commandAuthority,
       ...classpilotTransientCurrentPageCommandEnvelope(delivery),
-      data: Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "focusAfterOpen")),
+      data: commandType === "open-tab" ? { url: payload.url }
+        : Object.fromEntries(Object.entries(payload).filter(([key]) => !["focusAfterOpen", "afterRestrictionCommandId", "expectedFlightPathUpdatedAt"].includes(key))),
     },
     ...(classroomState ? { classroomState } : {}),
   };
@@ -1209,9 +1213,12 @@ export async function executeClasspilotCommand(options: {
   if (options.replayCommand && options.routineReservation?.replayCommandId === options.replayCommand.id) {
     normalized = { extensionType: normalized.extensionType, payload: { ...(options.replayCommand.commandPayload as object), replayOfCommandId: options.replayCommand.id } };
   }
-  const commandPayload = { ...normalized.payload };
+  let commandPayload = { ...normalized.payload };
   const focusExact = options.commandType === "focus-tab" || options.commandType === "activate-tab";
   const focusNewAction = focusExact || (options.commandType === "open-tab" && commandPayload.focusAfterOpen === true);
+  const lessonOpen = options.commandType === "open-tab" && typeof commandPayload.afterRestrictionCommandId === "string";
+  if (lessonOpen && (options.targetScope !== "students" || !options.targets.length))
+    throw Object.assign(new Error("Lesson opening requires explicit student recipients"), { status: 400, code: "LESSON_RECIPIENTS_REQUIRED" });
   if (focusExact) assertExactFocusTargetScope(options.commandType, options.targetScope,
     options.targets.map(target => target.studentId), commandPayload.tabTargets as ClasspilotExactTabTarget[]);
   // Poll close is bound to the immutable start-command target rows. Dashboard
@@ -1403,6 +1410,7 @@ export async function executeClasspilotCommand(options: {
     && !Array.isArray(created.commandPayload)
     ? created.commandPayload as Record<string, unknown>
     : storedCommandPayload;
+  commandPayload = { ...committedCommandPayload };
 
   const committedTargetByStudent = new Map(
     created.targets.map((target) => [target.studentId, target])
@@ -1612,7 +1620,7 @@ export async function executeClasspilotCommand(options: {
     }
   }
   const capabilityObservedIds = new Set([...deferredIds, ...authRelevantIds]);
-  if (focusNewAction || options.commandType === "stop-focus"
+  if (focusNewAction || lessonOpen || options.commandType === "stop-focus"
     || controlStateRows.some(row => normalizeClasspilotRestrictions(
       focusRecord(row.desiredState).restrictions).focus?.active))
     for (const target of committedTargets) if (target.available && target.studentSessionId && target.deviceId) capabilityObservedIds.add(target.studentId);
@@ -1798,6 +1806,29 @@ export async function executeClasspilotCommand(options: {
           const deliveryAuthority = await withClasspilotStudentControlDeliveryAuthority(
             baseExactTarget,
             async (transactionDb) => {
+              if (lessonOpen) {
+                if (created.teachingSessionId && !await isAuthorizedClasspilotSessionStaff(created.schoolId, created.teachingSessionId, created.teacherId, transactionDb))
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false };
+                const { classpilotRestrictionPrerequisiteCurrent } = await import("./classpilotLessonPrerequisites.js");
+                if (!Number.isSafeInteger(target.controlRevision)
+                  || !(await classpilotRestrictionPrerequisiteCurrent(transactionDb, created,
+                    { ...target, status: "requested" }, String(commandPayload.afterRestrictionCommandId), target.contextAuthorityRevision)))
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false };
+                if (created.supervisionContextId) {
+                  try { await requireScheduledClassroomContext({ schoolId: created.schoolId, supervisionContextId: created.supervisionContextId,
+                    actorId: created.teacherId, contextAuthorityRevision: target.contextAuthorityRevision, lock: true }, transactionDb); }
+                  catch { return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_PREREQUISITE_STALE", authCapabilityMissing: false }; }
+                }
+                await lockClasspilotSsoPolicyDeliveryAuthority(created.schoolId, transactionDb);
+                const current = await getClasspilotStudentControlState(created.schoolId, target.studentId, transactionDb);
+                const policy = await getClasspilotSsoPolicyForSchool(created.schoolId, transactionDb);
+                const delivered = current && serializeClasspilotStudentControlStateForDelivery({ state: current, gateActive,
+                  acceptedCapabilities: capabilitySnapshot?.acceptedCapabilities ?? [], exactBinding: baseExactTarget,
+                  authPassThrough: { gateActive: isClasspilotCapabilityActive("restrictionAuthPassThroughV1", { schoolId: created.schoolId }),
+                    policyRevision: policy.revision, policy: policy.policy } });
+                if (!delivered?.classroomState || delivered.withheld)
+                  return { kind: "unavailable" as const, reason: "LESSON_RESTRICTION_SNAPSHOT_UNSUPPORTED", authCapabilityMissing: false };
+              }
               if (requiredToolsCapability && !capabilitySnapshot?.acceptedCapabilities?.includes(requiredToolsCapability)) {
                 return { kind: "unavailable" as const, reason: `Unsupported client: ${requiredToolsCapability} is required`, authCapabilityMissing: false };
               }

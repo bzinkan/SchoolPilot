@@ -18376,6 +18376,29 @@ export async function createFlightPath(
   });
 }
 
+/** Quick Classroom lessons reuse only the caller's exact private reviewed source. */
+export async function createOrReuseReviewedClassroomFlightPath(data: InsertFlightPath): Promise<{ flightPath: FlightPath; reused: boolean }> {
+  return db.transaction(async tx => {
+    const database = tx as unknown as typeof db;
+    if (!data.teacherId || data.sourceType !== "google_classroom" || !data.sourceCourseId || (data.blockedDomains || []).length)
+      throw Object.assign(new Error("Reviewed Classroom imports require a personal source and empty block list"), { status: 400 });
+    if (!await lockStaffAssignmentLifecycleSchool(tx as unknown as Parameters<typeof lockStaffAssignmentLifecycleSchool>[0], data.schoolId)) throw new Error("School not found");
+    await assertActiveClasspilotTeacherMembership(data.teacherId, data.schoolId, database);
+    const { reviewedClassroomSourceKey } = await import("./classpilotLessonPrerequisites.js");
+    const key = reviewedClassroomSourceKey({ ...data, sourceCourseId: data.sourceCourseId,
+      sourceResourceIds: data.sourceResourceIds || [], allowedDomains: data.allowedDomains || [], resources: data.resources || [], blockedDomains: [] });
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([data.schoolId, data.teacherId, key])}, 0))`);
+    const candidates = await tx.select().from(flightPaths).where(and(eq(flightPaths.schoolId, data.schoolId),
+      eq(flightPaths.teacherId, data.teacherId), eq(flightPaths.sourceType, "google_classroom"),
+      eq(flightPaths.sourceCourseId, data.sourceCourseId), eq(flightPaths.visibility, "private"), eq(flightPaths.official, false)))
+      .orderBy(flightPaths.createdAt, flightPaths.id).for("update");
+    const existing = candidates.find(path => reviewedClassroomSourceKey(path) === key);
+    if (existing) return { flightPath: existing, reused: true };
+    const [created] = await tx.insert(flightPaths).values({ ...data, visibility: "private", official: false }).returning();
+    return { flightPath: created!, reused: false };
+  });
+}
+
 /**
  * With an actor (the Flight Path and Block List routes), authorization is
  * re-checked on the locked row and privileged changes are audited in the same
@@ -20634,12 +20657,15 @@ function frozenClasspilotCommandTargetResult(
   const freezesScheduledAuthority = !!commandData.supervisionContextId && ["timer", "poll", "lesson-activity", "student-sign-out"].includes(commandData.commandType);
   const freezesCurrentPageAuthority = commandData.commandType === "lock-screen"
     && commandPayload.currentPage === true;
+  const freezesLessonAuthority = (commandData.commandType === "apply-flight-path" && typeof commandPayload.expectedFlightPathUpdatedAt === "string")
+    || (commandData.commandType === "open-tab" && typeof commandPayload.afterRestrictionCommandId === "string");
   if (
     !freezesExactTabAuthority
     && !freezesFocusAuthority
     && !freezesDurableMessageAuthority
     && !freezesCurrentPageAuthority
     && !freezesScheduledAuthority
+    && !freezesLessonAuthority
   ) return target.result;
   return {
     ...(target.result && typeof target.result === "object" && !Array.isArray(target.result)
@@ -20650,10 +20676,10 @@ function frozenClasspilotCommandTargetResult(
       : {}),
     ...(freezesScheduledAuthority ? { scheduledAuthorityRevision: controlRevision,
       ...(classroomAuthorityRevision !== undefined ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}) } : {}),
-    ...(freezesExactTabAuthority || freezesCurrentPageAuthority || freezesFocusAuthority
+    ...(freezesExactTabAuthority || freezesCurrentPageAuthority || freezesFocusAuthority || freezesLessonAuthority
       ? { frozenControlRevision: controlRevision }
       : {}),
-    ...(freezesFocusAuthority && classroomAuthorityRevision !== undefined
+    ...((freezesFocusAuthority || freezesLessonAuthority) && classroomAuthorityRevision !== undefined
       ? { scheduledContextAuthorityRevision: String(classroomAuthorityRevision) } : {}),
   };
 }
@@ -21005,6 +21031,30 @@ export async function createClasspilotCommandWithTargets(
         ...commandData,
         unavailableCount: authoritativeTargets.filter((target) => target.status === "unavailable").length,
       };
+    }
+
+    const lessonPayload = commandData.commandPayload as Record<string, unknown>;
+    if (commandData.commandType === "apply-flight-path" && typeof lessonPayload.expectedFlightPathUpdatedAt === "string") {
+      const [path] = await tx.select().from(flightPaths).where(and(eq(flightPaths.id, String(lessonPayload.flightPathId)),
+        eq(flightPaths.schoolId, commandData.schoolId))).limit(1).for("update");
+      const { flightPathReviewedInstantMatches } = await import("./classpilotLessonPrerequisites.js");
+      const { isSharedTeachingResourcesEnabled } = await import("../config/sharedTeachingResources.js");
+      if (!path || (path.teacherId !== commandData.teacherId && !(isSharedTeachingResourcesEnabled(commandData.schoolId)
+        && (path.visibility === "school" || path.official)))) throw Object.assign(new Error("Flight Path not found"), { status: 404 });
+      if (!flightPathReviewedInstantMatches(path.updatedAt, lessonPayload.expectedFlightPathUpdatedAt))
+        throw Object.assign(new Error("Flight Path changed since review; review its boundaries again"), { status: 409, code: "FLIGHT_PATH_REVIEW_STALE", expose: true });
+      const { classpilotFlightPathApplyPayload } = await import("./classpilotPreciseRestrictions.js");
+      commandData = { ...commandData, commandPayload: { ...classpilotFlightPathApplyPayload({ schoolId: commandData.schoolId, flightPath: path }),
+        expectedFlightPathUpdatedAt: lessonPayload.expectedFlightPathUpdatedAt } };
+    }
+    if (commandData.commandType === "open-tab" && typeof lessonPayload.afterRestrictionCommandId === "string") {
+      const { classpilotRestrictionPrerequisiteCurrent } = await import("./classpilotLessonPrerequisites.js");
+      const checked: InsertClasspilotCommandTarget[] = [];
+      for (const target of authoritativeTargets) checked.push(await classpilotRestrictionPrerequisiteCurrent(tx as unknown as typeof db,
+        commandData, target, lessonPayload.afterRestrictionCommandId, classroomContext ? String(classroomContext.classroomAuthorityRevision) : undefined)
+        ? target : { ...target, status: "unavailable", errorMessage: "LESSON_RESTRICTION_PREREQUISITE_STALE" });
+      authoritativeTargets = checked;
+      commandData = { ...commandData, unavailableCount: checked.filter(target => target.status === "unavailable").length };
     }
 
     if (options.routineReservation) {
@@ -22131,7 +22181,7 @@ export type ClasspilotControlEnforcementHealth =
 export async function lockClasspilotStudentControlAuthorities(
   schoolId: string,
   studentIds: readonly string[],
-  dbInstance: typeof db = db
+  dbInstance: Pick<typeof db, "execute"> = db
 ): Promise<string[]> {
   const normalized = [...new Set(studentIds.map(String).map((id) => id.trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));

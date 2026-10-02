@@ -64,7 +64,7 @@ describe("class chat oversight", () => {
     const seen = ids.indexOf("classpilot-chat-seen-state-20260918");
     assert.ok(seen < ids.indexOf(classpilotChatOversightMigration.id));
     assert.ok(ids.indexOf(classpilotChatOversightMigration.id) < ids.indexOf(classpilotChatTranscriptIndexMigration.id));
-    assert.equal(ids.at(-1), "20260824_staff_identity_integrity_contract");
+    assert.ok(ids.indexOf(classpilotChatTranscriptIndexMigration.id) < ids.indexOf("20260824_staff_identity_integrity_contract"));
     const index = await source("src/index.ts");
     assert.match(index, /await pool\.query\(CLASSPILOT_CHAT_SEEN_STATE_SQL\);\s+await pool\.query\(CLASSPILOT_CHAT_OVERSIGHT_SQL\);\s+await pool\.query\(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL\);/);
   });
