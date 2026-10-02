@@ -1,13 +1,13 @@
-# ClassPilot 2.10.0 contract: precise restriction resources
+# ClassPilot 2.9.7 contract: precise restriction resources
 
 This is the extension contract for `preciseRestrictionResourcesV1`: "This resource only" Waypoints and Flight Paths that allow a
 single YouTube video, Google Doc, Slides deck, Sheet, Form or Drive file, or one section of a site. It is written for the ClassPilot
 extension work (repository `bzinkan/ClassPilot`), which happens separately. Everything stated as a server fact below is implemented
-in SchoolPilot (roadmap PR 2) and covered by its tests; everything stated as an extension requirement is what 2.10.0 must do.
+in SchoolPilot (roadmap PR 2) and covered by its tests; extension requirements apply to the 2.9.7 successor.
 
-Status: server side implemented and AUTOMATED-TEST VERIFIED, capability default off. ClassPilot 2.10.0 ships only after the server
-PRs 2 through 5 are merged and deployed. The precise pilot profile stays refused until it is bound to the exact 2.10.0 release
-evidence (see [Activation](#10-activation-and-release-gates)).
+Status: implemented on the coordinated release branch, capability default off; final-source acceptance remains separately recorded.
+The [2.9.7 operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) governs rollout and the owner-authorized live-validation waiver.
+The shared matcher fixture and its hash remain immutable, including its historical 2.10.0 description.
 
 ## 1. What the server guarantees
 
@@ -199,7 +199,7 @@ and a page that depends on a query is refused; a bare site becomes a website ent
 
 ## 5. DNR rules
 
-All rules are `resourceTypes: ["main_frame"]`, in the existing classroom range `[1, 1000)`, so a 2.9.x rollback clears them with
+All rules are `resourceTypes: ["main_frame"]`, in the existing classroom range `[1, 1000)`, so a legacy rollback through 2.9.6 clears them with
 the range it already owns. No new range.
 
 | Situation | Rules |
@@ -264,7 +264,7 @@ is unsupported. With the server's 200-entry cap a Flight Path needs at most 400 
 ## 6. Unified precedence
 
 One pure `decideNavigation(url, policy)` in the core, used by `buildDnrRules`, `handleBeforeNavigateForPolicy`, the history
-listeners and `createdTabPolicyDecision`. The order is the DNR order that 2.9.x already enforces:
+listeners and `createdTabPolicyDecision`. The order is the DNR order that legacy versions through 2.9.6 already enforce:
 
 1. attention mode (2000)
 2. school block list (1000)
@@ -290,8 +290,8 @@ Notes:
 
 - "Waypoint" includes a resource Waypoint: its allow is a Waypoint-layer allow, so a teacher block still wins (decision 2 of the
   roadmap plan) and a temporary allow cannot escape it.
-- 2.9.x's JavaScript listener returns early for the screen lock and lets the Waypoint beat the teacher block, while DNR already
-  blocks. 2.10.0 aligns the listener with DNR. Release-note it.
+- The legacy JavaScript listener through 2.9.6 returns early for the screen lock and lets the Waypoint beat the teacher block, while DNR already
+  blocks. 2.9.7 aligns the listener with DNR. Release-note it.
 - The temporary-allow row keeps today's two DNR priorities (900 with no destination restriction, 100 with one). Publish this
   table in the extension's `SCHEDULED_CLASSROOM_PROTOCOL.md` and assert it pair by pair in vitest, both for `decideNavigation` and
   for the DNR priorities, including the teacher-block 800 pin.
@@ -325,7 +325,7 @@ Server facts:
   with `authPassThroughPolicyRevision` and the pass-through envelope.
 - When the gate is off, the state is delivered without a sign-in envelope, exactly as for a website Waypoint today.
 - Precise delivery never depends on `restrictionAuthPassThroughV1` being negotiated. Those two outcomes are the defined outcome
-  for a 2.10.0 client without it.
+  for a 2.9.7 client without it.
 
 Extension requirements:
 
@@ -337,22 +337,23 @@ Extension requirements:
 
 ## 9. Persistence and downgrade
 
-- A 2.9.x core that restores a persisted precise snapshot drops `resource` and derives a domain lock from `url`. So 2.10.0 must
-  persist precise screen locks and Flight Paths under `classroomControlStateV1` in a form a 2.9.x restore rejects (a schema marker
+- A legacy core through 2.9.6 that restores a persisted precise snapshot drops `resource` and derives a domain lock from `url`. So 2.9.7 must
+  persist precise screen locks and Flight Paths under `classroomControlStateV1` in a form that legacy restore rejects (a schema marker
   the old restore refuses, or no legacy-readable `url`/`domain` for a precise Waypoint). A downgrade then restores no precise
-  restriction instead of a wider one. The server withholds precise states from a 2.9.x binding and shows the teacher
+  restriction instead of a wider one. The server withholds precise states from a binding without the negotiated capability and shows the teacher
   "unsupported".
-- Extend `test-extension-recovery-red-on-old.mjs`: load a 2.10.0-written snapshot into the 2.9.6 core and assert there is no
+- Extend `test-extension-recovery-red-on-old.mjs`: load a 2.9.7-written snapshot into the 2.9.6 core and assert there is no
   domain-wide DNR rule.
 - Server-side counterpart: the PR 2-pre fence (#550) withholds precise states in every older image, and the rollout runbook
   (`docs/CLASSPILOT_ROADMAP_RUNTIME_ROLLOUT.md`) clears stored precise restrictions before an image rollback.
 
 ## 10. Activation and release gates
 
-- Server: deploy the image with this PR (capability off), then server PRs 3 to 5, before 2.10.0 is published.
-- The runtime tool refuses `precise-restriction-resources-pilot` until a reviewed server change binds the exact 2.10.0 tag, merge
-  SHA and ZIP SHA-256. That needs a clean tag, green harnesses in CI, and MANAGED-CHROMEBOOK VERIFIED on at least two
-  Google-Admin-managed devices before the Web Store upload.
+- Deploy the compatible combined API/worker source, additive migrations and admission with capabilities off before publishing 2.9.7.
+- The runtime tool refuses `precise-restriction-resources-pilot` until reviewed source binds the exact 2.9.7 tag, source
+  SHA and ZIP SHA-256, passing automated acceptance and a source/image/package-bound waiver receipt.
+  The owner waived the two-managed-Chromebook prerequisite; record `waived_not_passed`, never a managed-device pass.
+  Validate the installed package at the current school for at least 30 sample-bearing minutes before the governed global promotion.
 - The dashboard's `features.preciseRestrictionResources` flag is for SchoolPilot's UI only. The extension keys on negotiation alone.
 
 ## 11. Required extension tests
@@ -375,28 +376,22 @@ Extension requirements:
   rule-ID budget; `normalizeRestrictions` accepts resources, rejects a snapshot with any invalid entry, and still drops unknown
   keys; a resource-only Flight Path no longer throws; the `decideNavigation` table; the teacher-block 800 pin.
 
-## 12. Focus and Bring Forward (PROVISIONAL)
+## 12. Focus and Bring Forward
 
-This section is provisional. The server side belongs to later roadmap PRs (Focus and Bring Forward, PR 5 in the current plan), and
-that PR defines the final wire shape. Do not build against it before that PR merges.
-
-- Capability `focusTabV1`, negotiated and scoped-authority dependent like the one above.
-- `restrictions.focus?: { active: true, tabRef, url, source: "teacher" | "presentation", setAt } | { active: false }`. Resolve
-  `tabRef` with `tabSnapshotV1`. Watch `tabs.onActivated`, `windows.onFocusChanged`, `tabs.onRemoved` and `tabs.onUpdated(url)`,
-  and re-activate the tab at most every 2000 ms. Skip sign-in and auth tabs. Invalidate with `focus_tab_closed` or
-  `focus_tab_off_policy`, reported through a `classroom-state-ack` extra `focus: { state, reason }`. Restrictions always beat
-  Focus. Persist it with the snapshot and re-resolve it on wake.
-- Bring Forward: transient `activate-tab { tabRef, observedRevision }`. Without `focusTabV1`: ACK `failed`
-  `TAB_ACTIVATE_CAPABILITY_REQUIRED` `{ status: "unsupported" }`. Unknown or changed tab: `STALE_TAB_REF`
-  `{ status: "stale_tab_ref" }`. Success: `{ status: "activated", tabRef, tabSnapshotRevision }`.
+The implemented [Focus and Bring Forward contract](CLASSPILOT_FOCUS_BRING_FORWARD_CONTRACT.md)
+supersedes the earlier provisional wire sketch. Use its student-scoped envelopes, exact opaque tab references,
+observed revisions, validated Open acknowledgements and persisted authority. Titles are display metadata.
+Focus yields to restrictions and authentication; Stop Focus clears only Focus and remains available for authorized
+offline cleanup when new issuance is disabled. Ordinary snapshot changes do not cancel adopted Focus.
 
 ## 13. Version and documentation
 
-Version `2.10.0` in `extension/manifest.json`, `server/__tests__/extension-release.test.ts` and
+Version `2.9.7` in `extension/manifest.json`, `server/__tests__/extension-release.test.ts` and
 `scripts/verify-extension-package.mjs`. Update the documentation pins (`extension-sso-documentation.test.ts`, `extension/README.md`,
 `extension/COMPLIANCE.md`: persistent restriction targets may now carry a teacher-chosen resource identifier such as a video id),
-add `CLASSPILOT_2_10_0_RELEASE.md`, and add "Precise restriction resources" and (later) "Focus tab" sections to
-`SCHEDULED_CLASSROOM_PROTOCOL.md`. No Web Store publish happens in a PR.
+record the successor release notes, and maintain "Precise restriction resources" and "Focus tab" sections in
+`SCHEDULED_CLASSROOM_PROTOCOL.md`. Preserve historical 2.10.0 ZIPs, hashes, notes and immutable shared fixtures.
+No Web Store publish happens in a PR.
 
 ## Server references
 
