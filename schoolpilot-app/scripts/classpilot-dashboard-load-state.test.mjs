@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import test from "node:test";
+import nodeTest from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 import { createServer } from "vite";
+
+// Split parent cases across isolated CI runners. Nested cases stay with their
+// parent, and listing registers no browser work. The inventory gate proves
+// every parent belongs to exactly one partition, including newly added cases.
+const partitionValue = process.env.CLASSPILOT_DASHBOARD_TEST_PARTITION;
+if (partitionValue && !/^[12]$/.test(partitionValue)) throw new Error('Dashboard partition must be 1 or 2');
+const partition = partitionValue ? Number(partitionValue) : null;
+const listOnly = process.env.CLASSPILOT_DASHBOARD_LIST_ONLY === '1';
+const registeredNames = [], selectedNames = [];
+const test = (...args) => {
+  const index = registeredNames.length; registeredNames.push(args[0]);
+  const selected = partition === null || index % 2 + 1 === partition;
+  if (selected) selectedNames.push(args[0]);
+  if (selected && !listOnly) return nodeTest(...args);
+};
 
 // Optional source override is used only to preserve a failing release-baseline
 // browser reproduction while the working Dashboard is being repaired.
@@ -3414,13 +3429,19 @@ async function chatBrowserFixture(context, options = {}) {
   let messages = [];
   let historyResponder = null;
   let replyResponder = null;
+  let closeResponder = null;
+  let lifecycle = { threadId: 'private-thread-a', schoolEpoch: 1, activityEpoch: 1, threadGeneration: 1 };
+  let lifecycleSupported = options.lifecycleSupported !== false;
+  const lifecycleMetadata = () => options.privateLifecycleRequired ? { privateChatLifecycleRequired: true, privateChatLifecycles: [{
+    studentId: STUDENT_ID, teachingSessionId: OWN_SESSION_ID, supervisionContextId: null, privateChatLifecycle: lifecycle, supported: lifecycleSupported,
+  }] } : {};
   let rosterRevision = 1;
   await page.route('**/api/teacher/**', async route => {
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === '/api/teacher/messages' && request.method() === 'GET') {
       reads.push({ sessionId: url.searchParams.get('sessionId'), schoolId: request.headers()['x-school-id'] });
-      const response = historyResponder ? await historyResponder(request) : { messages };
+      const response = historyResponder ? await historyResponder(request) : { messages, ...lifecycleMetadata() };
       await route.fulfill(response.status
         ? { status: response.status, json: response.body }
         : { json: response });
@@ -3431,11 +3452,12 @@ async function chatBrowserFixture(context, options = {}) {
       mutations.push({ pathname: url.pathname, body });
       const response = url.pathname.endsWith('/reply')
         ? replyResponder ? await replyResponder(request) : {
-          message: storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' }), queued: true,
+          message: { ...storedChatMessage({ id: CHAT_REPLY_ID, senderId: ADMIN_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT, deliveryStatus: 'sent' }),
+            ...(options.privateLifecycleRequired ? { privateChatLifecycle: lifecycle } : {}) }, queued: true,
         }
         : url.pathname.endsWith('/read')
           ? { readAt: new Date().toISOString(), updatedIds: body?.messageIds || [] }
-          : { ok: true };
+          : closeResponder ? await closeResponder(request) : { ok: true, ...(options.privateLifecycleRequired ? { privateChatLifecycle: lifecycle = { ...lifecycle, threadGeneration: lifecycle.threadGeneration + 1 } } : {}) };
       // A responder refuses with { status, body }, as the history responder does.
       if (response?.status >= 400) {
         await route.fulfill({ status: response.status, json: response.body });
@@ -3466,6 +3488,9 @@ async function chatBrowserFixture(context, options = {}) {
     setMessages(next) { messages = next; },
     setHistoryResponder(next) { historyResponder = next; },
     setReplyResponder(next) { replyResponder = next; },
+    setCloseResponder(next) { closeResponder = next; },
+    setLifecycle(next, supported = true) { lifecycle = next; lifecycleSupported = supported; },
+    getLifecycle() { return lifecycle; },
     async updateRoster({ refetchAggregate = true } = {}) {
       rosterRevision += 1;
       const title = `Chat fixture roster revision ${rosterRevision}`;
@@ -3923,6 +3948,8 @@ test('chat start: with messaging turned off for the class or the school a tile o
   await page.keyboard.press('Escape');
   await page.getByTestId('chat-drawer').waitFor({ state: 'hidden' });
   assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0, 'No new conversation while messaging is off');
+  // Live delivery follows durable persistence; hard-off now refreshes that history.
+  fixture.setMessages([storedChatMessage()]);
   await harness.sendWebSocketMessage(studentChatEvent(storedChatMessage()));
   const badge = page.getByTestId(`chat-unread-${STUDENT_ID}`);
   await badge.getByText('1', { exact: true }).waitFor();
@@ -3939,7 +3966,7 @@ test('chat start: with messaging turned off for the class or the school a tile o
   // Back on, the list is the whole class roster again.
   await page.getByRole('list', { name: 'Class roster', exact: true }).getByTestId(`chat-conversation-${SECOND_STUDENT_ID}`).waitFor();
   // The school-wide switch outranks the class switch: a class session's reply
-  // route never checks it, and the device would show no chat.
+  // route checks it authoritatively, and the private device channel closes.
   switches = { studentMessagingEnabled: false, sessionStudentMessagingEnabled: true, schoolStudentMessagingEnabled: false };
   await fixture.refetch('/api/settings');
   await page.getByTestId(`button-message-student-${STUDENT_ID}`).waitFor({ state: 'detached' });
@@ -4673,10 +4700,11 @@ test('Focus cleanup includes offline assigned students without a missing-target 
       });
     }
   }, { studentId: STUDENT_ID });
-  await page.getByTestId('button-tabs').click();
-  await page.getByTestId('dialog-tabs').waitFor();
-  assert.equal(await page.locator('[data-testid^="tab-row-"]').count(), 0, 'Withdrawn telemetry must remove every exact tab action before offline cleanup');
-  await page.getByTestId('button-stop-focus-targets').click();
+  await page.getByTestId(`preview-unavailable-${STUDENT_ID}`).waitFor();
+  await page.getByTestId('button-stop-focus').click();
+  await page.getByTestId('dialog-stop-focus').waitFor();
+  assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student']);
+  await page.getByTestId('button-confirm-stop-focus').click();
   await waitUntil(() => posts.length === 1, 'Offline cleanup must send its explicit student');
   assert.deepEqual(posts[0].targetStudentIds, [STUDENT_ID]);
   assert.equal(posts[0].targetScope, 'students');
@@ -6584,3 +6612,101 @@ test('Supervision hub ignores a different-school navigation hint without acquiri
   assert.equal(harness.tileRequests.some(request => request.body.supervisionContextId === OTHER_TESTING_CONTEXT_ID), false);
   assert.deepEqual(harness.pageErrors, []);
 });
+
+
+test('private lifecycle: Send echoes the server token and End waits for durable confirmation while retaining history', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true });
+  const { page, harness, mutations } = fixture;
+  fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
+  await replyInput(page).fill(CHAT_REPLY_TEXT); await replyInput(page).press('Enter'); await threadText(page, CHAT_REPLY_TEXT).waitFor();
+  const initial = fixture.getLifecycle();
+  assert.deepEqual(mutations.find(row => row.pathname.endsWith('/reply')).body.expectedPrivateChatLifecycle, initial);
+  let release; const held = new Promise(resolve => { release = resolve; }); context.after(() => release());
+  fixture.setCloseResponder(async () => { await held; const token = { ...initial, threadGeneration: 2 }; fixture.setLifecycle(token); return { ok: true, privateChatLifecycle: token }; });
+  await endChat(page); await waitUntil(() => mutations.some(row => row.pathname.endsWith('/close-chat')), 'End reaches the native HTTP route');
+  await page.getByTestId('chat-private-lifecycle-note').getByText('Ending this chat…', { exact: true }).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true); await threadText(page, storedChatMessage().content).waitFor();
+  assert.deepEqual(mutations.find(row => row.pathname.endsWith('/close-chat')).body.expectedPrivateChatLifecycle, initial);
+  release(); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
+  await threadText(page, storedChatMessage().content).waitFor();
+  await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor();
+  await replyInput(page).fill('A new conversation'); await replyInput(page).press('Enter');
+  await waitUntil(() => mutations.filter(row => row.pathname.endsWith('/reply')).length === 2, 'fresh user gesture starts the next generation');
+  assert.deepEqual(mutations.filter(row => row.pathname.endsWith('/reply'))[1].body.expectedPrivateChatLifecycle, fixture.getLifecycle());
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+test('private lifecycle: a stale Send refreshes tokens without replaying the write or losing its draft', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true }); const { page, harness, mutations, reads } = fixture;
+  await selectConversation(page); const original = fixture.getLifecycle(), next = { ...original, schoolEpoch: 2 };
+  fixture.setReplyResponder(() => { fixture.setLifecycle(next); return { status: 409, body: { code: 'PRIVATE_CHAT_LIFECYCLE_STALE' } }; });
+  const before = reads.length; await replyInput(page).fill('Synthetic retained draft'); await replyInput(page).press('Enter');
+  await page.getByRole('region', { name: /Notifications/ }).getByText('This conversation changed. Messages were refreshed; review the chat and send again.', { exact: true }).waitFor();
+  await waitUntil(() => reads.length > before, 'the 409 refreshes canonical history');
+  assert.equal(mutations.filter(row => row.pathname.endsWith('/reply')).length, 1); assert.equal(await replyInput(page).inputValue(), 'Synthetic retained draft');
+  fixture.setReplyResponder(null); await page.locator('[data-testid="chat-composer-input"]:not([disabled])').waitFor(); await replyInput(page).press('Enter');
+  await waitUntil(() => mutations.filter(row => row.pathname.endsWith('/reply')).length === 2, 'only the separate gesture retries');
+  assert.deepEqual(mutations.filter(row => row.pathname.endsWith('/reply'))[1].body.expectedPrivateChatLifecycle, next); assert.deepEqual(harness.pageErrors, []);
+});
+
+test('private lifecycle: an unsupported offline student keeps cleanup and history but receives no new private write', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true, lifecycleSupported: false,
+    students: [student({ status: 'offline', isLoggedIn: false, loginState: 'not_logged_in', lastSeenAt: null, realtimeObservedAt: null })] });
+  const { page, harness, mutations } = fixture;
+  fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
+  await page.getByTestId('chat-private-lifecycle-note').getByText("Update ClassPilot on this student's Chromebook to use private chat.", { exact: true }).waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true); assert.equal(await page.getByTestId(`button-message-student-${STUDENT_ID}`).count(), 0);
+  await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
+  await threadText(page, storedChatMessage().content).waitFor();
+  assert.equal(mutations.filter(row => row.pathname.endsWith('/reply')).length, 0);
+  assert.equal(mutations.filter(row => row.pathname.endsWith('/close-chat')).length, 1); assert.deepEqual(harness.pageErrors, []);
+});
+
+test('private lifecycle: stale End preserves history and requires a new gesture with the refreshed token', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true }); const { page, harness, mutations, reads } = fixture;
+  fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
+  const next = { ...fixture.getLifecycle(), activityEpoch: 2 }; const before = reads.length;
+  fixture.setCloseResponder(() => { fixture.setLifecycle(next); return { status: 409, body: { code: 'PRIVATE_CHAT_LIFECYCLE_STALE' } }; });
+  await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat not ended', { exact: true }).waitFor();
+  await waitUntil(() => reads.length > before, 'stale End refreshes metadata'); await threadText(page, storedChatMessage().content).waitFor();
+  assert.equal(mutations.filter(row => row.pathname.endsWith('/close-chat')).length, 1);
+  fixture.setCloseResponder(null); await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
+  assert.deepEqual(mutations.filter(row => row.pathname.endsWith('/close-chat'))[1].body.expectedPrivateChatLifecycle, next); assert.deepEqual(harness.pageErrors, []);
+});
+
+
+
+test('private lifecycle: hard-off retires a held reply while the separate frozen announcement stays available', { timeout: 60_000 }, async context => {
+  const fixture = await chatBrowserFixture(context, { privateLifecycleRequired: true }); const { page, harness, mutations } = fixture;
+  fixture.setMessages([storedChatMessage()]); await fixture.refetch('/api/teacher/messages'); await selectConversation(page);
+  const original = fixture.getLifecycle(); let release; const held = new Promise(resolve => { release = resolve; }); context.after(() => release());
+  fixture.setReplyResponder(async () => { await held; return { message: { ...storedChatMessage({ id: CHAT_REPLY_ID, senderType: 'teacher', content: CHAT_REPLY_TEXT }), privateChatLifecycle: original } }; });
+  const replyResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/teacher/reply' && response.request().method() === 'POST');
+  await replyInput(page).fill(CHAT_REPLY_TEXT); await replyInput(page).press('Enter');
+  await waitUntil(() => mutations.some(row => row.pathname.endsWith('/reply')), 'the reply POST is held');
+  fixture.setLifecycle({ ...original, schoolEpoch: 2 });
+  await page.route('**/api/settings', route => route.fulfill({ json: { settings: { activeSessionId: OWN_SESSION_ID, handRaisingEnabled: true, studentMessagingEnabled: false, schoolStudentMessagingEnabled: false, sessionStudentMessagingEnabled: true, blockedDomains: [] } } }));
+  await fixture.refetch('/api/settings'); await page.getByTestId('chat-school-off-banner').waitFor();
+  assert.equal(await replyInput(page).isDisabled(), true);
+  release(); assert.equal(await (await replyResponse).finished(), null);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.getByTestId(`chat-bubble-${CHAT_REPLY_ID}`).count(), 0, 'the retired HTTP completion cannot insert a sent reply into the current generation');
+  assert.equal(await page.getByRole('region', { name: /Notifications/ }).getByText('Message sent', { exact: true }).count(), 0);
+  await fixture.updateRoster();
+  const announcements = [];
+  await page.route('**/api/commands', async route => { const body = route.request().postDataJSON(); announcements.push(body); await route.fulfill({ json: { command: { id: 'announcement-hard-off', ...body, targets: body.targetStudentIds.map(studentId => ({ studentId, status: 'sent' })) } } }); });
+  assert.equal(await page.getByTestId('chat-broadcast').isEnabled(), true);
+  await page.getByTestId('chat-broadcast').click();
+  await page.getByTestId('dialog-send-message').waitFor();
+  assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student']);
+  await page.getByTestId('input-send-message').fill('Synthetic separate announcement'); await page.getByTestId('button-confirm-send-message').click();
+  await waitUntil(() => announcements.length === 1, 'the independent announcement posts while private chat is off');
+  assert.equal(announcements[0].commandType, 'teacher-message'); assert.deepEqual(announcements[0].targetStudentIds, [STUDENT_ID]);
+  await page.getByTestId('dialog-send-message').waitFor({ state: 'hidden' });
+  await endChat(page); await page.getByRole('region', { name: /Notifications/ }).getByText('Chat ended', { exact: true }).waitFor();
+  assert.equal(mutations.find(row => row.pathname.endsWith('/close-chat')).body.expectedPrivateChatLifecycle.schoolEpoch, 2, 'cleanup remains authorized after the private channel closes');
+  await threadText(page, storedChatMessage().content).waitFor();
+  assert.deepEqual(harness.pageErrors, []);
+});
+
+if (listOnly) console.log('DASHBOARD_TEST_INVENTORY ' + JSON.stringify({ registeredNames, selectedNames, partition }));

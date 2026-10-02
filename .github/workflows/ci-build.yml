@@ -716,8 +716,8 @@ jobs:
 
   # The 30 release-focused ClassPilot and kiosk gates used to run serially inside
   # the frontend job (~11-12 min). They need no build output - none of them reads
-  # dist/ - so they run here as three parallel shards. Shard boundaries are
-  # deliberate: shard 1 and 2 hold the suites that use a pid-suffixed Vite cacheDir
+  # dist/ - so they run here as four parallel shards. Shard boundaries are
+  # deliberate: shards 1, 2 and 4 hold the suites that use a pid-suffixed Vite cacheDir
   # and port 0; every suite that spawns `vite --strictPort` on a fixed port or uses
   # the default node_modules/.vite cacheDir is in shard 3, serial, exactly as it was.
   # Two shards must therefore never share a runner. The root `npm ci` is required:
@@ -730,7 +730,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@v7

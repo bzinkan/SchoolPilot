@@ -1116,8 +1116,11 @@ test('classroom dialogs freeze recipients when they open and send them as explic
   const opener = between('const openRecipientDialog = (kind, commandType, commandPayload = {}) => {', 'const clearRecipientSnapshot');
   assert.match(opener, /assertClassroomCommandSelectionIsolation\(commandType, selectedServerSignOutStudentIds\.size\)/);
   assert.match(opener, /dashboardCapabilities\.allows\(commandType\)/);
-  assert.match(opener, /resolveActiveCommandTarget\(null, \{ commandType, commandPayload \}\)/);
-  assert.match(opener, /snapshotCommandRecipients\(\{[\s\S]{0,500}scopeKey: activityScopeKey,\s*view: studentView,/);
+  assert.match(opener, /const snapshot = captureRecipientSnapshot\(commandType, commandPayload\);/);
+  const capture = between('const captureRecipientSnapshot = ', 'const openRecipientDialog');
+  assert.match(capture, /overrideStudentIds = null\) => snapshotCommandRecipients\(\{/);
+  assert.match(capture, /resolveActiveCommandTarget\(overrideStudentIds, \{ commandType, commandPayload \}\)/);
+  assert.match(capture, /scopeKey: activityScopeKey,\s*view: studentView,/);
   const refusal = opener.slice(opener.indexOf('} catch (error) {'));
   assert.match(refusal, /^\} catch \(error\) \{[\s\S]{0,700}toast\(\{\s*variant: 'destructive',[\s\S]{0,120}description: recipientDialogRefusalMessage\(error, \{[\s\S]{0,400}return false;\s*\}\s*\};/, 'an unavailable target must explain itself and not open the dialog');
   assert.doesNotMatch(refusal, /recipientDialogSetters|setRecipientSnapshot/, 'a refused dialog must not open or keep recipients');
@@ -1415,7 +1418,7 @@ test('Messages follows the class and school switches together, and Class tools n
   // keeps its roster and the teacher can still write.
   assert.match(workspace, /const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;/);
   assert.match(workspace, /const canStartConversations = messagingEnabled && chatAvailable;/);
-  assert.match(workspace, /const composerDisabled = !messagingEnabled \|\| Boolean\(selectedId && pendingReplyStudentIds\?\.has\(selectedId\)\);/);
+  assert.match(workspace, /const composerDisabled = !messagingEnabled \|\| Boolean\(selectedId && \(!canReplyToStudent\(selectedId\) \|\| pendingReplyStudentIds\?\.has\(selectedId\)\)\);/);
   assert.match(workspace, /\(canStartConversations \? rosterRows : rosterRows\.filter\(\(row\) => row\.hasThread\)\)/, 'messaging off lists existing threads only');
   assert.match(workspace, /answerableConversations\(conversations, \{ rosterById: rosterKnown \? rosterById : null, canStart: canStartConversations \}\)/, 'need reply follows the same switch');
   assert.doesNotMatch(workspace, /(?:canStartConversations|composerDisabled|messagingEnabled) = [^\n;]*pause/, 'a pause never gates writing');
@@ -1445,7 +1448,7 @@ test('Messages follows the class and school switches together, and Class tools n
   assert.match(composer, /disabled=\{!canSend\}/);
   // A tile starts a conversation only while both switches are on.
   assert.match(dashboard, /const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;/);
-  assert.match(dashboard, /canStartChat=\{classAndSchoolMessagingEnabled\}/);
+  assert.match(dashboard, /canStartChat=\{classAndSchoolMessagingEnabled && chat\.canReplyTo\(student\.studentId\)\}/);
   assert.match(dashboard, /studentMessagingEnabled=\{classMessagingEnabled\}\s*schoolMessagingEnabled=\{schoolMessagingEnabled\}/);
 
   // While a selection the Dashboard cleared stands, the Class tools footer and

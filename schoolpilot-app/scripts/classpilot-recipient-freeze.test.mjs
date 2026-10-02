@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { chromium } from 'playwright';
@@ -59,7 +60,7 @@ let browser;
 let baseURL;
 
 before(async () => {
-  vite = await createServer({ cacheDir: CACHE_DIR, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 } });
+  vite = await createServer({ cacheDir: CACHE_DIR, root: APP_ROOT, logLevel: 'error', server: { host: '127.0.0.1', port: 0 }, plugins: process.env.CLASSPILOT_CHAT_BASELINE_SOURCE ? [{ name: 'recipient-release-baseline', enforce: 'pre', load(id) { if (id.replaceAll('\\', '/').split('?')[0].endsWith('/src/products/classpilot/pages/Dashboard.jsx')) return readFileSync(process.env.CLASSPILOT_CHAT_BASELINE_SOURCE, 'utf8'); } }] : [] });
   await vite.listen();
   baseURL = `http://127.0.0.1:${vite.httpServer.address().port}`;
   browser = await chromium.launch({ headless: true });
@@ -731,4 +732,51 @@ test('Class tools names a sign-out-only selection as the Target badge does, befo
   assert.deepEqual(commands, []);
   assert.deepEqual(pageErrors, []);
   await page.close();
+});
+
+
+test('Stop Focus is reachable with every assigned student offline and sends exactly its frozen structural list', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, report } = await classPage([ADA, BEN], { signedOut: [ADA, BEN] });
+  try {
+    await page.getByTestId('button-stop-focus').click();
+    const dialog = page.getByTestId('dialog-stop-focus'); await dialog.waitFor();
+    assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
+    await report({ signIn: [BEN] });
+    assert.deepEqual(await dialog.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Ada Student', 'Ben Student']);
+    await page.getByTestId('button-confirm-stop-focus').click();
+    await waitUntil(() => commands.length === 1, 'offline Focus cleanup posts one explicit cohort');
+    assert.deepEqual(commands[0].targetStudentIds, [ADA, BEN]);
+    assert.equal(commands[0].targetScope, 'students'); assert.equal(commands[0].commandType, 'stop-focus');
+    assert.deepEqual(commands[0].commandPayload, {}); assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('Manage Tabs Stop Focus reviews only the named frozen recipients rather than broadening to other offline students', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors } = await classPage([ADA, BEN, CY], { signedOut: [ADA, BEN] });
+  try {
+    await page.getByTestId('button-tabs').click(); await page.getByTestId('dialog-tabs').waitFor();
+    assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Cy Student']);
+    await page.getByTestId('button-stop-focus-targets').click(); await settle(page);
+    assert.deepEqual(commands, [], 'reviewing Stop Focus must not immediately send a different live cohort');
+    await page.getByTestId('dialog-stop-focus').waitFor();
+    assert.deepEqual(await page.getByTestId('command-recipients-list').locator('li').allInnerTexts(), ['Cy Student']);
+    await page.getByTestId('button-confirm-stop-focus').click();
+    await waitUntil(() => commands.length === 1, 'the reviewed Focus cleanup posts');
+    assert.deepEqual(commands[0].targetStudentIds, [CY]); assert.equal(commands[0].commandType, 'stop-focus');
+    assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
+});
+
+test('Select All excludes signed-out students while individual saved restriction selection remains available', { timeout: 60_000 }, async () => {
+  const { page, commands, pageErrors, tick } = await classPage([ADA, BEN], { signedOut: [ADA], lateSignIn: true });
+  try {
+    assert.equal(await page.getByTestId('button-select-all-students').innerText(), 'Select All (1)');
+    await page.getByTestId('button-select-all-students').click();
+    await waitForTick(page, ADA, 'unchecked'); await waitForTick(page, BEN, 'checked');
+    assert.equal(await page.getByTestId('button-open-tab').isEnabled(), true);
+    await page.getByTestId('button-clear-selection').click(); await tick(ADA);
+    assert.equal(await page.getByTestId('button-open-tab').isDisabled(), true);
+    assert.equal(await page.getByTestId('button-apply-flight-path').isEnabled(), true);
+    assert.deepEqual(commands, []); assert.deepEqual(pageErrors, []);
+  } finally { await page.close(); }
 });

@@ -35,6 +35,7 @@ import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useRestrictionScopePreview } from '../hooks/useRestrictionScopePreview';
+import { privateChatLifecycleError, privateChatLifecycleToken, samePrivateChatLifecycle } from '../lib/privateChatLifecycle';
 import ClassroomActions from '../components/ClassroomActions';
 import RestrictionScopeReview from '../components/RestrictionScopeReview';
 import { teacherPreferencesKey, teacherTabLimitSeed } from '../lib/teachingTools';
@@ -506,6 +507,7 @@ export default function Dashboard() {
   const [lockScreenUrl, setLockScreenUrl] = useState("");
   const [lockScreenBoundary, setLockScreenBoundary] = useState("website");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
+  const [showStopFocusDialog, setShowStopFocusDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
   const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
   const [manageTabsTargetSnapshot, setManageTabsTargetSnapshot] = useState("");
@@ -1055,6 +1057,8 @@ export default function Dashboard() {
     focusCommandUpdatesRef.current.clear();
     setLastFocusResult(null);
     setShowCloseTabsDialog(false);
+    setShowStopFocusDialog(false);
+    setRecipientSnapshot((current) => ['manage-tabs', 'stop-focus'].includes(current?.kind) ? null : current);
     setSelectedTabsToClose(new Set());
     setManageTabsStudentIds(null);
     setManageTabsTargetSnapshot('');
@@ -1188,6 +1192,7 @@ export default function Dashboard() {
     setShowPollDialog(false);
     setShowPollResultsDialog(false);
     setShowRerouteDialog(false);
+    setShowStopFocusDialog(false);
     setRecipientSnapshot(null);
   }, [signOutOnlySelectionActive]);
   useEffect(() => {
@@ -1647,6 +1652,7 @@ export default function Dashboard() {
     setShowPollResultsDialog(false); setEndTestingTarget(null); setEndClassTarget(null);
     setRaisedHands(new Map());
     setSelectedTabsToClose(new Set()); setManageTabsStudentIds(null); setManageTabsTargetSnapshot('');
+    setShowStopFocusDialog(false);
     setRecipientSnapshot(null);
     setSelectionLoss(null);
     clearStudentDetails(); cleanupLiveViews();
@@ -1879,6 +1885,7 @@ export default function Dashboard() {
     wsAuthenticated,
     students,
     dismissedMessageIds,
+    privateMessagingEnabled: sessionFabState?.messagingEnabled !== false && settings?.schoolStudentMessagingEnabled !== false,
   });
   const { studentMessages, chatReplies, pendingReplyStudentIds } = chat;
   const unreadByStudent = useMemo(() => countUnreadByStudent(studentMessages), [studentMessages]);
@@ -1902,9 +1909,9 @@ export default function Dashboard() {
   const classMessagingEnabled = sessionFabState?.messagingEnabled !== false;
   // The school-wide switch arrives only with the dashboard settings, not in the
   // class state, and applies to scheduled classrooms too. While it is off a
-  // device shows no chat, so no tile offers Message and the reply box stays
-  // off; a class session's reply route does not check it. A missing field
-  // means on.
+  // private channel shows no chat, so no tile offers Message and the reply box
+  // stays off. The server enforces this switch too; announcements are separate.
+  // A missing field preserves the legacy on state.
   const schoolMessagingEnabled = settings?.schoolStudentMessagingEnabled !== false;
   const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;
   // The chat drawer is a sibling of the FAB, not a child: the FAB remounts
@@ -2937,13 +2944,13 @@ export default function Dashboard() {
     });
   };
   const selectAll = () => {
-    const allStudentIds = selectableStudents.map((s) => s.studentId);
+    const allStudentIds = selectAllStudents.map((s) => s.studentId);
     setSelectionLoss(null);
     setSelectedStudentIds(new Set(allStudentIds));
     setSelectedServerSignOutStudentIds(new Set());
     setSelectedStudentBindingSnapshots(new Map(
       studentView === 'class'
-        ? selectableStudents
+        ? selectAllStudents
           .map((student) => [student.studentId, signOutSelectionBindingFor(student)])
           .filter(([, bindingSnapshot]) => bindingSnapshot)
         : EMPTY_LIST,
@@ -3039,6 +3046,7 @@ export default function Dashboard() {
       setEndClassTarget(null);
       setSkipTodayGroup(null);
       setRecipientSnapshot(null);
+      setShowStopFocusDialog(false);
     }
   };
 
@@ -4407,6 +4415,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         ? uniqueStudentsById([...controllableStudents, ...lateSignInRestrictionStudents])
         : filteredStudents)
     : EMPTY_LIST;
+  // Select All is for actions that can run now. Signed-out students may still
+  // be ticked individually for an explicit saved restriction.
+  const selectAllStudents = selectableStudents.filter(isStudentCommandable);
 
   const statsStudents = (studentView === "class" ? sessionFilteredStudents : filteredStudents)
     .filter((student) => !isStudentMonitoringSuppressed(student));
@@ -4488,7 +4499,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const recipientStudents = () => (studentView === 'claimed' ? claimedPickupStudents : sessionFilteredStudents);
   const commandableRecipientIds = (commandType, commandPayload = {}) => (
     dashboardCapabilities.mode === 'claimed-coverage'
-      ? claimedPickupStudents.filter((student) => isStudentCommandable(student))
+      ? claimedPickupStudents.filter((student) => isStudentCommandableForCommand(student, commandType, commandPayload))
       : sessionFilteredStudents.filter((student) => (
           isStudentCommandableForCommand(student, commandType, commandPayload)
         ))
@@ -4842,7 +4853,6 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const manageTabsRecipients = !manageTabsStudentIds && recipientSnapshot?.kind === 'manage-tabs'
     ? recipientSnapshot.snapshot
     : null;
-  const focusCleanupStudents = getActiveCommandStudents(manageTabsStudentIds, { commandType: 'stop-focus' });
   const openTabs = manageTabsStudents
     .flatMap(s => {
       if (!monitoringDisplayFor(s).telemetryCurrent) return [];
@@ -5389,7 +5399,19 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     'flight-path': setShowApplyFlightPathDialog,
     'block-list': setShowApplyBlockListDialog,
     'manage-tabs': setShowCloseTabsDialog,
+    'stop-focus': setShowStopFocusDialog,
   };
+  const captureRecipientSnapshot = (commandType, commandPayload = {}, overrideStudentIds = null) => snapshotCommandRecipients({
+    target: resolveActiveCommandTarget(overrideStudentIds, { commandType, commandPayload }),
+    students: recipientStudents(),
+    label: recipientSnapshotLabel({
+      selectedCount: overrideStudentIds?.length ?? selectedStudentIds.size,
+      subgroupName: studentView === 'class' && selectedSubgroupId ? subgroupName || 'Selected group' : null,
+      view: studentView,
+    }),
+    scopeKey: activityScopeKey,
+    view: studentView,
+  });
   const openRecipientDialog = (kind, commandType, commandPayload = {}) => {
     try {
       assertClassroomCommandSelectionIsolation(commandType, selectedServerSignOutStudentIds.size);
@@ -5399,18 +5421,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (studentView !== 'claimed' && !effectiveAuthority) {
         throw new Error('Start or select an active class session before sending classroom commands.');
       }
-      const target = resolveActiveCommandTarget(null, { commandType, commandPayload });
-      const snapshot = snapshotCommandRecipients({
-        target,
-        students: recipientStudents(),
-        label: recipientSnapshotLabel({
-          selectedCount: selectedStudentIds.size,
-          subgroupName: studentView === 'class' && selectedSubgroupId ? subgroupName || 'Selected group' : null,
-          view: studentView,
-        }),
-        scopeKey: activityScopeKey,
-        view: studentView,
-      });
+      const snapshot = captureRecipientSnapshot(commandType, commandPayload);
       setRecipientSnapshot({ kind, snapshot, unavailableIds: null, confirmIds: null, notice: '' });
       recipientDialogSetters[kind](true);
       return true;
@@ -5458,6 +5469,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     'flight-path': showApplyFlightPathDialog,
     'block-list': showApplyBlockListDialog,
     'manage-tabs': showCloseTabsDialog,
+    'stop-focus': showStopFocusDialog,
   };
   // `open` hides the list while a closing dialog animates out, so a cleared
   // snapshot is never drawn as "no recipients" after a successful send.
@@ -5594,9 +5606,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   });
 
   const focusMutation = useMutation({
-    mutationFn: async ({ type, tab, studentIds }) => {
+    mutationFn: async ({ type, tab, studentIds, recipients }) => {
       const scope = focusControlScopeKey;
-      const ids = type === 'stop-focus' ? studentIds : [tab?.studentId];
+      const ids = recipients ? snapshotRecipientOptions(recipients).studentIds : type === 'stop-focus' ? studentIds : [tab?.studentId];
       if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => !id)) {
         throw new Error('Select a student before sending this command.');
       }
@@ -5606,7 +5618,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     },
     onSuccess: (data, variables) => {
       const confirmed = [...focusCommandUpdatesRef.current.values()].reduce((current, message) => mergeCommandUpdateIntoBatches([current], message)[0], data);
-      toast(focusCommandFeedback(confirmed, variables.type));
+      toast(variables.recipients ? recipientDeliveryToast(focusCommandFeedback(confirmed, variables.type), variables.recipients) : focusCommandFeedback(confirmed, variables.type));
+      if (variables.recipients) closeRecipientDialog('stop-focus');
       setLastFocusResult({ ...confirmed, type: variables.type });
       queryClient.invalidateQueries({ queryKey: ['/api/commands/active-state', activeSchoolId, currentUser?.id, effectiveAuthorityKey] });
     },
@@ -5614,7 +5627,34 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (error?.name === 'AbortError') return;
       toast({ variant: 'destructive', title: 'Command unavailable', description: error.message });
     },
+    onSettled: (_data, _error, variables) => { if (variables?.recipients) releaseRecipientSend('stop-focus'); },
   });
+
+  const handleStopFocus = (event) => {
+    if (focusMutation.isPending || recipientSendBusyRef.current === 'stop-focus') return;
+    const recipients = takeSnapshotRecipients('stop-focus', 'stop-focus', {}, { repeatGesture: event?.detail > 1 });
+    if (!recipients) return;
+    recipientSendBusyRef.current = 'stop-focus';
+    focusMutation.mutate({ type: 'stop-focus', recipients });
+  };
+  const openStopFocus = () => {
+    // This owns a structural cohort, independently of the online tabs shown
+    // in Manage Tabs. Never use its close-tabs snapshot or a later live target.
+    const explicitIds = showCloseTabsDialog
+      ? manageTabsStudentIds || manageTabsRecipients?.ids
+      : null;
+    try {
+      if (showCloseTabsDialog && (!Array.isArray(explicitIds) || explicitIds.length === 0)) throw new Error(RECIPIENTS_MISSING_MESSAGE);
+      assertClassroomCommandSelectionIsolation('stop-focus', selectedServerSignOutStudentIds.size);
+      if (!dashboardCapabilities.allows('stop-focus')) return;
+      const snapshot = captureRecipientSnapshot('stop-focus', {}, explicitIds);
+      if (showCloseTabsDialog) closeManageTabsDialog();
+      setRecipientSnapshot({ kind: 'stop-focus', snapshot, unavailableIds: null, confirmIds: null, notice: '' });
+      setShowStopFocusDialog(true);
+    } catch (error) {
+      toast({ variant: 'destructive', title: 'Stop Focus unavailable', description: error.message });
+    }
+  };
 
   const limitTabsMutation = useMutation({
     mutationFn: async ({ maxTabs, studentIds, recipients }) => postActiveCommand('limit-tabs', { maxTabs }, recipients ? snapshotRecipientOptions(recipients) : { studentIds }),
@@ -6093,9 +6133,14 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   const replyToMessageMutation = useMutation({
     mutationFn: async ({ sessionId, studentId, message, chatRequest }) => {
       if (!chat.isCurrentReply(chatRequest)) throw new Error('This class chat is no longer available.');
-      return apiRequest('POST', '/teacher/reply', { ...activityLegacyBody(chatRequest.authority || sessionId), studentId, message }, {
+      const data = await apiRequest('POST', '/teacher/reply', { ...activityLegacyBody(chatRequest.authority || sessionId), studentId, message,
+        ...(chatRequest.expectedPrivateChatLifecycle ? { expectedPrivateChatLifecycle: chatRequest.expectedPrivateChatLifecycle } : {}) }, {
         headers: activityRequestHeaders(chatRequest.schoolId, chatRequest.contextAuthorityRevision),
       });
+      if (chatRequest.expectedPrivateChatLifecycle && !samePrivateChatLifecycle(chatRequest.expectedPrivateChatLifecycle, privateChatLifecycleToken(data?.message?.privateChatLifecycle))) {
+        void chat.refreshLifecycle(); throw new Error('The reply confirmation changed. Refresh messages before sending again.');
+      }
+      return data;
     },
     onSuccess: (data, variables) => {
       const reply = data?.message || {};
@@ -6114,6 +6159,8 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       });
     },
     onError: (error, variables) => {
+      // Refresh the authoritative conversation token, but never retry the write.
+      if (privateChatLifecycleError(error)) void chat.refreshLifecycle();
       // The composer keeps the draft; the toast says why in plain words.
       if (chat.isCurrentReply(variables.chatRequest)) {
         toast({ variant: "destructive", title: "Message not sent", description: describeChatReplyError(error, chatNameById.get(variables.studentId)) });
@@ -6282,17 +6329,28 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     if (chat.closeThread(studentId)) dropChatSelection(studentId);
   };
   const endChat = async (studentId) => {
-    if (!chat.closeThread(studentId)) return;
-    dropChatSelection(studentId);
-    try { await requestActivityApi('POST', '/teacher/close-chat', { ...activityLegacyBody(effectiveAuthority), studentId }); } catch (error) {
-      console.error('Failed to send close-chat:', error);
+    const request = chat.beginEnd(studentId);
+    if (!request) { toast({ variant: 'destructive', title: 'Chat not ended', description: 'Refresh messages before ending this chat.' }); return; }
+    try {
+      const data = await apiRequest('POST', '/teacher/close-chat', { ...activityLegacyBody(request.authority), studentId,
+        ...(request.expectedPrivateChatLifecycle ? { expectedPrivateChatLifecycle: request.expectedPrivateChatLifecycle } : {}) },
+        { headers: activityRequestHeaders(request.schoolId, request.contextAuthorityRevision) });
+      if (data?.ok !== true || (request.expectedPrivateChatLifecycle && !privateChatLifecycleToken(data.privateChatLifecycle))) throw new Error('Chat ending could not be confirmed. Refresh messages before trying again.');
+      if (!chat.finishEnd(request, data)) return;
+      if (!request.expectedPrivateChatLifecycle && chat.closeThread(studentId)) dropChatSelection(studentId);
+      toast({ title: 'Chat ended', description: 'Pending private replies expired. Chat history is retained.' });
+      void chat.refreshLifecycle();
+    } catch (error) {
+      if (!chat.finishEnd(request)) return;
+      if (privateChatLifecycleError(error)) void chat.refreshLifecycle();
+      toast({ variant: 'destructive', title: 'Chat not ended', description: describeChatReplyError(error, chatNameById.get(studentId)) });
     }
   };
   const replyToStudent = (studentId, message) => {
     const chatRequest = chat.beginReply(studentId);
     if (!chatRequest) {
       // Never fail silently: the composer keeps the draft, and this says why.
-      toast({ variant: "destructive", title: "Message not sent", description: "Messages aren’t available in this class right now. Refresh the page and try again." });
+      toast({ variant: "destructive", title: "Message not sent", description: chat.replyUnavailableReason(studentId) || "Messages aren’t available in this class right now. Refresh the page and try again." });
       return Promise.reject(new Error('This class chat is no longer available.'));
     }
     return replyToMessageMutation.mutateAsync({ sessionId: effectiveActivity?.id, studentId, message, chatRequest });
@@ -6907,11 +6965,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                 <>
                   <button
                     onClick={selectAll}
-                    disabled={signOutOnlySelectionActive || selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
+                    disabled={signOutOnlySelectionActive || selectAllStudents.length === 0 || (selectedStudentIds.size === selectAllStudents.length && selectAllStudents.every(student => selectedStudentIds.has(student.studentId)))}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="button-select-all-students"
                   >
-                    <Users className="h-4 w-4" /> Select All ({selectableStudents.length})
+                    <Users className="h-4 w-4" /> Select All ({selectAllStudents.length})
                   </button>
                   <button onClick={clearSelection} disabled={selectedStudentIds.size === 0 && selectedServerSignOutStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                     Clear Selection
@@ -6944,10 +7002,12 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           <div data-class-tools-toolbar className="flex items-center gap-2 flex-wrap mb-4">
             {dashboardCapabilities.allows('open-tab') && <Button size="sm" variant="outline" onClick={() => openRecipientDialog('open-tab', 'open-tab', { url: '' })} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>}
             {dashboardCapabilities.allows('open-tab') && <ClassroomActions
-              key={JSON.stringify([focusControlScopeKey, selectedSubgroupId, [...selectedStudentIds].sort()])}
+              key={focusControlScopeKey}
               schoolId={activeSchoolId} viewerId={currentUser?.id} scopeKey={focusControlScopeKey}
               preciseResourcesEnabled={preciseRestrictionResourcesEnabled}
-              students={getActiveCommandStudents(null, { commandType: 'open-tab' })}
+              students={recipientStudents()}
+              captureRecipients={() => captureRecipientSnapshot('open-tab')}
+              availableRecipientIds={() => commandableRecipientIds('open-tab')}
               disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive}
               assertCurrent={() => { if (focusControlScopeRef.current !== focusControlScopeKey) throw new DOMException('Classroom assignment changed', 'AbortError'); }}
               postCommand={(type, payload, studentIds) => postActiveCommand(type, payload, { studentIds })}
@@ -6958,6 +7018,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                   { signal, contextAuthorityRevision: context?.contextAuthorityRevision });
               }}
             />}
+            {dashboardCapabilities.allows('stop-focus') && <Button size="sm" variant="outline" onClick={openStopFocus} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || selectionLossActive} data-testid="button-stop-focus">Stop Focus</Button>}
             {dashboardCapabilities.allows('close-tabs') && <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} disabled={subgroupCommandsDisabled || nonRestrictionSelectionActive} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>}
             {dashboardCapabilities.allows('lock-screen') && <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !exactSelectedTargetsResolved || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={exactSelectedTargetsResolved ? 'Set a waypoint: hold selected students at their current page or a specific domain' : 'Select one or more students first'} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Set Waypoint</Button>}
             {dashboardCapabilities.allows('unlock-screen') && <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={subgroupCommandsDisabled || signOutOnlySelectionActive || !selectedTargetsSupportScreenOnlyUnlock || lockScreenMutation.isPending || unlockScreenMutation.isPending} title={!exactSelectedUnlockTargetsResolved ? 'Select one or more students first' : selectedTargetsSupportScreenOnlyUnlock ? 'Clear the waypoint while preserving Flight Paths and other restrictions' : 'ClassPilot extension update required for every selected student'} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Clear Waypoint</Button>}
@@ -7502,7 +7563,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       && (classAndSchoolMessagingEnabled || unreadByStudent.has(student.studentId))
                       ? (opener) => openChatThread(student.studentId, opener)
                       : undefined}
-                    canStartChat={classAndSchoolMessagingEnabled}
+                    canStartChat={classAndSchoolMessagingEnabled && chat.canReplyTo(student.studentId)}
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
@@ -8033,6 +8094,17 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showStopFocusDialog} onOpenChange={(open) => open ? setShowStopFocusDialog(true) : closeRecipientDialog('stop-focus')}>
+        <DialogContent data-testid="dialog-stop-focus">
+          <DialogHeader><DialogTitle>Stop Focus</DialogTitle><DialogDescription>Clear saved Focus for exactly these students, including students who reconnect later.</DialogDescription></DialogHeader>
+          <CommandRecipients {...recipientDialogProps('stop-focus')} />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => closeRecipientDialog('stop-focus')}>Cancel</Button>
+            <Button disabled={focusMutation.isPending} onClick={handleStopFocus} onKeyDown={ignoreHeldEnter} data-recipient-send="" data-testid="button-confirm-stop-focus">{recipientSendLabel('stop-focus', 'Stop Focus')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Tabs Dialog */}
       <Dialog open={showCloseTabsDialog} onOpenChange={(open) => (open ? setShowCloseTabsDialog(true) : closeManageTabsDialog())}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" onOpenAutoFocus={focusRecipientDialogField} data-testid="dialog-tabs">
@@ -8117,7 +8189,7 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           )}
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={closeManageTabsDialog} data-testid="button-close-tabs-dialog">Done</Button>
-            {dashboardCapabilities.allows('stop-focus') && <Button variant="outline" disabled={focusMutation.isPending || focusCleanupStudents.length === 0} onClick={() => focusMutation.mutate({ type: 'stop-focus', studentIds: focusCleanupStudents.map((student) => student.studentId) })} title="Clear Focus for these students, including saved Focus awaiting reconnection" data-testid="button-stop-focus-targets">Stop Focus for target</Button>}
+            {dashboardCapabilities.allows('stop-focus') && <Button variant="outline" disabled={focusMutation.isPending} onClick={openStopFocus} title="Review the exact students whose saved Focus will be cleared" data-testid="button-stop-focus-targets">Review Stop Focus</Button>}
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
             {openTabs.length > 0 && <Button variant="destructive" onClick={handleCloseAllTabs} onKeyDown={ignoreHeldEnter} disabled={closeTabsMutation.isPending} title="Bulk close remains available for older extension versions" data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />{recipientSendLabel('manage-tabs', 'Close All Tabs (bulk)', 'close-all-tabs')}</Button>}
           </DialogFooter>
@@ -8537,6 +8609,9 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           onSendMessage={subgroupCommandsDisabled || !dashboardCapabilities.allows('teacher-message') ? undefined : () => openRecipientDialog('message', 'teacher-message', { message: '' })}
           focusSignal={chatView.nonce}
           chatAvailable={chat.available}
+          canReplyToStudent={chat.canReplyTo}
+          canEndChat={chat.canEndChat}
+          replyUnavailableReason={chat.replyUnavailableReason}
           />}
           help={<ClassHelp tools={classTools} raisedHands={raisedHands} handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
             onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}

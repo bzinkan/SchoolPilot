@@ -88,6 +88,9 @@ export default function ChatWorkspace({
   onSendMessage,
   focusSignal = 0,
   chatAvailable = true,
+  canReplyToStudent = () => true,
+  canEndChat = () => true,
+  replyUnavailableReason = () => '',
 }) {
   const pause = describeChatPause(fabState);
   const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;
@@ -112,7 +115,7 @@ export default function ChatWorkspace({
   // roster. The server refuses either reply, so there is no reply box.
   const readOnly = Boolean(selected) && rosterKnown && !selectedRosterRow?.canMessage;
   const offersComposer = Boolean(selected) && !readOnly;
-  const composerDisabled = !messagingEnabled || Boolean(selectedId && pendingReplyStudentIds?.has(selectedId));
+  const composerDisabled = !messagingEnabled || Boolean(selectedId && (!canReplyToStudent(selectedId) || pendingReplyStudentIds?.has(selectedId)));
   // Only a reply box that is on screen and enabled can take focus.
   const composerTakesFocus = offersComposer && !composerDisabled;
   const sectionRef = useRef(null);
@@ -379,7 +382,7 @@ export default function ChatWorkspace({
                   readiness={readOnly ? null : readinessByStudent.get(selected.studentId) || null}
                   waitingFor={waitingFor}
                   onClearThread={onClearThread}
-                  onEndChat={readOnly ? undefined : onEndChat}
+                  onEndChat={readOnly || !canEndChat(selected.studentId) ? undefined : onEndChat}
                   onMarkThreadRead={onMarkThreadRead}
                   onBack={singlePane ? backToRoster : undefined}
                   backButtonRef={backButtonRef}
@@ -389,19 +392,22 @@ export default function ChatWorkspace({
                       {readOnlyReplyNote({ name: selected.studentName, word: selectedRosterRow?.word })}
                     </p>
                   ) : (
-                    <ChatComposer
-                      studentId={selected.studentId}
-                      studentName={selected.studentName}
-                      value={drafts[selected.studentId] || ''}
-                      onChange={(text) => setDrafts((current) => ({ ...current, [selected.studentId]: text }))}
-                      onReplyToMessage={onReplyToMessage}
-                      disabled={composerDisabled}
-                      studentHasWritten={selected.items.some((item) => item.sender === 'student')}
-                      focusSignal={focusSignal}
-                      // A disabled box cannot take focus; the workspace spends
-                      // the request instead.
-                      claimFocusSignal={composerTakesFocus ? claimFocusSignal : undefined}
-                    />
+                    <div className="shrink-0">
+                      {replyUnavailableReason(selected.studentId) && <p role="status" className="px-3 py-2 text-xs" data-testid="chat-private-lifecycle-note">{replyUnavailableReason(selected.studentId)}</p>}
+                      <ChatComposer
+                        studentId={selected.studentId}
+                        studentName={selected.studentName}
+                        value={drafts[selected.studentId] || ''}
+                        onChange={(text) => setDrafts((current) => ({ ...current, [selected.studentId]: text }))}
+                        onReplyToMessage={onReplyToMessage}
+                        disabled={composerDisabled}
+                        studentHasWritten={selected.items.some((item) => item.sender === 'student')}
+                        focusSignal={focusSignal}
+                        // A disabled box cannot take focus; the workspace spends
+                        // the request instead.
+                        claimFocusSignal={composerTakesFocus ? claimFocusSignal : undefined}
+                      />
+                    </div>
                   )}
                 </ChatThread>
               ) : (

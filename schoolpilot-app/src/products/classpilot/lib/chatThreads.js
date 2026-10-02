@@ -98,6 +98,11 @@ export function describeChatReplyError(error, studentName) {
     case 'ACTIVE_SESSION_NOT_FOUND':
     case 'CLASSROOM_ACTIVITY_UNAVAILABLE':
       return 'This class has ended.';
+    case 'PRIVATE_CHAT_LIFECYCLE_STALE':
+      return 'This conversation changed. Messages were refreshed; review the chat and send again.';
+    case 'PRIVATE_CHAT_UPDATE_REQUIRED':
+      return "Update ClassPilot on this student's Chromebook to use private chat.";
+    case 'PRIVATE_CHAT_DISABLED':
     case 'FAB_FEATURE_DISABLED':
       return 'Messaging is turned off for this class or your school.';
     case 'CHAT_STUDENT_NOT_IN_SESSION':
