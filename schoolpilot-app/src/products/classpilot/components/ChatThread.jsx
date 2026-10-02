@@ -6,7 +6,7 @@ import { formatChatTimestamp } from '../lib/chatTimestamp';
 import { deliveryLabel, looksLikeQuestion } from '../lib/chatThreads';
 import LastSeenTime from './LastSeenTime';
 
-export function ChatMessageBubble({ item }) {
+export function ChatMessageBubble({ item, waitingFor = null }) {
   const question = item.sender === 'student' && looksLikeQuestion(item.message);
   return (
     <div className={cn('flex', item.sender === 'teacher' ? 'justify-end' : 'justify-start')}>
@@ -35,7 +35,7 @@ export function ChatMessageBubble({ item }) {
           {item.sender === 'teacher' && item.status && (
             <>
               <span aria-hidden="true"> · </span>
-              <span data-testid={`chat-delivery-${item.id}`}>{deliveryLabel(item.status, item.errorMessage)}</span>
+              <span data-testid={`chat-delivery-${item.id}`}>{deliveryLabel(item.status, item.errorMessage, { waitingFor })}</span>
             </>
           )}
         </div>
@@ -47,9 +47,11 @@ export function ChatMessageBubble({ item }) {
 /**
  * One student's conversation. Selecting it, and any message that arrives while
  * it is open on a visible tab, marks the student's messages read. Only this
- * thread auto-scrolls.
+ * thread auto-scrolls. A thread with no messages on this dashboard is one the
+ * teacher is starting, so it has nothing to clear or end. `waitingFor` names a
+ * signed-out student whose undelivered messages wait for them to sign in.
  */
-function ChatThread({ visible = true, onOpenStudentDetails, conversation, monitoring = null, readiness = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
+function ChatThread({ visible = true, onOpenStudentDetails, conversation, monitoring = null, readiness = null, waitingFor = null, onClearThread, onEndChat, onMarkThreadRead, onBack, children }) {
   const endRef = useRef(null);
   const { studentId, studentName, items } = conversation;
   const itemCount = items.length;
@@ -105,16 +107,18 @@ function ChatThread({ visible = true, onOpenStudentDetails, conversation, monito
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {onOpenStudentDetails && <button type="button" className="text-xs px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700" onClick={(event) => onOpenStudentDetails(studentId, event.currentTarget)}>Details</button>}
-          <button
-            type="button"
-            onClick={() => onClearThread(studentId)}
-            className="text-xs px-2 py-1 rounded text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700 font-medium transition-colors"
-            title="Hide this conversation here. Message history is kept and the student's chat is not affected."
-            data-testid="chat-thread-clear"
-          >
-            Clear thread
-          </button>
-          {onEndChat && (
+          {itemCount > 0 && (
+            <button
+              type="button"
+              onClick={() => onClearThread(studentId)}
+              className="text-xs px-2 py-1 rounded text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700 font-medium transition-colors"
+              title="Hide this conversation here. Message history is kept and the student's chat is not affected."
+              data-testid="chat-thread-clear"
+            >
+              Clear thread
+            </button>
+          )}
+          {onEndChat && itemCount > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -150,7 +154,14 @@ function ChatThread({ visible = true, onOpenStudentDetails, conversation, monito
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1.5" data-testid="chat-thread-messages">
-        {items.map((item) => <ChatMessageBubble key={item.id} item={item} />)}
+        {/* No claim about history: a cleared or ended thread reopens empty here
+            while the server keeps its messages. */}
+        {itemCount === 0 && (
+          <p className="py-6 text-center text-xs text-gray-500 dark:text-gray-400" data-testid="chat-thread-empty">
+            Only {studentName} receives what you send here.
+          </p>
+        )}
+        {items.map((item) => <ChatMessageBubble key={item.id} item={item} waitingFor={waitingFor} />)}
         <div ref={endRef} />
       </div>
       {children}

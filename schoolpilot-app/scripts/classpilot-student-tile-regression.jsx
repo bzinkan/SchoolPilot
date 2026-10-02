@@ -112,6 +112,20 @@ const SUPERVISED_STUDENT = Object.freeze({
   studentName: 'Supervised Student',
 });
 
+// Every footer action at once, so a narrow tile has the most to fit.
+const MESSAGE_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'message-student',
+  studentName: 'Message Student',
+});
+
+// Class messaging is off: unread messages can still be read, none started.
+const MESSAGING_OFF_STUDENT = Object.freeze({
+  ...ONLINE_STUDENT,
+  studentId: 'messaging-off-student',
+  studentName: 'Messaging Off Student',
+});
+
 const PAUSED_STUDENT = Object.freeze({
   ...ONLINE_STUDENT,
   studentId: 'paused-student',
@@ -273,6 +287,7 @@ function TileRegressionHarness() {
   const [lastCommand, setLastCommand] = useState('');
   const [allowClicks, setAllowClicks] = useState(0);
   const [returnClicks, setReturnClicks] = useState(0);
+  const [chatClicks, setChatClicks] = useState(0);
   const [tilesVisible, setTilesVisible] = useState(false);
   const [frameSwapped, setFrameSwapped] = useState(false);
   const [memoDetailsEnabled, setMemoDetailsEnabled] = useState(true);
@@ -362,6 +377,7 @@ function TileRegressionHarness() {
       <p data-testid="last-command">{lastCommand}</p>
       <p data-testid="allow-clicks">Allow clicks: {allowClicks}</p>
       <p data-testid="return-clicks">Return clicks: {returnClicks}</p>
+      <p data-testid="chat-clicks">Chat clicks: {chatClicks}</p>
       <p data-testid="ticks">Ticks: {ticks}</p>
       <p data-testid="parent-renders">Parent renders: {renderCount.current}</p>
 
@@ -388,6 +404,7 @@ function TileRegressionHarness() {
             onManageTabs={() => setTabClicks((count) => count + 1)}
             onToggleSelect={() => {}}
             persistentRestrictionSelectionAvailable
+            onOpenChat={() => setChatClicks((count) => count + 1)}
           />
         </div>
 
@@ -606,6 +623,37 @@ function TileRegressionHarness() {
             onOpenDetails={() => setDetailsClicks((count) => count + 1)}
             onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
             onReturnToClass={() => setReturnClicks((count) => count + 1)}
+            onOpenChat={() => setChatClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="message-tile-host">
+          <StudentTile
+            student={MESSAGE_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            screenshotData={{
+              screenshot: SCREENSHOT_DATA_URL,
+              timestamp: freshnessNowMs,
+              bindingVersion: 'v2:message-binding',
+              tabTitle: 'Lesson',
+            }}
+            onOpenScreenshot={() => setScreenshotClicks((count) => count + 1)}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
+            onManageTabs={() => setTabClicks((count) => count + 1)}
+            onOpenChat={() => setChatClicks((count) => count + 1)}
+          />
+        </div>
+
+        <div data-testid="messaging-off-tile-host">
+          <StudentTile
+            student={MESSAGING_OFF_STUDENT}
+            monitoringDisplay={onlineDisplay(freshnessNowMs)}
+            freshnessNowMs={freshnessNowMs}
+            onOpenDetails={() => setDetailsClicks((count) => count + 1)}
+            unreadMessageCount={2}
+            onOpenChat={() => setChatClicks((count) => count + 1)}
+            canStartChat={false}
           />
         </div>
 

@@ -142,7 +142,7 @@ import {
 import { useObservationLease } from '../hooks/useObservationLease';
 import { useClassTools } from '../hooks/useClassTools';
 import { useClasspilotSessionChat } from '../hooks/useClasspilotSessionChat';
-import { countUnreadByStudent, deriveChatConversations, looksLikeQuestion } from '../lib/chatThreads';
+import { chatStudentName, countUnreadByStudent, deriveChatConversations, describeChatReplyError, looksLikeQuestion } from '../lib/chatThreads';
 import { mergeFabSettingsResponse } from '../lib/dashboardCommandContext';
 import {
   classpilotObservationSessionEligible,
@@ -1761,7 +1761,31 @@ export default function Dashboard() {
   });
   const { studentMessages, chatReplies, pendingReplyStudentIds } = chat;
   const unreadByStudent = useMemo(() => countUnreadByStudent(studentMessages), [studentMessages]);
-  const chatConversations = useMemo(() => deriveChatConversations(studentMessages, chatReplies), [studentMessages, chatReplies]);
+  // A thread the teacher started has no student message to carry a name.
+  const chatNameById = useMemo(() => {
+    const names = new Map();
+    for (const row of students) {
+      const id = row.studentId || row.id;
+      const name = chatStudentName(row);
+      if (id && name) names.set(id, name);
+    }
+    return names;
+  }, [students]);
+  const chatConversations = useMemo(
+    () => deriveChatConversations(studentMessages, chatReplies, chatNameById),
+    [studentMessages, chatReplies, chatNameById],
+  );
+  // The class's hard messaging switch (a pause still lets the teacher write).
+  // While it is off a tile offers no Message; its unread badge still opens a
+  // thread that has unread messages, to read.
+  const classMessagingEnabled = sessionFabState?.messagingEnabled !== false;
+  // The school-wide switch arrives only with the dashboard settings, not in the
+  // class state, and applies to scheduled classrooms too. While it is off a
+  // device shows no chat, so no tile offers Message and the reply box stays
+  // off; a class session's reply route does not check it. A missing field
+  // means on.
+  const schoolMessagingEnabled = settings?.schoolStudentMessagingEnabled !== false;
+  const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;
   // The chat drawer is a sibling of the FAB, not a child: the FAB remounts
   // whenever the chat scope changes and would lose the open thread.
   const [chatView, setChatView] = useState({ scopeKey: activityScopeKey, open: false, tab: 'help', studentId: null, nonce: 0 });
@@ -5431,15 +5455,23 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
     onSuccess: (data, variables) => {
       const reply = data?.message || {};
       if (!chat.receiveReply(variables.chatRequest, reply, variables.message)) return;
+      const failed = reply.deliveryStatus === 'failed';
+      // The same words as the bubble: a signed-out student gets it on signing in.
+      const waitingFor = monitoringDisplaysByStudent.get(variables.studentId)?.kind === 'signed_out'
+        ? chatNameById.get(variables.studentId) || 'the student'
+        : null;
       toast({
-        title: reply.deliveryStatus === 'failed' ? "Reply Not Delivered" : "Reply Queued",
-        description: reply.deliveryStatus === 'failed' ? (reply.errorMessage || "No student device was available") : "Waiting for device confirmation",
-        variant: reply.deliveryStatus === 'failed' ? "destructive" : undefined,
+        title: failed ? "Message not delivered" : "Message sent",
+        description: failed
+          ? (reply.errorMessage || "No student device was available.")
+          : waitingFor ? `It waits until ${waitingFor} signs in.` : "Waiting for the device to confirm.",
+        variant: failed ? "destructive" : undefined,
       });
     },
     onError: (error, variables) => {
+      // The composer keeps the draft; the toast says why in plain words.
       if (chat.isCurrentReply(variables.chatRequest)) {
-        toast({ variant: "destructive", title: "Error", description: error.message });
+        toast({ variant: "destructive", title: "Message not sent", description: describeChatReplyError(error, chatNameById.get(variables.studentId)) });
       }
     },
     onSettled: (_data, _error, variables) => { chat.finishReply(variables.chatRequest); },
@@ -5605,7 +5637,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
   };
   const replyToStudent = (studentId, message) => {
     const chatRequest = chat.beginReply(studentId);
-    if (!chatRequest) return Promise.reject(new Error('This class chat is no longer available.'));
+    if (!chatRequest) {
+      // Never fail silently: the composer keeps the draft, and this says why.
+      toast({ variant: "destructive", title: "Message not sent", description: "Messages aren’t available in this class right now. Refresh the page and try again." });
+      return Promise.reject(new Error('This class chat is no longer available.'));
+    }
     return replyToMessageMutation.mutateAsync({ sessionId: effectiveActivity?.id, studentId, message, chatRequest });
   };
 
@@ -5672,7 +5708,10 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
       if (nextState) setSessionFabState(nextState);
       queryClient.invalidateQueries({ queryKey: ['/api/settings'] });
       const enabled = nextState?.messagingEnabled === true;
-      toast({ title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
+      // The class switch alone cannot open a chat the school keeps off.
+      toast(enabled && !schoolMessagingEnabled
+        ? { title: "Class Messaging Enabled", description: "Students still see no chat while messaging is turned off for your school." }
+        : { title: enabled ? "Student Messaging Enabled" : "Student Messaging Disabled", description: enabled ? "Students can now send messages" : "Students cannot send messages" });
     },
     onError: (error) => {
       if (error?.name === 'AbortError') return;
@@ -6769,9 +6808,11 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
                       ? undefined
                       : (opener) => openStudentDetails(student, opener)}
                     unreadMessageCount={unreadByStudent.get(student.studentId) || 0}
-                    onOpenChat={dashboardCapabilities.canUseTeacherFab && !supervisedElsewhere
+                    onOpenChat={dashboardCapabilities.canUseTeacherFab && !supervisedElsewhere && chat.available
+                      && (classAndSchoolMessagingEnabled || unreadByStudent.has(student.studentId))
                       ? (opener) => openChatThread(student.studentId, opener)
                       : undefined}
+                    canStartChat={classAndSchoolMessagingEnabled}
                     blockedDomains={supervisedElsewhere ? EMPTY_LIST : settings?.blockedDomains || []}
                     isOffTask={!supervisedElsewhere && isStudentOffTask(student)}
                     isAbsent={!supervisedElsewhere && absentIds.has(student.studentId)}
@@ -7744,12 +7785,15 @@ ${claimedScreenshotTileRequests.map(request => request.queryKey[1]).join(',')}`;
           students={students}
           freshnessNowMs={freshnessNowMs}
           authority={effectiveAuthority}
-          studentMessagingEnabled={sessionFabState?.messagingEnabled !== false}
+          studentMessagingEnabled={classMessagingEnabled}
+          schoolMessagingEnabled={schoolMessagingEnabled}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
           fabState={sessionFabState}
           onTogglePause={(paused) => toggleChatPauseMutation.mutate(paused)}
           fabSettingsPending={!sessionFabState || toggleHandRaisingMutation.isPending || toggleStudentMessagingMutation.isPending || toggleChatPauseMutation.isPending}
           onSendMessage={subgroupCommandsDisabled ? undefined : () => setShowSendMessageDialog(true)}
+          focusSignal={chatView.nonce}
+          chatAvailable={chat.available}
           />}
           help={<ClassHelp tools={classTools} raisedHands={raisedHands} handRaisingEnabled={sessionFabState?.handRaisingEnabled !== false}
             onToggleHandRaising={(enabled) => toggleHandRaisingMutation.mutate(enabled)}
