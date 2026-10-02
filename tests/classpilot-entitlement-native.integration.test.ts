@@ -28,9 +28,13 @@ beforeEach(async () => {
 });
 after(async () => {
   const storage = await import("../src/services/storage.js");
+  const { runWithTenantContext } = await import("../src/middleware/tenantContext.js");
   // Retire only these owned roots through the canonical lifecycle. Retention
   // remains intact even when the external helper keeps its isolated database.
-  for (const id of [schoolId, otherSchoolId]) await storage.softDeleteSchool(id);
+  for (const id of [schoolId, otherSchoolId]) {
+    const retired = await runWithTenantContext({ schoolId: id }, () => storage.softDeleteSchool(id));
+    assert.ok(retired?.deletedAt, "The owned synthetic school must be canonically retired");
+  }
   await admin?.end();
   const pools = await import("../src/db.js");
   const scheduler = await import("../src/services/schedulerDb.js");
