@@ -55,6 +55,8 @@ jobs:
               - '.github/workflows/ci-build.yml'
               - 'scripts/deploy.sh'
               - 'scripts/deploy-classpilot-runtime-config.ps1'
+              - 'scripts/classpilot-roadmap-release-evidence.ps1'
+              - 'scripts/enforce-private-chat-release-floor.mjs'
               - 'scripts/deploy-mydesk-runtime-config.ps1'
               - 'scripts/deploy-product-runtime-config.ps1'
               - 'scripts/run-mydesk-readiness.ps1'
