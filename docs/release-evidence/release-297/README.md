@@ -101,3 +101,32 @@ the complete catalog/migration/flag contract, raw hashes, post-run correctness,
 and verified generated-container cleanup separate. Three passing cold repeats,
 dense heavy-year history, fleet/RDS/managed-device capacity and pathological
 high-grain acceptance remain unproved.
+
+## Bounded heartbeat optimizations — focused validation
+
+[Focused manifest](bounded-authority-fastpaths-0e9e50df.json) and
+[nine retained logs](bounded-authority-fastpaths-0e9e50df.logs.ndjson.gz) record
+the two subsequent changes: skip owner/channel discovery for an empty exact
+student private outbox, and resolve an unlocked school entitlement in one
+uncached statement. Student locks, final binding, synchronous delivery,
+nonempty/expired outbox processing and the locked entitlement path remain
+enforced. No pool, timeout, infrastructure or schema change was made.
+
+The ordinary native runs passed 55 private lifecycle and 13 entitlement cases.
+The combined run passed 84 cases: 55 private cases through the restricted
+application role, 13 entitlement cases through their explicit privileged native
+SQL connection, and 16 source-contract assertions. Entitlement SQL results are
+not presented as RLS isolation proof. Plain check/build, the 438/534 test-type
+ratchet and the 689/7 cast counts passed. The independent lane separately owns
+the newer combined 75 ordinary and 62 restricted case logs.
+
+Two uncommitted draft failures remain archived: test ordering prematurely
+adopted the first-adoption fixture, and Drizzle stripped interpolated column
+qualifiers in the nested entitlement projection. The native positive case
+caught the latter; fully qualified correlation passed before the product was
+committed. The manifest distinguishes these failures, subsequent committed
+bytes and the later canonical fixture-retirement assertion.
+
+These focused checks permit a corrected-source capacity retry. They do not
+establish 100 requests/second acceptance or three passing cold runs, and cannot
+authorize Usage activation. The failed Run 01 record remains unchanged.
