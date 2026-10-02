@@ -1,5 +1,12 @@
 # Remaining-roadmap release preparation
 
+**Historical September 30–October 1 evidence.** Current release instructions are
+in [the 2.9.7 operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) and
+[reconciled PR inventory](RELEASE_2_9_7_PR_INVENTORY.md). The owner selected 2.9.7
+and waived the two-Chromebook prerequisite in favor of documented live validation.
+The 2.10.0 package and managed-device requirements below describe the earlier
+candidate; retain them as history, not current execution instructions.
+
 Status: preparation only, scope dated 2026-09-30; final local evidence through
 2026-10-01 UTC. No deployment, activation, Store upload,
 paid service creation or legacy resource deletion is authorized by this document.

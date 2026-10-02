@@ -2,6 +2,16 @@
 
 Status: canonical forward roadmap, adopted 2026-09-29. It does not supersede `CLASSPILOT_ROADMAP_IMPLEMENTATION.md`, which remains the September 6, 2026 release and evidence record.
 
+October 2 release stabilization: the owner approved one coordinated SchoolPilot
+integration release and separate ClassPilot **2.9.7**, preserving individual
+review branches. The current [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md)
+and [PR inventory](RELEASE_2_9_7_PR_INVENTORY.md) supersede the earlier candidate
+version, independent stack-merging order and two-Chromebook prerequisite. Managed
+validation is `waived_not_passed`; actual sample-bearing live acceptance is still
+required before global promotion. No implementation or test status here implies
+deployment or activation. Usage retains its independent capacity and deployed
+observation gates. SFU implementation and legacy media changes remain excluded.
+
 This document turns the product owner's eight-phase master plan into a sequence of safe, independently deployable pull requests. It records the product model, the engineering rules every PR follows, the PR order and its hard constraints, the capabilities and flags each PR adds, and the Phase 0/0A status. The retired Live View and parked TURN inventory, with its A–E classification and deletion order, is in `CLASSPILOT_LEGACY_MEDIA_AUDIT.md`.
 
 The master plan also sets three standing prohibitions: do not implement the roadmap in one PR, do not deploy production infrastructure or publish a Chrome Web Store extension automatically, and do not permanently destroy legacy TURN resources during the cost-reduction phase.
