@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-02T17:27:26.165Z",
+  "capturedAt": "2026-10-02T18:55:40.304Z",
   "status": "release_preparation_not_deployed",
   "schoolPilotBaseline": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
-  "schoolPilotReviewCheckpoint": "a2ddb5e354689b03538eb25cc53af1bff59be03d",
-  "classPilotReviewCheckpoint": "9aa02c07757c0e2396f85cd155ce25f5e5a8a190",
+  "schoolPilotReviewCheckpoint": "8a5cf69ae68a4dc6c45837907297f94b4466f1ca",
+  "classPilotReviewCheckpoint": "8069a9c9bd50352e187847158b356a69edc4e45d",
   "targetVersion": "2.9.7",
   "managedChromebookGate": "waived_not_passed",
   "integrationPolicy": "One SchoolPilot release integration PR; preserve individual branches and reconcile them after release merge. Never independently merge overlapping stacks.",
@@ -1362,5 +1362,42 @@
         "three deployed shadow school days and one rollup observation day"
       ]
     }
-  ]
+  ],
+  "releasePullRequests": [
+    {
+      "url": "https://github.com/bzinkan/SchoolPilot/pull/603",
+      "number": 603,
+      "head": "37d01a4aab913533bf4fddf1d86265a44741707f",
+      "base": {
+        "branch": "main",
+        "sha": "996d965f0b044f8fc4d4bbc399c5ab3781fbac04"
+      },
+      "state": "open",
+      "draft": true,
+      "mergedAt": null,
+      "role": "consolidated_release_review_container",
+      "note": "Remote head at capture; current local checkpoint and later CI records are separate. Not counted as an included source PR."
+    },
+    {
+      "url": "https://github.com/bzinkan/ClassPilot/pull/123",
+      "number": 123,
+      "head": "8069a9c9bd50352e187847158b356a69edc4e45d",
+      "base": {
+        "branch": "main",
+        "sha": "55bb531cb5f130cebec9d994daa957e82e87a13b"
+      },
+      "state": "open",
+      "draft": true,
+      "mergedAt": null,
+      "role": "consolidated_release_review_container",
+      "note": "Remote head at capture; current local checkpoint and later CI records are separate. Not counted as an included source PR."
+    }
+  ],
+  "extensionArtifact": {
+    "source": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "version": "2.9.7",
+    "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "sha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "evidence": "https://github.com/bzinkan/ClassPilot/blob/8069a9c9bd50352e187847158b356a69edc4e45d/docs/release-evidence/classpilot-2.9.7-candidate-20261002.json"
+  }
 }

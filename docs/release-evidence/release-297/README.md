@@ -1,5 +1,11 @@
 # Focused release 2.9.7 validation records
 
+The [superseded CI attempt manifest](ci-attempts/manifest.json) retains the four
+failed frontend, database and Terraform logs with exact source/run identities,
+hashes and diagnoses. These are failed attempts, never final acceptance. The
+[native private relay record](../private-chat-redis-relay-20261002/README.md)
+separately covers delayed Redis delivery using actual PostgreSQL and WebSockets.
+
 The [local checkpoint manifest](local-checkpoints/manifest.json) preserves earlier
 broad runs, failed attempts and follow-up results in individually hashed gzip
 logs. Unfrozen or superseded runs are explicitly labeled and cannot certify the

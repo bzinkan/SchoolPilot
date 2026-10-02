@@ -161,6 +161,10 @@ retain it while any offline cleanup is unresolved. The deploy guard verifies eac
 source image digest against its exact source SHA, the compatible writer/bridge
 and full candidate admission. A failed partial rollout retains that compatible
 source pair; the original pre-release image is not a lifecycle rollback target.
+Compatibility must also include the receiving Redis lifecycle fence
+(`PRIVATE_CHAT_RELAY_VERSION = 1`). Writer/bridge markers alone do not establish
+that delayed replies are safe. Serving candidates and rollback projections must
+retain this fence even with private issuance disabled.
 
 ## Runtime and Store sequence
 

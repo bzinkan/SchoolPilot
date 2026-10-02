@@ -1,6 +1,6 @@
 # SchoolPilot / ClassPilot 2.9.7 release inventory
 
-This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint a2ddb5e354689b03538eb25cc53af1bff59be03d is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.
+This is an inclusion inventory, not merge, deployment, or activation evidence. The structured record preserves full commits, base dependencies and inclusion proofs. Checkpoint 8a5cf69ae68a4dc6c45837907297f94b4466f1ca is based on main 996d965f0b044f8fc4d4bbc399c5ab3781fbac04. Preserve original review branches; reconcile their PRs only after the single integration PR lands.
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
@@ -66,6 +66,8 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 | [ClassPilot #120](https://github.com/bzinkan/ClassPilot/pull/120) | included | `d6cb334a6546cc06c744870382bdb5710f9d5934` | codex/precise-focus-candidate | Implement exact Focus and Bring Forward lifecycle |
 | [ClassPilot #121](https://github.com/bzinkan/ClassPilot/pull/121) | included | `3a9ece517d521632f1accbb5a51ff3fcf1934162` | codex/focus-enforcement | Prepare precise and Focus candidate 2.10.0 |
 | [ClassPilot #122](https://github.com/bzinkan/ClassPilot/pull/122) | included | `2aa6df988a78cb5860cef2c0866cab46566ffec5` | codex/precise-focus-release | Fix 2.10.0 Attention and lesson regressions and harden teacher chat delivery |
+
+The coordinated review containers are [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603) and [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123). They are additional to the 60 source PRs above. Their open/draft state is recorded in the structured inventory; neither is merged. The exact 2.9.7 packaged source is `065be165b5df704d84eb716e3fb914c1fed17f98`, independently of later documentation-only ClassPilot commits.
 
 #597 incorporates #595/#596 and their conflict resolutions once. The final integration retains #601/#602 and the complete roadmap. #574 and #586 have explicit conflict/fixture equivalence records. #562 is superseded by merged #580. #560 is reconciled by current release documentation while its historical evidence remains intact. #561 is a decision document only. ClassPilot #119→#120→#121→#122 remain intact in the separate 2.9.7 lineage.
 
