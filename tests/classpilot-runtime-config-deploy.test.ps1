@@ -37,6 +37,26 @@ function Get-ArgumentValue {
     return [string]$Arguments[$index + 1]
 }
 
+function New-TestRoadmapReleaseEvidence {
+    param([string]$Capability, [string]$SchoolId, [string]$ToolSha, [string]$AppSha, [string]$Digest, [DateTimeOffset]$Now)
+    return [ordered]@{
+        schemaVersion = 1; approvedAt = $Now.ToString('o'); approvedBy = 'bzinkan@school-pilot.net'
+        reason = 'Explicit test-only scoped managed-device validation waiver.'
+        validationLevel = 'synthetic_only'; managedValidation = 'waived_not_passed'
+        capability = $Capability; pilotSchoolId = $SchoolId; toolSha = $ToolSha; appSha = $AppSha; imageDigest = $Digest
+        classPilotTag = 'v2.9.7'; classPilotMergeSha = ('c' * 40); classPilotZipSha256 = ('d' * 64)
+        classPilotExtensionId = $script:ClassPilotExtensionId
+        contractFixtureSha256 = Get-FileSha256 -Path (Join-Path $repositoryRoot 'tests/fixtures/restriction-resource-matcher-cases.json')
+        testEvidenceSha256 = ('e' * 64)
+        checks = [ordered]@{
+            combinedCiPassed = $true; exactPackageVerified = $true; nativeChromePackagePassed = $true
+            crossRepositoryContractPassed = $true; unsupportedClientsFailClosed = $true
+            identityAndStaleBindingPassed = $true; offlineCleanupPassed = $true
+            attentionLessonAndChatRegressionsPassed = $true; announcementsRemainAvailable = $true
+        }
+    }
+}
+
 function New-TestTaskResponse {
     param(
         [ValidateSet("api", "worker")][string]$Role,
@@ -1440,29 +1460,29 @@ try {
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
     # The precise-restriction pilot is refused until a reviewed follow-up binds the
-    # exact MANAGED-CHROMEBOOK VERIFIED ClassPilot 2.10.0 package; the off profile
+    # exact reviewed ClassPilot 2.9.7 package; the off profile
     # never needs it.
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
         })
-    } "The precise-restriction pilot must refuse until 2.10.0 release evidence is bound."
+    } "The precise-restriction pilot must refuse until 2.9.7 release evidence is bound."
     [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 7; mode = "precise-restriction-resources-off"
     }))
     foreach ($partial in @(
-        @{ Tag = "v2.10.0"; Merge = ""; Zip = "" },
+        @{ Tag = "v2.9.7"; Merge = ""; Zip = "" },
         @{ Tag = "v2.9.6"; Merge = ("c" * 40); Zip = ("d" * 64) },
-        @{ Tag = "v2.10.0"; Merge = ("C" * 40); Zip = ("d" * 64) }
+        @{ Tag = "v2.9.7"; Merge = ("C" * 40); Zip = ("d" * 64) }
     )) {
         $script:PreciseRestrictionRequiredReleaseTag = $partial.Tag
         $script:PreciseRestrictionRequiredMergeSha = $partial.Merge
         $script:PreciseRestrictionRequiredZipSha256 = $partial.Zip
         Assert-Throws { Assert-PreciseRestrictionPilotReleaseEvidenceBound } `
-            "Partial or malformed 2.10.0 release evidence must not admit the precise-restriction pilot."
+            "Partial or malformed 2.9.7 release evidence must not admit the precise-restriction pilot."
     }
     # Test-only binding so the shared roadmap cases below can exercise the pilot.
-    $script:PreciseRestrictionRequiredReleaseTag = "v2.10.0"
+    $script:PreciseRestrictionRequiredReleaseTag = "v2.9.7"
     $script:PreciseRestrictionRequiredMergeSha = "c" * 40
     $script:PreciseRestrictionRequiredZipSha256 = "d" * 64
 
@@ -1474,8 +1494,8 @@ try {
     [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 7; mode = "focus-tab-off" }))
     foreach ($partial in @(
         @{ Tag = ""; Merge = "c" * 40; Zip = "d" * 64 },
-        @{ Tag = "v2.10.1"; Merge = ""; Zip = "d" * 64 },
-        @{ Tag = "v2.10.1"; Merge = "C" * 40; Zip = "d" * 64 }
+        @{ Tag = "v2.9.7"; Merge = ""; Zip = "d" * 64 },
+        @{ Tag = "v2.9.7"; Merge = "C" * 40; Zip = "d" * 64 }
     )) {
         $script:FocusTabRequiredReleaseTag = $partial.Tag
         $script:FocusTabRequiredMergeSha = $partial.Merge
@@ -1483,7 +1503,7 @@ try {
         Assert-Throws { Assert-FocusTabPilotReleaseEvidenceBound } "Partial or malformed Focus evidence must refuse activation."
     }
     # Synthetic binding only, to exercise the generic pilot/off invariants.
-    $script:FocusTabRequiredReleaseTag = "v2.10.1"
+    $script:FocusTabRequiredReleaseTag = "v2.9.7"
     $script:FocusTabRequiredMergeSha = "c" * 40
     $script:FocusTabRequiredZipSha256 = "d" * 64
 
@@ -1499,11 +1519,13 @@ try {
         $capability = [string]$roadmapCase.Capability
         $prefix = [string]$roadmapCase.Prefix
         $flag = [string]$script:CapabilityFlags[$capability]
-        Assert-Throws {
-            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
-                schemaVersion = 7; mode = "$prefix-global-on"
-            })
-        } "Roadmap profiles must not admit an unreviewed global activation."
+        if ($capability -cnotin $script:RoadmapGlobalCapabilities) {
+            Assert-Throws {
+                ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                    schemaVersion = 7; mode = "$prefix-global-on"
+                })
+            } "Other roadmap profiles must not admit global activation."
+        }
         Assert-Throws {
             ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
                 schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = "all"
@@ -1571,6 +1593,7 @@ try {
                 -SourceTaskDefinition $pilotSource -ContainerName "api"
         } "An active roadmap pilot must be disabled before another pilot admission."
         foreach ($badControl in @("global", "multiple-schools", "flag-only", "rollout-only", "partial")) {
+            if ($badControl -ceq 'global' -and $capability -cin $script:RoadmapGlobalCapabilities) { continue }
             $invalidSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
             $invalidEnv = $invalidSource.containerDefinitions[0].environment
             $registryEntry = @($invalidEnv | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -3695,12 +3718,36 @@ try {
         Write-TestJson -Path $roadmapProfilePath -Value ([pscustomobject]@{
             schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = $testSchoolId
         })
+        $roadmapAdmission = @{}
+        if ($null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")) {
+            $releasePath = Join-Path $testRoot "$prefix-release.json"
+            $release = New-TestRoadmapReleaseEvidence -Capability $roadmapCase.Capability -SchoolId $testSchoolId `
+                -ToolSha $toolSha -AppSha $appSha -Digest $digest -Now $now
+            Write-TestJson -Path $releasePath -Value $release
+            $roadmapAdmission = @{
+                PrivateRoadmapReleaseEvidencePath = $releasePath
+                ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $true
+            }
+            Assert-Throws {
+                New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $roadmapProfilePath `
+                    -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+                    -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+            } 'Precise/Focus plan must fail without its scoped approval.'
+        }
         $roadmapPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
             -PrivateProfilePath $roadmapProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha `
-            -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+            -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now @roadmapAdmission
         $roadmapPlan = Read-RuntimePlan -Path $roadmapPlanResult.PlanPath -ExpectedSha256 $roadmapPlanResult.PlanSha256
+        $roadmapApplyAdmission = @{}
+        if ($null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")) {
+            $roadmapApplyAdmission = @{ ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $true }
+            Assert-Throws {
+                Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
+                    -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+            } 'Apply must independently require the scoped managed-waiver confirmation.'
+        }
         $roadmapApply = Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
-            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 @roadmapApplyAdmission
         Assert-Condition ($roadmapApply.status -ceq "applied") "Roadmap pilot must pass the guarded mocked plan/apply path."
         $roadmapApi = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateApiTaskDefinitionArn].taskDefinition
         $roadmapWorker = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateWorkerTaskDefinitionArn].taskDefinition
@@ -3708,6 +3755,123 @@ try {
         $workerControls = Get-RuntimeCapabilityControls -Environment $roadmapWorker.containerDefinitions[0].environment
         Assert-Condition ((Get-CanonicalJsonSha256 -Value $apiControls) -ceq
             (Get-CanonicalJsonSha256 -Value $workerControls)) "Roadmap API and worker controls must be identical."
+        if ($roadmapCase.Capability -cin $script:RoadmapGlobalCapabilities) {
+            $isWaived = $null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")
+            $releaseSnapshot = $null
+            if ($isWaived) {
+            Assert-Condition ($roadmapPlan.validationLevel -ceq 'synthetic_only' -and
+                $roadmapApply.managedValidation -ceq 'waived_not_passed') 'The exception must never claim managed validation passed.'
+            $releaseSnapshot = Read-StrictJsonSnapshot -Path $releasePath
+            $releaseArgs = @{
+                Mode = "$prefix-pilot"; PilotSchoolId = $testSchoolId; ToolSha = $toolSha; AppSha = $appSha
+                ImageDigest = $digest; RepositoryRoot = $repositoryRoot; Now = $now
+            }
+            foreach ($mutation in @(
+                @{ Name = 'capability'; Value = 'liveViewIceServersV1' },
+                @{ Name = 'managedValidation'; Value = 'passed' },
+                @{ Name = 'classPilotTag'; Value = 'v2.10.0' },
+                @{ Name = 'classPilotMergeSha'; Value = ('f' * 40) },
+                @{ Name = 'classPilotZipSha256'; Value = ('f' * 64) },
+                @{ Name = 'appSha'; Value = ('f' * 40) },
+                @{ Name = 'imageDigest'; Value = ('sha256:' + ('f' * 64)) },
+                @{ Name = 'pilotSchoolId'; Value = '22222222-2222-4222-8222-222222222222' },
+                @{ Name = 'contractFixtureSha256'; Value = ('f' * 64) },
+                @{ Name = 'approvedBy'; Value = @('bzinkan@school-pilot.net') },
+                @{ Name = 'approvedAt'; Value = $now.AddHours(-3).ToString('o') }
+            )) {
+                $invalid = $release | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.($mutation.Name) = $mutation.Value
+                Assert-Throws {
+                    Assert-RoadmapReleaseEvidence -EvidenceSnapshot ([pscustomobject]@{ Value = $invalid; Sha256 = ('e' * 64) }) @releaseArgs
+                } "The scoped approval must reject changed $($mutation.Name)."
+            }
+            $invalid = $release | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $invalid.checks.announcementsRemainAvailable = $false
+            Assert-Throws {
+                Assert-RoadmapReleaseEvidence -EvidenceSnapshot ([pscustomobject]@{ Value = $invalid; Sha256 = ('e' * 64) }) @releaseArgs
+            } 'A missing or false approval check must fail closed.'
+            $originalReleaseBytes = [IO.File]::ReadAllBytes($roadmapPlan.roadmapReleaseEvidencePath)
+            [IO.File]::AppendAllText($roadmapPlan.roadmapReleaseEvidencePath, ' ')
+            Assert-Throws {
+                Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
+                    -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 @roadmapApplyAdmission
+            } 'Changed private evidence bytes must refuse apply.'
+            [IO.File]::WriteAllBytes($roadmapPlan.roadmapReleaseEvidencePath, $originalReleaseBytes)
+            }
+
+            $globalProfilePath = Join-Path $testRoot "$prefix-global-profile.json"
+            Write-TestJson -Path $globalProfilePath -Value ([ordered]@{ schemaVersion = 7; mode = "$prefix-global-on" })
+            $livePath = Join-Path $testRoot "$prefix-live.json"
+            $live = [ordered]@{
+                schemaVersion = 1; reviewedAt = $now.ToString('o')
+                observedFrom = $now.AddMinutes(-35).ToString('o'); observedThrough = $now.AddMinutes(-5).ToString('o')
+                capability = $roadmapCase.Capability; pilotSchoolId = $testSchoolId; toolSha = $toolSha
+                appSha = $appSha; imageDigest = $digest
+                apiTaskDefinitionArn = $roadmapApply.candidateApiTaskDefinitionArn
+                workerTaskDefinitionArn = $roadmapApply.candidateWorkerTaskDefinitionArn
+                runtimeConfigurationSha256 = Get-ManagedRuntimeFingerprint -TaskDefinition $roadmapApi -ContainerName 'api'
+                releaseEvidenceSha256 = if ($isWaived) { $releaseSnapshot.Sha256 } else { $null }
+                observedActions = 3; logSha256 = ('e' * 64)
+                classPilotTag = 'v2.9.7'; classPilotMergeSha = ('c' * 40); classPilotZipSha256 = ('d' * 64)
+                classPilotExtensionId = $script:ClassPilotExtensionId
+                checks = [ordered]@{
+                    teachingPeriodObserved = $true; supportedClientNegotiated = $true; exactRecipientsVerified = $true
+                    resourceOrFocusEnforced = $true; completedOutcomeVerified = $true; staleAndOfflineCleanupVerified = $true
+                    unsupportedClientsFailClosed = $true; noAuthorizationOrPrivacyDefects = $true
+                    apiWorkerAndRosterHealthy = $true; announcementsRemainAvailable = $true
+                }
+            }
+            Write-TestJson -Path $livePath -Value $live
+            $globalArgs = @{
+                RepositoryRoot = $repositoryRoot; PrivateProfilePath = $globalProfilePath; EvidenceRoot = $evidenceRoot
+                AppSha = $appSha; ImageDigest = $digest; Now = $now
+                ApiTaskDefinitionArn = $roadmapApply.candidateApiTaskDefinitionArn
+                WorkerTaskDefinitionArn = $roadmapApply.candidateWorkerTaskDefinitionArn
+                PrivateRoadmapReleaseEvidencePath = if ($isWaived) { $releasePath } else { $null }
+                ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $isWaived
+            }
+            Assert-Throws { New-RuntimeConfigPlan @globalArgs } 'Global promotion must require live pilot evidence.'
+            foreach ($mutation in @(
+                @{ Name = 'observedActions'; Value = 0 },
+                @{ Name = 'observedFrom'; Value = $now.AddMinutes(-10).ToString('o') },
+                @{ Name = 'runtimeConfigurationSha256'; Value = ('f' * 64) },
+                @{ Name = 'apiTaskDefinitionArn'; Value = $apiSourceArn },
+                @{ Name = 'releaseEvidenceSha256'; Value = ('f' * 64) }
+            )) {
+                $invalid = $live | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.($mutation.Name) = $mutation.Value
+                Write-TestJson -Path $livePath -Value $invalid
+                Assert-Throws { New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                    "Global promotion must reject changed $($mutation.Name)."
+            }
+            Write-TestJson -Path $livePath -Value $live
+            $globalPlanResult = New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath
+            $globalPlan = Read-RuntimePlan -Path $globalPlanResult.PlanPath -ExpectedSha256 $globalPlanResult.PlanSha256
+            $globalApply = Invoke-RuntimeConfigApply -Plan $globalPlan -PlanSha256 $globalPlanResult.PlanSha256 `
+                -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -ConfirmProductionMutation -ConfirmRoadmapManagedWaiver:$isWaived
+            $globalApi = $global:RuntimeConfigTestState.TaskResponses[$globalApply.candidateApiTaskDefinitionArn].taskDefinition
+            $globalControls = Get-RuntimeCapabilityControls -Environment $globalApi.containerDefinitions[0].environment
+            Assert-Condition ($globalControls[$roadmapCase.Capability].flag -ceq 'true' -and
+                $globalControls[$roadmapCase.Capability].mode -ceq 'on' -and
+                @($globalControls[$roadmapCase.Capability].schoolIds).Count -eq 0 -and
+                $globalApply.managedValidation -ceq $(if ($isWaived) { 'waived_not_passed' } else { 'not_applicable' })) `
+                'Global promotion must automatically cover eligible new schools while preserving its actual evidence status.'
+            foreach ($other in @($script:AllCapabilities | Where-Object { $_ -cne $roadmapCase.Capability })) {
+                Assert-Condition ((Get-CanonicalJsonSha256 -Value $globalControls[$other]) -ceq
+                    (Get-CanonicalJsonSha256 -Value $apiControls[$other])) 'Global promotion must preserve every unrelated control.'
+            }
+            $alreadyGlobalArgs = $globalArgs.Clone()
+            $alreadyGlobalArgs.ApiTaskDefinitionArn = $globalApply.candidateApiTaskDefinitionArn
+            $alreadyGlobalArgs.WorkerTaskDefinitionArn = $globalApply.candidateWorkerTaskDefinitionArn
+            Assert-Throws { New-RuntimeConfigPlan @alreadyGlobalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                'An already global capability is not fresh pilot evidence.'
+            if ($isWaived) { [IO.File]::Delete($globalPlan.roadmapReleaseEvidencePath) }
+            [IO.File]::Delete($globalPlan.roadmapPilotEvidencePath)
+            [void](Invoke-RuntimeConfigRollback -Plan $globalPlan -PlanSha256 $globalPlanResult.PlanSha256 `
+                -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+            Assert-Condition ($global:RuntimeConfigTestState.ApiCurrentArn -ceq $roadmapApply.candidateApiTaskDefinitionArn) `
+                'Rollback must restore the exact compatible pilot without requiring activation evidence.'
+        }
         $roadmapOffProfilePath = Join-Path $testRoot "$prefix-off-profile.json"
         Write-TestJson -Path $roadmapOffProfilePath -Value ([pscustomobject]@{ schemaVersion = 7; mode = "$prefix-off" })
         $roadmapOffPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
@@ -3811,10 +3975,14 @@ try {
         schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
     })
     $activationError = $null
+    $activationReleasePath = Join-Path $testRoot 'registry-projection-release.json'
+    Write-TestJson -Path $activationReleasePath -Value (New-TestRoadmapReleaseEvidence `
+        -Capability 'preciseRestrictionResourcesV1' -SchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -Digest $digest -Now $now)
     try {
         [void](New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $activationProfilePath `
             -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
-            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now)
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now `
+            -PrivateRoadmapReleaseEvidencePath $activationReleasePath -ConfirmProductionMutation -ConfirmRoadmapManagedWaiver)
     } catch { $activationError = $_.Exception.Message }
     Assert-Condition ($null -ne $activationError -and $activationError -cmatch 'would activate preciseRestrictionResourcesV1') `
         "Plan must refuse to activate a capability the serving image does not register."
