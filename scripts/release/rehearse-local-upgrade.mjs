@@ -132,8 +132,10 @@ try {
   await command(process.execPath, ['node_modules/tsc-alias/dist/bin/index.js'], { cwd: baseline, env, log: 'baseline-aliases.log' });
   await command(process.execPath, ['node_modules/drizzle-kit/bin.cjs', 'push', '--force'], { cwd: baseline, env, log: 'baseline-schema.log' });
   await command(process.execPath, ['dist/index.js'], { cwd: baseline, env: { ...env, RUN_LEGACY_MIGRATIONS_ONLY: 'true' }, log: 'baseline-legacy.log' });
-  // Production defaults defer the independent staff identity contract. Exercise
-  // that real expand-only path first rather than assuming all contracts adopted.
+  // The disposable legacy bootstrap also runs its versioned migrations and may
+  // already adopt staff identity contracts. Production-mode re-entry verifies
+  // that reconstructed state; it does not prove production's actual contract
+  // adoption state or rehearse an unadopted-to-adopted transition.
   await command(process.execPath, ['dist/index.js'], { cwd: baseline, env: { ...env, NODE_ENV: 'production', RUN_MIGRATIONS_ONLY: 'true', GIT_SHA: baselineSha }, log: 'baseline-versioned.log' });
   owner = new pg.Client({ connectionString: url }); await owner.connect();
   const snapshot = async name => {
@@ -176,8 +178,8 @@ try {
       assert.equal(Number((await reader.query(`SELECT COUNT(*) AS count FROM ${table}`)).rows[0].count), 0);
     }
   } finally { await reader.end(); }
-  // Verify later contract adoption is retained by compatible reruns without
-  // repeating the one-shot adoption request.
+  // Verify explicit contract-request re-entry and subsequent compatible reruns.
+  // When bootstrap already adopted the contract this proves idempotence only.
   await command(process.execPath, ['dist/index.js'], { env: { ...currentEnv, APPLY_STAFF_IDENTITY_CONTRACT_MIGRATIONS: 'true' }, log: 'candidate-contract-adoption.log' });
   const adopted = await snapshot('candidate-adopted-contract');
   await command(process.execPath, ['dist/index.js'], { env: currentEnv, log: 'candidate-retained-contract.log' });

@@ -3,6 +3,28 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The first frozen correction checkpoint is
+`cb66014d70a275405a5469257b37debe8d20ea18`. Its new records below preserve exact
+source identities; later harness/documentation corrections require their own
+source binding and do not turn a failed launch into measured capacity.
+
+- [Frozen unit suite](unit-cb66014d.json): 1,705 passed, zero failed and four
+  explicitly listed integration-dependent skips. Skips are not passing tests.
+- [Exact local API/worker candidate](candidate-artifact-cb66014d/index.json):
+  build, exported image hash, pinned Trivy scan and embedded writer/bridge/relay
+  and 129-table registry checks. The large image archive remains outside Git;
+  registry publication, production task bindings and capacity are separate.
+- [Local upgrade and rollback re-entry](rehearsal-cb66014d/index.json): the
+  synthetic baseline expands from 44 to 53 migration IDs and retains 129 tenant
+  tables through repeats and compatible rollback re-entry. Baseline legacy
+  bootstrap had **already applied the staff-identity contract**; the step named
+  contract adoption was idempotent re-entry, not an unadopted-to-adopted test.
+  This reconstructed empty schema does not establish the actual production
+  catalog, a populated RLS test or a production restore.
+- [Combined load launch 01](load-launch-01-cb66014d.json): retained launcher
+  failure from two Docker executable matches. It failed before fixture creation
+  or capacity measurement; a corrected harness needs a fresh recorded attempt.
+
 - [Report admission and cancellation](reports-manifest.json) indexes ordinary
   and restricted-role PostgreSQL tests, strict audit failure, queued revocation,
   cookie-session invalidation and focused unit checks. The initial failed native

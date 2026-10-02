@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:27:47.689Z",
+  "sourceCommit": "cb66014d70a275405a5469257b37debe8d20ea18",
+  "status": "runner_failed_before_fixture_or_capacity",
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:/Users/zinka/AppData/Local/Temp/release297-enabled-combined-01 -Phase combined *> $env:TEMP\\release297-enabled-combined-01-runner.log; exit $LASTEXITCODE",
+  "workingDirectory": "SchoolPilot release worktree",
+  "shell": "PowerShell",
+  "commandProvenance": "Exact invocation supplied by the executing parent agent.",
+  "outcome": "Get-Command docker returned two Application matches; concatenating both paths created an invalid executable name. Launcher failed before fixture setup or capacity measurement.",
+  "capacityMeasured": false,
+  "fixtureCreated": false,
+  "productFailureEstablished": false,
+  "repair": "Narrow the harness executable lookup to one verified Application path, then launch a fresh attempt on the new frozen harness source.",
+  "log": {
+    "file": "load-launch-01-cb66014d.log.gz",
+    "rawFileName": "release297-enabled-combined-01-runner.log",
+    "rawBytes": 345,
+    "rawSha256": "8bcb695ee5317d6c23694457d9eb0a2277790d39953a0ff1a9e822ae218cba5a",
+    "sanitizedBytes": 343,
+    "sanitizedSha256": "2e39387f180d4fba4e3985e02d16f64115ff5f02980dad262cdcbd7ab596a39e",
+    "gzipSha256": "09a5f83010fded5c271a82f6638e0b757f366b171f73387db99edebcdb8de4c2"
+  }
+}

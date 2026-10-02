@@ -15,7 +15,7 @@ function Assert-LocalDockerEndpoint {
     throw 'Load fixtures require a local named-pipe or Unix-socket Docker daemon.'
   }
 }
-$dockerExecutable = (Get-Command docker -CommandType Application -ErrorAction Stop).Source
+$dockerExecutable = (Get-Command docker -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $requestedDockerContext = ($env:DOCKER_CONTEXT ?? '').Trim()
 $requestedDockerHost = ($env:DOCKER_HOST ?? '').Trim()
 $Profile = 'cold-open-loop-ai'

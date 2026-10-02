@@ -37,6 +37,8 @@ test('Docker locality guard rejects remote daemons and every daemon operation pi
   const runner = readFileSync(new URL('./run-release-enabled-scale.ps1', import.meta.url), 'utf8');
   const guard = runner.match(/function Assert-LocalDockerEndpoint \{[\s\S]*?\r?\n\}/)?.[0];
   assert.ok(guard);
+  assert.match(runner, /\$dockerExecutable = \(Get-Command docker -CommandType Application -ErrorAction Stop \| Select-Object -First 1\)\.Source/,
+    'Windows can resolve both docker.exe and docker; pin exactly one executable path');
   const patterns = [...guard.matchAll(/-cnotmatch '([^']+)'/g)].map(match => new RegExp(match[1]));
   assert.equal(patterns.length, 2);
   for (const endpoint of ['npipe:////./pipe/dockerDesktopLinuxEngine', 'npipe://./pipe/docker_engine', 'unix:///var/run/docker.sock']) assert.ok(patterns.some(pattern => pattern.test(endpoint)));
