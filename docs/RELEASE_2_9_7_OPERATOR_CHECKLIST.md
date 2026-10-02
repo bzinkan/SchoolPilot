@@ -169,7 +169,10 @@ retain this fence even with private issuance disabled.
 ## Runtime and Store sequence
 
 1. Verify the dark compatible API/worker pair, completed migrations and admission;
-   publish the matched frontend after health checks pass.
+   publish the matched frontend after health checks pass. Refresh participating
+   teachers' already-open SchoolPilot dashboards and verify the served frontend
+   assets belong to the release before activating the new chat lifecycle.
+   Publishing new assets does not replace JavaScript already running in a tab.
 2. Release Library, corrected Rules, appointments and Reports v2 independently
    using `scripts/deploy-product-runtime-config.ps1` Plan → reviewed Apply → verify.
    Respect each mode's authorization, schema and readiness checks. Keep both
