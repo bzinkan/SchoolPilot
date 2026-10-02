@@ -5,8 +5,11 @@ import { once } from "node:events";
 import { after, before, beforeEach, test } from "node:test";
 import { setTimeout as pause } from "node:timers/promises";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
+import { getTenantStore, tenantALS } from "../src/db/tenantContext.js";
+import * as schema from "../src/schema/index.js";
 import { CLASSPILOT_PRIVATE_CHAT_LIFECYCLE_SQL } from "../src/db/classpilotPrivateChatLifecycleMigration.js";
 import type { PrivateChatLifecycle, PrivateChatScope } from "../src/services/classpilotPrivateChatLifecycle.js";
 
@@ -300,6 +303,53 @@ test("the dark-deployment bridge remains legacy until first adoption, which perm
     assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
     await assert.rejects(reply("Capability-off after adoption", adopted), hasCode("PRIVATE_CHAT_DISABLED"));
   } finally { process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true"; }
+});
+
+test("an empty exact-student private outbox skips claim discovery while retaining preparation and synchronous delivery", async () => {
+  await token(); // Keep first adoption outside the query trace.
+  const queries: string[] = [];
+  const result = await inSchool(async () => {
+    const store = getTenantStore(); assert.ok(store);
+    const traced = drizzle(store.client, { schema, logger: { logQuery: query => { queries.push(query); } } });
+    return tenantALS.run({ ...store, db: traced }, () => storage.withClasspilotStudentControlDeliveryAuthority(
+      { ...binding(), claimTeacherChatDeliveries: true }, async () => "prepared-empty-response",
+      (rows, prepared) => ({ messages: rows.map(row => row.message.id), prepared })));
+  });
+  assert.deepEqual(result, { authorized: true, value: { messages: [], prepared: "prepared-empty-response" } });
+  assert.equal(queries.filter(query => /from "classpilot_chat_deliveries"/.test(query)).length, 1);
+  assert.ok(queries.some(query => /pg_advisory_xact_lock/.test(query)), "The exact-student lock still precedes the empty check");
+  assert.equal(queries.filter(query => /from "student_sessions"/.test(query)).length, 2, "Both exact-binding checks remain");
+  assert.ok(!queries.some(query => /"teaching_sessions"|"classpilot_supervision_students"|"session_settings"/.test(query)),
+    "Empty outboxes need no owner, supervision or channel discovery");
+});
+
+for (const state of ["queued", "leased", "attempted", "retry"] as const) test(`an expired ${state} private outbox still enters the original cleanup path`, async () => {
+  const sent = await reply(`Expired ${state}`);
+  await admin.query("UPDATE classpilot_chat_deliveries SET state=$2,expires_at=now()-interval '1 second',next_attempt_at=now()+interval '1 hour' WHERE id=$1", [sent.delivery.id, state]);
+  assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
+  assert.equal((await admin.query("SELECT state FROM classpilot_chat_deliveries WHERE id=$1", [sent.delivery.id])).rows[0]!.state, "expired");
+});
+
+test("canonical enqueue waits behind an empty claim and is delivered by the next claim", async () => {
+  const initial = await token();
+  let release!: () => void, prepared!: (pid: number) => void;
+  const held = new Promise<void>(resolve => { release = resolve; }), ready = new Promise<number>(resolve => { prepared = resolve; });
+  let enqueueSettled = false, enqueuing: ReturnType<typeof reply> | undefined;
+  const claiming = inSchool(() => storage.withClasspilotStudentControlDeliveryAuthority({ ...binding(), claimTeacherChatDeliveries: true }, async connection => {
+    const result = await connection.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+    prepared(result.rows[0]!.pid); await held;
+  }, rows => ({ messages: rows.map(row => row.message.id) })));
+  try {
+    const pid = await ready;
+    enqueuing = reply("Reply after empty snapshot", initial);
+    enqueuing.then(() => { enqueueSettled = true; }, () => { enqueueSettled = true; });
+    const waiting = await blockedBehind(pid, () => enqueueSettled);
+    assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock/);
+    release(); assert.deepEqual(await claiming, { authorized: true, value: { messages: [] } });
+    const sent = await enqueuing, next = await claim();
+    assert.equal(next.authorized, true); if (next.authorized) assert.ok(next.value.messages.includes(sent.message.id));
+    assert.ok(await ack(sent.message.id, initial));
+  } finally { release(); await Promise.allSettled([claiming, enqueuing]); }
 });
 
 for (const operation of ["send", "claim", "ack"] as const) test(`first adoption serializes a legacy ${operation} with existing settings without a lock-order cycle`, async () => {

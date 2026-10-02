@@ -20058,14 +20058,28 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         return { authorized: false as const };
       }
-      const owner = options.claimTeacherChatDeliveries
+      // Canonical reply enqueue takes this same student-control lock. While it
+      // is held, an empty exact-student outbox cannot gain a racing reply.
+      // Include every pending state regardless of due time or expiry so the
+      // existing path still performs expiration and retry handling.
+      const [pendingPrivateDelivery] = options.claimTeacherChatDeliveries
+        ? await tx.select({ id: classpilotChatDeliveries.id })
+          .from(classpilotChatDeliveries)
+          .where(and(
+            eq(classpilotChatDeliveries.schoolId, options.schoolId),
+            eq(classpilotChatDeliveries.studentId, options.studentId),
+            inArray(classpilotChatDeliveries.state, ["queued", "leased", "attempted", "retry"])
+          ))
+          .limit(1)
+        : [];
+      const owner = pendingPrivateDelivery
         ? await getActiveClassOwnerForStudent(
             options.schoolId,
             options.studentId,
             transactionDb
           )
         : undefined;
-      const supervision = options.claimTeacherChatDeliveries
+      const supervision = pendingPrivateDelivery
         ? (await getActiveSupervisionForStudents(options.schoolId, [options.studentId], transactionDb))[0] : undefined;
       const classroomContext = scheduledContextHasClassroomTools(supervision?.context) && await scheduledClassroomBindingCapable(options)
         ? supervision.context : undefined;
