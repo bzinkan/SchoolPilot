@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "state": "focused-test-correction",
+  "repository": "bzinkan/SchoolPilot",
+  "correctionBaseCommit": "4ce644af819a03113f1ab5c341f2218970096d36",
+  "failure": {
+    "runId": 37046419054,
+    "jobId": 110969638953,
+    "headSha": "37d01a4aab913533bf4fddf1d86265a44741707f",
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37046419054/job/110969638953",
+    "step": "WAF block/count Terraform tests",
+    "testFile": "infra/tests/mydesk.tftest.hcl",
+    "runName": "passpilot_appointments_target",
+    "line": 361,
+    "terraformResult": { "passed": 41, "failed": 1 },
+    "failedCondition": "length(local.rls_post_expand_tables) == 128 && contains(local.rls_post_expand_tables, \"passpilot_appointments\")",
+    "cause": "The current post-expand registry target now contains129 private-chat tables; the historical appointments inventory remains128. The test incorrectly treated the old inventory as the final target.",
+    "retainedLog": "release-297-ci-rollout-second.log",
+    "retainedLogSha256": "1826c203cb4e3b96e7912ee0adaea46ae01a05a7384c2091336083b838b6702c",
+    "fullCiArchive": "Maintained separately by the release coordinator; not duplicated here."
+  },
+  "correction": {
+    "historicalAppointments": "Assert exact configured128-table appointments inventory and its subset membership in the current target.",
+    "currentPrivateChat": "Separately assert configured/current129-table target equals the exact preserved appointments inventory plus only classpilot_private_chat_threads.",
+    "scope": ["infra/tests/mydesk.tftest.hcl", "this evidence record"],
+    "productionConfigurationChanged": false,
+    "registryOrHistoricalInventoryChanged": false,
+    "runtimeOrSchemaChanged": false,
+    "terraformApplyPerformed": false
+  },
+  "validation": {
+    "gitDiffCheck": "passed",
+    "focusedTerraform": "pending quiet-window clearance or required CI; no green result claimed at creation",
+    "plannedFocusedCommand": "terraform -chdir=infra test -filter=tests/mydesk.tftest.hcl -no-color",
+    "localTerraformRunDuringCapacityWindow": false
+  }
+}

@@ -358,7 +358,29 @@ run "passpilot_appointments_target" {
     rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.passpilotAppointmentsPostExpand.tables)
   }
   assert {
-    condition     = length(local.rls_post_expand_tables) == 128 && contains(local.rls_post_expand_tables, "passpilot_appointments")
-    error_message = "The complete target must retain all 127 prior admissions and append appointments."
+    condition = (
+      length(local.rls_configured_tables) == 128 &&
+      toset(local.rls_configured_tables) == toset(local.rls_registry.inventories.passpilotAppointmentsPostExpand.tables) &&
+      contains(local.rls_configured_tables, "passpilot_appointments") &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The historical 128-table appointments inventory must remain accepted as an exact preserved subset of the current target."
+  }
+}
+
+run "classpilot_private_chat_lifecycle_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotPrivateChatLifecyclePostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 129 &&
+      length(local.rls_configured_tables) == 129 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.passpilotAppointmentsPostExpand.tables, ["classpilot_private_chat_threads"])) &&
+      toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
+    )
+    error_message = "The current 129-table target must preserve the exact historical appointments inventory and append only classpilot_private_chat_threads."
   }
 }
