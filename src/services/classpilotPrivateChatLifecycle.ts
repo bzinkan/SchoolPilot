@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { settings } from "../schema/shared.js";
 import { classpilotPrivateChatThreads, classpilotSessionStudents, classpilotSupervisionStudents,
@@ -189,7 +189,7 @@ export async function projectPrivateChatMessages(messages: ChatMessage[], databa
   if (!messages.length) return messages;
   const ids = messages.map(message=>message.id);
   const expired = await database.select({id:chatMessages.id}).from(chatMessages).where(and(
-    eq(chatMessages.schoolId,messages[0]!.schoolId),sql`${chatMessages.id}=ANY(${ids}::varchar[])`,PRIVATE_CHAT_EXPIRED_SQL));
+    eq(chatMessages.schoolId,messages[0]!.schoolId),inArray(chatMessages.id,ids),PRIVATE_CHAT_EXPIRED_SQL));
   const expiredIds = new Set(expired.map(row=>row.id));
   return messages.map(message => expiredIds.has(message.id) && !["seen","delivered"].includes(message.deliveryStatus)
     ? {...message,privateChatExpired:true,deliveryStatus:"expired" as const} : {...message,privateChatExpired:false});
