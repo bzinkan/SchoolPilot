@@ -21,6 +21,9 @@ const CLASS_COMMANDS = Object.freeze([
   'student-sign-out',
   'temp-unblock',
   'limit-tabs',
+  'activate-tab',
+  'focus-tab',
+  'stop-focus',
 ]);
 
 export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
@@ -33,6 +36,9 @@ export const DEFAULT_COVERAGE_COMMANDS = Object.freeze([
   'remove-flight-path',
   'apply-block-list',
   'remove-block-list',
+  'activate-tab',
+  'focus-tab',
+  'stop-focus',
 ]);
 
 export const LATE_SIGN_IN_RESTRICTION_COMMANDS = Object.freeze([
