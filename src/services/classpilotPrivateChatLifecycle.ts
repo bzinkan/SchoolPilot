@@ -5,7 +5,6 @@ import { classpilotPrivateChatThreads, classpilotSessionStudents, classpilotSupe
   sessionSettings, teachingSessions, classpilotSupervisionContexts, chatMessages, classpilotChatDeliveries,
   studentSessions, devices, type ChatMessage } from "../schema/classpilot.js";
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
-import { readClasspilotRealtimeStatusBatch, classpilotRealtimeFresh } from "./classpilotRealtimeStatus.js";
 
 export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;
 export type PrivateChatLifecycle = { threadId: string; schoolEpoch: number; activityEpoch: number; threadGeneration: number };
@@ -107,6 +106,7 @@ export async function privateChatBindingSupported(scope: Pick<PrivateChatScope,"
     .where(and(eq(studentSessions.studentId,scope.studentId),eq(studentSessions.isActive,true),isNull(studentSessions.endedAt),
       sql`(${studentSessions.authKind} <> 'manual_shared' OR ${studentSessions.manualLeaseExpiresAt} > clock_timestamp())`)).limit(1);
   if (!binding) return false;
+  const {readClasspilotRealtimeStatusBatch,classpilotRealtimeFresh} = await import("./classpilotRealtimeStatus.js");
   const snapshots = await readClasspilotRealtimeStatusBatch(scope.schoolId,[{studentId:scope.studentId,studentSessionId:binding.id,deviceId:binding.deviceId}]);
   const hit = snapshots.get(scope.studentId);
   return hit?.status === "hit" && classpilotRealtimeFresh(hit.snapshot) && hit.snapshot.acceptedCapabilities?.includes("privateChatLifecycleV1") === true;

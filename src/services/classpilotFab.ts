@@ -178,7 +178,7 @@ export async function buildStudentFabState(
       const context = supervision.context;
       const toggles = await scheduledClassroomToggles(schoolId, context, options.dbInstance);
       const hands = (await getActiveHandsForStudent(schoolId, studentId, options.dbInstance)).filter((hand) => hand.supervisionContextId === context.id);
-      return { schemaVersion: 1, privateChatLifecycleState, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id,
+      return { schemaVersion: 1, studentId, studentSessionId, ownershipRevision, teachingSessionId: null, supervisionContextId: context.id, privateChatLifecycleState,
         contextSource: scheduledSupervisionSource(context), contextName: context.name, activeSessionIds: [],
         contextAuthorityRevision: String(context.classroomAuthorityRevision),
         activeContexts: [{ supervisionContextId: context.id }], lifecycleRevision: toggles.lifecycleRevision, revision: toggles.lifecycleRevision,
@@ -194,8 +194,8 @@ export async function buildStudentFabState(
     }
     return {
       schemaVersion: 1,
-      privateChatLifecycleState,
       studentId,
+      privateChatLifecycleState,
       studentSessionId,
       ownershipRevision,
       teachingSessionId: null,
@@ -271,8 +271,8 @@ export async function buildStudentFabState(
 
   return {
     schemaVersion: 1,
-    privateChatLifecycleState,
     studentId,
+    privateChatLifecycleState,
     studentSessionId,
     ownershipRevision,
     teachingSessionId: sessions.length === 1 ? sessions[0]!.id : null,

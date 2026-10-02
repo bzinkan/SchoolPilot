@@ -22,7 +22,7 @@ describe("Flight Path precise resources schema rollout", () => {
     const contractIndex = ids.indexOf(STAFF_IDENTITY_CONTRACT_MIGRATION_IDS[0]);
     assert.ok(index >= 0);
     assert.equal(index, contractIndex - 1);
-    assert.equal(ids.at(-1), flightPathContentRevisionMigration.id);
+    assert.equal(ids.indexOf(flightPathContentRevisionMigration.id), contractIndex + 1, "the content revision keeps its historical position as later migrations append");
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === flightPathResourcesMigration.id));
     assert.ok(schoolPilot27ExpandMigrations.some((migration) => migration.id === flightPathContentRevisionMigration.id));
     assert.equal(new Set(ids).size, ids.length, "migration ids stay unique");

@@ -555,7 +555,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   assert.match(
     teacherReplyRecovery,
-    /withClasspilotStudentWebSocketBootstrapAuthority\([\s\S]*\(teacherReplies\) => teacherReplies\.map[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)/,
+    /withClasspilotStudentWebSocketBootstrapAuthority\([\s\S]*\(teacherReplies,control\) => teacherReplies\.map[\s\S]*sendToStudentBindingLocal\(exactTarget, replyPayload\)[\s\S]*publishWS\(exactTarget, replyPayload\)/,
   );
   assert.match(teacherReplyRecovery, /kind: "student-binding" as const/);
   assert.doesNotMatch(teacherReplyRecovery, /claimDueTeacherChatDeliveriesForBinding/);
