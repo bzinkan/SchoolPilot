@@ -13,8 +13,8 @@ describe("canonical production Terraform profile", () => {
   it("declares each protected launch value exactly once at the live posture", () => {
     const production = source("infra/production.tfvars");
     const expectedAssignments = {
-      ecs_tasks_in_public_subnets: "false",
-      enable_nat_gateway: "true",
+      ecs_tasks_in_public_subnets: "true",
+      enable_nat_gateway: "false",
       route53_measure_latency: "true",
       db_instance_class: '"db.t4g.medium"',
       redis_node_type: '"cache.t4g.micro"',
@@ -42,5 +42,15 @@ describe("canonical production Terraform profile", () => {
         `${name} must match the current Terraform-managed production baseline`
       );
     }
+  });
+
+  it("refuses to drop NAT while ECS tasks would still run in private subnets", () => {
+    const variables = source("infra/variables.tf");
+    const natVariable = variables.match(/variable "enable_nat_gateway" \{[\s\S]*?\n\}/)?.[0] ?? "";
+    assert.match(
+      natVariable,
+      /condition\s*=\s*var\.enable_nat_gateway \|\| var\.ecs_tasks_in_public_subnets/,
+      "enable_nat_gateway must validate that private ECS tasks keep NAT egress"
+    );
   });
 });
