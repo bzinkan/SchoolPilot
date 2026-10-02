@@ -187,10 +187,10 @@ function Wait-ExactServicePairConvergence {
 }
 
 function New-TestConfig([hashtable]$Environment) { return [pscustomobject]@{ schemaVersion = 1; environment = [pscustomobject]$Environment } }
-function New-TestProductPlan($Config, $EvidencePath = $null) {
+function New-TestProductPlan($Config, $EvidencePath = $null, $UsageEvidencePath = $null) {
     # Plan against whatever pair is serving now, as an operator would.
     return New-ProductPlan $Config $script:TestDirectory $script:Mock.Services.Api.taskDefinition $script:Mock.Services.Worker.taskDefinition `
-        $script:TestDigest $script:TestSha $EvidencePath
+        $script:TestDigest $script:TestSha $EvidencePath $UsageEvidencePath
 }
 function Assert-NoMutation([string]$Message) {
     $mutations = @($script:Mock.Calls | Where-Object { $_ -cin @('ecs register-task-definition', 'ecs update-service', 'lock', 'hold') })
@@ -211,6 +211,20 @@ function New-TestEvidence {
     return [pscustomobject]@{ schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'logs-insights/daily-usage-shadow-review'
         imageDigest = $script:TestDigest; schoolDays = (Get-TestSchoolDays 3) }
 }
+function New-TestUsageObservation {
+    $date = (Get-EasternNow).Date.AddDays(-2)
+    while ($date.DayOfWeek -in @([DayOfWeek]::Saturday, [DayOfWeek]::Sunday)) { $date = $date.AddDays(-1) }
+    $zone = [TimeZoneInfo]::FindSystemTimeZoneById('America/New_York')
+    $start = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date, [DateTimeKind]::Unspecified), $zone)
+    $end = [TimeZoneInfo]::ConvertTimeToUtc([DateTime]::SpecifyKind($date.AddDays(1), [DateTimeKind]::Unspecified), $zone).AddHours(2)
+    return [pscustomobject]@{ schemaVersion = 1; reviewedAt = [DateTimeOffset]::UtcNow.ToString('o'); reviewReference = 'usage/observed-ledger-review'
+        appSha = $script:TestSha; imageDigest = $script:TestDigest; schoolDays = @([pscustomobject]@{
+            schoolId = $script:SchoolA; date = $date.ToString('yyyy-MM-dd'); timeZone = 'America/New_York'
+            startedAt = $start.ToString('o'); endedAt = $end.ToString('o'); coverageCheckedAt = $end.ToString('o')
+            observedRuns = 25; failedSchools = 0; deferredDays = 0; budgetExhausted = $false; maxRunDurationMs = 10000
+            finalDayComplete = $true; currentDayComplete = $true; logSha256 = ('c' * 64); coverageSha256 = ('d' * 64)
+        }) }
+}
 function Write-TestEvidence($Evidence) {
     $path = Join-Path $script:TestDirectory ('evidence-' + [Guid]::NewGuid().ToString('N') + '.json')
     Write-SanitizedJson $path $Evidence
@@ -218,6 +232,7 @@ function Write-TestEvidence($Evidence) {
 }
 function Invoke-TestRollback($Plan) {
     $script:Action = 'Rollback'; $script:Execute = $true; $script:ManifestPath = $Plan.path; $script:ManifestHash = $Plan.sha256; $script:DailyUsageEvidencePath = $null
+    $script:UsageObservationEvidencePath = $null
     Invoke-ProductMain
 }
 
@@ -389,7 +404,8 @@ try {
         & $prepare; Set-TestEnvironment (Get-TestTask 'api') 'RLS_ENABLED_TABLES' $null
         Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig $gate.Config) } 'RLS_ENABLED_TABLES allowlist' "$($gate.Name) must require an allowlist."
         & $prepare
-        $admitted = New-TestProductPlan (New-TestConfig $gate.Config)
+        $usageEvidence = if ($gate.Name -ceq 'CLASSPILOT_DIGITAL_USAGE_MODE') { Write-TestEvidence (New-TestUsageObservation) } else { $null }
+        $admitted = New-TestProductPlan (New-TestConfig $gate.Config) $null $usageEvidence
         Assert-Condition (@($admitted.plan.activations).Count -eq 1) "$($gate.Name) must plan once its bundle is admitted on both services."
         Assert-NoMutation 'Precondition checks must be read-only.'
     }
@@ -444,10 +460,14 @@ try {
     Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days')
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage alone must be refused.'
     Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on'; CLASSPILOT_USAGE_ROLLUP_MODE = 'off' }) } 'requires CLASSPILOT_USAGE_ROLLUP_MODE=on' 'Digital usage with the rollup off must be refused.'
-    $both = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'on' })
-    Assert-Condition ('usageRollup' -cin @($both.plan.activations) -and 'digitalUsage' -cin @($both.plan.activations)) 'Both usage features may activate together.'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on'; CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'worker first' 'Digital Usage cannot activate in the same operation as its unobserved worker.'
+    Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'UsageObservationEvidencePath' 'Digital Usage activation requires operating evidence even with the worker on.'
+    $usageObservationPath = Write-TestEvidence (New-TestUsageObservation)
+    $both = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) $null $usageObservationPath
+    Assert-Condition ('digitalUsage' -cin @($both.plan.activations) -and $null -ne $both.plan.usageObservationEvidence) 'Digital Usage must bind operating evidence separately from daily shadow promotion.'
     $script:Mock.CompatibleUsageWriter = $false
-    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'on' }) } 'coverage contract version 1' 'Plan must reject a pre-ledger serving SHA even with both admissions.'
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }) } 'coverage contract version 1' 'Plan must reject a pre-ledger serving SHA even with both admissions.'
     Assert-ThrowsMatch { Invoke-ProductApply $both.plan $both.sha256 $script:TestDirectory } 'coverage contract version 1' 'Apply must re-check source compatibility before mutation.'
     Assert-NoMutation 'An incompatible serving release must not mutate.'
     $script:Mock.CompatibleUsageWriter = $true
@@ -457,6 +477,44 @@ try {
     Remove-TestTable 'api' 'classpilot_usage_rollups'
     $offBoth = New-TestProductPlan (New-TestConfig @{ CLASSPILOT_USAGE_ROLLUP_MODE = 'off'; CLASSPILOT_DIGITAL_USAGE_MODE = 'off' })
     Assert-Condition (@($offBoth.plan.activations).Count -eq 0) 'Turning both off must plan without preconditions.'
+
+    # A complete, source-matched observed day is mandatory; empty measured days
+    # still require successful ledger coverage and hourly worker samples.
+    Reset-ProductMock; Add-BothTables @('classpilot_usage_rollups', 'classpilot_usage_rollup_days'); Set-BothEnvironment 'CLASSPILOT_USAGE_ROLLUP_MODE' 'on'
+    $usageConfig = New-TestConfig @{ CLASSPILOT_DIGITAL_USAGE_MODE = 'on' }
+    foreach ($case in @(
+            @{ Property = 'appSha'; Value = ('f' * 40); Pattern = 'exact serving' },
+            @{ Property = 'imageDigest'; Value = ('sha256:' + ('f' * 64)); Pattern = 'exact serving' },
+            @{ Property = 'schoolDays'; Value = @(); Pattern = 'complete school day' },
+            @{ Property = 'reviewedAt'; Value = [DateTimeOffset]::UtcNow.AddDays(-2).ToString('o'); Pattern = 'hours old' })) {
+        $invalid = New-TestUsageObservation; $invalid.($case.Property) = $case.Value
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } $case.Pattern 'Invalid observation source or review must fail before mutation.'
+    }
+    foreach ($case in @(
+            @{ Property = 'observedRuns'; Value = 0 }, @{ Property = 'failedSchools'; Value = 1 }, @{ Property = 'deferredDays'; Value = 1 },
+            @{ Property = 'budgetExhausted'; Value = $true }, @{ Property = 'maxRunDurationMs'; Value = 1500000 },
+            @{ Property = 'finalDayComplete'; Value = $false }, @{ Property = 'currentDayComplete'; Value = $false },
+            @{ Property = 'logSha256'; Value = '' }, @{ Property = 'coverageSha256'; Value = '' })) {
+        $invalid = New-TestUsageObservation; $invalid.schoolDays[0].($case.Property) = $case.Value
+        Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'hourly samples' 'Failed, deferred or unverified days must not become accepted observations.'
+    }
+    $invalid = New-TestUsageObservation; $invalid.schoolDays += $invalid.schoolDays[0]
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'distinct canonical' 'Duplicate observation dates cannot supply additional acceptance.'
+    $invalid = New-TestUsageObservation; $invalid.schoolDays[0].startedAt = $invalid.schoolDays[0].endedAt
+    Assert-ThrowsMatch { New-TestProductPlan $usageConfig $null (Write-TestEvidence $invalid) } 'full recent' 'A partial-day observation must be rejected.'
+    Assert-NoMutation 'Rejected operating observations must not register or update services.'
+    $validUsage = New-TestUsageObservation; $usageObservationPath = Write-TestEvidence $validUsage
+    $usagePlan = New-TestProductPlan $usageConfig $null $usageObservationPath
+    $validUsage.schoolDays[0].maxRunDurationMs = 11000; Write-SanitizedJson $usageObservationPath $validUsage
+    Assert-ThrowsMatch { Invoke-ProductApply $usagePlan.plan $usagePlan.sha256 $script:TestDirectory } 'changed after planning' 'Apply must rehash the operating evidence before any mutation.'
+    Assert-NoMutation 'Changed operating evidence must fail before registration.'
+    $usageObservationPath = Write-TestEvidence (New-TestUsageObservation)
+    $usagePlan = New-TestProductPlan $usageConfig $null $usageObservationPath
+    Assert-Condition ((Invoke-ProductApply $usagePlan.plan $usagePlan.sha256 $script:TestDirectory).status -ceq 'applied') 'A complete clean observed day must permit governed reporting activation.'
+    Invoke-TestRollback $usagePlan
+    Assert-Condition ($null -eq (Get-ServingState 'Api')['CLASSPILOT_DIGITAL_USAGE_MODE']) 'Observation-gated activation rollback must restore reporting off.'
+    Reset-ProductMock
+    Assert-ThrowsMatch { New-TestProductPlan (New-TestConfig @{ PASSPILOT_RULES_MODE = 'off' }) $null $usageObservationPath } 'only to Digital Usage' 'Unrelated plans must refuse observation evidence.'
 
     # --- Daily usage rollup promotion requires clean shadow evidence ---
     Reset-ProductMock
@@ -620,6 +678,7 @@ try {
     $configPath = Join-Path $script:TestDirectory 'product-config.json'
     [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"environment":{"PASSPILOT_RULES_MODE":"on"}}')
     $script:Action = 'Plan'; $script:ConfigPath = $configPath; $script:OutDir = $script:TestDirectory; $script:DailyUsageEvidencePath = $null
+    $script:UsageObservationEvidencePath = $null
     $script:ApiArn = $script:TestApiArn; $script:WorkerArn = $script:TestWorkerArn; $script:ImageDigest = $script:TestDigest; $script:AppSha = $script:TestSha
     Invoke-ProductMain
     Assert-NoMutation 'The Plan entry point must be read-only.'
