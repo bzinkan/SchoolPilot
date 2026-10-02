@@ -87,6 +87,28 @@ const blockedBehind = async (pid: number, settled: () => boolean): Promise<{ pid
   return [];
 };
 
+const legacySchoolFixture = async () => {
+  const own = { school: randomUUID(), teacher: randomUUID(), student: randomUUID(), device: randomUUID() };
+  const under = <T>(fn: () => Promise<T>) => tenant({ schoolId: own.school }, fn);
+  await admin.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Legacy adoption race',$2,'active','active')", [own.school, `${own.school}.example.edu`]);
+  await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Legacy','Teacher')", [own.teacher, `${own.teacher}@example.edu`]);
+  await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [own.school, own.teacher]);
+  await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [own.school]);
+  await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Legacy','Student','active')", [own.student, own.school]);
+  await admin.query("INSERT INTO settings(school_id,school_name,ws_shared_key,enable_tracking_hours,after_hours_mode,pause_chat_during_testing) VALUES($1,'Legacy adoption race','synthetic',false,'off',false)", [own.school]);
+  await under(() => storage.createDevice({ schoolId: own.school, deviceId: own.device, classId: "default" }));
+  const session = await under(() => storage.startStudentSessionWithReplacements(own.school, own.student, own.device,
+    { authKind: "manual_shared", sessionRecoveryTokenHash: randomBytes(32).toString("hex") }));
+  const group = await under(() => storage.createGroup({ schoolId: own.school, teacherId: own.teacher,
+    name: "Legacy adoption class", groupType: "admin_class", status: "active" }));
+  await under(() => database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${group.id},${own.student})`));
+  const activity = await under(() => storage.createTeachingSession({ groupId: group.id, teacherId: own.teacher, sessionMode: "live" }));
+  const activityScope = { schoolId: own.school, studentId: own.student, teachingSessionId: activity.id };
+  const exactBinding = { schoolId: own.school, studentId: own.student, studentSessionId: session.session.id, deviceId: own.device };
+  await realtime.writeClasspilotRealtimeStatus({ ...exactBinding, heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities: capabilities });
+  return { own, under, activityScope, exactBinding };
+};
+
 before(async () => {
   assert.ok(["127.0.0.1", "localhost", "::1"].includes(new URL(process.env.DATABASE_URL || "").hostname));
   assert.ok(process.env.ADMIN_DATABASE_URL, "A separate local bootstrap connection is required");
@@ -153,6 +175,109 @@ after(async () => {
   await admin?.end();
 });
 
+test("the dark-deployment bridge remains legacy until first adoption, which permanently expires old unstamped replies", async () => {
+  process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+  try {
+    const school = (await admin.query("SELECT private_chat_lifecycle_required FROM settings WHERE school_id=$1", [ids.school])).rows[0]!;
+    assert.equal(school.private_chat_lifecycle_required, false);
+    const teacherReply = await inSchool(() => storage.createTeacherChatReplyWithDelivery({ ...scope(), teachingSessionId: live.id,
+      teacherId: ids.teacher, content: "Legacy dark-deployment reply" }));
+    const studentMessage = await inSchool(() => storage.createAuthorizedClasspilotStudentMessage({ ...binding(), teachingSessionId: live.id,
+      clientMessageId: randomUUID(), content: "Legacy dark-deployment question" }));
+    for (const message of [teacherReply.message, studentMessage.message]) {
+      assert.deepEqual([message.privateChatThreadId, message.privateChatSchoolEpoch, message.privateChatActivityEpoch, message.privateChatGeneration],
+        [null, null, null, null]);
+    }
+    const ended = await inSchool(() => storage.authorizeClasspilotTeacherCloseChat({ ...scope(), teachingSessionId: live.id, actorId: ids.teacher }));
+    assert.equal(ended.privateChatLifecycle, undefined);
+    const bridge = await inSchool(() => lifecycle.teacherPrivateChatLifecycles(scope()));
+    assert.deepEqual(bridge, { privateChatLifecycleRequired: false, privateChatLifecycles: [] });
+    assert.equal((await admin.query("SELECT count(*)::int AS count FROM classpilot_private_chat_threads WHERE school_id=$1", [ids.school])).rows[0]!.count, 0);
+    await inSchool(() => storage.markTeacherChatDeliveryAttempt({ ...binding(), chatMessageId: teacherReply.message.id }));
+    await admin.query("UPDATE classpilot_chat_deliveries SET next_attempt_at=now() WHERE id=$1", [teacherReply.delivery.id]);
+    await admin.query("UPDATE settings SET student_messaging_enabled=false WHERE school_id=$1", [ids.school]);
+    assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
+    assert.equal(await inSchool(() => storage.acknowledgeTeacherChatDelivery({ ...binding(), chatMessageId: teacherReply.message.id,
+      status: "delivered" })), undefined);
+    await admin.query("UPDATE settings SET student_messaging_enabled=true WHERE school_id=$1", [ids.school]);
+    assert.equal(await expired(teacherReply.message.id), false);
+    const claimed = await claim(); assert.equal(claimed.authorized, true);
+    if (claimed.authorized) assert.ok(claimed.value.messages.includes(teacherReply.message.id));
+    await inSchool(() => storage.markTeacherChatDeliveryAttempt({ ...binding(), chatMessageId: teacherReply.message.id }));
+    await admin.query("UPDATE classpilot_chat_deliveries SET next_attempt_at=now() WHERE id=$1", [teacherReply.delivery.id]);
+    const blocker = await admin.connect(); let adopting: Promise<void> | undefined, legacyClaim: ReturnType<typeof claim> | undefined;
+    try {
+      await blocker.query("BEGIN"); await blocker.query("SELECT school_id FROM settings WHERE school_id=$1 FOR SHARE", [ids.school]);
+      const pid = (await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+      process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
+      let adoptionSettled = false;
+      adopting = inSchool(() => lifecycle.latchPrivateChatLifecycle(ids.school));
+      adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
+      const writer = await blockedBehind(pid, () => adoptionSettled);
+      assert.equal(writer.length, 1); assert.match(writer[0]!.query, /settings/);
+      // Model a compatible preactivation writer while the adopting image owns
+      // its exclusive school fence but has not committed the sticky row yet.
+      process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+      let claimSettled = false;
+      legacyClaim = claim(); legacyClaim.then(() => { claimSettled = true; }, () => { claimSettled = true; });
+      const waiting = await blockedBehind(writer[0]!.pid, () => claimSettled);
+      assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock_shared/);
+      await blocker.query("COMMIT"); await adopting;
+      assert.deepEqual(await legacyClaim, { authorized: true, value: { messages: [] } });
+      assert.equal((await admin.query("SELECT state FROM classpilot_chat_deliveries WHERE id=$1", [teacherReply.delivery.id])).rows[0]!.state, "expired");
+    } finally { await blocker.query("ROLLBACK").catch(() => {}); await Promise.allSettled([adopting, legacyClaim]); blocker.release(); }
+    const adopted = await token(); assert.equal(adopted.threadGeneration, 1);
+    assert.equal(await expired(teacherReply.message.id), true);
+    assert.equal(await expired(studentMessage.message.id), true);
+    process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+    assert.equal(await expired(teacherReply.message.id), true);
+    assert.equal(await inSchool(() => storage.acknowledgeTeacherChatDelivery({ ...binding(), chatMessageId: teacherReply.message.id,
+      status: "delivered" })), undefined);
+    assert.deepEqual(await claim(), { authorized: true, value: { messages: [] } });
+    await assert.rejects(reply("Capability-off after adoption", adopted), hasCode("PRIVATE_CHAT_DISABLED"));
+  } finally { process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true"; }
+});
+
+for (const operation of ["send", "claim", "ack"] as const) test(`first adoption serializes a legacy ${operation} with existing settings without a lock-order cycle`, async () => {
+  process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+  const fixture = await legacySchoolFixture(), { own, under, activityScope, exactBinding } = fixture;
+  const blocker = await admin.connect(); let adopting: Promise<void> | undefined, racing: Promise<unknown> | undefined;
+  try {
+    const pending = await under(() => storage.createTeacherChatReplyWithDelivery({ ...activityScope, teacherId: own.teacher, content: "Pending legacy adoption race" }));
+    await under(() => storage.markTeacherChatDeliveryAttempt({ ...exactBinding, chatMessageId: pending.message.id }));
+    await admin.query("UPDATE classpilot_chat_deliveries SET next_attempt_at=now() WHERE id=$1", [pending.delivery.id]);
+    await blocker.query("BEGIN"); await blocker.query("SELECT school_id FROM settings WHERE school_id=$1 FOR SHARE", [own.school]);
+    const pid = (await blocker.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+    process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
+    let adoptionSettled = false;
+    adopting = under(() => lifecycle.latchPrivateChatLifecycle(own.school));
+    adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
+    const writer = await blockedBehind(pid, () => adoptionSettled);
+    assert.equal(writer.length, 1); assert.match(writer[0]!.query, /settings/);
+    process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+    let operationSettled = false;
+    racing = operation === "send"
+      ? under(() => storage.createTeacherChatReplyWithDelivery({ ...activityScope, teacherId: own.teacher, content: "Old-image send after adoption" }))
+      : operation === "ack"
+        ? under(() => storage.acknowledgeTeacherChatDelivery({ ...exactBinding, chatMessageId: pending.message.id, status: "delivered" }))
+        : under(() => storage.withClasspilotStudentControlDeliveryAuthority({ ...exactBinding, claimTeacherChatDeliveries: true },
+          async () => undefined, rows => ({ messages: rows.map(row => row.message.id) })));
+    racing.then(() => { operationSettled = true; }, () => { operationSettled = true; });
+    const waiting = await blockedBehind(writer[0]!.pid, () => operationSettled);
+    assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /pg_advisory_xact_lock_shared/);
+    await blocker.query("COMMIT"); await adopting;
+    if (operation === "send") await assert.rejects(racing, hasCode("PRIVATE_CHAT_DISABLED"));
+    else if (operation === "ack") assert.equal(await racing, undefined);
+    else assert.deepEqual(await racing, { authorized: true, value: { messages: [] } });
+    assert.equal(await under(() => lifecycle.isPrivateChatMessageExpired(pending.message.id, own.school)), true);
+    assert.equal((await admin.query("SELECT count(*)::int AS count FROM chat_messages WHERE school_id=$1", [own.school])).rows[0]!.count, 1);
+  } finally {
+    await blocker.query("ROLLBACK").catch(() => {}); await Promise.allSettled([adopting, racing]); blocker.release();
+    process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
+    await under(() => storage.softDeleteSchool(own.school));
+  }
+});
+
 test("the authorized empty roster exposes tokens and activation rejects old writers and mutable message ownership", async () => {
   const initial = await token();
   assert.equal(initial.threadGeneration, 1);
@@ -163,6 +288,62 @@ test("the authorized empty roster exposes tokens and activation rejects old writ
   const sent = await reply("Immutable private ownership", initial);
   await assert.rejects(admin.query("UPDATE chat_messages SET private_chat_generation=private_chat_generation+1 WHERE id=$1", [sent.message.id]), hasCode("23514"));
   await assert.rejects(admin.query("UPDATE classpilot_private_chat_threads SET student_id=$1 WHERE id=$2", [ids.students[1], initial.threadId]), hasCode("23514"));
+});
+
+test("a school without legacy settings stays unstamped in the dark bridge and receives the sticky default row on first adoption", async () => {
+  const own = { school: randomUUID(), teacher: randomUUID(), student: randomUUID(), device: randomUUID() };
+  const under = <T>(fn: () => Promise<T>) => tenant({ schoolId: own.school }, fn);
+  process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "false";
+  try {
+    await admin.query("INSERT INTO schools(id,name,domain,status,plan_status) VALUES($1,'Missing settings bridge',$2,'active','active')", [own.school, `${own.school}.example.edu`]);
+    await admin.query("INSERT INTO users(id,email,first_name,last_name) VALUES($1,$2,'Missing','Teacher')", [own.teacher, `${own.teacher}@example.edu`]);
+    await admin.query("INSERT INTO school_memberships(school_id,user_id,role,status) VALUES($1,$2,'teacher','active')", [own.school, own.teacher]);
+    await admin.query("INSERT INTO product_licenses(school_id,product,status) VALUES($1,'CLASSPILOT','active')", [own.school]);
+    await admin.query("INSERT INTO students(id,school_id,first_name,last_name,status) VALUES($1,$2,'Missing','Student','active')", [own.student, own.school]);
+    await under(() => storage.createDevice({ schoolId: own.school, deviceId: own.device, classId: "default" }));
+    const session = await under(() => storage.startStudentSessionWithReplacements(own.school, own.student, own.device,
+      { authKind: "manual_shared", sessionRecoveryTokenHash: randomBytes(32).toString("hex") }));
+    const group = await under(() => storage.createGroup({ schoolId: own.school, teacherId: own.teacher,
+      name: "Missing settings class", groupType: "admin_class", status: "active" }));
+    await under(() => database.execute(sql`INSERT INTO group_students(group_id,student_id) VALUES(${group.id},${own.student})`));
+    const activity = await under(() => storage.createTeachingSession({ groupId: group.id, teacherId: own.teacher, sessionMode: "live" }));
+    const activityScope = { schoolId: own.school, studentId: own.student, teachingSessionId: activity.id };
+    const exactBinding = { schoolId: own.school, studentId: own.student, studentSessionId: session.session.id, deviceId: own.device };
+    await realtime.writeClasspilotRealtimeStatus({ ...exactBinding, heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities: capabilities });
+    assert.equal((await admin.query("SELECT count(*)::int AS count FROM settings WHERE school_id=$1", [own.school])).rows[0]!.count, 0);
+    const sent = await under(() => storage.createTeacherChatReplyWithDelivery({ ...activityScope, teacherId: own.teacher, content: "Missing settings legacy" }));
+    assert.equal(sent.message.privateChatThreadId, null);
+    assert.equal((await under(() => storage.authorizeClasspilotTeacherCloseChat({ ...activityScope, actorId: own.teacher }))).privateChatLifecycle, undefined);
+    assert.equal((await admin.query("SELECT count(*)::int AS count FROM classpilot_private_chat_threads WHERE school_id=$1", [own.school])).rows[0]!.count, 0);
+    let release!: () => void, prepared!: (pid: number) => void;
+    const held = new Promise<void>(resolve => { release = resolve; }), ready = new Promise<number>(resolve => { prepared = resolve; });
+    let adoptionSettled = false, adopting: ReturnType<typeof lifecycle.teacherPrivateChatLifecycles> | undefined;
+    const claiming = under(() => storage.withClasspilotStudentControlDeliveryAuthority({ ...exactBinding, claimTeacherChatDeliveries: true }, async connection => {
+      const result = await connection.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
+      prepared(result.rows[0]!.pid); await held;
+    }, claimed => { assert.equal(adoptionSettled, false, "Legacy delivery must finish before adoption commits"); return { messages: claimed.map(row => row.message.id) }; }));
+    let adopted: Awaited<ReturnType<typeof lifecycle.teacherPrivateChatLifecycles>>;
+    try {
+      const pid = await ready;
+      process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
+      adopting = under(() => lifecycle.teacherPrivateChatLifecycles(activityScope));
+      adopting.then(() => { adoptionSettled = true; }, () => { adoptionSettled = true; });
+      const waiting = await blockedBehind(pid, () => adoptionSettled);
+      assert.equal(waiting.length, 1, "First adoption must wait for the native legacy delivery transaction even without a settings row");
+      assert.match(waiting[0]!.query, /pg_advisory_xact_lock/);
+      release(); const legacy = await claiming;
+      assert.equal(legacy.authorized, true); if (legacy.authorized) assert.ok(legacy.value.messages.includes(sent.message.id));
+      adopted = await adopting;
+    } finally { release(); await Promise.allSettled([claiming, adopting]); }
+    assert.equal(adopted.privateChatLifecycleRequired, true);
+    assert.equal(adopted.privateChatLifecycles[0]!.privateChatLifecycle.threadGeneration, 1);
+    const settingsRow = (await admin.query("SELECT private_chat_lifecycle_required,private_chat_epoch FROM settings WHERE school_id=$1", [own.school])).rows[0]!;
+    assert.deepEqual(settingsRow, { private_chat_lifecycle_required: true, private_chat_epoch: 1 });
+    assert.equal(await under(() => lifecycle.isPrivateChatMessageExpired(sent.message.id, own.school)), true);
+  } finally {
+    process.env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1 = "true";
+    await under(() => storage.softDeleteSchool(own.school));
+  }
 });
 
 test("End permanently expires pending replies, retains history and allows a new explicit generation", async () => {
@@ -354,7 +535,7 @@ for (const operation of ["send", "claim", "ack"] as const) test(`school hard-off
     racing = operation === "send" ? reply("Send behind off", initial) : operation === "claim" ? claim() : ack(sent.message.id, initial);
     racing.then(() => { settled = true; }, () => { settled = true; });
     const waiting = await blockedBehind(pid, () => settled);
-    assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /settings/);
+    assert.equal(waiting.length, 1); assert.match(waiting[0]!.query, /settings|private_chat_lifecycle_required/);
     await writer.query("COMMIT");
     if (operation === "send") await assert.rejects(racing, hasCode("FAB_FEATURE_DISABLED"));
     else if (operation === "claim") assert.deepEqual(await racing, { authorized: true, value: { messages: [] } });
