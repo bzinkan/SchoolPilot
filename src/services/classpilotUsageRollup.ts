@@ -116,13 +116,14 @@ export const CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL = `SELECT EXISTS (
  * with heartbeats."timestamp" (timestamp without time zone, never converted),
  * $4 the school-local usage date, $5 the excluded intervals as JSON.
  */
-export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH school_ai_available AS MATERIALIZED (
-  -- This school-level presence probe lets an empty AI history avoid a newest
-  -- lookup for every observation. It shares the statement's snapshot and
-  -- the exact school/time predicate of the nonempty path below.
-  SELECT 1 FROM classpilot_ai_decisions
+export const CLASSPILOT_USAGE_ROLLUP_INSERT_SQL = `WITH school_ai_decisions AS MATERIALIZED (
+  -- Read the matching school's candidate decisions once. A per-observation
+  -- newest lookup performs an index probe even for observations without AI;
+  -- joining this bounded relation below preserves the same statement snapshot,
+  -- lower time boundary and deterministic newest-decision tie rule.
+  SELECT heartbeat_id, category, teacher_intent_source, created_at, id
+  FROM classpilot_ai_decisions
   WHERE school_id = $1 AND created_at >= $2::timestamp
-  LIMIT 1
 ),
 school_excluded AS MATERIALIZED (
   SELECT NULLIF(item->>'studentId', '') AS student_id,
@@ -187,19 +188,12 @@ deduplicated AS MATERIALIZED (
   ORDER BY student_id, date_trunc('second', observed_at), observed_at, id
 ),
 ai_decision AS MATERIALIZED (
-  SELECT decision.heartbeat_id, decision.category,
+  SELECT DISTINCT ON (decision.heartbeat_id)
+    decision.heartbeat_id, decision.category,
     decision.teacher_intent_source
-  FROM deduplicated AS observation
-  CROSS JOIN LATERAL (
-    SELECT newest.heartbeat_id, newest.category, newest.teacher_intent_source
-    FROM classpilot_ai_decisions AS newest
-    WHERE newest.school_id = $1
-      AND newest.heartbeat_id = observation.id
-      AND newest.created_at >= $2::timestamp
-    ORDER BY newest.created_at DESC, newest.id DESC
-    LIMIT 1
-  ) AS decision
-  WHERE EXISTS (SELECT 1 FROM school_ai_available)
+  FROM school_ai_decisions AS decision
+  JOIN deduplicated AS observation ON observation.id = decision.heartbeat_id
+  ORDER BY decision.heartbeat_id, decision.created_at DESC, decision.id DESC
 ),
 normalized AS (
   SELECT observation.id, observation.student_id, observation.observed_at,

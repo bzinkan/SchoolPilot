@@ -187,9 +187,14 @@ describe("Monitored Browser Time rollup SQL", () => {
     assert.match(normalized, /'\^www\\\.'/);
     assert.match(normalized, /COALESCE\(NULLIF\(ai_decision\.category, ''\), observation\.ai_category\)/);
     assert.match(normalized, /NULLIF\(ai_decision\.teacher_intent_source, ''\) IS NOT NULL\s+OR NULLIF\(observation\.teacher_intent_source, ''\) IS NOT NULL/);
+    const schoolDecisions = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "school_ai_decisions", "school_excluded");
+    assert.match(schoolDecisions, /FROM classpilot_ai_decisions\s+WHERE school_id = \$1 AND created_at >= \$2::timestamp/);
+    assert.doesNotMatch(schoolDecisions, /created_at\s*</);
     const decisions = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "ai_decision", "normalized");
-    assert.match(decisions, /newest\.school_id = \$1\s+AND newest\.heartbeat_id = observation\.id/);
-    assert.match(decisions, /ORDER BY newest\.created_at DESC, newest\.id DESC\s+LIMIT 1/);
+    assert.match(decisions, /DISTINCT ON \(decision\.heartbeat_id\)/);
+    assert.match(decisions, /FROM school_ai_decisions AS decision\s+JOIN deduplicated AS observation ON observation\.id = decision\.heartbeat_id/);
+    assert.match(decisions, /ORDER BY decision\.heartbeat_id, decision\.created_at DESC, decision\.id DESC/);
+    assert.doesNotMatch(decisions, /CROSS JOIN LATERAL|LIMIT 1/);
     const classified = cte(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, "classified", "roster_window");
     assert.match(classified, /normalized\.category = 'non-educational' AND NOT normalized\.teacher_intent_exempt\s+AND normalized\.domain <> '' THEN 'non-educational'/);
   });
