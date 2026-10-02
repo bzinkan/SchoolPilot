@@ -7,6 +7,9 @@ import { classpilotPrivateChatThreads, classpilotSessionStudents, classpilotSupe
 import { isClasspilotCapabilityActive } from "./classpilotProtocol.js";
 
 export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;
+// The first dark deployment can roll back before lifecycle adoption: it never
+// creates lifecycle state. After adoption the stored latch, not the flag, wins.
+export const PRIVATE_CHAT_BRIDGE_VERSION = 1;
 export type PrivateChatLifecycle = { threadId: string; schoolEpoch: number; activityEpoch: number; threadGeneration: number };
 export type PrivateChatScope = { schoolId: string; studentId: string; teachingSessionId?: string | null; supervisionContextId?: string | null };
 
@@ -51,6 +54,24 @@ export async function privateChatLifecycleRequired(schoolId: string, database: t
   const [row] = await database.select({ required: settings.privateChatLifecycleRequired }).from(settings)
     .where(eq(settings.schoolId,schoolId)).limit(1);
   return row?.required === true || isClasspilotCapabilityActive("privateChatLifecycleV1", { schoolId });
+}
+
+export async function lockPrivateChatChannel(scope: PrivateChatScope, database: typeof db) {
+  if (!!scope.teachingSessionId === !!scope.supervisionContextId) throw lifecycleError("PRIVATE_CHAT_SCOPE_INVALID", "One classroom authority is required",400);
+  if (scope.teachingSessionId) {
+    await database.select({id:teachingSessions.id}).from(teachingSessions).where(and(eq(teachingSessions.schoolId,scope.schoolId),
+      eq(teachingSessions.id,scope.teachingSessionId))).for("key share");
+  } else {
+    await database.select({id:classpilotSupervisionContexts.id}).from(classpilotSupervisionContexts).where(and(
+      eq(classpilotSupervisionContexts.schoolId,scope.schoolId),eq(classpilotSupervisionContexts.id,scope.supervisionContextId!))).for("key share");
+  }
+  const [school] = await database.select().from(settings).where(eq(settings.schoolId,scope.schoolId)).limit(1).for("share");
+  if (!school) throw lifecycleError("PRIVATE_CHAT_SETTINGS_UNAVAILABLE", "School messaging settings are unavailable");
+  const parent = scope.teachingSessionId ? eq(sessionSettings.sessionId,scope.teachingSessionId)
+    : eq(sessionSettings.supervisionContextId,scope.supervisionContextId!);
+  const [activity] = await database.select().from(sessionSettings).where(and(eq(sessionSettings.schoolId,scope.schoolId),parent)).limit(1).for("share");
+  return {required:school.privateChatLifecycleRequired || isClasspilotCapabilityActive("privateChatLifecycleV1",{schoolId:scope.schoolId}),
+    enabled:school.studentMessagingEnabled !== false && activity?.chatEnabled !== false};
 }
 
 /** Caller owns entitlement + student authority locks. Parent -> school settings
@@ -113,6 +134,12 @@ export async function privateChatBindingSupported(scope: Pick<PrivateChatScope,"
 }
 
 export async function preparePrivateChatMessage(scope: PrivateChatScope, expected: unknown, database: typeof db) {
+  const channel = await lockPrivateChatChannel(scope,database);
+  if (!channel.enabled) throw lifecycleError("FAB_FEATURE_DISABLED", "Messaging is turned off",403);
+  if (!channel.required) {
+    if (expected !== undefined) throw lifecycleError("PRIVATE_CHAT_LIFECYCLE_STALE", "Chat changed; refresh before sending again");
+    return {};
+  }
   const state = await lockPrivateChatLifecycle(scope,database);
   if (!state.enabled) throw lifecycleError("FAB_FEATURE_DISABLED", "Messaging is turned off",403);
   if (state.required) {
@@ -126,6 +153,14 @@ export async function preparePrivateChatMessage(scope: PrivateChatScope, expecte
 }
 
 export async function closePrivateChatLifecycle(scope: PrivateChatScope, expected: unknown, actorId: string, database: typeof db) {
+  const channel = await lockPrivateChatChannel(scope,database);
+  if (!channel.required) {
+    if (expected !== undefined) throw lifecycleError("PRIVATE_CHAT_LIFECYCLE_STALE", "Chat changed; refresh before ending it");
+    await database.execute(sql`INSERT INTO audit_logs (school_id,user_id,action,entity_type,entity_id,metadata)
+      VALUES (${scope.schoolId},${actorId},'classpilot.chat.closed','student',${scope.studentId},
+        ${JSON.stringify({teachingSessionId:scope.teachingSessionId ?? null,supervisionContextId:scope.supervisionContextId ?? null})}::jsonb)`);
+    return undefined;
+  }
   const state = await lockPrivateChatLifecycle(scope,database);
   if ((state.required || expected !== undefined) && !samePrivateChatLifecycle(parsePrivateChatLifecycle(expected),state.token)) {
     throw lifecycleError("PRIVATE_CHAT_LIFECYCLE_STALE", "Chat changed; refresh before ending it");
@@ -142,9 +177,16 @@ export async function closePrivateChatLifecycle(scope: PrivateChatScope, expecte
 
 export async function isPrivateChatMessageCurrent(message: ChatMessage, database: typeof db): Promise<boolean> {
   if (!message.studentId) return false;
+  const token = privateChatMessageLifecycle(message);
+  // Unadopted schools retain the old delivery contract until the compatible
+  // bridge is serving everywhere. Activation permanently retires legacy rows.
+  if (!token) {
+    const channel = await lockPrivateChatChannel({schoolId:message.schoolId,studentId:message.studentId,
+      teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId},database);
+    if (!channel.required) return true;
+  }
   const state = await lockPrivateChatLifecycle({schoolId:message.schoolId,studentId:message.studentId,
     teachingSessionId:message.sessionId,supervisionContextId:message.supervisionContextId},database);
-  const token = privateChatMessageLifecycle(message);
   return state.enabled && (token ? samePrivateChatLifecycle(token,state.token) : !state.required && state.token.threadGeneration === 1 && state.token.schoolEpoch === 1 && state.token.activityEpoch === 1);
 }
 
@@ -197,7 +239,8 @@ export async function projectPrivateChatMessages(messages: ChatMessage[], databa
 
 /** SQL predicate also makes status projections truthful before the worker catches up. */
 export const PRIVATE_CHAT_EXPIRED_SQL = sql`EXISTS (
- SELECT 1 FROM settings cs WHERE cs.school_id=chat_messages.school_id AND (
+ SELECT 1 FROM settings cs WHERE cs.school_id=chat_messages.school_id
+ AND (cs.private_chat_lifecycle_required OR chat_messages.private_chat_thread_id IS NOT NULL) AND (
    (chat_messages.private_chat_thread_id IS NULL AND (
      cs.private_chat_lifecycle_required OR cs.student_messaging_enabled=false OR cs.private_chat_epoch>1
      OR EXISTS (SELECT 1 FROM session_settings legacy_activity WHERE legacy_activity.school_id=chat_messages.school_id

@@ -12,7 +12,7 @@ import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle,
+import { latchPrivateChatLifecycle, preparePrivateChatMessage, closePrivateChatLifecycle, lockPrivateChatLifecycle, lockPrivateChatChannel,
   privateChatMessageLifecycle, samePrivateChatLifecycle, parsePrivateChatLifecycle, privateChatLifecycleRequired, privateChatBindingSupported, isPrivateChatMessageCurrent, isPrivateChatMessageExpired,
   type PrivateChatLifecycle } from "./classpilotPrivateChatLifecycle.js";
 import {
@@ -19521,7 +19521,7 @@ export async function authorizeClasspilotTeacherCloseChat(options: {
   studentId: string;
   actorId: string;
   expectedPrivateChatLifecycle?: unknown;
-}): Promise<AuthorizedClasspilotTeacherStudentAction & {privateChatLifecycle:PrivateChatLifecycle}> {
+}): Promise<AuthorizedClasspilotTeacherStudentAction & {privateChatLifecycle:PrivateChatLifecycle | undefined}> {
   await latchPrivateChatLifecycle(options.schoolId);
   return withAuthorizedClasspilotTeacherStudentAction(options, async (transactionDb, authority) => ({...authority,
     privateChatLifecycle:await closePrivateChatLifecycle(options,options.expectedPrivateChatLifecycle,options.actorId,transactionDb)}));
@@ -20025,7 +20025,7 @@ export async function withClasspilotStudentControlDeliveryAuthority<
           ...authority,
         }, transactionDb)
       ) {
-        const lifecycleRequired = await privateChatLifecycleRequired(options.schoolId,transactionDb);
+        const lifecycleRequired = (await lockPrivateChatChannel({...options,...authority},transactionDb)).required;
         const [stamped] = await tx.select({id:chatMessages.id}).from(chatMessages).where(and(eq(chatMessages.schoolId,options.schoolId),eq(chatMessages.studentId,options.studentId),authority.teachingSessionId ? eq(chatMessages.sessionId,authority.teachingSessionId) : eq(chatMessages.supervisionContextId,authority.supervisionContextId!),isNotNull(chatMessages.privateChatThreadId))).limit(1);
         const lifecycle = lifecycleRequired || stamped ? await lockPrivateChatLifecycle({...options,...authority},transactionDb) : null;
         const capable = !lifecycle?.required || await privateChatBindingSupported(options,transactionDb);
