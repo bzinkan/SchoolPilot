@@ -230,6 +230,9 @@ jobs:
 
     env:
       DATABASE_URL: postgres://postgres:test@localhost:5432/sptest
+      # Lifecycle race/RLS probes use a dedicated bootstrap connection while
+      # leaving the application connection's tenant context untouched.
+      ADMIN_DATABASE_URL: postgres://postgres:test@localhost:5432/sptest
       TEST_REDIS_URL: redis://localhost:6379
 
     steps:
