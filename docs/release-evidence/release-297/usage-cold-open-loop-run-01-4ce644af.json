@@ -1,0 +1,508 @@
+{
+  "schemaVersion": 1,
+  "recordType": "immutable failed synthetic capacity run; release acceptance remains closed",
+  "capacityMeasured": true,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "sourceRevision": "4ce644af819a03113f1ab5c341f2218970096d36",
+  "productCheckpoint": "8cb02862d1edc42d62b95f995236491e527aca35",
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-local-cold-open-loop-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory <fresh-owned-evidence-directory>",
+  "startedAt": "2026-10-02T18:45:27.462Z",
+  "finishedAt": "2026-10-02T18:48:09.854Z",
+  "preparationMs": 434181.251,
+  "measuredConcurrentAndDrainMs": 77648.1565,
+  "sourceRecord": {
+    "recordType": "immutable pre-run source-only snapshot, not the final outcome",
+    "capacityMeasured": false,
+    "sha256": "77f85502ca54a36b2818ed201642880343574e4057892f8666a778b3d64e2602",
+    "clarification": "Its legacy workload.concurrentReportQueries=64 denotes total JSON offers: four sequential waves of sixteen maximum parallel offers; CSV eight correctness/audit probes are subsequent."
+  },
+  "classPilot": {
+    "extensionVersion": "2.9.7",
+    "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "sourceFile": "extension/service-worker.js",
+    "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+    "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad"
+  },
+  "quotas": {
+    "workload": {
+      "name": "six-lessons-200-domains-1m-unique-10k-ai-cold-open-loop-100rps",
+      "students": 500,
+      "classes": 100,
+      "studentsPerClass": 5,
+      "periods": 6,
+      "lessonMinutes": 50,
+      "passingMinutes": 10,
+      "observationsPerStudent": 2000,
+      "cadenceSeconds": 10,
+      "domainDwellSeconds": 200,
+      "domainsPerStudent": 8,
+      "domainsSchoolWide": 200,
+      "rawPerSchool": 1000000,
+      "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+      "aiDecisionRowsPerSchool": 10000,
+      "aiDecisionsPerStudent": 20,
+      "aiDecisionEveryObservations": 100,
+      "aiDecisionCadenceSeconds": 1000,
+      "aiDecisionCategory": "matches the selected heartbeat",
+      "httpOffering": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "fullWorkerAcceptanceMs": 48000,
+      "classPilot": {
+        "extensionVersion": "2.9.7",
+        "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+        "sourceFile": "extension/service-worker.js",
+        "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+        "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+        "capabilities": [
+          "helpRequestsV1",
+          "questionParkingV1",
+          "timerControlsV1",
+          "lessonActivitiesV1",
+          "exitTicketsV1",
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "scopedAuthorityChecksV1",
+          "scheduledClassroomV1",
+          "authBoundTelemetryV1",
+          "exactBindingAckV2",
+          "exactTabCloseV2",
+          "studentAuthGatePresenceV1",
+          "lateSignInRestrictionSsoV1",
+          "restrictionAuthPassThroughV1",
+          "preciseRestrictionResourcesV1",
+          "restrictionPortalFirstV1",
+          "afterHoursSafetyOnlyV1",
+          "schoolWebsiteBlockEnforcementV1",
+          "studentChatIdempotencyV1",
+          "screenshotTrackingWindowLeaseV1",
+          "screenshotActiveObservationCadenceV1",
+          "screenshotObservationLeaseV1",
+          "safetyEvidenceCaptureV1",
+          "liveViewIceServersV1",
+          "kioskLaunchTicketV1",
+          "kioskLaunchTicketV2",
+          "managedDeviceContinuityV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1",
+          "domainPreservingRestrictionsV1",
+          "chatPauseV1",
+          "chatSeenAckV1",
+          "focusTabV1",
+          "privateChatLifecycleV1"
+        ]
+      },
+      "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed."
+    },
+    "postgresCpus": 4,
+    "postgresMemoryBytes": 4294967296,
+    "nodeV8OldSpaceMiB": 512,
+    "nodeHeapLimitBytes": 587202560,
+    "apiStatementDeadlineMs": 15000,
+    "apiAcquisitionDeadlineMs": 5000,
+    "workerStatementDeadlineMs": 60000,
+    "workerAcquisitionDeadlineMs": 10000
+  },
+  "ddl": {
+    "inputSha256": "d6cdffd59c33da5d1613a17f4632d235b56a8478314867ea19a1d14a4ddc44fa",
+    "postConvergenceSha256": "78608ad5ba9ca657b5f8361f5d8254c985ccaaedc15dd1b126280ceb9c0c8465",
+    "normalization": "UTF8/LF; no owner/grants; pg_dump nonce retained",
+    "nonceNormalizedEqualityCompared": false
+  },
+  "contract": {
+    "inventory": "classpilotPrivateChatLifecyclePostExpand",
+    "admittedTenantTables": 129,
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "completeMigrations": 53,
+    "catalogForceRlsNonOwner": true,
+    "newGates": {
+      "preciseRestrictionResourcesV1": {
+        "configuredSwitch": "false",
+        "configuredRollout": {
+          "mode": "off"
+        },
+        "effectiveRollout": "off",
+        "active": false
+      },
+      "focusTabV1": {
+        "configuredSwitch": "false",
+        "configuredRollout": {
+          "mode": "off"
+        },
+        "effectiveRollout": "off",
+        "active": false
+      },
+      "privateChatLifecycleV1": {
+        "configuredSwitch": "false",
+        "configuredRollout": {
+          "mode": "off"
+        },
+        "effectiveRollout": "off",
+        "active": false
+      }
+    },
+    "schedulerEnabled": false,
+    "dailyRollup": {
+      "configured": "shadow",
+      "effective": "shadow"
+    }
+  },
+  "workload": {
+    "substantialSchools": 2,
+    "studentsPerSchool": 500,
+    "rawHeavyDayPerSchool": 1000000,
+    "uniqueHeavyDayPerSchool": 1000000,
+    "expectedHeavyGrainsPerSchool": 84000,
+    "officialClassesPerSchool": 100,
+    "historicalDenseDays": 361,
+    "historicalRowsPerSchool": 541500,
+    "requestedInclusiveDays": 366,
+    "retainedInclusiveDays": 365,
+    "successfulEmptyDate": "2026-09-29",
+    "unavailableDate": "2026-09-27",
+    "heavyDate": "2026-09-30",
+    "today": "2026-10-02",
+    "dateRange": {
+      "from": "2025-10-02",
+      "to": "2026-10-02"
+    }
+  },
+  "reportOffers": {
+    "concurrentJsonTotal": 64,
+    "waves": 4,
+    "maximumParallelJsonOffers": 16,
+    "jsonSuccessful": 50,
+    "jsonFailed": 14,
+    "subsequentCsvCorrectnessAuditProbes": 8,
+    "csvPartOfConcurrentJsonOffers": false
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "durationMs": 23582.2441,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000
+    },
+    {
+      "schoolIndex": 1,
+      "durationMs": 24041.4868,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000
+    }
+  ],
+  "worker60SecondMinimumHeadroomMs": 35958.5132,
+  "workerTarget48000MsPassed": true,
+  "openLoop": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 4072,
+    "succeeded": 882,
+    "failed": 3190,
+    "refusedAtInFlightLimit": 1928,
+    "lateOffers": 30,
+    "maxOfferLatenessMs": 157.21170000000347,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2034,
+        "succeeded": 442,
+        "failed": 1592,
+        "refused": 966
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2038,
+        "succeeded": 440,
+        "failed": 1598,
+        "refused": 962
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 1962,
+      "REQUEST_FAILED": 1228
+    },
+    "offerWindowMs": 59991.01470000001,
+    "outstandingAtEndOfOffering": 999,
+    "totalIncludingDrainMs": 77646.6615,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 4072,
+      "minMs": 766.7126000000007,
+      "p50Ms": 17278.327799999995,
+      "p95Ms": 20022.4552,
+      "maxMs": 20097.8112
+    }
+  },
+  "apiDatabase": {
+    "acquisitions": {
+      "count": 17030,
+      "failures": 2826,
+      "maxMs": 5168.679899999999,
+      "failureCodes": {
+        "UNKNOWN": 2826
+      }
+    },
+    "statements": {
+      "other": {
+        "count": 21866,
+        "failures": 0,
+        "maxMs": 456.41430000000037
+      },
+      "settings": {
+        "count": 7543,
+        "failures": 0,
+        "maxMs": 293.3814999999995
+      },
+      "transaction": {
+        "count": 22310,
+        "failures": 0,
+        "maxMs": 365.48859999999695
+      },
+      "school": {
+        "count": 8076,
+        "failures": 0,
+        "maxMs": 162.90729999999894
+      },
+      "usageCoverage": {
+        "count": 50,
+        "failures": 0,
+        "maxMs": 92.68630000000121
+      },
+      "usageReport": {
+        "count": 50,
+        "failures": 0,
+        "maxMs": 4663.208299999998
+      },
+      "heartbeat": {
+        "count": 2365,
+        "failures": 0,
+        "maxMs": 386.804900000001
+      },
+      "studentDirectory": {
+        "count": 8915,
+        "failures": 0,
+        "maxMs": 211.00690000000031
+      },
+      "teachingSession": {
+        "count": 2750,
+        "failures": 0,
+        "maxMs": 163.81230000000141
+      },
+      "audit": {
+        "count": 0,
+        "failures": 0,
+        "maxMs": 0
+      }
+    }
+  },
+  "currentObservationCounts": {
+    "rawCurrentDayIncludingAllPreflights": {
+      "0": 1163,
+      "1": 1166
+    },
+    "successfulInsertedPreflightsPerSchool": {
+      "0": 2,
+      "1": 2
+    },
+    "concurrentInsertedBySchool": {
+      "0": 1161,
+      "1": 1164
+    },
+    "concurrentInsertedTotal": 2325,
+    "measurementHttpResponsesIncludingMeasurementPreflights": 2846,
+    "measurementSuccessfulResponsePreflights": 2,
+    "concurrentHttpResponses": 2844,
+    "concurrentHttpStatusCounts": {
+      "200": 793,
+      "204": 89,
+      "500": 1962
+    },
+    "note": "Preparation inserted one observation/school (fixture raw 1000001 each), fresh-process auth preflight inserted one/school. Database persistence and HTTP success differ: errors after commit and aborted responses remain failures;204 need not insert."
+  },
+  "deadlineAcceptance": {
+    "fullWorkerOperations": true,
+    "apiStatements": true,
+    "apiAcquisitions": false
+  },
+  "performanceAcceptance": {
+    "fullWorkerTwentyPercentHeadroom": true,
+    "actualOpenLoop100Rps": false
+  },
+  "diagnosticCorrectness": {
+    "realMaxRangeAccepted": true,
+    "nextLongerRangeRejected": true,
+    "independentAllScopeTotals": true,
+    "concurrentSchoolWriters": true,
+    "actualHttpIngest": true,
+    "successfulEmptyDay": true,
+    "gapWithheld": true,
+    "expiredDateWithheld": true,
+    "atomicSnapshotReads": true,
+    "currentDayRawOracle": true,
+    "crossSchoolIdsDenied": true,
+    "csvStrictAuditRecorded": true
+  },
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Expected values to be strictly equal:\n\n500 !== 200\n"
+  },
+  "cleanup": {
+    "exitCode": 1,
+    "generatedContainer": "schoolpilot-usage-scale-b8813622f5f2",
+    "generatedDatabase": "schoolpilot_redesign_usage_scale_b8813622f5f2",
+    "generatedContainerRemovedVerified": true,
+    "sharedDockerDatabaseOrRedisModified": false,
+    "schemaSourceIsOwnedSyntheticClone": true
+  },
+  "limitations": [
+    "Local DockerCPU/memory caps do not represent RDS I/O.",
+    "Node heap cap is not a Windows CPU or total RSS quota.",
+    "The hourly scheduler fleet, preceding heavy jobs, Redis distribution, managed devices and production rollout remain unverified.",
+    "Full100rps concurrent arrival acceptance FAILED; worker-only success cannot activate Usage.",
+    "Three passing repeated cold runs are not established at this source.",
+    "PostgreSQL shared buffers reset; host filesystem caches not flushed. Measurement auth/range preflights warm report history/auth before concurrency.",
+    "541500 historical grains/school is not a dense heavy-year proof; pathological500000grains/day stress failures remain unresolved.",
+    "Stored1m SQL observations/school are separate from the actual6000 open-loop HTTP offers."
+  ],
+  "archive": {
+    "file": "usage-cold-open-loop-run-01-4ce644af.raw.ndjson.gz",
+    "compression": "gzip",
+    "format": "NDJSON records with unchanged original UTF8 bytes represented by utf8; source filename/byte count/SHA256",
+    "sha256": "e37dc4dfb2bd5416390c0b1f138e809ab3996994f39989733b59e44b7e788f28",
+    "uncompressedSha256": "54ee0f9bab4f6c0c5c9e96bff27af1d53d91de399a6fc7d46a5165d484597e13",
+    "records": [
+      {
+        "name": "build.log",
+        "bytes": 55,
+        "sha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48"
+      },
+      {
+        "name": "cold-fixture-state.json",
+        "bytes": 183028,
+        "sha256": "e9395689efe2c59ecef00768f9de1162aa07ab160cfed8e996ed0c49efeb236d"
+      },
+      {
+        "name": "cold-restart.log",
+        "bytes": 38,
+        "sha256": "3b2b3a33cdaa2d2c5c423ae4cc255c7e5a0b08f73d4070c97bcf374bfd4db68b"
+      },
+      {
+        "name": "cold-restarted-state.json",
+        "bytes": 229,
+        "sha256": "07fcda59f60f0f1b4de76f9d74abcee93fecfa2cab53474feb2c7ae237e3bfc0"
+      },
+      {
+        "name": "container-create.log",
+        "bytes": 66,
+        "sha256": "09477e645149506514523dc0bf242648f3bc277e3287afcc6cab21514ae84337"
+      },
+      {
+        "name": "container-final-state.json",
+        "bytes": 229,
+        "sha256": "07fcda59f60f0f1b4de76f9d74abcee93fecfa2cab53474feb2c7ae237e3bfc0"
+      },
+      {
+        "name": "container-final-stats.json",
+        "bytes": 249,
+        "sha256": "0aad1df2a76fc835cfe1aaeb538f6c45e670c9efc937bd66c1435bfc2ef1c4cc"
+      },
+      {
+        "name": "execution.json",
+        "bytes": 1342,
+        "sha256": "a8618b49bcd0a9d61abb66730e1bf11b2612ddbe6528766122cdde5626c48a44"
+      },
+      {
+        "name": "fixture-contract.json",
+        "bytes": 35903,
+        "sha256": "e7ff3396db7cadd6780fe7846cd9bb865afcdcfdac4ca02ccbf62024e06451aa"
+      },
+      {
+        "name": "fixture-legacy-convergence.log",
+        "bytes": 12576,
+        "sha256": "44cb9b62a0ad0506df7239db12b8af606fac3c3865554a935a7046963c66382a"
+      },
+      {
+        "name": "fixture-versioned-migrations.log",
+        "bytes": 3648,
+        "sha256": "1ff5aa93f0417f85a159e99df0fe21a9f14de970111a8ac352353313ef0aecd7"
+      },
+      {
+        "name": "post-convergence-schema.sql",
+        "bytes": 575957,
+        "sha256": "78608ad5ba9ca657b5f8361f5d8254c985ccaaedc15dd1b126280ceb9c0c8465"
+      },
+      {
+        "name": "preparation-fixture-contract.json",
+        "bytes": 35903,
+        "sha256": "e7ff3396db7cadd6780fe7846cd9bb865afcdcfdac4ca02ccbf62024e06451aa"
+      },
+      {
+        "name": "preparation-metrics.json",
+        "bytes": 45123,
+        "sha256": "d9e42cdcda28febc8755260dacae9fc83f248d5c0714dc0b60e0cb3beb3f1640"
+      },
+      {
+        "name": "preparation.log",
+        "bytes": 75899,
+        "sha256": "e09f3c390fbd5f0722e2a651b874dd58b91c02fe45fec8596607dacab45d0584"
+      },
+      {
+        "name": "resource-caps.json",
+        "bytes": 1560,
+        "sha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025"
+      },
+      {
+        "name": "scale.log",
+        "bytes": 192835,
+        "sha256": "1aa433c4b2d096b1ba6d6a33c6e553e60c975fc76ad06083e1431bf28bbb82fe"
+      },
+      {
+        "name": "schema-only.sql",
+        "bytes": 591139,
+        "sha256": "d6cdffd59c33da5d1613a17f4632d235b56a8478314867ea19a1d14a4ddc44fa"
+      },
+      {
+        "name": "schema-restore.log",
+        "bytes": 20912,
+        "sha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321"
+      },
+      {
+        "name": "usage-scale.json",
+        "bytes": 131330,
+        "sha256": "b485a2456d23584465c00886fce745c4302bc593fa16e4f22a912d7d019bb8b3"
+      },
+      {
+        "name": "pre-run-source-only.json",
+        "bytes": 6499,
+        "sha256": "77f85502ca54a36b2818ed201642880343574e4057892f8666a778b3d64e2602"
+      }
+    ]
+  }
+}
