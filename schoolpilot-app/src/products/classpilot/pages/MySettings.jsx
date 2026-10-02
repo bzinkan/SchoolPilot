@@ -21,6 +21,8 @@ import TeachingDefaults from "../components/TeachingDefaults";
 import ClassroomWebsiteImport from "../components/ClassroomWebsiteImport";
 import { teachingResourceBadge, teachingResourceErrorMessage, teachingResourceList } from "../lib/teachingResourceLibrary";
 import { restrictionResourceLabel, restrictionResourceUrl } from "../lib/restrictionResourceMatcher";
+import { useRestrictionScopePreview } from "../hooks/useRestrictionScopePreview";
+import RestrictionScopeReview from "../components/RestrictionScopeReview";
 
 const EMPTY_RESOURCE_LIST = Object.freeze({ own: Object.freeze([]), library: Object.freeze([]), libraryEnabled: false });
 const selectFlightPathList = (data) => teachingResourceList(data, 'flightPaths');
@@ -112,6 +114,15 @@ function TeachingToolsContent({ currentUser, logout }) {
         resources: flightPathResources.split("\n").map((line) => line.trim()).filter(Boolean).map((url) => ({ url })),
       }
     : {});
+  const flightPathPreview = useRestrictionScopePreview({ schoolId: currentUser.schoolId, viewerId: currentUser.id,
+    enabled: showFlightPathDialog,
+    input: { purpose: 'flight_path', allowedDomains: flightPathAllowedDomains.split(',').map(line => line.trim()).filter(Boolean), resources: resourcesPayload().resources || [] },
+    context: [editingFlightPath?.id, flightPathName, flightPathDescription, preciseResourcesEnabled],
+  });
+  const flightPathReviewRequired = preciseResourcesEnabled && Boolean(flightPathResources.trim());
+  const flightPathScopePayload = () => flightPathPreview.preview
+    ? { allowedDomains: flightPathPreview.preview.authoring.allowedDomains, ...(preciseResourcesEnabled ? { resources: flightPathPreview.preview.authoring.resources } : {}) }
+    : { allowedDomains: flightPathAllowedDomains.split(',').map(d => normalizeDomain(d)).filter(Boolean), ...resourcesPayload() };
 
   const { data: blockListData = EMPTY_RESOURCE_LIST, isError: blockListsError, refetch: retryBlockLists } = useQuery({
     queryKey: ['/api/block-lists', ...scope],
@@ -240,8 +251,7 @@ function TeachingToolsContent({ currentUser, logout }) {
       return await request("POST", "/flight-paths", {
         flightPathName,
         description: flightPathDescription || undefined,
-        allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
-        ...resourcesPayload(),
+        ...flightPathScopePayload(),
       });
     },
     onSuccess: () => {
@@ -263,8 +273,7 @@ function TeachingToolsContent({ currentUser, logout }) {
       return await request("PATCH", `/flight-paths/${editingFlightPath.id}`, {
         flightPathName,
         description: flightPathDescription || undefined,
-        allowedDomains: flightPathAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
-        ...resourcesPayload(),
+        ...flightPathScopePayload(),
       });
     },
     onSuccess: () => {
@@ -607,6 +616,7 @@ function TeachingToolsContent({ currentUser, logout }) {
   };
 
   const handleSaveFlightPath = () => {
+    if (flightPathPreview.pending || (flightPathReviewRequired && !flightPathPreview.preview)) return;
     if (editingFlightPath) {
       updateFlightPathMutation.mutate();
     } else {
@@ -667,7 +677,7 @@ function TeachingToolsContent({ currentUser, logout }) {
         <div className="space-y-6">
           <section hidden={section !== "websites"} className="space-y-6" aria-label="Website tools">
             <h2 className="text-xl font-semibold">Website tools</h2>
-            <ClassroomWebsiteImport schoolId={currentUser.schoolId} viewerId={currentUser.id} />
+            <ClassroomWebsiteImport schoolId={currentUser.schoolId} viewerId={currentUser.id} preciseResourcesEnabled={preciseResourcesEnabled} />
             {/* Flight Paths Section */}
             <Card data-testid="card-flight-paths">
               <CardHeader>
@@ -1246,7 +1256,7 @@ function TeachingToolsContent({ currentUser, logout }) {
 
       {/* Flight Path Create/Edit Dialog */}
       <Dialog open={showFlightPathDialog} onOpenChange={open => open ? setShowFlightPathDialog(true) : closeEditor(() => setShowFlightPathDialog(false))}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[85dvh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingFlightPath ? "Edit Flight Path" : "Create Flight Path"}
@@ -1254,7 +1264,7 @@ function TeachingToolsContent({ currentUser, logout }) {
             <DialogDescription>
               {editingFlightPath
                 ? "Update the Flight Path configuration below."
-                : "Define a set of allowed domains for focused student browsing."}
+                : preciseResourcesEnabled ? "Define the websites and resources allowed for focused student browsing." : "Define a set of allowed domains for focused student browsing."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1301,13 +1311,13 @@ function TeachingToolsContent({ currentUser, logout }) {
                 </ul>
                 <p className="text-amber-600 dark:text-amber-500 pt-1 flex items-start gap-1">
                   <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                  <span>Using just <code className="text-xs bg-muted px-1 rounded">google.com</code> allows ALL Google services (YouTube, Gmail, etc.)</span>
+                  <span><code className="text-xs bg-muted px-1 rounded">google.com</code> allows that website and its subdomains, including Docs and Gmail. YouTube uses the separate <code className="text-xs bg-muted px-1 rounded">youtube.com</code> website.</span>
                 </p>
               </div>
             </div>
             {preciseResourcesEnabled ? (
               <div className="space-y-2">
-                <Label htmlFor="flight-path-resources">Specific videos, documents and pages (optional)</Label>
+                <Label htmlFor="flight-path-resources">Specific videos, documents and sections (optional)</Label>
                 <Textarea
                   id="flight-path-resources"
                   data-testid="textarea-flight-path-resources"
@@ -1318,15 +1328,16 @@ function TeachingToolsContent({ currentUser, logout }) {
                   className="min-h-[96px] font-mono text-xs"
                 />
                 <div className="text-xs text-muted-foreground space-y-1">
-                  <p>One link per line. A YouTube video, Google Doc, Slides, Sheet, Form or Drive file allows only that item; a Google Classroom class or assignment, or any other page, allows that page and the pages under it.</p>
+                  <p>One link per line. A YouTube video, Google Doc, Slides, Sheet, Form or Drive file allows only that item. Other links define a Section: its path and paths below it. Review the normalized scope before saving.</p>
                   <p>Students whose ClassPilot extension needs an update do not receive a Flight Path with these entries; you will see who.</p>
                 </div>
               </div>
             ) : editingFlightPath?.resources?.length > 0 ? (
               <p className="text-xs text-muted-foreground" data-testid="flight-path-resources-kept">
-                This Flight Path also has {editingFlightPath.resources.length} specific video, document or page entr{editingFlightPath.resources.length === 1 ? "y" : "ies"}. They are turned off for your school right now and stay unchanged when you save.
+                This Flight Path also has {editingFlightPath.resources.length} specific video, document or Section entr{editingFlightPath.resources.length === 1 ? "y" : "ies"}. They are turned off for your school right now and stay unchanged when you save.
               </p>
             ) : null}
+            <RestrictionScopeReview review={flightPathPreview} disabled={toolBusy} />
           </div>
           <DialogFooter>
             <Button
@@ -1340,7 +1351,7 @@ function TeachingToolsContent({ currentUser, logout }) {
             <Button
               type="button"
               onClick={handleSaveFlightPath}
-              disabled={!flightPathName.trim() ||
+              disabled={!flightPathName.trim() || flightPathPreview.pending || (flightPathReviewRequired && !flightPathPreview.preview) ||
                        createFlightPathMutation.isPending || updateFlightPathMutation.isPending}
               data-testid="button-save-flight-path"
             >
