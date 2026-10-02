@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
+  buildSelectionScopeKey,
   buildStudentSignOutCommandRequest,
+  commandAudienceIsServerDerived,
   commandRecipientsHeadline,
   commandRecipientsSummary,
   commandSupportsLateSignInRestriction,
@@ -35,8 +37,14 @@ import {
   recipientDialogRefusalMessage,
   recipientSnapshotLabel,
   recipientsRestoredMessage,
+  recordSelectionLoss,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  SELECTION_LOST_CODE,
+  selectionLossActionLabel,
+  selectionLossBlocksFallback,
+  selectionLostMessage,
+  selectionScopeKeepsBoundary,
   snapshotCommandRecipients,
   snapshotRecipientNames,
   studentSignOutSelectionBinding,
@@ -1137,6 +1145,255 @@ test('recipient copy names the frozen audience and who was left out', () => {
     'Ada Student can receive this again. Nothing was sent. Send again to include them.',
   );
   assert.equal(RECIPIENTS_UNAVAILABLE_MESSAGE, "Some selected students can't receive this right now. Nothing was sent.");
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student'], { availableCount: 1, offerCancel: false }),
+    `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them.`,
+    'a dialog that closes with Done does not name a Cancel button',
+  );
+});
+
+test('a selection the teacher did not clear is recorded per class and view and blocks only the fallback', () => {
+  assert.equal(recordSelectionLoss(null, { previousIds: [], keptIds: [], scopeKey: 'class-a' }), null, 'nothing ticked, nothing lost');
+  assert.equal(recordSelectionLoss(null, { previousIds: ['a'], keptIds: ['a'], scopeKey: 'class-a' }), null, 'nothing removed');
+  assert.equal(recordSelectionLoss(undefined), null);
+
+  const one = recordSelectionLoss(null, { previousIds: ['a', 'b'], keptIds: ['b'], scopeKey: 'class-a' });
+  assert.deepEqual(one, { lostIds: ['a'], count: 1, scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.equal(Object.isFrozen(one), true);
+  assert.equal(Object.isFrozen(one.lostIds), true);
+  const both = recordSelectionLoss(one, { previousIds: ['b', ' '], keptIds: [], scopeKey: 'class-a' });
+  assert.deepEqual(both, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'stopped-reporting' }, 'losses in one class and view add up');
+  assert.equal(recordSelectionLoss(both, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a' }).count, 2, 'a student lost twice counts once');
+  assert.equal(recordSelectionLoss(both, { previousIds: ['b'], keptIds: ['b'], scopeKey: 'class-a' }), both, 'unchanged when nothing is removed');
+  assert.deepEqual(
+    recordSelectionLoss(both, { previousIds: ['c'], keptIds: [], scopeKey: 'class-b', reason: 'session-changed' }),
+    { lostIds: ['c'], count: 1, scopeKey: 'class-b', reason: 'session-changed' },
+    'a loss in another class or view replaces the old one, cause included',
+  );
+
+  // Each cause is named; losses with more than one cause name none.
+  const sessionChanged = recordSelectionLoss(null, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a', reason: 'session-changed' });
+  assert.equal(sessionChanged.reason, 'session-changed');
+  assert.equal(recordSelectionLoss(sessionChanged, { previousIds: ['b'], keptIds: [], scopeKey: 'class-a', reason: 'session-changed' }).reason, 'session-changed');
+  const mixed = recordSelectionLoss(sessionChanged, { previousIds: ['b'], keptIds: [], scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.deepEqual(mixed, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'changed' });
+  assert.equal(recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'class-a', reason: 'made-up' }).reason, 'changed');
+  assert.deepEqual(
+    recordSelectionLoss(null, { previousIds: ['group-1'], scopeKey: 'class-a', reason: 'group-removed' }),
+    { lostIds: ['group-1'], count: 1, scopeKey: 'class-a', reason: 'group-removed' },
+    'a removed group with nobody ticked is still a lost target',
+  );
+
+  assert.equal(selectionLossBlocksFallback(both, []), true, 'nothing left ticked: the fallback is refused');
+  assert.equal(selectionLossBlocksFallback(both, new Set()), true);
+  assert.equal(selectionLossBlocksFallback(both, ['c']), false, 'ticks that remain are an explicit target');
+  assert.equal(selectionLossBlocksFallback(both, new Set(['c'])), false);
+  assert.equal(selectionLossBlocksFallback(null, []), false);
+  assert.equal(selectionLossBlocksFallback({ lostIds: [], count: 0 }, []), false);
+
+  assert.equal(
+    selectionLostMessage(1),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(2, { scope: 'group', nothingSent: true }),
+    'Your selection was cleared because 2 selected students stopped reporting. Nothing was sent. Choose students again, or use the whole group.',
+  );
+  assert.equal(
+    selectionLostMessage(1, { scope: 'claimed' }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use all claimed students.',
+  );
+  assert.equal(selectionLostMessage(0, { scope: 'unknown' }), 'Your selection was cleared. Choose students again, or use the whole class.');
+  assert.equal(
+    selectionLostMessage(2, { reason: 'session-changed' }),
+    'Your selection was cleared because the session changed for 2 selected students. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(3, { scope: 'claimed', reason: 'groups-changed', nothingSent: true }),
+    'Your selection was cleared because your supervision groups changed. Nothing was sent. Choose students again, or use all claimed students.',
+  );
+  assert.equal(
+    selectionLostMessage(1, { reason: 'group-removed' }),
+    'Your selection was cleared because the group you chose was removed. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(2, { reason: 'changed' }),
+    'Your selection was cleared. Choose students again, or use the whole class.',
+    'more than one cause names none',
+  );
+  assert.deepEqual(
+    ['class', 'group', 'claimed', 'unknown', undefined].map((scope) => selectionLossActionLabel(scope)),
+    ['Use whole class', 'Use whole group', 'Use all claimed students', 'Use whole class', 'Use whole class'],
+  );
+});
+
+test('a student lost twice keeps the first cause, and an unavailable class is named', () => {
+  // A ticked student who signs out stops reporting (the telemetry trim) and
+  // changes session (the binding check) in the same update.
+  const stopped = recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.equal(
+    recordSelectionLoss(stopped, { previousIds: ['a'], scopeKey: 'class-a', reason: 'session-changed' }),
+    stopped,
+    'the same student recorded again changes nothing',
+  );
+  assert.equal(
+    selectionLostMessage(stopped.count, { reason: stopped.reason }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  // A new student with another cause still names none.
+  assert.deepEqual(
+    recordSelectionLoss(stopped, { previousIds: ['a', 'b'], scopeKey: 'class-a', reason: 'session-changed' }),
+    { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'changed' },
+  );
+  // In another scope the same student is a new loss with its own cause.
+  assert.deepEqual(
+    recordSelectionLoss(stopped, { previousIds: ['a'], scopeKey: 'class-b', reason: 'session-changed' }),
+    { lostIds: ['a'], count: 1, scopeKey: 'class-b', reason: 'session-changed' },
+  );
+
+  const unavailable = recordSelectionLoss(null, { previousIds: ['a', 'b'], scopeKey: 'class-a', reason: 'class-unavailable' });
+  assert.deepEqual(unavailable, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'class-unavailable' });
+  assert.equal(
+    selectionLostMessage(unavailable.count, { reason: unavailable.reason, nothingSent: true }),
+    'Your selection was cleared because the class was unavailable. Nothing was sent. Choose students again, or use the whole class.',
+  );
+  // When the class is back, the cleared ticks still refuse the class fallback.
+  assert.throws(
+    () => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: unavailable }),
+    (error) => error.code === SELECTION_LOST_CODE
+      && error.message === 'Your selection was cleared because the class was unavailable. Nothing was sent. Choose students again, or use the whole class.',
+  );
+});
+
+test('the Claimed view keeps its selection scope across class sessions, and only the view may change automatically', () => {
+  const reader = JSON.stringify(['school-1', 'teacher-1']);
+  const classA = JSON.stringify([['session', 'a'], '3']);
+  const classB = JSON.stringify([['session', 'b'], '1']);
+  const key = (overrides = {}) => buildSelectionScopeKey({ readerKey: reader, transitionKey: '', view: 'class', authorityKey: classA, ...overrides });
+
+  assert.notEqual(key(), key({ authorityKey: classB }), 'a new class session or revision is a new Class-view scope');
+  assert.equal(
+    key({ view: 'claimed' }),
+    key({ view: 'claimed', authorityKey: classB }),
+    'claimed students are commanded through their own groups: a class session starting or ending keeps their scope',
+  );
+  assert.equal(key({ view: 'claimed' }), key({ view: 'claimed', authorityKey: null }));
+  assert.notEqual(key({ view: 'claimed' }), key(), 'Class and Claimed are separate scopes');
+  assert.notEqual(key({ transitionKey: 'boundary-2' }), key(), 'a scheduled boundary is a new scope');
+
+  // The Dashboard can switch Class <-> Claimed by itself in one school and
+  // boundary; a school, viewer or schedule change is never that switch.
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed' })), true);
+  assert.equal(selectionScopeKeepsBoundary(key({ view: 'claimed' }), key({ authorityKey: classB })), true);
+  assert.equal(selectionScopeKeepsBoundary(key(), key()), true);
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed', readerKey: JSON.stringify(['school-2', 'teacher-1']) })), false);
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed', transitionKey: 'boundary-2' })), false);
+  for (const invalid of [null, undefined, '', 'not json', '[]', JSON.stringify({ view: 'class' })]) {
+    assert.equal(selectionScopeKeepsBoundary(invalid, key()), false, `${String(invalid)} is no scope`);
+    assert.equal(selectionScopeKeepsBoundary(key(), invalid), false);
+  }
+});
+
+test('a lost selection never falls back to the subgroup or class, while explicit students still resolve', () => {
+  const thrown = (fn) => { try { fn(); } catch (error) { return error; } assert.fail('expected a throw'); };
+  const lost = recordSelectionLoss(null, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a' });
+  const claimedRows = [
+    { studentId: 'a', contextId: 'context-1' },
+    { studentId: 'b', contextId: 'context-2' },
+  ];
+
+  const classRefusal = thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: lost }));
+  assert.equal(classRefusal.code, SELECTION_LOST_CODE);
+  assert.equal(
+    classRefusal.message,
+    'Your selection was cleared because 1 selected student stopped reporting. Nothing was sent. Choose students again, or use the whole class.',
+  );
+  const groupRefusal = thrown(() => resolveCommandTargets({
+    mode: 'owned-class', sessionStudents: classStudents, selectedSubgroupId: 'group-1', subgroupStudentIds: ['a', 'b'], selectionLoss: lost,
+  }));
+  assert.equal(groupRefusal.code, SELECTION_LOST_CODE);
+  assert.match(groupRefusal.message, /Nothing was sent\. Choose students again, or use the whole group\.$/);
+  assert.equal(
+    thrown(() => resolveCommandTargets({ mode: 'scheduled-supervision', sessionStudents: classStudents, selectionLoss: lost })).code,
+    SELECTION_LOST_CODE,
+  );
+  const claimedRefusal = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, selectionLoss: lost }));
+  assert.match(claimedRefusal.message, /use all claimed students\.$/);
+  // The supervision groups changed under ticked claimed students.
+  const groupsChanged = recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'claimed', reason: 'groups-changed' });
+  const groupsRefusal = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, selectionLoss: groupsChanged }));
+  assert.equal(groupsRefusal.code, SELECTION_LOST_CODE);
+  assert.deepEqual(groupsRefusal.selectionLoss, { count: 1, scope: 'claimed', reason: 'groups-changed' });
+  assert.equal(
+    groupsRefusal.message,
+    'Your selection was cleared because your supervision groups changed. Nothing was sent. Choose students again, or use all claimed students.',
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(groupsRefusal),
+    'Your selection was cleared because your supervision groups changed. Choose students again, or use all claimed students.',
+  );
+  // A removed group refuses the class fallback it would otherwise reach.
+  const groupRemoved = recordSelectionLoss(null, { previousIds: ['group-1'], scopeKey: 'class-a', reason: 'group-removed' });
+  assert.equal(
+    thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: groupRemoved })).message,
+    'Your selection was cleared because the group you chose was removed. Nothing was sent. Choose students again, or use the whole class.',
+  );
+
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectedStudentIds: ['b'], selectionLoss: lost }).targetStudentIds,
+    ['b'],
+    'a remaining or new tick is an explicit target',
+  );
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, overrideStudentIds: ['a'], selectionLoss: lost }).targetStudentIds,
+    ['a'],
+    'a frozen dialog list or tile names its students and is unaffected',
+  );
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, overrideStudentIds: ['b'], selectionLoss: lost }).targetStudentIds,
+    ['b'],
+  );
+  assert.deepEqual(resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: null }).targetStudentIds, ['a', 'b']);
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: { lostIds: [], count: 0 } }).targetStudentIds,
+    ['a', 'b'],
+    'once the teacher chooses whole class the fallback is allowed again',
+  );
+
+  // A dialog that does not open explains the loss without claiming a send.
+  assert.equal(
+    recipientDialogRefusalMessage(classRefusal, { blockedNames: ['Ada Student'] }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(groupRefusal),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole group.',
+  );
+});
+
+test('only the controls of a running tool keep the audience the server froze', () => {
+  for (const [commandType, commandPayload, serverDerived] of [
+    ['poll', { action: 'close', pollId: 'poll-1' }, true],
+    ['poll', { action: 'start', question: 'Ready?' }, false],
+    ['poll', {}, false],
+    ['attention-mode', { active: false }, true],
+    ['attention-mode', { active: true, message: 'Eyes up' }, false],
+    ['timer', { action: 'stop' }, true],
+    ['timer', { action: 'pause' }, true],
+    ['timer', { action: 'resume' }, true],
+    ['timer', { action: 'extend', seconds: 60 }, true],
+    ['timer', { action: 'start', seconds: 60 }, false],
+    ['lesson-activity', { action: 'update' }, true],
+    ['lesson-activity', { action: 'end' }, true],
+    ['lesson-activity', { action: 'start', title: 'Work' }, false],
+    ['teacher-message', { message: 'Hi' }, false],
+    ['apply-flight-path', { flightPathId: 'fp-1' }, false],
+    ['remove-flight-path', {}, false],
+    ['close-tabs', { closeAll: true }, false],
+  ]) {
+    assert.equal(commandAudienceIsServerDerived(commandType, commandPayload), serverDerived, `${commandType} ${JSON.stringify(commandPayload)}`);
+  }
+  assert.equal(commandAudienceIsServerDerived('poll'), false);
 });
 
 test('the shared last-name comparator is the Dashboard grid rule', () => {

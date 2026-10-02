@@ -11,6 +11,7 @@ import {
  * and who can no longer receive it. Pass the dialog's description component as
  * `summaryAs` so the headline is announced when the dialog opens. `open` is the
  * dialog's own flag; nothing is drawn while a closing dialog animates out.
+ * `offerCancel` is false in a dialog that closes with Done (Manage Tabs).
  */
 export default function CommandRecipients({
   open = true,
@@ -18,6 +19,7 @@ export default function CommandRecipients({
   unavailableIds = null,
   confirmIds = null,
   notice = '',
+  offerCancel = true,
   summaryAs: Summary = 'p',
   className,
 }) {
@@ -38,7 +40,7 @@ export default function CommandRecipients({
   const unavailable = new Set(unavailableIds || []);
   const unavailableNames = snapshotRecipientNames(snapshot, unavailableIds);
   const alert = notice || (unavailableNames.length > 0
-    ? unavailableRecipientsMessage(unavailableNames, { availableCount: confirmIds?.length || 0 })
+    ? unavailableRecipientsMessage(unavailableNames, { availableCount: confirmIds?.length || 0, offerCancel })
     : '');
 
   return (
