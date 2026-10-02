@@ -9,11 +9,15 @@ aws_region  = "us-east-1"
 # Networking
 vpc_cidr = "10.1.0.0/16"
 az_count = 2
-# Canonical Terraform-managed production baseline: ECS tasks remain private and
-# NAT remains enabled. Future public-ECS and NAT-removal values belong in their
-# separately reviewed phase plans/PRs and must not be preloaded here.
-ecs_tasks_in_public_subnets = false
-enable_nat_gateway          = true
+# ECS API and worker tasks run in the public subnets with public IPv4 addresses
+# and reach the internet through the internet gateway (live since 2026-09-30).
+# NAT was removed 2026-10-01 after a school-day soak carried 0 NAT bytes; only
+# RDS and Redis remain in the private subnets, and neither needs egress. Moving
+# tasks back to private subnets requires enable_nat_gateway = true first (the
+# variable validation refuses the combination). See
+# docs/AWS_COST_ROLLOUT_OPERATIONS.md, "Deferred phase 3: NAT removal".
+ecs_tasks_in_public_subnets = true
+enable_nat_gateway          = false
 
 # Database — pilot-cost posture for confirmed onboarding while schools are pending
 db_instance_class        = "db.t4g.medium"

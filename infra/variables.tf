@@ -125,6 +125,13 @@ variable "enable_nat_gateway" {
   description = "Create one NAT gateway per AZ for private ECS egress"
   type        = bool
   default     = true
+
+  # Private-subnet tasks have no other route to ECR, Secrets Manager, CloudWatch
+  # Logs or any third-party API, so they would fail to start without NAT.
+  validation {
+    condition     = var.enable_nat_gateway || var.ecs_tasks_in_public_subnets
+    error_message = "enable_nat_gateway can be false only while ecs_tasks_in_public_subnets is true; private ECS tasks need NAT for egress."
+  }
 }
 
 variable "ecs_tasks_in_public_subnets" {
