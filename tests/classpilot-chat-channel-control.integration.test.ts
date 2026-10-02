@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { and, eq, sql } from "drizzle-orm";
 import { Client } from "pg";
+import type { WebSocket } from "ws";
 import { chatMessages, classpilotChatDeliveries } from "../src/schema/classpilot.js";
 import { CLASSPILOT_CHAT_CHANNEL_CONTROL_SQL } from "../src/db/classpilotChatChannelControlMigration.js";
 
@@ -83,10 +84,16 @@ after(async () => {
     for (const table of ["classpilot_chat_deliveries", "chat_messages", "classpilot_active_hands", "session_settings",
       "classpilot_session_students", "classpilot_session_staff", "teaching_sessions", "group_students", "groups",
       "classpilot_classroom_states", "classpilot_command_targets", "classpilot_commands", "classpilot_student_control_states",
-      "classpilot_supervision_students", "classpilot_supervision_contexts", "student_sessions", "devices", "students", "settings"]) {
-      if (table === "student_sessions") await database.execute(sql`DELETE FROM student_sessions WHERE student_id=${ids.student}`);
-      else if (table === "group_students") await database.execute(sql`DELETE FROM group_students WHERE group_id IN (${ids.group}, ${ids.classGroup})`);
-      else await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${ids.school}`);
+      "classpilot_supervision_students", "classpilot_supervision_contexts", "heartbeats", "student_devices", "student_sessions", "devices", "students",
+      "settings"]) {
+      if (table === "student_devices" || table === "student_sessions") {
+        // Neither table has a school_id: their rows are found by the fixture's two students.
+        await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE student_id IN (${ids.student}, ${ids.classStudent})`);
+      } else if (table === "group_students") {
+        await database.execute(sql`DELETE FROM group_students WHERE group_id IN (${ids.group}, ${ids.classGroup})`);
+      } else {
+        await database.execute(sql`DELETE FROM ${sql.identifier(table)} WHERE school_id=${ids.school}`);
+      }
     }
   });
   await pool.query("DELETE FROM product_licenses WHERE school_id=$1", [ids.school]);
@@ -213,19 +220,24 @@ const refusedWith = (message: string) => (error: unknown): boolean => {
   assert.deepEqual({ status, code, message: error.message, expose }, { status: 403, code: "FAB_FEATURE_DISABLED", message, expose: true });
   return true;
 };
-const routeRefusesReply = async (t: TestContext, content: string) => {
+// One real app for the route checks, started on first use.
+const appUrl = async () => {
   if (!server) {
     const { createApp } = await import("../src/app.js");
     const listening = createServer(createApp());
     await new Promise<void>((resolve) => listening.listen(0, "127.0.0.1", resolve));
     server = listening;
   }
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+};
+const routeRefusesReply = async (t: TestContext, content: string) => {
+  const base = await appUrl();
   const monitor = (await import("../src/services/errorMonitor.js")).default;
   const tracked: unknown[] = [];
   t.mock.method(monitor, "trackError", (category: unknown) => { tracked.push(category); });
   const { signUserToken } = await import("../src/services/jwt.js");
   const token = signUserToken({ userId: ids.teacher, email: `${ids.teacher}@${ids.school}.example.edu`, isSuperAdmin: false });
-  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/classpilot/teacher/reply`, {
+  const response = await fetch(`${base}/api/classpilot/teacher/reply`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "x-school-id": ids.school, "content-type": "application/json" },
     body: JSON.stringify({ sessionId: liveSession.id, studentId: ids.classStudent, message: content }),
@@ -401,25 +413,177 @@ test("a reply racing the school switch-off waits at its share-locked read of the
   }
 });
 
+const scheduledReply = (content: string) => inSchool(() => tools.createScheduledTeacherReply({ schoolId: ids.school, contextId: context.id,
+  actorId: ids.teacher, studentId: ids.student, content }));
+const setActivitySwitches = async (patch: { chatEnabled?: boolean; chatPaused?: boolean }) => {
+  const { lifecycleRevision } = await inSchool(() => tools.scheduledClassroomToggles(ids.school, context));
+  return inSchool(() => tools.updateScheduledClassroomSettings({ schoolId: ids.school, contextId: context.id, actorId: ids.teacher,
+    expectedRevision: lifecycleRevision, ...patch }));
+};
+
 test("a scheduled reply keeps its own gate: a pause never blocks it, either hard switch does", async () => {
-  const reply = (content: string) => inSchool(() => tools.createScheduledTeacherReply({ schoolId: ids.school, contextId: context.id,
-    actorId: ids.teacher, studentId: ids.student, content }));
-  const setActivity = async (patch: { chatEnabled?: boolean; chatPaused?: boolean }) => {
-    const { lifecycleRevision } = await inSchool(() => tools.scheduledClassroomToggles(ids.school, context));
-    return inSchool(() => tools.updateScheduledClassroomSettings({ schoolId: ids.school, contextId: context.id, actorId: ids.teacher,
-      expectedRevision: lifecycleRevision, ...patch }));
-  };
-  await setActivity({ chatPaused: true });
-  assert.equal((await reply("Paused, still reachable")).delivery.state, "queued");
+  await setActivitySwitches({ chatPaused: true });
+  assert.equal((await scheduledReply("Paused, still reachable")).delivery.state, "queued");
   const before = await teacherRows({ supervisionContextId: context.id });
-  await setActivity({ chatEnabled: false });
-  await assert.rejects(reply("The activity switch is off"), refusedWith("Messaging is disabled"));
-  await setActivity({ chatEnabled: true, chatPaused: false });
+  await setActivitySwitches({ chatEnabled: false });
+  await assert.rejects(scheduledReply("The activity switch is off"), refusedWith("Messaging is disabled"));
+  await setActivitySwitches({ chatEnabled: true, chatPaused: false });
   await setSchoolMessaging(false);
   try {
-    await assert.rejects(reply("The school switch is off"), refusedWith("Messaging is disabled"));
+    await assert.rejects(scheduledReply("The school switch is off"), refusedWith("Messaging is disabled"));
   } finally {
     await setSchoolMessaging(true);
   }
   assert.deepEqual(await teacherRows({ supervisionContextId: context.id }), before, "a refused scheduled reply stores nothing");
+});
+
+// What a device is told about the channel. messagingChannelEnabled is the hard
+// switches alone (the school's, and the class's or activity's own): exactly what
+// a teacher reply must pass. The pause rides separately in messagesPaused, so a
+// device can show a paused thread read-only and hide a switched-off one.
+type FabChannel = { messagingChannelEnabled?: boolean; messagingEnabled?: boolean; messagesPaused?: boolean; pauseReason?: string | null };
+type ChannelView = [channelEnabled: boolean | undefined, messagingEnabled: boolean | undefined, messagesPaused: boolean | undefined,
+  pauseReason: string | null | undefined];
+const channel = (state: FabChannel | undefined): ChannelView =>
+  [state?.messagingChannelEnabled, state?.messagingEnabled, state?.messagesPaused, state?.pauseReason];
+const setTestingPause = (paused: boolean) => statement(sql`UPDATE settings SET pause_chat_during_testing=${paused} WHERE school_id=${ids.school}`);
+
+test("a live class FAB carries both hard switches, never the pause, so a paused class is told apart from a switched-off one", async () => {
+  const expectLiveChannel = async (expected: ChannelView, why: string) => {
+    const state = await inSchool(() => fab.buildStudentFabState(ids.school, ids.classStudent));
+    assert.deepEqual(state.activeSessionIds, [liveSession.id], "the live class owns the student");
+    assert.deepEqual(channel(state), expected, why);
+    assert.deepEqual(state.sessions.map((session) => channel(session)), [expected], `${why}: the per-class entry agrees`);
+    const toggles = await inSchool(() => fab.getEffectiveFabToggles(ids.school, liveSession.id));
+    assert.equal(toggles.messagingChannelEnabled, expected[0], `${why}: the effective toggles agree`);
+    // The channel is exactly the gate a live teacher reply passes.
+    if (expected[0]) assert.equal((await liveReply(`Sent while ${why}`)).delivery.state, "queued", `${why}: a reply goes through`);
+    else await assert.rejects(liveReply(`Sent while ${why}`), refusedWith("Messaging is turned off"));
+  };
+  await setClassSwitches({ chatEnabled: true, chatPaused: false });
+  await expectLiveChannel([true, true, false, null], "the class is open");
+  await setClassSwitches({ chatPaused: true });
+  await expectLiveChannel([true, false, true, "teacher"], "the class is paused");
+  await setClassSwitches({ chatEnabled: false });
+  await expectLiveChannel([false, false, true, "teacher"], "the paused class is switched off");
+  await setClassSwitches({ chatPaused: false });
+  await expectLiveChannel([false, false, false, null], "the class switch is off");
+  await setClassSwitches({ chatEnabled: true });
+  await setSchoolMessaging(false);
+  try {
+    await expectLiveChannel([false, false, false, null], "the school switch is off and the class switch on");
+    await setClassSwitches({ chatPaused: true });
+    await expectLiveChannel([false, false, true, "teacher"], "the school switch is off and the class paused");
+  } finally {
+    await setSchoolMessaging(true);
+  }
+  await setClassSwitches({ chatPaused: false });
+});
+
+test("a scheduled FAB channel is the activity switch AND the school switch, whatever the testing pause says", async () => {
+  const expectScheduledChannel = async (expected: ChannelView, why: string) => {
+    const state = await studentFab();
+    assert.equal(state.supervisionContextId, context.id, "the testing block owns the student");
+    assert.deepEqual(channel(state), expected, why);
+    const toggles = await inSchool(() => tools.scheduledClassroomToggles(ids.school, context));
+    assert.equal(toggles.messagingChannelEnabled, expected[0], `${why}: the scheduled toggles agree`);
+    if (expected[0]) assert.equal((await scheduledReply(`Sent while ${why}`)).delivery.state, "queued", `${why}: a reply goes through`);
+    else await assert.rejects(scheduledReply(`Sent while ${why}`), refusedWith("Messaging is disabled"));
+  };
+  await setActivitySwitches({ chatEnabled: true, chatPaused: false });
+  await setTestingPause(true);
+  try {
+    await expectScheduledChannel([true, false, true, "testing"], "the testing block pauses chat by default");
+    await setActivitySwitches({ chatEnabled: false });
+    await expectScheduledChannel([false, false, true, "testing"], "the testing block is switched off");
+    await setActivitySwitches({ chatEnabled: true, chatPaused: true });
+    await expectScheduledChannel([true, false, true, "teacher"], "the teacher paused the testing block");
+    await setActivitySwitches({ chatPaused: false });
+    await setSchoolMessaging(false);
+    try {
+      await expectScheduledChannel([false, false, true, "testing"], "the school switch is off during the testing block");
+    } finally {
+      await setSchoolMessaging(true);
+    }
+  } finally {
+    await setTestingPause(false);
+  }
+  await expectScheduledChannel([true, true, false, null], "the school opted out of the testing pause");
+});
+
+test("fab-state-sync pushes, the messaging-toggle command, the settings read and the heartbeat all carry the channel", async () => {
+  const { registerWsClient, authenticateWsClient, removeWsClient } = await import("../src/realtime/ws-broadcast.js");
+  const { syncClasspilotControlStatesToActiveDevices } = await import("../src/services/classpilotControlStateDelivery.js");
+  const { writeClasspilotRealtimeStatus } = await import("../src/services/classpilotRealtimeStatus.js");
+  const { createStudentToken } = await import("../src/services/deviceJwt.js");
+  const classDevice = randomUUID();
+  const classBinding = await inSchool(async () => {
+    await storage.createDevice({ schoolId: ids.school, deviceId: classDevice, classId: "default", deviceName: "Class Chromebook" });
+    return (await storage.startStudentSessionWithReplacements(ids.school, ids.classStudent, classDevice,
+      { authKind: "manual_shared", sessionRecoveryTokenHash: "d".repeat(64) })).session;
+  });
+  type DeviceFrame = { type?: string; data?: FabChannel; command?: { type?: string; data?: FabChannel } };
+  const deviceSocket = (frames: DeviceFrame[]) => ({ readyState: 1 as const,
+    send: (raw: Parameters<WebSocket["send"]>[0]) => { frames.push(JSON.parse(String(raw))); } } as WebSocket);
+  const lastPush = (frames: DeviceFrame[]) => frames.filter((frame) => frame.type === "fab-state-sync").at(-1)?.data;
+  const lastToggle = (frames: DeviceFrame[]) => frames.filter((frame) => frame.type === "remote-control"
+    && frame.command?.type === "messaging-toggle").at(-1)?.command?.data;
+  const liveFrames: DeviceFrame[] = [];
+  const scheduledFrames: DeviceFrame[] = [];
+  const liveSocket = deviceSocket(liveFrames);
+  const scheduledSocket = deviceSocket(scheduledFrames);
+  registerWsClient(liveSocket);
+  authenticateWsClient(liveSocket, { role: "student", schoolId: ids.school, studentId: ids.classStudent, studentSessionId: classBinding.id,
+    deviceId: classDevice, acceptedCapabilities: [] });
+  registerWsClient(scheduledSocket);
+  authenticateWsClient(scheduledSocket, { role: "student", schoolId: ids.school, studentId: ids.student, studentSessionId: bindingId,
+    deviceId: ids.device, acceptedCapabilities: ["scopedAuthorityChecksV1", "scheduledClassroomV1"] });
+  try {
+    // A live class switch change pushes the full FAB and the legacy toggle command to the class's device.
+    await setClassSwitches({ chatPaused: true });
+    assert.deepEqual(channel(lastPush(liveFrames)), [true, false, true, "teacher"], "a paused class keeps its channel");
+    assert.deepEqual(channel(lastToggle(liveFrames)), [true, false, true, "teacher"]);
+    await setClassSwitches({ chatEnabled: false });
+    assert.deepEqual(channel(lastPush(liveFrames)), [false, false, true, "teacher"], "switched off while paused: no channel");
+    assert.deepEqual(channel(lastToggle(liveFrames)), [false, false, true, "teacher"]);
+
+    const base = await appUrl();
+    const device = { authorization: `Bearer ${createStudentToken({ schoolId: ids.school, studentId: ids.classStudent,
+      deviceId: classDevice, sessionId: classBinding.id })}` };
+    const readSettings = async () => {
+      const response = await fetch(`${base}/api/classpilot/extension/settings`, { headers: device });
+      const settings: FabChannel & { fab?: FabChannel } = JSON.parse(await response.text());
+      assert.equal(response.status, 200, JSON.stringify(settings));
+      return [channel(settings.fab), channel(settings)];
+    };
+    assert.deepEqual(await readSettings(), [[false, false, true, "teacher"], [false, false, true, "teacher"]],
+      "the settings read carries it inside fab and at the top level");
+
+    await setClassSwitches({ chatEnabled: true });
+    // Paused with the switch on is the state where the channel and messagingEnabled differ.
+    assert.deepEqual(await readSettings(), [[true, false, true, "teacher"], [true, false, true, "teacher"]],
+      "both settings copies report the channel itself, not messagingEnabled");
+    const heartbeatResponse = await fetch(`${base}/api/classpilot/device/heartbeat`, { method: "POST",
+      headers: { ...device, "content-type": "application/json" }, body: JSON.stringify({ requestFabState: true }) });
+    const heartbeat: { fab?: FabChannel } = JSON.parse(await heartbeatResponse.text());
+    assert.equal(heartbeatResponse.status, 200, JSON.stringify(heartbeat));
+    assert.deepEqual(channel(heartbeat.fab), [true, false, true, "teacher"], "the heartbeat's FAB recovery snapshot carries it");
+
+    // A scheduled testing block, re-pushed the way the activity settings route does after a change.
+    await setTestingPause(true);
+    await setActivitySwitches({ chatEnabled: false });
+    await writeClasspilotRealtimeStatus({ schoolId: ids.school, studentId: ids.student, studentSessionId: bindingId, deviceId: ids.device,
+      heartbeatId: randomUUID(), observedAt: Date.now(), acceptedCapabilities: ["scopedAuthorityChecksV1", "scheduledClassroomV1"] });
+    await syncClasspilotControlStatesToActiveDevices(ids.school, [ids.student]);
+    assert.deepEqual(channel(lastPush(scheduledFrames)), [false, false, true, "testing"], "a switched-off testing block no longer looks paused");
+    await setActivitySwitches({ chatEnabled: true });
+    await syncClasspilotControlStatesToActiveDevices(ids.school, [ids.student]);
+    assert.deepEqual(channel(lastPush(scheduledFrames)), [true, false, true, "testing"], "the testing pause alone keeps the channel");
+  } finally {
+    removeWsClient(liveSocket);
+    removeWsClient(scheduledSocket);
+    await setTestingPause(false);
+    await setActivitySwitches({ chatEnabled: true, chatPaused: false });
+    await setClassSwitches({ chatEnabled: true, chatPaused: false });
+  }
 });

@@ -91,6 +91,49 @@ describe("student chat channel control", () => {
     assert.match(fab, /messagingEnabled: schoolMessagingEnabled && sessionMessagingEnabled && !pause\.messagesPaused/);
   });
 
+  it("tells every device FAB surface the hard channel apart from the pause, by the teacher reply gate's rule", async () => {
+    const [fab, tools, devices, delivery, websocket, toolsEvents] = await Promise.all([
+      source("src/services/classpilotFab.ts"),
+      source("src/services/classpilotScheduledClassroomTools.ts"),
+      source("src/routes/classpilot/devices.ts"),
+      source("src/services/classpilotControlStateDelivery.ts"),
+      source("src/realtime/websocket.ts"),
+      source("src/services/classpilotToolsEvents.ts"),
+    ]);
+    // Both hard switches and nothing else: these exact expressions leave no room for the pause.
+    const toggles = fab.slice(fab.indexOf("export async function getEffectiveFabToggles"), fab.indexOf("export async function resolveStudentFabSessions"));
+    assert.match(toggles, /messagingChannelEnabled: schoolMessagingEnabled && sessionMessagingEnabled,/, "live: school AND class switch");
+    assert.match(tools, /const messagingChannelEnabled = school\?\.studentMessagingEnabled !== false && settings\?\.chatEnabled !== false;/,
+      "scheduled: school AND activity switch");
+
+    // Every FAB snapshot shape: 2.10.0 devices show a paused channel read-only and hide a closed one,
+    // while older devices drop the unknown key and keep reading messagingEnabled. Each shape is checked
+    // inside its own object literal, so the key and its value are pinned but not where the key sits.
+    const builder = fab.slice(fab.indexOf("export async function buildStudentFabState"), fab.indexOf("export async function getSessionStudentDeviceIds"));
+    const shapes = [...builder.matchAll(/\breturn \{[\s\S]*?\};/g)].map(([shape]) => shape);
+    assert.equal(shapes.length, 3, "the scheduled classroom, disabled supervision and live class shapes");
+    const [scheduledShape = "", disabledShape = "", classShape = ""] = shapes;
+    assert.match(scheduledShape, /\bmessagingChannelEnabled: toggles\.messagingChannelEnabled,/, "scheduled classroom shape");
+    assert.match(disabledShape, /\bmessagingChannelEnabled: false,/, "disabled supervision shape");
+    assert.match(classShape, /^\s+messagingChannelEnabled,$/m, "aggregate class shape");
+    assert.match(builder, /sessionStates\.push\(\{[^}]*\bmessagingChannelEnabled: toggles\.messagingChannelEnabled,/, "per-session shape");
+    assert.match(builder, /messagingChannelEnabled = messagingChannelEnabled \|\| toggles\.messagingChannelEnabled;/, "aggregated like messagingEnabled");
+    const fanout = fab.slice(fab.indexOf("export async function updateAndFanoutSessionFabSettings"));
+    assert.match(fanout, /type: "messaging-toggle",[\s\S]*?messagingChannelEnabled: toggles\.messagingChannelEnabled,[\s\S]*?type: "hand-raising-toggle"/,
+      "the legacy messaging-toggle command");
+    const sync = delivery.slice(delivery.indexOf("export async function syncClasspilotControlStatesToActiveDevices"));
+    assert.match(sync, /\} catch \{[^}]*fabState = \{[^}]*\bmessagingChannelEnabled: false,/, "the fail-closed push closes the channel too");
+    const settingsRoute = devices.slice(devices.indexOf('router.get("/extension/settings"'), devices.indexOf('router.post("/extension/student-login"'));
+    assert.match(settingsRoute, /: \{ \.\.\.settingsFab,[^}]*\bmessagingChannelEnabled: false\b[^}]*\}/, "no channel outside full monitoring");
+    assert.match(settingsRoute, /messagingChannelEnabled: monitoringPolicy\.policyMode === "full" && settingsFab\.messagingChannelEnabled,/, "top-level copy");
+
+    // These surfaces forward the builder's whole snapshot. An explicit field list there would drop the key.
+    assert.match(websocket, /const fab = await buildStudentFabState\(schoolId, payload\.studentId,/, "WebSocket auth-success builds the snapshot");
+    assert.match(websocket, /fab: \{\s+\.\.\.prepared\.fab,/, "auth-success settings.fab spreads it whole");
+    assert.match(toolsEvents, /buildStudentFabState\(scope\.schoolId, binding\.studentId,[\s\S]*?classpilotFabStatePushFrame\(\{[^\n]*\bdata: snapshot \}\)/,
+      "the class tools fab-state-sync push forwards it whole");
+  });
+
   it("refuses a live teacher reply on either hard switch, never on a pause, before anything is stored", async () => {
     const storage = await source("src/services/storage.ts");
     const reply = storage.slice(
