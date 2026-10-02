@@ -146,6 +146,29 @@ try {
     try { & $validator -Phase NatRollback -PlanPath $crossWired -PlanSha256 (Get-Sha $crossWired) -ForwardPlanPath $natDestroy -ForwardPlanSha256 (Get-Sha $natDestroy)|Out-Null } catch { $crossWiredRejected=$_.Exception.Message -match 'changed stable field' }
     Assert-Condition $crossWiredRejected "NatRollback must reject cross-wired subnet recovery even when the action count remains exact."
 
+    # The unknown leaves the current AWS provider actually emits for these creates,
+    # taken from the first real production NatRollback plan (2026-10-02).
+    $providerUnknown=@{
+        eip=@("allocation_id","arn","association_id","carrier_ip","customer_owned_ip","id","instance","ipam_pool_id","network_border_group","network_interface","private_dns","private_ip","ptr_record","public_dns","public_ip","public_ipv4_pool","vpc")
+        nat=@("allocation_id","association_id","id","network_interface_id","private_ip","public_ip","secondary_private_ip_address_count","secondary_private_ip_addresses")
+        route=@("id","instance_id","instance_owner_id","nat_gateway_id","network_interface_id","origin","state")
+    }
+    function New-UnknownLeaves([string[]]$Names) { $o=[ordered]@{}; foreach($n in $Names){$o[$n]=$true}; [pscustomobject]$o }
+    $providerShapeChanges=@($natAddresses|ForEach-Object{
+        $kind=if($_ -match 'aws_eip'){"eip"}elseif($_ -match 'aws_nat_gateway'){"nat"}else{"route"}
+        New-Change $_ @("create") $null (&$natValue $_ $true) (New-UnknownLeaves $providerUnknown[$kind])
+    })
+    $providerShape=Register-Plan "nat-create-provider-shape" $providerShapeChanges $natConfiguration
+    $providerShapeResult=& $validator -Phase NatRollback -PlanPath $providerShape -PlanSha256 (Get-Sha $providerShape) -ForwardPlanPath $natDestroy -ForwardPlanSha256 (Get-Sha $natDestroy)|ConvertFrom-Json
+    Assert-Condition ($providerShapeResult.valid -eq $true) "NatRollback must accept the provider-computed unknown leaves of a real six-add plan."
+
+    $unreviewedLeafChanges=@($providerShapeChanges|ForEach-Object{$_|ConvertTo-Json -Depth 30|ConvertFrom-Json -Depth 30})
+    ($unreviewedLeafChanges|Where-Object address -eq 'module.vpc.aws_eip.nat[0]').change.after_unknown|Add-Member -NotePropertyName customer_owned_ipv4_pool -NotePropertyValue $true
+    $unreviewedLeaf=Register-Plan "nat-create-unreviewed-leaf" $unreviewedLeafChanges $natConfiguration
+    $unreviewedLeafRejected=$false
+    try { & $validator -Phase NatRollback -PlanPath $unreviewedLeaf -PlanSha256 (Get-Sha $unreviewedLeaf) -ForwardPlanPath $natDestroy -ForwardPlanSha256 (Get-Sha $natDestroy)|Out-Null } catch { $unreviewedLeafRejected=$_.Exception.Message -match 'unreviewed nested unknown leaves \[customer_owned_ipv4_pool\]' }
+    Assert-Condition $unreviewedLeafRejected "NatRollback must still reject an unknown leaf outside the reviewed provider-computed set."
+
     $healthBefore=[pscustomobject]@{id="hc-old";type="HTTPS";fqdn="school-pilot.net";port=443;resource_path="/health";request_interval=30;failure_threshold=3;measure_latency=$true}
     $healthAfter=$healthBefore|ConvertTo-Json|ConvertFrom-Json;$healthAfter.id=$null;$healthAfter.measure_latency=$false
     $alarmBefore=[pscustomobject]@{alarm_name="health";namespace="AWS/Route53";metric_name="HealthCheckStatus";comparison_operator="LessThanThreshold";threshold=1;period=60;evaluation_periods=3;treat_missing_data="breaching";alarm_actions=@("topic");dimensions=[pscustomobject]@{HealthCheckId="old"}}
