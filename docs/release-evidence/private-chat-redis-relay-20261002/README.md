@@ -31,3 +31,11 @@ The [manifest](manifest.json) records commands, exact source/test identity, raw 
 The independent ordinary-CI RLS fixture failure is separately corrected in `b4b6fed268e3b5f8c5e42fcde10bac1eb67281f4`: foreign insertion must produce either the exact invoker assignment-mismatch 23514 or this table's exact FORCE-RLS WITH CHECK 42501. A malformed same-school parent and immutable ownership/generation checks remain strict 23514. The saved green runs include this correction. Original root CI log is retained externally as `release-297-ci-db-second.log`, SHA-256 `5735a63aa0e1449a3d3018b130d0599cff4141590374418992a4b972fcb46652`; final current-head CI remains required.
 
 No production deployment, merge, real-school mutation or operational activation occurred as part of these tests.
+
+## Combined fastpath checkpoint
+
+The [fastpath manifest](fastpaths-manifest.json) preserves the subsequent combined regression proof at clean local source `e5b51d625095791b1e5631959a6714bdfd791793`. The four relevant product blobs are identical to root `b07953db7a0b6e7ac92b7971a4004b742137a65d`, including the empty-outbox and one-statement unlocked entitlement optimizations. Canonical fixture cleanup checkpoint `e87d2b1b` is included.
+
+The [ordinary log](fastpaths-final-ordinary-green.log.gz) records **75/75 passed**, zero failures/skips: 56 native private-chat cases, six hermetic RLS cases and 13 privileged ADMIN entitlement cases. The [restricted log](fastpaths-final-restricted-green.log.gz) records **62/62 passed**, zero failures/skips: the same private-chat and hermetic RLS suites with a non-owner NOSUPERUSER/NOBYPASSRLS application role. The entitlement suite is excluded from the restricted run; its ADMIN queries are not evidence of restricted-role enforcement. Both runs completed teardown and generated-role cleanup.
+
+Exact commands, test/product blobs and raw/gzip hashes are recorded separately from the earlier relay baseline. No production source, build/type allowance, browser fixture or deadline changed for this record. These local checks precede final integrated-source CI and capacity validation.
