@@ -229,4 +229,36 @@ describe("PassPilot rule tables under forced RLS", { skip: RLS ? false : "requir
     const rows = await system!.query("SELECT rule_code, issued_via, actor_user_id FROM passpilot_pass_denials WHERE school_id = $1 AND student_id = $2", [tenant.schoolId, next]);
     assert.deepEqual(rows.rows, [{ rule_code: "PASSPILOT_RULE_DESTINATION_CAPACITY", issued_via: "teacher", actor_user_id: tenant.teacherId }]);
   });
+
+  it("conceals retained encounter overrides for teachers with Rules on/off while administrator reads remain scoped", async () => {
+    const [a, b] = [await createTenant("Privacy A"), await createTenant("Privacy B")];
+    const passId = randomUUID();
+    await system!.query(`INSERT INTO passes(id, school_id, student_id, grade_id, destination, status, duration, expires_at, rule_override_code)
+      VALUES ($1, $2, $3, $4, 'nurse', 'active', 5, now() + interval '5 minutes', 'PASSPILOT_RULE_ENCOUNTER')`, [passId, a.schoolId, a.students[0], a.gradeId]);
+    const read = async (tenant: Tenant, userId: string) => {
+      const response = await fetch(`${baseUrl}/passpilot/passes/history`, { headers: {
+        authorization: `Bearer ${signUserToken({ userId, email: `${TAG}-${userId.slice(0, 8)}@example.test`, isSuperAdmin: false })}`,
+        "x-school-id": tenant.schoolId,
+      } });
+      assert.equal(response.status, 200, await response.clone().text());
+      return response.json() as Promise<{ passes: Array<{ id: string; ruleOverrideCode?: string }> }>;
+    };
+    const previousMode = process.env.PASSPILOT_RULES_MODE;
+    try {
+      for (const mode of ["on", "off"]) {
+        process.env.PASSPILOT_RULES_MODE = mode;
+        const teacher = await read(a, a.teacherId);
+        assert.ok(teacher.passes.some((pass) => pass.id === passId));
+        assert.equal(JSON.stringify(teacher).includes("PASSPILOT_RULE_ENCOUNTER"), false, mode);
+        const administrator = await read(a, a.adminId);
+        assert.equal(administrator.passes.find((pass) => pass.id === passId)?.ruleOverrideCode, "PASSPILOT_RULE_ENCOUNTER");
+        assert.equal(JSON.stringify(await read(b, b.adminId)).includes(passId), false, "another school's administrator cannot see the retained pass");
+      }
+    } finally {
+      if (previousMode === undefined) delete process.env.PASSPILOT_RULES_MODE;
+      else process.env.PASSPILOT_RULES_MODE = previousMode;
+    }
+    const stored = await system!.query("SELECT rule_override_code FROM passes WHERE id = $1", [passId]);
+    assert.equal(stored.rows[0].rule_override_code, "PASSPILOT_RULE_ENCOUNTER");
+  });
 });

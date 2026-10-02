@@ -1141,6 +1141,24 @@ export const classpilotUsageRollups = pgTable(
 export type ClasspilotUsageRollup = typeof classpilotUsageRollups.$inferSelect;
 export type InsertClasspilotUsageRollup = typeof classpilotUsageRollups.$inferInsert;
 
+// Computation coverage, including successful days with no observations. No
+// student, domain or device data: this is metadata for the existing aggregates.
+export const classpilotUsageRollupDays = pgTable("classpilot_usage_rollup_days", {
+  schoolId: text("school_id").notNull(),
+  usageDate: date("usage_date", { mode: "string" }).notNull(),
+  dayStartAt: timestamp("day_start_at", { withTimezone: true }).notNull(),
+  dayEndAt: timestamp("day_end_at", { withTimezone: true }).notNull(),
+  processedThrough: timestamp("processed_through", { withTimezone: true }).notNull(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  isFinal: boolean("is_final").notNull().default(false),
+}, (table) => [
+  unique("cp_usage_days_school_date_unique").on(table.schoolId, table.usageDate),
+  foreignKey({ columns: [table.schoolId], foreignColumns: [schools.id], name: "cp_usage_days_school_fk" }).onDelete("cascade"),
+  check("cp_usage_days_window_check", sql`${table.dayStartAt} < ${table.dayEndAt}
+    AND ${table.processedThrough} >= ${table.dayStartAt} AND ${table.processedThrough} <= ${table.dayEndAt}
+    AND (NOT ${table.isFinal} OR ${table.processedThrough} = ${table.dayEndAt})`),
+]);
+
 // ============================================================================
 // Scoped classroom monitoring events - privacy-bounded extension telemetry
 // ============================================================================

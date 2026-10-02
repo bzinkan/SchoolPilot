@@ -1282,7 +1282,7 @@ async function purgeExpiredHeartbeats() {
       await schedulerPool.query(`DELETE FROM daily_usage WHERE school_id = $1 AND date < $2`, [school.id, cutoffLocalDate]);
       // Monitored Browser Time rollups share the daily aggregate horizon. A
       // failure here must not skip this school's remaining retention steps.
-      await schedulerPool.query(`DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
+      await schedulerPool.query(`WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "purgeExpiredHeartbeats", errorCode: "USAGE_ROLLUP_RETENTION_FAILED",
         });

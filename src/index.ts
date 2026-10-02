@@ -16,6 +16,7 @@ import {
   PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL,
 } from "./db/passpilotRulesMigration.js";
 import { CLASSPILOT_USAGE_ROLLUPS_SQL } from "./db/classpilotUsageRollupsMigration.js";
+import { CLASSPILOT_USAGE_ROLLUP_DAYS_SQL } from "./db/classpilotUsageRollupDaysMigration.js";
 import { FLIGHT_PATH_RESOURCES_EXPAND_SQL } from "./db/flightPathResourcesMigration.js";
 import { MICROSOFT_SIGN_IN_EXPAND_SQL } from "./db/microsoftSignInMigration.js";
 import { SHARED_TEACHING_RESOURCES_EXPAND_SQL } from "./db/sharedTeachingResourcesMigration.js";
@@ -4986,6 +4987,7 @@ export async function runStartupMigrations(): Promise<void> {
   await pool.query(PASSPILOT_RULES_STUDENT_ISSUED_INDEX_SQL);
   await pool.query(PASSPILOT_RULES_ACTIVE_DESTINATION_INDEX_SQL);
   await pool.query(CLASSPILOT_USAGE_ROLLUPS_SQL);
+  await pool.query(CLASSPILOT_USAGE_ROLLUP_DAYS_SQL);
   await pool.query(FLIGHT_PATH_RESOURCES_EXPAND_SQL);
 
 }

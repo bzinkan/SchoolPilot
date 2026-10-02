@@ -53,7 +53,7 @@ export type ClasspilotUsageRollupPool = ClasspilotUsageRollupQueryable & {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-/** A rerun of today starts this far before the last computation (commit lag). */
+/** Probe from this far before the stored processed cutoff (late arrivals). */
 const RECOMPUTE_LOOKBACK_MS = 5 * 60 * 1000;
 /**
  * runHeavyJobsSerially purges retention only once an hour's UTC minute reaches
@@ -92,9 +92,16 @@ CROSS JOIN LATERAL (
 ) AS event
 WHERE student.school_id = $1`;
 
-export const CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL = `SELECT MAX(computed_at) AS computed_at
-FROM classpilot_usage_rollups
+export const CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL = `SELECT processed_through, is_final
+FROM classpilot_usage_rollup_days
 WHERE school_id = $1 AND usage_date = $2::date`;
+
+export const CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL = `INSERT INTO classpilot_usage_rollup_days
+  (school_id, usage_date, day_start_at, day_end_at, processed_through, is_final, computed_at)
+VALUES ($1, $2::date, $3::timestamptz, $4::timestamptz, $5::timestamptz, $6, now())
+ON CONFLICT (school_id, usage_date) DO UPDATE SET
+  day_start_at = EXCLUDED.day_start_at, day_end_at = EXCLUDED.day_end_at,
+  processed_through = EXCLUDED.processed_through, is_final = EXCLUDED.is_final, computed_at = EXCLUDED.computed_at`;
 
 export const CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL = `SELECT EXISTS (
   SELECT 1 FROM heartbeats AS heartbeat
@@ -384,6 +391,14 @@ export async function rollupClasspilotUsageDay(
     await client.query("BEGIN");
     try {
       await client.query(CLASSPILOT_USAGE_ROLLUP_LOCK_SQL, [options.schoolId]);
+      // Recheck under the same lock as the rewrite: stale queued work cannot
+      // regress a newer snapshot or turn a finalized day back into a live day.
+      const prior = await client.query(CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL, [options.schoolId, options.day.date]);
+      const processedThrough = asDate(prior.rows[0]?.processed_through);
+      if (processedThrough && processedThrough >= options.windowEndUtc) {
+        await client.query("COMMIT");
+        return { rowCount: 0, seconds: 0, heartbeatCount: 0 };
+      }
       await client.query(CLASSPILOT_USAGE_ROLLUP_DELETE_SQL, [options.schoolId, options.day.date]);
       const result = await client.query(CLASSPILOT_USAGE_ROLLUP_INSERT_SQL, [
         options.schoolId,
@@ -391,6 +406,13 @@ export async function rollupClasspilotUsageDay(
         utcTimestampForSql(options.windowEndUtc),
         options.day.date,
         classpilotUsageExclusionsJson(options.exclusions),
+      ]);
+      // Aggregate-change triggers invalidate prior coverage. Restore it only
+      // after a successful insert, including the successful empty-day case.
+      await client.query(CLASSPILOT_USAGE_ROLLUP_COMPLETE_SQL, [
+        options.schoolId, options.day.date, options.day.dayStartUtc.toISOString(),
+        options.day.dayEndUtc.toISOString(), options.windowEndUtc.toISOString(),
+        options.windowEndUtc >= options.day.dayEndUtc,
       ]);
       await client.query("COMMIT");
       const row = result.rows[0] ?? {};
@@ -440,10 +462,12 @@ async function hasHeartbeatsSinceLastRollup(
   windowEndUtc: Date
 ): Promise<boolean> {
   const last = await pool.query(CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL, [schoolId, day.date]);
-  const computedAt = asDate(last.rows[0]?.computed_at);
-  const since = computedAt
-    ? new Date(Math.max(day.dayStartUtc.getTime(), computedAt.getTime() - RECOMPUTE_LOOKBACK_MS))
-    : day.dayStartUtc;
+  const processedThrough = asDate(last.rows[0]?.processed_through);
+  // Absence is not a successful empty computation: establish coverage once,
+  // even when no heartbeat exists. Computation time may be much later than the
+  // input cutoff while a school waits behind other work.
+  if (!processedThrough) return true;
+  const since = new Date(Math.max(day.dayStartUtc.getTime(), processedThrough.getTime() - RECOMPUTE_LOOKBACK_MS));
   if (since >= windowEndUtc) return false;
   const changed = await pool.query(CLASSPILOT_USAGE_ROLLUP_CHANGED_SQL, [
     schoolId,
@@ -561,11 +585,13 @@ export async function runClasspilotUsageRollup(options: {
     const context = await contextFor(task.school);
     if (task.kind === "finalize") {
       const day = context.days.yesterday;
-      if (await options.markers.isComplete(task.school.id, day.date)) return;
+      // Redis is only a cache. Pre-ledger or invalidated cache entries cannot
+      // assert a day was computed, and failed/skipped work is never completion.
+      const coverage = await options.pool.query(CLASSPILOT_USAGE_ROLLUP_LAST_COMPUTED_SQL, [task.school.id, day.date]);
+      if (coverage.rows[0]?.is_final === true) return;
       if (day.dayStartUtc < context.horizon) {
         // Partly purged already: keep the rows computed while it was today.
         outcome.retentionSkippedDays += 1;
-        await options.markers.markComplete(task.school.id, day.date);
         return;
       }
       await rewrite(context, day, day.dayEndUtc);

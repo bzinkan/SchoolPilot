@@ -37,8 +37,8 @@ $script:ProductRlsGates = @(
     [pscustomobject]@{ Feature = 'passpilotRules'; Name = 'PASSPILOT_RULES_MODE'
         Tables = @('passpilot_destination_policies', 'passpilot_pass_limits', 'passpilot_encounter_restrictions', 'passpilot_pass_denials') },
     [pscustomobject]@{ Feature = 'passpilotAppointments'; Name = 'PASSPILOT_APPOINTMENTS_MODE'; Tables = @('passpilot_appointments') },
-    [pscustomobject]@{ Feature = 'usageRollup'; Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Tables = @('classpilot_usage_rollups') },
-    [pscustomobject]@{ Feature = 'digitalUsage'; Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Tables = @('classpilot_usage_rollups') }
+    [pscustomobject]@{ Feature = 'usageRollup'; Name = 'CLASSPILOT_USAGE_ROLLUP_MODE'; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days') },
+    [pscustomobject]@{ Feature = 'digitalUsage'; Name = 'CLASSPILOT_DIGITAL_USAGE_MODE'; Tables = @('classpilot_usage_rollups', 'classpilot_usage_rollup_days') }
 )
 $script:ProductSchoolIdPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 $script:ProductPlanTool = 'deploy-product-runtime-config'
@@ -265,9 +265,19 @@ function Assert-DailyUsagePromotionEvidence {
 }
 
 function Assert-ProductPreconditions {
-    param([Collections.IDictionary]$Prior, [Collections.IDictionary]$Desired, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot)
-    # Only activations carry preconditions, so a turn-off is never blocked.
+    param([Collections.IDictionary]$Prior, [Collections.IDictionary]$Desired, $Snapshot, [string]$EvidencePath, [string]$Digest, [string]$RepositoryRoot, [string]$AppSha)
+    # Admission checks apply to activation; source compatibility applies while
+    # usage remains on. Turning both usage flags off stays available.
     $activations = Get-ProductActivations $Prior $Desired
+    if ($Desired['CLASSPILOT_USAGE_ROLLUP_MODE'] -ceq 'on' -or $Desired['CLASSPILOT_DIGITAL_USAGE_MODE'] -ceq 'on') {
+        # The snapshot binds BOTH serving task definitions to AppSha and digest.
+        # Inspect that release's source, never the local working tree: admitting
+        # the table alone cannot make a pre-ledger writer coverage-compatible.
+        $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/config/classpilotUsageModes.ts") -RepositoryRoot $RepositoryRoot
+        if ($source -cnotmatch 'export const CLASSPILOT_USAGE_COVERAGE_CONTRACT_VERSION = 1;') {
+            throw 'Monitored Browser Time requires a serving source SHA with usage coverage contract version 1 on both API and worker.'
+        }
+    }
     foreach ($gate in $script:ProductRlsGates) {
         if ($gate.Feature -cnotin $activations) { continue }
         foreach ($environment in $Snapshot.Environments) {
@@ -360,7 +370,7 @@ function New-ProductPlan {
     $snapshot = Get-ProductSnapshot $ExpectedApiArn $ExpectedWorkerArn $Digest $ReleaseSha
     $prior = Get-ProductManagedState $snapshot.Environments[0]
     $desired = Resolve-ProductDesiredState $prior $changes
-    $evidence = Assert-ProductPreconditions $prior $desired $snapshot $EvidencePath $Digest $repo
+    $evidence = Assert-ProductPreconditions $prior $desired $snapshot $EvidencePath $Digest $repo $ReleaseSha
     $scaling = Get-ScalingSnapshot
     if ($scaling.DynamicIn -or $scaling.DynamicOut -or $scaling.Scheduled) { throw 'Another operation holds autoscaling.' }
     Assert-ScheduledScalingContract
@@ -411,7 +421,7 @@ function Invoke-ProductApply {
     }
     $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     $evidencePath = if ($null -ne $Plan.dailyUsageEvidence) { [string]$Plan.dailyUsageEvidence.path } else { $null }
-    $evidence = Assert-ProductPreconditions $state.Prior $state.Desired $snapshot $evidencePath $Plan.imageDigest $repo
+    $evidence = Assert-ProductPreconditions $state.Prior $state.Desired $snapshot $evidencePath $Plan.imageDigest $repo $Plan.appSha
     if ($null -ne $evidence -and $evidence.sha256 -cne $Plan.dailyUsageEvidence.sha256) { throw 'Daily-usage evidence changed after planning.' }
     foreach ($check in @(
         @((Get-TaskFingerprint $snapshot.ApiTask.taskDefinition 'api'), $Plan.apiFingerprint),
