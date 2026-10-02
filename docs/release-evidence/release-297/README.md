@@ -1,5 +1,14 @@
 # Focused release 2.9.7 validation records
 
+The [local checkpoint manifest](local-checkpoints/manifest.json) preserves earlier
+broad runs, failed attempts and follow-up results in individually hashed gzip
+logs. Unfrozen or superseded runs are explicitly labeled and cannot certify the
+final release. The [private lifecycle record](local-checkpoints/private-lifecycle-6a1c80ab.json)
+contains its isolated source checkpoint, 32 ordinary and 32 restricted results,
+and a companion archive retaining the failing proofs and their corrections.
+The integration PR's final-head CI and ClassPilot's exact ZIP acceptance are
+separate evidence sources.
+
 [The manifest](focused-validation-5f406d8c.json) records exact commands, source
 SHA, timestamps, exit codes, test/assertion counts, raw-log hashes, sanitized-log
 hashes and the local schema scope. Its companion
