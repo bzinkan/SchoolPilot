@@ -160,6 +160,9 @@ export function useScheduledTestingView({ schoolId, viewerId, enabled }) {
     coverageSummary, summaryQueryKey, ownSupervisionContexts, displaySupervisionContexts: displayContexts,
     ownSupervisionStudentCount, activeCoverageCount, hasOwnSupervisionRoster, supervisionRosterRevision,
     automaticallyShowingSupervision, studentView, setStudentView, showOwnSupervision,
+    // True when staff picked the view shown; false when it follows the
+    // supervision groups (or the schedule) by itself.
+    studentViewChosen: Boolean(manualSelection),
     supervisionSummaryError: isError, supervisionSummaryRefreshing: isFetching,
     pendingSupervisionConfirmation: pendingContexts.length > 0, retrySupervisionSummary,
     refreshSupervisionSummary: refetch,
