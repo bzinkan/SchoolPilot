@@ -18,13 +18,14 @@ recipient, enforcement, tenancy or deployment health checks.
 | Item | Required record / current state |
 |---|---|
 | SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`, freshly fetched October 2, 2026 |
-| Integration branch | `codex/release-stabilization-297`; one integration PR, preserve original review branches |
-| ClassPilot lineage | #119 → #120 → #121 → #122, followed by the 2.9.7 stabilization commits |
+| Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603), preserve original review branches |
+| ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
 | Exact release source / CI | Pending final combined-source freeze and required checks; record full SHAs and run URLs |
 | API / worker artifacts | Pending compatible digest-pinned serving and rollback artifacts; record image digest, source SHA and task definitions |
-| Extension ZIP | Pending final source/package verifier; record ZIP SHA-256, file inventory and all supported Chrome results |
+| Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
+| Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Live validation | Not started; minimum 30 minutes with nonzero samples for every required lifecycle category |
 | Deployed / activated | No changes performed by this release preparation |
 
@@ -33,6 +34,28 @@ records exact heads, dependency bases, disposition and inclusion proofs. Its
 checkpoint is a review snapshot, not a final artifact identity. Final evidence
 must retain failed attempts and identify their source, environment and repair;
 never substitute a later passing run for an earlier failure.
+
+For the new 2.9.7 profiles, the legacy field names `RequiredMergeSha` and
+`classPilotMergeSha` identify the **exact packaged source** above. They do not
+prove a merge. Preserve that commit through a separately authorized merge and
+record the actual merge commit independently. After that merge, the version tag
+must point to the packaged ancestor, not to a different build. Before any upload
+or activation, run these checks in the ClassPilot repository and verify the ZIP
+hash against the value above:
+
+```powershell
+git fetch origin main --tags
+git merge-base --is-ancestor 065be165b5df704d84eb716e3fb914c1fed17f98 origin/main
+git rev-parse 'v2.9.7^{commit}'
+Get-FileHash -Algorithm SHA256 -LiteralPath .\dist\ClassPilot-v2.9.7.zip
+```
+
+Require the ancestry command to exit zero and the tag output to equal that exact
+40-character source SHA. The runtime receipt compares pinned literals; it does
+not resolve the ClassPilot tag itself. A missing tag, squash/rebase that loses
+the source ancestry, changed source or changed ZIP requires reconciliation and
+new acceptance/bindings. These checks do not authorize creating or publishing a
+tag, and no 2.9.7 tag or merged status is claimed here.
 
 ## Acceptance before an operator green light
 
