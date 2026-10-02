@@ -116,13 +116,15 @@ $script:RoadmapProfileCapabilities = @{
     "focus-tab-pilot" = "focusTabV1"
     "focus-tab-global-on" = "focusTabV1"
     "focus-tab-off" = "focusTabV1"
+    "private-chat-lifecycle-global-on" = "privateChatLifecycleV1"
+    "private-chat-lifecycle-global-off" = "privateChatLifecycleV1"
 }
 $script:PreciseRestrictionCapability = "preciseRestrictionResourcesV1"
 $script:RoadmapGlobalModes = @('after-hours-safety-only-global-on', 'school-website-block-global-on', "precise-restriction-resources-global-on", "focus-tab-global-on")
-$script:RoadmapGlobalCapabilities = @('afterHoursSafetyOnlyV1', 'schoolWebsiteBlockEnforcementV1', "preciseRestrictionResourcesV1", "focusTabV1")
+$script:RoadmapGlobalCapabilities = @('afterHoursSafetyOnlyV1', 'schoolWebsiteBlockEnforcementV1', "preciseRestrictionResourcesV1", "focusTabV1", 'privateChatLifecycleV1')
 $script:RoadmapCapabilities = @(
     "afterHoursSafetyOnlyV1", "schoolWebsiteBlockEnforcementV1", $script:ReadOnlyObservationCapability,
-    $script:PreciseRestrictionCapability, "focusTabV1"
+    $script:PreciseRestrictionCapability, "focusTabV1", 'privateChatLifecycleV1'
 )
 $script:RoadmapPilotModes = @(
     "after-hours-safety-only-pilot", "school-website-block-pilot", "read-only-observation-pilot",
@@ -130,7 +132,7 @@ $script:RoadmapPilotModes = @(
 )
 $script:RoadmapOffModes = @(
     "after-hours-safety-only-off", "school-website-block-off", "read-only-observation-off",
-    "precise-restriction-resources-off", "focus-tab-off"
+    "precise-restriction-resources-off", "focus-tab-off", 'private-chat-lifecycle-global-off'
 )
 $script:AdditiveCapabilities = @(
     $script:TrackingWindowCapability,
@@ -152,8 +154,8 @@ $script:AllCapabilities = @(
     "safetyEvidenceCaptureV1",
     $script:RetiredCapability,
     "kioskLaunchTicketV2"
-) + @($script:AdditiveCapabilities | Where-Object { $_ -cne "focusTabV1" }) + @(
-    "kioskLaunchTicketV1", "focusTabV1"
+) + @($script:AdditiveCapabilities | Where-Object { $_ -cnotin @("focusTabV1", 'privateChatLifecycleV1') }) + @(
+    "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
 )
 $script:CapabilityFlags = [ordered]@{
     scopedAuthorityChecksV1       = "CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1"
@@ -177,6 +179,7 @@ $script:CapabilityFlags = [ordered]@{
     scheduledClassroomV1          = "CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1"
     preciseRestrictionResourcesV1 = "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1"
     focusTabV1                   = "CLASSPILOT_CAP_FOCUS_TAB_V1"
+    privateChatLifecycleV1       = 'CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1'
 }
 $script:RuntimeEnvironmentNames = @(
     "CLASSPILOT_PROTOCOL_V3_ENABLED",
@@ -293,6 +296,9 @@ function Get-RuntimeProjectionCapabilities {
     }
     if (-not [string]::IsNullOrEmpty($RegistryTargetAppSha)) {
         $target = @(Get-ServingProtocolCapabilities -RepositoryRoot $RepositoryRoot -AppSha $RegistryTargetAppSha)
+        if ('privateChatLifecycleV1' -cin $known -and 'privateChatLifecycleV1' -cnotin $target) {
+            throw 'A lifecycle-aware serving image cannot project to a pre-lifecycle writer; retained private-chat enforcement may be latched. Roll forward with a compatible image.'
+        }
         $known = @($known | Where-Object { $_ -cin $target })
     }
     return ,$known
@@ -2588,6 +2594,12 @@ function Assert-RoadmapRuntimeControls {
             $Rollouts.scopedAuthorityChecksV1.PSObject.Properties.Name -contains "schoolIds") {
             throw "Roadmap pilots require the completed global repaired-capability runtime."
         }
+        if ($capability -ceq 'privateChatLifecycleV1' -and
+            ([string]$Values.CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1 -cne 'true' -or
+             [string]$Rollouts.studentChatIdempotencyV1.mode -cne 'on' -or
+             $Rollouts.studentChatIdempotencyV1.PSObject.Properties.Name -contains 'schoolIds')) {
+            throw 'Private chat lifecycle requires global scoped authority and student chat idempotency.'
+        }
     }
 }
 
@@ -3068,6 +3080,14 @@ function Assert-AllowedRuntimeTransition {
                 [string]$targetControls[$selectedCapability].schoolIds[0] -cne
                     [string]$TargetRuntimeConfiguration.PilotSchoolId) {
                 throw "Roadmap activation must begin with one exact school-scoped pilot from off."
+            }
+        }
+        elseif ($roadmapMode -ceq 'private-chat-lifecycle-global-on') {
+            if ([string]$sourceControls[$selectedCapability].mode -cne 'off' -or
+                [string]$targetControls[$selectedCapability].flag -cne 'true' -or
+                [string]$targetControls[$selectedCapability].mode -cne 'on' -or
+                @($targetControls[$selectedCapability].schoolIds).Count -ne 0) {
+                throw 'Private chat lifecycle global activation must begin from off and preserve every other control.'
             }
         }
         elseif ($roadmapMode -cin $script:RoadmapGlobalModes) {
@@ -4236,6 +4256,7 @@ function New-RuntimeConfigPlan {
             -RegistryTargetAppSha $RegistryTargetAppSha)
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition -ContainerName "api" `
         -TargetRuntimeConfiguration $runtime -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    Assert-PrivateChatRuntimeCompatibility -Runtime $runtime -Snapshot $snapshot -RepositoryRoot $RepositoryRoot -AppSha $AppSha
     Assert-RoadmapActivationEvidence -Runtime $runtime -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
         -ReleaseSnapshot $roadmapReleaseSnapshot -PilotSnapshot $roadmapPilotSnapshot -ToolSha $toolSha `
         -AppSha $AppSha -ImageDigest $ImageDigest -RepositoryRoot $RepositoryRoot `
@@ -4877,6 +4898,7 @@ function Invoke-RuntimeConfigApply {
     Assert-AllowedRuntimeTransition -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
         -ContainerName "api" -TargetRuntimeConfiguration $runtime `
         -AllowSyntheticOnlyGlobalActivation:$syntheticOnlyWaiver
+    Assert-PrivateChatRuntimeCompatibility -Runtime $runtime -Snapshot $snapshot -RepositoryRoot ([string]$Plan.repositoryRoot) -AppSha ([string]$Plan.appSha)
     Assert-RoadmapActivationEvidence -Runtime $runtime -SourceTaskDefinition $snapshot.ApiTask.taskDefinition `
         -ReleaseSnapshot $roadmapReleaseSnapshot -PilotSnapshot $roadmapPilotSnapshot -ToolSha ([string]$Plan.toolSha) `
         -AppSha ([string]$Plan.appSha) -ImageDigest ([string]$Plan.imageDigest) -RepositoryRoot ([string]$Plan.repositoryRoot) `

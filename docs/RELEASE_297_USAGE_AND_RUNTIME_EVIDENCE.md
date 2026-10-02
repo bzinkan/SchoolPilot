@@ -98,6 +98,28 @@ Plan/Apply hash and revalidate the exact receipt. Unrelated feature plans reject
 usage observation evidence. Turning reports off remains available, while retained
 coverage tables, RLS, compatible writers and retention continue to protect data.
 
+## Private-chat lifecycle runtime
+
+Schema-7 `private-chat-lifecycle-global-on` and
+`private-chat-lifecycle-global-off` preserve every other capability, school
+setting and announcement control. Activation requires global scoped authority
+and student-chat idempotency, the bound reviewed 2.9.7 successor, and the complete
+preserved 129-table GUC admission on both serving services. The singleton
+`classpilot_private_chat_threads` admission is indivisible and must already have
+passed the backend deployment's actual migration/catalog/FORCE-RLS checks.
+The runtime tool does not perform migrations or infer catalog admission merely
+from a table's existence.
+
+Both profiles require the exact serving source's lifecycle writer version 1,
+matching immutable migration and sticky `private_chat_lifecycle_required`
+enforcement. Capability withdrawal stops new private issuance; persisted thread
+generations/epochs, expiry and cleanup remain enforced. It neither restores a
+legacy private writer nor turns off announcements. Once a lifecycle-aware source
+is serving, the tool conservatively refuses registry projection onto an image
+that predates the lifecycle contract, even with the capability off. Use a
+compatible repaired image; capability withdrawal is not data rollback.
+Global eligibility includes qualifying schools added later without manual pins.
+
 ## Capacity acceptance remains separate
 
 Historical million-observation runs remain immutable. They measured SQL-stored

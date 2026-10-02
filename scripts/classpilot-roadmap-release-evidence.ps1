@@ -146,6 +146,9 @@ function Assert-RoadmapPilotEvidence {
     if (-not $ReleaseEvidenceSha256 -and $null -ne $evidence.releaseEvidenceSha256) {
         throw 'Live-only promotion must not claim a managed-waiver receipt.'
     }
+    if ($ReleaseEvidenceSha256 -and $evidence.releaseEvidenceSha256 -isnot [string]) {
+        throw 'A waived live pilot must bind one string release-evidence hash.'
+    }
     $reviewedAt = [DateTimeOffset]::Parse((Get-FreshEvidenceTimestamp -Value ([string]$evidence.reviewedAt) -Label 'roadmap live pilot review' -Now $Now))
     try {
         $from = [DateTimeOffset]::ParseExact([string]$evidence.observedFrom, 'o', [Globalization.CultureInfo]::InvariantCulture)
@@ -205,4 +208,43 @@ function Assert-RoadmapActivationEvidence {
             -RuntimeConfigurationSha256 (Get-ManagedRuntimeFingerprint -TaskDefinition $SourceTaskDefinition -ContainerName 'api') `
             -ReleaseEvidenceSha256 $(if ($liveOnly) { $null } else { [string]$ReleaseSnapshot.Sha256 }) -Now $Now)
     }
+}
+
+function Assert-PrivateChatRuntimeCompatibility {
+    param($Runtime, $Snapshot, [string]$RepositoryRoot, [string]$AppSha)
+    $api = $Snapshot.ApiTask.taskDefinition
+    $worker = $Snapshot.WorkerTask.taskDefinition
+    $sourceContainer = @($api.containerDefinitions | Where-Object name -CEQ 'api')
+    if ($sourceContainer.Count -ne 1) { throw 'Private chat source container is ambiguous.' }
+    $sourceControls = Get-RuntimeCapabilityControls -Environment @($sourceContainer[0].environment)
+    $needsFence = [string]$Runtime.Mode -cin @('private-chat-lifecycle-global-on','private-chat-lifecycle-global-off') -or
+        $sourceControls['privateChatLifecycleV1'].mode -ceq 'on' -or
+        @($Runtime.EnabledCapabilities) -ccontains 'privateChatLifecycleV1'
+    if (-not $needsFence) { return }
+    if ([string]$Runtime.Mode -ceq 'private-chat-lifecycle-global-on') { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
+    $message = 'Private chat lifecycle requires the complete preserved129-table GUC admission on both services and a lifecycle-aware sticky writer/migration at the exact serving SHA. Capability off never permits legacy fallback.'
+    try {
+        $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/services/classpilotPrivateChatLifecycle.ts") -RepositoryRoot $RepositoryRoot
+        $migration = Invoke-GitText -Arguments @('show', "${AppSha}:src/db/classpilotPrivateChatLifecycleMigration.ts") -RepositoryRoot $RepositoryRoot
+        $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String
+        $inventory = $registry.inventories.classpilotPrivateChatLifecyclePostExpand
+        $previous = @($registry.inventories.passpilotAppointmentsPostExpand.tables)
+        if ($source -cnotmatch 'export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;' -or
+            $migration -cnotmatch 'id: "classpilot-private-chat-lifecycle-20261002"' -or
+            $migration -cnotmatch 'OLD\.private_chat_lifecycle_required\s+AND\s+NOT\s+NEW\.private_chat_lifecycle_required' -or
+            $inventory.count -ne 129 -or @($inventory.tables).Count -ne 129 -or
+            @($inventory.tables | Sort-Object -Unique).Count -ne 129 -or $previous.Count -ne 128 -or
+            (Get-CanonicalJsonSha256 -Value @($inventory.tables)[0..127]) -cne (Get-CanonicalJsonSha256 -Value $previous) -or
+            [string]$inventory.tables[128] -cne 'classpilot_private_chat_threads' -or
+            (Get-CanonicalJsonSha256 -Value @($registry.reviewedEnablementRequests.classpilotPrivateChatLifecycle)) -cne
+                (Get-CanonicalJsonSha256 -Value @('classpilot_private_chat_threads'))) { throw $message }
+        foreach ($contract in @(@{ Task=$api; Container='api' }, @{ Task=$worker; Container='scheduler-worker' })) {
+            $container = @($contract.Task.containerDefinitions | Where-Object name -CEQ $contract.Container)
+            if ($container.Count -ne 1) { throw $message }
+            $environment = @{}; foreach ($entry in @($container[0].environment)) { $environment[[string]$entry.name]=[string]$entry.value }
+            if ($environment['RLS_GUC_ENABLED'] -cne 'true' -or -not $environment.ContainsKey('RLS_ENABLED_TABLES') -or
+                @($inventory.tables | Where-Object { $_ -cnotin $environment['RLS_ENABLED_TABLES'].Split(',') }).Count) { throw $message }
+        }
+    }
+    catch { throw $message }
 }

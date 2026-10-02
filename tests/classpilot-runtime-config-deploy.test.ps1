@@ -454,14 +454,14 @@ try {
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
-        "kioskLaunchTicketV1", "focusTabV1"
+        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-off"] -ceq "preciseRestrictionResourcesV1" -and
         $script:AdditiveCapabilities -ccontains "preciseRestrictionResourcesV1" -and
         -not ($script:ActivationOrder -ccontains "preciseRestrictionResourcesV1")) `
-        "Precise restriction resources must be an additive roadmap capability with pilot and off profiles only."
+        "Precise restriction resources must remain additive and outside the legacy repaired activation prefix."
     Assert-Condition ($testRuntime.Environment.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 -ceq "false" -and
         $testRollouts.preciseRestrictionResourcesV1.mode -ceq "off") `
         "Existing runtime profiles must leave precise restriction resources off."
@@ -2083,6 +2083,10 @@ try {
     $global:RuntimeConfigGitState.ShowRequests = [Collections.Generic.List[string]]::new()
     # A registry target (an older image) can be served from its own SHA.
     $global:RuntimeConfigGitState.ProtocolSourceBySha = @{}
+    $global:RuntimeConfigGitState.SourceByPath = @{}
+    foreach ($file in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/config/rlsRegistry.json')) {
+        $global:RuntimeConfigGitState.SourceByPath[$file]=[IO.File]::ReadAllText((Join-Path $repositoryRoot $file))
+    }
     $global:SchoolPilotRuntimeConfigGitHandler = {
         param([string[]]$Arguments)
         if ($Arguments[0] -ceq "branch") { return $global:RuntimeConfigGitState.Branch }
@@ -2097,6 +2101,10 @@ try {
             } else { $global:RuntimeConfigGitState.ServingProtocolSource }
             if ($null -eq $protocolSource) { throw "Mocked git show failed." }
             return $protocolSource
+        }
+        if ($Arguments[0] -ceq 'show' -and $Arguments.Count -eq 2 -and $Arguments[1] -cmatch '^[0-9a-f]{40}:(?<path>.*)$' -and
+            $global:RuntimeConfigGitState.SourceByPath.ContainsKey($Matches.path)) {
+            return $global:RuntimeConfigGitState.SourceByPath[$Matches.path]
         }
         throw "Unexpected mocked git operation."
     }
@@ -3902,6 +3910,82 @@ try {
         $roadmapPlanText = [IO.File]::ReadAllText($roadmapPlanResult.PlanPath)
         Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
     }
+
+    # Private chat is a direct global rollout of the durable writer, independent
+    # of school messaging policy. Announcements/settings are never changed here.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $privateInventory = ([IO.File]::ReadAllText((Join-Path $repositoryRoot 'src/config/rlsRegistry.json')) | ConvertFrom-Json -Depth 30 -DateKind String).inventories.classpilotPrivateChatLifecyclePostExpand
+    foreach ($contract in @(@{Arn=$apiSourceArn;Container='api'},@{Arn=$workerSourceArn;Container='scheduler-worker'})) {
+        $container=@($global:RuntimeConfigTestState.TaskResponses[$contract.Arn].taskDefinition.containerDefinitions | Where-Object name -CEQ $contract.Container)[0]
+        $container.environment += [pscustomobject]@{name='RLS_GUC_ENABLED';value='true'}
+        $container.environment += [pscustomobject]@{name='RLS_ENABLED_TABLES';value=($privateInventory.tables -join ',')}
+    }
+    $privateProfilePath=Join-Path $testRoot 'private-chat-profile.json'
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    $privateArgs=@{RepositoryRoot=$repositoryRoot;PrivateProfilePath=$privateProfilePath;EvidenceRoot=$evidenceRoot;AppSha=$appSha;ImageDigest=$digest;
+        ApiTaskDefinitionArn=$apiSourceArn;WorkerTaskDefinitionArn=$workerSourceArn;Now=$now}
+    $privateSource=New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $privateIntent=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    $privateRuntime=Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $privateIntent -SourceTaskDefinition $privateSource -ContainerName 'api'
+    foreach ($parent in @('scopedAuthorityChecksV1','studentChatIdempotencyV1')) {
+        $invalid=New-TransitionSourceTask -RuntimeConfiguration $privateRuntime
+        $environment=$invalid.containerDefinitions[0].environment
+        @($environment | Where-Object name -CEQ $script:CapabilityFlags[$parent])[0].value='false'
+        Assert-Throws {Get-RuntimeActivationState -Environment $environment -AllowBaseline} 'Private chat must require both negotiated authority/idempotency parents.'
+    }
+    foreach ($role in @('api','worker')) {
+        $arn=if($role -ceq 'api'){$apiSourceArn}else{$workerSourceArn}
+        $container=$global:RuntimeConfigTestState.TaskResponses[$arn].taskDefinition.containerDefinitions[0]
+        $entry=@($container.environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+        $full=$entry.value; $entry.value=$full.Replace(',classpilot_private_chat_threads','')
+        Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Either service missing the singleton admission must refuse private chat activation.'
+        $entry.value=$full
+        $guc=@($container.environment | Where-Object name -CEQ 'RLS_GUC_ENABLED')[0]
+        $guc.value='false'; Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Either service missing tenant GUC enforcement must refuse activation.'
+        $guc.value='true'
+    }
+    foreach ($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts')) {
+        $original=$global:RuntimeConfigGitState.SourceByPath[$path]
+        $global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
+        Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'A pre-lifecycle writer or missing sticky migration must refuse activation.'
+        $global:RuntimeConfigGitState.SourceByPath[$path]=$original
+    }
+    $originalRegistry=$global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']
+    $invalidRegistry=$originalRegistry | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidRegistry.inventories.classpilotPrivateChatLifecyclePostExpand.tables[0]='classpilot_private_chat_threads'
+    $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$invalidRegistry | ConvertTo-Json -Depth 30
+    Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Partial or duplicated129 inventory must refuse admission.'
+    $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$originalRegistry
+    $privatePlanResult=New-RuntimeConfigPlan @privateArgs
+    $privatePlan=Read-RuntimePlan -Path $privatePlanResult.PlanPath -ExpectedSha256 $privatePlanResult.PlanSha256
+    $privateApply=Invoke-RuntimeConfigApply -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privateApi=$global:RuntimeConfigTestState.TaskResponses[$privateApply.candidateApiTaskDefinitionArn].taskDefinition
+    $privateControls=Get-RuntimeCapabilityControls -Environment $privateApi.containerDefinitions[0].environment
+    Assert-Condition ($privateControls.privateChatLifecycleV1.flag -ceq 'true' -and $privateControls.privateChatLifecycleV1.mode -ceq 'on' -and
+        @($privateControls.privateChatLifecycleV1.schoolIds).Count -eq 0) 'Private chat lifecycle reaches eligible future schools with no manual school pin.'
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-off'})
+    $privateOffArgs=$privateArgs.Clone(); $privateOffArgs.ApiTaskDefinitionArn=$privateApply.candidateApiTaskDefinitionArn; $privateOffArgs.WorkerTaskDefinitionArn=$privateApply.candidateWorkerTaskDefinitionArn
+    $privateOffResult=New-RuntimeConfigPlan @privateOffArgs
+    $privateOffPlan=Read-RuntimePlan -Path $privateOffResult.PlanPath -ExpectedSha256 $privateOffResult.PlanSha256
+    $privateOffApply=Invoke-RuntimeConfigApply -Plan $privateOffPlan -PlanSha256 $privateOffResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privateOffApi=$global:RuntimeConfigTestState.TaskResponses[$privateOffApply.candidateApiTaskDefinitionArn].taskDefinition
+    $offControls=Get-RuntimeCapabilityControls -Environment $privateOffApi.containerDefinitions[0].environment
+    foreach($capability in $script:AllCapabilities) {
+        if($capability -ceq 'privateChatLifecycleV1'){continue}
+        Assert-Condition ((Get-CanonicalJsonSha256 -Value $privateControls[$capability]) -ceq (Get-CanonicalJsonSha256 -Value $offControls[$capability])) 'Private chat withdrawal must preserve all other capabilities.'
+    }
+    Assert-Condition ($offControls.privateChatLifecycleV1.mode -ceq 'off' -and
+        (Get-TaskFingerprint -TaskDefinition $privateApi -ContainerName 'api') -ceq (Get-TaskFingerprint -TaskDefinition $privateOffApi -ContainerName 'api')) `
+        'Withdrawal only changes capability controls; it preserves image, schema admission and persisted enforcement.'
+    $oldTarget='f' * 40
+    $global:RuntimeConfigGitState.ProtocolSourceBySha[$oldTarget]=$currentProtocolSource -replace '\r?\n\s*"privateChatLifecycleV1",',''
+    Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget} `
+        'Cap off must not make a pre-lifecycle image projection safe after enforcement can be latched.'
+    $global:RuntimeConfigGitState.ProtocolSourceBySha.Remove($oldTarget)
+    [void](Invoke-RuntimeConfigRollback -Plan $privateOffPlan -PlanSha256 $privateOffResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
     # --- Registry projection: never write a capability the serving image cannot parse ---
     # An image older than roadmap PR 2 rejects the whole rollout registry (and so
