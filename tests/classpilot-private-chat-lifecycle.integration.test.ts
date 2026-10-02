@@ -698,7 +698,7 @@ for (const channel of ["school", "activity"] as const) test(`Redis private relay
 });
 
 test("Redis private relay verifies durable message IDs, content, scope, lifecycle and attempted binding rather than trusting its envelope", async t => {
-  const variants = ["missing lifecycle", "forged generation", "wrong lifecycle thread", "private announcement disguise", "unknown message", "conflicting message IDs", "wrong student",
+  const variants = ["missing lifecycle", "forged generation", "wrong lifecycle thread", "private announcement disguise", "unknown message", "conflicting message IDs", "conflicting dedup ID", "wrong student",
     "wrong session", "wrong activity", "extra activity", "changed content", "missing message ID", "wrong attempted binding", "expired attempt"] as const;
   for (const variant of variants) await t.test(variant, async () => {
     const candidate = await relayFrame(`Synthetic relay integrity: ${variant}`);
@@ -715,6 +715,7 @@ test("Redis private relay verifies durable message IDs, content, scope, lifecycl
     }
     if (variant === "unknown message") frame.chatMessageId = frame.messageId = randomUUID();
     if (variant === "conflicting message IDs") frame.messageId = randomUUID();
+    if (variant === "conflicting dedup ID") frame._msgId = randomUUID();
     if (variant === "wrong student") frame.studentId = ids.students[1]!;
     if (variant === "wrong session") frame.studentSessionId = randomUUID();
     if (variant === "wrong activity") frame.sessionId = randomUUID();
