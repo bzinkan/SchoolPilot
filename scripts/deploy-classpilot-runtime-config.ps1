@@ -304,6 +304,13 @@ function Get-RuntimeProjectionCapabilities {
         if ('privateChatLifecycleV1' -cin $known -and 'privateChatLifecycleV1' -cnotin $target) {
             throw 'A lifecycle-aware serving image cannot project to a pre-lifecycle writer; retained private-chat enforcement may be latched. Roll forward with a compatible image.'
         }
+        $privateChatAdmission = @($SourceTaskDefinition.containerDefinitions | Where-Object name -CEQ 'api' | ForEach-Object {
+            @($_.environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES' | ForEach-Object { ([string]$_.value).Split(',') | ForEach-Object { $_.Trim() } })
+        }) -ccontains 'classpilot_private_chat_threads'
+        if ('privateChatLifecycleV1' -cin $known -and ($privateChatAdmission -or
+            $Mode -cin @('private-chat-lifecycle-pilot','private-chat-lifecycle-off','private-chat-lifecycle-global-on','private-chat-lifecycle-global-off'))) {
+            Assert-PrivateChatRelaySource -RepositoryRoot $RepositoryRoot -AppSha $RegistryTargetAppSha
+        }
         $known = @($known | Where-Object { $_ -cin $target })
     }
     return ,$known

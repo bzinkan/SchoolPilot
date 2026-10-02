@@ -12,6 +12,7 @@ const candidateSources = {
   registry: JSON.stringify(registry), writer: readFileSync('src/services/classpilotPrivateChatLifecycle.ts', 'utf8'),
   migration: readFileSync('src/db/classpilotPrivateChatLifecycleMigration.ts', 'utf8'),
   protocol: readFileSync('src/services/classpilotProtocol.ts', 'utf8'),
+  relay: readFileSync('src/realtime/websocket.ts', 'utf8'),
 };
 function task(name: string, admitted = true, guc = 'true') {
   return { containerDefinitions: [{ name, image: `123456789012.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:${'d'.repeat(64)}`, environment: [
@@ -24,6 +25,7 @@ function task(name: string, admitted = true, guc = 'true') {
 }
 const rollbackSourcesBySha = { ['a'.repeat(40)]: candidateSources, ['b'.repeat(40)]: candidateSources };
 function input() { return { apiTaskDefinition: task('api'), workerTaskDefinition: task('scheduler-worker'), candidateSources, rollbackSourcesBySha }; }
+function withoutRelay() { const source = { ...candidateSources }; Reflect.deleteProperty(source, 'relay'); return source; }
 
 it('preserves historical pre-admission deployment behavior', () => {
   assert.deepEqual(assertPrivateChatReleaseFloor({ apiTaskDefinition: task('api', false), workerTaskDefinition: task('scheduler-worker', false), candidateSources: null }), { required: false });
@@ -32,7 +34,7 @@ it('requires a compatible writer with capability off after129 admission', () => 
   assert.deepEqual(assertPrivateChatReleaseFloor(input()), { required: true, writerVersion: 1, inventoryCount: 129 });
   assert.throws(() => assertPrivateChatReleaseFloor({ ...input(), candidateSources: { ...candidateSources, writer: 'legacy writer' } }), /durable release floor/);
 });
-for (const key of ['writer', 'migration', 'protocol'] as const) {
+for (const key of ['writer', 'migration', 'protocol', 'relay'] as const) {
   it(`rejects candidate ${key} downgrade after admission`, () => {
     assert.throws(() => assertPrivateChatReleaseFloor({ ...input(), candidateSources: { ...candidateSources, [key]: '' } }));
   });
@@ -54,12 +56,32 @@ it('checks the candidate writer on first singleton admission', () => {
 });
 it('first admission refuses the current legacy rollback source even when candidate writer is compatible', () => {
   const value = { apiTaskDefinition: task('api', false), workerTaskDefinition: task('scheduler-worker', false), enablingTables: ['classpilot_private_chat_threads'], candidateSources, rollbackSourcesBySha };
-  for (const key of ['writer', 'migration', 'protocol'] as const) {
+  for (const key of ['writer', 'migration', 'protocol', 'relay'] as const) {
     const old = { ...candidateSources, [key]: 'legacy rollback source' };
     assert.throws(() => assertPrivateChatReleaseFloor({ ...value, rollbackSourcesBySha: { ...rollbackSourcesBySha, ['a'.repeat(40)]: old } }), /compatible dark writer\/bridge/);
   }
   const noBridge = { ...candidateSources, writer: candidateSources.writer.replace('export const PRIVATE_CHAT_BRIDGE_VERSION = 1;', '') };
   assert.throws(() => assertPrivateChatReleaseFloor({ ...value, rollbackSourcesBySha: { ...rollbackSourcesBySha, ['b'.repeat(40)]: noBridge } }), /compatible dark writer\/bridge/);
+});
+for (const admitted of [false, true]) {
+  for (const role of ['api', 'scheduler-worker']) {
+    it(`rejects a pre-relay ${role} rollback image with capability off ${admitted ? 'after' : 'before'} admission`, () => {
+      const value = { ...input(), apiTaskDefinition: task('api', admitted), workerTaskDefinition: task('scheduler-worker', admitted),
+        enablingTables: admitted ? [] : ['classpilot_private_chat_threads'] };
+      const sha = (role === 'api' ? 'a' : 'b').repeat(40);
+      for (const source of [withoutRelay(), { ...candidateSources, relay: candidateSources.relay.replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;', '') },
+        { ...candidateSources, relay: candidateSources.relay.replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;', 'export const PRIVATE_CHAT_RELAY_VERSION = 2;') }]) {
+        assert.throws(() => assertPrivateChatReleaseFloor({ ...value,
+          rollbackSourcesBySha: { ...rollbackSourcesBySha, [sha]: source } }), /compatible dark writer\/bridge/);
+      }
+    });
+  }
+}
+it('writer and bridge markers cannot substitute for the exact candidate relay marker', () => {
+  for (const source of [withoutRelay(), { ...candidateSources, relay: candidateSources.relay.replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;', '') },
+    { ...candidateSources, relay: 'export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;\nexport const PRIVATE_CHAT_BRIDGE_VERSION = 1;' }]) {
+    assert.throws(() => assertPrivateChatReleaseFloor({ ...input(), candidateSources: source }), /durable release floor/);
+  }
 });
 it('a missing rollback GIT_SHA cannot be replaced by the candidate commit', () => {
   const value = input(); const [container] = value.apiTaskDefinition.containerDefinitions; assert.ok(container);

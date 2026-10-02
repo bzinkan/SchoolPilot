@@ -20,6 +20,7 @@ function inspect(task, name) {
 function compatibleSource(files) {
   return /export const PRIVATE_CHAT_LIFECYCLE_WRITER_VERSION = 1;/.test(files?.writer ?? '') &&
     /export const PRIVATE_CHAT_BRIDGE_VERSION = 1;/.test(files?.writer ?? '') &&
+    /export const PRIVATE_CHAT_RELAY_VERSION = 1;/.test(files?.relay ?? '') &&
     /id: "classpilot-private-chat-lifecycle-20261002"/.test(files?.migration ?? '') &&
     /OLD\.private_chat_lifecycle_required\s+AND\s+NOT\s+NEW\.private_chat_lifecycle_required/.test(files?.migration ?? '') &&
     /"privateChatLifecycleV1"/.test(files?.protocol ?? '');
@@ -29,7 +30,7 @@ export function assertPrivateChatReleaseFloor({ apiTaskDefinition, workerTaskDef
   const source = [inspect(apiTaskDefinition, 'api'), inspect(workerTaskDefinition, 'scheduler-worker')];
   const admitted = source.some(item => item.tables.includes(THREAD_TABLE));
   if (!admitted && !enablingTables.includes(THREAD_TABLE)) return { required: false };
-  const failure = 'Private chat admission is a durable release floor: require the complete preserved129 GUC admission and lifecycle-aware sticky writer/migration, even when its capability is off.';
+  const failure = 'Private chat admission is a durable release floor: require the complete preserved129 GUC admission and lifecycle-aware sticky writer/migration/relay, even when its capability is off.';
   const registry = JSON.parse(candidateSources.registry);
   const inventory = registry.inventories?.classpilotPrivateChatLifecyclePostExpand;
   const previous = registry.inventories?.passpilotAppointmentsPostExpand?.tables;
@@ -44,7 +45,7 @@ export function assertPrivateChatReleaseFloor({ apiTaskDefinition, workerTaskDef
   if (!admitted && !source.every(item => item.guc === 'true' && previous.every(table => item.tables.includes(table)))) throw new Error(failure);
   for (const item of source) {
     if (!/^[a-f0-9]{40}$/.test(item.gitSha ?? '') || !compatibleSource(rollbackSourcesBySha[item.gitSha])) {
-      throw new Error('First private chat admission requires a stable compatible dark writer/bridge on both exact rollback source images. Deploy that reversible dark pair before enabling the thread table.');
+      throw new Error('Private chat admission requires a stable compatible dark writer/bridge/relay on both exact rollback source images. Deploy that reversible dark pair before enabling the thread table.');
     }
   }
   for (const candidate of candidateTaskDefinitions) {
@@ -89,11 +90,12 @@ function main() {
   const candidateSources = floor ? {
     registry: readSource('src/config/rlsRegistry.json'), writer: readSource('src/services/classpilotPrivateChatLifecycle.ts'),
     migration: readSource('src/db/classpilotPrivateChatLifecycleMigration.ts'), protocol: readSource('src/services/classpilotProtocol.ts'),
+    relay: readSource('src/realtime/websocket.ts'),
   } : null;
   const rollbackSourcesBySha = {};
   if (floor) for (const item of [inspect(apiTaskDefinition, 'api'), inspect(workerTaskDefinition, 'scheduler-worker')]) {
     if (!/^[a-f0-9]{40}$/.test(item.gitSha ?? '')) throw new Error('Compatible rollback source GIT_SHA is required before private chat admission.');
-    rollbackSourcesBySha[item.gitSha] = Object.fromEntries([['writer','src/services/classpilotPrivateChatLifecycle.ts'],['migration','src/db/classpilotPrivateChatLifecycleMigration.ts'],['protocol','src/services/classpilotProtocol.ts']]
+    rollbackSourcesBySha[item.gitSha] = Object.fromEntries([['writer','src/services/classpilotPrivateChatLifecycle.ts'],['migration','src/db/classpilotPrivateChatLifecycleMigration.ts'],['protocol','src/services/classpilotProtocol.ts'],['relay','src/realtime/websocket.ts']]
       .map(([key,path]) => [key, execFileSync('git', ['show', `${item.gitSha}:${path}`], { cwd: root, encoding: 'utf8' })]));
   }
   const result = assertPrivateChatReleaseFloor({ apiTaskDefinition, workerTaskDefinition, enablingTables, candidateSources, rollbackSourcesBySha, candidateTaskDefinitions: candidates });

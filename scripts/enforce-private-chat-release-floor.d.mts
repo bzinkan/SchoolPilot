@@ -6,13 +6,13 @@ export type TaskDefinition = {
     secrets?: Array<{ name: string; valueFrom: string }>;
   }>;
 };
-export type CandidateSources = { registry: string; writer: string; migration: string; protocol: string };
+export type CandidateSources = { registry: string; writer: string; migration: string; protocol: string; relay: string };
 export function assertPrivateChatReleaseFloor(input: {
   apiTaskDefinition: TaskDefinition;
   workerTaskDefinition: TaskDefinition;
   enablingTables?: string[];
   candidateSources: CandidateSources | null;
-  rollbackSourcesBySha?: Record<string, Pick<CandidateSources, 'writer' | 'migration' | 'protocol'>>;
+  rollbackSourcesBySha?: Record<string, Pick<CandidateSources, 'writer' | 'migration' | 'protocol' | 'relay'>>;
   candidateTaskDefinitions?: Array<{ taskDefinition: TaskDefinition; containerName: string }>;
 }): { required: false } | { required: true; writerVersion: 1; inventoryCount: 129 };
 export function verifyPrivateChatSourceImages(input: {

@@ -232,6 +232,15 @@ function Assert-RoadmapActivationEvidence {
     }
 }
 
+function Assert-PrivateChatRelaySource {
+    param([string]$RepositoryRoot, [string]$AppSha)
+    if ($AppSha -cnotmatch '^[0-9a-f]{40}$') { throw 'Private chat relay compatibility requires an exact source SHA.' }
+    $relay = Invoke-GitText -Arguments @('show', "${AppSha}:src/realtime/websocket.ts") -RepositoryRoot $RepositoryRoot
+    if ($relay -cnotmatch 'export const PRIVATE_CHAT_RELAY_VERSION = 1;') {
+        throw 'Private chat requires the lifecycle-aware relay receiver at the exact source SHA, even when its capability is off.'
+    }
+}
+
 function Assert-PrivateChatRuntimeCompatibility {
     param($Runtime, $Snapshot, [string]$RepositoryRoot, [string]$AppSha)
     $api = $Snapshot.ApiTask.taskDefinition
@@ -249,8 +258,9 @@ function Assert-PrivateChatRuntimeCompatibility {
         @($Runtime.EnabledCapabilities) -ccontains 'privateChatLifecycleV1'
     if (-not $needsFence) { return }
     if ([string]$Runtime.Mode -cin @('private-chat-lifecycle-pilot','private-chat-lifecycle-global-on')) { Assert-PreciseRestrictionPilotReleaseEvidenceBound }
-    $message = 'Private chat lifecycle requires the complete preserved129-table GUC admission on both services and a lifecycle-aware sticky writer/migration at the exact serving SHA. Capability off never permits legacy fallback.'
+    $message = 'Private chat lifecycle requires the complete preserved129-table GUC admission on both services and a lifecycle-aware sticky writer/migration/relay at the exact serving SHA. Capability off never permits legacy fallback.'
     try {
+        Assert-PrivateChatRelaySource -RepositoryRoot $RepositoryRoot -AppSha $AppSha
         $source = Invoke-GitText -Arguments @('show', "${AppSha}:src/services/classpilotPrivateChatLifecycle.ts") -RepositoryRoot $RepositoryRoot
         $migration = Invoke-GitText -Arguments @('show', "${AppSha}:src/db/classpilotPrivateChatLifecycleMigration.ts") -RepositoryRoot $RepositoryRoot
         $registry = (Invoke-GitText -Arguments @('show', "${AppSha}:src/config/rlsRegistry.json") -RepositoryRoot $RepositoryRoot) | ConvertFrom-Json -Depth 30 -DateKind String

@@ -2107,7 +2107,9 @@ try {
     # A registry target (an older image) can be served from its own SHA.
     $global:RuntimeConfigGitState.ProtocolSourceBySha = @{}
     $global:RuntimeConfigGitState.SourceByPath = @{}
-    foreach ($file in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/config/rlsRegistry.json')) {
+    $global:RuntimeConfigGitState.SourceBySha = @{}
+    $global:RuntimeConfigGitState.SourceShowRequests = [Collections.Generic.List[string]]::new()
+    foreach ($file in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/config/rlsRegistry.json','src/realtime/websocket.ts')) {
         $global:RuntimeConfigGitState.SourceByPath[$file]=[IO.File]::ReadAllText((Join-Path $repositoryRoot $file))
     }
     $global:SchoolPilotRuntimeConfigGitHandler = {
@@ -2127,6 +2129,10 @@ try {
         }
         if ($Arguments[0] -ceq 'show' -and $Arguments.Count -eq 2 -and $Arguments[1] -cmatch '^[0-9a-f]{40}:(?<path>.*)$' -and
             $global:RuntimeConfigGitState.SourceByPath.ContainsKey($Matches.path)) {
+            $global:RuntimeConfigGitState.SourceShowRequests.Add($Arguments[1])
+            if ($global:RuntimeConfigGitState.SourceBySha.ContainsKey($Arguments[1])) {
+                return $global:RuntimeConfigGitState.SourceBySha[$Arguments[1]]
+            }
             return $global:RuntimeConfigGitState.SourceByPath[$Matches.path]
         }
         throw "Unexpected mocked git operation."
@@ -3978,10 +3984,10 @@ try {
         $guc.value='false'; Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Either service missing tenant GUC enforcement must refuse activation.'
         $guc.value='true'
     }
-    foreach ($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts')) {
+    foreach ($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/realtime/websocket.ts')) {
         $original=$global:RuntimeConfigGitState.SourceByPath[$path]
         $global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
-        Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'A pre-lifecycle writer or missing sticky migration must refuse activation.'
+        Assert-Throws {New-RuntimeConfigPlan @privateArgs} "A pre-lifecycle writer, sticky migration or relay must refuse activation ($path)."
         $global:RuntimeConfigGitState.SourceByPath[$path]=$original
     }
     $originalRegistry=$global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']
@@ -4053,13 +4059,33 @@ try {
     Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget} `
         'Cap off must not make a pre-lifecycle image projection safe after enforcement can be latched.'
     $global:RuntimeConfigGitState.ProtocolSourceBySha.Remove($oldTarget)
+    $relayTargetKey="${oldTarget}:src/realtime/websocket.ts"
+    $originalRelay=$global:RuntimeConfigGitState.SourceByPath['src/realtime/websocket.ts']
+    $preAdmissionSource=$privateOffApi | ConvertTo-Json -Depth 50 | ConvertFrom-Json -Depth 50
+    $preAdmissionTables=@($preAdmissionSource.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+    $preAdmissionTables.value=$preAdmissionTables.value.Replace(',classpilot_private_chat_threads','')
+    $global:RuntimeConfigGitState.SourceBySha[$relayTargetKey]=$originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;','')
+    $preAdmissionCapabilities=Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'school-website-block-off' -SourceTaskDefinition $preAdmissionSource -RegistryTargetAppSha $oldTarget
+    Assert-Condition ($preAdmissionCapabilities -ccontains 'privateChatLifecycleV1') 'Unrelated pre-admission projection must preserve legacy behavior until the thread bundle is admitted.'
+    foreach($invalidRelay in @($originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;',''),
+        $originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;','export const PRIVATE_CHAT_RELAY_VERSION = 2;'))) {
+        $global:RuntimeConfigGitState.SourceBySha[$relayTargetKey]=$invalidRelay
+        foreach($rollbackSource in @($privatePilotApi,$privateOffApi)) {
+            Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $rollbackSource -RegistryTargetAppSha $oldTarget} `
+                'Exact rollback projection must refuse a pre-relay image both during activation and after capability withdrawal.'
+        }
+    }
+    $global:RuntimeConfigGitState.SourceBySha.Remove($relayTargetKey)
+    [void](Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget)
+    Assert-Condition ($global:RuntimeConfigGitState.SourceShowRequests -ccontains $relayTargetKey) 'Rollback relay source must be read from its exact target SHA.'
     $unrelated=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='school-website-block-off'})
     $privateSnapshot=[pscustomobject]@{ApiTask=[pscustomobject]@{taskDefinition=$privateOffApi};WorkerTask=[pscustomobject]@{taskDefinition=$global:RuntimeConfigTestState.TaskResponses[$privateOffApply.candidateWorkerTaskDefinitionArn].taskDefinition}}
-    foreach($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts')){
+    foreach($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/realtime/websocket.ts')){
         $original=$global:RuntimeConfigGitState.SourceByPath[$path];$global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
         Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'The admitted floor must protect unrelated plans after private chat is off.'
         $global:RuntimeConfigGitState.SourceByPath[$path]=$original
     }
+    Assert-Condition ($global:RuntimeConfigGitState.SourceShowRequests -ccontains "${appSha}:src/realtime/websocket.ts") 'Serving relay source must be read from the exact app SHA, including capability off.'
     $offGuc=@($privateOffApi.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_GUC_ENABLED')[0]
     $offGuc.value='false'
     Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'Withdrawal cannot bypass129 admission on an unrelated profile.'
