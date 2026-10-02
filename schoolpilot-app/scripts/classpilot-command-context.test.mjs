@@ -4,7 +4,12 @@ import assert from 'node:assert/strict';
 import {
   activeTemporaryAllows,
   assertClassroomCommandSelectionIsolation,
+  buildSelectionScopeKey,
   buildStudentSignOutCommandRequest,
+  classToolsRecipientLabel,
+  commandAudienceIsServerDerived,
+  commandRecipientsHeadline,
+  commandRecipientsSummary,
   commandSupportsLateSignInRestriction,
   combineCommandSettlements,
   CONSERVATIVE_DOMAIN_RESTRICTION_MESSAGE,
@@ -27,8 +32,23 @@ import {
   parseTabSelectionKey,
   partitionCoverageCurrentPageWaypointTargets,
   partitionCurrentPageWaypointTargets,
+  partitionSnapshotRecipients,
+  planRecipientSend,
+  RECIPIENTS_UNAVAILABLE_MESSAGE,
+  recipientDialogRefusalMessage,
+  recipientSnapshotLabel,
+  recipientsRestoredMessage,
+  recordSelectionLoss,
   resolveCommandTargets,
   resolveStudentSignOutTargets,
+  SELECTION_LOST_CODE,
+  selectionLossActionLabel,
+  selectionLossBlocksFallback,
+  selectionLostMessage,
+  selectionScopeKeepsBoundary,
+  signOutOnlySelectionLabel,
+  snapshotCommandRecipients,
+  snapshotRecipientNames,
   studentSignOutSelectionBinding,
   studentSupportsCapability,
   studentTileFlightPathReleaseCommand,
@@ -41,8 +61,10 @@ import {
   tabSelectionKey,
   toolbarScreenCommand,
   uniqueStudentsById,
+  unavailableRecipientsMessage,
 } from '../src/products/classpilot/lib/dashboardCommandContext.js';
 import { commandDeliveryFeedback } from '../src/products/classpilot/lib/commandDeliveryTruth.js';
+import { compareStudentsByLastName, studentLastName } from '../src/products/classpilot/lib/studentOrder.js';
 
 const classStudents = [
   { studentId: 'a', commandable: true },
@@ -976,4 +998,464 @@ test('a settings response folds the stored row and the effective state into one 
   assert.deepEqual(mergeFabSettingsResponse({ settings: { chatEnabled: false, lifecycleRevision: 1 } }), { chatEnabled: false, lifecycleRevision: 1 });
   assert.deepEqual(mergeFabSettingsResponse({ teachingSessionId: 's', messagingEnabled: true }), { teachingSessionId: 's', messagingEnabled: true }, 'a bare state passes through');
   assert.equal(mergeFabSettingsResponse(null), null);
+});
+
+const recipientRoster = [
+  { studentId: 'a', studentName: 'Zed Alpha', commandable: true },
+  { studentId: 'b', studentName: 'Ann Zulu', commandable: true },
+  { studentId: 'c', studentName: 'Cy Beta', commandable: true },
+];
+
+test('a classroom dialog freezes its recipients by last name and refuses an empty list', () => {
+  const target = resolveCommandTargets({ mode: 'owned-class', sessionStudents: recipientRoster });
+  const snapshot = snapshotCommandRecipients({
+    target, students: recipientRoster, label: 'Whole class', scopeKey: 'scope-a', view: 'class',
+  });
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.ids), true);
+  assert.equal(Object.isFrozen(snapshot.names), true);
+  assert.throws(() => { snapshot.ids.push('d'); }, TypeError, 'a frozen list cannot grow after the dialog opens');
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b'], 'ids stay aligned with names in last-name order');
+  assert.deepEqual(snapshot.names, ['Zed Alpha', 'Cy Beta', 'Ann Zulu']);
+  assert.deepEqual([snapshot.label, snapshot.scopeKey, snapshot.view], ['Whole class', 'scope-a', 'class']);
+
+  const unnamed = snapshotCommandRecipients({
+    target: { targetStudentIds: ['x', 'y', 'y', ' '] },
+    students: [{ studentId: 'y', studentEmail: 'y@example.edu' }],
+  });
+  assert.deepEqual(unnamed.ids, ['x', 'y'], 'ids are trimmed and de-duplicated');
+  assert.deepEqual(unnamed.names, ['Student unavailable', 'y@example.edu']);
+
+  for (const empty of [{ target: { targetStudentIds: [] } }, { target: null }, {}, undefined]) {
+    assert.throws(() => snapshotCommandRecipients(empty), /^Error: Choose at least one student\.$/);
+  }
+});
+
+test('a frozen send keeps only recipients who can still receive it and never adds anyone', () => {
+  const snapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster });
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b']);
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, ['b', 'a', 'c']), { sendIds: ['a', 'c', 'b'], unavailableIds: [] });
+  assert.deepEqual(
+    partitionSnapshotRecipients(snapshot, ['b', 'z', 'everyone-else']),
+    { sendIds: ['b'], unavailableIds: ['a', 'c'] },
+    'a currently commandable student outside the snapshot is never added',
+  );
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, new Set(['c'])), { sendIds: ['c'], unavailableIds: ['a', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, []), { sendIds: [], unavailableIds: ['a', 'c', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(snapshot, null), { sendIds: [], unavailableIds: ['a', 'c', 'b'] });
+  assert.deepEqual(partitionSnapshotRecipients(null, ['a']), { sendIds: [], unavailableIds: [] });
+  assert.deepEqual(snapshotRecipientNames(snapshot, ['b', 'a', 'z']), ['Zed Alpha', 'Ann Zulu'], 'names follow the frozen order');
+  assert.deepEqual(snapshotRecipientNames(snapshot, null), []);
+});
+
+test('Send only ever sends what the dialog shows, and a partial send needs a separate confirmation', () => {
+  const snapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster });
+  assert.deepEqual(snapshot.ids, ['a', 'c', 'b']);
+  const plan = (commandableIds, options = {}) => planRecipientSend({ snapshot, commandableIds, ...options });
+
+  assert.deepEqual(plan(['b', 'c', 'a', 'outsider']), { action: 'send', studentIds: ['a', 'c', 'b'] }, 'a student outside the frozen list is never added');
+  assert.deepEqual(plan(['a', 'b', 'c'], { repeatGesture: true }), { action: 'send', studentIds: ['a', 'c', 'b'] }, 'a repeat only matters while confirming');
+  assert.deepEqual(plan(['c', 'b']), { action: 'ask', unavailableIds: ['a'], confirmIds: ['c', 'b'] }, 'a lost recipient is named first');
+  assert.deepEqual(plan([]), { action: 'ask', unavailableIds: ['a', 'c', 'b'], confirmIds: null }, 'no one left: nothing to confirm');
+
+  // Waiting on "Send to 2 available" (c and b).
+  const confirming = { confirmIds: ['c', 'b'] };
+  assert.deepEqual(plan(['c', 'b'], confirming), { action: 'send', studentIds: ['c', 'b'] }, 'the confirmation sends exactly the named students');
+  assert.deepEqual(plan(['c', 'b'], { ...confirming, repeatGesture: true }), { action: 'ignore' }, 'a double click or held key cannot confirm');
+  assert.deepEqual(plan(['a', 'c', 'b'], confirming), { action: 'restored', restoredIds: ['a'] }, 'a returning student is not silently skipped');
+  assert.deepEqual(plan(['c'], confirming), { action: 'ask', unavailableIds: ['a', 'b'], confirmIds: ['c'] }, 'a confirmed student who drops is asked about again');
+  assert.deepEqual(plan(['a', 'c'], confirming), { action: 'ask', unavailableIds: ['b'], confirmIds: ['a', 'c'] }, 'a changed subset is asked about again');
+  assert.deepEqual(plan(['outsider'], confirming), { action: 'ask', unavailableIds: ['a', 'c', 'b'], confirmIds: null });
+});
+
+test('a dialog that cannot open says why without claiming a send', () => {
+  const thrown = (fn) => { try { fn(); } catch (error) { return error; } assert.fail('expected a throw'); };
+  const noClassTarget = thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: [] }));
+  const noClaimedTarget = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: [] }));
+  const ticksUnavailable = new Error(RECIPIENTS_UNAVAILABLE_MESSAGE);
+
+  assert.equal(recipientDialogRefusalMessage(noClassTarget), 'No students in this class can receive this right now.');
+  assert.equal(recipientDialogRefusalMessage(noClassTarget, { subgroupSelected: true }), 'No students in this group can receive this right now.');
+  assert.equal(recipientDialogRefusalMessage(noClaimedTarget, { view: 'claimed' }), 'No claimed students can receive this right now.');
+  assert.equal(
+    recipientDialogRefusalMessage(noClassTarget, { blockedNames: ['Ada Student'] }),
+    "Ada Student can't receive this right now. Untick them and try again.",
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(ticksUnavailable, { blockedNames: ['Ada Student', 'Ben Student'] }),
+    "Ada Student and Ben Student can't receive this right now. Untick them and try again.",
+  );
+  assert.equal(recipientDialogRefusalMessage(ticksUnavailable), "Some selected students can't receive this right now. Untick them and try again.");
+  const loading = 'Student targets are unavailable until the class roster finishes loading.';
+  assert.equal(recipientDialogRefusalMessage(new Error(loading), { blockedNames: ['Ada Student'] }), loading, 'other reasons pass through');
+  assert.equal(recipientDialogRefusalMessage(null), 'This is not available right now.');
+  for (const error of [noClassTarget, noClaimedTarget, ticksUnavailable]) {
+    assert.doesNotMatch(recipientDialogRefusalMessage(error), /sent/i, 'nothing was attempted when a dialog does not open');
+  }
+});
+
+test('recipient copy names the frozen audience and who was left out', () => {
+  assert.equal(recipientSnapshotLabel({ selectedCount: 2 }), '2 selected students');
+  assert.equal(recipientSnapshotLabel({ selectedCount: 1, subgroupName: 'Reading table' }), '1 selected student', 'ticks win over a subgroup');
+  assert.equal(recipientSnapshotLabel({ subgroupName: ' Reading table ' }), 'Group: Reading table');
+  assert.equal(recipientSnapshotLabel({}), 'Whole class');
+  assert.equal(recipientSnapshotLabel(), 'Whole class');
+  assert.equal(recipientSnapshotLabel({ view: 'claimed' }), 'All claimed students');
+
+  const one = snapshotCommandRecipients({ target: { targetStudentIds: ['a'] }, students: recipientRoster, label: '1 selected student' });
+  const three = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b', 'c'] }, students: recipientRoster, label: 'Group: Reading table' });
+  const classSnapshot = snapshotCommandRecipients({ target: { targetStudentIds: ['a', 'b'] }, students: recipientRoster, label: 'Whole class' });
+  assert.equal(commandRecipientsHeadline(one), 'Send to 1 selected student', 'a tick label already states the count');
+  assert.equal(commandRecipientsHeadline(three), 'Send to 3 students — Group: Reading table');
+  assert.equal(commandRecipientsHeadline(classSnapshot), 'Send to 2 students — Whole class');
+  assert.equal(commandRecipientsHeadline(null), 'Send to 0 students');
+
+  // The toast line names the audience; its title and outcome text report delivery.
+  assert.equal(commandRecipientsSummary({ count: 2, label: '2 selected students' }), 'Recipients: 2 selected students.');
+  assert.equal(commandRecipientsSummary({ count: 2, frozenCount: 2, label: 'Whole class' }), 'Recipients: 2 students (Whole class).');
+  assert.equal(
+    commandRecipientsSummary({ count: 1, frozenCount: 2, label: '2 selected students' }),
+    'Recipients: 1 of 2 selected students.',
+    'a confirmed partial send says how many of the frozen list it addressed',
+  );
+  assert.equal(commandRecipientsSummary({ count: 1, frozenCount: 3, label: 'Group: Reading table' }), 'Recipients: 1 of 3 students (Group: Reading table).');
+  assert.equal(commandRecipientsSummary({ count: 1 }), 'Recipients: 1 student.');
+  assert.equal(commandRecipientsSummary({ count: 1, label: '10 selected students' }), 'Recipients: 1 student (10 selected students).');
+  for (const summary of [
+    commandRecipientsSummary({ count: 2, label: 'Whole class' }),
+    commandRecipientsSummary({ count: 1, frozenCount: 2, label: '2 selected students' }),
+  ]) {
+    assert.doesNotMatch(summary, /sent|deliver/i, 'a failed delivery toast must not read as sent');
+  }
+
+  assert.equal(unavailableRecipientsMessage(['Ada Student']), "Ada Student can't receive this right now. Nothing was sent.");
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student'], { availableCount: 1 }),
+    `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them, or Cancel.`,
+    'a partial send says what to do next',
+  );
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student', 'Ben Student'], { nothingSent: false }),
+    "Ada Student and Ben Student can't receive this right now.",
+  );
+  assert.equal(
+    unavailableRecipientsMessage(['A One', 'B Two', 'C Three', 'D Four', 'E Five', 'F Six']),
+    "A One, B Two, C Three, D Four, and 2 more students can't receive this right now. Nothing was sent.",
+  );
+  assert.equal(
+    recipientsRestoredMessage(['Ada Student']),
+    'Ada Student can receive this again. Nothing was sent. Send again to include them.',
+  );
+  assert.equal(RECIPIENTS_UNAVAILABLE_MESSAGE, "Some selected students can't receive this right now. Nothing was sent.");
+  assert.equal(
+    unavailableRecipientsMessage(['Ada Student'], { availableCount: 1, offerCancel: false }),
+    `Ada Student can't receive this right now. Choose "Send to 1 available" to send without them.`,
+    'a dialog that closes with Done does not name a Cancel button',
+  );
+});
+
+test('a selection the teacher did not clear is recorded per class and view and blocks only the fallback', () => {
+  assert.equal(recordSelectionLoss(null, { previousIds: [], keptIds: [], scopeKey: 'class-a' }), null, 'nothing ticked, nothing lost');
+  assert.equal(recordSelectionLoss(null, { previousIds: ['a'], keptIds: ['a'], scopeKey: 'class-a' }), null, 'nothing removed');
+  assert.equal(recordSelectionLoss(undefined), null);
+
+  const one = recordSelectionLoss(null, { previousIds: ['a', 'b'], keptIds: ['b'], scopeKey: 'class-a' });
+  assert.deepEqual(one, { lostIds: ['a'], count: 1, scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.equal(Object.isFrozen(one), true);
+  assert.equal(Object.isFrozen(one.lostIds), true);
+  const both = recordSelectionLoss(one, { previousIds: ['b', ' '], keptIds: [], scopeKey: 'class-a' });
+  assert.deepEqual(both, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'stopped-reporting' }, 'losses in one class and view add up');
+  assert.equal(recordSelectionLoss(both, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a' }).count, 2, 'a student lost twice counts once');
+  assert.equal(recordSelectionLoss(both, { previousIds: ['b'], keptIds: ['b'], scopeKey: 'class-a' }), both, 'unchanged when nothing is removed');
+  assert.deepEqual(
+    recordSelectionLoss(both, { previousIds: ['c'], keptIds: [], scopeKey: 'class-b', reason: 'session-changed' }),
+    { lostIds: ['c'], count: 1, scopeKey: 'class-b', reason: 'session-changed' },
+    'a loss in another class or view replaces the old one, cause included',
+  );
+
+  // Each cause is named; losses with more than one cause name none.
+  const sessionChanged = recordSelectionLoss(null, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a', reason: 'session-changed' });
+  assert.equal(sessionChanged.reason, 'session-changed');
+  assert.equal(recordSelectionLoss(sessionChanged, { previousIds: ['b'], keptIds: [], scopeKey: 'class-a', reason: 'session-changed' }).reason, 'session-changed');
+  const mixed = recordSelectionLoss(sessionChanged, { previousIds: ['b'], keptIds: [], scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.deepEqual(mixed, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'changed' });
+  assert.equal(recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'class-a', reason: 'made-up' }).reason, 'changed');
+  assert.deepEqual(
+    recordSelectionLoss(null, { previousIds: ['group-1'], scopeKey: 'class-a', reason: 'group-removed' }),
+    { lostIds: ['group-1'], count: 1, scopeKey: 'class-a', reason: 'group-removed' },
+    'a removed group with nobody ticked is still a lost target',
+  );
+
+  assert.equal(selectionLossBlocksFallback(both, []), true, 'nothing left ticked: the fallback is refused');
+  assert.equal(selectionLossBlocksFallback(both, new Set()), true);
+  assert.equal(selectionLossBlocksFallback(both, ['c']), false, 'ticks that remain are an explicit target');
+  assert.equal(selectionLossBlocksFallback(both, new Set(['c'])), false);
+  assert.equal(selectionLossBlocksFallback(null, []), false);
+  assert.equal(selectionLossBlocksFallback({ lostIds: [], count: 0 }, []), false);
+
+  assert.equal(
+    selectionLostMessage(1),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(2, { scope: 'group', nothingSent: true }),
+    'Your selection was cleared because 2 selected students stopped reporting. Nothing was sent. Choose students again, or use the whole group.',
+  );
+  assert.equal(
+    selectionLostMessage(1, { scope: 'claimed' }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use all claimed students.',
+  );
+  assert.equal(selectionLostMessage(0, { scope: 'unknown' }), 'Your selection was cleared. Choose students again, or use the whole class.');
+  assert.equal(
+    selectionLostMessage(2, { reason: 'session-changed' }),
+    'Your selection was cleared because the session changed for 2 selected students. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(3, { scope: 'claimed', reason: 'groups-changed', nothingSent: true }),
+    'Your selection was cleared because your supervision groups changed. Nothing was sent. Choose students again, or use all claimed students.',
+  );
+  assert.equal(
+    selectionLostMessage(1, { reason: 'group-removed' }),
+    'Your selection was cleared because the group you chose was removed. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    selectionLostMessage(2, { reason: 'changed' }),
+    'Your selection was cleared. Choose students again, or use the whole class.',
+    'more than one cause names none',
+  );
+  assert.deepEqual(
+    ['class', 'group', 'claimed', 'unknown', undefined].map((scope) => selectionLossActionLabel(scope)),
+    ['Use whole class', 'Use whole group', 'Use all claimed students', 'Use whole class', 'Use whole class'],
+  );
+});
+
+test('a student lost twice keeps the first cause, and an unavailable class is named', () => {
+  // A ticked student who signs out stops reporting (the telemetry trim) and
+  // changes session (the binding check) in the same update.
+  const stopped = recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'class-a', reason: 'stopped-reporting' });
+  assert.equal(
+    recordSelectionLoss(stopped, { previousIds: ['a'], scopeKey: 'class-a', reason: 'session-changed' }),
+    stopped,
+    'the same student recorded again changes nothing',
+  );
+  assert.equal(
+    selectionLostMessage(stopped.count, { reason: stopped.reason }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  // A new student with another cause still names none.
+  assert.deepEqual(
+    recordSelectionLoss(stopped, { previousIds: ['a', 'b'], scopeKey: 'class-a', reason: 'session-changed' }),
+    { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'changed' },
+  );
+  // In another scope the same student is a new loss with its own cause.
+  assert.deepEqual(
+    recordSelectionLoss(stopped, { previousIds: ['a'], scopeKey: 'class-b', reason: 'session-changed' }),
+    { lostIds: ['a'], count: 1, scopeKey: 'class-b', reason: 'session-changed' },
+  );
+
+  const unavailable = recordSelectionLoss(null, { previousIds: ['a', 'b'], scopeKey: 'class-a', reason: 'class-unavailable' });
+  assert.deepEqual(unavailable, { lostIds: ['a', 'b'], count: 2, scopeKey: 'class-a', reason: 'class-unavailable' });
+  assert.equal(
+    selectionLostMessage(unavailable.count, { reason: unavailable.reason, nothingSent: true }),
+    'Your selection was cleared because the class was unavailable. Nothing was sent. Choose students again, or use the whole class.',
+  );
+  // When the class is back, the cleared ticks still refuse the class fallback.
+  assert.throws(
+    () => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: unavailable }),
+    (error) => error.code === SELECTION_LOST_CODE
+      && error.message === 'Your selection was cleared because the class was unavailable. Nothing was sent. Choose students again, or use the whole class.',
+  );
+});
+
+test('the Claimed view keeps its selection scope across class sessions, and only the view may change automatically', () => {
+  const reader = JSON.stringify(['school-1', 'teacher-1']);
+  const classA = JSON.stringify([['session', 'a'], '3']);
+  const classB = JSON.stringify([['session', 'b'], '1']);
+  const key = (overrides = {}) => buildSelectionScopeKey({ readerKey: reader, transitionKey: '', view: 'class', authorityKey: classA, ...overrides });
+
+  assert.notEqual(key(), key({ authorityKey: classB }), 'a new class session or revision is a new Class-view scope');
+  assert.equal(
+    key({ view: 'claimed' }),
+    key({ view: 'claimed', authorityKey: classB }),
+    'claimed students are commanded through their own groups: a class session starting or ending keeps their scope',
+  );
+  assert.equal(key({ view: 'claimed' }), key({ view: 'claimed', authorityKey: null }));
+  assert.notEqual(key({ view: 'claimed' }), key(), 'Class and Claimed are separate scopes');
+  assert.notEqual(key({ transitionKey: 'boundary-2' }), key(), 'a scheduled boundary is a new scope');
+
+  // The Dashboard can switch Class <-> Claimed by itself in one school and
+  // boundary; a school, viewer or schedule change is never that switch.
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed' })), true);
+  assert.equal(selectionScopeKeepsBoundary(key({ view: 'claimed' }), key({ authorityKey: classB })), true);
+  assert.equal(selectionScopeKeepsBoundary(key(), key()), true);
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed', readerKey: JSON.stringify(['school-2', 'teacher-1']) })), false);
+  assert.equal(selectionScopeKeepsBoundary(key(), key({ view: 'claimed', transitionKey: 'boundary-2' })), false);
+  for (const invalid of [null, undefined, '', 'not json', '[]', JSON.stringify({ view: 'class' })]) {
+    assert.equal(selectionScopeKeepsBoundary(invalid, key()), false, `${String(invalid)} is no scope`);
+    assert.equal(selectionScopeKeepsBoundary(key(), invalid), false);
+  }
+});
+
+test('a lost selection never falls back to the subgroup or class, while explicit students still resolve', () => {
+  const thrown = (fn) => { try { fn(); } catch (error) { return error; } assert.fail('expected a throw'); };
+  const lost = recordSelectionLoss(null, { previousIds: ['a'], keptIds: [], scopeKey: 'class-a' });
+  const claimedRows = [
+    { studentId: 'a', contextId: 'context-1' },
+    { studentId: 'b', contextId: 'context-2' },
+  ];
+
+  const classRefusal = thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: lost }));
+  assert.equal(classRefusal.code, SELECTION_LOST_CODE);
+  assert.equal(
+    classRefusal.message,
+    'Your selection was cleared because 1 selected student stopped reporting. Nothing was sent. Choose students again, or use the whole class.',
+  );
+  const groupRefusal = thrown(() => resolveCommandTargets({
+    mode: 'owned-class', sessionStudents: classStudents, selectedSubgroupId: 'group-1', subgroupStudentIds: ['a', 'b'], selectionLoss: lost,
+  }));
+  assert.equal(groupRefusal.code, SELECTION_LOST_CODE);
+  assert.match(groupRefusal.message, /Nothing was sent\. Choose students again, or use the whole group\.$/);
+  assert.equal(
+    thrown(() => resolveCommandTargets({ mode: 'scheduled-supervision', sessionStudents: classStudents, selectionLoss: lost })).code,
+    SELECTION_LOST_CODE,
+  );
+  const claimedRefusal = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, selectionLoss: lost }));
+  assert.match(claimedRefusal.message, /use all claimed students\.$/);
+  // The supervision groups changed under ticked claimed students.
+  const groupsChanged = recordSelectionLoss(null, { previousIds: ['a'], scopeKey: 'claimed', reason: 'groups-changed' });
+  const groupsRefusal = thrown(() => resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, selectionLoss: groupsChanged }));
+  assert.equal(groupsRefusal.code, SELECTION_LOST_CODE);
+  assert.deepEqual(groupsRefusal.selectionLoss, { count: 1, scope: 'claimed', reason: 'groups-changed' });
+  assert.equal(
+    groupsRefusal.message,
+    'Your selection was cleared because your supervision groups changed. Nothing was sent. Choose students again, or use all claimed students.',
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(groupsRefusal),
+    'Your selection was cleared because your supervision groups changed. Choose students again, or use all claimed students.',
+  );
+  // A removed group refuses the class fallback it would otherwise reach.
+  const groupRemoved = recordSelectionLoss(null, { previousIds: ['group-1'], scopeKey: 'class-a', reason: 'group-removed' });
+  assert.equal(
+    thrown(() => resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: groupRemoved })).message,
+    'Your selection was cleared because the group you chose was removed. Nothing was sent. Choose students again, or use the whole class.',
+  );
+
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectedStudentIds: ['b'], selectionLoss: lost }).targetStudentIds,
+    ['b'],
+    'a remaining or new tick is an explicit target',
+  );
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, overrideStudentIds: ['a'], selectionLoss: lost }).targetStudentIds,
+    ['a'],
+    'a frozen dialog list or tile names its students and is unaffected',
+  );
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'claimed-coverage', claimedStudents: claimedRows, overrideStudentIds: ['b'], selectionLoss: lost }).targetStudentIds,
+    ['b'],
+  );
+  assert.deepEqual(resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: null }).targetStudentIds, ['a', 'b']);
+  assert.deepEqual(
+    resolveCommandTargets({ mode: 'owned-class', sessionStudents: classStudents, selectionLoss: { lostIds: [], count: 0 } }).targetStudentIds,
+    ['a', 'b'],
+    'once the teacher chooses whole class the fallback is allowed again',
+  );
+
+  // A dialog that does not open explains the loss without claiming a send.
+  assert.equal(
+    recipientDialogRefusalMessage(classRefusal, { blockedNames: ['Ada Student'] }),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole class.',
+  );
+  assert.equal(
+    recipientDialogRefusalMessage(groupRefusal),
+    'Your selection was cleared because 1 selected student stopped reporting. Choose students again, or use the whole group.',
+  );
+});
+
+test('only the controls of a running tool keep the audience the server froze', () => {
+  for (const [commandType, commandPayload, serverDerived] of [
+    ['poll', { action: 'close', pollId: 'poll-1' }, true],
+    ['poll', { action: 'start', question: 'Ready?' }, false],
+    ['poll', {}, false],
+    ['attention-mode', { active: false }, true],
+    ['attention-mode', { active: true, message: 'Eyes up' }, false],
+    ['timer', { action: 'stop' }, true],
+    ['timer', { action: 'pause' }, true],
+    ['timer', { action: 'resume' }, true],
+    ['timer', { action: 'extend', seconds: 60 }, true],
+    ['timer', { action: 'start', seconds: 60 }, false],
+    ['lesson-activity', { action: 'update' }, true],
+    ['lesson-activity', { action: 'end' }, true],
+    ['lesson-activity', { action: 'start', title: 'Work' }, false],
+    ['teacher-message', { message: 'Hi' }, false],
+    ['apply-flight-path', { flightPathId: 'fp-1' }, false],
+    ['remove-flight-path', {}, false],
+    ['close-tabs', { closeAll: true }, false],
+  ]) {
+    assert.equal(commandAudienceIsServerDerived(commandType, commandPayload), serverDerived, `${commandType} ${JSON.stringify(commandPayload)}`);
+  }
+  assert.equal(commandAudienceIsServerDerived('poll'), false);
+});
+
+test('the shared last-name comparator is the Dashboard grid rule', () => {
+  // The rule the grid has always used inline: last word, lower-cased, localeCompare.
+  const gridLastName = (fullName) => {
+    if (!fullName) return '';
+    const nameParts = fullName.trim().split(/\s+/);
+    if (nameParts.length === 1) return nameParts[0].toLowerCase();
+    return nameParts[nameParts.length - 1].toLowerCase();
+  };
+  const names = ['Ada Student', 'ben  zed', 'Cher', '  ', '', undefined, 'Dee de la Cruz', 'Émile Zola', 'zoe adams', 'Ann Student'];
+  for (const left of names) {
+    assert.equal(studentLastName(left), gridLastName(left));
+    for (const right of names) {
+      assert.equal(
+        Math.sign(compareStudentsByLastName({ studentName: left }, { studentName: right })),
+        Math.sign(gridLastName(left).localeCompare(gridLastName(right))),
+        `${JSON.stringify(left)} vs ${JSON.stringify(right)}`,
+      );
+    }
+  }
+  const sorted = [{ studentName: 'Ben Student', id: 1 }, { studentName: 'zoe adams', id: 2 }, { studentName: 'Ada Student', id: 3 }]
+    .sort(compareStudentsByLastName);
+  assert.deepEqual(sorted.map((row) => row.id), [2, 1, 3], 'equal last names keep their incoming order');
+});
+
+test('the Class tools footer names who new actions reach, with a singular for one student', () => {
+  assert.equal(classToolsRecipientLabel({ selectedCount: 1, subgroupSelected: true, subgroupMemberCount: 4, classCount: 20 }), '1 selected student', 'ticks win');
+  assert.equal(classToolsRecipientLabel({ selectedCount: 3 }), '3 selected students');
+  assert.equal(classToolsRecipientLabel({ subgroupSelected: true, subgroupMemberCount: 1, classCount: 20 }), '1 student in selected group');
+  assert.equal(classToolsRecipientLabel({ subgroupSelected: true, subgroupMemberCount: 4 }), '4 students in selected group');
+  assert.equal(classToolsRecipientLabel({ classCount: 20 }), 'all 20 students');
+  assert.equal(classToolsRecipientLabel({ classCount: 1 }), '1 student');
+  assert.equal(classToolsRecipientLabel({ classCount: 0 }), 'no students');
+  assert.equal(classToolsRecipientLabel(), 'no students');
+});
+
+test('while a cleared selection stands, the Class tools footer never names the group or class it refuses', () => {
+  const lost = 'no one until you choose students again';
+  assert.equal(classToolsRecipientLabel({ selectionLost: true, classCount: 20 }), lost);
+  assert.equal(classToolsRecipientLabel({ selectionLost: true, subgroupSelected: true, subgroupMemberCount: 4, classCount: 20 }), lost);
+  assert.equal(classToolsRecipientLabel({ selectionLost: true, selectedCount: 2, classCount: 20 }), '2 selected students', 'new ticks are an explicit target again');
+  assert.equal(classToolsRecipientLabel({ selectionLost: 'yes', classCount: 20 }), 'all 20 students', 'only a real loss narrows the label');
+  // The Dashboard passes exactly the guard the command resolver applies.
+  const loss = recordSelectionLoss(null, { previousIds: ['ada'], keptIds: [], scopeKey: 'scope', reason: 'stopped-reporting' });
+  assert.equal(classToolsRecipientLabel({ selectionLost: selectionLossBlocksFallback(loss, new Set()), classCount: 20 }), lost);
+  assert.equal(classToolsRecipientLabel({ selectionLost: selectionLossBlocksFallback(loss, new Set(['ben'])), selectedCount: 1, classCount: 20 }), '1 selected student');
+});
+
+test('while students are ticked for sign-out only, the Class tools footer names no one, as every new action is refused', () => {
+  const blocked = 'no one until you clear the sign-out-only selection';
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, classCount: 20 }), blocked, 'never the class');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 2, subgroupSelected: true, subgroupMemberCount: 4, classCount: 20 }), blocked, 'never the group');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, selectedCount: 3, classCount: 20 }), blocked, 'never the other ticks');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 1, selectionLost: true, classCount: 20 }), blocked, 'whatever was lost');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: 0, selectionLost: true, classCount: 20 }), 'no one until you choose students again');
+  assert.equal(classToolsRecipientLabel({ signOutOnlyCount: -1, classCount: 20 }), 'all 20 students', 'only a count changes the label');
+  // The refusal those new actions meet, and the Target badge's wording.
+  assert.throws(() => assertClassroomCommandSelectionIsolation('teacher-message', 1), /clear the sign-out-only selection/i);
+  assert.doesNotThrow(() => assertClassroomCommandSelectionIsolation('student-sign-out', 1));
+  assert.equal(signOutOnlySelectionLabel(1), '1 selected for sign-out only');
+  assert.equal(signOutOnlySelectionLabel(3), '3 selected for sign-out only');
 });

@@ -60,6 +60,12 @@ export async function getEffectiveFabToggles(
   dbInstance: typeof db = db
 ): Promise<{
   messagingEnabled: boolean;
+  /**
+   * The hard switches only: the school-wide switch and this class's own. It
+   * ignores the pause, so a device can tell a paused class (true) from a
+   * switched-off one (false), and it matches the teacher reply gate.
+   */
+  messagingChannelEnabled: boolean;
   handRaisingEnabled: boolean;
   schoolMessagingEnabled: boolean;
   schoolHandRaisingEnabled: boolean;
@@ -85,6 +91,7 @@ export async function getEffectiveFabToggles(
 
   return {
     messagingEnabled: schoolMessagingEnabled && sessionMessagingEnabled && !pause.messagesPaused,
+    messagingChannelEnabled: schoolMessagingEnabled && sessionMessagingEnabled,
     handRaisingEnabled: schoolHandRaisingEnabled && sessionHandRaisingEnabled,
     schoolMessagingEnabled,
     schoolHandRaisingEnabled,
@@ -171,7 +178,8 @@ export async function buildStudentFabState(
         contextSource: scheduledSupervisionSource(context), contextName: context.name, activeSessionIds: [],
         contextAuthorityRevision: String(context.classroomAuthorityRevision),
         activeContexts: [{ supervisionContextId: context.id }], lifecycleRevision: toggles.lifecycleRevision, revision: toggles.lifecycleRevision,
-        messagingEnabled: toggles.messagingEnabled, handRaisingEnabled: toggles.handRaisingEnabled,
+        messagingEnabled: toggles.messagingEnabled, messagingChannelEnabled: toggles.messagingChannelEnabled,
+        handRaisingEnabled: toggles.handRaisingEnabled,
         messagesPaused: toggles.messagesPaused, pauseReason: toggles.pauseReason, handRaised: hands.length > 0,
         activeHands: hands.map((hand) => ({ supervisionContextId: context.id, studentId, raisedAt: hand.raisedAt, expiresAt: hand.expiresAt })),
         classTools: await toolsSnapshot({ supervisionContextId: context.id }),
@@ -194,6 +202,7 @@ export async function buildStudentFabState(
       handRaisingEnabled: false,
       messagesPaused: false,
       pauseReason: null,
+      messagingChannelEnabled: false,
       handRaised: false,
       activeHands: [],
       sessions: [],
@@ -215,12 +224,14 @@ export async function buildStudentFabState(
     .filter((hand) => !!hand.teachingSessionId && authoritativeSessionIds.has(hand.teachingSessionId));
 
   let messagingEnabled = false;
+  let messagingChannelEnabled = false;
   let handRaisingEnabled = false;
   let messagesPaused = false;
   let pauseReason: ChatPauseReason = null;
   const sessionStates: Array<{
     sessionId: string;
     messagingEnabled: boolean;
+    messagingChannelEnabled: boolean;
     handRaisingEnabled: boolean;
     messagesPaused: boolean;
     pauseReason: ChatPauseReason;
@@ -237,12 +248,14 @@ export async function buildStudentFabState(
     );
     const handRaised = activeHands.some((hand) => hand.teachingSessionId === session.id);
     messagingEnabled = messagingEnabled || toggles.messagingEnabled;
+    messagingChannelEnabled = messagingChannelEnabled || toggles.messagingChannelEnabled;
     handRaisingEnabled = handRaisingEnabled || toggles.handRaisingEnabled;
     messagesPaused = messagesPaused || toggles.messagesPaused;
     pauseReason = pauseReason ?? toggles.pauseReason;
     sessionStates.push({
       sessionId: session.id,
       messagingEnabled: toggles.messagingEnabled,
+      messagingChannelEnabled: toggles.messagingChannelEnabled,
       handRaisingEnabled: toggles.handRaisingEnabled,
       messagesPaused: toggles.messagesPaused,
       pauseReason: toggles.pauseReason,
@@ -265,6 +278,7 @@ export async function buildStudentFabState(
     handRaisingEnabled,
     messagesPaused,
     pauseReason,
+    messagingChannelEnabled,
     handRaised: activeHands.length > 0,
     activeHands: activeHands.map((hand) => ({
       sessionId: hand.teachingSessionId,
@@ -392,6 +406,7 @@ export async function updateAndFanoutSessionFabSettings(options: {
           studentSessionId: binding.studentSessionId,
           enabled: toggles.messagingEnabled,
           messagingEnabled: toggles.messagingEnabled,
+          messagingChannelEnabled: toggles.messagingChannelEnabled,
           messagesPaused: toggles.messagesPaused,
           pauseReason: toggles.pauseReason,
           revision: settings.lifecycleRevision,

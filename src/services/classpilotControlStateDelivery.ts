@@ -138,6 +138,7 @@ export async function syncClasspilotControlStatesToActiveDevices(
               teachingSessionId: null,
               activeSessionIds: [],
               messagingEnabled: false,
+              messagingChannelEnabled: false,
               handRaisingEnabled: false,
               handRaised: false,
               lifecycleRevision: 0,

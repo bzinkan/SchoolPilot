@@ -19694,6 +19694,37 @@ export async function createTeacherChatReplyWithDelivery(options: {
     }, transactionDb))) {
       throw classpilotFabMutationError(409, "chat_authority_stale", "Student classroom authority changed");
     }
+    // Teachers may still reach a paused class; only the hard switches (the
+    // school-wide one and this class's own) stop replies. Locks follow the
+    // class switch writer's order (teaching session, then its settings row);
+    // the inserts below take this same key-share lock on their parent.
+    await tx
+      .select({ id: teachingSessions.id })
+      .from(teachingSessions)
+      .where(and(
+        eq(teachingSessions.schoolId, options.schoolId),
+        eq(teachingSessions.id, options.teachingSessionId)
+      ))
+      .limit(1)
+      .for("key share");
+    const [schoolSettings] = await tx
+      .select({ studentMessagingEnabled: settings.studentMessagingEnabled })
+      .from(settings)
+      .where(eq(settings.schoolId, options.schoolId))
+      .limit(1)
+      .for("share");
+    const [classSettings] = await tx
+      .select({ chatEnabled: sessionSettings.chatEnabled })
+      .from(sessionSettings)
+      .where(and(
+        eq(sessionSettings.schoolId, options.schoolId),
+        eq(sessionSettings.sessionId, options.teachingSessionId)
+      ))
+      .limit(1)
+      .for("share");
+    if (schoolSettings?.studentMessagingEnabled === false || classSettings?.chatEnabled === false) {
+      throw classpilotFabMutationError(403, "FAB_FEATURE_DISABLED", "Messaging is turned off");
+    }
     const [message] = await tx.insert(chatMessages).values({
       schoolId: options.schoolId,
       sessionId: options.teachingSessionId,
