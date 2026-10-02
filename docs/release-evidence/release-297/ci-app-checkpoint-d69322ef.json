@@ -1,0 +1,3016 @@
+{
+  "schemaVersion": 1,
+  "recordType": "exact successful remote CI application checkpoint with rollout tooling status",
+  "recordedAt": "2026-10-02T19:50:59.813Z",
+  "repository": "bzinkan/SchoolPilot",
+  "pullRequest": 603,
+  "sourceHeadSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+  "run": {
+    "id": 37053146557,
+    "attempt": 1,
+    "number": 1737,
+    "name": "CI",
+    "path": ".github/workflows/ci-build.yml",
+    "event": "pull_request",
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557",
+    "headBranch": "codex/release-stabilization-297",
+    "status": "completed",
+    "conclusion": "success",
+    "createdAt": "2026-10-02T19:17:31Z",
+    "updatedAt": "2026-10-02T19:48:29Z"
+  },
+  "retrieval": {
+    "method": "GitHub REST via gh api; native PowerShell7.6.5 redirection; unmodified bytes as downloaded",
+    "metadataEndpoints": [
+      "repos/bzinkan/SchoolPilot/actions/runs/37053146557",
+      "repos/bzinkan/SchoolPilot/actions/runs/37053146557/jobs?per_page=100",
+      "repos/bzinkan/SchoolPilot/git/commits/b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+    ],
+    "logEndpoints": [
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991209975/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210095/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210132/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210150/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210239/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210266/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210289/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991210303/logs",
+      "repos/bzinkan/SchoolPilot/actions/jobs/110991255468/logs"
+    ],
+    "initialAndFinalMetadataPreserved": true
+  },
+  "ciCheckout": {
+    "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110",
+    "parents": [
+      "996d965f0b044f8fc4d4bbc399c5ab3781fbac04",
+      "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    ],
+    "treeSha": "fcffe5cd37c92506aa6422ed67f6169562f976eb",
+    "sourceHeadTreeSha": "fcffe5cd37c92506aa6422ed67f6169562f976eb",
+    "treeEqualsHead": true,
+    "explanation": "pull_request checked out GitHub synthetic merge b34db4e5; its tree exactly equals d69322ef. Ordinary capture job also checks out released ClassPilot2.9.3 ccaf2c8d separately, recorded in that job log."
+  },
+  "sourceEquivalence": {
+    "comparedIntegrationCommit": "e89bcbfdfad895366fc0e11fdf909a7630cb955e",
+    "differencesOnlyUnderDocs": true,
+    "changedPaths": [
+      "docs/release-evidence/private-chat-redis-relay-20261002/README.md",
+      "docs/release-evidence/private-chat-redis-relay-20261002/fastpaths-final-ordinary-green.log.gz",
+      "docs/release-evidence/private-chat-redis-relay-20261002/fastpaths-final-restricted-green.log.gz",
+      "docs/release-evidence/private-chat-redis-relay-20261002/fastpaths-manifest.json",
+      "docs/release-evidence/release-297/README.md",
+      "docs/release-evidence/release-297/bounded-authority-fastpaths-0e9e50df.json",
+      "docs/release-evidence/release-297/bounded-authority-fastpaths-0e9e50df.logs.ndjson.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/manifest.json",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-focused-types.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-js-green.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-js-invalid-loader.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-js-red.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-powershell-green.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-powershell-invalid-array-fixture.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-powershell-red.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-relay-floor-test-casts.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-terraform-inventory-green.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-terraform-inventory-init.log.gz",
+      "docs/release-evidence/release-297/tool-checkpoints/release-297-terraform-inventory-unselected-forward-slash.log.gz",
+      "docs/release-evidence/release-297/usage-cold-open-loop-run-01-4ce644af.json",
+      "docs/release-evidence/release-297/usage-cold-open-loop-run-01-4ce644af.raw.ndjson.gz",
+      "docs/release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.json",
+      "docs/release-evidence/release-297/usage-cold-open-loop-run-02-60bb2338.raw.ndjson.gz"
+    ],
+    "nonDocsRootObjects": [
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "2690fe5b170d2c8e4cced68c3016577157226957",
+        "path": ".codex"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "9c091ecf767aa579199cc3e454e4ddc13356f399",
+        "path": ".dockerignore"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "b3b0752e7b6c822457fadda0b3cff861fa5c183c",
+        "path": ".env.example"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "abd3f58c9266524ad14ad6239f041315e4c00592",
+        "path": ".gitattributes"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "aca28b423e4787f94c5891d42f903411b3600bab",
+        "path": ".github"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "79e6deac53ddbea20c06746aa64ee1f0926fbb61",
+        "path": ".gitignore"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "926ff11a16aa20e7e6e21e81c5839414f4150a2e",
+        "path": ".gitleaks.toml"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "cbeb7ee552f81a038dc6a9c5a38049626a803f42",
+        "path": ".gitleaksignore"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "9deaa8eb0c407157db1171153c670a0a2e4cbfa7",
+        "path": "AGENTS.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "50c7a4875e96e78ec3f5c1cb309d2b1c997f90eb",
+        "path": "ARCHITECTURE.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "13aedff16fe6760bf2b22e9be4d4b44c6645445d",
+        "path": "CLAUDE.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "c2ed7303984d2eab8d934d7be01cd2a33c3a2d3e",
+        "path": "DEVELOPMENT_NOTES.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "a34731b061470dabde748c3509363a486bb7a1c2",
+        "path": "Dockerfile"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "19550f0549de261c4957d9a3561a5fcec85ec33a",
+        "path": "Dockerfile.migrate"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "a1210eb49d4f05558859c301ee78d5af4b90b9ad",
+        "path": "PROJECT_OVERVIEW.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "9fb7385c84a52e8f171d705105d6d7a13deda1ee",
+        "path": "README.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "d62bfd912d68cb6f1e37556e35250cfe0dcbd46b",
+        "path": "SOC2.md"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "8993ea857ef2cc23eb39d8fe53d06aab1e18b911",
+        "path": "docker-compose.yml"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "b51bb2953e85a7d25248c840c08d158168a7e5a0",
+        "path": "drizzle.config.ts"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "b6e50406e8d7d287a54f2840d8c93af5164485c7",
+        "path": "infra"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "6a14d1dc86a23e424eba9cde5f1f2d84024adfa3",
+        "path": "migrations"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "3a8768648f828102a79df1d44f3418f6e3121374",
+        "path": "package-lock.json"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "5e847f1eddda47d28682cb2e977528348e5e514c",
+        "path": "package.json"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "1f42efe3a088d84c5f92269f478fee13684bd0eb",
+        "path": "schoolpilot-app"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "8ae16dcbaecb336bf3e62d14baf9b71fd2806948",
+        "path": "schoolpilot-logo.png"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "0996f4b0009570461cea8de8445931c5da836e1b",
+        "path": "schoolpilot-logo.svg"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "4adf675dc9bb8808390460cd6b719f4f8ee2d870",
+        "path": "scripts"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "c3993c0677567d99362c9ab6c12ed02d908017a7",
+        "path": "seeds"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "8f33ee3e5cc29857417bc829d8ef0512701b8099",
+        "path": "src"
+      },
+      {
+        "mode": "040000",
+        "type": "tree",
+        "gitObject": "f1301bdf828af39266da287daa5b47d78c590ac5",
+        "path": "tests"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "e23ae94ae03b07a14eff4f7ab019d387748c0731",
+        "path": "tsconfig.json"
+      },
+      {
+        "mode": "100644",
+        "type": "blob",
+        "gitObject": "310e05cf992b8bcd92f8482d99e86925408c4007",
+        "path": "tsconfig.tests.json"
+      }
+    ],
+    "explanation": "Verified by git diff d693..e89b. Later docs-only commits change the repository tree but preserve application, tests, workflow, dependency and tooling blobs. Any later non-doc change requires separate validation."
+  },
+  "jobs": [
+    {
+      "id": 110991209975,
+      "name": "Cross-tenant isolation tests",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991209975",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:31:25Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:35Z",
+          "completed_at": "2026-10-02T19:17:36Z"
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:49Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:49Z",
+          "completed_at": "2026-10-02T19:17:51Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:51Z",
+          "completed_at": "2026-10-02T19:17:53Z"
+        },
+        {
+          "name": "Install bounded PDF processing runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:53Z",
+          "completed_at": "2026-10-02T19:18:18Z"
+        },
+        {
+          "name": "Install dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:18Z",
+          "completed_at": "2026-10-02T19:18:25Z"
+        },
+        {
+          "name": "Create test schema",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:25Z",
+          "completed_at": "2026-10-02T19:18:29Z"
+        },
+        {
+          "name": "Build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:18:29Z",
+          "completed_at": "2026-10-02T19:19:06Z"
+        },
+        {
+          "name": "Install appointment migration-owned test contract",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:19:06Z",
+          "completed_at": "2026-10-02T19:19:06Z"
+        },
+        {
+          "name": "DB and ordinary cross-tenant tests (serial)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-02T19:19:06Z",
+          "completed_at": "2026-10-02T19:28:44Z"
+        },
+        {
+          "name": "Checkout released ClassPilot 2.9.3 capture runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-02T19:28:44Z",
+          "completed_at": "2026-10-02T19:28:45Z"
+        },
+        {
+          "name": "Install preview browser dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-02T19:28:45Z",
+          "completed_at": "2026-10-02T19:29:11Z"
+        },
+        {
+          "name": "Real extension capture to observed and claimed tiles (serial)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-02T19:29:11Z",
+          "completed_at": "2026-10-02T19:31:20Z"
+        },
+        {
+          "name": "Upload real capture evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-02T19:31:20Z",
+          "completed_at": "2026-10-02T19:31:21Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-02T19:31:21Z",
+          "completed_at": "2026-10-02T19:31:21Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-02T19:31:21Z",
+          "completed_at": "2026-10-02T19:31:22Z"
+        },
+        {
+          "name": "Post Checkout released ClassPilot 2.9.3 capture runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-10-02T19:31:22Z",
+          "completed_at": "2026-10-02T19:31:22Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30,
+          "started_at": "2026-10-02T19:31:22Z",
+          "completed_at": "2026-10-02T19:31:22Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 31,
+          "started_at": "2026-10-02T19:31:22Z",
+          "completed_at": "2026-10-02T19:31:23Z"
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 32,
+          "started_at": "2026-10-02T19:31:23Z",
+          "completed_at": "2026-10-02T19:31:23Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33,
+          "started_at": "2026-10-02T19:31:23Z",
+          "completed_at": "2026-10-02T19:31:23Z"
+        }
+      ],
+      "rawLogFile": "job-110991209975.log",
+      "rawLogBytes": 2586169,
+      "rawLogSha256": "5082b82c0cf82a99e9bea61c7849ba091779e1759fcf33fb87e33d2f5b790c27",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 272,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        },
+        {
+          "sourceLine": 11423,
+          "sha": "ccaf2c8d1b0df3aa1f8ea74754e457990a74498a"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 11309,
+          "tests": 1383,
+          "pass": 1375,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 8,
+          "duration_ms": 578109.362859,
+          "lastSourceLine": 11316
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": [
+        {
+          "sourceLine": 2095,
+          "text": "2026-10-02T19:21:00.3435565Z ok 81 - Focus authority and continuation under restricted RLS # SKIP"
+        },
+        {
+          "sourceLine": 2230,
+          "text": "2026-10-02T19:21:08.8074500Z ok 85 - Classroom lesson prerequisites under restricted RLS # SKIP"
+        },
+        {
+          "sourceLine": 3049,
+          "text": "2026-10-02T19:21:52.2212832Z ok 170 - ClassPilot roadmap forced tenant isolation # SKIP"
+        },
+        {
+          "sourceLine": 3351,
+          "text": "2026-10-02T19:22:00.3064348Z ok 186 - ClassPilot schedule-change startup and forced-RLS bundle # SKIP"
+        },
+        {
+          "sourceLine": 6064,
+          "text": "2026-10-02T19:23:51.9342406Z ok 335 - ClassPilot transactional plan scenarios against PostgreSQL/FORCE RLS # SKIP"
+        },
+        {
+          "sourceLine": 6228,
+          "text": "2026-10-02T19:24:01.6430557Z ok 338 - Monitored Browser Time rollups under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+        },
+        {
+          "sourceLine": 6427,
+          "text": "2026-10-02T19:24:12.7525606Z     ok 2 - RLS partitions PassPilot legacy multi-class memberships # SKIP"
+        },
+        {
+          "sourceLine": 6433,
+          "text": "2026-10-02T19:24:12.7536291Z     ok 3 - RLS partitions PassPilot appointments and rejects foreign appointment parents # SKIP"
+        },
+        {
+          "sourceLine": 6439,
+          "text": "2026-10-02T19:24:12.7540266Z     ok 4 - RLS partitions PassPilot issuance rules and their school-scoped read # SKIP"
+        },
+        {
+          "sourceLine": 6445,
+          "text": "2026-10-02T19:24:12.7544107Z     ok 5 - RLS partitions Monitored Browser Time rollups and their school-scoped read # SKIP"
+        },
+        {
+          "sourceLine": 6451,
+          "text": "2026-10-02T19:24:12.7548423Z     ok 6 - RLS partitions ClassPilot summary delivery and roster snapshot rows by tenant context # SKIP"
+        },
+        {
+          "sourceLine": 6511,
+          "text": "2026-10-02T19:24:12.9197984Z     ok 16 - RLS hides another school's School Library rows even when that school is named explicitly # SKIP"
+        },
+        {
+          "sourceLine": 6523,
+          "text": "2026-10-02T19:24:12.9376746Z     ok 18 - RLS hides another school's precise Flight Path resources even when that school is named explicitly # SKIP"
+        },
+        {
+          "sourceLine": 7190,
+          "text": "2026-10-02T19:24:26.1594958Z ok 363 - GoPilot child-table RLS # SKIP"
+        },
+        {
+          "sourceLine": 8564,
+          "text": "2026-10-02T19:26:13.9866451Z ok 499 - appointments under forced tenant RLS # SKIP requires restricted RLS lane"
+        },
+        {
+          "sourceLine": 8754,
+          "text": "2026-10-02T19:26:22.0576377Z     ok 7 - partitions canonical classes, rosters, passes, and migration state under RLS # SKIP"
+        },
+        {
+          "sourceLine": 9530,
+          "text": "2026-10-02T19:27:02.5507011Z ok 530 - PassPilot rule tables under forced RLS # SKIP requires the RLS lane (RLS_GUC_ENABLED=true)"
+        }
+      ]
+    },
+    {
+      "id": 110991210095,
+      "name": "RLS-enabled cross-tenant tests",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210095",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:21:49Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:36Z"
+        },
+        {
+          "name": "Initialize containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:47Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:47Z",
+          "completed_at": "2026-10-02T19:17:49Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:49Z",
+          "completed_at": "2026-10-02T19:17:51Z"
+        },
+        {
+          "name": "Install bounded PDF processing runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:51Z",
+          "completed_at": "2026-10-02T19:18:00Z"
+        },
+        {
+          "name": "Install dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:00Z",
+          "completed_at": "2026-10-02T19:18:07Z"
+        },
+        {
+          "name": "Create test schema",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:07Z",
+          "completed_at": "2026-10-02T19:18:10Z"
+        },
+        {
+          "name": "Build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:18:10Z",
+          "completed_at": "2026-10-02T19:18:49Z"
+        },
+        {
+          "name": "Run non-production legacy schema convergence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:18:49Z",
+          "completed_at": "2026-10-02T19:18:53Z"
+        },
+        {
+          "name": "Enable RLS on app tables",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-02T19:18:53Z",
+          "completed_at": "2026-10-02T19:18:54Z"
+        },
+        {
+          "name": "RLS-enabled cross-tenant and tile-read isolation tests (serial)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-02T19:18:54Z",
+          "completed_at": "2026-10-02T19:21:45Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-02T19:21:45Z",
+          "completed_at": "2026-10-02T19:21:45Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-02T19:21:45Z",
+          "completed_at": "2026-10-02T19:21:46Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-10-02T19:21:46Z",
+          "completed_at": "2026-10-02T19:21:47Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-10-02T19:21:47Z",
+          "completed_at": "2026-10-02T19:21:47Z"
+        },
+        {
+          "name": "Stop containers",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-10-02T19:21:47Z",
+          "completed_at": "2026-10-02T19:21:47Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-10-02T19:21:47Z",
+          "completed_at": "2026-10-02T19:21:47Z"
+        }
+      ],
+      "rawLogFile": "job-110991210095.log",
+      "rawLogBytes": 401979,
+      "rawLogSha256": "d25dc497199758f1e859f61304bd8258f11e78eac7c59bdda85de7c568f48c6e",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 228,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 3278,
+          "tests": 364,
+          "pass": 363,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 1,
+          "duration_ms": 171548.485937,
+          "lastSourceLine": 3285
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": [
+        {
+          "sourceLine": 2709,
+          "text": "2026-10-02T19:21:09.5826054Z     ok 4 - uses Redis HMAC keys and one atomic cross-process V2 consumer # SKIP Redis 7 integration service is unavailable"
+        }
+      ]
+    },
+    {
+      "id": 110991210132,
+      "name": "Frontend release-focused gates (shard 3)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210132",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:22:57Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:39Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:39Z",
+          "completed_at": "2026-10-02T19:17:44Z"
+        },
+        {
+          "name": "Install backend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:44Z",
+          "completed_at": "2026-10-02T19:17:56Z"
+        },
+        {
+          "name": "Install frontend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:56Z",
+          "completed_at": "2026-10-02T19:18:04Z"
+        },
+        {
+          "name": "Install Chromium for release-focused browser gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:04Z",
+          "completed_at": "2026-10-02T19:18:28Z"
+        },
+        {
+          "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 3)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:28Z",
+          "completed_at": "2026-10-02T19:22:54Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:22:54Z",
+          "completed_at": "2026-10-02T19:22:54Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:22:54Z",
+          "completed_at": "2026-10-02T19:22:55Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:22:55Z",
+          "completed_at": "2026-10-02T19:22:55Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:22:55Z",
+          "completed_at": "2026-10-02T19:22:56Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:22:56Z",
+          "completed_at": "2026-10-02T19:22:56Z"
+        }
+      ],
+      "rawLogFile": "job-110991210132.log",
+      "rawLogBytes": 213428,
+      "rawLogSha256": "ce79ab3f344b5c065b488c2144a6ee7e3ee49935a5a7cba34235b06cc4a9133c",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 133,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 486,
+          "tests": 5,
+          "pass": 5,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 71.949996,
+          "lastSourceLine": 493
+        },
+        {
+          "firstSourceLine": 518,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 67.14674,
+          "lastSourceLine": 525
+        },
+        {
+          "firstSourceLine": 712,
+          "tests": 30,
+          "pass": 30,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 158.385047,
+          "lastSourceLine": 719
+        },
+        {
+          "firstSourceLine": 930,
+          "tests": 34,
+          "pass": 34,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 151.427359,
+          "lastSourceLine": 937
+        },
+        {
+          "firstSourceLine": 1610,
+          "tests": 111,
+          "pass": 111,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 334.598351,
+          "lastSourceLine": 1617
+        },
+        {
+          "firstSourceLine": 1666,
+          "tests": 7,
+          "pass": 7,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 79.872187,
+          "lastSourceLine": 1673
+        },
+        {
+          "firstSourceLine": 1692,
+          "tests": 2,
+          "pass": 2,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 63.011509,
+          "lastSourceLine": 1699
+        },
+        {
+          "firstSourceLine": 1928,
+          "tests": 37,
+          "pass": 37,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 285.556754,
+          "lastSourceLine": 1935
+        },
+        {
+          "firstSourceLine": 1960,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 80.410063,
+          "lastSourceLine": 1967
+        },
+        {
+          "firstSourceLine": 1976,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 33151.849093,
+          "lastSourceLine": 1983
+        },
+        {
+          "firstSourceLine": 2068,
+          "tests": 13,
+          "pass": 13,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 93.09282,
+          "lastSourceLine": 2075
+        },
+        {
+          "firstSourceLine": 2104,
+          "tests": 2,
+          "pass": 2,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 66.628216,
+          "lastSourceLine": 2111
+        },
+        {
+          "firstSourceLine": 2146,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 64.18974,
+          "lastSourceLine": 2153
+        },
+        {
+          "firstSourceLine": 2191,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 71.651399,
+          "lastSourceLine": 2198
+        },
+        {
+          "firstSourceLine": 2223,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 63.132506,
+          "lastSourceLine": 2230
+        },
+        {
+          "firstSourceLine": 2309,
+          "tests": 12,
+          "pass": 12,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 111.966201,
+          "lastSourceLine": 2316
+        },
+        {
+          "firstSourceLine": 2365,
+          "tests": 7,
+          "pass": 7,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 14553.830214,
+          "lastSourceLine": 2372
+        },
+        {
+          "firstSourceLine": 2405,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 30427.583475,
+          "lastSourceLine": 2412
+        },
+        {
+          "firstSourceLine": 2437,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 8705.756496,
+          "lastSourceLine": 2444
+        },
+        {
+          "firstSourceLine": 2457,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 3655.396114,
+          "lastSourceLine": 2464
+        },
+        {
+          "firstSourceLine": 2495,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 67.633481,
+          "lastSourceLine": 2502
+        },
+        {
+          "firstSourceLine": 2571,
+          "tests": 10,
+          "pass": 10,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 25026.906733,
+          "lastSourceLine": 2578
+        },
+        {
+          "firstSourceLine": 2717,
+          "tests": 22,
+          "pass": 22,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 29329.791616,
+          "lastSourceLine": 2724
+        },
+        {
+          "firstSourceLine": 2858,
+          "tests": 21,
+          "pass": 21,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 30506.528341,
+          "lastSourceLine": 2865
+        },
+        {
+          "firstSourceLine": 2956,
+          "tests": 14,
+          "pass": 14,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 10086.493073,
+          "lastSourceLine": 2963
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": []
+    },
+    {
+      "id": 110991210150,
+      "name": "Frontend (Vite Build)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210150",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:26:26Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:35Z",
+          "completed_at": "2026-10-02T19:17:37Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:37Z",
+          "completed_at": "2026-10-02T19:17:39Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:39Z",
+          "completed_at": "2026-10-02T19:17:41Z"
+        },
+        {
+          "name": "Use npm 11 for the dependency audit",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:41Z",
+          "completed_at": "2026-10-02T19:17:45Z"
+        },
+        {
+          "name": "Install backend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:45Z",
+          "completed_at": "2026-10-02T19:17:56Z"
+        },
+        {
+          "name": "Install frontend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:17:56Z",
+          "completed_at": "2026-10-02T19:18:04Z"
+        },
+        {
+          "name": "Test Router reachability validator",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:04Z",
+          "completed_at": "2026-10-02T19:18:08Z"
+        },
+        {
+          "name": "Test frontend dependency audit engine and scope contract",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:18:08Z",
+          "completed_at": "2026-10-02T19:18:09Z"
+        },
+        {
+          "name": "Collect dependency audit and validate source reachability",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:18:09Z",
+          "completed_at": "2026-10-02T19:18:12Z"
+        },
+        {
+          "name": "Test frontend API routing contract",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-02T19:18:12Z",
+          "completed_at": "2026-10-02T19:18:13Z"
+        },
+        {
+          "name": "Test ClassPilot tile batching contract",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-02T19:18:13Z",
+          "completed_at": "2026-10-02T19:18:14Z"
+        },
+        {
+          "name": "Test ClassPilot precise restriction matcher parity",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-02T19:18:14Z",
+          "completed_at": "2026-10-02T19:18:14Z"
+        },
+        {
+          "name": "Test GoPilot staff-only contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-02T19:18:14Z",
+          "completed_at": "2026-10-02T19:18:14Z"
+        },
+        {
+          "name": "Test staff identity lifecycle frontend contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-02T19:18:14Z",
+          "completed_at": "2026-10-02T19:18:15Z"
+        },
+        {
+          "name": "Lint frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-02T19:18:15Z",
+          "completed_at": "2026-10-02T19:19:02Z"
+        },
+        {
+          "name": "Build frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-02T19:19:02Z",
+          "completed_at": "2026-10-02T19:19:13Z"
+        },
+        {
+          "name": "Install Chromium for production-preview smoke",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:19:13Z",
+          "completed_at": "2026-10-02T19:19:43Z"
+        },
+        {
+          "name": "Test ClassPilot one-day schedule-change workflows",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:19:43Z",
+          "completed_at": "2026-10-02T19:19:57Z"
+        },
+        {
+          "name": "Test ClassPilot Teaching tools School Library",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:19:57Z",
+          "completed_at": "2026-10-02T19:20:03Z"
+        },
+        {
+          "name": "Smoke production preview routes",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20,
+          "started_at": "2026-10-02T19:20:03Z",
+          "completed_at": "2026-10-02T19:22:28Z"
+        },
+        {
+          "name": "Test PassPilot rules UI contracts and Chromium flows",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-10-02T19:22:28Z",
+          "completed_at": "2026-10-02T19:22:38Z"
+        },
+        {
+          "name": "Validate standard frontend Router bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22,
+          "started_at": "2026-10-02T19:22:38Z",
+          "completed_at": "2026-10-02T19:22:40Z"
+        },
+        {
+          "name": "Build GoPilot frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23,
+          "started_at": "2026-10-02T19:22:40Z",
+          "completed_at": "2026-10-02T19:22:50Z"
+        },
+        {
+          "name": "Test GoPilot staff workflows in Chromium",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-10-02T19:22:50Z",
+          "completed_at": "2026-10-02T19:23:04Z"
+        },
+        {
+          "name": "Validate GoPilot Router bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-10-02T19:23:04Z",
+          "completed_at": "2026-10-02T19:23:06Z"
+        },
+        {
+          "name": "Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-10-02T19:23:06Z",
+          "completed_at": "2026-10-02T19:23:06Z"
+        },
+        {
+          "name": "Sync GoPilot Android staff bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-10-02T19:23:06Z",
+          "completed_at": "2026-10-02T19:23:08Z"
+        },
+        {
+          "name": "Build GoPilot Android debug APK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28,
+          "started_at": "2026-10-02T19:23:08Z",
+          "completed_at": "2026-10-02T19:24:41Z"
+        },
+        {
+          "name": "Inspect GoPilot mobile security and generated bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-10-02T19:24:41Z",
+          "completed_at": "2026-10-02T19:24:42Z"
+        },
+        {
+          "name": "Build PassPilot frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30,
+          "started_at": "2026-10-02T19:24:42Z",
+          "completed_at": "2026-10-02T19:24:52Z"
+        },
+        {
+          "name": "Smoke canonical classes in the PassPilot bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 31,
+          "started_at": "2026-10-02T19:24:52Z",
+          "completed_at": "2026-10-02T19:26:07Z"
+        },
+        {
+          "name": "Validate PassPilot Router bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 32,
+          "started_at": "2026-10-02T19:26:07Z",
+          "completed_at": "2026-10-02T19:26:09Z"
+        },
+        {
+          "name": "Sync PassPilot Android secure-storage bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33,
+          "started_at": "2026-10-02T19:26:09Z",
+          "completed_at": "2026-10-02T19:26:10Z"
+        },
+        {
+          "name": "Build PassPilot Android debug APK",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 34,
+          "started_at": "2026-10-02T19:26:10Z",
+          "completed_at": "2026-10-02T19:26:21Z"
+        },
+        {
+          "name": "Inspect PassPilot mobile security and generated bundle",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 35,
+          "started_at": "2026-10-02T19:26:21Z",
+          "completed_at": "2026-10-02T19:26:22Z"
+        },
+        {
+          "name": "Finalize production dependency gate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 36,
+          "started_at": "2026-10-02T19:26:22Z",
+          "completed_at": "2026-10-02T19:26:23Z"
+        },
+        {
+          "name": "Upload frontend dependency audit evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 37,
+          "started_at": "2026-10-02T19:26:23Z",
+          "completed_at": "2026-10-02T19:26:24Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 38,
+          "started_at": "2026-10-02T19:26:24Z",
+          "completed_at": "2026-10-02T19:26:24Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 39,
+          "started_at": "2026-10-02T19:26:24Z",
+          "completed_at": "2026-10-02T19:26:25Z"
+        },
+        {
+          "name": "Post Run actions/setup-java@v5",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 76,
+          "started_at": "2026-10-02T19:26:25Z",
+          "completed_at": "2026-10-02T19:26:25Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 77,
+          "started_at": "2026-10-02T19:26:25Z",
+          "completed_at": "2026-10-02T19:26:25Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 78,
+          "started_at": "2026-10-02T19:26:25Z",
+          "completed_at": "2026-10-02T19:26:25Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 79,
+          "started_at": "2026-10-02T19:26:25Z",
+          "completed_at": "2026-10-02T19:26:25Z"
+        }
+      ],
+      "rawLogFile": "job-110991210150.log",
+      "rawLogBytes": 368708,
+      "rawLogSha256": "1e071922a017cbafbd7cf6ba6cdf43ccb0622b1cbf43fab10158f89ab75d00e1",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 134,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 324,
+          "tests": 15,
+          "pass": 15,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 3910.565388,
+          "lastSourceLine": 331
+        },
+        {
+          "firstSourceLine": 446,
+          "tests": 16,
+          "pass": 16,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 358.765628,
+          "lastSourceLine": 453
+        },
+        {
+          "firstSourceLine": 714,
+          "tests": 37,
+          "pass": 37,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 279.994125,
+          "lastSourceLine": 721
+        },
+        {
+          "firstSourceLine": 756,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 74.60545,
+          "lastSourceLine": 763
+        },
+        {
+          "firstSourceLine": 852,
+          "tests": 13,
+          "pass": 13,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 90.271547,
+          "lastSourceLine": 859
+        },
+        {
+          "firstSourceLine": 924,
+          "tests": 9,
+          "pass": 9,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 78.709688,
+          "lastSourceLine": 931
+        },
+        {
+          "firstSourceLine": 1847,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 14366.447315,
+          "lastSourceLine": 1854
+        },
+        {
+          "firstSourceLine": 1921,
+          "tests": 7,
+          "pass": 7,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 5860.163658,
+          "lastSourceLine": 1928
+        },
+        {
+          "firstSourceLine": 1999,
+          "tests": 10,
+          "pass": 10,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 481.91502,
+          "lastSourceLine": 2006
+        },
+        {
+          "firstSourceLine": 2019,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 4916.248793,
+          "lastSourceLine": 2026
+        },
+        {
+          "firstSourceLine": 2059,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 24709.729243,
+          "lastSourceLine": 2066
+        },
+        {
+          "firstSourceLine": 2133,
+          "tests": 10,
+          "pass": 10,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 1003.601681,
+          "lastSourceLine": 2140
+        },
+        {
+          "firstSourceLine": 2260,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 73844.91756,
+          "lastSourceLine": 2267
+        },
+        {
+          "firstSourceLine": 2280,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 22938.815512,
+          "lastSourceLine": 2287
+        },
+        {
+          "firstSourceLine": 2320,
+          "tests": 2,
+          "pass": 2,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 9165.679305,
+          "lastSourceLine": 2327
+        },
+        {
+          "firstSourceLine": 3094,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 728.492525,
+          "lastSourceLine": 3101
+        },
+        {
+          "firstSourceLine": 3434,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 74231.24265,
+          "lastSourceLine": 3441
+        },
+        {
+          "firstSourceLine": 3943,
+          "tests": 4,
+          "pass": 4,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 676.198196,
+          "lastSourceLine": 3950
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": []
+    },
+    {
+      "id": 110991210239,
+      "name": "Backend (TypeScript + Build)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210239",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:24:40Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:38Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:38Z",
+          "completed_at": "2026-10-02T19:17:40Z"
+        },
+        {
+          "name": "Use npm 11 for the dependency audit",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:40Z",
+          "completed_at": "2026-10-02T19:17:45Z"
+        },
+        {
+          "name": "Install bounded PDF processing runtime",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:45Z",
+          "completed_at": "2026-10-02T19:18:01Z"
+        },
+        {
+          "name": "Install dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:01Z",
+          "completed_at": "2026-10-02T19:18:11Z"
+        },
+        {
+          "name": "Audit dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:11Z",
+          "completed_at": "2026-10-02T19:18:12Z"
+        },
+        {
+          "name": "TypeScript check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:18:12Z",
+          "completed_at": "2026-10-02T19:18:53Z"
+        },
+        {
+          "name": "Unsafe test cast ratchet",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:18:53Z",
+          "completed_at": "2026-10-02T19:18:53Z"
+        },
+        {
+          "name": "Build",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-02T19:18:53Z",
+          "completed_at": "2026-10-02T19:19:38Z"
+        },
+        {
+          "name": "Test TypeScript check (no emit)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-02T19:19:38Z",
+          "completed_at": "2026-10-02T19:20:40Z"
+        },
+        {
+          "name": "Pure unit tests (concurrency 4)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-02T19:20:40Z",
+          "completed_at": "2026-10-02T19:21:56Z"
+        },
+        {
+          "name": "Usage workload fixture guards (no database or load)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-02T19:21:56Z",
+          "completed_at": "2026-10-02T19:21:58Z"
+        },
+        {
+          "name": "Infrastructure and load-safety tests (serial)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-02T19:21:58Z",
+          "completed_at": "2026-10-02T19:24:37Z"
+        },
+        {
+          "name": "SOC 2 governance evidence check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-02T19:24:37Z",
+          "completed_at": "2026-10-02T19:24:38Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-02T19:24:38Z",
+          "completed_at": "2026-10-02T19:24:38Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:24:38Z",
+          "completed_at": "2026-10-02T19:24:38Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33,
+          "started_at": "2026-10-02T19:24:38Z",
+          "completed_at": "2026-10-02T19:24:39Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 34,
+          "started_at": "2026-10-02T19:24:39Z",
+          "completed_at": "2026-10-02T19:24:39Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 35,
+          "started_at": "2026-10-02T19:24:39Z",
+          "completed_at": "2026-10-02T19:24:39Z"
+        }
+      ],
+      "rawLogFile": "job-110991210239.log",
+      "rawLogBytes": 1116248,
+      "rawLogSha256": "c9e3c96d14f4f6a6090492fee3c51752f50d33f88ec65f75f276e1a5511e1aa4",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 133,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 11972,
+          "tests": 1686,
+          "pass": 1682,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 4,
+          "duration_ms": 76051.120413,
+          "lastSourceLine": 11979
+        },
+        {
+          "firstSourceLine": 12160,
+          "tests": 29,
+          "pass": 29,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 1573.113002,
+          "lastSourceLine": 12167
+        },
+        {
+          "firstSourceLine": 16552,
+          "tests": 646,
+          "pass": 644,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 2,
+          "duration_ms": 159149.780511,
+          "lastSourceLine": 16559
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [
+        {
+          "sourceLine": 361,
+          "text": "2026-10-02T19:18:53.4662045Z Unsafe test cast ratchet OK: {\"asAny\":689,\"asUnknownAs\":7,\"tsIgnore\":0,\"tsExpectError\":0}"
+        },
+        {
+          "sourceLine": 378,
+          "text": "2026-10-02T19:20:40.1043596Z Test TypeScript no-emit ratchet OK: 438/534 existing test-only diagnostics; syntax and application source remain zero-error."
+        }
+      ],
+      "skipProofLines": [
+        {
+          "sourceLine": 5415,
+          "text": "2026-10-02T19:21:13.4054195Z     ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP"
+        },
+        {
+          "sourceLine": 6884,
+          "text": "2026-10-02T19:21:17.1967883Z     ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP"
+        },
+        {
+          "sourceLine": 11680,
+          "text": "2026-10-02T19:21:56.9196306Z     ok 3 - parses inspected index key columns as a text array # SKIP"
+        },
+        {
+          "sourceLine": 11960,
+          "text": "2026-10-02T19:21:56.9245309Z     ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+        },
+        {
+          "sourceLine": 15342,
+          "text": "2026-10-02T19:24:26.0827910Z ok 51 - private load artifact Windows ACLs # SKIP"
+        },
+        {
+          "sourceLine": 16534,
+          "text": "2026-10-02T19:24:37.8854401Z     ok 7 - the detachment CLI removes only the ten bindings and preserves Redis # SKIP"
+        },
+        {
+          "sourceLine": 16540,
+          "text": "2026-10-02T19:24:37.8858057Z     ok 8 - removes state before planning so Terraform 1.14 plan/show contain no prior value # SKIP"
+        }
+      ]
+    },
+    {
+      "id": 110991210266,
+      "name": "Frontend release-focused gates (shard 1)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210266",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:27:51Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:37Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:37Z",
+          "completed_at": "2026-10-02T19:17:39Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:39Z",
+          "completed_at": "2026-10-02T19:17:43Z"
+        },
+        {
+          "name": "Install backend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:43Z",
+          "completed_at": "2026-10-02T19:17:51Z"
+        },
+        {
+          "name": "Install frontend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:51Z",
+          "completed_at": "2026-10-02T19:17:58Z"
+        },
+        {
+          "name": "Install Chromium for release-focused browser gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:17:58Z",
+          "completed_at": "2026-10-02T19:18:22Z"
+        },
+        {
+          "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 1)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:22Z",
+          "completed_at": "2026-10-02T19:27:47Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:27:47Z",
+          "completed_at": "2026-10-02T19:27:47Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:27:47Z",
+          "completed_at": "2026-10-02T19:27:48Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:27:48Z",
+          "completed_at": "2026-10-02T19:27:48Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:27:48Z",
+          "completed_at": "2026-10-02T19:27:49Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:27:49Z",
+          "completed_at": "2026-10-02T19:27:49Z"
+        }
+      ],
+      "rawLogFile": "job-110991210266.log",
+      "rawLogBytes": 82418,
+      "rawLogSha256": "ae80751f5dc7680f56fd328e42032b3fdb09d2cc1cd2b606f82f6374027ffb0a",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 133,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 510,
+          "tests": 9,
+          "pass": 9,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 77.035675,
+          "lastSourceLine": 517
+        },
+        {
+          "firstSourceLine": 531,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 1672.810985,
+          "lastSourceLine": 538
+        },
+        {
+          "firstSourceLine": 659,
+          "tests": 19,
+          "pass": 19,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 23234.019278,
+          "lastSourceLine": 666
+        },
+        {
+          "firstSourceLine": 931,
+          "tests": 43,
+          "pass": 43,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 539482.119836,
+          "lastSourceLine": 938
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": []
+    },
+    {
+      "id": 110991210289,
+      "name": "Frontend release-focused gates (shard 4)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210289",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:35Z",
+      "completedAt": "2026-10-02T19:26:24Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:36Z",
+          "completed_at": "2026-10-02T19:17:38Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:38Z",
+          "completed_at": "2026-10-02T19:17:40Z"
+        },
+        {
+          "name": "Install backend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:40Z",
+          "completed_at": "2026-10-02T19:17:51Z"
+        },
+        {
+          "name": "Install frontend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:17:51Z",
+          "completed_at": "2026-10-02T19:17:59Z"
+        },
+        {
+          "name": "Install Chromium for release-focused browser gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:17:59Z",
+          "completed_at": "2026-10-02T19:18:21Z"
+        },
+        {
+          "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 4)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:21Z",
+          "completed_at": "2026-10-02T19:26:21Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:26:21Z",
+          "completed_at": "2026-10-02T19:26:21Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:26:21Z",
+          "completed_at": "2026-10-02T19:26:21Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:26:21Z",
+          "completed_at": "2026-10-02T19:26:22Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:26:22Z",
+          "completed_at": "2026-10-02T19:26:22Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:26:22Z",
+          "completed_at": "2026-10-02T19:26:22Z"
+        }
+      ],
+      "rawLogFile": "job-110991210289.log",
+      "rawLogBytes": 79534,
+      "rawLogSha256": "da9fd6dd49f808d6d9fdae4533d3a85a23caf8008dce39216dbb8209ec30ff79",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 133,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 713,
+          "tests": 43,
+          "pass": 43,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 442857.932044,
+          "lastSourceLine": 720
+        },
+        {
+          "firstSourceLine": 781,
+          "tests": 9,
+          "pass": 9,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 19085.077022,
+          "lastSourceLine": 788
+        },
+        {
+          "firstSourceLine": 885,
+          "tests": 15,
+          "pass": 15,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 16907.72937,
+          "lastSourceLine": 892
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": []
+    },
+    {
+      "id": 110991210303,
+      "name": "Frontend release-focused gates (shard 2)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210303",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:18:11Z",
+      "completedAt": "2026-10-02T19:29:40Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:18:12Z",
+          "completed_at": "2026-10-02T19:18:13Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:18:13Z",
+          "completed_at": "2026-10-02T19:18:14Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:18:14Z",
+          "completed_at": "2026-10-02T19:18:16Z"
+        },
+        {
+          "name": "Install backend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:18:16Z",
+          "completed_at": "2026-10-02T19:18:26Z"
+        },
+        {
+          "name": "Install frontend deps",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:18:26Z",
+          "completed_at": "2026-10-02T19:18:33Z"
+        },
+        {
+          "name": "Install Chromium for release-focused browser gates",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:33Z",
+          "completed_at": "2026-10-02T19:18:57Z"
+        },
+        {
+          "name": "Run ClassPilot and kiosk release-focused frontend gates (shard 2)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:57Z",
+          "completed_at": "2026-10-02T19:29:36Z"
+        },
+        {
+          "name": "Collect SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:29:36Z",
+          "completed_at": "2026-10-02T19:29:36Z"
+        },
+        {
+          "name": "Upload SOC 2 evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:29:36Z",
+          "completed_at": "2026-10-02T19:29:37Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:29:37Z",
+          "completed_at": "2026-10-02T19:29:38Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:29:38Z",
+          "completed_at": "2026-10-02T19:29:38Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:29:38Z",
+          "completed_at": "2026-10-02T19:29:38Z"
+        }
+      ],
+      "rawLogFile": "job-110991210303.log",
+      "rawLogBytes": 161583,
+      "rawLogSha256": "b72205da163cbd8ddade8e78396810af8e99b810b1051e76a779d105a2037ebc",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [
+        {
+          "sourceLine": 133,
+          "sha": "b34db4e5c16dcecdfe00457ca2ea92c4371cd110"
+        }
+      ],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 653,
+          "tests": 33,
+          "pass": 33,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 118.951682,
+          "lastSourceLine": 660
+        },
+        {
+          "firstSourceLine": 939,
+          "tests": 46,
+          "pass": 46,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 229222.522983,
+          "lastSourceLine": 946
+        },
+        {
+          "firstSourceLine": 1055,
+          "tests": 17,
+          "pass": 17,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 56516.359549,
+          "lastSourceLine": 1062
+        },
+        {
+          "firstSourceLine": 1165,
+          "tests": 16,
+          "pass": 16,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 23154.519161,
+          "lastSourceLine": 1172
+        },
+        {
+          "firstSourceLine": 1263,
+          "tests": 14,
+          "pass": 14,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 125218.936473,
+          "lastSourceLine": 1270
+        },
+        {
+          "firstSourceLine": 1295,
+          "tests": 3,
+          "pass": 3,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 61290.042733,
+          "lastSourceLine": 1302
+        },
+        {
+          "firstSourceLine": 1699,
+          "tests": 65,
+          "pass": 65,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 83034.309968,
+          "lastSourceLine": 1706
+        },
+        {
+          "firstSourceLine": 1851,
+          "tests": 23,
+          "pass": 23,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 20269.728882,
+          "lastSourceLine": 1858
+        },
+        {
+          "firstSourceLine": 2033,
+          "tests": 28,
+          "pass": 28,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 38833.220745,
+          "lastSourceLine": 2040
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [],
+      "skipProofLines": []
+    },
+    {
+      "id": 110991255468,
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991255468",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+      "startedAt": "2026-10-02T19:17:42Z",
+      "completedAt": "2026-10-02T19:48:28Z",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-02T19:17:43Z",
+          "completed_at": "2026-10-02T19:17:44Z"
+        },
+        {
+          "name": "Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-02T19:17:44Z",
+          "completed_at": "2026-10-02T19:17:53Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-02T19:17:53Z",
+          "completed_at": "2026-10-02T19:17:58Z"
+        },
+        {
+          "name": "Run hashicorp/setup-terraform@v4",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-02T19:17:58Z",
+          "completed_at": "2026-10-02T19:18:00Z"
+        },
+        {
+          "name": "Configure non-UTC rollout test timezone",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-02T19:18:00Z",
+          "completed_at": "2026-10-02T19:18:00Z"
+        },
+        {
+          "name": "PowerShell JSON date-kind conformance",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-02T19:18:00Z",
+          "completed_at": "2026-10-02T19:18:04Z"
+        },
+        {
+          "name": "Capacity-acceptance tooling-only boundary",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-02T19:18:04Z",
+          "completed_at": "2026-10-02T19:18:04Z"
+        },
+        {
+          "name": "Engineering capacity-acceptance runner tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-02T19:18:04Z",
+          "completed_at": "2026-10-02T19:18:15Z"
+        },
+        {
+          "name": "Git Bash production Eastern clock",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-02T19:18:15Z",
+          "completed_at": "2026-10-02T19:18:17Z"
+        },
+        {
+          "name": "Waf/800 diagnostic preparation lifecycle tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-02T19:18:17Z",
+          "completed_at": "2026-10-02T19:33:58Z"
+        },
+        {
+          "name": "Fixture-preparation binding validation tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-02T19:33:58Z",
+          "completed_at": "2026-10-02T19:34:20Z"
+        },
+        {
+          "name": "Credential-rotation contract tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 12,
+          "started_at": "2026-10-02T19:34:20Z",
+          "completed_at": "2026-10-02T19:34:25Z"
+        },
+        {
+          "name": "ClassPilot same-digest runtime-config deployment tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-02T19:34:25Z",
+          "completed_at": "2026-10-02T19:35:10Z"
+        },
+        {
+          "name": "My Desk runtime-config deployment tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-02T19:35:10Z",
+          "completed_at": "2026-10-02T19:35:17Z"
+        },
+        {
+          "name": "Wave-1 product runtime-config deployment tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-02T19:35:17Z",
+          "completed_at": "2026-10-02T19:35:29Z"
+        },
+        {
+          "name": "Terraform formatting",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-02T19:35:29Z",
+          "completed_at": "2026-10-02T19:35:29Z"
+        },
+        {
+          "name": "Terraform lockfile-only initialization",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-02T19:35:29Z",
+          "completed_at": "2026-10-02T19:35:38Z"
+        },
+        {
+          "name": "Terraform validation",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-02T19:35:38Z",
+          "completed_at": "2026-10-02T19:35:44Z"
+        },
+        {
+          "name": "WAF block/count Terraform tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-02T19:35:44Z",
+          "completed_at": "2026-10-02T19:36:37Z"
+        },
+        {
+          "name": "State backup and recovery tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20,
+          "started_at": "2026-10-02T19:36:37Z",
+          "completed_at": "2026-10-02T19:36:51Z"
+        },
+        {
+          "name": "Private load-artifact Windows ACL tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-10-02T19:36:51Z",
+          "completed_at": "2026-10-02T19:36:59Z"
+        },
+        {
+          "name": "Rollout owned-process lifecycle tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22,
+          "started_at": "2026-10-02T19:36:59Z",
+          "completed_at": "2026-10-02T19:40:04Z"
+        },
+        {
+          "name": "Rollout monitor and rollback tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23,
+          "started_at": "2026-10-02T19:40:04Z",
+          "completed_at": "2026-10-02T19:47:26Z"
+        },
+        {
+          "name": "Rollout plan-validator tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-10-02T19:47:26Z",
+          "completed_at": "2026-10-02T19:47:28Z"
+        },
+        {
+          "name": "Rollout classification tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-10-02T19:47:28Z",
+          "completed_at": "2026-10-02T19:47:30Z"
+        },
+        {
+          "name": "RDS capacity-gate tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-10-02T19:47:30Z",
+          "completed_at": "2026-10-02T19:47:35Z"
+        },
+        {
+          "name": "Waf/800 diagnostic-only contract tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-10-02T19:47:35Z",
+          "completed_at": "2026-10-02T19:47:43Z"
+        },
+        {
+          "name": "Waf certification-chain contract tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28,
+          "started_at": "2026-10-02T19:47:43Z",
+          "completed_at": "2026-10-02T19:48:06Z"
+        },
+        {
+          "name": "Waf certification preflight contract tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-10-02T19:48:06Z",
+          "completed_at": "2026-10-02T19:48:08Z"
+        },
+        {
+          "name": "Database Insights monitoring lease tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30,
+          "started_at": "2026-10-02T19:48:08Z",
+          "completed_at": "2026-10-02T19:48:17Z"
+        },
+        {
+          "name": "Waf certification query-identity tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 31,
+          "started_at": "2026-10-02T19:48:17Z",
+          "completed_at": "2026-10-02T19:48:19Z"
+        },
+        {
+          "name": "Waf certification Database Insights lease binding tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 32,
+          "started_at": "2026-10-02T19:48:19Z",
+          "completed_at": "2026-10-02T19:48:22Z"
+        },
+        {
+          "name": "Waf certification deterministic PI finalizer tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 33,
+          "started_at": "2026-10-02T19:48:22Z",
+          "completed_at": "2026-10-02T19:48:24Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 65,
+          "started_at": "2026-10-02T19:48:24Z",
+          "completed_at": "2026-10-02T19:48:24Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 66,
+          "started_at": "2026-10-02T19:48:24Z",
+          "completed_at": "2026-10-02T19:48:26Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 67,
+          "started_at": "2026-10-02T19:48:27Z",
+          "completed_at": "2026-10-02T19:48:27Z"
+        }
+      ],
+      "rawLogFile": "job-110991255468.log",
+      "rawLogBytes": 65328,
+      "rawLogSha256": "f6d08b7163cc04b01a58e071bfb289f9379683300397a4fd057a716a3570b1a5",
+      "secretShapeScan": {
+        "jwt": 0,
+        "awsAccessKey": 0,
+        "githubToken": 0,
+        "privateKey": 0,
+        "credentialUrl": 0
+      },
+      "checkouts": [],
+      "tapInvocations": [
+        {
+          "firstSourceLine": 503,
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "duration_ms": 6804.3736,
+          "lastSourceLine": 510
+        }
+      ],
+      "tapCountInterpretation": "Each complete Node TAP block is one invocation; do not sum as unique cases across overlapping suites. Raw skipped lines can include nested cases and need not equal top-level TAP skipped count.",
+      "assertionProofLines": [
+        {
+          "sourceLine": 318,
+          "text": "2026-10-02T19:35:10.3068045Z ClassPilot runtime-config deployment tests passed (1296 assertions)."
+        },
+        {
+          "sourceLine": 326,
+          "text": "2026-10-02T19:35:17.5665650Z My Desk runtime configuration tests passed (123 assertions)."
+        },
+        {
+          "sourceLine": 339,
+          "text": "2026-10-02T19:35:28.2619537Z Product runtime configuration tests passed (378 assertions)."
+        },
+        {
+          "sourceLine": 474,
+          "text": "2026-10-02T19:36:37.3869434Z \u001b[32mSuccess!\u001b[0m\u001b[0m 43 passed, 0 failed."
+        },
+        {
+          "sourceLine": 549,
+          "text": "2026-10-02T19:47:43.3198707Z AWS Waf/800 diagnostic-only contract tests passed (960 assertions)."
+        },
+        {
+          "sourceLine": 569,
+          "text": "2026-10-02T19:48:17.1829212Z Database Insights monitoring lease tests passed (90 assertions)."
+        },
+        {
+          "sourceLine": 579,
+          "text": "2026-10-02T19:48:22.0316300Z AWS rollout certification Database Insights lease tests passed (29 assertions)."
+        }
+      ],
+      "skipProofLines": []
+    }
+  ],
+  "metadataOnlyJobs": [
+    {
+      "id": 110991210105,
+      "name": "Detect changed paths",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110991210105",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110993825605,
+      "name": "SOC 2 privileged access evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110993825605",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110995635955,
+      "name": "SOC 2 monitoring evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110995635955",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110995636009,
+      "name": "SOC 2 AI/privacy evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110995636009",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110996288571,
+      "name": "SOC 2 incident evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110996288571",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110996288776,
+      "name": "SOC 2 deployment evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110996288776",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110996288786,
+      "name": "SOC 2 tenant isolation evidence",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110996288786",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    },
+    {
+      "id": 110996380481,
+      "name": "SOC 2 approval queue",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557/job/110996380481",
+      "status": "completed",
+      "conclusion": "success",
+      "headSha": "d69322ef7a2c56a9fb353f59c3c72b882042e41c"
+    }
+  ],
+  "secretScan": {
+    "localSanitization": false,
+    "githubServerMaskingRetained": true,
+    "patterns": [
+      "jwt",
+      "awsAccessKey",
+      "githubToken",
+      "privateKey",
+      "credentialUrl"
+    ],
+    "matches": 0,
+    "publicSyntheticFixture": "Two database-job logs contain POSTGRES_PASSWORD=test, exactly the public deterministic CI service literal at this workflow source; database URLs are GitHub-masked. No unexpected unmasked credential assignment was observed.",
+    "scope": "Pattern/assignment review of downloaded logs; no claim of exhaustive content classification."
+  },
+  "limits": [
+    "This is exact d693 CI checkpoint; later source acceptance requires recorded blob equivalence or new gates.",
+    "Success includes explicit skips: unit4, source-contract2, ordinaryDB8 and RLS1 as top-level TAP summaries report; reasons remain raw. RLS conditional skip states unavailableRedis7service.",
+    "Frontend counts are per invocation; overlapping model/browser cases are not a unique all-suite grandtotal.",
+    "AWS rollout safety is a test job; success is not deployment, live acceptance or authorization.",
+    "Ordinary capture workflow uses released2.9.3 runtime; exact2.9.7 source/ZIP acceptance is a separate preserved record.",
+    "Run01 and correctedRun02 both fail100rps capacity; Usage remainsOFF and three passing cold runs remain unestablished.",
+    "No tests, build, native browser, capacity run or production operation was performed while archiving."
+  ],
+  "archive": {
+    "file": "ci-app-checkpoint-d69322ef.raw.ndjson.gz",
+    "compression": "gzip",
+    "format": "NDJSON records preserving exact raw UTF8 bytes via utf8; filenames/bytes/SHA256",
+    "rawRecords": 14,
+    "rawBytes": 5221632,
+    "sha256": "77ae4350a0218764c4168f2fdc9905e097d4337f7e7ecd9f148450122bdeeac8",
+    "uncompressedSha256": "a4c770b06749be159fdadf5434cdb39a49a359f51721408e85b8a5e6974ddb37",
+    "records": [
+      {
+        "name": "checkout-commit.json",
+        "bytes": 2614,
+        "sha256": "b4a3d39befc883a235ddfdc8d92a6b0909620c76cfb8d25f426f77cf49f1fe32"
+      },
+      {
+        "name": "job-110991209975.log",
+        "bytes": 2586169,
+        "sha256": "5082b82c0cf82a99e9bea61c7849ba091779e1759fcf33fb87e33d2f5b790c27"
+      },
+      {
+        "name": "job-110991210095.log",
+        "bytes": 401979,
+        "sha256": "d25dc497199758f1e859f61304bd8258f11e78eac7c59bdda85de7c568f48c6e"
+      },
+      {
+        "name": "job-110991210132.log",
+        "bytes": 213428,
+        "sha256": "ce79ab3f344b5c065b488c2144a6ee7e3ee49935a5a7cba34235b06cc4a9133c"
+      },
+      {
+        "name": "job-110991210150.log",
+        "bytes": 368708,
+        "sha256": "1e071922a017cbafbd7cf6ba6cdf43ccb0622b1cbf43fab10158f89ab75d00e1"
+      },
+      {
+        "name": "job-110991210239.log",
+        "bytes": 1116248,
+        "sha256": "c9e3c96d14f4f6a6090492fee3c51752f50d33f88ec65f75f276e1a5511e1aa4"
+      },
+      {
+        "name": "job-110991210266.log",
+        "bytes": 82418,
+        "sha256": "ae80751f5dc7680f56fd328e42032b3fdb09d2cc1cd2b606f82f6374027ffb0a"
+      },
+      {
+        "name": "job-110991210289.log",
+        "bytes": 79534,
+        "sha256": "da9fd6dd49f808d6d9fdae4533d3a85a23caf8008dce39216dbb8209ec30ff79"
+      },
+      {
+        "name": "job-110991210303.log",
+        "bytes": 161583,
+        "sha256": "b72205da163cbd8ddade8e78396810af8e99b810b1051e76a779d105a2037ebc"
+      },
+      {
+        "name": "job-110991255468.log",
+        "bytes": 65328,
+        "sha256": "f6d08b7163cc04b01a58e071bfb289f9379683300397a4fd057a716a3570b1a5"
+      },
+      {
+        "name": "jobs-final-capture.json",
+        "bytes": 59658,
+        "sha256": "6fd64b6aea911dcb7a3c9309e3af3d40d08b5ab2ca478fb1584d3522ec5ff763"
+      },
+      {
+        "name": "jobs.json",
+        "bytes": 58946,
+        "sha256": "9effd15d760a3638954206746e015ab8496c24a5ed8ed0e45ce93862ba0496d4"
+      },
+      {
+        "name": "run-final-capture.json",
+        "bytes": 12511,
+        "sha256": "d15940ca630c01d755b315160fbec7ada6a7385ab8acc486fb444024b7ac63ea"
+      },
+      {
+        "name": "run.json",
+        "bytes": 12508,
+        "sha256": "cc5875987e107c930a9bcff0f500d8a622ccaf95300591167ceb84b06df43034"
+      }
+    ]
+  }
+}

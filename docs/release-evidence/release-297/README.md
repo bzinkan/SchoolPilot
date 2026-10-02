@@ -166,3 +166,37 @@ rejected cannot establish margins with all offers accepted. No additional
 optimization, larger pool, timeout, resource allowance or easier profile was
 introduced. Earlier 4.8-percent worker-margin runs and stress failures retain
 their original, narrower evidence scope.
+
+## Remote CI application checkpoint — d69322ef
+
+[CI manifest](ci-app-checkpoint-d69322ef.json) and
+[exact downloaded records](ci-app-checkpoint-d69322ef.raw.ndjson.gz) preserve
+run [37053146557](https://github.com/bzinkan/SchoolPilot/actions/runs/37053146557)
+at head `d69322ef`. Backend, frontend lint/build/PDF gates, ordinary database,
+restricted RLS, all four frontend shards, and the separate AWS rollout safety
+job completed successfully. The latter finished while this archive was being
+prepared; both the earlier pending and final successful metadata remain.
+
+The backend unit invocation reports 1,682 passing cases and four skips; source
+contracts report 644 passing and two skips. Ordinary database tests report
+1,375 passing and eight skips; restricted RLS reports 363 passing and one Redis
+service conditional skip. Frontend invocation summaries and every requested
+job's step statuses are recorded individually; overlapping model/browser cases
+are not added into a unique grand total. The raw logs retain all skip reasons.
+
+GitHub checked out synthetic PR merge `b34db4e5`, whose tree exactly equals
+the head `d69322ef`. A direct comparison through integration `e89bcbfd` found
+only documentation/evidence changes. The manifest preserves the non-doc root
+Git objects so later document-only checkpoints can be checked explicitly.
+Any later application, test, dependency, workflow or tooling change needs its
+own verification.
+
+The 14-record archive contains nine complete job logs and five REST metadata
+snapshots, with each original byte count and hash. No local sanitization was
+performed; GitHub's own masking remains as downloaded. Secret-pattern and
+assignment review found no unexpected credentials. The fixed public CI
+`POSTGRES_PASSWORD=test` fixture literal remains in the two database logs.
+The ordinary capture job uses released ClassPilot 2.9.3; this is separate from
+the recorded exact 2.9.7 package acceptance. CI success does not assert a
+deployment or live acceptance, and does not reopen the failed Usage capacity
+gate.
