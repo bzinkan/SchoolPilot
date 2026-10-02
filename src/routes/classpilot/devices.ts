@@ -2658,12 +2658,13 @@ router.get("/extension/settings", requireDeviceAuth, requireClasspilotEntitlemen
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
-      fab: monitoringPolicy.policyMode === "full" ? settingsFab : { ...settingsFab, messagingEnabled: false, handRaisingEnabled: false, handRaised: false, messagesPaused: false, pauseReason: null },
+      fab: monitoringPolicy.policyMode === "full" ? settingsFab : { ...settingsFab, messagingEnabled: false, handRaisingEnabled: false, handRaised: false, messagesPaused: false, pauseReason: null, messagingChannelEnabled: false },
       messagingEnabled: monitoringPolicy.policyMode === "full" && settingsFab.messagingEnabled,
       handRaisingEnabled: monitoringPolicy.policyMode === "full" && settingsFab.handRaisingEnabled,
       handRaised: monitoringPolicy.policyMode === "full" && settingsFab.handRaised,
       messagesPaused: monitoringPolicy.policyMode === "full" && settingsFab.messagesPaused,
       pauseReason: monitoringPolicy.policyMode === "full" ? settingsFab.pauseReason : null,
+      messagingChannelEnabled: monitoringPolicy.policyMode === "full" && settingsFab.messagingChannelEnabled,
     });
   } catch (err) {
     next(err);
