@@ -130,15 +130,16 @@ different from the deferred 2,000-device HA profile:
   takes priority over the original 1024 MB cost model.
 - Scheduler: exactly one task at the reviewed `512 CPU / 1024 MB` (raised from
   `256 CPU / 512 MB` on 2026-09-27 for paperwork processing).
-- ECS application tasks: the medium engineering acceptance retains the current
-  private subnets and NAT egress. A later, separately reviewed cost stage may
-  move tasks to public subnets; the ALB remains the only inbound application
-  path and RDS/Redis remain private.
+- ECS application tasks: in the public subnets with a public IPv4 address since
+  2026-09-30, reaching ECR, Secrets Manager, CloudWatch Logs and third-party
+  APIs through the internet gateway. The ALB remains the only inbound
+  application path, and RDS/Redis remain private.
 - RDS: `db.t4g.medium`, Single-AZ, 100 GB gp3 with a 1,000 GB autoscaling ceiling.
 - Redis: one `cache.t4g.small` node. The micro-node cost experiment is deferred
   and is not part of medium engineering acceptance.
-- NAT gateways: retained for this acceptance and removed only after a
-  separately authorized public-task egress soak succeeds.
+- NAT gateways: none. They were removed 2026-10-01 after a school-day soak
+  carried 0 NAT bytes. Moving tasks back to private subnets requires restoring
+  NAT first, and Terraform's `enable_nat_gateway` validation enforces that.
 - Container Insights: enabled through testing and the first five live school
   days, then disabled while native ECS/ALB/RDS/Redis alarms remain active.
 - WAF: 100,000 requests/5 minutes/IP for exact device-ingest POST aliases and
@@ -396,6 +397,10 @@ does not pass. Keep bounded histogram and shared-IP results with the rollout
 evidence, but never retain the manifest or authentication values with them.
 
 ## Deferred cost stages (historical reference; inactive for acceptance)
+
+Stages 2 and 3 were completed on the medium path on 2026-09-30 and 2026-10-01,
+with the egress checklist and a school-day soak replacing the 800-device gates.
+See "Medium-path activation" in `docs/AWS_COST_ROLLOUT_OPERATIONS.md`.
 
 1. **Safety baseline:** deploy the WAF split, limiter/logging/rollup changes and
    alarms with NAT, current Redis, and Container Insights still enabled. Stop on

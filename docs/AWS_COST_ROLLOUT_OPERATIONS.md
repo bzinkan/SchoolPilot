@@ -2088,6 +2088,42 @@ Brian authorized phases 2 and 3 below for the current medium path on
 2026-09-29, separately from the paused capacity campaign. Everything in those
 sections applies except the load gates, which this section replaces.
 
+- **Status: complete. Production has no NAT gateways.**
+  - Public ECS was applied 2026-09-30 and the guarded redeploy now serves it.
+  - The 2026-10-01 school-day soak carried 0 bytes through either NAT gateway,
+    with 0 ALB 5xx and 0 outbound error signatures.
+  - NAT was removed at 22:30 ET on 2026-10-01 with the reviewed 0/0/6 saved plan.
+    The `production.tfvars` profile records the posture (#598).
+  - The guarded `NatRemoved` redeploy then served api-emergency:163 and
+    worker:179. Every proof passed, and the migration task started fresh with
+    no NAT.
+  - A night-time egress check needs no real sign-in. Run a one-off task on the
+    serving definition, in the service's public subnets and security group,
+    with the command overridden to `node --input-type=module -e` and a script
+    that `fetch`es each vendor with no credentials. Any HTTP status proves the
+    route. It reached all 14 endpoints: ECR, Secrets Manager, SSM, CloudWatch
+    Logs, Google OAuth, Classroom and Directory, Gemini, SendGrid, Stripe,
+    Telegram, GitHub, Anthropic and Microsoft login.
+  - ECS tasks must stay in the public subnets with a public IPv4 address.
+    `enable_nat_gateway` validates that `ecs_tasks_in_public_subnets` is true, so
+    Terraform refuses to move tasks to private subnets without restoring NAT
+    first.
+  - Only RDS and Redis remain in the private subnets, and neither needs egress.
+    Anything new that needs the internet from a private subnet, such as an
+    in-VPC Lambda or a private task, has no route until NAT or a VPC endpoint
+    exists.
+- **NatRollback after the destroy.** Destroying the two `aws_route.private_nat`
+  routes changes the computed `route` set of
+  `module.vpc.aws_route_table.private[*]`. Terraform marks those tables relevant
+  in full, so the first NatRollback plan fails with "unreviewed resource drift".
+  1. Take and apply a saved `-refresh-only` plan first. Its required shape: no
+     resource or output changes, and drift on exactly those two route tables.
+  2. Then take the NatRollback plan.
+  3. The inverse check accepts only the provider-computed unknown leaves that
+     #599 reviewed.
+- **Paused capacity tooling.** `start-classpilot-capacity-acceptance.ps1` and
+  `start-waf800-batch-diagnostic.ps1` require the two-NAT private posture and
+  refuse to run now. Update them before that campaign resumes.
 - **Load gates.** The 810-socket PublicEcs/800 and NatRemoved/800 gates and the
   supervisor `MonitorOnly` soak are not required. The supervisor soak depends on
   capacity-chain predecessor evidence that the paused campaign never produced.
@@ -2184,6 +2220,9 @@ The final six hours require all 360 fresh one-minute datapoints, under 1 MiB
 total NAT bytes, no drops/allocation errors, and no upward trend.
 
 ## Deferred phase 3: NAT removal (authorized 2026-09-29, medium path)
+
+Executed 2026-10-01. See the medium-path status above for what changed and for
+the refresh-only step the NatRollback plan needs after the destroy.
 
 Only after the soak passes, merge a phase-specific `production.tfvars` PR that
 sets `ecs_tasks_in_public_subnets=true` and `enable_nat_gateway=false`. This
