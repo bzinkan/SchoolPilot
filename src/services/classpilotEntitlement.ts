@@ -77,6 +77,33 @@ export async function resolveClasspilotEntitlement(
   if (options.afterSchoolLockBeforeLicense && !options.lock) {
     throw new TypeError("ClassPilot entitlement lock bridge requires lock: true");
   }
+  if (!options.lock) {
+    // Device discovery is uncached, but needs only one statement/checkout.
+    // Mutations retain the separate school -> configuration -> license locks
+    // below; this snapshot never replaces their final entitlement fence.
+    const [school] = await dbInstance.select({
+      status: schools.status,
+      isActive: schools.isActive,
+      planStatus: schools.planStatus,
+      activeUntil: schools.activeUntil,
+      disabledAt: schools.disabledAt,
+      deletedAt: schools.deletedAt,
+      licensed: sql<boolean>`EXISTS (
+        SELECT 1 FROM ${productLicenses}
+        WHERE product_licenses.school_id = schools.id
+          AND product_licenses.product = 'CLASSPILOT'
+          AND product_licenses.status = 'active'
+          AND (product_licenses.expires_at IS NULL OR product_licenses.expires_at > clock_timestamp())
+      )`,
+    }).from(schools).where(eq(schools.id, schoolId)).limit(1);
+    if (!school) return { schoolId, entitled: false, reason: "school_missing" };
+    if (!isClasspilotSchoolActive(school, new Date())) {
+      return { schoolId, entitled: false, reason: "school_inactive" };
+    }
+    return school.licensed
+      ? { schoolId, entitled: true, reason: "active" }
+      : { schoolId, entitled: false, reason: "license_inactive" };
+  }
   const schoolQuery = dbInstance
     .select({
       id: schools.id,
