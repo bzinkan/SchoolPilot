@@ -9,3 +9,4 @@ import '../scripts/load/usage/cold-open-loop-profile.test.mjs';
 import '../scripts/load/usage/release-enabled-profile.test.mjs';
 import '../scripts/load/usage/release-enabled-focus-protocol.test.mjs';
 import '../scripts/load/usage/release-enabled-drain.test.mjs';
+import '../scripts/load/usage/roles/suite.mjs';

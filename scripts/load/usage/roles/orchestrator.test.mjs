@@ -1,0 +1,41 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {EventEmitter} from 'node:events';import {PassThrough} from 'node:stream';
+import {runRoleContainers} from './host-orchestrator.mjs';import {rolePlan} from './role-plan.mjs';import {createDockerHostAdapter} from './docker-host-adapter.mjs';
+import {runStartup} from './coordinator-startup.mjs';
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes;});return{promise,resolve};};
+const base={run:'a'.repeat(12),source:'b'.repeat(40),imageId:'sha256:'+'c'.repeat(64),pgContainerId:'d'.repeat(64),evidenceDirectory:'C:/owned/evidence',controlDirectory:'C:/owned/control',environmentKeys:['NODE_ENV'],environment:{NODE_ENV:'test'}};
+function fixture({createFails,terminate=false,logFails}={}){
+ const roles=['coordinator','api','worker','generator'],plans=roles.map(role=>Object.assign(rolePlan({...base,role}),{runtimeConfigDigest:'sha256:'+'e'.repeat(64)}));
+ const states=new Map(),byRole=new Map(),receipts=new Map(),removed=[],bindings=[],calls=[];let initial=true,clock=0,publicResult;
+ const complete=role=>{const row=byRole.get(role);if(!row||!row.inspect.State.Running)return;row.inspect.State.Running=false;row.exit.resolve(0);row.logs.resolve({code:0,closed:true});};
+ const adapter={assertOwnedPostgres:async()=>calls.push('verify_pg'),inspectName:async name=>[...states.values()].find(row=>row.inspect.Name===`/${name}`)?.inspect||null,
+  async create(args,environment){const p=plans.find(row=>row.args===args);assert.equal(environment.NODE_ENV,'test');if(p.role===createFails)throw new Error('injected');const id=String(plans.indexOf(p)+1).repeat(64);const inspect={Id:id,Name:`/${p.name}`,Image:p.runtimeConfigDigest,Mounts:p.mounts,Config:{Image:p.imageId,Entrypoint:p.entrypoint,Cmd:p.command,WorkingDir:'/app',Healthcheck:{Test:['NONE']},Env:['NODE_ENV=test'],User:'node',Labels:{'codex.usage-scale':p.run,'codex.usage-role':p.role,'codex.usage-source':p.source}},HostConfig:{NetworkMode:`container:${p.pgContainerId}`,NanoCpus:p.caps.nanoCpus,Memory:p.caps.memoryBytes,MemorySwap:p.caps.memorySwapBytes,ReadonlyRootfs:true,PortBindings:{},Init:true,CapDrop:['ALL'],CapAdd:null,SecurityOpt:['no-new-privileges'],Privileged:false,PidMode:'',IpcMode:'private'},State:{Running:false,ExitCode:0,OOMKilled:false}};const row={plan:p,inspect,exit:deferred(),logs:deferred()};states.set(id,row);byRole.set(p.role,row);calls.push(`create_${p.role}`);return id;},
+  inspectId:async id=>states.get(id)?.inspect||null,
+  startAndCapture(id){const row=states.get(id);row.inspect.State.Running=true;calls.push(`start_${row.plan.role}`);if(row.plan.role===logFails){const failed=Promise.reject(new Error('capture failed while container remains running'));failed.closed=row.logs.promise;return failed;}return row.logs.promise;},wait:async id=>states.get(id).exit.promise,
+  async publishExit(role,receipt){assert.equal(receipts.has(role),false);receipts.set(role,receipt);if(['api','worker','generator'].every(name=>receipts.has(name)))complete('coordinator');},
+  async kill(id){complete(states.get(id).plan.role);},async remove(id){removed.push(states.get(id).plan.role);states.delete(id);},
+ };
+ const io={initialize:async()=>calls.push('initialize'),writeRegistry:async registry=>{assert.equal(registry.roles.length,3);assert.equal(states.size,4);},readBridgeReady:async()=>({host:'127.0.0.1',port:4321,run:base.run,source:base.source}),writeChildBinding:async(role,binding)=>{bindings.push({role,binding});assert.equal(binding.port,4321);},
+  async readTerminationRequests(){if(initial){initial=false;for(const role of ['api','worker','generator'])if(!terminate||role!=='api')complete(role);if(terminate){const row=byRole.get('api');return [{sequence:1,request:{run:base.run,source:base.source,role:'api',containerId:row.inspect.Id,imageId:base.imageId,signal:'TERM'}}];}}return[];},writeResult:async value=>{publicResult=value;}};
+ const run=()=>runRoleContainers({adapter,io,plans,runtimeSha256:'f'.repeat(64),harnessHashes:Object.fromEntries(roles.map(role=>[role,'9'.repeat(64)])),now:()=>clock,sleep:async ms=>{clock+=ms;await tick();},nonce:()=> '8'.repeat(64)});
+ return {run,states,removed,receipts,bindings,calls,elapsed:()=>clock,result:()=>publicResult};
+}
+test('host dry flow creates every role before launch, authenticates bindings, waits exact exits and removes all',async()=>{const f=fixture();const result=await f.run();assert.equal(result.passed,true);assert.equal(result.resourceAcceptance,false);assert.equal(result.capacityAccepted,false);assert.equal(f.states.size,0);assert.equal(f.removed.length,4);assert.equal(f.receipts.size,4);assert.equal(f.bindings.length,3);const firstStart=f.calls.findIndex(value=>value.startsWith('start'));assert.equal(f.calls.slice(0,firstStart).filter(value=>value.startsWith('create')).length,4);assert.equal(JSON.stringify(result).includes('8'.repeat(64)),false);});
+test('partial create failure cleans every already-owned exact role',async()=>{const f=fixture({createFails:'worker'});const result=await f.run();assert.equal(result.passed,false);assert.equal(result.cleanup.cleanupPassed,true);assert.deepEqual(f.removed,['api','coordinator']);assert.equal(f.states.size,0);});
+test('TERM that exits zero is still forced cleanup and never a clean diagnostic',async()=>{const f=fixture({terminate:true});const result=await f.run();assert.equal(result.passed,false);assert.equal(f.receipts.get('api').forced,true);assert.equal(f.receipts.get('api').clean,false);assert.equal(f.states.size,0);});
+test('capture rejection contains exact-owned roles promptly while their daemon waits remain pending',async()=>{const f=fixture({logFails:'api'});const result=await f.run();assert.equal(result.passed,false);assert.equal(result.cleanup.cleanupPassed,true);assert.equal(f.states.size,0);assert.equal(f.removed.length,4);assert.ok(f.elapsed()<1000,'Known capture failure must not wait for the900s orphan bound');assert.equal(f.receipts.has('api'),false);});
+test('log stream failure is handled immediately while CLI closure remains separately owned',async()=>{
+ const log=new PassThrough(),child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();
+ const adapter=createDockerHostAdapter({docker:'unused',endpoint:'unix:///var/run/docker.sock',environment:{},evidenceDirectory:'unused',receiptDirectory:'unused',createLog:()=>log,spawnProcess:()=>child});
+ const pending=adapter.startAndCapture('1'.repeat(64),'api');let closed=false;pending.closed.finally(()=>{closed=true;}).catch(()=>{});
+ log.destroy(new Error('synthetic log failure'));await assert.rejects(pending,/LOG_CAPTURE/);assert.equal(closed,false);assert.equal(child.stdout.readableFlowing,true);assert.equal(child.stderr.readableFlowing,true);
+ child.emit('close',0);await assert.rejects(pending.closed,/LOG_CAPTURE/);assert.equal(closed,true);
+});
+test('tiny startup mode exercises original readiness/drain/shutdown without offering workload',async()=>{
+ const calls=[],closed=[];let written;
+ const owners={captureCoordinatorResources:phase=>calls.push(`resource_${phase}`),async child(role,file,env){assert.equal(env.USAGE_RELEASE_ROLE,role);calls.push(`launch_${role}`);const stream=new PassThrough();stream.resume();const done=deferred();closed.push(done);
+  return {process:{connected:true,exitCode:null,kill(){throw new Error('unexpected');}},ready:Promise.resolve({kind:'ready',pid:7,containerId:role, ...(role==='api'?{pools:{api:16,session:2},readiness:true,redis:true}:role==='worker'?{pools:{worker:5}}:{})}),stdout:stream,closed:done.promise,
+   async rpc(operation){calls.push(`${role}_${operation}`);if(operation==='shutdown'){stream.end();done.resolve({code:0,signal:null});return true;}assert.equal(operation,'quiesce');return{complete:true};}};
+ }};
+ const result=await runStartup(owners,{write:value=>{written=value;}});assert.equal(result.prototypeStartupPassed,true);assert.equal(written.heartbeatOffers,0);assert.equal(written.reportOffers,0);assert.equal(written.workerRollups,0);assert.equal(written.capacityAccepted,false);assert.deepEqual(calls.filter(value=>value.endsWith('shutdown')),['generator_shutdown','worker_shutdown','api_shutdown']);assert.ok(!calls.some(value=>value.includes('phase')));
+});

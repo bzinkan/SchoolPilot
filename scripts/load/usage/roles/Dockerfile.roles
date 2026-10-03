@@ -1,0 +1,22 @@
+# Local test helper only. The original candidate runtime under /app is untouched.
+ARG CANDIDATE_IMAGE
+FROM ${CANDIDATE_IMAGE}
+USER root
+COPY verify-runtime.mjs /prototype-tools/verify-runtime.mjs
+RUN node /prototype-tools/verify-runtime.mjs capture /prototype-tools/base-runtime.json
+RUN apk add --no-cache git \
+    && node /prototype-tools/verify-runtime.mjs assert-before-source /prototype-tools/base-runtime.json
+COPY --chown=node:node clean-source/ /source/
+COPY --chown=node:node overlay/ /diagnostic/
+COPY --chown=node:node prototype/ /prototype/
+LABEL codex.usage-role.prototype="unvalidated"
+RUN ln -s /app/dist /diagnostic/dist \
+    && ln -s /app/node_modules /diagnostic/node_modules \
+    && ln -s /app/package.json /diagnostic/package.json
+USER node
+ENV GIT_OPTIONAL_LOCKS=0
+RUN node /prototype-tools/verify-runtime.mjs assert /prototype-tools/base-runtime.json
+HEALTHCHECK NONE
+WORKDIR /app
+ENTRYPOINT ["node"]
+CMD ["--import", "/prototype/runtime-facts.mjs", "/prototype/role-coordinator.mjs"]
