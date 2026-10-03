@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull, or, sql, type SQLWrapper } from "drizzle-orm";
 import db from "../db.js";
+import { readHeartbeatSchool, readHeartbeatLicense } from "./classpilotHeartbeatPreparedReads.js";
 import { productLicenses, schools } from "../schema/core.js";
 
 export type ClasspilotEntitlement = {
@@ -104,22 +105,7 @@ export async function resolveClasspilotEntitlement(
       ? { schoolId, entitled: true, reason: "active" }
       : { schoolId, entitled: false, reason: "license_inactive" };
   }
-  const schoolQuery = dbInstance
-    .select({
-      id: schools.id,
-      status: schools.status,
-      isActive: schools.isActive,
-      planStatus: schools.planStatus,
-      activeUntil: schools.activeUntil,
-      disabledAt: schools.disabledAt,
-      deletedAt: schools.deletedAt,
-    })
-    .from(schools)
-    .where(eq(schools.id, schoolId))
-    .limit(1);
-  const [school] = options.lock
-    ? await schoolQuery.for("share")
-    : await schoolQuery;
+  const [school] = await readHeartbeatSchool(dbInstance, schoolId);
   if (!school) return { schoolId, entitled: false, reason: "school_missing" };
   if (!isClasspilotSchoolActive(school, new Date())) {
     return { schoolId, entitled: false, reason: "school_inactive" };
@@ -130,22 +116,7 @@ export async function resolveClasspilotEntitlement(
   if (!isClasspilotSchoolActive(school, new Date())) {
     return { schoolId, entitled: false, reason: "school_inactive" };
   }
-  const licenseQuery = dbInstance
-    .select({ id: productLicenses.id })
-    .from(productLicenses)
-    .where(and(
-      eq(productLicenses.schoolId, schoolId),
-      eq(productLicenses.product, "CLASSPILOT"),
-      eq(productLicenses.status, "active"),
-      or(
-        isNull(productLicenses.expiresAt),
-        gt(productLicenses.expiresAt, sql`clock_timestamp()`)
-      )
-    ))
-    .limit(1);
-  const [license] = options.lock
-    ? await licenseQuery.for("share")
-    : await licenseQuery;
+  const [license] = await readHeartbeatLicense(dbInstance, schoolId);
   return license
     ? { schoolId, entitled: true, reason: "active" }
     : { schoolId, entitled: false, reason: "license_inactive" };

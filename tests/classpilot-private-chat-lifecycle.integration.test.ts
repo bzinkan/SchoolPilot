@@ -1147,3 +1147,38 @@ test("heartbeat recovery rejects a manual lease expired during required preparat
   }, () => assert.fail("expired lease cannot receive HTTP authority"), () => assert.fail("expired lease cannot receive a private reply")));
   assert.deepEqual(result, { authorized: false });
 });
+
+for (const fault of ["none", "claim SQL", "local socket"] as const) test(`cached heartbeat preparation preserves queued private recovery with ${fault}`, async t => {
+  await freshRecovery();
+  const pending = await reply(`Cached metadata ${fault}`);
+  const before = (await admin.query("SELECT state,attempt_count,last_attempt_student_session_id,last_attempt_device_id FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows;
+  const order: string[] = [];
+  const injected = fault === "claim SQL" ? faultNativeQuery(t, text => /from "classpilot_chat_deliveries"/.test(text)) : undefined;
+  try {
+    const result = await inSchool(() => storage.withClasspilotHeartbeatDeliveryAuthority(binding(), async (connection, read) => {
+      await read();
+      await connection.execute(sql`UPDATE students SET last_name='cached-required-kept' WHERE id=${ids.students[0]!}`);
+      order.push("prepared"); return "prepared";
+    }, (_rows, value) => { order.push("http"); return value; }, rows => {
+      assert.ok(rows.some(row => row.message.id === pending.message.id));
+      order.push("private"); if (fault === "local socket") throw Error("synthetic optional send failure");
+    }));
+    assert.equal(result.authorized, true); assert.equal(result.authorized && result.value, "prepared");
+    assert.deepEqual(order, fault === "claim SQL" ? ["prepared", "http"] : ["prepared", "private", "http"]);
+    if (injected) assert.equal(injected.count(), 1);
+  } finally { injected?.restore(); }
+  assert.equal((await admin.query("SELECT last_name FROM students WHERE id=$1", [ids.students[0]])).rows[0]!.last_name, "cached-required-kept");
+  const afterRows = (await admin.query("SELECT state,attempt_count,last_attempt_student_session_id,last_attempt_device_id FROM classpilot_chat_deliveries WHERE id=$1", [pending.delivery.id])).rows;
+  if (fault === "none") {
+    assert.equal(afterRows[0]!.state, "attempted"); assert.equal(afterRows[0]!.last_attempt_student_session_id, binding().studentSessionId);
+  } else assert.deepEqual(afterRows, before, "optional claim mutation must roll back while mandatory preparation persists");
+});
+
+test("cached heartbeat final fence still denies revoked binding without private or HTTP delivery", async () => {
+  await freshRecovery(); await reply("Cached revoked binding"); let privateSent = 0, http = 0;
+  const result = await inSchool(() => storage.withClasspilotHeartbeatDeliveryAuthority(binding(), async (connection, read) => {
+    await read();
+    await connection.execute(sql`UPDATE student_sessions SET is_active=false,ended_at=clock_timestamp() WHERE id=${binding().studentSessionId}`);
+  }, () => { http++; return true; }, () => { privateSent++; }));
+  assert.equal(result.authorized, false); assert.deepEqual({ privateSent, http }, { privateSent: 0, http: 0 });
+});

@@ -78,13 +78,13 @@ test("manual student sessions use database-time leases and exact recovery capabi
       < sessionStart.indexOf("lockClasspilotStudentControlAuthorities("),
     "session transfer must finish combined entitlement/config authority before student-control locking"
   );
-  const schoolLock = entitlement.indexOf("const [school] = options.lock");
+  const schoolLock = entitlement.indexOf("const [school] = await readHeartbeatSchool(dbInstance, schoolId)");
   const bridge = entitlement.indexOf("await options.afterSchoolLockBeforeLicense?.()");
   const schoolRecheck = entitlement.indexOf(
     "if (!isClasspilotSchoolActive(school, new Date()))",
     bridge
   );
-  const licenseQuery = entitlement.indexOf("const licenseQuery", bridge);
+  const licenseQuery = entitlement.indexOf("await readHeartbeatLicense(dbInstance, schoolId)", bridge);
   assert.ok(
     schoolLock >= 0 && schoolLock < bridge && bridge < schoolRecheck && schoolRecheck < licenseQuery,
     "combined entitlement authority must use school-row -> class bridge -> fresh school check -> license-row order"
@@ -93,7 +93,12 @@ test("manual student sessions use database-time leases and exact recovery capabi
     entitlement,
     /afterSchoolLockBeforeLicense && !options\.lock[\s\S]*requires lock: true/
   );
-  assert.match(entitlement, /productLicenses\.expiresAt, sql`clock_timestamp\(\)`/);
+  const readQueries = source("../src/services/classpilotHeartbeatReadQueries.ts");
+  const lockedSchoolQuery = readQueries.slice(readQueries.indexOf("export function heartbeatSchoolQuery"), readQueries.indexOf("export function heartbeatLicenseQuery"));
+  const lockedLicenseQuery = readQueries.slice(readQueries.indexOf("export function heartbeatLicenseQuery"), readQueries.indexOf("export function heartbeatSessionQuery"));
+  assert.match(lockedSchoolQuery, /from\(schools\)[\s\S]*eq\(schools\.id, options\.schoolId\)[\s\S]*for\("share"\)/);
+  assert.match(lockedLicenseQuery, /productLicenses\.expiresAt, sql`clock_timestamp\(\)`/);
+  assert.match(lockedLicenseQuery, /eq\(productLicenses\.schoolId, options\.schoolId\)[\s\S]*for\("share"\)/);
   assert.ok(
     sessionStart.indexOf("const conflictStudentCandidates")
       < sessionStart.indexOf("lockClasspilotStudentControlAuthorities("),

@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 
 const source = readFileSync(new URL("../src/services/storage.ts", import.meta.url), "utf8");
-const start = source.indexOf("async function withClasspilotStudentControlDeliveryAuthorityCore<");
+const start = source.indexOf("async function runClasspilotControlDeliveryTransaction<");
 const end = source.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority<", start);
 assert.ok(start >= 0 && end > start);
 const executable = ts.transpileModule(source.slice(start, end).replaceAll("export ", "") + "\nwithClasspilotHeartbeatDeliveryAuthority;", {
@@ -25,6 +25,10 @@ function fixture(options: { projection?: Projection; deny?: boolean; fault?: str
   } };
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => strings.reduce((s, part, i) => s + part + (i < values.length ? String(values[i]) : ""), "").trim();
   const fn = runInNewContext(executable, {
+    trackHeartbeatPreparedReadTask: (_tx: object, work: () => Promise<unknown>) => work(),
+    sealHeartbeatPreparedReads: async () => {},
+    assertHeartbeatPreparedReadsSettled: () => {},
+    withHeartbeatPreparedReadTransaction: (reference: { transaction: (work: () => Promise<unknown>) => Promise<unknown> }, _school: string, work: () => Promise<unknown>) => reference.transaction(work),
     db: { async transaction(work: (tx: typeof connection) => Promise<unknown>) {
       held = true; order.push("begin"); try { return await work(connection); } finally { held = false; order.push("released"); }
     } }, sql: tag, classpilotStudentControlStates: "control", teachingSessions: "teaching", studentSessions: {}, students: {}, devices: {}, schools: {},

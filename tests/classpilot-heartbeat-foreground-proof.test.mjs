@@ -30,6 +30,9 @@ function fixture(projection) {
     queries.push(query); return { rows: [{ allowed: 1 }] };
   } };
   const run = runInNewContext(executable, {
+    trackHeartbeatPreparedReadTask: (_tx, work) => work(),
+    sealHeartbeatPreparedReads: async () => {},
+    assertHeartbeatPreparedReadsSettled: () => {},
     withClasspilotStudentControlDeliveryAuthorityCore: async (binding, prepare, deliver, _recover, beforeDelivery) => {
       held = true; bindings.push({ ...binding });
       try {

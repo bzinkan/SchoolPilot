@@ -52,7 +52,10 @@ test("SSO-bearing bootstrap freezes policy before private chat settings without 
   const storage = source("../src/services/storage.ts");
   const delivery = section(storage, "async function withClasspilotStudentControlDeliveryAuthorityCore",
     "async function assertClasspilotHeartbeatDeliveryCurrent");
-  assert.ok(delivery.indexOf("latchPrivateChatLifecycle") < delivery.indexOf("db.transaction"));
+  const transaction = delivery.indexOf("runClasspilotControlDeliveryTransaction(");
+  assert.ok(transaction > delivery.indexOf("latchPrivateChatLifecycle") && delivery.indexOf("latchPrivateChatLifecycle") >= 0);
+  const transactionEntry = section(storage, "async function runClasspilotControlDeliveryTransaction", "async function withClasspilotStudentControlDeliveryAuthorityCore");
+  assert.match(transactionEntry, /heartbeat[\s\S]*withHeartbeatPreparedReadTransaction\(db, schoolId, work\)[\s\S]*db\.transaction\(work\)/);
   assert.match(delivery, /hasExactClasspilotTelemetryBinding[\s\S]*if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority/);
   assert.ok(delivery.indexOf("lockClasspilotSsoPolicyDeliveryAuthority") < delivery.indexOf("claimTeacherChatDeliveriesWithAuthorityLocked"));
   const claim = section(storage, "async function claimTeacherChatDeliveriesWithAuthorityLocked", "/**\n * Linearize".replace("\n", storage.includes("\r\n") ? "\r\n" : "\n"));

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 const source = readFileSync(new URL('../src/services/storage.ts', import.meta.url), 'utf8');
-const start = source.indexOf('async function withClasspilotStudentControlDeliveryAuthorityCore<');
+const start = source.indexOf('async function runClasspilotControlDeliveryTransaction<');
 const end = source.indexOf('export async function withClasspilotStudentWebSocketBootstrapAuthority<', start);
 assert.ok(start > 0 && end > start);
 const executable = ts.transpileModule(source.slice(start, end).replaceAll('export ', '') + '\nwithClasspilotHeartbeatDeliveryAuthority;', {
@@ -18,6 +18,10 @@ function fixture(fault?: string) {
     return { rows: query.includes('AS entitled') ? [{ entitled: true, bound: fault !== 'binding', denialReason: 'license_inactive' }] : [{ allowed: true }] };
   } };
   const fn: (binding: object, prepare: () => void, deliver: (claimed: unknown, prepared: unknown, inbox: unknown) => boolean, recovery: undefined, foreground: undefined, request: object | undefined) => Promise<{ authorized: boolean }> = runInNewContext(executable, {
+    trackHeartbeatPreparedReadTask: (_tx: object, work: () => Promise<unknown>) => work(),
+    sealHeartbeatPreparedReads: async () => {},
+    assertHeartbeatPreparedReadsSettled: () => {},
+    withHeartbeatPreparedReadTransaction: (reference: { transaction: (work: () => Promise<unknown>) => Promise<unknown> }, _school: string, work: () => Promise<unknown>) => reference.transaction(work),
     db: { async transaction(work: (db: typeof tx) => Promise<unknown>) { held = true; order.push('begin'); try { const result = await work(tx); if (fault === 'commit') throw Error('COMMIT failed'); return result; } finally { held = false; order.push('release'); } } },
     sql(strings: TemplateStringsArray, ...values: unknown[]) { return strings.reduce((text, part, index) => text + part + (index < values.length ? String(values[index]) : ''), '').trim(); },
     schools: {}, studentSessions: {}, devices: {}, students: {},

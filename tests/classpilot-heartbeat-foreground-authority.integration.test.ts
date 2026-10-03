@@ -119,6 +119,80 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
       } finally { spy.mock.restore(); }
     });
 
+    await t.test("prepared SELECT metadata preserves reference projections on the same physical client across schools", async () => {
+      await begin();
+      const original = pg.Client.prototype.query; const configs: Array<{ text: string; name: unknown; values: unknown[] }> = [];
+      const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+        const request = args[0];
+        if (request && typeof request === "object" && "text" in request && "name" in request && request.name === "") {
+          configs.push({ text: String(request.text), name: request.name, values: Array.isArray(args[1]) ? [...args[1]] : [] });
+        }
+        return Reflect.apply(original, this, args);
+      });
+      let firstClient: object | undefined;
+      try {
+        for (const fixture of [a, b, a]) {
+          const exact = { schoolId: fixture.school.id, studentId: fixture.student.id, studentSessionId: fixture.binding.id, deviceId: fixture.deviceId, freezeSsoPolicy: true };
+          await scoped(fixture.school.id, async () => {
+            const client = getTenantStore()?.client; assert.ok(client);
+            if (firstClient) assert.equal(client, firstClient, "prove physical client reuse across school GUCs"); else firstClient = client;
+            const reference = await storage.withClasspilotStudentControlDeliveryAuthority(exact,
+              tx => storage.getClasspilotScreenshotAuthorityProjection(exact, tx), (_rows, projection) => projection);
+            const before = configs.length;
+            const prepared = await storage.withClasspilotHeartbeatDeliveryAuthority(exact, async (_tx, read) => read(), (_rows, projection) => projection);
+            assert.deepEqual(prepared.authorized && prepared.value, reference.authorized && reference.value);
+            const selected = configs.slice(before);
+            assert.equal(selected.length, 5, "exactly the five eligible SELECTs use unnamed prepared metadata");
+            assert.ok(selected.every(row => row.name === "" && row.values.includes(fixture.school.id)));
+          });
+        }
+      } finally { spy.mock.restore(); }
+    });
+
+    await t.test("orphan multi-query reader failure seals before any foreground or HTTP", async () => {
+      await begin();
+      let release: () => void = () => {}; let reached: () => void = () => {};
+      const gate = new Promise<void>(resolve => { release = resolve; }); const ready = new Promise<void>(resolve => { reached = resolve; });
+      const original = pg.Client.prototype.query; let held = false;
+      const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+        const request = args[0], text = typeof request === "string" ? request : request && typeof request === "object" && "text" in request ? String(request.text) : "";
+        if (!held && text.startsWith('select "student_sessions"."id", "student_sessions"."started_at"')) {
+          held = true; reached(); return gate.then(() => Reflect.apply(original, this, args));
+        }
+        return Reflect.apply(original, this, args);
+      });
+      const operation = invoke(async (_tx, read) => { void read(); await ready; });
+      void operation.catch(() => {});
+      try {
+        await waitUntilReady(ready);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        release(); await assert.rejects(operation, /outlived preparation/);
+        assert.equal(http, 0); assert.equal(published, 0);
+      }
+      finally { release(); await Promise.allSettled([operation]); spy.mock.restore(); }
+    });
+
+    await t.test("an optional foreground catch cannot clear a sealed prepared-read ownership failure", async t => {
+      await begin();
+      const { readHeartbeatSchool } = await import("../src/services/classpilotHeartbeatPreparedReads.js");
+      let captured: typeof db | undefined, poisoned = false, schoolSelects = 0;
+      const original = pg.Client.prototype.query;
+      const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
+        const request = args[0], text = typeof request === "string" ? request : request && typeof request === "object" && "text" in request ? String(request.text) : "";
+        if (text.startsWith("select ") && text.includes('from "schools"')) schoolSelects++;
+        if (!poisoned && text.includes("SELECT 1 AS allowed")) {
+          poisoned = true; assert.ok(captured);
+          assert.throws(() => readHeartbeatSchool(captured!, a.school.id), /phase is closed/);
+        }
+        return Reflect.apply(original, this, args);
+      });
+      try {
+        await assert.rejects(invoke(async (tx, read) => { captured = tx; await read(); }), /phase is closed/);
+        assert.equal(poisoned, true); assert.equal(schoolSelects, 1, "sealed read must issue no additional school SQL");
+        assert.deepEqual({ published, http, failed }, { published: 0, http: 0, failed: 1 });
+      } finally { spy.mock.restore(); }
+    });
+
     await t.test("wrong exact bindings cannot reach preparation or foreground and a foreign original owner cannot be substituted", async () => {
       for (const patch of [{ studentId: b.student.id }, { studentSessionId: b.binding.id }, { deviceId: b.deviceId }, { schoolId: b.school.id }]) {
         await begin(); const result = await invoke(async () => assert.fail("invalid binding cannot prepare"), undefined, { ...binding, ...patch });
