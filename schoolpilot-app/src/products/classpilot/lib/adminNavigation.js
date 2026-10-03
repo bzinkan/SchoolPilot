@@ -30,6 +30,7 @@ export const ADMIN_NAVIGATION = [
     { id: 'email', label: 'Email monitoring', to: `${admin}/email-monitoring`, emailOnly: true },
   ] },
   { label: 'Reports', items: [
+    { id: 'usage', label: 'Monitored Browser Time', to: `${admin}/usage` },
     { id: 'analytics', label: 'Analytics', to: `${admin}/analytics` },
     { id: 'audit', label: 'Audit logs', to: `${admin}?tab=audit` },
   ] },
@@ -59,6 +60,7 @@ export function adminRoute(location) {
   else if (pathname === '/classpilot/settings') id = `settings-${SETTINGS_SECTIONS.some(item => item.section === params.get('section')) ? params.get('section') : 'school'}`;
   else if (isWithin(pathname, `${admin}/email-monitoring`)) id = 'email';
   else if (pathname === `${admin}/analytics`) id = 'analytics';
+  else if (pathname === `${admin}/usage`) id = 'usage';
   else if (pathname === `${admin}/it-readiness`) id = 'it';
   else if (pathname === `${admin}/safety`) id = 'safety';
   else if (params.get('entry') === 'admin' && pathname === '/classpilot/coverage') id = 'coverage';

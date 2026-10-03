@@ -1,0 +1,225 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:28:57.367Z",
+  "scope": "Preserve final8069560d CI failures and the local static assertion repair for relocated SSO policy locking.",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "incremental uncommitted static test change; remote CI has not validated subsequent edits",
+    "archiveTimeFiles": {
+      "tests/classpilot-runtime-security-contract.test.ts": "aeac47e20223c4fcadf040d06cd7a6f0438751b60fa5caff605bb0031014c056",
+      "src/services/storage.ts": "f4ba65eb55c20093270853c7d8f0c97de39e44b58f3803c7f8c0923ac9e27f5e",
+      "src/routes/classpilot/devices.ts": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0"
+    }
+  },
+  "ci": {
+    "runId": 37087926445,
+    "jobId": 111101943743,
+    "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943743",
+    "headSha": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "status": "completed",
+    "conclusion": "failure",
+    "ordinaryDb": {
+      "command": "npm run test:db-serial",
+      "tests": 1409,
+      "passed": 1400,
+      "failed": 1,
+      "skipped": 8,
+      "soleFailure": "never short-circuits a tracking-window transition heartbeat before issuing policy"
+    },
+    "allJobs": [
+      {
+        "name": "Detect changed paths",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943565,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943565"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 4)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943674,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943674"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 1)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943716,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943716"
+      },
+      {
+        "name": "Frontend (Vite Build)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943719,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943719"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 2)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943730,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943730"
+      },
+      {
+        "name": "Cross-tenant isolation tests",
+        "status": "completed",
+        "conclusion": "failure",
+        "databaseId": 111101943743,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943743"
+      },
+      {
+        "name": "Backend (TypeScript + Build)",
+        "status": "completed",
+        "conclusion": "failure",
+        "databaseId": 111101943746,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943746"
+      },
+      {
+        "name": "RLS-enabled cross-tenant tests",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943757,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943757"
+      },
+      {
+        "name": "Frontend release-focused gates (shard 3)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101943768,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101943768"
+      },
+      {
+        "name": "AWS rollout safety (PowerShell + Terraform)",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111101968908,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111101968908"
+      },
+      {
+        "name": "SOC 2 privileged access evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111102065574,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111102065574"
+      },
+      {
+        "name": "SOC 2 monitoring evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111103593709,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111103593709"
+      },
+      {
+        "name": "SOC 2 AI/privacy evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111103593729,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111103593729"
+      },
+      {
+        "name": "SOC 2 incident evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111104358648,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111104358648"
+      },
+      {
+        "name": "SOC 2 tenant isolation evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111104358654,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111104358654"
+      },
+      {
+        "name": "SOC 2 deployment evidence",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111104358663,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111104358663"
+      },
+      {
+        "name": "SOC 2 approval queue",
+        "status": "completed",
+        "conclusion": "success",
+        "databaseId": 111104407569,
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37087926445/job/111104407569"
+      }
+    ],
+    "backendAuditFailure": "../build-dependency-audit/manifest.json"
+  },
+  "correction": {
+    "before": "Static regex required the SSO lock inline in the heartbeat final-delivery callback after the implementation moved this lock into shared delivery authority.",
+    "after": "Assert explicit freezeSsoPolicy:true on the route, the conditional shared SSO lock, and its ordering before prepareAuthorized/screenshot projection. Existing authority assertions retained.",
+    "productionSourceModifiedForThisRepair": false
+  },
+  "local": [
+    {
+      "attempt": 1,
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-name-pattern 'ClassPilot tracking-window screenshot authority' tests/classpilot-runtime-security-contract.test.ts",
+      "environment": "DATABASE_URL omitted",
+      "outcome": "failed during module import; FATAL DATABASE_URL is not set; no product test passed",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0
+    },
+    {
+      "attempt": 2,
+      "command": "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-runtime-security-contract.test.ts",
+      "environment": {
+        "NODE_ENV": "test",
+        "SCHEDULER_ENABLED": "false",
+        "DATABASE_URL": "Deliberately unreachable synthetic loopback endpoint on port1, database schoolpilot_unused; credential values omitted."
+      },
+      "outcome": "passed; no database connection needed",
+      "passed": 27,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "limits": [
+    "Remote8069560d remains failed, despite subsequent local repairs. A fresh final-source CI run is required.",
+    "The local follow-up exercises27 static/pure runtime-security assertions; it is not a rerun of the full ordinary or restricted-role database lanes.",
+    "The independent backend audit failure and its correction are archived separately."
+  ],
+  "sanitation": "User home paths, connection URLs, JWT-shaped values, authorization values and uppercase credential assignments redacted; raw and sanitized hashes retained.",
+  "files": [
+    {
+      "file": "ci-8069560d-cross-tenant.log.gz",
+      "status": "failed_static_contract",
+      "originalSha256": "15a077945e395e402bf568a3e36ed83ca35eb0f8666df148cb15dc75d39c3706",
+      "sanitizedSha256": "da4984f5aeaa0a8c5e45c57c53a7c3792048bfb24ee736c7cde353a833260058",
+      "archiveSha256": "180c0075e5e5d60c77df1ff0accc0874ee27a94cb5606d9f67c9ae0827ce7925",
+      "sourceBytes": 2563733,
+      "archiveBytes": 372279
+    },
+    {
+      "file": "followup-01.log.gz",
+      "status": "failed_missing_required_environment",
+      "originalSha256": "f8ef9833509a03fa81032bc74122ca50ae74fdb2cabc9a2a2188edc56f70fadc",
+      "sanitizedSha256": "f8ef9833509a03fa81032bc74122ca50ae74fdb2cabc9a2a2188edc56f70fadc",
+      "archiveSha256": "3e06f3095ebdb57c460aae42a7c380743e3a7540b0e7a35d99e90440764a22ed",
+      "sourceBytes": 1198,
+      "archiveBytes": 592
+    },
+    {
+      "file": "followup-02.log.gz",
+      "status": "27_pass_0_fail_0_skip",
+      "originalSha256": "d246325ad4c02307ff9d27a5ae3beec540ffe1a574890ba728dd2c506d66e8e1",
+      "sanitizedSha256": "d246325ad4c02307ff9d27a5ae3beec540ffe1a574890ba728dd2c506d66e8e1",
+      "archiveSha256": "d61e72a7cfe0c054f68a042767881e2e38d861f17b32efebdde77925169db9a3",
+      "sourceBytes": 7790,
+      "archiveBytes": 1780
+    },
+    {
+      "file": "ci-8069560d-snapshot-01.json.gz",
+      "status": "completed_failure_15_success_2_failed",
+      "originalSha256": "ddc1b57d4ac779f227e4fbac0b70a81ea51e1a80cbd472662d025858dee74306",
+      "sanitizedSha256": "ddc1b57d4ac779f227e4fbac0b70a81ea51e1a80cbd472662d025858dee74306",
+      "archiveSha256": "dccac97e1a332d40a26256b95064cb06600850bb58e826771ba465190ac65168",
+      "sourceBytes": 48283,
+      "archiveBytes": 4680
+    }
+  ]
+}

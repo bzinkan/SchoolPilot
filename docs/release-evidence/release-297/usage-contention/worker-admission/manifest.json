@@ -1,0 +1,210 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T01:38:54.147Z",
+  "baseRevision": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+  "sourceDirty": true,
+  "status": "focused_worker_admission_checks_passed",
+  "capacityEvidence": false,
+  "beforeEvidence": {
+    "sourceRevision": "0431f043812504ced7f2bf494f58aacd4ddc90c4",
+    "actualBlockedEntryPointCheckouts": 3,
+    "expected": 1,
+    "exitCode": 1,
+    "setupAttempt": "The first external probe failed to load the Windows module path and is retained separately; only the corrected assertion failure is regression evidence."
+  },
+  "focused": {
+    "passed": 42,
+    "failed": 0,
+    "skipped": 0,
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-usage-rollup-admission.test.ts tests/classpilot-usage-rollup-sql.test.ts"
+  },
+  "native": {
+    "passed": 20,
+    "failed": 0,
+    "skipped": 0,
+    "role": "owner",
+    "isolatedFixture": true,
+    "productionMutations": 0,
+    "sharedDistRebuilt": false,
+    "cleanupLog": "native-cleanup.log.gz",
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-usage-rollup.test.ts",
+    "verified": [
+      "real57014 timeout after aggregate DELETE restores prior rows and completion ledger",
+      "inherited500ms statement limit never increased and transaction-local reduction never leaks",
+      "subsequent operation admitted and completed",
+      "existing coverage, DST, cutoff, reporting and atomicity tests retained"
+    ]
+  },
+  "checks": {
+    "productionTypes": "passed",
+    "testTypeRatchet": "Failed solely on concurrently edited heartbeat recovery tests (TS2502 x2) and private chat native test (TS2532 x1); owned files had no reported debt. Final combined type rerun remains required."
+  },
+  "semantics": [
+    "One active writer plus one waiting operation per supplied pool; queue overflow is explicit failure. Harness and scheduler both use the production entrypoint.",
+    "The60s monotonic success budget begins before admission. Pool statement_timeout remains60s, with transaction-local reductions that preserve any stricter inherited limit.",
+    "No promise race releases an owned connection early. SQL or cleanup overrun is observed failure; original work/release errors remain visible.",
+    "The complete48s capacity acceptance threshold, two schools, all reports and6000 offered heartbeats remain unchanged. This trial has no passing combined load evidence yet."
+  ],
+  "sourceHashes": {
+    "src/services/classpilotUsageRollup.ts": "44dd58ccc805b46905116cb4e0292a0a014e3038d2889f28506964e530ad2681",
+    "src/services/classpilotUsageRollupAdmission.ts": "80bec8c4f197fefb5e44568aaa11a2f2ea920546ec306dd8747e84a1de578d79",
+    "tests/classpilot-usage-rollup-admission.test.ts": "44575d51681fea9b3e2cd3a2ec2532ff5dd820f5f3a935831feb4988a65af246",
+    "tests/classpilot-usage-rollup-sql.test.ts": "479483b387c6eebfb017f29b6e86106a09f15fc897e2053f11a37ae37961843d",
+    "tests/classpilot-usage-rollup.test.ts": "97223f5e8e66641f34e191d4ad287d5f2b94abe4a02a5ad54cc146468ef17ea2"
+  },
+  "sanitation": "UTF8/LF; credentials, connection strings, JWTs, cookies, emails, UUIDs and workstation paths removed. Raw originals retained unchanged.",
+  "files": [
+    {
+      "file": "native-cleanup.log.gz",
+      "rawBytes": 43,
+      "rawSha256": "345348fe10991cb5fb67932f6e6298be9e9f42a40389a4e129b5c9397ee84119",
+      "sanitizedBytes": 42,
+      "sanitizedSha256": "cc6d08dc0a0c950ebe01ebc0bb7988f73a7236b680957c2ed6b16f950e546744",
+      "gzipSha256": "e043daf55799c5d75630ff31baec04a2817a04b3a97c92a82f4f6b68056f95f7"
+    },
+    {
+      "file": "native-container-create.log.gz",
+      "rawBytes": 66,
+      "rawSha256": "e6103a495cdf05c79a6eb8bc329a6ed669cd3d20bd07a39a528e1c5a908555a4",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "687c40d801b03f14263758125b68f610c578ae436bc7ee2ef06b05fe249d3dce",
+      "gzipSha256": "4d697af733131d456aace9ff4023d689ad739011a1fc35c4587e68cfd80b8322"
+    },
+    {
+      "file": "native-execution.json.gz",
+      "rawBytes": 415,
+      "rawSha256": "32bc422553fca15483c1172dc49025f1806c2de4e267010792b21eda667d8aa7",
+      "sanitizedBytes": 402,
+      "sanitizedSha256": "59162890ffea998edcc8b11859e72e2d7f05bd0fbd33ab3ca3bee8aa1830f74d",
+      "gzipSha256": "96d75ae3e432ddda25c1aa1e8e88c04bae34484ea651f83c95f6a6c31114742f"
+    },
+    {
+      "file": "native-ordinary.log.gz",
+      "rawBytes": 13367,
+      "rawSha256": "b50b7c9b2937b5b37a86ca930af60bd78f51342c72cd8f8d367fd4f4e1e3d982",
+      "sanitizedBytes": 13199,
+      "sanitizedSha256": "f16e3de1eaf3de4cb4d364e0f14ea7f0c390400ee139776d82edfa5886c67210",
+      "gzipSha256": "e72bcfa65ea3554a27336c6a495891b77c70a618b24859cd2c07f970865c3c5a"
+    },
+    {
+      "file": "native-restore.log.gz",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-schema.sql.gz",
+      "rawBytes": 591139,
+      "rawSha256": "778464dd8cda19efb6d503176a01bc4a242509910d6fcc409dcdb120188398a7",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "3759b3d6abb3bc8942458b13cd58fac2a904b141632c9738796d8126fbbe6df9",
+      "gzipSha256": "4660f09afcb8d7be5eebd248dbb5b1a538b475be75e47e8f696ee392851cbad4"
+    },
+    {
+      "file": "release297-worker-admission-focused-01.log.gz",
+      "rawBytes": 10620,
+      "rawSha256": "59669b8a64640fe027e24ade445e68482b7926cf7e90b65473d530a8a600831c",
+      "sanitizedBytes": 10313,
+      "sanitizedSha256": "d6a1bc056ecfedba8a51dd35bf75bd820f27b42830cf848ce93a68f4001c9335",
+      "gzipSha256": "0b68f4fefe59366324d4fc1cde13f3224ec238bef7b9217dab50bdb180021498"
+    },
+    {
+      "file": "release297-worker-admission-focused-02.log.gz",
+      "rawBytes": 11071,
+      "rawSha256": "f733402b89f056a98c654aa6ae6882998b43878c5569d01beb73d00542c17560",
+      "sanitizedBytes": 10752,
+      "sanitizedSha256": "69c33c97763ba8f4aa9378b2718effa036077efa40abbf294a5660509647fd2b",
+      "gzipSha256": "83df01b36d5b2090dca7eb558f85105ae6e36829efec688802e0c14fb7a2b997"
+    },
+    {
+      "file": "release297-worker-admission-focused-03.log.gz",
+      "rawBytes": 11297,
+      "rawSha256": "1197458ebce3bb31e8cce1ec35931229b93dc8035d5676d8fff50be197e8ce99",
+      "sanitizedBytes": 10972,
+      "sanitizedSha256": "b6b78341a054cc6fa748245cd773f86e237bf6d1aa5d831386be08f0ee8ac26a",
+      "gzipSha256": "2b10bac79a01e6f8ea8dc9a2d1c87e25f19eca3e0f0134cfb49824e83c6b3bfd"
+    },
+    {
+      "file": "release297-worker-admission-typecheck.log.gz",
+      "rawBytes": 51,
+      "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedBytes": 47,
+      "sanitizedSha256": "12652975a3b03117abbcc6550586f75df88990995b7237999814218ccc3e0c19",
+      "gzipSha256": "c086639e5a0724523bfe673ae97b1e35db5e0454e98240feb09fa4b2346bec79"
+    },
+    {
+      "file": "release297-worker-admission-test-types.log.gz",
+      "rawBytes": 178,
+      "rawSha256": "8b3d6c8b4380884f33504cac0a9b32673a40d21d05c4131649ae12e5b64d4765",
+      "sanitizedBytes": 175,
+      "sanitizedSha256": "842278d973f507d78b751c53de997c574e06ce8ac674cc22426a24fcac53a4eb",
+      "gzipSha256": "cf538ad96800a86af52770a5e945fa1d298dc91d0c4d65764b16a0b1e38f4a20"
+    },
+    {
+      "file": "release297-worker-admission-red.log.gz",
+      "rawBytes": 483,
+      "rawSha256": "92702d772cbbd2a0c0b140d65349f286ba1a975fc271a19c81439dad7204ef59",
+      "sanitizedBytes": 439,
+      "sanitizedSha256": "d8df0ded621d35791ed4647dca8a7b84c86ccb115f0072d5e194d3836d3cf5fc",
+      "gzipSha256": "17431b2bea153689619d84f0f8f9f110acea1a9a8f2f494a41609f685baeac4d"
+    },
+    {
+      "file": "release297-worker-admission-red.json.gz",
+      "rawBytes": 625,
+      "rawSha256": "f6f1d7c233a021c2c869be98a02df4e4bfee56326adfbbb55336f55751b1b514",
+      "sanitizedBytes": 625,
+      "sanitizedSha256": "f6f1d7c233a021c2c869be98a02df4e4bfee56326adfbbb55336f55751b1b514",
+      "gzipSha256": "8961356c4af78f9e6e829105d5f833a005790583c0f1fedfba5e8ee20bef1756"
+    },
+    {
+      "file": "release297-worker-admission-red-setup-failure.log.gz",
+      "rawBytes": 989,
+      "rawSha256": "289f5cc94215bc1af4fc6ac3672c4dac1d1bcef7814e1a021b0b4d3f7301e205",
+      "sanitizedBytes": 972,
+      "sanitizedSha256": "fe889748bcfaab520b7c128de4b4bf2d819f246903c73f9eda9bfda80fe1ffa0",
+      "gzipSha256": "0e7b342de069a1f11e33aba1c597ed341035d5826bcb4a0d88970b891016d05e"
+    },
+    {
+      "file": "release297-worker-admission-red-setup-failure.json.gz",
+      "rawBytes": 625,
+      "rawSha256": "f6f1d7c233a021c2c869be98a02df4e4bfee56326adfbbb55336f55751b1b514",
+      "sanitizedBytes": 625,
+      "sanitizedSha256": "f6f1d7c233a021c2c869be98a02df4e4bfee56326adfbbb55336f55751b1b514",
+      "gzipSha256": "8961356c4af78f9e6e829105d5f833a005790583c0f1fedfba5e8ee20bef1756"
+    },
+    {
+      "file": "release297-worker-admission-before-probe.mjs.gz",
+      "rawBytes": 3309,
+      "rawSha256": "351ba844e5f9de9c2b0ff39a334cbcb2b57c8a3a7d8d7e3d7924d2ac88642dc7",
+      "sanitizedBytes": 3250,
+      "sanitizedSha256": "c65dba80f8d39b04c436959a3eface002d394a86cefa3c9b76624dc933b3188f",
+      "gzipSha256": "50259490d3a827e7b8c98e3c720405ca37d2fb890ee843a4b83a7347b3830733"
+    },
+    {
+      "file": "release297-worker-admission-before-check.mjs.gz",
+      "rawBytes": 1111,
+      "rawSha256": "89a06e0782b72e61a5d7330aa8673631e0f5b3389920b1ea2db845177e34aae4",
+      "sanitizedBytes": 1084,
+      "sanitizedSha256": "d131d18e7e527441c36e3730815cd6ff356bd29edcd28914a598cb836b9318a0",
+      "gzipSha256": "2e067e81d0368e90bf5f6535ebe978fec8b13ca45e39641fbb0473299e093b67"
+    },
+    {
+      "file": "release297-rollup-before-admission.mjs.gz",
+      "rawBytes": 26380,
+      "rawSha256": "184abe77da607f0dc390f9c7b86c071fa7f594da2dce5cac0bcc5eeda87b5ad6",
+      "sanitizedBytes": 26203,
+      "sanitizedSha256": "4a5c36a2172a865ad6d40149beeef8e744c0e2801bfa63c3e744eb9b0035b1e0",
+      "gzipSha256": "9ff65319f74aacb556ded8e7cabd036ed5428359f0a07fed28b2297447594879"
+    },
+    {
+      "file": "release297-worker-admission-native.ps1.gz",
+      "rawBytes": 3947,
+      "rawSha256": "a122cedc4023cb3941f15de1ba40f4d46df10deb1d7dedeac9bed7f25598eeac",
+      "sanitizedBytes": 3852,
+      "sanitizedSha256": "4b437be0bf5afa5f26d74d9545420be0af2d13e5be0e9564ffc8c3c37606df3e",
+      "gzipSha256": "632f2d68411fd8d96bcbb41b498974e0c5593fa3f785d89bf90ad2f7375841e9"
+    }
+  ]
+}

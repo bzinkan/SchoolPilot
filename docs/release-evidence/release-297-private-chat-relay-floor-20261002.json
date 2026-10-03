@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T19:04:56Z",
+  "state": "focused-correction-verified",
+  "repository": "bzinkan/SchoolPilot",
+  "correctionBaseCommit": "4ce644af819a03113f1ab5c341f2218970096d36",
+  "requiredProductCommit": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+  "versions": { "writer": 1, "bridge": 1, "relay": 1 },
+  "problem": "Writer/bridge markers alone admitted rollback sources whose private Redis receiver lacked lifecycle revalidation.",
+  "correction": {
+    "javascript": "Read and require relay1 from the exact candidate and both independent rollback source SHAs whenever the thread admission floor is required.",
+    "powershell": "Read and require relay1 from the exact serving app SHA and any selected rollback target SHA under the admitted floor or a private lifecycle profile.",
+    "capabilityOff": "Admission remains a durable floor after withdrawal; neither marker absence nor an unrelated off profile permits unsafe rollback.",
+    "preAdmission": "Unrelated legacy projection before thread admission remains unchanged.",
+    "scope": [
+      "scripts/enforce-private-chat-release-floor.mjs",
+      "scripts/enforce-private-chat-release-floor.d.mts",
+      "scripts/classpilot-roadmap-release-evidence.ps1",
+      "scripts/deploy-classpilot-runtime-config.ps1",
+      "tests/private-chat-release-floor.test.ts",
+      "tests/classpilot-runtime-config-deploy.test.ps1"
+    ],
+    "migrationRegistryAndHistoricalInventoriesChanged": false,
+    "extensionPackageChanged": false,
+    "operationalMutationPerformed": false
+  },
+  "validation": {
+    "javascriptBaseline": { "passed": 18, "failed": 7, "cause": "Missing expected refusal for candidate or rollback relay marker absence." },
+    "javascriptCorrected": { "passed": 25, "failed": 0, "skipped": 0 },
+    "powershellBaseline": "The new serving pre-relay refusal assertion failed because the original tool accepted the source.",
+    "powershellCorrected": { "assertions": 1296, "exitCode": 0 },
+    "focusedTypes": { "exitCode": 0, "scope": "Strict no-emit TypeScript check of the changed floor test and imported declaration." },
+    "unsafeTestCastRatchet": { "exitCode": 0, "asAny": 689, "asUnknownAs": 7, "tsIgnore": 0, "tsExpectError": 0 },
+    "gitDiffCheck": "passed",
+    "nativeOrBrowserSuiteRun": false,
+    "invalidProbesExcluded": [
+      { "log": "release-297-relay-floor-js-invalid-loader.log", "reason": "Windows loader path lacked file URL syntax; no assertions executed." },
+      { "log": "release-297-relay-floor-powershell-invalid-array-fixture.log", "reason": "New test wrapped an intentionally protected array; controlled shape proof identified the fixture error before correction." }
+    ]
+  },
+  "logs": [
+    { "name": "release-297-relay-floor-js-red.log", "sha256": "084adff3dee284f197a638115f55b4b7c76a5b9f598876e575ebb8a18230a843", "bytes": 9060 },
+    { "name": "release-297-relay-floor-js-green.log", "sha256": "50f4ca2dad9d7cb28e3cab63ae9fb512de3b29b1ee15c478dd007380e727ec4b", "bytes": 2306 },
+    { "name": "release-297-relay-floor-powershell-red.log", "sha256": "898c47e3b4ed1b4d0f5970173f8a6eeb35b7eafda420feb906cece4209a34577", "bytes": 790 },
+    { "name": "release-297-relay-floor-powershell-green.log", "sha256": "089ccb659307c8d97ad23cefd5f9409b10a9e4e10eb5ece5cc4f992867b75403", "bytes": 70 },
+    { "name": "release-297-relay-floor-focused-types.log", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "bytes": 0 },
+    { "name": "release-297-relay-floor-test-casts.log", "sha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8", "bytes": 91 }
+  ]
+}

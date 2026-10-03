@@ -7,6 +7,7 @@ import {
   classpilotCapabilityRolloutMode,
   isClasspilotCapabilityActive,
   negotiateClasspilotProtocol,
+  assertClasspilotCapabilityRolloutsEnv,
 } from "../src/services/classpilotProtocol.js";
 import {
   classpilotObservationStatus,
@@ -32,6 +33,61 @@ const REPAIRED_CLIENT_DEPENDENT_CAPABILITIES = [
   "restrictionAuthPassThroughV1",
   "restrictionPortalFirstV1",
 ] as const;
+
+test("private chat requires reviewed tenancy admission and both advertised parent capabilities", () => {
+  const env: NodeJS.ProcessEnv = {
+    CLASSPILOT_PROTOCOL_V3_ENABLED:"true",CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1:"true",
+    CLASSPILOT_CAP_SCOPED_AUTHORITY_CHECKS_V1:"true",CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1:"true",
+    RLS_GUC_ENABLED:"true",RLS_ENABLED_TABLES:"classpilot_private_chat_threads",
+  };
+  const advertisedCapabilities=["scopedAuthorityChecksV1","studentChatIdempotencyV1","privateChatLifecycleV1"];
+  const accepted=(candidate:NodeJS.ProcessEnv,advertised=advertisedCapabilities)=>negotiateClasspilotProtocol({
+    clientProtocolVersion:3,advertisedCapabilities:advertised,scope:{schoolId:"school-a"},env:candidate,
+  }).acceptedCapabilities.includes("privateChatLifecycleV1");
+  assert.equal(accepted(env),true);
+  assert.doesNotThrow(()=>assertClasspilotCapabilityRolloutsEnv(env));
+  // Reusing one environment object must not retain admission after revocation,
+  // nor confuse a similarly named table with the exact admission token.
+  for (const [tables, expected] of [
+    ["other, classpilot_private_chat_threads ,another", true],
+    ["classpilot_private_chat_threads_archive", false],
+    ["", false],
+    ["classpilot_private_chat_threads", true],
+  ] as const) {
+    env.RLS_ENABLED_TABLES = tables;
+    assert.equal(accepted(env), expected);
+    if (expected) assert.doesNotThrow(() => assertClasspilotCapabilityRolloutsEnv(env));
+    else assert.throws(() => assertClasspilotCapabilityRolloutsEnv(env), /RLS admission/);
+  }
+  for(const parent of ["scopedAuthorityChecksV1","studentChatIdempotencyV1"]) {
+    assert.equal(accepted(env,advertisedCapabilities.filter(value=>value!==parent)),false);
+  }
+  for(const missing of ["RLS_GUC_ENABLED","RLS_ENABLED_TABLES"]) {
+    const candidate={...env,[missing]:""};
+    assert.equal(accepted(candidate),false);
+    assert.throws(()=>assertClasspilotCapabilityRolloutsEnv(candidate),/RLS admission/);
+  }
+  const withoutAdmission = { ...env };
+  delete withoutAdmission.RLS_ENABLED_TABLES;
+  const previousAdmission = process.env.RLS_ENABLED_TABLES;
+  try {
+    process.env.RLS_ENABLED_TABLES = "classpilot_private_chat_threads";
+    assert.equal(accepted(withoutAdmission), true);
+    process.env.RLS_ENABLED_TABLES = "other";
+    assert.equal(accepted(withoutAdmission), false);
+    delete process.env.RLS_ENABLED_TABLES;
+    assert.equal(accepted(withoutAdmission), false);
+    assert.equal(accepted(env), true);
+  } finally {
+    if (previousAdmission === undefined) delete process.env.RLS_ENABLED_TABLES;
+    else process.env.RLS_ENABLED_TABLES = previousAdmission;
+  }
+  assert.equal(accepted({...env,CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1:"false"}),false);
+  assert.equal(accepted({...env,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({
+    scopedAuthorityChecksV1:{mode:"on"},studentChatIdempotencyV1:{mode:"on"},
+    privateChatLifecycleV1:{mode:"on",schoolIds:["school-b"]},
+  })}),false);
+});
 
 test("supervision capability follows either enabled classroom origin without bypassing capability controls", () => {
   const base = { CLASSPILOT_PROTOCOL_V3_ENABLED: "true", CLASSPILOT_CAP_SCHEDULED_CLASSROOM_V1: "true",
@@ -212,10 +268,9 @@ test("read-only screenshot observation requires explicit capability and all thre
 test("precise restriction resources negotiate only with scoped authority, the flag and the school rollout", () => {
   const precise = "preciseRestrictionResourcesV1";
   // Index 25: inside the 32-name realtime capability cache, which is the
-  // accepted list delivery reads. Appended last so the order of every
-  // existing accepted name is unchanged.
+  // accepted list delivery reads. Later additive capabilities retain its slot.
   assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.indexOf(precise), 25);
-  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.at(-1), precise);
+  assert.equal(CLASSPILOT_PROTOCOL_V3_CAPABILITIES[26], "focusTabV1");
   assert.ok(CLASSPILOT_PROTOCOL_V3_CAPABILITIES.length <= 32);
   const env: NodeJS.ProcessEnv = {
     CLASSPILOT_PROTOCOL_V3_ENABLED: "true",

@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "result": "pass",
+  "recordedAtUtc": "2026-10-02T20:08:53.952Z",
+  "command": "npm run test:release-focused",
+  "source": {
+    "command": "npm run test:release-focused",
+    "workdir": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\schoolpilot-app",
+    "startedAt": "2026-10-02T15:38:39.5765953-04:00",
+    "sourceSha": "60bb2338157a9f0c313ebffae3f42a69ac3e3345",
+    "frontendTreeHash": "1f42efe3a088d84c5f92269f478fee13684bd0eb",
+    "nodeVersion": "v24.19.0",
+    "nodeExecutable": "C:\\Users\\zinka\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe",
+    "npmCli": "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
+    "parallelBrowserChains": false,
+    "log": "release-297-frontend-aggregate-final.log",
+    "completedAt": "2026-10-02T16:06:18.7727045-04:00",
+    "exitCode": 0,
+    "sourceShaAfter": "5f19785771d8adf379753c0d625ec55cbce6f68d",
+    "frontendTreeHashAfter": "1f42efe3a088d84c5f92269f478fee13684bd0eb",
+    "logSha256": "09ce6cdbd7443706d29b7c5ca8c65185f7ef1dcf06c2b9a0171ae3adb0b6097f",
+    "logBytes": 93131,
+    "frontendWorkingTreeCleanAfter": true,
+    "frontendCommitDiffEmpty": true,
+    "nodeRunnerSummaryCount": 40,
+    "nodeRunnerTotals": {
+      "tests": 738,
+      "pass": 738,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "nodeRunnerTotalsExcludeDirectBrowserScriptsWithoutNodeTestSummary": true
+  },
+  "combinedCiApplicationSource": "d69322ef7a2c56a9fb353f59c3c72b882042e41c",
+  "combinedCiFrontendTree": "1f42efe3a088d84c5f92269f478fee13684bd0eb",
+  "sourceNote": "Root evidence/checklist commits and documentation-only edits occurred during this run. The frontend Git tree and working files were unchanged. No filtered tests, skipped cases, relaxed deadlines or parallel native browser chains were used.",
+  "rawMetadataSha256": "1c9b93030d7b962d8a1a274ce45a22aa531adf30a4af4f26479936555a0c7d52",
+  "rawLog": {
+    "bytes": 93131,
+    "sha256": "09ce6cdbd7443706d29b7c5ca8c65185f7ef1dcf06c2b9a0171ae3adb0b6097f"
+  },
+  "archive": {
+    "path": "frontend-aggregate-60bb2338.log.gz",
+    "bytes": 29658,
+    "sha256": "f5b92396f114d52729ecf70bcb4f9f95dfa97baa07ef7ba4fac53a823a32fa5d"
+  },
+  "preservation": "Exact original stdout/stderr bytes; no sanitization. Gzip roundtrip and original hash verified.",
+  "credentialShapeScan": {
+    "privateKey": false,
+    "awsAccessKey": false,
+    "jwt": false
+  },
+  "countLimit": "738 passing Node-runner cases across 40 summaries; direct browser scripts without Node summaries are additional and are not included in that count. This is not a cross-suite unique-test total.",
+  "operationalAcceptance": {
+    "productionDeployment": false,
+    "activation": false,
+    "managedChromebookGate": "waived_not_passed",
+    "liveValidation": false,
+    "usageCapacity": "failed_and_held_off"
+  }
+}

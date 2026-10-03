@@ -31,7 +31,6 @@ const {
 const {
   devices,
   heartbeats,
-  schools,
   studentSessions,
   students,
 } = schema;
@@ -100,7 +99,9 @@ after(async () => {
         await db.delete(students).where(eq(students.id, studentId));
       }
       if (schoolId) {
-        await db.delete(schools).where(eq(schools.id, schoolId));
+        // Full migration fixtures retain the canonical school deletion guard.
+        // Use the same lifecycle cleanup as the other heartbeat route suites.
+        await storage.softDeleteSchool(schoolId);
       }
     });
   } finally {

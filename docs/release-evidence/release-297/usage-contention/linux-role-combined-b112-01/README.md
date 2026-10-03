@@ -1,0 +1,3 @@
+# Failed b112 combined diagnostic
+
+Full6,000 offers:3,020 successful,2,095 failed,885 refused;199late. All64 reports passed. Whole worker operations25.049s/47.561s passed. Independent correctness passed; first lock-screen HTTP500 prevented lifecycle completion. API checkout failures2,096 are distinct from failed HTTP requests2,095. Both drains were complete with no owners/aborts. RPC roles exited0; actual coordinator exit1 is retained. All6owned containers were removed. Accepted run count remains0. The source, runtime, helper and test receipts are preserved separately; original raw files and historical profiles were not changed. Private snapshot is not restore-tested.

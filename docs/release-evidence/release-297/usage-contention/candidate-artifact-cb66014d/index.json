@@ -1,0 +1,213 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:27:47.641Z",
+  "sourceCommit": "cb66014d70a275405a5469257b37debe8d20ea18",
+  "status": "local_exact_source_image_prepared_not_deployed",
+  "originalManifest": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-cb66014d-20261002T231900Z\\manifest.json",
+    "sha256": "d89bfeea9228d39b7cf3f6716ef3babb48e4b71896ea92e741b1f6377209fb91",
+    "archivedFile": "manifest.json.gz"
+  },
+  "externalImageArchive": {
+    "path": "C:\\Users\\zinka\\.codex\\artifacts\\release297-candidate-cb66014d-20261002T231900Z\\image.tar",
+    "sha256": "2c0abbe084f8613de82fce053dda1c9fd73bfb6aceb33a0ae5db8a0d3cc69dce",
+    "includedInRepository": false,
+    "retainedLocally": true
+  },
+  "image": {
+    "localTag": "schoolpilot-candidate-local:cb66014d70a2-20261002231901",
+    "indexDigest": "sha256:3db2f540323bd0fe66fea86955a371c1626eb07268e2485f3800b0243a8fc139",
+    "platformManifestDigest": "sha256:c44475c0ba3ef5ab07fe1191115dbc866309dfcd3250b859ec3b3ad90d49180b",
+    "configDigest": "sha256:359c8c72fdd9aee8aa48af668cf553206d5702a62475966bbdfc790754cf8a20",
+    "localRepoDigests": [
+      "schoolpilot-candidate-local@sha256:3db2f540323bd0fe66fea86955a371c1626eb07268e2485f3800b0243a8fc139"
+    ],
+    "platform": "linux/amd64",
+    "revisionLabel": "cb66014d70a275405a5469257b37debe8d20ea18",
+    "apiCommand": [
+      "node",
+      "dist/index.js"
+    ],
+    "workerCommand": [
+      "node",
+      "dist/worker.js"
+    ],
+    "archive": "image.tar",
+    "archiveSha256": "2c0abbe084f8613de82fce053dda1c9fd73bfb6aceb33a0ae5db8a0d3cc69dce",
+    "registryPublished": false,
+    "productionDigestBindingVerified": false
+  },
+  "scan": {
+    "scannerImage": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "gate": "Fixed HIGH/CRITICAL findings fail: --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1",
+    "allSeverityCounts": {
+      "UNKNOWN": 1,
+      "LOW": 0,
+      "MEDIUM": 6,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gateFindings": 0,
+    "gatePassed": true,
+    "databaseMetadata": {
+      "Version": 2,
+      "NextUpdate": "2026-10-03T19:00:34.190885133Z",
+      "UpdatedAt": "2026-10-02T19:00:34.190885353Z",
+      "DownloadedAt": "2026-10-02T23:21:19.353366736Z"
+    }
+  },
+  "compatibility": {
+    "passed": true,
+    "writerVersion": 1,
+    "bridgeVersion": 1,
+    "relayVersion": 1,
+    "inventoryCount": 129,
+    "stickyMigration": true,
+    "hashes": {
+      "writer": "2cc41ab7ac712023eaab3e0d14fd25d0b24101163462fefa59aefb4ca3e3ed89",
+      "relay": "ca94fa4dba5af6bd69d21e9230b1d7ebffeb21bfdfe332e7bad673a270c3914d",
+      "migration": "64f0cc7e80b96c55be7f5029255296156f8a0f9b2e1b154c228dd7a9401fd008",
+      "protocol": "0fd25026c78996a1052800b0538921b49106d334e719f13e01abf816fac894b4",
+      "registry": "0391c747c103c013e51dbec7ca35c54532d09e25df637fafd8ea8fef6447c235"
+    },
+    "scope": "Embedded file/marker validation only; no API/worker application process started or database connected."
+  },
+  "scope": "Sanitized copies of local build/export/scan and embedded-marker evidence. No database, registry publication, production task binding, capacity or deployment approval is established.",
+  "files": [
+    {
+      "file": "build.log.gz",
+      "rawFileName": "build.log",
+      "rawBytes": 2930,
+      "rawSha256": "64726e1b65a079711e4344aff8f6ab4e1edc678762d66daf14f37ed2f37f7b7a",
+      "sanitizedBytes": 2849,
+      "sanitizedSha256": "9350c7be81e1a1bddf9e87612e4372915e8396e41086c411530630cbb6d48e71",
+      "gzipSha256": "8f0e752d90d912ee7284f50feb1b69d888aa8a0f03ec6fabf99e707b510a8438"
+    },
+    {
+      "file": "embedded-compatibility.json.gz",
+      "rawFileName": "embedded-compatibility.json",
+      "rawBytes": 705,
+      "rawSha256": "a56bdd79a8e5e8ad69e5dfdc4f82fef42867144819833d142e8beadb1bbd4fc3",
+      "sanitizedBytes": 689,
+      "sanitizedSha256": "41616d97a796181762d7a9e10d171a05f992b0eea461ec5d5bd1d2ed05ebe441",
+      "gzipSha256": "c21c7b0afda7be35666ab7508c20082e68118133d3e5da32424b064cfbf40c18"
+    },
+    {
+      "file": "image-id.txt.gz",
+      "rawFileName": "image-id.txt",
+      "rawBytes": 71,
+      "rawSha256": "bc7810041cf79322bc7f65fcfa3a6e1020fa17a49c1cee3947995d2d3a9f2f38",
+      "sanitizedBytes": 71,
+      "sanitizedSha256": "bc7810041cf79322bc7f65fcfa3a6e1020fa17a49c1cee3947995d2d3a9f2f38",
+      "gzipSha256": "fb8c628040d43756a244a9e92477985e93c45e59fa6c7b69d0eda8e3304690b9"
+    },
+    {
+      "file": "image-inspect.json.gz",
+      "rawFileName": "image-inspect.json",
+      "rawBytes": 3266,
+      "rawSha256": "13da16d7460de9cb68fcd641d3fe20cf67a2cd234e30a89b322a48379a8ff5b0",
+      "sanitizedBytes": 3191,
+      "sanitizedSha256": "a086a62693df2d7c2d55c15d950ec9b9fa33ecf7ed0e68088c1e13ea3957a710",
+      "gzipSha256": "ce5cd55c51bbf267441cd453d8db90519c8ee4bd27f33e07de810d5c870846a2"
+    },
+    {
+      "file": "inspect-compatibility.mjs.gz",
+      "rawFileName": "inspect-compatibility.mjs",
+      "rawBytes": 1549,
+      "rawSha256": "8ca0b386dc09a56009d90ee45833457363a07d3369b3c2d28dcc6353ba1256ae",
+      "sanitizedBytes": 1548,
+      "sanitizedSha256": "54a41905c000cf53f2819ba125736233c25580ff862de3e935f9ac8b0bdba2b2",
+      "gzipSha256": "180889a9a94867fb7330cf91a80c9cd40856632d86cf518f3b4c9621d37de0d3"
+    },
+    {
+      "file": "manifest.json.gz",
+      "rawFileName": "manifest.json",
+      "rawBytes": 6713,
+      "rawSha256": "d89bfeea9228d39b7cf3f6716ef3babb48e4b71896ea92e741b1f6377209fb91",
+      "sanitizedBytes": 6713,
+      "sanitizedSha256": "d89bfeea9228d39b7cf3f6716ef3babb48e4b71896ea92e741b1f6377209fb91",
+      "gzipSha256": "f3a90bfb44fd38c7690aec6b5463a58e73fb460978b260141fc615f55f34fb5a"
+    },
+    {
+      "file": "preparation.json.gz",
+      "rawFileName": "preparation.json",
+      "rawBytes": 726,
+      "rawSha256": "4f0f5b55cc214048ebbe9f0d357966a0660a6d66b4bcf17f6aea03dee6bac750",
+      "sanitizedBytes": 707,
+      "sanitizedSha256": "0ff7a6638ebc00dba6a913f3bb080c7dd65959e8c1d917eb16614db1157c12df",
+      "gzipSha256": "e04143883c1502f8a82e4e79e79b5986a6d596ece041f2eea5b656b51586c0f5"
+    },
+    {
+      "file": "prepare-candidate.ps1.gz",
+      "rawFileName": "prepare-candidate.ps1",
+      "rawBytes": 3447,
+      "rawSha256": "2648cc6738cd15c694ca926ac6d9f93f69aa75493043d2cfae09924e6fd44b7e",
+      "sanitizedBytes": 3446,
+      "sanitizedSha256": "5c0caec3ee41129ca365c33ceb1eac85109782b24a91840084fcaff64ef8f09b",
+      "gzipSha256": "a5082c295793aad71ac57b4aceb8a6ddf646dd6a2a190e32bb3acb5c52764ae8"
+    },
+    {
+      "file": "save.log.gz",
+      "rawFileName": "save.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "trivy-all.json.gz",
+      "rawFileName": "trivy-all.json",
+      "rawBytes": 383039,
+      "rawSha256": "4ad6b465f44021cd7cc9048df34d6edf66e748279fce6aba50855f841ed1ce45",
+      "sanitizedBytes": 383039,
+      "sanitizedSha256": "4ad6b465f44021cd7cc9048df34d6edf66e748279fce6aba50855f841ed1ce45",
+      "gzipSha256": "30015c034ad2711f06196c1b13072a666b8df154526f1e71ac34ca2f8c49d2ff"
+    },
+    {
+      "file": "trivy-all.log.gz",
+      "rawFileName": "trivy-all.log",
+      "rawBytes": 12100,
+      "rawSha256": "669c93a14a871c8b76f521318f0c3e0f5bcce7c65b29e858c8ecf2181849921a",
+      "sanitizedBytes": 12090,
+      "sanitizedSha256": "d09f63eb0ce61c34b5c6f7bb9c5177fdfde0cb532c400a9c1f8ec45e7e83cdca",
+      "gzipSha256": "5ef5dc37006ae97b255ee1a69ac6285c07dec4a298a075d3a8f1a1795ce7b053"
+    },
+    {
+      "file": "trivy-database-metadata.json.gz",
+      "rawFileName": "trivy-database-metadata.json",
+      "rawBytes": 170,
+      "rawSha256": "27ae2792689dc34a171fc8e8edb0857f569d5090cac422321434075145bef7c1",
+      "sanitizedBytes": 170,
+      "sanitizedSha256": "27ae2792689dc34a171fc8e8edb0857f569d5090cac422321434075145bef7c1",
+      "gzipSha256": "ca7ab58d4858d07e33230b23d7d7f020e353e15e65bde005101696ffabe3461f"
+    },
+    {
+      "file": "trivy-gate.json.gz",
+      "rawFileName": "trivy-gate.json",
+      "rawBytes": 356836,
+      "rawSha256": "d08a169895dcc49f78a2f472a578aabba434410bbace508fd43728d1a19ec4f0",
+      "sanitizedBytes": 356836,
+      "sanitizedSha256": "d08a169895dcc49f78a2f472a578aabba434410bbace508fd43728d1a19ec4f0",
+      "gzipSha256": "b9b7908b461a0e18f7ca4df02308567b2326e3d6b05022f0317195cf9623070e"
+    },
+    {
+      "file": "trivy-gate.log.gz",
+      "rawFileName": "trivy-gate.log",
+      "rawBytes": 569,
+      "rawSha256": "d631dcd8acb0c26cb30a16994925c4e3781cc9b651429a513832d48609d7ee5c",
+      "sanitizedBytes": 563,
+      "sanitizedSha256": "ab167f94e0ff477853ebd3f25c5e1399b4229973fdf2d1050b4522e9616dd64e",
+      "gzipSha256": "327afd99d75d735e0f8e712a9e69b0f46b56b9ca6baae955e251d425c2b8019b"
+    },
+    {
+      "file": "write-manifest.mjs.gz",
+      "rawFileName": "write-manifest.mjs",
+      "rawBytes": 4727,
+      "rawSha256": "54151a6fb1d73a7bfa622aace498860af9dfc113fa3124bf18457d0b2e0bf0b0",
+      "sanitizedBytes": 4726,
+      "sanitizedSha256": "a73e2c9676f0eae6577beaa060c9aafcbbd7e7d34c5e0457522e7c1fc08adaa8",
+      "gzipSha256": "1a4aec9f61c79368f59ee65283ccbe32ba201b84837b7bd817dbac32cc14b952"
+    }
+  ]
+}

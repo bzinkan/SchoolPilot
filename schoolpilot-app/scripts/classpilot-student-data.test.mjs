@@ -348,7 +348,7 @@ test('selected-student export carries Monitored Browser Time rollups beside sess
       monitoredBrowserTime: {
         measure: 'Monitored Browser Time',
         dataState: 'live',
-        range: { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14' },
+        range: { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14', partiallyComputed: true, requestedDays: 3, computedDays: 2, unavailableDates: ['2026-09-13'] },
         totals: { monitoredBrowserSeconds: 125, instructionalSeconds: 100, offTaskSeconds: 15, unknownSeconds: 10, heartbeatCount: 12 },
         byDay: [
           { date: '2026-09-17', state: 'final', monitoredBrowserSeconds: 100, instructionalSeconds: 90, offTaskSeconds: 5, unknownSeconds: 5 },
@@ -361,11 +361,13 @@ test('selected-student export carries Monitored Browser Time rollups beside sess
   const report = normalizeStudentDataResponse(payload, { studentId: 'student-1', expectedScope: SCHOOL_SCOPE, expectedPeriod: 'week' });
   assert.equal(report.student.monitoredSeconds, 40, 'class-session seconds are untouched');
   assert.equal(report.student.monitoredBrowserTime.dataState, 'live');
-  assert.deepEqual(report.student.monitoredBrowserTime.range, { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14' });
+  assert.deepEqual(report.student.monitoredBrowserTime.range, { retainedFrom: '2026-08-19', partiallyExpired: false, computedFrom: '2026-09-14', partiallyComputed: true, requestedDays: 3, computedDays: 2, unavailableDates: ['2026-09-13'] });
   assert.deepEqual(report.student.monitoredBrowserTime.byDay.map((day) => day.date), ['2026-09-17', '2026-09-18'], 'malformed dates are dropped');
 
   const csv = studentDataCsv(report, { period: 'week', studentId: 'student-1' });
   assert.match(csv, /"Monitored Browser Time \(school days\)","live"/);
+  assert.match(csv, /"Computed retained days","2","Requested retained days","3"/);
+  assert.match(csv, /"Unavailable dates","2026-09-13"/);
   assert.match(csv, /"Date","Day state","Monitored Browser Time seconds","Instructional seconds","Off-task seconds","Unclassified seconds"/);
   assert.match(csv, /"2026-09-17","final","100","90","5","5"/);
   assert.match(csv, /"Total","","125","100","15","10"/);

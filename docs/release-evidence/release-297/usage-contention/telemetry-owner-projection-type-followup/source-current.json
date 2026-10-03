@@ -1,0 +1,4622 @@
+[
+  {
+    "path": "package-lock.json",
+    "sha256": "dc099eaee2b1089c2ca5bb3e0960138bf542d34e7841da6fa7a82d7c665ae6c2"
+  },
+  {
+    "path": "package.json",
+    "sha256": "9dd31abf3f1927a8c086e86787925e3f097d9c54fc4d208d0af985a520fa1be6"
+  },
+  {
+    "path": "scripts/check-test-cast-ratchet.mjs",
+    "sha256": "0dfb7c0cc5657bb4305888ccec3c921def8ced3b1c98dbb29035ca8a6759723e"
+  },
+  {
+    "path": "scripts/check-test-types.mjs",
+    "sha256": "e9ed470228e4ae601c9d725a2e392874aa1e14c4d20fba639e6e46875717f4d3"
+  },
+  {
+    "path": "scripts/classpilot-preview-chrome.mjs",
+    "sha256": "cdcb2ebbb5ed83fb7e04df618bb49325d0e132d6b6ea6f6cd68000d2ec89a6ff"
+  },
+  {
+    "path": "scripts/classpilot-roadmap-release-evidence.ps1",
+    "sha256": "2e157bcc2f34115ca0cc396cea3226c85759ce0d629aed3693d291ebb43a149d"
+  },
+  {
+    "path": "scripts/collect-classpilot-tile-auth-plan-observation-evidence.mjs",
+    "sha256": "ccbc50cea63b8c560368324ad7915fe1805210cfb1d46997c6b41e123f9d5294"
+  },
+  {
+    "path": "scripts/deploy-api-readiness.mjs",
+    "sha256": "fe6a7d806fa1a486d284ad91f98493cb04f2fad2563f93a0b062c4040f9bce72"
+  },
+  {
+    "path": "scripts/deploy-classpilot-runtime-config.ps1",
+    "sha256": "bcfd3f3575974c23fa958eaad8c46045ff536523f732fdcfb6d082d34bd08049"
+  },
+  {
+    "path": "scripts/deploy-mydesk-runtime-config.ps1",
+    "sha256": "b215eff9ea6241a8b7164c4a1cf50532d6dd4ced67338c38f6ba655bb77d9789"
+  },
+  {
+    "path": "scripts/deploy-product-runtime-config.ps1",
+    "sha256": "af53e725e9870d4c9507d3b46dbd54f1449e57885251b17e6e1fd3fd58bec1bd"
+  },
+  {
+    "path": "scripts/deploy.sh",
+    "sha256": "3e741e2e06257a8850cd0972ea47a0e16c807f514d80d4833707fc9ea6298955"
+  },
+  {
+    "path": "scripts/diagnostic.js",
+    "sha256": "83b4b89af985c300728ccd283e145ee8b9f8fbc94e1917a1ad93096ea772e1d4"
+  },
+  {
+    "path": "scripts/enable-microsoft-sign-in-runtime.d.mts",
+    "sha256": "bab9ba7cf6826e46f4ed401329b06f5b85f7059cf34fbef61c186872c2b79696"
+  },
+  {
+    "path": "scripts/enable-microsoft-sign-in-runtime.mjs",
+    "sha256": "f9337ceed6b914b1b27aa593147f18982d2ce491853d2e8d670b4b50308c6694"
+  },
+  {
+    "path": "scripts/enforce-deploy-rls-allowlist.mjs",
+    "sha256": "6aaff4e441f11866814b08ecc8aa16b006206adcf15db75d3e64d5a3d6e5aea5"
+  },
+  {
+    "path": "scripts/enforce-private-chat-release-floor.d.mts",
+    "sha256": "6df00fecffcf54fe256d4dffe14d7a5ca383d7c47c4a22dfd4753aada519bffb"
+  },
+  {
+    "path": "scripts/enforce-private-chat-release-floor.mjs",
+    "sha256": "f74d39fc1c26ab42ef64ff747057cf35ee03f521960474de93cf18b45faa7fde"
+  },
+  {
+    "path": "scripts/evaluate-mydesk-import.mjs",
+    "sha256": "c73fc655717a28c983fcaed5046d9d6ec5c4514e6daf5f1a8570dea35c05f68e"
+  },
+  {
+    "path": "scripts/extract-classpilot-tile-auth-plan-failure.mjs",
+    "sha256": "6337b511be3cb4908bea11f5571f21334f074900da4c1c5151da64656ddfc34c"
+  },
+  {
+    "path": "scripts/infra-init.sh",
+    "sha256": "09d5a46ab5c2f773feaec7d7892b6ed92a72366161435956607c5b02de02b3bc"
+  },
+  {
+    "path": "scripts/load/alb-access-log-summary.mjs",
+    "sha256": "fd76c317e89505c2cb9a8db0cdb27ce28ebd446f91b59c03c01d75abc7bcc42a"
+  },
+  {
+    "path": "scripts/load/aws-rollout-monitor.ps1",
+    "sha256": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b"
+  },
+  {
+    "path": "scripts/load/aws-rollout-rollback.ps1",
+    "sha256": "b165c531c8c148ebc70dcfd1fe2a314e57d9ea28693460fe0bd4625ee14a4a87"
+  },
+  {
+    "path": "scripts/load/bind-fresh-diagnostic.ps1",
+    "sha256": "06476cb8059cb9334f29f7ea1710c7e975d9c74bb8df1a7974998f35e620ef35"
+  },
+  {
+    "path": "scripts/load/capacity-acceptance-authorization.json",
+    "sha256": "c6f8a07f54bfb2dc10dcadb74d292214ad46c7ab8dde4274ca0827313667b8ed"
+  },
+  {
+    "path": "scripts/load/classpilot-load-test.mjs",
+    "sha256": "419239c37275b152689dce3380f9163ed21f681b0889fb4828e1fd61c81bb9c6"
+  },
+  {
+    "path": "scripts/load/command-status-observer.mjs",
+    "sha256": "817c141af8c9c3245ab3681cbcf9ca59f60bbd3d2770c6cfd43e199611d179d5"
+  },
+  {
+    "path": "scripts/load/database-insights-lease.ps1",
+    "sha256": "2dc9967951a8cbad34a8bd079e52e7a72cdbb860fd58ca87f13aa195254c43ed"
+  },
+  {
+    "path": "scripts/load/finalize-history-fallback-pi-evidence.ps1",
+    "sha256": "fe5da72c62a1a5a9a23ff32e92edbbd7c1898972bef52dd3aac761cb2f6a9392"
+  },
+  {
+    "path": "scripts/load/history-fallback-pi-finalizer.psm1",
+    "sha256": "19abf55c104484611b3b7cfdfdbaa3ef3c38bcce0e453a5a2d230596617b66ac"
+  },
+  {
+    "path": "scripts/load/monotonic-deadline.mjs",
+    "sha256": "122f23f02749b361efe3c11f91a7646f7e9d0e018d2030d7f6bb8aec744cbe84"
+  },
+  {
+    "path": "scripts/load/paperwork/README.md",
+    "sha256": "82c1633932fe8e25c241ad8b263d9c13aaa868d4becf040a639bea6674a191a0"
+  },
+  {
+    "path": "scripts/load/paperwork/api-server-contract.mjs",
+    "sha256": "44e5e1bf0f208f11d6dea1f1d98efe240de2c75a71b731d9a6011e0137010844"
+  },
+  {
+    "path": "scripts/load/paperwork/finalize-api-evidence.mjs",
+    "sha256": "a64863242b770f4281bd650b98902f9ca89074d45f3b92cdc450dee33b453cb7"
+  },
+  {
+    "path": "scripts/load/paperwork/latency-metrics.d.mts",
+    "sha256": "e2c8e6ce9a9b21463a28be00be76697a0b00a9ff44ddb36bac4cf123ad062b8a"
+  },
+  {
+    "path": "scripts/load/paperwork/latency-metrics.mjs",
+    "sha256": "01ec4d1f46c7e66885ebf3abc56259c6e7c43ad00e38f534f7f500145ededf92"
+  },
+  {
+    "path": "scripts/load/paperwork/physical-object-store.d.mts",
+    "sha256": "fed214b9e649f3e8d3504f2a8ef2052a11c1a8e0684701e51337ecb1f99c6661"
+  },
+  {
+    "path": "scripts/load/paperwork/physical-object-store.mjs",
+    "sha256": "d9c33418b1ebc98776ee7ff2ef741ec9a7d55c167dc888245a23dc7afc646db7"
+  },
+  {
+    "path": "scripts/load/paperwork/run-split.ps1",
+    "sha256": "6e5782176db45edf54a4f8d5e7d99c8112bf3806894c8544ad8e09ec74027078"
+  },
+  {
+    "path": "scripts/load/paperwork/runner-provenance.mjs",
+    "sha256": "4fbb7ef511c4f391ab1769c8015b5cdb769b1a7227062a050971ee27606ea37d"
+  },
+  {
+    "path": "scripts/load/paperwork/scheduler-overlap.mjs",
+    "sha256": "b6d425783a0f557280377651b9342c45b0f77572dcf2f2a8b8cd3497899d30cf"
+  },
+  {
+    "path": "scripts/load/paperwork/split-api-observation.mjs",
+    "sha256": "a7d70f007a41db89e28fc731ed1a89106f2389809820fa6102048f686830cab0"
+  },
+  {
+    "path": "scripts/load/paperwork/split-api-server.mjs",
+    "sha256": "28fe78540e8e35780b603549f76f06616412fcc56f5e2eada2614143777a8811"
+  },
+  {
+    "path": "scripts/load/paperwork/split-worker.mjs",
+    "sha256": "06e20fe989239a3965b41910100fab4ca93e28bf8fedd98820bdbb67b1aa666a"
+  },
+  {
+    "path": "scripts/load/paperwork/split.test.mjs",
+    "sha256": "f8220e93c07dc7d5b47e2c3be1df6e654dbceb6f1ecff28619811ac9b20e24ba"
+  },
+  {
+    "path": "scripts/load/passpilot-kiosk-load-test.mjs",
+    "sha256": "825dbf87815ad3b4b51b0fc5716d234418ca965af7fbc2d49defd45238cf0791"
+  },
+  {
+    "path": "scripts/load/prepare-classpilot-load-test.mjs",
+    "sha256": "9e84d3bc24f1380e4ed8e93c15780aeb50e8bb3d5880636adcfac708014fb814"
+  },
+  {
+    "path": "scripts/load/refresh-and-snapshot-fixtures.ps1",
+    "sha256": "b5bdce3b0c96bf2041fbe308e6f1c93cc86d814aeecdf00da1fb655e576cbd2f"
+  },
+  {
+    "path": "scripts/load/start-aws-rollout-supervisor.ps1",
+    "sha256": "d0b97caa4dd1854f05ccbd247ca6ea35b012a4ab111999fbbd4b101f98114146"
+  },
+  {
+    "path": "scripts/load/start-classpilot-capacity-acceptance.ps1",
+    "sha256": "78666effc1982e8b6085ad80b2cb763f6c1e094319ca1ec771a1e000548ba0a3"
+  },
+  {
+    "path": "scripts/load/start-waf800-batch-diagnostic.ps1",
+    "sha256": "0c8ce8d3d414be5827d20eb75573a599edc3deb52d67716497e9595514e0414f"
+  },
+  {
+    "path": "scripts/load/start-waf800-diagnostic-preparation.ps1",
+    "sha256": "3749640001844b7e0e2eb3cdbbb88632bd2bb850161058721bc1973e2db79009"
+  },
+  {
+    "path": "scripts/load/tile-poll-accounting.mjs",
+    "sha256": "93de1454cf1b73b428a06f8b8bba1e0c8e689a2e215ac4612cafa11621ddad5c"
+  },
+  {
+    "path": "scripts/load/usage/assert-fresh-evidence-directory.mjs",
+    "sha256": "3137d4a81507d6a16d8ef329a848e60d092467770c372f9f3dd137c5934c05e2"
+  },
+  {
+    "path": "scripts/load/usage/bounded-fixture-step.mjs",
+    "sha256": "66f8e4a00420143f4443050c2ff77c6f54c3feecb20bdfb6462f1fe25c23de8b"
+  },
+  {
+    "path": "scripts/load/usage/classpilot-297-advertised-capabilities.json",
+    "sha256": "bd43f3f39e5bc5c73d7980f28ee2db50dfc8b6611f340ad68f7335fda2bfef87"
+  },
+  {
+    "path": "scripts/load/usage/cold-open-loop-profile.mjs",
+    "sha256": "0973638f564349b90c3682d12dcef67af27ae0701257ea467df742fa1a41efe2"
+  },
+  {
+    "path": "scripts/load/usage/cold-open-loop-profile.test.mjs",
+    "sha256": "465ac3ee2e5b65c5059a2a89ea9deb9c3438d787dc9f9ab78760284dca2a41a5"
+  },
+  {
+    "path": "scripts/load/usage/evidence-20260930.json",
+    "sha256": "8c165f94136948dd98e38cebe95f10a99009eae1c936f12dd862766075e6a858"
+  },
+  {
+    "path": "scripts/load/usage/evidence-insertion-cost-20260930.json",
+    "sha256": "6d9694d02f291ce670676370fc7ea8b6b3b2ddf698fe55078fbcbdfcce6f2074"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-api-families-20260930.json",
+    "sha256": "290a00674ab4c60bd384c389bcd970e2a1b6957532547793cbc6b34f27277d4f"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-bounded-insertion-failure-20260930.json",
+    "sha256": "50359e0db0661afd4c1ae596a6161f04347796aa99cb2746baebe01a3d4e530f"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-failure-20260930.json",
+    "sha256": "af615ff8166b27a99396a9c5e6d8a5093054ad6de029814215f9302eb593fc13"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-failure-complete-20260930.json",
+    "sha256": "8410a83ee574201aa0933a77a0e52f178685d551e20c53d66693ff4ab87ec4e4"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-failure-diagnostics-20260930.json",
+    "sha256": "2cb6ea2e471629fcd647814ef1acb407898065d2840c8236c808696406d325da"
+  },
+  {
+    "path": "scripts/load/usage/evidence-scale-partial-improvement-20260930.json",
+    "sha256": "335e7d5d3e4bb01fa4bd2dbdf243fa996a6fce1e21326d34d771ab0416e4b88b"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-failed-20260930.json",
+    "sha256": "39acef94b86956c535bd9d952023d69be5359578bd2159a1bc1b567a50402efd"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-fast-paths-passed-20261001.json",
+    "sha256": "d448655853814653a97017e0913538e3574647e8844561896dc648dc90c19f55"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-fast-paths-repeat-passed-20261001.json",
+    "sha256": "79d3ef479c1b5895499e182eee07633c77f88657b32845713f297c14fd94dff2"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-integrated-128-ai-comparison-20261001.json",
+    "sha256": "45900166ce6f222ce475e92fd9c4efb0e4281650336ec25324926e38967f51b0"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-integrated-128-ai-passed-20261001.json",
+    "sha256": "dba9f4c049a40621d3f2b3c9ba962832c6944bdccb9619916991d3dc764903cd"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-integrated-128-ai-repeat-passed-20261001.json",
+    "sha256": "87ba4ef4f7dd439f4e9cd600d38505fba6fafc30baa4136ec26fc9d1a72a5bdc"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-nonempty-ai-passed-20261001.json",
+    "sha256": "1501e79d682e494b0d25de703b23e5b16218a8981c703c8ac8589eb150f51011"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-passed-20260930.json",
+    "sha256": "2f688ed592998fd45a5be6ff5d98cf388a9a933a105a810982c756e50dea024d"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-preparation-failure-20260930.json",
+    "sha256": "6a1e984c45fd0f0bc00ee44543c70cb38930cbb77d7e0d82f537a8800d8ab125"
+  },
+  {
+    "path": "scripts/load/usage/evidence-school-day-repeat-failed-20260930.json",
+    "sha256": "e733616c1fa73accddb44f800004ee120cb01c21e7afa636a199b8941992c801"
+  },
+  {
+    "path": "scripts/load/usage/fixture-rls-contract.mjs",
+    "sha256": "efa1466988c30a7026b9b1b4adac73efa9417369ca7235c6e6fa1300213f65f4"
+  },
+  {
+    "path": "scripts/load/usage/fixture-rls-contract.test.mjs",
+    "sha256": "8cf9d0c129dbf44a7075d6623c378d8f7a521ba33ef448151e6c95384ae4891f"
+  },
+  {
+    "path": "scripts/load/usage/local-cold-open-loop-scale.mjs",
+    "sha256": "7785257c950d6565e45a71ef1b44197d112ba6cb8db1b812f3fbedd1d8386ccd"
+  },
+  {
+    "path": "scripts/load/usage/local-school-day-ai-scale.mjs",
+    "sha256": "f0910a5a9150b92cfb5eda265f6f58dbedaa8aa65fa307f33bbbf1fa5d126488"
+  },
+  {
+    "path": "scripts/load/usage/local-school-day-scale.mjs",
+    "sha256": "9bb94199db7cfbff7ac897b4952ff14a1b3b79beb651c0d9eeda1d350ea0caf7"
+  },
+  {
+    "path": "scripts/load/usage/local-usage-benchmark.mjs",
+    "sha256": "bd1d2d960faed59afe0a1583a9bbd2dbc3657fde52f1a3dc871112b39d3b8250"
+  },
+  {
+    "path": "scripts/load/usage/local-usage-benchmark.test.mjs",
+    "sha256": "ef5150922c8cd4cf657fb466af9490713bea883e237ad5b401080dabb23a4314"
+  },
+  {
+    "path": "scripts/load/usage/local-usage-scale.mjs",
+    "sha256": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd"
+  },
+  {
+    "path": "scripts/load/usage/local-usage-scale.test.mjs",
+    "sha256": "2158dcf9e2154946370f1e2ccead70d169931d311c0ebd8df125864c24c7c5c5"
+  },
+  {
+    "path": "scripts/load/usage/open-loop-heartbeats.mjs",
+    "sha256": "a0696ba86cecf8e216da0fd2f88b0a039fe712be61f051274b0969e5719f022c"
+  },
+  {
+    "path": "scripts/load/usage/open-loop-heartbeats.test.mjs",
+    "sha256": "cacb5e58f1c2003362e0404675e08999062a239194fda1b28f3d7b3b61137bfd"
+  },
+  {
+    "path": "scripts/load/usage/prepare-release-control-ownership.mjs",
+    "sha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809"
+  },
+  {
+    "path": "scripts/load/usage/reference-attribution-20260930.sql",
+    "sha256": "a39891fdfdd98d2609fef3764883df7c099ef8e9b1f928dcdc98adbd47b0f21a"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-generator.mjs",
+    "sha256": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-instrumentation.mjs",
+    "sha256": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-postgres-pressure.mjs",
+    "sha256": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-process.mjs",
+    "sha256": "30cbe37ee514d729fe89a7a13cb7d815804b26ba1c1c6d3fd8915e82a963d478"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-profile.mjs",
+    "sha256": "c6ff6ce713f1444b2b77e993fd7b2cd707e6fed5bc04744751a172ee0b60b1da"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-profile.test.mjs",
+    "sha256": "a7e7309bca8ad8ff0add5c1b8a2d9979c45f8e199aa3e276f8691f3729c9e6ea"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-protocol.mjs",
+    "sha256": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf"
+  },
+  {
+    "path": "scripts/load/usage/release-enabled-scale.mjs",
+    "sha256": "7b8d1d9bd5e9edf592d89ec9ed551be6acf3af606b995d85b43fa01508b604ab"
+  },
+  {
+    "path": "scripts/load/usage/release-schema-fingerprint.mjs",
+    "sha256": "90d90555cdd82fe2f8afb2ccd5cb573a56c073a956377b919fa38459908af853"
+  },
+  {
+    "path": "scripts/load/usage/run-local-cold-open-loop-scale.ps1",
+    "sha256": "33184d17a485b1d01b5c54f4761eda3aee0e70b31aed2cfe2cdcabcc074b35e3"
+  },
+  {
+    "path": "scripts/load/usage/run-local-school-day-ai-scale.ps1",
+    "sha256": "6317d92f6374daea43c22487857e7fa6124825ade7624749423e13e4352b35fd"
+  },
+  {
+    "path": "scripts/load/usage/run-local-school-day-scale.ps1",
+    "sha256": "3756bacfa0969f07bdd7d3da3d124532bc57490110e665b7112a4eb8986e74de"
+  },
+  {
+    "path": "scripts/load/usage/run-local-usage-benchmark.ps1",
+    "sha256": "b80fcb05194d89fc12cc284a5bc6e6bf156d06252686986d6aaf703ff290a296"
+  },
+  {
+    "path": "scripts/load/usage/run-local-usage-scale.ps1",
+    "sha256": "ac58725e0032d8ce7a074612a53f221ac8ee95c997cb8bbe9cf9ddc7ff8e6e6a"
+  },
+  {
+    "path": "scripts/load/usage/run-release-enabled-scale.ps1",
+    "sha256": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384"
+  },
+  {
+    "path": "scripts/load/usage/school-day-ai-profile.mjs",
+    "sha256": "946978730652f7fbef0416c43d5a53daa26816bb72fa9adc6887f344a9f5e2fa"
+  },
+  {
+    "path": "scripts/load/usage/school-day-ai-profile.test.mjs",
+    "sha256": "6e21d67ce23b58c97cf4fb2bb72715f8e2e21a7269cf080d690b4f1762b23421"
+  },
+  {
+    "path": "scripts/load/usage/school-day-profile.mjs",
+    "sha256": "54d89f98faa477736bdc5abb5a2607991a85f6281e6f3b0ab68481104156e09a"
+  },
+  {
+    "path": "scripts/load/usage/school-day-profile.test.mjs",
+    "sha256": "145cd9695327888d3737dc94081c49ffd06ce3506ab19cd2f4acfe531ee81708"
+  },
+  {
+    "path": "scripts/load/validate-rollout-plan.ps1",
+    "sha256": "0b66a1a7c252b5c04690d1fa20206b2e5b8f206a25f071c0d6729f430365249d"
+  },
+  {
+    "path": "scripts/load/waf800-diagnostic-prep-manifest.template.json",
+    "sha256": "826934bf9cf553494b17eda8cebc81d457d87413f7dc3b2bc167414eced360b8"
+  },
+  {
+    "path": "scripts/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs",
+    "sha256": "6279b80ad66602506b291550f0c877588aa116ed2487481e6f33c740bcff0a59"
+  },
+  {
+    "path": "scripts/manage-classpilot-tile-auth-plan-observation.mjs",
+    "sha256": "a4c97e7612d2e4ee5dbd4c8906949585772a416451db7d2bd5648f02f7c85da9"
+  },
+  {
+    "path": "scripts/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs",
+    "sha256": "9d83db5fd4c40305db1084ace10688079d72f285a96d448999487011ae428162"
+  },
+  {
+    "path": "scripts/read-classpilot-tile-auth-plan-log-events.mjs",
+    "sha256": "3599b382074634eb8de3f9fda49b221cde7df548879cf3941bd13b86514e0254"
+  },
+  {
+    "path": "scripts/release/rehearsal-build-steps.mjs",
+    "sha256": "efea9fc12d8a39d7e779075f8ac7b378c58aaa15e8b24b73d334fbf8c21cd339"
+  },
+  {
+    "path": "scripts/release/rehearse-local-upgrade.mjs",
+    "sha256": "a97f1ec9cf6a7d7c11b533ea06116a69e947c2df16bec4e6b21e3e4579b3c61a"
+  },
+  {
+    "path": "scripts/reread-classpilot-tile-auth-plan-observation-evidence.mjs",
+    "sha256": "acda3928c3b228e18e660db41f97dcd7a8bda73ec5f0ca14ac9cab6b71808e37"
+  },
+  {
+    "path": "scripts/resolve-classpilot-tile-auth-plan-log-binding.mjs",
+    "sha256": "b59b6eaa4fbd2fc1aff55b2794d815fde8da5c56fd76e7461058d635b9cf1f2b"
+  },
+  {
+    "path": "scripts/run-local-workspace-tests.ps1",
+    "sha256": "2ab22ac95dfb8df40e60af9a69c01de873f3389a7f1a9080e21d224bd6abd66f"
+  },
+  {
+    "path": "scripts/run-migrations.js",
+    "sha256": "8b5e9a59b1dfd6828c117765cc1dbea7b40f20fe5535811315a878a1c68be9e1"
+  },
+  {
+    "path": "scripts/run-mydesk-readiness.ps1",
+    "sha256": "e87847d1be817554437c2c173f3c589f25318c9cf6ea98cae90c06f0a0a0084b"
+  },
+  {
+    "path": "scripts/run-test-lane.mjs",
+    "sha256": "8d320d61f1ac5dc1eb47bcef8e84392335177abddaad5c1c0e8aa3665324f202"
+  },
+  {
+    "path": "scripts/security/rotate-production-credential.ps1",
+    "sha256": "8b338b0161d29ee6a6f4124fff27e359f5d71c2de0115855f71cac64e7e8539e"
+  },
+  {
+    "path": "scripts/seed-super-admin.ts",
+    "sha256": "4c67dabcf06dba574c84963a191889bef6f5c0e7ec9ad11698b9419fd4e7b17c"
+  },
+  {
+    "path": "scripts/soc2/ai-private-evidence-kit.mjs",
+    "sha256": "208466dd8a37768233ccf5db39124109b67f88d9392131a371b7b4ee906b9c26"
+  },
+  {
+    "path": "scripts/soc2/approval-queue.mjs",
+    "sha256": "dc02cfc1d7b41027464dc08f25f696e3d7de33949722c44be8479dba03c61e3a"
+  },
+  {
+    "path": "scripts/soc2/check-governance-evidence.mjs",
+    "sha256": "458872c349d5c5847781b98aa47090d53cb3f8acf181d70e1206b3e901c80b8d"
+  },
+  {
+    "path": "scripts/soc2/collect-ai-privacy-evidence.mjs",
+    "sha256": "3aee7024a1df2169993422f88fcd5c628f14b732ec53125f777a702cdd1feee4"
+  },
+  {
+    "path": "scripts/soc2/collect-ci-evidence.mjs",
+    "sha256": "4174ee97e4ca2c92cd7f9e7b9410b04a696d541936e879cb0f3215c692bb9b24"
+  },
+  {
+    "path": "scripts/soc2/collect-deployment-evidence.mjs",
+    "sha256": "952e5d5a3d36b7641748c7f2aac0fca2f7a1efae960f2a31216821c1175bc7d7"
+  },
+  {
+    "path": "scripts/soc2/collect-incident-evidence.mjs",
+    "sha256": "8291a6623c7d67bc2e8dcf7981c4fdfcc2ba1ea840bd4ae1a01cd21430c78fd1"
+  },
+  {
+    "path": "scripts/soc2/collect-monitoring-evidence.mjs",
+    "sha256": "1009fbcf5f88c902f35fc5773be4cb4019a1614f36a6e91648ba777a0e2bf603"
+  },
+  {
+    "path": "scripts/soc2/collect-privileged-access-evidence.mjs",
+    "sha256": "bd2561138432324a89bdb9108d286e832f066211e589e8606421dae196ed2641"
+  },
+  {
+    "path": "scripts/soc2/collect-tenant-isolation-evidence.mjs",
+    "sha256": "448d2c087237361788a2bd1d1eac6472195a43e5ebacc3608c0c07232f42d057"
+  },
+  {
+    "path": "scripts/soc2/github-approval-issue.mjs",
+    "sha256": "fd6b18673526277a676da3c8fa52f541ac7710e362f950cba4df60733a7031e4"
+  },
+  {
+    "path": "scripts/soc2/incident-private-evidence-kit.mjs",
+    "sha256": "b2bfe98501f0790ce95e2eb3bfad913c6d38a553b235bdc49ffd9c385393b231"
+  },
+  {
+    "path": "scripts/soc2/monitoring-private-evidence-kit.mjs",
+    "sha256": "57c286d62466f9dc66fea0798acdd47ac0ca98baf1df7a0ec4b1eb7adf1ac665"
+  },
+  {
+    "path": "scripts/soc2/private-evidence-readiness.mjs",
+    "sha256": "bb80aa0696e886255eaa98c16387cf52fc4397d62fe9c92e1e91fbdc881563e9"
+  },
+  {
+    "path": "scripts/soc2/privileged-access-private-evidence-kit.mjs",
+    "sha256": "33882e4e712ea1e771ee89ee5ba2c781ee0afc176b910457e24ecf7cae8e6586"
+  },
+  {
+    "path": "scripts/stamp-release-runtime-identity.mjs",
+    "sha256": "328701028f7c36554bfc4ff0d4ede28c57a0c63ec4ff9584faa0b54e07eb9a4b"
+  },
+  {
+    "path": "scripts/stripe-setup-products.ts",
+    "sha256": "94e980c4498bab47fa45f227774ebbc9a9d68fba90081162288f9d3dffc9da6d"
+  },
+  {
+    "path": "scripts/terraform-detach-application-secret-state.ps1",
+    "sha256": "4d574b14966e45872188f84093b207ec981deec6970f8134781f4e96b1ad3e12"
+  },
+  {
+    "path": "scripts/terraform-state-backup.ps1",
+    "sha256": "b19035e7756ac0e50d7a34952ef5098bc795b031e7ab6514af4ceb52bd7d2190"
+  },
+  {
+    "path": "scripts/test-classpilot-pin-retry-browser.mjs",
+    "sha256": "9ba62a71c193fde2a85d07e516087581039ee422cc16825ca9fadbe0c991bb72"
+  },
+  {
+    "path": "scripts/validate-classpilot-tile-auth-plan-base-funnel-evidence.mjs",
+    "sha256": "faba07d69085456b13b89aa09a5925c36d9bc666c9255632488a74982337d777"
+  },
+  {
+    "path": "scripts/validate-classpilot-tile-auth-plan-base-selection-evidence.mjs",
+    "sha256": "56a63b9e506438d937659086089af14b2e81fb428470e67a6be0a2076e73fe53"
+  },
+  {
+    "path": "scripts/validate-classpilot-tile-auth-plan-evidence.mjs",
+    "sha256": "86c9859ef702d285c01a1ccfe590894eb9cd43adaf37f01cb573a6ed9a44ba78"
+  },
+  {
+    "path": "scripts/validate-classpilot-tile-auth-plan-preflight-evidence.mjs",
+    "sha256": "a9d0274d8bc6674383f500eeae826b3c45d199fb4d51e1a038473bb3e5ed3056"
+  },
+  {
+    "path": "scripts/validate-runtime-secret-metadata.mjs",
+    "sha256": "a8e711109eff670773060d67fdfbfdbff955c08c653168d89636c38d3fa50fde"
+  },
+  {
+    "path": "scripts/verify-browsing-history-plan.ts",
+    "sha256": "6bfd3761cf82be5ca6338076b181959bba05ba7b824cf59ed3691783d5d5a37f"
+  },
+  {
+    "path": "scripts/write-classpilot-history-fallback-identity-receipt.mjs",
+    "sha256": "c4c6fd18eb05f0e083d023e858641f8a3636d7d8f996cdcebcd2ccacf58cff53"
+  },
+  {
+    "path": "src/app.ts",
+    "sha256": "600d985638104a3402b8c8a0c6701dda4c04c32ae3c495db99b46785158aa4e2"
+  },
+  {
+    "path": "src/cli/auditClasspilotPinConsistency.ts",
+    "sha256": "2810b6c1a7ca4a96c009aa144ae934ace2423c87853ca7d06b323b34b755d61e"
+  },
+  {
+    "path": "src/cli/auditGopilotContainment.ts",
+    "sha256": "2e9c4259fc639ba2bcd9675ab08a0d111a6db5b05e30a20a837326c828774b62"
+  },
+  {
+    "path": "src/cli/benchmarkPaperworkPreparation.ts",
+    "sha256": "25268b558a23dede8d658298b08a7336bdb603908101a37471f489c8fe01e26c"
+  },
+  {
+    "path": "src/cli/checkClasspilotTileAuthorizationPlans.ts",
+    "sha256": "7d0d1db15bd095a9a1f100dd27c1ca992332a59e118e6da0d4101265327190ba"
+  },
+  {
+    "path": "src/cli/clearClasspilotPreciseRestrictions.ts",
+    "sha256": "efd3c3f859fc1bac430d10780e996c33c93ce4061b030ea074c52e141cc0da4f"
+  },
+  {
+    "path": "src/cli/cutoverPasspilotCleanSchools.ts",
+    "sha256": "bb57ee6d9891c7ec2bdf4f42e301b471aaef7c0a56eda2ba680a1c592ee2bdb9"
+  },
+  {
+    "path": "src/cli/inspectMyDeskReadiness.ts",
+    "sha256": "d87f0fbe8f6a88858b1ec913a262f4cba4a72308cf676ce4ef2504254b4de4ec"
+  },
+  {
+    "path": "src/cli/measureMyDeskProcessing.ts",
+    "sha256": "89f0531f53753adecdcccd20d71bd6c0abd874ce47ccfb767e3e86950e64b387"
+  },
+  {
+    "path": "src/cli/migrateClasspilotPinEncryption.ts",
+    "sha256": "0beef1cb906b18d8ce252fc53ad9d071f532b3a1cd7f3938b61a7d50049c8814"
+  },
+  {
+    "path": "src/cli/repairClasspilotStaffIdentity.ts",
+    "sha256": "0f38c9bdcac7126a673ee51ebfb8db952796d06aacb0db385d7c0eaab95c8715"
+  },
+  {
+    "path": "src/config/classpilotClassTools.ts",
+    "sha256": "6d06161874abfa34aec516e422312ab68eab06b67ac7fe2ebdb90c9e6253454b"
+  },
+  {
+    "path": "src/config/classpilotScheduledClassroom.ts",
+    "sha256": "23b2444d635ac7e7ab9605dc885878f55fbdbaac939de9b45fa57024c8f261e2"
+  },
+  {
+    "path": "src/config/classpilotSchoolScope.ts",
+    "sha256": "8e50ef241c04e4a6c5a447966269c0d6154e3d205c082c85b2910085a040bdcf"
+  },
+  {
+    "path": "src/config/classpilotSessionReportRollout.ts",
+    "sha256": "4132d30daaba0fa70195140512908325976050ae073c862150680bf0e63477d7"
+  },
+  {
+    "path": "src/config/classpilotSupervisionPreviewRollout.ts",
+    "sha256": "612fd038b1ca5da861f468f1bd8ff3b4dc39e9479b580fcb9b10d4e3a0a715c0"
+  },
+  {
+    "path": "src/config/classpilotUsageModes.ts",
+    "sha256": "72fc18827e9840c6e22e228041b47ffe97d5690c4d8d54f023863f8af2c76a7f"
+  },
+  {
+    "path": "src/config/databaseCapacity.json",
+    "sha256": "47ab621728f7f4a436fe0042dfaf7305a26c5d3fe29d20e6e7e89b0d8a645bfb"
+  },
+  {
+    "path": "src/config/databasePools.ts",
+    "sha256": "f347c2d39c9ce43aa27c8f1c9c052480defb37f511f8fb3122bdb7c1a6ca6b73"
+  },
+  {
+    "path": "src/config/mydeskModes.ts",
+    "sha256": "a7f2a5180532cdfd1df7d6b91c590e4339ee034a4aa15fba8aaa1d8569b25eb9"
+  },
+  {
+    "path": "src/config/paperworkProcessing.ts",
+    "sha256": "e38db8881fc5b84f576ad16040b597dc562654f7a02241d941bc9b919d2c5b10"
+  },
+  {
+    "path": "src/config/passpilotAppointmentsMode.ts",
+    "sha256": "24a69a95af3070131d6d4722b739d801dfcbd798083add77c8522ff89d936969"
+  },
+  {
+    "path": "src/config/passpilotReportsMode.ts",
+    "sha256": "a877459899ed4b92f274558d5622c7ea86fc67fd7029987822e04a4665a2ff61"
+  },
+  {
+    "path": "src/config/passpilotRulesMode.ts",
+    "sha256": "98daeb462d95bbf686ad1df1da3c8d374663c862c2b5e48e078e2143e6edf4da"
+  },
+  {
+    "path": "src/config/pricing.ts",
+    "sha256": "5e6ca5e7746ace3e068b2473e73e28390feb5d1b21a7f916710dab5455bbc8f9"
+  },
+  {
+    "path": "src/config/rlsRegistry.json",
+    "sha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4"
+  },
+  {
+    "path": "src/config/runtime.ts",
+    "sha256": "9880e7bc1f56c918b76b4dad4fbd266c10291b0f9a1b0e82edf6b542d4f1d0dd"
+  },
+  {
+    "path": "src/config/sessionCookie.ts",
+    "sha256": "62eec2ad60638d45a5f71480907d9275d8fc718550cbdf80993d5764a3804e4f"
+  },
+  {
+    "path": "src/config/sharedTeachingResources.ts",
+    "sha256": "9a36dff0eea1288b6c2ca985f078ac07a08067e92f492fa1b0d517f7d27ff15a"
+  },
+  {
+    "path": "src/db.ts",
+    "sha256": "582b2f1776d173e66cc523956db85d368fc1a111bcd997def0ec5de5720573d5"
+  },
+  {
+    "path": "src/db/classpilotChatChannelControlMigration.ts",
+    "sha256": "5c06d867db3678028352bf01f6d93e197da1cc9527d541a3f9b654679ecb4a16"
+  },
+  {
+    "path": "src/db/classpilotChatOversightMigration.ts",
+    "sha256": "8e96d00cdc8eb0f45f45ec69f9d934e99305aba265979b7c09a33edb58662ddc"
+  },
+  {
+    "path": "src/db/classpilotChatSeenStateMigration.ts",
+    "sha256": "69828455b5edd952460b0e1ef4f241f1e57a78bcb88ecc218df5d800e527e8c6"
+  },
+  {
+    "path": "src/db/classpilotChatTranscriptIndexMigration.ts",
+    "sha256": "79ecd73e5859e379561113755acfd38e021e5f6e1345cfc28b998eccadc786d1"
+  },
+  {
+    "path": "src/db/classpilotContentCategoriesMigration.ts",
+    "sha256": "dda75c69bad1dadd9da7133283323b4218c514758b218c913e4ecbeea6a91bb5"
+  },
+  {
+    "path": "src/db/classpilotCoverageCategoriesMigration.ts",
+    "sha256": "a13f779cf72c4e1cd1ca798eeb897b5510bd41c807a4f4e03980de6fa435adbf"
+  },
+  {
+    "path": "src/db/classpilotMonitoringInterruptionsMigration.ts",
+    "sha256": "1d0ca18634053a9a071e07c22ed27e23424e605c0d475791159ff3ed1ebbbf04"
+  },
+  {
+    "path": "src/db/classpilotPrivateChatLifecycleMigration.ts",
+    "sha256": "4b468db9681672cd3ac4c9b024e30b7891b35f5ab281f82694c43d4470c791b9"
+  },
+  {
+    "path": "src/db/classpilotScheduleBoundaryMigration.ts",
+    "sha256": "e38f9a162c5d92e4a4e5ac213944e5a7c16793931d3201fac1590034c17a1c2e"
+  },
+  {
+    "path": "src/db/classpilotScheduleConfigRepairMigration.ts",
+    "sha256": "359e07ae7fcc199ab70560c7600211cc330898881890fdadf6c834946df758ef"
+  },
+  {
+    "path": "src/db/classpilotScheduleProfileSupervisionMigration.ts",
+    "sha256": "869dd96daacfa6331c32463ac8c32e2d519b6039e29ffa3c2cbec841f442c998"
+  },
+  {
+    "path": "src/db/classpilotScheduledClassroomMigration.ts",
+    "sha256": "b78a9e3ffb45d8f99a3ee9daf36f5d2ce4e7c746209d366a04833cf28a9aeb3b"
+  },
+  {
+    "path": "src/db/classpilotSchedulingMigration.ts",
+    "sha256": "0fc18514dcf5b920f215703468229175e632bce598092ad439b14e895b1d7df7"
+  },
+  {
+    "path": "src/db/classpilotSchoolWebsitePolicyMigration.ts",
+    "sha256": "a397a88e736a6e71186bcc7563495274e4cff68b69dd53266a79fb7027236e1c"
+  },
+  {
+    "path": "src/db/classpilotStudentSessionRecoveryIndexes.ts",
+    "sha256": "0a0119f3233f3463e146552a83806600350f8b323f7ab128a576ab628902e0d0"
+  },
+  {
+    "path": "src/db/classpilotSupervisionReportsMigration.ts",
+    "sha256": "8ed97fa2fa9003f1906d19fbb581293864aed2da5c947ac6ac850ae5f036c087"
+  },
+  {
+    "path": "src/db/classpilotTeacherPreferencesMigration.ts",
+    "sha256": "48d50b026628a3b32a85ecfcc0b851cb70b5f87211169a3555fcab92cffc6d48"
+  },
+  {
+    "path": "src/db/classpilotToolsMigration.ts",
+    "sha256": "eb54fe29e93954f48f37d677ead9b8165f53844c9cccfe1ace0f832eaaaaf9c7"
+  },
+  {
+    "path": "src/db/classpilotUsageRollupDaysMigration.ts",
+    "sha256": "d4bf09add0b53201da9988901253c196b181a48540968d22b4af5dde60baf214"
+  },
+  {
+    "path": "src/db/classpilotUsageRollupsMigration.ts",
+    "sha256": "a0758e7d9c381d74dabd339f22a91069697498a60278afb7a4ba7430b21bd747"
+  },
+  {
+    "path": "src/db/flightPathContentRevisionMigration.ts",
+    "sha256": "c98a0c99010a81fe7a6409f96cf6cf2996b2bb49aea0302e317714cf4149092c"
+  },
+  {
+    "path": "src/db/flightPathResourcesMigration.ts",
+    "sha256": "b525f836ec87a60bbeaed04ef9a800bae58cf063b34e31c10ce80d5f99931839"
+  },
+  {
+    "path": "src/db/heartbeatHistoryIndex.ts",
+    "sha256": "69b443bf83896f92af9395939b137ee6bff05d916755500f8de652c96d41754f"
+  },
+  {
+    "path": "src/db/importProcessingStagesMigration.ts",
+    "sha256": "678db4d9b5158f4cc3a0e3541b98bf97d0b3f3808815ee34c245be7c28e38cf6"
+  },
+  {
+    "path": "src/db/mailpilotSafetyDurabilityMigration.ts",
+    "sha256": "b022c836b4a9c397b62f93d0d8907a10f11eb041c153b82e1a5744ef004da568"
+  },
+  {
+    "path": "src/db/microsoftSignInMigration.ts",
+    "sha256": "35298d47ceecabfe191d77e96de5aa27ed4df53f60b4ea4b3d67c1377fa65f79"
+  },
+  {
+    "path": "src/db/migrationLedger.ts",
+    "sha256": "f03e3a1aba59e2e00872e86677bece924230a64cfc40472c96b97226e3119f6b"
+  },
+  {
+    "path": "src/db/migrations27.ts",
+    "sha256": "25c6ecf646db00e1bb9b06d9efcd69bac0d973583a132149ea211859ace06656"
+  },
+  {
+    "path": "src/db/mydeskGradeFilingMigration.ts",
+    "sha256": "953d794785fac7d52efb3bdb6a8dd2c073ac8c6a41e58d77600c88b8883a7ee6"
+  },
+  {
+    "path": "src/db/mydeskImportDestinationMigration.ts",
+    "sha256": "bf7b52177ddf89c4f3b01e9e267f1a4fb0414ae0ff076803b2b5a64f3e7ef30b"
+  },
+  {
+    "path": "src/db/mydeskImportsMigration.ts",
+    "sha256": "b47abd9078cbfe4f15015ed856389f81d70630383d1cc33db04a00ef0b2ce413"
+  },
+  {
+    "path": "src/db/mydeskMigration.ts",
+    "sha256": "1ea9ded83e9df23a934f9daabb18b836bf578c6d1c8127587ce9ab71b24276bc"
+  },
+  {
+    "path": "src/db/mydeskReadiness.ts",
+    "sha256": "c27c4c43e58f9d8860936fd59fd56e13a8e0c46f4a2634d198e57bbfae0ab588"
+  },
+  {
+    "path": "src/db/mydeskSeatingMeasuredMigration.ts",
+    "sha256": "bc0e95b83f7ae765118d0ae69d41cce70a96011475ab3bb02b705a2a6d27a928"
+  },
+  {
+    "path": "src/db/mydeskSeatingMigration.ts",
+    "sha256": "a003cf220f5a0efb518e75dbe975da4528de7566d2a54b4d3d01c9e7858b5341"
+  },
+  {
+    "path": "src/db/mydeskWorkspaceMigration.ts",
+    "sha256": "bc6c9cdd5ce5efad7f96af12ab5ddbdffb9d1eac0f681db1bc5774d5489459d5"
+  },
+  {
+    "path": "src/db/passpilotAppointmentsMigration.ts",
+    "sha256": "277f5794995f3a4d019a24fb91d1ae1c54d8789898c129649985edadb73ef6fc"
+  },
+  {
+    "path": "src/db/passpilotKioskScheduleMigration.ts",
+    "sha256": "659dd03623986920475c1c1c18b7971a78e5e137efa4eb212bb997990e860a20"
+  },
+  {
+    "path": "src/db/passpilotRulesMigration.ts",
+    "sha256": "aa88a97cb6b9415932dffeb82529a03b13c382f95480f6f8aaccd74869a56393"
+  },
+  {
+    "path": "src/db/rlsEnforcement.ts",
+    "sha256": "9e6a89ed0c0790396887d5217702f45015f2209ffc8f0f1d9ab9afa2570dcb97"
+  },
+  {
+    "path": "src/db/rlsPolicies.ts",
+    "sha256": "7994a00560738e6f362798d84d17d51444f4e9234e4fec0f79411b61edcd6cb5"
+  },
+  {
+    "path": "src/db/rosterIntegrationsMigration.ts",
+    "sha256": "de16bfee95acf6c1832eaabfccfea681c828dacea106a4ba32e036a0ff2adf4f"
+  },
+  {
+    "path": "src/db/safetyCenterMigration.ts",
+    "sha256": "ac8d7508cc633c544c51b1e531eacd474b28aaf6d29c1b9a5bdf1e77027042bb"
+  },
+  {
+    "path": "src/db/schoolDisciplineMigration.ts",
+    "sha256": "b14be34a2eaaa667b43e6eae9c4926b9d85aad641e21389c0ce6953882d7e4ba"
+  },
+  {
+    "path": "src/db/schoolDisciplineRedesignMigration.ts",
+    "sha256": "48fd680bb0cfdd5cc8bcd671df46af29753ae809352e80d3e8c1d7f9eb002630"
+  },
+  {
+    "path": "src/db/sharedTeachingResourcesMigration.ts",
+    "sha256": "db8d4bada5200086f0ea72e330eb35e01041d0f9e1c09a6734f4c1203dec01b9"
+  },
+  {
+    "path": "src/db/ssl.ts",
+    "sha256": "ebaca8211f16d8bf2eec55d074edb12ffebcf29aa1350de7f5fa24bb6e5c8bcf"
+  },
+  {
+    "path": "src/db/staffIdentityIntegrityMigration.ts",
+    "sha256": "283c3149330945a26b3c09e1bcd958c8c5dc7ef4b2156d474fcbcbffa7619f4b"
+  },
+  {
+    "path": "src/db/studentInformationRedesignMigration.ts",
+    "sha256": "7679435fed6b8237bc2ef972517ae8340af107630bb058d55936cdc5fb9be262"
+  },
+  {
+    "path": "src/db/tenantContext.ts",
+    "sha256": "9c60217a66a76689638b8e1c85d8fc2af2f51426fbee0dddd00c7bf62a66bb72"
+  },
+  {
+    "path": "src/index.ts",
+    "sha256": "f4f4be94795fe5abcd109948031019c329b6b6dc71a6b3b8f954c941e1edbe45"
+  },
+  {
+    "path": "src/middleware/authenticate.ts",
+    "sha256": "fe7b28c42aaf22ad46e50826415c66bf8ccf64dc318f577ba769c968724528ad"
+  },
+  {
+    "path": "src/middleware/classpilotTileAdmission.ts",
+    "sha256": "b360ea624c0b735ca6445b064b90a3f10f1c53bc01b7192607b0c4e3a5790fb5"
+  },
+  {
+    "path": "src/middleware/csrfProtection.ts",
+    "sha256": "5c1f721adbd6623fb87f22ec594a11975b134ab0bab60d179cad428561b134f0"
+  },
+  {
+    "path": "src/middleware/errorHandler.ts",
+    "sha256": "fc48a5fd70f5dfc27108842632971e5a75696fdf3fff3d7c949c80311e735667"
+  },
+  {
+    "path": "src/middleware/mydeskUpstreamErrorBoundary.ts",
+    "sha256": "bb1002ed196aa0012435063bd88fda1cf3668d19f95a159c9ab637d653136aaf"
+  },
+  {
+    "path": "src/middleware/rateLimiter.ts",
+    "sha256": "44d70f626e1274a7a6113935c756840a55f5e6caca419509ffd839dbb8a4dd03"
+  },
+  {
+    "path": "src/middleware/rejectDisabledGoPilotParent.ts",
+    "sha256": "a1b46d25147c737468a65242fd622e299a20daee2343040ec92d342c2ec54d30"
+  },
+  {
+    "path": "src/middleware/requestId.ts",
+    "sha256": "48c969b7a2a386fb31927deec82512e1f5101989adefac227e2e33e37af73c91"
+  },
+  {
+    "path": "src/middleware/requireActiveSchool.ts",
+    "sha256": "dd4741af94098567cd2a7676550938bccc43c06224751529dea736bfcd5d4509"
+  },
+  {
+    "path": "src/middleware/requireClasspilotEntitlement.ts",
+    "sha256": "3c4ceba57ac0337ad7bd581788b27b38f240d0ade1d8d087fdbdd8e91e421aca"
+  },
+  {
+    "path": "src/middleware/requireDeviceAuth.ts",
+    "sha256": "ff3268ec912819f0d64d218994c833d1b4768ef0b1c8cf8ccfa5c393d827c4ff"
+  },
+  {
+    "path": "src/middleware/requireGopilotEntitlement.ts",
+    "sha256": "27f82dd762eb4230e5862462b86bdee0b815cc384ca2fbba2e2cb998a6acc836"
+  },
+  {
+    "path": "src/middleware/requireMyDesk.ts",
+    "sha256": "58a69eaa3615970920f91d071a01359e980d8d5392dee1be0441f9deed7c4890"
+  },
+  {
+    "path": "src/middleware/requireProductLicense.ts",
+    "sha256": "c51e18c4375597dc9a5bf62f8f09e4d7cd42f354eb680fe158855743f84de952"
+  },
+  {
+    "path": "src/middleware/requireRole.ts",
+    "sha256": "da720bafa8e609914ba803eab2514e5cfe6cf3bd815e4bcb25be62fe61fc454e"
+  },
+  {
+    "path": "src/middleware/requireSchoolContext.ts",
+    "sha256": "e4e28b031676d3a3648acac61e202a1615af1548192d3bb379a1f0fc84edcba8"
+  },
+  {
+    "path": "src/middleware/sessionIdleTimeout.ts",
+    "sha256": "62d1539389031894eba2ef823b6529b7f8dc8161956f45db40ba3ab03bad0bcf"
+  },
+  {
+    "path": "src/middleware/tenantContext.ts",
+    "sha256": "50b101725c0c20b028c6c548a7733ca02bf14c2bbab694ceb8486ded77f9da5f"
+  },
+  {
+    "path": "src/prompts/systemPrompt.ts",
+    "sha256": "eedcc77944e19cc44a0ebf7c86d9579b17a2b9d976a2ce29d94a5ffb972512ab"
+  },
+  {
+    "path": "src/realtime/cacheInvalidation.ts",
+    "sha256": "60935b80b4184f990d43d979e20f69495a01160d3b4d6cd0bef5696125923fec"
+  },
+  {
+    "path": "src/realtime/classpilotStaffPresence.ts",
+    "sha256": "e0390067564de30ef70e3c867ef929677c5228ffcb60d115b2da6408b83ff721"
+  },
+  {
+    "path": "src/realtime/index.ts",
+    "sha256": "1bceeb2840507ccede30d3c5681e21d7d535a6376f503161a1d1eb2e49879c10"
+  },
+  {
+    "path": "src/realtime/sharedRecordAccess.ts",
+    "sha256": "b14da083062028f2a4c4192074085cce669ef5d0cc1ecfb4ea2ab81e7a58ddc9"
+  },
+  {
+    "path": "src/realtime/socketio-redis.ts",
+    "sha256": "2efcc9ff7ecde8ade57e452a804931826ed581ecb0eb7a4c9513d7fb88fec444"
+  },
+  {
+    "path": "src/realtime/socketio.ts",
+    "sha256": "a001e3d1f23e7a6b85336048b87efb640fc5c549197585543c2fef1b2e64885a"
+  },
+  {
+    "path": "src/realtime/student-statuses.ts",
+    "sha256": "d85125afd94ef18f998fcbc7a4863fccd606f9f784729e0e083e91fe0625ebbb"
+  },
+  {
+    "path": "src/realtime/studentSocketRevocation.ts",
+    "sha256": "0472a224b4c5c53cbf79647dabef8f2581c6cb2c586b08fdb722b504ca7b5cd9"
+  },
+  {
+    "path": "src/realtime/websocket.ts",
+    "sha256": "5de51dd51ede2a98d5bdd068279a1f437f7c1f3757ea7ecc106a5f5183f02cea"
+  },
+  {
+    "path": "src/realtime/websocketPaths.ts",
+    "sha256": "1e98c00ad2798204b09eeb2392f64ed6a8276f786d2260ee694e45e233a35b5b"
+  },
+  {
+    "path": "src/realtime/websocketShutdown.ts",
+    "sha256": "1ba9b542ab17479f3092a43146d453a3998e10ab66e23c874736a1c92098226f"
+  },
+  {
+    "path": "src/realtime/websocketWork.ts",
+    "sha256": "975b2028a7b3bf5be9d3ddbcd5a42fc980a535f45011192f005e3858aa45411c"
+  },
+  {
+    "path": "src/realtime/ws-broadcast.ts",
+    "sha256": "3496586852495dd11426dd343202c37eb4306c6d227bcf3641d4853c47121ea1"
+  },
+  {
+    "path": "src/realtime/ws-redis.ts",
+    "sha256": "fc02789260d21c3997439f7a896d72924d42d4fd8c6556943275c5d027a80b30"
+  },
+  {
+    "path": "src/routes/admin/attendance.ts",
+    "sha256": "63ba9a5b960ab3f52c68e6f93c712a864d619c68780585809acf3519a3f2f416"
+  },
+  {
+    "path": "src/routes/admin/billing.ts",
+    "sha256": "2ba2a8a8fa66e4b7630b204fbdd5fa25e7eef03d4fc70e6cd5212c7f34f31dc6"
+  },
+  {
+    "path": "src/routes/admin/monitoring.ts",
+    "sha256": "3843d40e7f5a193944ced335266b683fffa4b5cf8e74a1fee24981a9fb56dbe4"
+  },
+  {
+    "path": "src/routes/admin/schoolInquiries.ts",
+    "sha256": "daac89c0c77b7ba5b8bf2f68dccb64b421f4248dab9580bde99cc733c638c58f"
+  },
+  {
+    "path": "src/routes/admin/soc2.ts",
+    "sha256": "827101e89c485cb6985b6606091e3d7042af40725be26a3a388cdcf35a8febee"
+  },
+  {
+    "path": "src/routes/admin/superAdmin.ts",
+    "sha256": "bf55e156f6ccc3a4ab3d68ccadaf882c7b3f098bd81199e5dec210b3c3a558e2"
+  },
+  {
+    "path": "src/routes/auth.ts",
+    "sha256": "37a4bac3ab9f1b59c6ea85be184565ff242d06276965bee01b5b66e2696fe5c1"
+  },
+  {
+    "path": "src/routes/chat.ts",
+    "sha256": "18d9506bd5f52c01d5b61eb3e5ae43428a57229183c86d4c0f456f460d2e9d12"
+  },
+  {
+    "path": "src/routes/classpilot/adminClasses.ts",
+    "sha256": "b959e72673169f111791b1e9ea39c821c745eeb1868abb15e13b7733e7b4fb59"
+  },
+  {
+    "path": "src/routes/classpilot/adminUsage.ts",
+    "sha256": "61f86fcf110ff8729cafcae9c625a06864d5233f922106dc7818ea9a030b80b9"
+  },
+  {
+    "path": "src/routes/classpilot/chat.ts",
+    "sha256": "22963ea5f116305538959082cb72f02da2f13d893c0f1d8fcec62b431f0d8beb"
+  },
+  {
+    "path": "src/routes/classpilot/classTools.ts",
+    "sha256": "cf536bec7d235d9663ec18136d10b885515ded10f4073767f170fd14f9287f9d"
+  },
+  {
+    "path": "src/routes/classpilot/commands.ts",
+    "sha256": "3daed84753cf4466f8f561c51185c8c0856cadf6fa580213b2d8fe4025da34b7"
+  },
+  {
+    "path": "src/routes/classpilot/competitive.ts",
+    "sha256": "8aed6dc6c842610684741cc35ff1410e1480f3f89ccc156c45a2f4c045d945af"
+  },
+  {
+    "path": "src/routes/classpilot/coverage.ts",
+    "sha256": "4650da4e58cce5973d9d9f00ef2b92e2d48fab29e35674e8bbac644d27ac97bc"
+  },
+  {
+    "path": "src/routes/classpilot/dashboard.ts",
+    "sha256": "12de7d63f134cc2bfd39e3d37431d1991febf0622fb5c0e5c113e20b7f7cb71b"
+  },
+  {
+    "path": "src/routes/classpilot/dashboardActivity.ts",
+    "sha256": "3091288f8abef364b9c1c28fb64d2f7233d48f01964f73a87246ea874fbba8b4"
+  },
+  {
+    "path": "src/routes/classpilot/devices.ts",
+    "sha256": "d8d22ab3ef5bcea883e0eef405d26702999db6e88f25aeb21504eac0355afba0"
+  },
+  {
+    "path": "src/routes/classpilot/flightPaths.ts",
+    "sha256": "5ce85d02b65a0f5e16947a62b3710209ac953ce6d7d771bce07db7412da7830f"
+  },
+  {
+    "path": "src/routes/classpilot/groups.ts",
+    "sha256": "4a85b83fc7dfd55be375dcaf3f1793f31c0854e0a093368cec0eaa2fe1202c30"
+  },
+  {
+    "path": "src/routes/classpilot/instructionalCalendar.ts",
+    "sha256": "592e5555d5b3bb66d1796f377fb9eb9f2ba14676ada52d185e78961b7ae177bf"
+  },
+  {
+    "path": "src/routes/classpilot/liveViewTelemetry.ts",
+    "sha256": "2c969075e93ffd50293b838588a5477508296f9ba1e93f40e4a761ff71017578"
+  },
+  {
+    "path": "src/routes/classpilot/monitoring.ts",
+    "sha256": "853ba08d1ee2726dbb35265f599c4135671e8bd5c5f4dbb04be93152469d2570"
+  },
+  {
+    "path": "src/routes/classpilot/monitoringEvents.ts",
+    "sha256": "6f80619d6cbca2e82bd7c08e9ade950c598d6d0c29083f4280c9339584b92dce"
+  },
+  {
+    "path": "src/routes/classpilot/monitoringInterruptions.ts",
+    "sha256": "75f78dc17f1f21c434e2f9e5671e82b6df1afbd0b87cc0b19ccb09d360498885"
+  },
+  {
+    "path": "src/routes/classpilot/rosterIntegrations.ts",
+    "sha256": "bad66dc51a633c8da56f9ec17410a6a2ce1bf08181c3633c86dae48863ee6380"
+  },
+  {
+    "path": "src/routes/classpilot/safetyCenter.ts",
+    "sha256": "c79eae57937856e1cb09e508db257f26d0e2527b154ebdc655e2a846d7b0664d"
+  },
+  {
+    "path": "src/routes/classpilot/scheduleChanges.ts",
+    "sha256": "54979d73048abc870fa774bada9d127fc2bc56615bfb3ffae30d95593180c0eb"
+  },
+  {
+    "path": "src/routes/classpilot/scheduleProfiles.ts",
+    "sha256": "10f860169c203ff925b812ac0e54d3fe21cae2739c4252277fa3d3837d0c4fb2"
+  },
+  {
+    "path": "src/routes/classpilot/scheduledConflicts.ts",
+    "sha256": "488c5138870ddcb5ddfaee6562c4ff0cffd58fb4ef9fa41b5b6ab3bfd46662dd"
+  },
+  {
+    "path": "src/routes/classpilot/scheduledSupervision.ts",
+    "sha256": "64c83f95fe3e76fcaef89fd29a414a313693cb054090b4eece03bb8b31491c2f"
+  },
+  {
+    "path": "src/routes/classpilot/scheduling.ts",
+    "sha256": "74da1fb5bb47da70f136061925b3fc6b8ccdeca590b5e4d591b33d764349145f"
+  },
+  {
+    "path": "src/routes/classpilot/sessions.ts",
+    "sha256": "f732d127d74faa72743ce5318696e0867b76e2d88703466d4ba9d82cbb8e30ec"
+  },
+  {
+    "path": "src/routes/classpilot/settings.ts",
+    "sha256": "66b14853a3285a1169579913bbc1ca28c1d60d4527aaaef98136956d84f4918e"
+  },
+  {
+    "path": "src/routes/classpilot/ssoPolicy.ts",
+    "sha256": "b685537239228e8bbd6f017455f2fe3f6472d6cfc78dec0db39ff89020ad674b"
+  },
+  {
+    "path": "src/routes/classpilot/studentBrowsingHistory.ts",
+    "sha256": "54cb33f6bdfa8bfcac6c09d6c50fee26790eb27c7bec229bee1be0f8f13c14c0"
+  },
+  {
+    "path": "src/routes/compat.ts",
+    "sha256": "f4311aea76c9dbb551294781c9bdb27db39afc4a1c8a304d1124184bf9b1e570"
+  },
+  {
+    "path": "src/routes/google/classroom.ts",
+    "sha256": "c413d3b9821f14580b36c385297af159f560bc20933a99b277ab1689debac54f"
+  },
+  {
+    "path": "src/routes/google/directory.ts",
+    "sha256": "c8533986fc5b9b9b40045170b1b9c66f3a060505bf0fcf78e3d2e37a27eb4396"
+  },
+  {
+    "path": "src/routes/google/oauth.ts",
+    "sha256": "8bd34eb715d8aca0f263f74ad1a771f4a3ea37e1c2912043be98eacf13bdab87"
+  },
+  {
+    "path": "src/routes/google/rosterConnector.ts",
+    "sha256": "3a23186147c497de93e8bb80d1ff61c563844851cbfa284e74b9da8995f0d854"
+  },
+  {
+    "path": "src/routes/google/workspaceAudit.ts",
+    "sha256": "f11b143ef09481d32433f25047ea402e2b796d3f68d2e8c0ec6a6b29a9691bc3"
+  },
+  {
+    "path": "src/routes/gopilot/busRoutes.ts",
+    "sha256": "d917aaa953c9481b7cfbcf0686111a6c2e205f89152f8239f8e4c03534990838"
+  },
+  {
+    "path": "src/routes/gopilot/changes.ts",
+    "sha256": "36cb8c9977ba2d5d95b16979b8b3e442cecdf82e28d4c3f408fdb2beffe2cb9b"
+  },
+  {
+    "path": "src/routes/gopilot/dismissal.ts",
+    "sha256": "3ebcb69130c6baf8eba2936a22f88cf6a1d3eaedee9c545627a855abf84d8c7c"
+  },
+  {
+    "path": "src/routes/gopilot/families.ts",
+    "sha256": "7242534e0868cc8704c17e2b990fe61130172ec9b3c2b401ba3bcd94d36f5900"
+  },
+  {
+    "path": "src/routes/gopilot/homerooms.ts",
+    "sha256": "9566bd2ef40c18cf6444c9273d877fd84b2500f9158c028a4c24fd3d22a0464a"
+  },
+  {
+    "path": "src/routes/gopilot/instructionalCalendar.ts",
+    "sha256": "47c50c75ec0524156bb89194507f42f7d716b5d0618366658ae6b3249a59757d"
+  },
+  {
+    "path": "src/routes/gopilot/pickups.ts",
+    "sha256": "f5281ace583a65d1b908a40fae41d642720ac5a0f1666e448f998f6a1392de43"
+  },
+  {
+    "path": "src/routes/gopilot/settings.ts",
+    "sha256": "ffa6355593ef4fd628bc0b571ad54fbe7d7e3a05319fe5240faa26289ee8eee1"
+  },
+  {
+    "path": "src/routes/gopilot/students.ts",
+    "sha256": "9cfc5e52df3cfc10175e55ea0f968f5ce1d87071def9fb326fdd5d6f46de0666"
+  },
+  {
+    "path": "src/routes/index.ts",
+    "sha256": "228d776424b9f4945fc1b691aefc23ea52c338024ae83733890dcebf85d080d0"
+  },
+  {
+    "path": "src/routes/mailpilot/alerts.ts",
+    "sha256": "ec3d936dfe0e90a6853939b50f1bb37d4e31a010e6239855d781a40acdde2d62"
+  },
+  {
+    "path": "src/routes/mailpilot/pubsub.ts",
+    "sha256": "59491a9d9e197502232d6bf786757c4659135897bbdc1b2055ccec5e8ea3b828"
+  },
+  {
+    "path": "src/routes/mailpilot/setup.ts",
+    "sha256": "9bcc401b1cde512b27571180611ace9289b5b3d0150cfed2f79030d01c4c7a62"
+  },
+  {
+    "path": "src/routes/monitoring.ts",
+    "sha256": "e826d0651d6b436f857b47a69a77d56e1cef4a5c4060b99837f6cfa4e453cdb8"
+  },
+  {
+    "path": "src/routes/mydesk.ts",
+    "sha256": "3f09cf85374121cf899e60645e2ea195db104cb637971610ee0307a0c7581d5c"
+  },
+  {
+    "path": "src/routes/mydeskAttachments.ts",
+    "sha256": "91a29446fce52a45694a390fd902e77b85192f456198f959168dc6cc9a7d4ca4"
+  },
+  {
+    "path": "src/routes/mydeskImports.ts",
+    "sha256": "5e1537e6ae83cd60e8738607fc3f6eaeea6792d568c946425aacdac8574ef849"
+  },
+  {
+    "path": "src/routes/mydeskSeating.ts",
+    "sha256": "6a4d4ce8818cbcf9728428442b79f31bf74364ff5d216a83bbad2d5302c0ab84"
+  },
+  {
+    "path": "src/routes/passpilot/appointments.ts",
+    "sha256": "482890ee4cbced3f20ab1774377ca4aeda8a4a285041ba0a70dd0b41861ae981"
+  },
+  {
+    "path": "src/routes/passpilot/classMigration.ts",
+    "sha256": "26c4f8969b092a375fc8d03f13cc0f695cb1d070e7a248bf2432fa8b56d97fc3"
+  },
+  {
+    "path": "src/routes/passpilot/classes.ts",
+    "sha256": "f11213c94f09f0b3b7c919309f8db251f7eb457fc6048b09dd103fc0c4a49a6e"
+  },
+  {
+    "path": "src/routes/passpilot/kiosk.ts",
+    "sha256": "5b8dbd8d54154ef67d1e3a3f94b3a64fa719920b8e84c31d7c2d075e9b1e4bc0"
+  },
+  {
+    "path": "src/routes/passpilot/kioskPreferences.ts",
+    "sha256": "c5bb2d2abd38869413a8798e097329908a330c389d8c07684c4ee04826788715"
+  },
+  {
+    "path": "src/routes/passpilot/passes.ts",
+    "sha256": "0f87973ff7f161ff538e8439211a35e4839dbc5d3031928d8c89723061f60ddf"
+  },
+  {
+    "path": "src/routes/passpilot/reports.ts",
+    "sha256": "b95b359d104e376a1e5e695641cfda2f3d78394d1d5aff77bf40491e5e084712"
+  },
+  {
+    "path": "src/routes/passpilot/rules.ts",
+    "sha256": "1ebfe0d1a5702b96ed16e8b81b871891565e9b54eef321edaa771776e7b299a3"
+  },
+  {
+    "path": "src/routes/passpilot/schoolYear.ts",
+    "sha256": "c356b80656ed85011be06450c85c18220c5c43fd79fbd23d9267d812d6ff5585"
+  },
+  {
+    "path": "src/routes/passpilot/settings.ts",
+    "sha256": "99caa4aa95d953d5378f07223f128ae6593b65e080ad40b239f803cf01cf8413"
+  },
+  {
+    "path": "src/routes/schoolDiscipline.ts",
+    "sha256": "c16f35f6b9f6c2f938428792e5f300a251489bc099d5a1a500cb0c6e4e2e3c8e"
+  },
+  {
+    "path": "src/routes/schools.ts",
+    "sha256": "b50eb0dd08c369484f98e6e5fbac0d8bae06c72f5117ecd396d4aa25bfa10a17"
+  },
+  {
+    "path": "src/routes/staffAssignmentLifecycle.ts",
+    "sha256": "eeba9e498e17e2e64f09e906a3b80ca41ae53188e279b6181efecfe88281a285"
+  },
+  {
+    "path": "src/routes/studentInformation.ts",
+    "sha256": "76791a57cfcb499581f7b4ab72d14d839ca676cd057d2c8136c450c6eff6e55a"
+  },
+  {
+    "path": "src/routes/students.ts",
+    "sha256": "49862c32418a662cd5e8ab7feef6729249ecace58f91e59132667bc6f1e4eccb"
+  },
+  {
+    "path": "src/routes/users.ts",
+    "sha256": "c570ca446ad9c93998ab2fe73204261f6d5ea6ecebc55fb1cf6da67f089684d0"
+  },
+  {
+    "path": "src/schema/classpilot.ts",
+    "sha256": "e15c63e0c322adc19ef0e6e06cfb1136812a810fbdda7347c4fc87ed7a641ddc"
+  },
+  {
+    "path": "src/schema/classpilotMonitoringInterruptions.ts",
+    "sha256": "02559e1309f28aecab252c6483dfc4b4657b3289fe74c67e77c9d2c4640bfab9"
+  },
+  {
+    "path": "src/schema/classpilotScheduling.ts",
+    "sha256": "ddfdbc74afed9ae156435bc8e01a0b99b1ac4e6728876f32989809787bbeb31f"
+  },
+  {
+    "path": "src/schema/classpilotSchoolWebsitePolicy.ts",
+    "sha256": "9266b35e9879a2d409ff5c1a5a1a6d594f30cd24e363d190da7ce71268d482a0"
+  },
+  {
+    "path": "src/schema/classpilotSupervisionReports.ts",
+    "sha256": "39a746360af68b02a4b9fa730a9a9a95127c32a4614be36a338fbe079c30c368"
+  },
+  {
+    "path": "src/schema/classpilotTeacherPreferences.ts",
+    "sha256": "0eed7e6facc94cc13136aeaf0fbe96058c8425ab3f1c0213874067efdc8e848f"
+  },
+  {
+    "path": "src/schema/classpilotTools.ts",
+    "sha256": "19428d4693a359029559fdd45b03608c457ae81ae248ecd16d8611c62251d140"
+  },
+  {
+    "path": "src/schema/core.ts",
+    "sha256": "c29e6f7c374d697c02cf8800cd2ae6b038a285730633cb46db676db72268e472"
+  },
+  {
+    "path": "src/schema/gopilot.ts",
+    "sha256": "7d52acacbdeb0d3cb2c457d640b277be42e781b71d04e53872445b4863795ca2"
+  },
+  {
+    "path": "src/schema/importProcessingStages.ts",
+    "sha256": "6f824112dd859d1d903f26406baee68935d52c31620d176c9538a197d0b7a82c"
+  },
+  {
+    "path": "src/schema/index.ts",
+    "sha256": "0b343d6013aea557570e9d09f0ab25880c9e8d72d452f605b42bac04502157ba"
+  },
+  {
+    "path": "src/schema/mailpilot.ts",
+    "sha256": "0a74663a8923eb39bd8acac67a4f1f0725ab69f5ae0251380b5a410be850b905"
+  },
+  {
+    "path": "src/schema/mydesk.ts",
+    "sha256": "19f0158ddcf47e3d57c6bc6991f79b3411e858c40c10beeff39e949f6d78c0d2"
+  },
+  {
+    "path": "src/schema/mydeskImports.ts",
+    "sha256": "3c923d027f2059de2e6b4d38d954e432426daa1001b0e3c56bfc7331cbce5bd4"
+  },
+  {
+    "path": "src/schema/mydeskPreferences.ts",
+    "sha256": "eff745e375cbac6fb90694e94069eaddfaff10a92cec8e0a43a81af402a5bdd2"
+  },
+  {
+    "path": "src/schema/mydeskSeating.ts",
+    "sha256": "6f54bed10c9013ef18fa2d169c169c82bda9e6f530f97e7e57a90279df6f03b7"
+  },
+  {
+    "path": "src/schema/passpilot.ts",
+    "sha256": "06f7c6abb1c7bb5fb95e8cb43439b47a228dda1d0e61ca83dbd2b620b9b23410"
+  },
+  {
+    "path": "src/schema/passpilotAppointments.ts",
+    "sha256": "c9593c060f832ad637a238f2a4ebe3656bccb5e723b630ae86176cb842ecf6b8"
+  },
+  {
+    "path": "src/schema/rosterIntegrations.ts",
+    "sha256": "4ea38fb5ce45b1f5470c4e28eb35c0b241b7ee7b73ea36f594172671018eb230"
+  },
+  {
+    "path": "src/schema/safetyCenter.ts",
+    "sha256": "3eda84c253298fa90aecd43d79bafbf24f8cb418cea904d25b48c6b5d02d962c"
+  },
+  {
+    "path": "src/schema/schoolDiscipline.ts",
+    "sha256": "8ceafd7ca3d60a91d6ecbec0b9fb3f6d9eecc4e848f0dbacce403d4119c967a1"
+  },
+  {
+    "path": "src/schema/shared.ts",
+    "sha256": "13934f29f316a290a127ebbd8a6b05e6a8f6a6bfd9832ebac32d375c30f4b21f"
+  },
+  {
+    "path": "src/schema/studentInformation.ts",
+    "sha256": "9f9298869eb347d4592249eadc9f700be83fc4ecf887ed6704922aa5ec36029c"
+  },
+  {
+    "path": "src/schema/students.ts",
+    "sha256": "a2cc2240e6347251127591bd13f4b0a94899d96a94b7b07a33ff035988fe4e34"
+  },
+  {
+    "path": "src/schema/validation.ts",
+    "sha256": "eb3a1ca212e77b11c87b0a623e48dd3615f790140723d0b6ab291a18c2ed04f4"
+  },
+  {
+    "path": "src/services/accountLockout.ts",
+    "sha256": "db195e55ffe3fc24bcf538460b3bd02f52c85ee83601bf682dccac5c46b97fa9"
+  },
+  {
+    "path": "src/services/aiClassification.ts",
+    "sha256": "75b6c48c3e448065f76dd628cd93d7b8b96d192a2f7ac1d96a9fde23534d4c15"
+  },
+  {
+    "path": "src/services/aiConversationStore.ts",
+    "sha256": "dcab8b9c4df6b66e89610eb9150553e842d3e16711b43a823848fb1c284164f0"
+  },
+  {
+    "path": "src/services/apiPoolReadiness.ts",
+    "sha256": "cb043c14b009341ceab9a21fb16a847cc4fcb0d655b5bf9747e0825fe9a4eb0b"
+  },
+  {
+    "path": "src/services/audit.ts",
+    "sha256": "36c7d860dff30a9b84d88c732b4f7ecee5c225a1683dd4373d740fe2893ad867"
+  },
+  {
+    "path": "src/services/authCodeExchange.ts",
+    "sha256": "a4bd690d6a4f0b66cc9e8b348f458a8490ef575672e16c4308f1c17aae0986e6"
+  },
+  {
+    "path": "src/services/chatService.ts",
+    "sha256": "265ee44b73be17b3129e6352b6632dafe080e0af018ddc541ade595b295b02fb"
+  },
+  {
+    "path": "src/services/chatToolExecutor.ts",
+    "sha256": "2e7d3ad83323953aac9b991800df14880baa90311cc5d57c926c009c79c55b72"
+  },
+  {
+    "path": "src/services/chatTools.ts",
+    "sha256": "98e28dd8da41a5c5c432455f7f5ab1b06965329522418b03239fac8b1615ba1b"
+  },
+  {
+    "path": "src/services/classpilotAckBinding.ts",
+    "sha256": "0f28daa77a7494f662b966edc881c6a4971867a26d37cab5f93a4926095c4885"
+  },
+  {
+    "path": "src/services/classpilotAckReceipt.ts",
+    "sha256": "495129d5db360b95a42bf3109e82cbfee69cb8b1dc516ec043466fb75dec540a"
+  },
+  {
+    "path": "src/services/classpilotActivityAttribution.ts",
+    "sha256": "ca0ce195b5c25cd4be34e7415351e8ea822de83e7ddb249f915418af99ad3380"
+  },
+  {
+    "path": "src/services/classpilotActivityAuthority.ts",
+    "sha256": "f5c682847dde8c4117a5a13322df928f0df3fef11e82a665470dc9ce6110f02d"
+  },
+  {
+    "path": "src/services/classpilotActivityHistory.ts",
+    "sha256": "9e33eb003ff70dcc040e85334588613e7fd0088759124c424d9263ca3d033071"
+  },
+  {
+    "path": "src/services/classpilotAdminAnalytics.ts",
+    "sha256": "22cf4ecfdd86e0ad603da19d6ca2b2601cb38da900ef1ce5360d2f43e6b7fdf4"
+  },
+  {
+    "path": "src/services/classpilotAfterHoursSafety.ts",
+    "sha256": "8f25612bc43537d199b374ff9b9b0a00cf77c08ffc377b91b2d49e3b621a4f6c"
+  },
+  {
+    "path": "src/services/classpilotBrowserSafetySeverity.ts",
+    "sha256": "6eae114f3e5d8ba2cdfc69e94d0235cb1ee89b669897c30f9f80d07ab2615e35"
+  },
+  {
+    "path": "src/services/classpilotBrowsingHistory.ts",
+    "sha256": "5a391762df6ad32a3acbd394b7ed0381911bf300fb457d4fe7965be5abf99a5e"
+  },
+  {
+    "path": "src/services/classpilotBrowsingHistoryModel.ts",
+    "sha256": "41f60882194f71b5da064c701a49c2d278f615a5d567c72cb1d4b926a8675b52"
+  },
+  {
+    "path": "src/services/classpilotChatChannelControl.ts",
+    "sha256": "941abf876a2534c1542d456ce970c83292fcd5557b92e98676fd8aea045a2242"
+  },
+  {
+    "path": "src/services/classpilotChatDelivery.ts",
+    "sha256": "b3002a6eae0836a5a3666e602f7eeb0a49ae0bf7934c5ea29fc7c3c6f1cb585a"
+  },
+  {
+    "path": "src/services/classpilotChatSafety.ts",
+    "sha256": "0c505dd69eb87f2118e81adb5c69d2691fb71ec2fea46bfa1c8a89e1d7f4f26b"
+  },
+  {
+    "path": "src/services/classpilotClassTools.ts",
+    "sha256": "2c0044592506ab0da37d9db0597f1c15328497e59b1b69f259297d4fe8d705b4"
+  },
+  {
+    "path": "src/services/classpilotClassroomState.ts",
+    "sha256": "54fadc22833cdfb0dd5158ea0ce3f98e17cc89efe1a2cac6241fcf6e6ac684f4"
+  },
+  {
+    "path": "src/services/classpilotCommandAuthority.ts",
+    "sha256": "4d15c0acd4732e9f4ff1db9447ea54f319f1c768729f399c1f1df3a61d4e9c82"
+  },
+  {
+    "path": "src/services/classpilotCommandDelivery.ts",
+    "sha256": "c734354b1995cdb2233d4f28ebf3ef196766c9ef4dc8185b5ad81359a96b99af"
+  },
+  {
+    "path": "src/services/classpilotCommandDispatcher.ts",
+    "sha256": "027d998942466e00d706987ea5b4b85b9bd5d0e7fc13bd6dd775c37048e0e22e"
+  },
+  {
+    "path": "src/services/classpilotCommandPublic.ts",
+    "sha256": "9f24da3a9df1e6bbe9d840c86c28a3eb11dd43fad8453fd9e5d187c2ede25fce"
+  },
+  {
+    "path": "src/services/classpilotCommandUpdateScheduler.ts",
+    "sha256": "58b7379dc89afa1eb057ec445a1ddac515bc8e984c5dbe3ddf5ddc4b1a8151e0"
+  },
+  {
+    "path": "src/services/classpilotCommandValidation.ts",
+    "sha256": "f6adde4df588101a863cfa235af67c134d41caa569e9c18bca6901184a77bcdc"
+  },
+  {
+    "path": "src/services/classpilotContentCategories.ts",
+    "sha256": "9128e666ba12aa106f381ad226682b50c23f09c36ec22d6cbebee9173c0f3e6c"
+  },
+  {
+    "path": "src/services/classpilotControlStateAckGate.ts",
+    "sha256": "b835ec4b8e006fe7b83d40ae74567a4795ee42cd204e489bd895eb6ae12813e8"
+  },
+  {
+    "path": "src/services/classpilotControlStateDelivery.ts",
+    "sha256": "d81ff761cbe9faa9df280251c4ba7019968a4093010d7bcea8fdd750366aa8ee"
+  },
+  {
+    "path": "src/services/classpilotControlStateFrame.ts",
+    "sha256": "384852d82ace1d84c58e15444a97a2e7b44dd56c3593ea345f4d4faedbb51f3a"
+  },
+  {
+    "path": "src/services/classpilotCoverageCategoryVersions.ts",
+    "sha256": "4479ee2f14e5c46d04dff264e301105566b8ab9dd0b8386df4743fa8e27688c4"
+  },
+  {
+    "path": "src/services/classpilotCoverageDeletion.ts",
+    "sha256": "1e835f454f9658f5b9fb82f312a517a70bf4ea791c7f3d9160a3b57ab8ba1231"
+  },
+  {
+    "path": "src/services/classpilotCoverageDirectory.ts",
+    "sha256": "abed19f3b97c902433346f5c49732ea031c83e1b982296920082ee8692bf4a28"
+  },
+  {
+    "path": "src/services/classpilotCoverageHydration.ts",
+    "sha256": "b8021d7a0cbd595c1792b1e3f6eda0d8eaa28ae9561838ff8e531405263fe548"
+  },
+  {
+    "path": "src/services/classpilotCoverageSummary.ts",
+    "sha256": "023fdfee47716a5b117f7277b9d2c0ebee21b24ecf8c40f1ed35f7b098d3cff0"
+  },
+  {
+    "path": "src/services/classpilotCurrentPage.ts",
+    "sha256": "774e7d4aa908de531d44567e5ed1227e0e372656fed75aab5ef2ce702dcd1282"
+  },
+  {
+    "path": "src/services/classpilotDailyUsageRollup.ts",
+    "sha256": "738aa74928db444ad8f2add2f482a573d7a2ba1fec6cab8ac9b67cafaab34cb5"
+  },
+  {
+    "path": "src/services/classpilotDashboardActivity.ts",
+    "sha256": "af840209797602c7f1a7c516c3b8eecbf8993decddccfd84bda1cf373978c5e3"
+  },
+  {
+    "path": "src/services/classpilotDashboardSchedule.ts",
+    "sha256": "bab129f8b85f85e74a7dce04d1c0ac4774ce3b0ea24ff07189d8d194d74b0a8c"
+  },
+  {
+    "path": "src/services/classpilotDashboardSnapshot.ts",
+    "sha256": "49e74dba18ede5c993228a4ba8efecf00c53021b8b4f3d5bbeeb201a8fbb9299"
+  },
+  {
+    "path": "src/services/classpilotDeviceScope.ts",
+    "sha256": "dc94da8b00f3ddf0572d68506859b3acdf8d97ba5897e6caba315a1547428246"
+  },
+  {
+    "path": "src/services/classpilotEntitlement.ts",
+    "sha256": "c1b55098e44d7478f341a2c8f2d523868cf5d28a80a68e43f6c81179699cf13e"
+  },
+  {
+    "path": "src/services/classpilotEvidenceAuthority.ts",
+    "sha256": "059c9e599d521f27f9cf7b2cbf667d02097cc19b3fec920afd2a6422281a8231"
+  },
+  {
+    "path": "src/services/classpilotEvidenceCapture.ts",
+    "sha256": "fb40c60082f80f6d33084dcdef2bb3d56b986e41944f41106ddb82d33b9d9afe"
+  },
+  {
+    "path": "src/services/classpilotExactTabCapability.ts",
+    "sha256": "468cea7faa4ab648e42891c4771d7fa47d8ff48a5ac83dd3396dccdcba4b5d02"
+  },
+  {
+    "path": "src/services/classpilotFab.ts",
+    "sha256": "93cf7630440d4bc4d9a832ea63d6942eb1d3e788bdf4e92a2430b8169a8d5f1b"
+  },
+  {
+    "path": "src/services/classpilotFabSyncPending.ts",
+    "sha256": "d951864c05ad423de551e7a2901e6172384c7df96c11794e3825254a42ad7478"
+  },
+  {
+    "path": "src/services/classpilotFocus.ts",
+    "sha256": "45e6eab73a6e5ab0999c7f368b4e2eade4c4922b944444f64adfeffd165cd919"
+  },
+  {
+    "path": "src/services/classpilotFocusCleanup.ts",
+    "sha256": "f062f40ca496ee4b8682a3e4df1f33b536ddfe7d3b07766de042a1d5384b22fe"
+  },
+  {
+    "path": "src/services/classpilotFocusPersistence.ts",
+    "sha256": "0eb74cf0d28799a856406b6edb9db256e69e0f0337201129d505ae75453d2e51"
+  },
+  {
+    "path": "src/services/classpilotHeartbeatCoverage.ts",
+    "sha256": "983c21278346c1d5fa486e0e49ddb0bc89bc0cbb8d7e0fb3d39d34472d18e252"
+  },
+  {
+    "path": "src/services/classpilotHeartbeatSsoSanitizer.ts",
+    "sha256": "b6c1899584498c327bcc92b5bb0a358e68ad53415675826ae25ad65aaff86c51"
+  },
+  {
+    "path": "src/services/classpilotHistoryFallbackSqlIdentity.ts",
+    "sha256": "ca56891b393dab834e0bb1fb34c402f70955db1b7b83ea1336510201a932ed04"
+  },
+  {
+    "path": "src/services/classpilotIceServers.ts",
+    "sha256": "4da8836f3313f0874ac62995567d73e9980d4cec6fee683194f0abf1d08406af"
+  },
+  {
+    "path": "src/services/classpilotKioskLaunchTicket.ts",
+    "sha256": "2e9e2800dd68ab9d8f28b058179206b1248fca175ed0bbb72a53eaa18e73d50a"
+  },
+  {
+    "path": "src/services/classpilotLessonPrerequisites.ts",
+    "sha256": "df0ffde335c4a3d1f9e7552facd7c3ee91fa9eb3cb977a40346d2f769168cc9a"
+  },
+  {
+    "path": "src/services/classpilotLifecyclePushes.ts",
+    "sha256": "c7a49ddcc26880b945e41e62b70b8db59cbfb319b9354c59c74f86c675521a31"
+  },
+  {
+    "path": "src/services/classpilotLiveViewAuthority.ts",
+    "sha256": "d1692c511c0475eef1185249cc986fab5c1c802192a3c3313be9d4dcf6c7afc6"
+  },
+  {
+    "path": "src/services/classpilotLiveViewNegotiation.ts",
+    "sha256": "234f73461aa4a7a322b916a6d3a25c517964271524c86b6f81e4f4b5acd70a51"
+  },
+  {
+    "path": "src/services/classpilotLiveViewRevocation.ts",
+    "sha256": "3e8c43885f3f30926c542a08c6df16c359ad98cb493d6cdfed8d417663630499"
+  },
+  {
+    "path": "src/services/classpilotLiveViewStop.ts",
+    "sha256": "5b2cc6d49a12eafbc4f9646e4564d0b5f421c00c07f88355caf3f471df0f027e"
+  },
+  {
+    "path": "src/services/classpilotManagedDeviceContinuity.ts",
+    "sha256": "c7177aeb88e3f2f14d630301bbcdf270253f72e2f4ff82ac30a8eb7560e64c43"
+  },
+  {
+    "path": "src/services/classpilotMonitoringDigests.ts",
+    "sha256": "b676250751d2c3d6e7918066bcb5828f55624c87daa996c475601f0628ff974a"
+  },
+  {
+    "path": "src/services/classpilotMonitoringEventSanitizer.ts",
+    "sha256": "6b6cc043536d72028af2cee8e9b048a223c5f4dbc8f004725920ae289211a977"
+  },
+  {
+    "path": "src/services/classpilotMonitoringEvents.ts",
+    "sha256": "31a83f5abca5d7217e6d2de174f3f7ff963e3ef8541fc7ff31a0e8c5b3cfeec3"
+  },
+  {
+    "path": "src/services/classpilotMonitoringHistoryRules.ts",
+    "sha256": "96b91011c46ac13f04fd5d92489509a88381e8eb99f33a8be96ae06447f08fa1"
+  },
+  {
+    "path": "src/services/classpilotMonitoringInterruptionRules.ts",
+    "sha256": "c7cf409d6a76dcb019fc732fff3404876a7e5e1efa8a13f0e33c11baf072634f"
+  },
+  {
+    "path": "src/services/classpilotMonitoringInterruptions.ts",
+    "sha256": "eea294e505b997d93ef0b77309e706cd538e1e250bf3b0a03697bcdc089ac48c"
+  },
+  {
+    "path": "src/services/classpilotMonitoringPolicy.ts",
+    "sha256": "7d8c770c546b3ea2125eea56b6bf6b79565677d4bd5edd96fa9c46b0bc56a66c"
+  },
+  {
+    "path": "src/services/classpilotMonitoringReports.ts",
+    "sha256": "dc2729853843a55b025dd49274f0d9647d331a7f7c75daf2cd426162dbc76291"
+  },
+  {
+    "path": "src/services/classpilotMonitoringSettings.ts",
+    "sha256": "1394c425a3adfdb47fd4099079e8959323663ce6225b0e6236f079bb507e1d98"
+  },
+  {
+    "path": "src/services/classpilotObservableActivities.ts",
+    "sha256": "59291e19071267ec69263671532674d44fcfd37a5a505ffb5bb8f44cc5228c43"
+  },
+  {
+    "path": "src/services/classpilotObservationAuthority.ts",
+    "sha256": "af9fa63200b8ab05e35d4e84da85b9bc47b1e1348b40370d2c031c7d993a394d"
+  },
+  {
+    "path": "src/services/classpilotObservationLease.ts",
+    "sha256": "6458e7be79a615643cde48efbc271966e0ff29209562ae919a739ab4741e0efa"
+  },
+  {
+    "path": "src/services/classpilotObserverEvents.ts",
+    "sha256": "72f74b5113060f1222afc07f5c23a1bca563c15cda682565d0e05a6de9ad5fc4"
+  },
+  {
+    "path": "src/services/classpilotPinConsistencyAudit.ts",
+    "sha256": "0f58d975bc594c7f117c016a65811186ac86c01b7f5e1eb2b918b177d8bcc87c"
+  },
+  {
+    "path": "src/services/classpilotPinConsistencyAuditStore.ts",
+    "sha256": "fa0505e481db4161331c4520776385349dcf3f685fe2a97556cee701e32d0b39"
+  },
+  {
+    "path": "src/services/classpilotPinEncryptionMigration.ts",
+    "sha256": "c63a4f50cf130b1955c5458b500c0eb224a6c9ac4a90ee430dd446b0ef379cdd"
+  },
+  {
+    "path": "src/services/classpilotPinEncryptionMigrationStore.ts",
+    "sha256": "18be477f33d417502720d4dec329b56a6aec7d5126eb1284dc86f997ba448f13"
+  },
+  {
+    "path": "src/services/classpilotPins.ts",
+    "sha256": "731c818f31c9d52d8f37085fd109febca9da82a5015f4fa019417e2d3873769a"
+  },
+  {
+    "path": "src/services/classpilotPreciseRestrictionClear.ts",
+    "sha256": "4609227d151b7a6d4c950632b779f52345efd3b70ea05582c1286083e17a5466"
+  },
+  {
+    "path": "src/services/classpilotPreciseRestrictionRollback.ts",
+    "sha256": "e71b4476c75b15fd33003ba4b6958043bbc0075d7cd8de56aee00fbee9b1e50e"
+  },
+  {
+    "path": "src/services/classpilotPreciseRestrictions.ts",
+    "sha256": "03cd87306c49952b3883b4811b920b6d7523631492c50275d4010d9f21c2d6de"
+  },
+  {
+    "path": "src/services/classpilotPrivateChatLifecycle.ts",
+    "sha256": "fa9bace5979eefe93f234ab2f9c3212f789ff4b7b2900ff0626118ee6e41781a"
+  },
+  {
+    "path": "src/services/classpilotProtocol.ts",
+    "sha256": "21cb8afa6ee0d9dac8283f36d90a3932d444ebc941a59e767eff4afb648db508"
+  },
+  {
+    "path": "src/services/classpilotPublicAiDecision.ts",
+    "sha256": "b2d01264a42d55a243a5d64459f209e819b60a101ed86c550c0129d001d48cc3"
+  },
+  {
+    "path": "src/services/classpilotRealtimeStatus.ts",
+    "sha256": "1bbb577468d65ef40a9b1950a5fe1aa42fb3ae0ab50ae4705b4c480ab088171b"
+  },
+  {
+    "path": "src/services/classpilotRegularSchedule.ts",
+    "sha256": "9c7d16d3c225c37361bc8412ed2c9021ec922c49cfc8ec2954072de4c57b7975"
+  },
+  {
+    "path": "src/services/classpilotReportAuthorization.ts",
+    "sha256": "29ee82f3afd61583dda4eabcf4255d528567b834869eaed490024b26dab2a882"
+  },
+  {
+    "path": "src/services/classpilotRestrictionAuthMetrics.ts",
+    "sha256": "50a8c8102bc8230da46f1e70e060c31ac3389237f8412a628795bdcc94d1722a"
+  },
+  {
+    "path": "src/services/classpilotRosterPagination.ts",
+    "sha256": "b3284c4f3f4360bfa070fb9686e96ddfff3b1e366d1de50ed5d25594038296d9"
+  },
+  {
+    "path": "src/services/classpilotSafetyAction.ts",
+    "sha256": "03ba14a7f5204bd60aabda8d834e969918721c35151edd5c7471cdffa436d1b9"
+  },
+  {
+    "path": "src/services/classpilotSafetyContext.ts",
+    "sha256": "dff1ea2eab3bc980334d69794836d8929adde6fa0c14cbca95ff9b8ed5773ffd"
+  },
+  {
+    "path": "src/services/classpilotSafetyCooldown.ts",
+    "sha256": "91a0380bd202b5bbedde63f3b91ac0a8d46fb1bc2bd8bea7637eeab7e2858261"
+  },
+  {
+    "path": "src/services/classpilotSafetyEvidence.ts",
+    "sha256": "ca7b9ba2d080d934450d2754234376073c800d7b058cdfc48e1bf93a60e11701"
+  },
+  {
+    "path": "src/services/classpilotScheduleApplicationStudentReview.ts",
+    "sha256": "b34a644322feb681ad8db268dbeea931ac41dab6d91d93533362488b6d2c14ab"
+  },
+  {
+    "path": "src/services/classpilotScheduleApplicationSummaries.ts",
+    "sha256": "0393a6e5a9963dca1d2d0d8154cb240ea81c05cbb73b83c22e5194584334a275"
+  },
+  {
+    "path": "src/services/classpilotScheduleBoundaries.ts",
+    "sha256": "0e06470585c835cd5a95a82c6d95e7410881016455e6958c5f09994449abecb6"
+  },
+  {
+    "path": "src/services/classpilotScheduleChanges.ts",
+    "sha256": "6533960fe4b8916bbedae44a97c9952884d977834279fa033aeaba29dec47ec2"
+  },
+  {
+    "path": "src/services/classpilotScheduleDraftReview.ts",
+    "sha256": "d43f9e8b64165558d6df83ce37f935777cc3d912e49a1d13a0d59fe7d398a914"
+  },
+  {
+    "path": "src/services/classpilotScheduleProfileModel.ts",
+    "sha256": "e95d3ffeb1e1ac50b887cee42558984484bd64b51d8afc2b93da1830a0554ab1"
+  },
+  {
+    "path": "src/services/classpilotScheduleProfileSupervision.ts",
+    "sha256": "c4197067b7b451ff1e76fb6efb60fa911c6b4e2934c4e045fefe338b91aae69b"
+  },
+  {
+    "path": "src/services/classpilotScheduleProfileValidation.ts",
+    "sha256": "8889a85821678dbba8a3c541e6ea75ececb69e84d4b4722ea137f32052f51478"
+  },
+  {
+    "path": "src/services/classpilotScheduleProfiles.ts",
+    "sha256": "fc90ee2bfcdebafce81252c6b5cf9810858d01dda8e67e3ed84322b10f0d17a5"
+  },
+  {
+    "path": "src/services/classpilotScheduleStudentAnalysis.ts",
+    "sha256": "49bbc8a8ffcae138397b7bca5e2e17100bfbeb1918c5cf97a5f91dcf808f0363"
+  },
+  {
+    "path": "src/services/classpilotScheduledClassroomTools.ts",
+    "sha256": "5f09346f102e1cb1b1a4e055119093163e69e43d27346f1590c70983530c25d5"
+  },
+  {
+    "path": "src/services/classpilotScheduledStaff.ts",
+    "sha256": "06d9f6acdedf69ca70c73d53ccd0e798d22f7e4583e5cc1f8dc81daf07146d65"
+  },
+  {
+    "path": "src/services/classpilotScheduledStart.ts",
+    "sha256": "8240b449427c530c55671216f6eeadb3f9800d7794458034fa4571cd80eee711"
+  },
+  {
+    "path": "src/services/classpilotScheduledSupervision.ts",
+    "sha256": "20f0478758131bf7bb3219233ff514b2cada8507470d3637ef7d9f542ee04afc"
+  },
+  {
+    "path": "src/services/classpilotScheduling.ts",
+    "sha256": "22f22453d659b41dfaa8faee4242112b3551ba3a9aef804ac72e24931e448da5"
+  },
+  {
+    "path": "src/services/classpilotSchedulingRules.ts",
+    "sha256": "8052241b7cda4192f9481215a78164a9b81890d8b483d8332ad8b1c808b52fa9"
+  },
+  {
+    "path": "src/services/classpilotSchoolWebsitePolicy.ts",
+    "sha256": "7fa976f52fda7e97392b840b051d5d24369965cd14388a0f2878a17484131c2a"
+  },
+  {
+    "path": "src/services/classpilotScreenshotAuthorityStart.ts",
+    "sha256": "5232a1b11a7e912bc5a8d88d2858fc9885c264bf3e7f9068d3ccc60438629029"
+  },
+  {
+    "path": "src/services/classpilotScreenshotAvailability.ts",
+    "sha256": "93d4694b68f83904c457fc5c5611708efa5b942b30976618f40b26d27985dd8c"
+  },
+  {
+    "path": "src/services/classpilotScreenshotFallback.ts",
+    "sha256": "07a4fd9d856193f7d3298e2e3d3b0b873d901ca29dd7c39e51e8998873e56b3f"
+  },
+  {
+    "path": "src/services/classpilotScreenshotPolicy.ts",
+    "sha256": "faffd8a5a2fda05b3683be9b323fbb3c60acb55e3b826dc032712a475d2356a7"
+  },
+  {
+    "path": "src/services/classpilotScreenshotPolicyRefresh.ts",
+    "sha256": "dcf0f8269424b785ccbf8e4a620168ed7a367a5d6680e75e6471f46ffb6d82b4"
+  },
+  {
+    "path": "src/services/classpilotScreenshotPolicyRefreshClaim.ts",
+    "sha256": "2a9da5e14fe257da146882301dd868c08b45ae7ac1e3a161b7736b8b018c6ff1"
+  },
+  {
+    "path": "src/services/classpilotSessionLifecycle.ts",
+    "sha256": "853af3dfbf8c6f5e8a78886968494840bb23a1e4d5e975eb823a0b512e913e45"
+  },
+  {
+    "path": "src/services/classpilotSessionReportPresentation.ts",
+    "sha256": "e4400f05f3abd312959a530c10803e2a8301e745be6c8fbec7f1900d35abd698"
+  },
+  {
+    "path": "src/services/classpilotSessionSubscription.ts",
+    "sha256": "4a0b6f75269477eee043f2d6c272a7f1beaafdd61f76fc42d504b99eef567acb"
+  },
+  {
+    "path": "src/services/classpilotSettings.ts",
+    "sha256": "da51fabce334fc36a62ccb967ad8c9e258324dd68c0d1d3bc6b570fec301a1f3"
+  },
+  {
+    "path": "src/services/classpilotSharedChromebook.ts",
+    "sha256": "0532e4d204c81855525dfcc2c17337fc3e25e9c9b0e4f8af5b94a80eac197de3"
+  },
+  {
+    "path": "src/services/classpilotSignaling.ts",
+    "sha256": "9c6749f6011078504b9ed10ae52eb9e605fcaf170a0cdc9b5c38417d0d822907"
+  },
+  {
+    "path": "src/services/classpilotSsoPolicy.ts",
+    "sha256": "cd7b76576250ffaf96af9cae00d1fb7c531fc90c8f5ea518815237799f3ab23c"
+  },
+  {
+    "path": "src/services/classpilotSsoReadiness.ts",
+    "sha256": "5931062a81136621bc261cc9e6ba817ade586915d3632b4f13b5c0e2f3c99425"
+  },
+  {
+    "path": "src/services/classpilotStartOverlap.ts",
+    "sha256": "27ae9fc90eb00d3ad70a6f24b2ee41b7af5dec03bba563a6987e8574c220815b"
+  },
+  {
+    "path": "src/services/classpilotStudentAuth.ts",
+    "sha256": "550c00ef2a6de0ce3065e7d69294b412cbd32bc320256551e69c5e32b5537bab"
+  },
+  {
+    "path": "src/services/classpilotStudentAuthGatePresence.ts",
+    "sha256": "0ee13a3a66ea2fab431d134050cd9c815b1f6bc906b32d443c969a1044452283"
+  },
+  {
+    "path": "src/services/classpilotStudentChat.ts",
+    "sha256": "29c45653fac0e33d4e4cb45350c6b780994f88e9837e3affd465dbba48d1e609"
+  },
+  {
+    "path": "src/services/classpilotStudentData.ts",
+    "sha256": "7e7d535ef4429e0e30ced6635ff46b5f9f816b6a4448c1a1c469fdd397549d59"
+  },
+  {
+    "path": "src/services/classpilotStudentDataProvisionalCache.ts",
+    "sha256": "635d77865fc14861d4cd17008e14a2e0b72e34ffd8a19030c7cc421620d46380"
+  },
+  {
+    "path": "src/services/classpilotStudentSessionAuthority.ts",
+    "sha256": "33c1dbbd6c0db7faed655d337de716930af1a786ea3e31ac4472d1479693fd60"
+  },
+  {
+    "path": "src/services/classpilotStudentSessionLifecycle.ts",
+    "sha256": "8169fcc0a53021a77ed9b8b6d140024d0192f5f08d118b7c07e404a69cead6bc"
+  },
+  {
+    "path": "src/services/classpilotStudentSessionTransfer.ts",
+    "sha256": "0e7c5a03e3ba6689a0593a85c55f17f755d0bd47f19c22d8966d3dd98e813390"
+  },
+  {
+    "path": "src/services/classpilotStudentSignInDiagnostics.ts",
+    "sha256": "3dd130d2c8b96fe68251f17b6cc1748b564acef34885a417a6fcda007f05a7c7"
+  },
+  {
+    "path": "src/services/classpilotStudentSignInDiagnosticsContract.ts",
+    "sha256": "ff689c9821e63168fd87f0929420130a999d0199979f0072d3d47990d4d43849"
+  },
+  {
+    "path": "src/services/classpilotSupervisionHistory.ts",
+    "sha256": "5e2008a057ba8c7a1e27f32c244a663bfa0f036582a8c04390bcbca9f65c1f85"
+  },
+  {
+    "path": "src/services/classpilotSupervisionPurpose.ts",
+    "sha256": "de3eb47601eb8bc948cbb329ecfbbbe4a2393ad1639c6b60cb690f520aad1a67"
+  },
+  {
+    "path": "src/services/classpilotSupervisionReportLifecycle.ts",
+    "sha256": "6e17cad0cdcd46f50451a523b74dc02bd8fa97699c7fecae842f9f9d5b86ae27"
+  },
+  {
+    "path": "src/services/classpilotSupervisionReports.ts",
+    "sha256": "ac2225b30850c4a6390315df81ea0f63a5c69d1a137c22feb205bd8228615182"
+  },
+  {
+    "path": "src/services/classpilotSupervisionReview.ts",
+    "sha256": "1b84f5219447862d6b8b77a67fcb711d54643681cbc52ed473bc3f80ee2cf35a"
+  },
+  {
+    "path": "src/services/classpilotSynchronousAuthority.ts",
+    "sha256": "2724f4275cd537fd1557476e307d5b1a07be8563e6af2b98ef8e05a7e486b57c"
+  },
+  {
+    "path": "src/services/classpilotTeacherIntent.ts",
+    "sha256": "14695963f53057cd8b1267bea4594a5277bf29f60fc2e64b7722ada6dc634c2f"
+  },
+  {
+    "path": "src/services/classpilotTileAuthorization.ts",
+    "sha256": "06c64a5867000f17f33f844e0c30d5b429a74b452b93e6fb01f3d5f582091373"
+  },
+  {
+    "path": "src/services/classpilotTileAuthorizationPlanCheck.ts",
+    "sha256": "f9010f3d6a85c6ca657019a07590b132f7e708fc88a5d6fc2638c6c70cc8f79b"
+  },
+  {
+    "path": "src/services/classpilotTimestamp.ts",
+    "sha256": "393dc2d5711e7c7837eb23359f751bf26756de262cfc29a13c1aa3bcb660f3a9"
+  },
+  {
+    "path": "src/services/classpilotToolsAuthority.ts",
+    "sha256": "d040de8711048dcbc8ac830ad1c5115f985ccfdb5ab130a5290e2c862e625263"
+  },
+  {
+    "path": "src/services/classpilotToolsCommands.ts",
+    "sha256": "feba72bcbf7fc1d594dc10432cb6811bf2f476df2dac02ce9ab7f5515acafc48"
+  },
+  {
+    "path": "src/services/classpilotToolsEvents.ts",
+    "sha256": "7586e93e9b5a6b8a3a4e8fc7ccdef28a9e09d413495db5d711a1ba4e01312318"
+  },
+  {
+    "path": "src/services/classpilotToolsLifecycle.ts",
+    "sha256": "545372098d908207e97a2ee4a380cbb4c0810d7ceb42cbc8a8cb49a3631e36f8"
+  },
+  {
+    "path": "src/services/classpilotToolsPlanning.ts",
+    "sha256": "af0d9239afbca7de91054fec9ae9794be1010a764de700e5b88ff4236e82843f"
+  },
+  {
+    "path": "src/services/classpilotToolsRoutines.ts",
+    "sha256": "dd342f121d2a25024cfb4ef91e942455d7c7f509b1ce4ab9e49f0597d9836701"
+  },
+  {
+    "path": "src/services/classpilotToolsValidation.ts",
+    "sha256": "3c0a4926e6d013255829e6da94d934f18a3d0a1b61c221458f7e4ac2728f2f45"
+  },
+  {
+    "path": "src/services/classpilotTransientCurrentPage.ts",
+    "sha256": "cb98a4e1d95433da7881d22c0a30d129e0836ce3c4ea40507507e86c202efabe"
+  },
+  {
+    "path": "src/services/classpilotTurnTelemetry.ts",
+    "sha256": "3f79249ec20006d6f250ccad906578ce111a4cd1e5bad8cf62eeda90023b0c2a"
+  },
+  {
+    "path": "src/services/classpilotUsageAdmission.ts",
+    "sha256": "9230e31085366d3229f9270be75e574c170be3a433aa8d1674d56dac57fd1f30"
+  },
+  {
+    "path": "src/services/classpilotUsageAuthorization.ts",
+    "sha256": "bdf4c154f89352fad1bbb463a6ec3e981f80c91e286f8423c4ceb5fed22a89e7"
+  },
+  {
+    "path": "src/services/classpilotUsageExecution.ts",
+    "sha256": "1a99e4772a039ff484bfe644ebafe0bf6bb4ebf0a9ad40d268e19a2eb58b1716"
+  },
+  {
+    "path": "src/services/classpilotUsageRead.ts",
+    "sha256": "48d39398b5ee459436dc32e30be785177641eb7289ff46a0473c9602cd46504a"
+  },
+  {
+    "path": "src/services/classpilotUsageRequest.ts",
+    "sha256": "dc86432e127e3f6255d6e3fc18000ee709fca6ead2959d5dfa0ad7d24c7f0a32"
+  },
+  {
+    "path": "src/services/classpilotUsageRollup.ts",
+    "sha256": "44dd58ccc805b46905116cb4e0292a0a014e3038d2889f28506964e530ad2681"
+  },
+  {
+    "path": "src/services/classpilotUsageRollupAdmission.ts",
+    "sha256": "80bec8c4f197fefb5e44568aaa11a2f2ea920546ec306dd8747e84a1de578d79"
+  },
+  {
+    "path": "src/services/classpilotWebSocketAuthDiagnostics.ts",
+    "sha256": "84f1edc5afb0c9df44b5f9b6dda0d92c90082020805ed0f2d2cd01a410892717"
+  },
+  {
+    "path": "src/services/classpilotWebSocketAuthorization.ts",
+    "sha256": "8762217f837bab876d6d5f5a7b6287d97d51d345b067f868744469d73bfd8665"
+  },
+  {
+    "path": "src/services/cleverRosterClient.ts",
+    "sha256": "8eaa703ebf113105df824064ed9f2892fd064ffeef13467fca0df6a09298e006"
+  },
+  {
+    "path": "src/services/crypto.ts",
+    "sha256": "1ea7907437dc73a1cb4233b253fdcbc0a1f4308630aaf6b37b3d33737eae6335"
+  },
+  {
+    "path": "src/services/deviceJwt.ts",
+    "sha256": "38c6490edbc8f25be8e2de3e3d2b333caf307a1ed7fa69878d103866ce6d6f50"
+  },
+  {
+    "path": "src/services/ecsRuntimeIdentity.ts",
+    "sha256": "cef040d9ff0c93a4b4bb1f612f012c3b4f84a90705e6b172c0cdc15728f7e21b"
+  },
+  {
+    "path": "src/services/email.ts",
+    "sha256": "dab753ef9ef99fbb631922ec036656ed62b09b0a89fd9c379399113d2a23039f"
+  },
+  {
+    "path": "src/services/errorMonitor.ts",
+    "sha256": "cf08076926ece8fb5bf25b2d0d87835203345fdc79de375977788700fb1b03b5"
+  },
+  {
+    "path": "src/services/googleClassroomCourses.ts",
+    "sha256": "4856f917a9e995864f3d3911cbca937dbc01bd5f24ebd7ff53f449a7d23460b1"
+  },
+  {
+    "path": "src/services/googleRosterConnector.ts",
+    "sha256": "a453c5bc570a9927facb06d0861884be694c6b9cfef193756a8859290d5a2a5c"
+  },
+  {
+    "path": "src/services/gopilotAccess.ts",
+    "sha256": "3a0a98bb52d0c07d05ca2f1c97240aa9ced091484a058fc10a25a02671ff57c7"
+  },
+  {
+    "path": "src/services/gopilotEntitlement.ts",
+    "sha256": "f741af84d5b8abb82959187a6cee29c393f8408a4bde0d61560fa61353a40e66"
+  },
+  {
+    "path": "src/services/gopilotOverrides.ts",
+    "sha256": "5851ea181026534aaf535dd41eae1676d20cd22a1cb05ba5deb7d85c9e68a62a"
+  },
+  {
+    "path": "src/services/gopilotSettings.ts",
+    "sha256": "1f0edf6a97441f56f87baf95f95c99bd7db68b664eb0b39cb07e1c08b1d19ee9"
+  },
+  {
+    "path": "src/services/healthMonitor.ts",
+    "sha256": "4fea7523e77e4be5c6ce3dfadf0f087802c1729caf089e1b56345eedea6a9083"
+  },
+  {
+    "path": "src/services/heartbeatClassificationBatcher.ts",
+    "sha256": "16af164319980aae9085e5cec10827ddecacef7099c256b232e10bdda9907a3a"
+  },
+  {
+    "path": "src/services/heartbeatHotPathMetrics.ts",
+    "sha256": "a4a68eabe50f2d0988e38b851312a75b4ede9462b6c2f978c2571d958ccb69fe"
+  },
+  {
+    "path": "src/services/heartbeatTileCache.ts",
+    "sha256": "57a2ca1f616058ac89569a77488cb8d24561dcc6eb7e386d7e8ad5dbdf25f36b"
+  },
+  {
+    "path": "src/services/importLog.ts",
+    "sha256": "01e7d2cd6ba3f7ae7cec973a5aef7179ada89ee819606a6c08f90caa00827236"
+  },
+  {
+    "path": "src/services/importPipelineQueue.ts",
+    "sha256": "e4e7241c8107f7a1fdcbf324e9b3523a24e49de3d3f407a498df79d9c1bc48bc"
+  },
+  {
+    "path": "src/services/importProcessingStages.ts",
+    "sha256": "fcbcd9d5cfbe9d10dd0c4af5f418082cafbf5b9b251d7c656d4b92163a961b50"
+  },
+  {
+    "path": "src/services/jwt.ts",
+    "sha256": "ec4c6c7ba7c8a52be859621c5a66e532b5909b052f1348c0719b909d630d17b6"
+  },
+  {
+    "path": "src/services/mailpilotGmail.ts",
+    "sha256": "ee04c3a9e27f304eb88854558540670ffd7339f1872ffbf623f3b9acda52b855"
+  },
+  {
+    "path": "src/services/mailpilotNotification.ts",
+    "sha256": "6aa90a31b103b5e3e4aff2c4108139935a2d5dfe9fa16c94379168fc471165ac"
+  },
+  {
+    "path": "src/services/mailpilotProvisioning.ts",
+    "sha256": "28b222165928d8d071755305838b4f29e1b8fa8dd933a0779033597527017b18"
+  },
+  {
+    "path": "src/services/mailpilotPubsubDelivery.ts",
+    "sha256": "6c131242ae6dd7321ca84666f49dcd3bfa2ef29a0273eb56e1a4eb7f32ba95de"
+  },
+  {
+    "path": "src/services/mailpilotSafetyPersistence.ts",
+    "sha256": "3735120558cf8908490503a2875b62fe8b20bad072348fea8b870ce655d824ee"
+  },
+  {
+    "path": "src/services/microsoftSignIn.ts",
+    "sha256": "d8563ce49ae7d2c97bdbcc28a7465b557ce2ac603c0d18cc9be6edccc7837dd6"
+  },
+  {
+    "path": "src/services/monitorAggregation.ts",
+    "sha256": "b8794285734be4dbd41c5133633105aee531741d09740a1622e0540840d77dd1"
+  },
+  {
+    "path": "src/services/monitoringDashboard.ts",
+    "sha256": "8b05c9f5aa90968262e1f8effdafe7dca838a87faae63d26427a7d1a331b18e1"
+  },
+  {
+    "path": "src/services/mydesk.ts",
+    "sha256": "6c7a851499cc81920c84cb01798536e160afafd0086ee5ad8e29b6b5d5954569"
+  },
+  {
+    "path": "src/services/mydeskAttachments.ts",
+    "sha256": "bf2d2ae743860a701b3110c9fab7474767bfd474f5b100b25705a8e873ece713"
+  },
+  {
+    "path": "src/services/mydeskCleanup.ts",
+    "sha256": "19d35ccb5b4796ce92510d1827f9ec459c4d58ab975bc382f323c21eba6003bf"
+  },
+  {
+    "path": "src/services/mydeskFiles.ts",
+    "sha256": "994d78565157b9dc11df79accabeb57a22517f21942da6b49fdee5357801d24a"
+  },
+  {
+    "path": "src/services/mydeskGrade.ts",
+    "sha256": "1f8023ffc6b7a277180980a9d1a5d8941de9f7658c06f6bd616ff859ca93cb30"
+  },
+  {
+    "path": "src/services/mydeskImportCleanup.ts",
+    "sha256": "66e7dea3a1ecd27718347b94af21d81eb0f8163ec149f062e19547ce3c3ff94e"
+  },
+  {
+    "path": "src/services/mydeskImportPipeline.ts",
+    "sha256": "1692b721b7eb72ce6d9db3384a4a16dd9b043b88018c85e4887a27d54e2ef67a"
+  },
+  {
+    "path": "src/services/mydeskImportProcessing.ts",
+    "sha256": "6bdcebff41dc8f9c699bec4d392db1645a6c6529ce027a8eaab4d3f8fbd75cef"
+  },
+  {
+    "path": "src/services/mydeskImportProgress.ts",
+    "sha256": "876aa63892a0b433f33b63ca8b0ca967356d9f50e166a711e47ef00f5647614e"
+  },
+  {
+    "path": "src/services/mydeskImportWorker.ts",
+    "sha256": "d9454f12021ce04b779b42891abb8712af5dbae0d9cd9bfc54fd92d4fe5ed38e"
+  },
+  {
+    "path": "src/services/mydeskImports.ts",
+    "sha256": "163a5293ce6a88bffc426fa9814804652cf52b1110766bd6b763182f46603900"
+  },
+  {
+    "path": "src/services/mydeskImportsValidation.ts",
+    "sha256": "ea6c763471d39934381100b406a0616109989b0be10cc9f23c01c417375ab6ad"
+  },
+  {
+    "path": "src/services/mydeskSeating.ts",
+    "sha256": "40e1a398bc5ae77f00c21e63ef33db31deb83ec9d743bcec34aa6fe139650c7a"
+  },
+  {
+    "path": "src/services/mydeskSeatingValidation.ts",
+    "sha256": "6740ba7bf5128febd5a707919d29d34e9f70390f117ff81f20a0c13c98cf0488"
+  },
+  {
+    "path": "src/services/mydeskValidation.ts",
+    "sha256": "57e19f7768a670b44631ff3e624e768ca4b882cba44faac7ac66e783caeee1c3"
+  },
+  {
+    "path": "src/services/oneRosterCsv.ts",
+    "sha256": "4df446e8cce340b03ae6f7eda30423f014cbe45dcf55158d7c18aee4175a150c"
+  },
+  {
+    "path": "src/services/passpilotAccess.ts",
+    "sha256": "89e026a606f65ce4be644c2bf28c2a256b2adf5c71ddc1dd6641a1d416b00ab7"
+  },
+  {
+    "path": "src/services/passpilotAppointments.ts",
+    "sha256": "7f3e8326138828333e60a1e4775758073c8ba01a69c154eb2d75f3f4d67c17b6"
+  },
+  {
+    "path": "src/services/passpilotAppointmentsLifecycle.ts",
+    "sha256": "1509e80cb5c94a6aff4614006552f2d9411415bf2bbc6cf7afcb676e16b71868"
+  },
+  {
+    "path": "src/services/passpilotAppointmentsValidation.ts",
+    "sha256": "bc8afb7c762322762be7f97b07dd5acf3644116d115fcdcb5f1470ff2d9478ac"
+  },
+  {
+    "path": "src/services/passpilotClasses.ts",
+    "sha256": "b189aa22c99020964dd5522839db2e133e6f9f34958e7cb9a84d60cd4e4acb3c"
+  },
+  {
+    "path": "src/services/passpilotKioskAssignments.ts",
+    "sha256": "aefe496cdb515d85726d86480cb93204157f31352f5f7728f613efb7f9e000ec"
+  },
+  {
+    "path": "src/services/passpilotKioskAuth.ts",
+    "sha256": "54fec3fff5272af3a31a2e558d750a3ed663815530d2937ba5571144f3289aa6"
+  },
+  {
+    "path": "src/services/passpilotKioskData.ts",
+    "sha256": "f9532bd652cecbad187887e87e4ea2e71dd58023efdbf4e2a9268dea62b6014c"
+  },
+  {
+    "path": "src/services/passpilotKioskHealth.ts",
+    "sha256": "8af07ac74d093e8b772785abfab099531c5fd91ddcd5a25b92abc98bb1a1f206"
+  },
+  {
+    "path": "src/services/passpilotKioskMetrics.ts",
+    "sha256": "28ce9eea6a8885168697a65bb93f02840d3eee47be4c6cb3f76340e39cb817f0"
+  },
+  {
+    "path": "src/services/passpilotKioskSchedule.ts",
+    "sha256": "2b2a66d907dbb2de9a5ce747107365ff910bb577481d7cb4b1433cbd2908f4f8"
+  },
+  {
+    "path": "src/services/passpilotReports.ts",
+    "sha256": "7e763b143d3f76681be4a76ffbfbac665db1cd90c07b7e55a6500d0fe2b27286"
+  },
+  {
+    "path": "src/services/passpilotReportsValidation.ts",
+    "sha256": "316dd8747b83f3527894981bf61219d288a55f776098aa6913f6df3f09726c1b"
+  },
+  {
+    "path": "src/services/passpilotRules.ts",
+    "sha256": "f7930e53278833b799d4e344e19503801ac2b36d5e579329318de05ff5881689"
+  },
+  {
+    "path": "src/services/passpilotRulesAdmin.ts",
+    "sha256": "a4063c5bcc4db1a5d70d05dfaebb254d3690107faad6c186d77faa431ba269b2"
+  },
+  {
+    "path": "src/services/passpilotSchoolYear.ts",
+    "sha256": "f933138d6d3db59f78aca5254d4da214df307d0a8ecd2e08a497be422ca02344"
+  },
+  {
+    "path": "src/services/privateImportAiResponse.ts",
+    "sha256": "219550a53ba8fbc5fa76fe9e989a136b6447c72d7653fb9a12aae786e2e46fda"
+  },
+  {
+    "path": "src/services/privateNativeProcessing.ts",
+    "sha256": "6b89ecb8223907040ba943a8f1fc025fe86b2c0cb1d4252ada47a7de0f72166f"
+  },
+  {
+    "path": "src/services/privatePdfProcessing.ts",
+    "sha256": "5b5a5ee01272be262e17afc747992a4d9e88807474a1a216731ba675c63c25fb"
+  },
+  {
+    "path": "src/services/productEntitlement.ts",
+    "sha256": "4b1432daa42a27dbf6c923347bd22afb3e70c54bf512770925026dd84883fbeb"
+  },
+  {
+    "path": "src/services/restrictionResourcePreview.ts",
+    "sha256": "2f6b8aacaddaba07947900cb6ffb8e27839c6ef3c1c65f4e89a265e88955b37c"
+  },
+  {
+    "path": "src/services/restrictionResourceResolver.ts",
+    "sha256": "b99cb4fa9c9b4b386c2d55d6560243ba8b01183a890a6c58cd37a881723a3a2a"
+  },
+  {
+    "path": "src/services/restrictionResources.ts",
+    "sha256": "78aa4d4f8555d75299d06d7a060700f5beffce0a9b93b3c13211d6bde6df4fc2"
+  },
+  {
+    "path": "src/services/rosterIntegrationJobs.ts",
+    "sha256": "e886061c1cf6bdce459f11bebbfe4ad02c5b913a22e1e32d32f69a5fe7a3f02c"
+  },
+  {
+    "path": "src/services/rosterIntegrationModel.ts",
+    "sha256": "2ee3537281acf6e1c6eb10258bd08758a8654ca0ac3a2078846d43f8d9a45d13"
+  },
+  {
+    "path": "src/services/rosterIntegrationPlanner.ts",
+    "sha256": "a9bb170213321fed87d2030d60b94eaa323ac34ebf9444759299ec5d547bce46"
+  },
+  {
+    "path": "src/services/rosterIntegrationReview.ts",
+    "sha256": "9efcacfcd686851c31037f1bddd540c67cf2597b06480dc1607559c16eb5841d"
+  },
+  {
+    "path": "src/services/rosterIntegrationStore.ts",
+    "sha256": "20b6c931705cd983290e1991d4d09e242e541b5cdd97e19be0da351bb9aa8e25"
+  },
+  {
+    "path": "src/services/rosterManualOwnership.ts",
+    "sha256": "1dd2da7799c602f39a8f09d5b7c3d3185d5aaf6d9ec03fee73bac41f9e242d8e"
+  },
+  {
+    "path": "src/services/runtimeMetadata.ts",
+    "sha256": "323dad203dd329629e894b6a0c7b1ef2a88965ebe99071d4c3f9d24446caf351"
+  },
+  {
+    "path": "src/services/runtimePerformanceMetrics.ts",
+    "sha256": "d99fcd9d9c78a64ec0a11f99c586fd7ae9cea99cc69d548b7ea51f758b158e73"
+  },
+  {
+    "path": "src/services/runtimeTelemetry.ts",
+    "sha256": "15ef5473be95ab7aa54197b4697c340e103d2fe370dc85fa653a325dd04cb342"
+  },
+  {
+    "path": "src/services/safetyCenter.ts",
+    "sha256": "a6a5b75b1c551cc5e3abf422b54b281e39edb650d4efdfa2852bba8902a738b0"
+  },
+  {
+    "path": "src/services/safetyEmailTransport.ts",
+    "sha256": "10b2c7b2dca86d9a39fc230331ba03cda149688abbe182fe5735e18203e47a40"
+  },
+  {
+    "path": "src/services/safetyNotificationModel.ts",
+    "sha256": "c91cd1c7f6199306920a1efe172bfe59a8885ad238cd05cf76b0a1188e5c9929"
+  },
+  {
+    "path": "src/services/safetyNotifications.ts",
+    "sha256": "607b590c94fa62291ff3db337a7b99a73e9acc343eeb248728e1d217c14742dd"
+  },
+  {
+    "path": "src/services/safetyUrl.ts",
+    "sha256": "c479bd5ea7981f3bd291671201cebadf4364094b84e61e9652feab62530a504e"
+  },
+  {
+    "path": "src/services/scheduler.ts",
+    "sha256": "f3bd6abad91e02012bcdefcc3596117630a1f420f701a4b04b3915611031937a"
+  },
+  {
+    "path": "src/services/schedulerDb.ts",
+    "sha256": "bcbed37c78a1cef4d6acca3137dbc8a2b7271af7f9dded40a627b9b46693b1dc"
+  },
+  {
+    "path": "src/services/schoolAuthorization.ts",
+    "sha256": "485d923b97b8fd19739fa90e73b56800ce832bcd09845b53219d6c678217b0e4"
+  },
+  {
+    "path": "src/services/schoolDiscipline.ts",
+    "sha256": "171b369f5c5c47054c01b8faa4ad07b28a49f000f9a4dd3bb32fdf5b2e1e949e"
+  },
+  {
+    "path": "src/services/schoolDisciplineAccess.ts",
+    "sha256": "b92b66c542425fed84e2106fd9a6544168fa7e0c35077d6ca6b85e9476494676"
+  },
+  {
+    "path": "src/services/schoolDisciplineCleanup.ts",
+    "sha256": "47111f788aa420c92578500980c83364228a465b7994a5937f4f22c35c1f19b8"
+  },
+  {
+    "path": "src/services/schoolDisciplineValidation.ts",
+    "sha256": "8473ec94f536619581970c7d41add67d1b62519195f90e6296f25be289e696ed"
+  },
+  {
+    "path": "src/services/schoolDisciplineWorkspace.ts",
+    "sha256": "d6fcd5cfeec1bf5d3e735e4885bcb74bba6c6ff4e567572f6dba9958b4d4b9f2"
+  },
+  {
+    "path": "src/services/schoolHours.ts",
+    "sha256": "e1a6af72e55c7ab8aea0c5f7e3c53e16d3898aec25861034b1cb1763691fd786"
+  },
+  {
+    "path": "src/services/schoolIdentity.ts",
+    "sha256": "d98f99fdc0ea81071526770541c849dbd6e7e1fa79cb6225f516cea7225d7d27"
+  },
+  {
+    "path": "src/services/schoolIdentityModel.ts",
+    "sha256": "ea857a1c84d92268367398f92c118e6a4151ab060b8ecc0a9dc3fd9f3b4562ef"
+  },
+  {
+    "path": "src/services/securityMonitor.ts",
+    "sha256": "aadfd5cc90b05f57ba124ce21c7926e6aa8fb4b91ba867148badc910af3c4c2c"
+  },
+  {
+    "path": "src/services/sentry.ts",
+    "sha256": "9efdb718270e44550041292fefea8c83cf14d536f59b1a6a00ad370df1acf810"
+  },
+  {
+    "path": "src/services/serviceShutdown.ts",
+    "sha256": "f48067ec571a0a50f364d29790c09b7959a26a5351cfe56ad15665913727ddbb"
+  },
+  {
+    "path": "src/services/sharedStudentRecords.ts",
+    "sha256": "ac940f25aa596751391ee9ba8de7e185f9a4355b85c50ec45c0c1b38d9b9230c"
+  },
+  {
+    "path": "src/services/soc2Dashboard.ts",
+    "sha256": "0b842f076bdd27e77c23fd1ddae76729b51803070f7a6012413886cbf4ac27dd"
+  },
+  {
+    "path": "src/services/staffAssignmentLifecycle.ts",
+    "sha256": "a14894163c0e27bc1ec3917c79e57b6574e5d3116d09b6c585af2efc00a962b8"
+  },
+  {
+    "path": "src/services/staffAssignmentLifecycleLock.ts",
+    "sha256": "0635dd01950e6a443a86c2d965abc2a285c9d8d63199cb94d9b01ba0fa9888b7"
+  },
+  {
+    "path": "src/services/staffIdentity.ts",
+    "sha256": "8e989285d3f73555d10dca63eceb5b628f320b0818e1fb96ba6afb06ec2f913f"
+  },
+  {
+    "path": "src/services/staffIdentityMonitoring.ts",
+    "sha256": "de04cdb98e696a077a9a4236017401eadead62d8a91f7e7e539218fd5c5979ff"
+  },
+  {
+    "path": "src/services/staffLifecycleGuardSignal.ts",
+    "sha256": "d0e6d3b7e914a85eec0af5769baba2d637bf22a4987ba27109eb105a2f86f0ec"
+  },
+  {
+    "path": "src/services/storage.ts",
+    "sha256": "37a302fc43e330584679684bd645551a74fdc64d680ab52c1d16973b133c3f80"
+  },
+  {
+    "path": "src/services/studentEmailPolicy.ts",
+    "sha256": "09691e3fe941625624ec369ae27a88c02a5c607b3c2c9d25fa948c5fea722f65"
+  },
+  {
+    "path": "src/services/studentInformation.ts",
+    "sha256": "08eb5ad6587783a19053dcf48e81660fb6e85c515f669db88922d56977754ca3"
+  },
+  {
+    "path": "src/services/studentInformationEvaluation.ts",
+    "sha256": "4159b321332b209cd7329319cde46d63b8f700c822c9741356f9ca1e014a090f"
+  },
+  {
+    "path": "src/services/studentInformationImports.ts",
+    "sha256": "f8c8262f88cb334c86b47fcb1d1cf6631f96cebdf66d90fca17bb5c231ec7eb2"
+  },
+  {
+    "path": "src/services/studentInformationModel.ts",
+    "sha256": "56e193a07573758c8a33310eadffeb0694d027e713eb6d2c50937b9c65649cae"
+  },
+  {
+    "path": "src/services/studentInformationOffice.ts",
+    "sha256": "5c6d7bdf72877540911655b77cb7a4fc3dd2e62d2b4ebf3b2bcc78df5fa2018e"
+  },
+  {
+    "path": "src/services/studentInformationProcessing.ts",
+    "sha256": "a3a5b12a37234d205646dfc46eeb4337b3580a5dec179971d46f3e8e837ea227"
+  },
+  {
+    "path": "src/services/studentInformationValidation.ts",
+    "sha256": "a4a4d95ec6133a9cd378fd62dc509c319ee5a208aa6ef9899710c121a4c6bf09"
+  },
+  {
+    "path": "src/services/studentInformationWorker.ts",
+    "sha256": "ee6d2d25cb2da4b6573f17d85514755dc4ef589e08fa136f501d48fc8ae68ed6"
+  },
+  {
+    "path": "src/services/teachingResourceLibrary.ts",
+    "sha256": "c01dad7222bbf084f23ef12d314dd1efa596700457306351200a518cdf7e4da9"
+  },
+  {
+    "path": "src/services/usageCapacityDiagnostics.ts",
+    "sha256": "ef503c5d7e1bf593f5b06b4ed6d3e96bafb67d41ecc95e1c81c38e18e4adb550"
+  },
+  {
+    "path": "src/services/webSession.ts",
+    "sha256": "e387b2fa1b0af4503c18868ab0d8897f8468383e9e495803afe159b260d585fe"
+  },
+  {
+    "path": "src/services/workspaceAudit.ts",
+    "sha256": "6e8bfd0a69d80d3dd6eee28d3b50d28bd6e260e1388a578ac3e95bd2f3ee1926"
+  },
+  {
+    "path": "src/shared/mydeskSeatingGeometry.ts",
+    "sha256": "fbd8637e781d8c16f9ef4b9d013e8da5f30be41ac0e9acb5413702921f708215"
+  },
+  {
+    "path": "src/types/express.d.ts",
+    "sha256": "7f5cf0a5c1d2f8449c4017f89c9d4e6ce2761b13447e506bc45c92277239f776"
+  },
+  {
+    "path": "src/util/apiRateLimitIdentity.ts",
+    "sha256": "f891bfd623dda942736924586ba3853605d5cfa2ae9764938f89d7ba69d51ee3"
+  },
+  {
+    "path": "src/util/apiRateLimitRoutes.ts",
+    "sha256": "7f111b3c30bbbbadc0a3ebabc231c5a0e594c7f5181c45d9e031bbdb644c04d4"
+  },
+  {
+    "path": "src/util/classpilotEventCursor.ts",
+    "sha256": "fb132029e5b0d7e84bbc6a7d820efff372b8a0385d51348de24b74fe1dbe49fe"
+  },
+  {
+    "path": "src/util/classpilotRetention.ts",
+    "sha256": "7928dcfc96f1a8a6e8f74eadc2f863b73698396717f957c9ce6cc8a172f7233c"
+  },
+  {
+    "path": "src/util/classpilotStudentSignInMethod.ts",
+    "sha256": "f3f7d51843cdd6b963fc71d8d73a4b3cd953233a349d6c206fdc6d924fc86127"
+  },
+  {
+    "path": "src/util/concurrency.ts",
+    "sha256": "6139030c258ad8ae8229351d762febde168b3cf6a9645412cf2297e17fc8d23b"
+  },
+  {
+    "path": "src/util/dailyUsageRollup.ts",
+    "sha256": "2a7842b534b72f6d72cacf51eebba137f14356c9b6611ccf3fdd3c49276e7897"
+  },
+  {
+    "path": "src/util/databaseError.ts",
+    "sha256": "b618e420395f6cead6a942527c6131dbd4a0764de13c78ce23f36a0c8b41c0e3"
+  },
+  {
+    "path": "src/util/googleOAuthTokenExchange.ts",
+    "sha256": "5ec931488b8a81cec181508e1f3fbd1d6a9b105189b2726c88d176af70f33476"
+  },
+  {
+    "path": "src/util/gopilotParentContainment.ts",
+    "sha256": "ff9421c2eacca079ed65e922b11621821aec318de066b71f5f57fda2a47e344e"
+  },
+  {
+    "path": "src/util/noStorePath.ts",
+    "sha256": "b938434d9b83192f788de8f34406ca44255d3aefbfaa5d179b0d1064aecc1102"
+  },
+  {
+    "path": "src/util/operationalErrors.ts",
+    "sha256": "e0c55f47b1f402082c8a01f9d0fe2df0ea4e7a667cbf782c82374ba3918a9fee"
+  },
+  {
+    "path": "src/util/password.ts",
+    "sha256": "54702cdc00f5f08088026b635a9f844052e338e58cc410e8b7bdf264a600fa81"
+  },
+  {
+    "path": "src/util/privateMigrationReport.ts",
+    "sha256": "abb127edb35990f6145b24c0d135e64c5a6e4d1cb4412b13ad137b821128edbb"
+  },
+  {
+    "path": "src/util/publicRegistrationRetired.ts",
+    "sha256": "74b6efbdfc1f7870f518f2295a92d8736261c188640cd6edce42ec48e2a876c9"
+  },
+  {
+    "path": "src/util/redisReadyWaiter.ts",
+    "sha256": "84b3fe608b2d24848f9cd8b6c89db271a63dda3077c8897676741477070d5718"
+  },
+  {
+    "path": "src/util/safeCompare.ts",
+    "sha256": "9a29326f748aecb5de7efd6d0ce3f4866581c73a43f70d95cd0c413c29b602fa"
+  },
+  {
+    "path": "src/util/safeLogging.ts",
+    "sha256": "428d75b5f4c8761ed2f3693b0d9f2216c93d86dd8fd2a370d518c256186d8f30"
+  },
+  {
+    "path": "src/util/safeStudent.ts",
+    "sha256": "d7ae4f8033f72cf4e243a92b6c3d6da1688cb4b8a61442f8f87339d823ea7faa"
+  },
+  {
+    "path": "src/util/safeUser.ts",
+    "sha256": "00c7bd65673987da1ca713cbc62d5cea070c793a5238cb8006f862658e190397"
+  },
+  {
+    "path": "src/util/sanitizeSchool.ts",
+    "sha256": "c9697ffae2055122d9d0c050cf1f013c86e0ae1335c28b0166ac2dc450eaedda"
+  },
+  {
+    "path": "src/util/schedulerTimestamp.ts",
+    "sha256": "ea91f69cd66bb6506e270be26671191b63c492e02873ccd9b7a7409ea6335fbd"
+  },
+  {
+    "path": "src/util/schoolTime.ts",
+    "sha256": "c56793c5e3870a0f78ee35d7bf3de780f99fac4210128ab938c713e40b2bec5c"
+  },
+  {
+    "path": "src/util/schoolUpdate.ts",
+    "sha256": "d22fb224a216fe85efcf720025551539920fa827ced9afe453a794a203d76a97"
+  },
+  {
+    "path": "src/util/singleFlight.ts",
+    "sha256": "8cf7ab62c0d6fed8baec5e9d54fb23f02362f08d8346956b3ca16efd2c8db850"
+  },
+  {
+    "path": "src/util/studentCode.ts",
+    "sha256": "23c55479cc12b7ba3858f323439dc1f18c333543b3a93b7ce5fb1bb221cabc17"
+  },
+  {
+    "path": "src/util/transientGoogleError.ts",
+    "sha256": "095305e67cf4104c6f83cbcc70c484b8d963f71c0935c5b5a4288170a1efdc45"
+  },
+  {
+    "path": "src/worker.ts",
+    "sha256": "20806804e77d404764c29b13dc4434f62dcbc43d38104325d963240e7a8e72ac"
+  },
+  {
+    "path": "tests/ai-chat-flight-path-scope.test.ts",
+    "sha256": "5ae83a51bf02f5955e2d5edca5a3a67a8989e08f004db9332295b201afaeb4d0"
+  },
+  {
+    "path": "tests/ai-chat-tools.test.ts",
+    "sha256": "4f709af2c7aa927a012c1b4d656bc40bc2bcf196ed17816bbe51019423b665dc"
+  },
+  {
+    "path": "tests/ai-classification.test.ts",
+    "sha256": "317d3f389465743fc93c50cb757c89042960d0c54f24193085c41fdc567e67e2"
+  },
+  {
+    "path": "tests/ai-conversation-store.test.ts",
+    "sha256": "ff4bf046fcf0218bfba7a2d49d911148545b23737747bbb616af261c160431dc"
+  },
+  {
+    "path": "tests/api-pool-readiness.integration.test.ts",
+    "sha256": "a22603d43438ae246c89085a33ff7c2dd055aa793836020e6a52b2d7b033095d"
+  },
+  {
+    "path": "tests/api-pool-readiness.test.ts",
+    "sha256": "3c37d33aaea37ff46bd28f48fcf9149f86cb9f532281dd7262bbfade6a41fe27"
+  },
+  {
+    "path": "tests/api-rate-limiter-identity.test.ts",
+    "sha256": "be4183041bdc7be7f96a7da95a1c8a03b6703fe82d7a34b8c978847065354af0"
+  },
+  {
+    "path": "tests/audit-writes.test.ts",
+    "sha256": "507c71c22af64901064f2e8196f5c0e0218983fa11b0e88b207903c420309906"
+  },
+  {
+    "path": "tests/auth-code-exchange.test.ts",
+    "sha256": "554c8f0b7fa6ea6fbe05b631461055c73d7e54886b2cd1eb762c6c5ccf64e7af"
+  },
+  {
+    "path": "tests/auth-membership-lifecycle.test.ts",
+    "sha256": "444f8e725adc58cf4a8efacfdd1f717db5f9f1e39855ba5973f839269498c9bb"
+  },
+  {
+    "path": "tests/authenticate-operational-failure.test.ts",
+    "sha256": "662dbd2ecfc439b43f4d38c763c3cb1a783d3854aedce4e1a74e7775a87efad7"
+  },
+  {
+    "path": "tests/aws-alb-access-log-summary.test.ts",
+    "sha256": "e06917fbe2af0459813617e3181314073bdd6b48c71e17156604673d3f3e8436"
+  },
+  {
+    "path": "tests/aws-immutable-release-image.test.ts",
+    "sha256": "470918736da4b41e0979c3297992634cfedf0de6d7fd036d36b413e119b3ff96"
+  },
+  {
+    "path": "tests/aws-rollout-automation.test.ps1",
+    "sha256": "f61178544f4b44e84db3f42db849c06454bbadc133c5bab9203953aede8670b9"
+  },
+  {
+    "path": "tests/aws-rollout-capacity-acceptance.test.ps1",
+    "sha256": "727c5279570782abec523fe096e47c2129819b87f94334a35dcd00f21aa7a108"
+  },
+  {
+    "path": "tests/aws-rollout-certification-chain.test.ps1",
+    "sha256": "4b97a603277b271b211b373090276055b6d047d507ba028b20e3cf76208cd53d"
+  },
+  {
+    "path": "tests/aws-rollout-certification-database-insights-lease.test.ps1",
+    "sha256": "4933cfd59caeb1efeac3c2ec2f7c87874285b60a998257b0931722262c4b0d0e"
+  },
+  {
+    "path": "tests/aws-rollout-certification-pi-finalizer.test.ps1",
+    "sha256": "6a74616236248c70db8b614dc95a7c20c47d9beeadf1dc821e716e69b9e40b48"
+  },
+  {
+    "path": "tests/aws-rollout-certification-preflight.test.ps1",
+    "sha256": "343bc66ca8c2aa1a146970283204f4a9b2e1a421f4bd3c07d628bfb3b69cdcb3"
+  },
+  {
+    "path": "tests/aws-rollout-certification-query-identity.test.ps1",
+    "sha256": "ff86b9010f8eb1c4c0cf43d4346de9fcff5e83b6748f0cc8abba63d925d51d80"
+  },
+  {
+    "path": "tests/aws-rollout-classification.test.ps1",
+    "sha256": "bc89d6b00f23989cfedc9e024c7ffc5255172174fe464968fc0a19a7d996fa92"
+  },
+  {
+    "path": "tests/aws-rollout-diagnostic-preparation.test.ps1",
+    "sha256": "490c6a0c586807e9a6094c7c8cf9865ecde05da8a3e0d98a950777c9c8910acf"
+  },
+  {
+    "path": "tests/aws-rollout-diagnostic.test.ps1",
+    "sha256": "91c635a8b3e7ab6ef27612a16351dee6883e569735e7d6e70584686555ae64c6"
+  },
+  {
+    "path": "tests/aws-rollout-fixture-preparation-binding.test.ps1",
+    "sha256": "ccae785e2c41d82ce6a2aa0d2f8ecd130964b9f41641884da16a035eea0944cb"
+  },
+  {
+    "path": "tests/aws-rollout-plan-validator.test.ps1",
+    "sha256": "b32f58b76206a78982fad5588ae24daff004f698dcfa5c46dc280434ff9136b1"
+  },
+  {
+    "path": "tests/aws-rollout-process-lifecycle.test.ps1",
+    "sha256": "d655f49e698847ef88b11eb1eba7ce3cba65c570d37edb4510f5a660ad733957"
+  },
+  {
+    "path": "tests/aws-rollout-rds-capacity-gates.test.ps1",
+    "sha256": "383fe9277dc9026cecc619f96d964a1040a5ae62a070a810d6423e9056201ec5"
+  },
+  {
+    "path": "tests/cache-invalidation-bus.test.ts",
+    "sha256": "23d290ba9ec072d2bdb41e14a1c8363c4de9d8543be86539af33e4d948052f99"
+  },
+  {
+    "path": "tests/capacity-acceptance-tooling-boundary.test.ps1",
+    "sha256": "e55c8fb51082f1bf793d147ababda27893148db2e63920914bfe97c1ab95bdbd"
+  },
+  {
+    "path": "tests/chat-sse-latency.test.ts",
+    "sha256": "0e505432f5b91a76d8f20ef98ab3d7e1cb7e8eb3ae69ce7d97edd9cc81c5486a"
+  },
+  {
+    "path": "tests/classpilot-2-7-1-command-frame.test.ts",
+    "sha256": "7067165c8a4e1e7ccf0dee7e8beca4d5b8c6ae2a2d759a4b63e43c5e481c3447"
+  },
+  {
+    "path": "tests/classpilot-2-7-1-control-frame.test.ts",
+    "sha256": "6abf250ad3ab4ff74be802ec2070b907b892715790b690e0299a58b506d8467e"
+  },
+  {
+    "path": "tests/classpilot-ack-binding.test.ts",
+    "sha256": "b011b2804e05946391d62ebc9f563b35ef738691ba85738798d6942850faa0a9"
+  },
+  {
+    "path": "tests/classpilot-activity-attribution.test.ts",
+    "sha256": "7e3e4d88986cd2f5030f2b370cf00308a86a370ca8d3c12c04945ac5cd5a52e3"
+  },
+  {
+    "path": "tests/classpilot-activity-import-isolation.test.ts",
+    "sha256": "ace6f51367db334393035eb37005589c2e881b1fe460ebcd3e05ddcfa1d38044"
+  },
+  {
+    "path": "tests/classpilot-admin-analytics.test.ts",
+    "sha256": "41d61c52b18e9f69f4393e5fd3257d3d3ff7da367fbde096f1c9cacc4fb60ddd"
+  },
+  {
+    "path": "tests/classpilot-admin-classes.test.ts",
+    "sha256": "b4d40ab609da487824499c3eb521c9384917defe70695c1c9de729f5492c8fc2"
+  },
+  {
+    "path": "tests/classpilot-ai-decision-public.test.ts",
+    "sha256": "5fa394cbc8358696dfe42f6deac5a4c84e04447ab64f1d7da68bc6634cd1996c"
+  },
+  {
+    "path": "tests/classpilot-ai-decision-route-privacy.test.ts",
+    "sha256": "e5f5236f185ab58d8377c9885455613156937f3f062ae99fa8820f60020b0e56"
+  },
+  {
+    "path": "tests/classpilot-arrival-capacity.test.ts",
+    "sha256": "eba23295511449f1447d7a72945abbb08428f84ae275c1171c7aefa7fa69a322"
+  },
+  {
+    "path": "tests/classpilot-bounded-state.test.ts",
+    "sha256": "79e1e6e252fe40810701b16658e7ab272806084bfd21999d4baa3482302d767f"
+  },
+  {
+    "path": "tests/classpilot-browser-safety-severity.test.ts",
+    "sha256": "96776bbfc745dd53864cab5bbac95124b221d447d5e4cef05cb1ffb7d7523428"
+  },
+  {
+    "path": "tests/classpilot-browsing-history.integration.test.ts",
+    "sha256": "02053c43d8c970b3377260d1afe330623f4fd4827c57a416ede3d877a06881c7"
+  },
+  {
+    "path": "tests/classpilot-browsing-history.test.ts",
+    "sha256": "d159febda2498c38667208038cf0594c902ef093fb581242a7ab7da60058945a"
+  },
+  {
+    "path": "tests/classpilot-capability-rollouts-boot-assertion.test.ts",
+    "sha256": "cef421d4d744f764f38f5b29edb137048b8b6e2ec3560688e11baf12833d4eed"
+  },
+  {
+    "path": "tests/classpilot-chat-authority-contract.test.ts",
+    "sha256": "0d614d5875c32c143d731638b830207ee9fe37bd493e161872ab9b0bc64bfc35"
+  },
+  {
+    "path": "tests/classpilot-chat-channel-control.integration.test.ts",
+    "sha256": "7b2fb65c1d099629ab2fc1aa210451e696c0c0029f081444ddf797a22a5237b2"
+  },
+  {
+    "path": "tests/classpilot-chat-channel-control.test.ts",
+    "sha256": "e0120bd88aa254230de659c4948c98f305625b8d9e1840486d20088f6f302c7e"
+  },
+  {
+    "path": "tests/classpilot-chat-delivery.test.ts",
+    "sha256": "826045f8f75a2f9c058e872f65adf5caed4cd92d2b529fa0d26fa30f53aee725"
+  },
+  {
+    "path": "tests/classpilot-chat-oversight.integration.test.ts",
+    "sha256": "15bf5ceccad12ae3c42ebe6a84ba614e9a8c23e854d3b95aabcb9fc994c70eaf"
+  },
+  {
+    "path": "tests/classpilot-chat-oversight.test.ts",
+    "sha256": "614a3d155c543ea94f05d2b360e38245dd71550efac47b2998b518586eff794f"
+  },
+  {
+    "path": "tests/classpilot-chat-safety.test.ts",
+    "sha256": "25afef0e3a75be7e637ef9e6566656dcec5703b6ac7b94c6e6f99922c36faa4a"
+  },
+  {
+    "path": "tests/classpilot-chat-seen-state.test.ts",
+    "sha256": "2c17850c2a9c322d4e64e1688094333c803cbdbdd678efc974d5ffeeca60f475"
+  },
+  {
+    "path": "tests/classpilot-class-tools.integration.test.ts",
+    "sha256": "d0341c4b48bd5cfdec7c04702ba3a5d08fe98789ec6071048cbc969305703f0d"
+  },
+  {
+    "path": "tests/classpilot-classroom-state.test.ts",
+    "sha256": "27bda93bb7b4c0a58510eab331a9280ebd3df3885c93b879853fb2d31086c752"
+  },
+  {
+    "path": "tests/classpilot-co-teacher-routes.test.ts",
+    "sha256": "332ea68e3f9cd0bbfce0083fcd06bb33baef95a6312c11bad72ee49b38b2f392"
+  },
+  {
+    "path": "tests/classpilot-command-hot-path.test.ts",
+    "sha256": "80b63a14daeffe8a430ea9312e746352ed712b7a413806003ebf661ebbfd5b29"
+  },
+  {
+    "path": "tests/classpilot-command-public.test.ts",
+    "sha256": "209c1f32cedf51a6047a10770c2d1ab537f9996c463c2dbf43fbdbd892139184"
+  },
+  {
+    "path": "tests/classpilot-command-validation.test.ts",
+    "sha256": "ee3f2064c5a9c1e5fdd37c509b9231ed38012412559e6f792512a236f40e7d6d"
+  },
+  {
+    "path": "tests/classpilot-content-categories.test.ts",
+    "sha256": "091b8378f5a612fad33e43042356017495ffdb83adc11fbe44b69b2ef2178bcc"
+  },
+  {
+    "path": "tests/classpilot-control-lock-order-contract.test.ts",
+    "sha256": "668ace184c334da785779e1abcd764cce5e4c044231a4717ef7c9e0c8d207dd7"
+  },
+  {
+    "path": "tests/classpilot-control-state-ack-gate.test.ts",
+    "sha256": "6997435841a5acd8ba984eb48bf9ca6f67264ba6c388b973c8b16fb9b3185820"
+  },
+  {
+    "path": "tests/classpilot-control-state-delivery-authority-contract.test.ts",
+    "sha256": "abcb9ce984a871249d85e2b1a8e07c6a7abbecbdf94b383969c720d8f5bf4f46"
+  },
+  {
+    "path": "tests/classpilot-coverage-categories-schema.test.ts",
+    "sha256": "945994ad8e2951b5f496931821d5052007beb8e43ab1af2699988e7d30cba5a9"
+  },
+  {
+    "path": "tests/classpilot-coverage-deletion.integration.test.ts",
+    "sha256": "4ac6da5e6ff533bf277af459b6245812d25212bea3395b73e842506533e35d5c"
+  },
+  {
+    "path": "tests/classpilot-coverage-directory.integration.test.ts",
+    "sha256": "d193fef2a0c122056af1efe5b8ff4d080abad0bb776cdbc737849f790b7df4b5"
+  },
+  {
+    "path": "tests/classpilot-coverage-hydration.test.ts",
+    "sha256": "a9e9f69fce946da87537679749d91045a32c7256f75bc03850e3aca96d14c7ab"
+  },
+  {
+    "path": "tests/classpilot-coverage-summary.test.ts",
+    "sha256": "6c802d90b3c78da07005651a53a03b5524c0efa2f15dc278a963a8e6225837bb"
+  },
+  {
+    "path": "tests/classpilot-coverage.test.ts",
+    "sha256": "10fbcf9ba5d759a75fe51a364059d38f8a05c988dd674ce93e6fe4a383d2960c"
+  },
+  {
+    "path": "tests/classpilot-dashboard-snapshot.test.ts",
+    "sha256": "8717c66619aae4decbeeb88776d088987b711d67026507d669614252a70be815"
+  },
+  {
+    "path": "tests/classpilot-device-upsert.integration.test.ts",
+    "sha256": "1f7b184a4c2bac4a5b3d29e17dc4d4fdbdac836eef36bcc6317dc23ff3c1f0c6"
+  },
+  {
+    "path": "tests/classpilot-entitlement-native.integration.test.ts",
+    "sha256": "93c389c7e118e841684a50923f7b804c46b466c9895074cb73835b420605e70f"
+  },
+  {
+    "path": "tests/classpilot-entitlement.test.ts",
+    "sha256": "bfcaf863fe1dcd6772f45e1f88bd83f06857693e0c2885b587d77a8868ab609d"
+  },
+  {
+    "path": "tests/classpilot-evidence-capture-contract.test.ts",
+    "sha256": "ff99e3999aec2385b45086a8a44bd4ce32b9b2f353942ba2bafb324cc292d3b6"
+  },
+  {
+    "path": "tests/classpilot-evidence-expiry-digest.test.ts",
+    "sha256": "0844fe4a63dd6a62974967b777d1df60d09041163c63133c3a6ea85a5b91636b"
+  },
+  {
+    "path": "tests/classpilot-exact-binding-capability-delivery.test.ts",
+    "sha256": "9fe72f3ac57a3dfd1e14bda2a87ce922627fb364d8d86780d71b1496ee859a1c"
+  },
+  {
+    "path": "tests/classpilot-extension-auth-state-contract.test.ts",
+    "sha256": "81dd58b452b20fc0e78ebb08cec186f409ace6acf4c69263f4315c3c1aac3767"
+  },
+  {
+    "path": "tests/classpilot-fab-lifecycle-contract.test.ts",
+    "sha256": "81afdbe0392c113bb2b6a2b602b41b10d14841eda7154bd627368a8d041492ba"
+  },
+  {
+    "path": "tests/classpilot-fab-migration-contract.test.ts",
+    "sha256": "4da11cd9cef6e07a1fe702bcbe2306ff0bdec725ff8f0b061bce5733944f7052"
+  },
+  {
+    "path": "tests/classpilot-fab-parent-rls.integration.test.ts",
+    "sha256": "d647f1d9e3696856df79e21ea1932d70c141e9ac7fe8bca4e4b3b39b5ed50ede"
+  },
+  {
+    "path": "tests/classpilot-fab-sync-pending.integration.test.ts",
+    "sha256": "b6cc3a97678b0bbd51efa019aedf0bd44d7db4a0255ca02c94c5bb53147ed40c"
+  },
+  {
+    "path": "tests/classpilot-fab-sync-pending.test.ts",
+    "sha256": "b0a0c382ce32ba0cf4f5102018bdec51532ff312c16507c935d6ece237561ee4"
+  },
+  {
+    "path": "tests/classpilot-fab-transaction-threading-contract.test.ts",
+    "sha256": "ee5105bd4a1eb8486becf5c0a4cf6cffffb58bfb91a037848754fa76e7845295"
+  },
+  {
+    "path": "tests/classpilot-fast-preview-contract.test.ts",
+    "sha256": "df6773be9666e07b87d4756f297a508d332d5dd486fb3eb69496c1575770cd6c"
+  },
+  {
+    "path": "tests/classpilot-flight-path-import-contract.test.ts",
+    "sha256": "10b104e72258d00932680659e86bc445acc6e80b6e366222cb2d5e56f2297880"
+  },
+  {
+    "path": "tests/classpilot-focus-optional-status.test.ts",
+    "sha256": "9463874be50b1294cc46b22c47c35e1dd04fd7c393993b9380a232acc69f71a0"
+  },
+  {
+    "path": "tests/classpilot-focus.integration.test.ts",
+    "sha256": "1198752378b6cab992918d9302a2259c25e378c93642ddef29d3ac8e47c03948"
+  },
+  {
+    "path": "tests/classpilot-focus.test.ts",
+    "sha256": "161c17b52bdc8514323ddb606233b63bcfafea006e48ea74b4eb3c86f711850c"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-classification-delivery.test.ts",
+    "sha256": "f8c9852fe5300e24bddd6539a259fc00ec9dadfa875150adb65ceaabb97ea0b0"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-immediate-classification.test.ts",
+    "sha256": "9af1c2a3897f1706dd29b6e4f29e0839f4a5d9566bce1e0a0911d7095b94072a"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-persistence-context.integration.test.ts",
+    "sha256": "947759398fd9d0bae8af1f4f61827600e615da78d09de18c33971e2509323efd"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-presence.test.ts",
+    "sha256": "6a3dfcf23ddcc5b987a9178eafd7124578ed4b4f076aee19873adfda11b6812d"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-recovery-delivery.test.ts",
+    "sha256": "5413b89c75de6bc106004df01d15a9c0b81493a0d7a49892b93a499f66f953dc"
+  },
+  {
+    "path": "tests/classpilot-heartbeat-sso-sanitizer.test.ts",
+    "sha256": "87293f7ac3929dc61f3a8aefbc05a73b3c9141377c639b8e826fdc385e90f39b"
+  },
+  {
+    "path": "tests/classpilot-history-fallback-identity-receipt.test.ts",
+    "sha256": "230d5cdada0badbdc0a008465b0ae6851af4c6edf89351aac65f71bb8fb895d5"
+  },
+  {
+    "path": "tests/classpilot-hot-path-alarms.test.ts",
+    "sha256": "c28246bb104e71f77e15a20d694043b752e2e186ff70e9c7218eb126efe5941e"
+  },
+  {
+    "path": "tests/classpilot-ice-servers.test.ts",
+    "sha256": "a7e9dec6cf01726895694e910aea85de8fe44a04a4dbb6183d0dbcb146855ac7"
+  },
+  {
+    "path": "tests/classpilot-instructional-calendar.test.ts",
+    "sha256": "7178c89cfa278183c644f7417940a12c36ce718d42be1682b1e5b3e180a81747"
+  },
+  {
+    "path": "tests/classpilot-late-signin-contract.test.ts",
+    "sha256": "aea04d921d80cdc66e5ec8240c1717de9a0800304377d0afb51f5086cf989fe4"
+  },
+  {
+    "path": "tests/classpilot-lesson-prerequisite-frame.test.ts",
+    "sha256": "03d532339cb0f1e5323927ae66ed7660d8d8da29c7fbf4767f65c403cd65da1a"
+  },
+  {
+    "path": "tests/classpilot-lesson-prerequisites.integration.test.ts",
+    "sha256": "fba32430aaa63f65c82962ab3654cf32dc3af492af51e05a2d949998edc53cb3"
+  },
+  {
+    "path": "tests/classpilot-lesson-prerequisites.test.ts",
+    "sha256": "1c9d5c8b9eee44220c30a35312366d3792bf18ca79677dcc6badb3a5c5ae57aa"
+  },
+  {
+    "path": "tests/classpilot-lifecycle-pushes.test.ts",
+    "sha256": "4cf8f2c0edc74189ed84c3c0de898e81e88af940c02800c8cf768ab388752a89"
+  },
+  {
+    "path": "tests/classpilot-lifecycle-worker-pool.integration.test.ts",
+    "sha256": "9bcedac18b20f1ea5e7fb86cb85222dddfb29f9fcc44eb432090d9054b82e1e3"
+  },
+  {
+    "path": "tests/classpilot-live-view-receipt.test.ts",
+    "sha256": "b5ebf59b5c8b2e67bccc5703d9233a6f984463ba8657edba28791ac6085c34a8"
+  },
+  {
+    "path": "tests/classpilot-live-view-signaling-gate.test.ts",
+    "sha256": "5f90a56ec7ff12f755a055c4b5ad2029a7d5fa516111d9f2fa0643770b9d156e"
+  },
+  {
+    "path": "tests/classpilot-load-harness.test.ts",
+    "sha256": "c1537248727bfbcf5d148826757afbf96a3567e5b732f1ace337691431b49981"
+  },
+  {
+    "path": "tests/classpilot-load-kiosk-profile.test.ts",
+    "sha256": "d9f3f1d45d7d918749dc592f146ee98a849924f6f70ffc2eceddb7fa2c4998ae"
+  },
+  {
+    "path": "tests/classpilot-load-preparer.test.ts",
+    "sha256": "d71b01f1b95991fa7fbf3e5c087988a326b844f93565f402c46a8498d9095f49"
+  },
+  {
+    "path": "tests/classpilot-managed-device-continuity.test.ts",
+    "sha256": "d5003403cd1c3fd6648eb0695a56b894ab8649de6cc9197275b8db1a499e7434"
+  },
+  {
+    "path": "tests/classpilot-monitoring-history-rules.test.ts",
+    "sha256": "a803bdd642365c510ea0476297f315b124b34f0e639522696e18f918d8da03a8"
+  },
+  {
+    "path": "tests/classpilot-monitoring-interruption-rules.test.ts",
+    "sha256": "c09a0bc31a4d196134541a2f3de86134479bae86dd538f5b204e3cc4b83b09e9"
+  },
+  {
+    "path": "tests/classpilot-monitoring-interruptions.integration.test.ts",
+    "sha256": "1fba2a5264c88cd18dd2b1a98a05612b36c11dc1299f62439cdeff7e888940bd"
+  },
+  {
+    "path": "tests/classpilot-monitoring-migration-contract.test.ts",
+    "sha256": "20b9216cbfbf9a9394a70ca46e36b5600ad2f8424d960b9d427ba81ec7852a2a"
+  },
+  {
+    "path": "tests/classpilot-monitoring-policy.test.ts",
+    "sha256": "43d8c294adf5292bdc0a82fe83389f061d829d921b56796089d4feb5a081b93a"
+  },
+  {
+    "path": "tests/classpilot-monitoring-reliability.test.ts",
+    "sha256": "db874ae53936fd5449032c1ca44ac67ec37a7540b8da5d937a3c1ff66ed72d39"
+  },
+  {
+    "path": "tests/classpilot-monitoring-reports.test.ts",
+    "sha256": "f3be616aa9979d40cc5f57a117af2595dd0a640212e910f1df0c154d32fbd16a"
+  },
+  {
+    "path": "tests/classpilot-monitoring-settings.test.ts",
+    "sha256": "19d9711c08cd7e9d0c92e6b5e4ff8e576ae7727ceea7a074594d50f0843ed052"
+  },
+  {
+    "path": "tests/classpilot-monitoring-tenant-context.test.ts",
+    "sha256": "8962ec9d967d9570f38849f37f14bd198b6e1b26642f6a65dd5440b6d4a2bebd"
+  },
+  {
+    "path": "tests/classpilot-observation-authority.test.ts",
+    "sha256": "9904eea43425a4001b4708baf6a4684d6d8a646414bb2bf3e45840197c133bf3"
+  },
+  {
+    "path": "tests/classpilot-observation-lease-subjects.test.ts",
+    "sha256": "863264f93d6fe3ee60861e23924e261fd30be5c68a71a86a992337c111a9a419"
+  },
+  {
+    "path": "tests/classpilot-observer-events.test.ts",
+    "sha256": "777c924b55d97af6bbe16cdccfed231604ee675cb488f9619745b94b0fb456a5"
+  },
+  {
+    "path": "tests/classpilot-pin-consistency-audit.test.ts",
+    "sha256": "57196ac911baba2de4e245ec87eda741825b48d98283e013ead09fc606572051"
+  },
+  {
+    "path": "tests/classpilot-pin-encryption-migration.test.ts",
+    "sha256": "cc82667424b186dea6df70d57da5da40a1fa57fd7d4d74acfbe4d14a5e78ac84"
+  },
+  {
+    "path": "tests/classpilot-pin-migration-cli.test.ts",
+    "sha256": "e4a2f2ab9b94a5f0e68075bf9aba066242afe9a8c9103221b563a8115e569aea"
+  },
+  {
+    "path": "tests/classpilot-pin-verify.test.ts",
+    "sha256": "8cb44baba4890a2c34c44f7d8e6b6aa04e3adb4145aa89c374c60c818c21e275"
+  },
+  {
+    "path": "tests/classpilot-portal-first-login.integration.test.ts",
+    "sha256": "972cdf189765c903aebfe8cd66643ef69d72b5842a4b60d7a9b3eaf5b6bfed04"
+  },
+  {
+    "path": "tests/classpilot-precise-restriction-clear.test.ts",
+    "sha256": "e5c97ad9bbffdd2c50defc02bcdb03d7dcf9868dbcb37a19af4cf02fd50b1a90"
+  },
+  {
+    "path": "tests/classpilot-precise-restriction-dispatch.test.ts",
+    "sha256": "84ae073c0fe3ed4bd44bc0bca8e5957c14a7dca994426f3dabef1ff716a276d5"
+  },
+  {
+    "path": "tests/classpilot-precise-restriction-fence.integration.test.ts",
+    "sha256": "be6c99341b14679ab4be6111f8f07760035e0433bfc856d5e31a69ccd224a7bb"
+  },
+  {
+    "path": "tests/classpilot-precise-restriction-fence.test.ts",
+    "sha256": "4fe622e6379dddacd58890c244339dc910def7ae540288a277dd8a4016f86fdb"
+  },
+  {
+    "path": "tests/classpilot-precise-restriction-projection.test.ts",
+    "sha256": "1ceffd1c1fdcfde4cfcc7483f9cba039608b5be07f0e6fa1524e12e655165cf8"
+  },
+  {
+    "path": "tests/classpilot-private-chat-lifecycle-rls.test.ts",
+    "sha256": "d407049c09b4e860320b4b5f6fa125c9e162ffb5ff07a69fd4ac495db39bdc90"
+  },
+  {
+    "path": "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+    "sha256": "03f85e62da0cedbfd7610f210e9680c7dc9d4db1f04c3b45b3b24488ce5bbf4f"
+  },
+  {
+    "path": "tests/classpilot-protocol-compatibility.test.ts",
+    "sha256": "3e5119511471462f063255853edf5e5b7d5c2347af36273f9e48e15e72e84b01"
+  },
+  {
+    "path": "tests/classpilot-protocol.test.ts",
+    "sha256": "1c2ddcca6cf61e3be369086d396fa29426037fecd83d137bb8fc8ce9ee5b432a"
+  },
+  {
+    "path": "tests/classpilot-realtime-status.test.ts",
+    "sha256": "f94680ce3310be8d695d0f1501033691a38dc5ad8085aa30635b399d8ff78413"
+  },
+  {
+    "path": "tests/classpilot-regular-schedule.test.ts",
+    "sha256": "9b0451033435e92fa93e06d63fc2cb439563f0e8abe10f27c0dbe9fbc777cb7f"
+  },
+  {
+    "path": "tests/classpilot-report-authorization.test.ts",
+    "sha256": "5a06e915a48dc9534ac1f3ca2c4cd81197daa9dcf138687dbc630ebb51971fec"
+  },
+  {
+    "path": "tests/classpilot-restriction-auth-metrics.test.ts",
+    "sha256": "f594e40fdc9f950ccd342ee6de0ce686831c98f0bfdab5f6f4884e5a342a3ae2"
+  },
+  {
+    "path": "tests/classpilot-roadmap-rls.test.ts",
+    "sha256": "6fd63559e67eff93b48eb12c8cfc4aa5c55b9a29a4b09fb226e39ba1976ef02e"
+  },
+  {
+    "path": "tests/classpilot-runtime-config-deploy.test.ps1",
+    "sha256": "b15f04840c40e2f297c86bc7a2b0699ea17b4a0478c6673c7c74db49d732b9fc"
+  },
+  {
+    "path": "tests/classpilot-runtime-security-contract.test.ts",
+    "sha256": "aeac47e20223c4fcadf040d06cd7a6f0438751b60fa5caff605bb0031014c056"
+  },
+  {
+    "path": "tests/classpilot-safety-action.test.ts",
+    "sha256": "25182f004f12f1283b9eb7316f7a93f57fc61b05f117f6350b31a5c44de08288"
+  },
+  {
+    "path": "tests/classpilot-safety-email-privacy.test.ts",
+    "sha256": "ea41fc91dda46694abf1592d5d145fece8f5a6a2d5a78d6a740e93a05eff02d9"
+  },
+  {
+    "path": "tests/classpilot-safety-evidence.test.ts",
+    "sha256": "98226b7d006fc8991be7f88e48958916f9104daf38c74c202380af0e32ed6a24"
+  },
+  {
+    "path": "tests/classpilot-safety-spine-retention-contract.test.ts",
+    "sha256": "36e0c9d09e18914673e67620990e09b149e1e346ed83443ba408a37280562f91"
+  },
+  {
+    "path": "tests/classpilot-safety-spine-retention.test.ts",
+    "sha256": "165805925e4c1798db290d6d465fe3c84c10bab623215bdb00c4f51736db37b7"
+  },
+  {
+    "path": "tests/classpilot-schedule-application-summaries.test.ts",
+    "sha256": "c0e74d111f0f8b1e96c9014c6ebae0d6102c63c3d761e52487f2b25db6b14195"
+  },
+  {
+    "path": "tests/classpilot-schedule-boundaries.integration.test.ts",
+    "sha256": "f2e2b5bfa919196069b188a6da1bcafa15060c9b7018529d599046a3cc120521"
+  },
+  {
+    "path": "tests/classpilot-schedule-change-rls.test.ts",
+    "sha256": "0299d8cc2210c671c33e6c0f32d5a342d03d47564bf7027955f98e69759a91f9"
+  },
+  {
+    "path": "tests/classpilot-schedule-change-route-atomicity.test.ts",
+    "sha256": "dc0716165783d23f06ec5b3be39e55f8fd17085c1b9be789094ef46f1bb75db8"
+  },
+  {
+    "path": "tests/classpilot-schedule-changes.test.ts",
+    "sha256": "30f7ac8552f72f131a08673c41649a51cad7d331a01e014e8d3d5a27b0502862"
+  },
+  {
+    "path": "tests/classpilot-schedule-config-repair.integration.test.ts",
+    "sha256": "b3a6f8335006e579c39dcfd6d6794e9d9ab8e911da8f300a9bcadb49e1043793"
+  },
+  {
+    "path": "tests/classpilot-schedule-config-repair.test.ts",
+    "sha256": "61314cfd77b84d16eac597ee54b0ed9c3c27e6df2081134902882d5f45706b61"
+  },
+  {
+    "path": "tests/classpilot-schedule-draft-review.test.ts",
+    "sha256": "be535c65fed53b7a518786729c851439bafade4806ca3c9985a8c6f62af0c8ae"
+  },
+  {
+    "path": "tests/classpilot-schedule-profile-model.test.ts",
+    "sha256": "43880832ef9149118b9e8188c1863b71a6f2adaf08c3bea5dc76218eef26bec4"
+  },
+  {
+    "path": "tests/classpilot-schedule-profile-supervision.integration.test.ts",
+    "sha256": "41bdd38198e0dfcc7c9bdcde75c07d0aa3dbbb035881c1b741af632aecc0eb52"
+  },
+  {
+    "path": "tests/classpilot-schedule-profile-validation.integration.test.ts",
+    "sha256": "77fd222119562446c6d79dec2954f48f94bea04d4a1442f18ef535fdfc754438"
+  },
+  {
+    "path": "tests/classpilot-schedule-profile-validation.test.ts",
+    "sha256": "e155fb5f968e5c56519f8aa386207edc19a62b5f7ec42ea7c42a74e96d9d59f8"
+  },
+  {
+    "path": "tests/classpilot-schedule-profiles.integration.test.ts",
+    "sha256": "9fd41e4a27521bece14d77834ed29a5d996056d86ac651e8383735a0a28252d8"
+  },
+  {
+    "path": "tests/classpilot-schedule-student-analysis.test.ts",
+    "sha256": "981bec595e6caefba5e70f29affbd018bae1bfc12d9ebe73b15fb92d787f7b71"
+  },
+  {
+    "path": "tests/classpilot-scheduled-classroom-media.test.ts",
+    "sha256": "f46f11c3b511cf5063f7c5f5aa2cdaf5f8ac986b2b0fa060d742edbc39c4b1a4"
+  },
+  {
+    "path": "tests/classpilot-scheduled-classroom.integration.test.ts",
+    "sha256": "303c2bd0ca03ce9753e3e3052592c31989d86c0c329c030885d2a1aee91264a8"
+  },
+  {
+    "path": "tests/classpilot-scheduled-live-view.test.ts",
+    "sha256": "223fdc200ac74e7c5cf4a584f29eeecef2f88031efe37cf1a051b87ddd05b66c"
+  },
+  {
+    "path": "tests/classpilot-scheduling-rules.test.ts",
+    "sha256": "208ebf737b75a7549d0fcac1ff192e6da38a6bb9b60a8e847169c989dc9ad650"
+  },
+  {
+    "path": "tests/classpilot-scheduling.integration.test.ts",
+    "sha256": "ff845f3b1ca5b64905375680e488fbc0839e7475d83adb3d82f953771f02f125"
+  },
+  {
+    "path": "tests/classpilot-school-status-auth.test.ts",
+    "sha256": "c36fa17d391abd5dd0e1f96ea78b86508a792d87062beb03501d1a9e578d51c1"
+  },
+  {
+    "path": "tests/classpilot-school-website-policy.integration.test.ts",
+    "sha256": "c9647f4f8205dc1524623da5cef10e26d2d7177fff9078d50025139ca4e22742"
+  },
+  {
+    "path": "tests/classpilot-screenshot-publish-gate.test.ts",
+    "sha256": "61642e3ed67034315f5481cca71a91aeeecb9f6da22614e72bbe6ef158c94654"
+  },
+  {
+    "path": "tests/classpilot-session-report-export.test.ts",
+    "sha256": "bb2e03cecb841314712d9cb3584a633ada224ab801a8c9f18e6cd6596a172801"
+  },
+  {
+    "path": "tests/classpilot-session-report-rollout.test.ts",
+    "sha256": "b6cd69a8d33bd6bda8a033780344d31d06cc09856f44d42c890c9817cd460d95"
+  },
+  {
+    "path": "tests/classpilot-session-summary-lifecycle.test.ts",
+    "sha256": "ccbc1a65bbf35c7e68584281bc6a11db818e03255451972c805ba93a5c109140"
+  },
+  {
+    "path": "tests/classpilot-session-summary-migration-contract.test.ts",
+    "sha256": "10df4fc031a67a5ee920067c596e967f38308649df8a6f8f9d7e7c7789cae72a"
+  },
+  {
+    "path": "tests/classpilot-settings.test.ts",
+    "sha256": "9a49bb8ba17b36862d479b2229fd10cfc633b1e0de2fc072ebeccb4f24177c82"
+  },
+  {
+    "path": "tests/classpilot-signin-ingress-diagnostics.test.ts",
+    "sha256": "57a85346baac451880c2f010d11aeb34cf7a7c018b04dbd9981c91fd29fa0406"
+  },
+  {
+    "path": "tests/classpilot-sso-policy-delivery-contract.test.ts",
+    "sha256": "2f258f6bd9aace4108222fb46a68205ef4d8517e2ad67f0b14b957b0fbb28c18"
+  },
+  {
+    "path": "tests/classpilot-sso-policy-validation.test.ts",
+    "sha256": "2c94e73eda2df6bf8715adc6d390fde07c0a6a0634f1596be3d3e0987e63c620"
+  },
+  {
+    "path": "tests/classpilot-sso-policy.test.ts",
+    "sha256": "75e651f3f743b8d1b42e41744c704f5ecc4f9e0c875290f6b1d81dc24406a603"
+  },
+  {
+    "path": "tests/classpilot-sso-readiness.test.ts",
+    "sha256": "9b0d30932f7460eecfa09bfc8804df493586659d1a14f351bfa098b0ba77d7bc"
+  },
+  {
+    "path": "tests/classpilot-stop-focus-frame.test.ts",
+    "sha256": "f5294afe772cf3818b5d0c0e0d269d22ddb0378a5a3356170861a3a13e7a4c8d"
+  },
+  {
+    "path": "tests/classpilot-student-auth-gate-presence.test.ts",
+    "sha256": "33544a53ad813a018ac4d09b4eecd5fae1d8e1868d2245f83f0e0195729c0150"
+  },
+  {
+    "path": "tests/classpilot-student-auth.test.ts",
+    "sha256": "4c5322547487a850ae172fc384755045fd1219961ebe7431435bc65557f00ca1"
+  },
+  {
+    "path": "tests/classpilot-student-chat.test.ts",
+    "sha256": "842fe6755df7b118bd48015f304e7ce2379776f18359104c56363657e11ccd10"
+  },
+  {
+    "path": "tests/classpilot-student-data-contract.test.ts",
+    "sha256": "db46f4d304f2cdc6c91587f1394311ed713e1d72c0a1442f48197a63852e36d2"
+  },
+  {
+    "path": "tests/classpilot-student-data-provisional-cache.test.ts",
+    "sha256": "7d8d45949be81d3b9e72469d3d47d93a0c028f442e297e68f9fe14f180fa19d1"
+  },
+  {
+    "path": "tests/classpilot-student-session-auth-kind-guard.test.ts",
+    "sha256": "ceea19e6de8518d6b762980d7dd47d87e62b6d4cd6f7a3ccebc99e9ead91b31c"
+  },
+  {
+    "path": "tests/classpilot-student-session-lease-clock.integration.test.ts",
+    "sha256": "5d5c2ab6b41c838db670b0f4faf108ebf729290116e4a55b26027c77eacb812e"
+  },
+  {
+    "path": "tests/classpilot-student-session-recovery-contract.test.ts",
+    "sha256": "ba30abc5c089794b3809b5e12610efb3a7e71b42a27224773bee437a1c843c58"
+  },
+  {
+    "path": "tests/classpilot-student-session-recovery-indexes.test.ts",
+    "sha256": "c65752b595db5baac40e8bf5bb6b163cfe45c3a17894722511c9596916e0ffe7"
+  },
+  {
+    "path": "tests/classpilot-student-session-recovery.integration.test.ts",
+    "sha256": "dbcabc15fd6a40c168d0811e31e472b1a986cec0fb7eabfd742174c647f49927"
+  },
+  {
+    "path": "tests/classpilot-student-signin-diagnostics.test.ts",
+    "sha256": "67e3303bf5435b9a2eda33bd86c22939394381deafb020a918207ce35eada644"
+  },
+  {
+    "path": "tests/classpilot-student-signin-route-diagnostics.test.ts",
+    "sha256": "57ce5e20c99176160551662350a8bc62a29fb311a49e01d1cf06a02aafa6f405"
+  },
+  {
+    "path": "tests/classpilot-supervision-lifecycle.test.ts",
+    "sha256": "abb6111c202ed8a13b0727b1bd282b439708ec5fd28d17dd97b783d0cc7f257f"
+  },
+  {
+    "path": "tests/classpilot-supervision-preview-plumbing.test.ts",
+    "sha256": "8d3d25056109d121956906ffb59c5faeffd912c012eb1c7e4df9c94c8e792c8a"
+  },
+  {
+    "path": "tests/classpilot-supervision-purpose.test.ts",
+    "sha256": "02b3f10330eae9c8f72bedd4f0a507cea2ec59a65c6ad959762b2e308d4d630e"
+  },
+  {
+    "path": "tests/classpilot-supervision-review.integration.test.ts",
+    "sha256": "94f4efd03305152a8de80d48c79ea121f8f6ee87bfc873fcd7dd7af4ba72b5e2"
+  },
+  {
+    "path": "tests/classpilot-supervision-summaries.test.ts",
+    "sha256": "63738b1a4019de23af6724cf07b8b882a7c374c51b5cbabced79f90b674f2a43"
+  },
+  {
+    "path": "tests/classpilot-synchronous-authority.test.ts",
+    "sha256": "852c35893c15da41ae53161a3b0b36bcf1a7630623ea3fe8ec304c18feb9bfb8"
+  },
+  {
+    "path": "tests/classpilot-teacher-preferences-schema.integration.test.ts",
+    "sha256": "5bc1dc47cd5879258c3fc6b366a0b2011c262d8170a53a48f523c1954ecc8201"
+  },
+  {
+    "path": "tests/classpilot-teaching-sessions-recent.test.ts",
+    "sha256": "049546f6c6a1f904a6958d8dc35843cc9ccc59daf49ed2bfa53b4a628b915001"
+  },
+  {
+    "path": "tests/classpilot-telemetry-owner-projection.integration.test.ts",
+    "sha256": "c3f572c1894b7ff461b4f39da89cde5ae3b5ddae7e13d64d5ce1e6a30cc0b377"
+  },
+  {
+    "path": "tests/classpilot-tile-admission.test.ts",
+    "sha256": "0a01f8a1efb7ccfcfa1fcb2fe0100c11e159f87a7ddfcd3fc29430492364a5be"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-base-funnel-evidence.test.ts",
+    "sha256": "f7d0a2a24d0061f74cd7eb698ea7d27d6e5c4a0a35a50141b7a45e568e0a7621"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-base-selection-evidence.test.ts",
+    "sha256": "830b68dbe05d9a6b36ce160f4886ccd0adfa3b574fe9a05c0d5ee121e6db3fff"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-evidence-validator.test.ts",
+    "sha256": "b52846c8a9a1fb58eabef39ec529e27a5288742cbab6c596619852825b772124"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-lifecycle-cli.test.ts",
+    "sha256": "a16c3890c3b61feafb62b8bbc645471b24376024a29707d3cbf44b62d1476069"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-observation-collector.test.ts",
+    "sha256": "71a4f5e060624f0d43efd6cc43ca519040626e4c289f7b89db6fcf66da2ec64d"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-observation-reread.test.ts",
+    "sha256": "0481f39ed49de1a53ffa3557277d300355b49547ba26d8180bf2333e21dbf0d0"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-observation.test.ts",
+    "sha256": "2ed251d723fb7c618f21c0d9a4856d4e77fbd08d0a26828141fdffc8580b6bba"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
+    "sha256": "a05720540b2710d16d7d217b4930d94a2ae2b3132a827cca1853e4eead836c2a"
+  },
+  {
+    "path": "tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts",
+    "sha256": "03cc33bf963ee2a4f82877d192f6fb695ee03b476a37a79803d8ec4ff6e19795"
+  },
+  {
+    "path": "tests/classpilot-tile-authorization-plan-check.test.ts",
+    "sha256": "461ffdb117a958a17933d039fb2be207fe7ac23e4c58df1eff96f5993d35e9ac"
+  },
+  {
+    "path": "tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts",
+    "sha256": "5870bd47c520f663a2c0ee4257ef8d2fad6b454353dc65b5b77686a01af4f51c"
+  },
+  {
+    "path": "tests/classpilot-tile-batch-contract.test.ts",
+    "sha256": "327afff0d2536129c1d640222377cd08937307038e7b4272df9debb2c048e770"
+  },
+  {
+    "path": "tests/classpilot-tile-history-lateral.test.ts",
+    "sha256": "f9f8d21919572bfdba65036fd98060dd2034ffdd409ac9098a19df9310b70d43"
+  },
+  {
+    "path": "tests/classpilot-tile-read-scope.test.ts",
+    "sha256": "a889971458c0671edd9b5a054f369e2eb59ea16e7137cea45c5d79408654a772"
+  },
+  {
+    "path": "tests/classpilot-tile-screenshot-degrade.test.ts",
+    "sha256": "1741fbf4c409c71b638dabc4488cf4567704cfda165d416663c82f87584c5f5a"
+  },
+  {
+    "path": "tests/classpilot-turn-telemetry.test.ts",
+    "sha256": "8d08a9e0ae6686fd52f4a031a87371593e2efe5438c82cd3bd38e13fb881bcd7"
+  },
+  {
+    "path": "tests/classpilot-usage-admission.integration.test.ts",
+    "sha256": "129feee3b80196f0a4d6818c083a837264c2be3af80e8827827632328d37e6ed"
+  },
+  {
+    "path": "tests/classpilot-usage-admission.test.ts",
+    "sha256": "8a81bd4a45a828885592a35f486b190d0585c9fee3492e03db87baaa522abb87"
+  },
+  {
+    "path": "tests/classpilot-usage-coverage.test.ts",
+    "sha256": "707b038026bcbbf66a2df161ec2ee510405f518d4edba0a8b02d39f58df30ba7"
+  },
+  {
+    "path": "tests/classpilot-usage-execution.test.ts",
+    "sha256": "7d2190a0cc40eb136e73e0d547c624667e101d0aa692ca1ffd01649ac5064cb6"
+  },
+  {
+    "path": "tests/classpilot-usage-request.test.ts",
+    "sha256": "54b0a43fc51d200e7227ae13f79771d9e52e5f07159c1a1227ea57c30c17bca4"
+  },
+  {
+    "path": "tests/classpilot-usage-rollup-admission.test.ts",
+    "sha256": "44575d51681fea9b3e2cd3a2ec2532ff5dd820f5f3a935831feb4988a65af246"
+  },
+  {
+    "path": "tests/classpilot-usage-rollup-rls.test.ts",
+    "sha256": "63235a788c090b969392343e67de3727edc6affd465cf611f69507a3457acbcc"
+  },
+  {
+    "path": "tests/classpilot-usage-rollup-sql.test.ts",
+    "sha256": "479483b387c6eebfb017f29b6e86106a09f15fc897e2053f11a37ae37961843d"
+  },
+  {
+    "path": "tests/classpilot-usage-rollup.test.ts",
+    "sha256": "97223f5e8e66641f34e191d4ad287d5f2b94abe4a02a5ad54cc146468ef17ea2"
+  },
+  {
+    "path": "tests/classpilot-web-session-routing.test.ts",
+    "sha256": "ff63fce50c8a399ae2c9244a7d438cad204e97a02485125e2746f25ddf83e48e"
+  },
+  {
+    "path": "tests/classpilot-websocket-auth-diagnostics.test.ts",
+    "sha256": "785157f56e277c79499fada0d3edf9464485fcb84ae249a7b04e3bb1c65df432"
+  },
+  {
+    "path": "tests/classpilot-websocket-passive-authorization.test.ts",
+    "sha256": "4bffbe834470ce005e362e2c1304c6247294684f7de723e3989c446eee36d9ff"
+  },
+  {
+    "path": "tests/credential-rotation-infra.test.ts",
+    "sha256": "26d1b019470b57fcee6c52e3b96f4f713b8ca0e4ddefb83fe6fa2b05a59b4106"
+  },
+  {
+    "path": "tests/credential-rotation.test.ps1",
+    "sha256": "25a03fa6fa2c76361748ba053f9464ba693cb1676d947204efa68def13a330b4"
+  },
+  {
+    "path": "tests/cross-tenant-isolation.test.ts",
+    "sha256": "ee1983f4ba4e92ddf5e76ef1db1c391533e377d3a41424b80f8e278947de8d14"
+  },
+  {
+    "path": "tests/crypto-key-rotation.test.ts",
+    "sha256": "ac4df43c42c8b04c1bece1a80d96b1a4633853c76616f659c948690b5289efef"
+  },
+  {
+    "path": "tests/csrf-kiosk-exemption.test.ts",
+    "sha256": "082fe2cc49204005e0481248dc3b8007c31abe600e535af1538a47a0b994f210"
+  },
+  {
+    "path": "tests/daily-usage-rollup.integration.test.ts",
+    "sha256": "69bad12f1e9fc1b5f851a1fb9d4a17961205650ac7a95bddccf1d95c6a5d4a06"
+  },
+  {
+    "path": "tests/daily-usage-rollup.test.ts",
+    "sha256": "3c9496c3279e7c9b0326e14ab623c17f9f992b4291f9677ec3dc4ee81e92afbc"
+  },
+  {
+    "path": "tests/database-insights-lease.test.ps1",
+    "sha256": "0a22acb87c0fa13094a8d74fa9dde2a4518d102f00ea9040c5d4bec1bdf4b427"
+  },
+  {
+    "path": "tests/database-insights-restore-automation.test.py",
+    "sha256": "9d8a9908658378212ad21f9802074c1915e240008d42838b392ff40062e26c7e"
+  },
+  {
+    "path": "tests/database-pool-prewarm.test.ts",
+    "sha256": "f9639f6a6f59543c424b2ecfaad12ac75c1602724d4cb4b3989d46d014ef84ad"
+  },
+  {
+    "path": "tests/database-query-logging-privacy.test.ts",
+    "sha256": "589413ca3d7f17b3b93531e88537a7ee88ff23449f24d600a31626961210b7e7"
+  },
+  {
+    "path": "tests/deploy-api-readiness.test.mjs",
+    "sha256": "ad961e425af28e67bfc49dd339ff7688864a4cb4c88206bb0b728cfe3bcf5dd3"
+  },
+  {
+    "path": "tests/deploy-capacity-acceptance-release.test.ts",
+    "sha256": "a5724e8ab5161878f1136124ede981b12b4c313f4d91188d0d1cc8433ec6f46c"
+  },
+  {
+    "path": "tests/deploy-capacity-preflight.test.ts",
+    "sha256": "7120d9d35798370ac0596a531c9387d8ffb8c52855d7e7861e7715880a0ebb1f"
+  },
+  {
+    "path": "tests/deploy-classpilot-tile-auth-plan-gate.test.ts",
+    "sha256": "c2c62e926d748bc9b329defb5d0afd8a556e4f9da58cfe2f28f6c49e07650643"
+  },
+  {
+    "path": "tests/deploy-git-bash-timezone.test.ps1",
+    "sha256": "cc5e56f4a9875341b124221777b2f94d4e83009d536726e251c5e0097c21d678"
+  },
+  {
+    "path": "tests/deploy-microsoft-sign-in.test.ts",
+    "sha256": "2fcd8dab4a86e6d35560bb8a567feebbcca3bd493cefe581f86d275ec06f9333"
+  },
+  {
+    "path": "tests/deploy-production-task-sizing.test.ts",
+    "sha256": "ec060415370e5d02a985fe7f79f0341f66d7082319c6382eb167e28e8b9a0fb2"
+  },
+  {
+    "path": "tests/deploy-release-runtime-identity.test.ts",
+    "sha256": "cff1c3e20d4729d1681f4653a5c327b0e93baa9b261dc9ad662b112c2cc358d7"
+  },
+  {
+    "path": "tests/deploy-rls-table-enablement.test.ts",
+    "sha256": "b12d778d1231bb838952b7addeb3141bfa690f3bbbf6dace5bcaeb79ccf54c25"
+  },
+  {
+    "path": "tests/deploy-runtime-secret-preflight.test.ts",
+    "sha256": "3c132de863f6383f1f6c3645def002fe83d8ce4801e4d57ac0fdadd9b0e5fc0b"
+  },
+  {
+    "path": "tests/deploy-same-image-networking.test.ts",
+    "sha256": "d1bb0030baacaff54d5e2927890e7935fe7329b04bf3b6c9e77517852f76e7c4"
+  },
+  {
+    "path": "tests/deploy-staff-identity-contract-rollout.test.ts",
+    "sha256": "24d4ca7996bf2e52191bd77e10c15f6e2fcfe02e36bbbb81eb1a3227609b0775"
+  },
+  {
+    "path": "tests/device-jwt.test.ts",
+    "sha256": "76d97892ebf0ad2c425367587d393e9639f8966f3bd2cbd520fac64cfa33ef93"
+  },
+  {
+    "path": "tests/ecs-runtime-identity.test.ts",
+    "sha256": "83717cf05a6cf625a4e2aa6b4b7f00c3880d8fc5c9ba3ff095dbe60b35e2e7d3"
+  },
+  {
+    "path": "tests/error-monitor.test.ts",
+    "sha256": "2a0777c87399e5892f8e1ec047e808e24ef5abed345024c72198c066255b2cc6"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/README.md",
+    "sha256": "f09e58468324fb4c951308ebd48e7e0090f9ba5d0d18f3d22cfa8732e7f5b196"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/classpilot-2.6.1.json",
+    "sha256": "2ea1ae6f529c5f6da51c2cb3979051ae7258b1be0bb0b81edff0417346698807"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/classpilot-2.6.9.json",
+    "sha256": "3fee82da00f0cb17bf48c2bb8dcc35a6c7b89a2f486e99b9c9c28ebddbb70386"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/classpilot-2.9.6.json",
+    "sha256": "ca643cdc850f04773694995cd36d37ef1e8aceddec0eaaf1eee713cfd6a59d62"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/schoolpilot-2.7.1-close-all-frame.json",
+    "sha256": "0db567f59d67c4e6a0de1377dee9a15c7599d01a0b350e663d1ee81b33d63e3c"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/schoolpilot-2.7.1-control-revision-frames.json",
+    "sha256": "359bbf20e2e67785b099297b2cc5b5be5d7212b00f28bfe12f4cabf619eeca10"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/schoolpilot-2.7.1-exact-tab-frame.json",
+    "sha256": "a1b56b9d99a4adffbc997b210743174e460f9a731f34672b7fa971bd24b1b4a5"
+  },
+  {
+    "path": "tests/fixtures/classpilot-compatibility/schoolpilot-legacy-restriction-frames.json",
+    "sha256": "9458453b59209b876c57c73e8a324d42f20aba3a2e96fc132a343febf52a16ae"
+  },
+  {
+    "path": "tests/fixtures/classpilot-kiosk-ticket-process.mjs",
+    "sha256": "548f7dbe5235d2be56761631e09fe2dfc0bd363a588ddd14ab30d033177e68a4"
+  },
+  {
+    "path": "tests/fixtures/gopilot-socket-instance.ts",
+    "sha256": "8fa82777c2ab3fe355c8a1e68dc7270a0dcb084d819c440c65667183a7c269bd"
+  },
+  {
+    "path": "tests/fixtures/mydesk-import-encrypted-empty-password.pdf.base64",
+    "sha256": "b58ed4a3414b1b11d66c42abc7e3626b86b6ce23f0a85c49793d16ac009dcb4c"
+  },
+  {
+    "path": "tests/fixtures/restriction-resource-matcher-cases.json",
+    "sha256": "4ff6b3311bcf6937a776deb5c5eec60de98d7d74e9dc963bf762a842b440d243"
+  },
+  {
+    "path": "tests/fixtures/usage-before-fast-paths/attribution.sql",
+    "sha256": "f5202a0421d1cd1f455c7d97dacb48c5dfcbea63db907b01d0d0899ab433dbe0"
+  },
+  {
+    "path": "tests/fixtures/usage-before-fast-paths/report.sql",
+    "sha256": "a909ff50ef2bd4da5eaf330027b8fdb52c0d45ba2a6f8dfe5e4200bd4c6ff13f"
+  },
+  {
+    "path": "tests/flight-path-precise-resources-routes.test.ts",
+    "sha256": "39768b222520905cf32f277fccbb2d0e84856d835779e3566db371955213d1e4"
+  },
+  {
+    "path": "tests/flight-path-resources-migration.test.ts",
+    "sha256": "353a3654791dd551a45b5d6325065c3e750a2f610a40062b7ae1e4ebc672b324"
+  },
+  {
+    "path": "tests/frontend-dependency-audit.test.ts",
+    "sha256": "bb5f1ee17266f2a2b4856e79c2de1e5275c5f12d31806de38a8a1f0133170936"
+  },
+  {
+    "path": "tests/gemini-url-classification-budget.test.ts",
+    "sha256": "33dfebf29721a13887b2705583c98330c88dddca2cd262b62df5257294eac12c"
+  },
+  {
+    "path": "tests/gemini-url-classification.test.ts",
+    "sha256": "b392d1fe7a9b74b224622fae1b2e069108099911902f03a9e616e124167f9386"
+  },
+  {
+    "path": "tests/google-classroom-course-listing.test.ts",
+    "sha256": "888ecfc135632707f72298bb83e110ae7e3beaca2aaa68e7803bec2206d58848"
+  },
+  {
+    "path": "tests/google-classroom-listing-contract.test.ts",
+    "sha256": "86450479e0b516f3ed7a69af85ec83f48b3a56a268fe45d331bfec8cf9fafff5"
+  },
+  {
+    "path": "tests/google-roster-connector-transient.test.ts",
+    "sha256": "3f099104d2cf8c7cbce22883c39f937936cf3ec3417ea3df46d45bc0ea324f28"
+  },
+  {
+    "path": "tests/google-staff-import-error-sanitization.test.ts",
+    "sha256": "0e062fdd983b31f56be65c9373c810ac2c36b765d530e820ebb252720f4426b3"
+  },
+  {
+    "path": "tests/gopilot-containment-inventory.test.ts",
+    "sha256": "3f6d0c4d21fa15e57e7c5b7910e2762e5c87f8c5df45eb1c595a6e510c80ca48"
+  },
+  {
+    "path": "tests/gopilot-entitlement.test.ts",
+    "sha256": "a7ecad630d8f93b280a78ebd924ca9661e2f93f31f3119db0f1b3bc38c2dbb71"
+  },
+  {
+    "path": "tests/gopilot-parent-containment.test.ts",
+    "sha256": "403fb217d8562e39926c300414c0879573f053df9f85fd1b6be35c21fcffb7c9"
+  },
+  {
+    "path": "tests/gopilot-redis-relay.test.ts",
+    "sha256": "35e4793224979050ce6f3efec073777173033720bf351685bb2d20aecf5dbba6"
+  },
+  {
+    "path": "tests/gopilot-rls-isolation.test.ts",
+    "sha256": "a1fa791c61f612c48f07d9969b3cf8e42a6f738048b6622ac4b7d49b34443d7b"
+  },
+  {
+    "path": "tests/gopilot-runtime-contracts.test.ts",
+    "sha256": "456bce7d77585cc1fea2facdbf0e59e2fe0d1dbfb8541624b08baeb4cef6947f"
+  },
+  {
+    "path": "tests/gopilot-settings.test.ts",
+    "sha256": "1bc54f6511d2b6b673796121c8ed88deac69a441746680a1e781e993d84a1522"
+  },
+  {
+    "path": "tests/gopilot-setup-deletion.test.ts",
+    "sha256": "07243e3cda7335bb27ef6776e6949fa4f36043835465da61c0369fd9215cfb7b"
+  },
+  {
+    "path": "tests/gopilot-socket-containment.test.ts",
+    "sha256": "bfcaeb156f82cd5b89b89d1ced3d314f458971a278793939e152f3e8393b5196"
+  },
+  {
+    "path": "tests/gopilot-socket-latency.test.ts",
+    "sha256": "8f2a254d883970ebe546c0579b45844bb70f39d0aaa03c5d3ba70c10e48ca019"
+  },
+  {
+    "path": "tests/gopilot-two-instance-realtime.test.ts",
+    "sha256": "0c676962c77afae440b3990687e18eb027835fcce2f068b45632fa76067702a8"
+  },
+  {
+    "path": "tests/heartbeat-history-index-contract.test.ts",
+    "sha256": "0050402d0290e0caa150f4aa43b5ddfeedcfde560917b5447ad8074f885a19e6"
+  },
+  {
+    "path": "tests/heartbeat-hot-path-emf.test.ts",
+    "sha256": "8d2a11bee44830b9b9d5fa44022446c4169b25f76bb8b59036e3d0d5c698d55b"
+  },
+  {
+    "path": "tests/heartbeat-hot-path-identity.test.ts",
+    "sha256": "04b154bb7815786c009106416d387832298451de0f8aaf6e53fb77072b9a2ba6"
+  },
+  {
+    "path": "tests/heartbeat-hot-path-optimization.test.ts",
+    "sha256": "cfa3d2ea720fed3234875ca75ba6aaafee598df2ba12bce2f0198b67a6113d67"
+  },
+  {
+    "path": "tests/heartbeat-tile-cache-batch-qualification.test.ts",
+    "sha256": "00d44afb89e4d87a7c7ed25d27b166e63c8de7acc51397eff3a0ef8b447143a6"
+  },
+  {
+    "path": "tests/heartbeat-tracking-settings-cache.test.ts",
+    "sha256": "65cbda1ed1620ea3f917c42df3050f9827665783b691018cba89ac8645a1436e"
+  },
+  {
+    "path": "tests/hecvat-page-markdown.test.ts",
+    "sha256": "98e73d9023b1b88586e069b07218bacb4e656ceafdc7f358d1311a1b7c185758"
+  },
+  {
+    "path": "tests/helmet-response-headers.test.ts",
+    "sha256": "caca8af6b61923e61d0ffb877bb370bdcb78c0bf3e0131d2b8813cecf718fef8"
+  },
+  {
+    "path": "tests/helpers/intervalMetricWindow.ts",
+    "sha256": "15147569fd991b70d620d2321a1a4de919a6c6fc56511ea10c44222ae478f6fb"
+  },
+  {
+    "path": "tests/helpers/mydeskRedesign.ts",
+    "sha256": "b264aea202d7bfdb5207292501c5c1e72894adbf53c073a99a7a943ee8f6ef23"
+  },
+  {
+    "path": "tests/helpers/owned-test-process.ps1",
+    "sha256": "55a17529a32c2612e0e8e9cfec740ace0304af734262dbb79b74deb90b6b478d"
+  },
+  {
+    "path": "tests/helpers/passpilotAppointmentFixture.ts",
+    "sha256": "2cfeee17af5a15962b8eb47b7d5667de874b4ed66f4f58a161188e7ef1abb355"
+  },
+  {
+    "path": "tests/helpers/signInDiagnosticRecords.ts",
+    "sha256": "03d329cec86883644c2ababd3205ba39f4e670cbd2e8232cbfc6fe4b77fb0032"
+  },
+  {
+    "path": "tests/helpers/studentInformationEvaluationFixtures.ts",
+    "sha256": "0374716f408adce023ddc9311fdd94fabfbff9385b1c1f39cea4cbf064d8cd6b"
+  },
+  {
+    "path": "tests/hot-path-logging.test.ts",
+    "sha256": "b9523048b5741df3e698a0ddde005cf1cfb2de19eef396c95c95f6631f2dad6c"
+  },
+  {
+    "path": "tests/http-server-keep-alive-contract.test.ts",
+    "sha256": "468259ac99b4d33cf985a7e551817ed4646c41bff001683bc6e99f8e15f40ad4"
+  },
+  {
+    "path": "tests/import-pipeline-queue.test.ts",
+    "sha256": "123301099e7c6bbb14f57e62ba309c9fe6e301a9f5205242aa358b05fbc8eb34"
+  },
+  {
+    "path": "tests/import-processing-stages.integration.test.ts",
+    "sha256": "a2f96a0cc0bec4d70e4f186268cff1aea51e19bf0741fdd69a5c4fd88d3967cf"
+  },
+  {
+    "path": "tests/interval-metric-window.test.ts",
+    "sha256": "0ba6792ce17a17f9a9849d7e726d0d079784be81f71a6e7643781ffcd1668a1c"
+  },
+  {
+    "path": "tests/mailpilot-notification.test.ts",
+    "sha256": "6981ac1b5c005e714f07acb8ad0b31b7bb17f29a96d9e074c40e8e3d702fb677"
+  },
+  {
+    "path": "tests/mailpilot-safety-durability.integration.test.ts",
+    "sha256": "da218c92683b5524a9d579c3ab969b6ae7cf882914f8201df87323f4394ecd79"
+  },
+  {
+    "path": "tests/microsoft-sign-in-flow.test.ts",
+    "sha256": "8355677dba7c62f47eaa28b2a0e87557dfc3c9874e1004bc5b947c23375ac573"
+  },
+  {
+    "path": "tests/microsoft-sign-in.test.ts",
+    "sha256": "61ee7b62ae89cdc1e45393a7e588688443e5dcaabc1681fcf1daf47e18d19225"
+  },
+  {
+    "path": "tests/migration-ledger.test.ts",
+    "sha256": "ec409a33995825d09bc552e02692bc1c7caba7c56b132178691732e6e418d887"
+  },
+  {
+    "path": "tests/multi-role-authorization.test.ts",
+    "sha256": "42d7410cb8aacc82626787bcf502aed01593647d4f12e77359819dbb87208af2"
+  },
+  {
+    "path": "tests/multi-school-readiness-routes.test.ts",
+    "sha256": "5d3b8a99655a4035f7078602d4e16378747ac32f34a0121056e2e95c84e3c636"
+  },
+  {
+    "path": "tests/multipart-upload-compatibility.test.ts",
+    "sha256": "b624a204b6bee259972e8d09b9a5713d115d3d8c0dd4aaf2f36dc514e03d9fbb"
+  },
+  {
+    "path": "tests/mydesk-attachments.integration.test.ts",
+    "sha256": "1ef1384aeb39dd40418f9080cd5aef50c8c0018e5da4c149089d2401d43c6ddf"
+  },
+  {
+    "path": "tests/mydesk-core.integration.test.ts",
+    "sha256": "ca126672a134c9c750a9ef0fa8613dc5385f444ea779ae16b7a16b50fbd599f5"
+  },
+  {
+    "path": "tests/mydesk-files.test.ts",
+    "sha256": "38dbcf36894e7536a59c239e2f4f11ae60099035dd476759f621a930d5fc093a"
+  },
+  {
+    "path": "tests/mydesk-import-evaluation.test.mjs",
+    "sha256": "95f649b6cbbe35227f9e0ed3a5f678ef09eac419d0ec30afa0d3a51a4f012b0a"
+  },
+  {
+    "path": "tests/mydesk-import-processing.test.ts",
+    "sha256": "df133eccc0c53f5855345efc482f81fe26123b424382007655ef3edb12a25243"
+  },
+  {
+    "path": "tests/mydesk-import-progress.test.ts",
+    "sha256": "92753f39797042d54db011a05d5ac7a506a031814babe0a4d5f9bf692160217b"
+  },
+  {
+    "path": "tests/mydesk-imports-http.integration.test.ts",
+    "sha256": "9ad62e7c4dbc8bac2d80cb12ec2132fdf76d785c84c06b8cc7e97c44850cff2d"
+  },
+  {
+    "path": "tests/mydesk-imports-schema.integration.test.ts",
+    "sha256": "a89232731fb99c0efcd5fe0dd96857c2c447fff424bf9f319ccc54e1440a2729"
+  },
+  {
+    "path": "tests/mydesk-imports.integration.test.ts",
+    "sha256": "0a574892b603ad5681410abd9ead80b9079ecafcd29ecc7fb3db58b139b4a4c5"
+  },
+  {
+    "path": "tests/mydesk-processing-measurement.test.ts",
+    "sha256": "5eae4cc440007f987a49c45b94d0de914662f3057fea90c1bffb9a981bc14547"
+  },
+  {
+    "path": "tests/mydesk-redesign-schema.integration.test.ts",
+    "sha256": "9ae4c043b527c2b297a5cd5ed678e85b0e8dcd4399dae23e4e79e770b208da06"
+  },
+  {
+    "path": "tests/mydesk-request-lifecycle.integration.test.ts",
+    "sha256": "34c635e04ef7fe14e78534f34a60b588ed05d2f506665b7f60ab1a20e9b9ef57"
+  },
+  {
+    "path": "tests/mydesk-runtime-config-deploy.test.ps1",
+    "sha256": "b4872abb31541dc5581ec1c4f936fb2968d7654c9886b267a8ea3ce570b6509c"
+  },
+  {
+    "path": "tests/mydesk-schema.integration.test.ts",
+    "sha256": "ffb5ead6fc7a71261ae0e31d82a24d8a2310c26df1c05783f30efc3c6cacbd74"
+  },
+  {
+    "path": "tests/mydesk-seating-schema.integration.test.ts",
+    "sha256": "79146cd679b16a2ce31e0464579a2e906d53cf97a67c0ae49af28a6f6072d687"
+  },
+  {
+    "path": "tests/mydesk-seating-validation.test.ts",
+    "sha256": "a13167250ba7777c554198d34acd6754a498835ff3e6a43083999cd8e1abe891"
+  },
+  {
+    "path": "tests/mydesk-seating.integration.test.ts",
+    "sha256": "0879631f72d880a990d23aa51fe816675d738b8c8cd8fad8f76c622180d5ce1d"
+  },
+  {
+    "path": "tests/mydesk-upstream-error-boundary.test.ts",
+    "sha256": "a86dc68749d1f756fb3c5d87ee4bc9736331ed6be1967bf7488e27be8e567f98"
+  },
+  {
+    "path": "tests/mydesk-validation.test.ts",
+    "sha256": "8e34621b2e7d68bea506290ab6ccd1c716fe1df217648e976ac4e25c0d7ad6d9"
+  },
+  {
+    "path": "tests/mydesk-workspace-schema.integration.test.ts",
+    "sha256": "13c6ee953e86889c730c95aa50b50b660edfeddb01a36d922e364adfd58c940b"
+  },
+  {
+    "path": "tests/oneroster-csv-validation.test.ts",
+    "sha256": "8222aea74fe0cdae3ff21bd4337a0cfebf85857d3c3d356f94f44af41a26a0a7"
+  },
+  {
+    "path": "tests/p0-traffic-schema.test.ts",
+    "sha256": "e01aeb807376d8b1b93aae0367a20501746139fb22a09ff30fc01a93362fd62e"
+  },
+  {
+    "path": "tests/paperwork-benchmark.test.ts",
+    "sha256": "c33ebb76b06b067866992c6379c4b7a3ff7329ac354253a0f0ea16987f627369"
+  },
+  {
+    "path": "tests/paperwork-capacity-api-contract.test.mjs",
+    "sha256": "a4976a65c0c9204ac9ff0fe5b846ebe72e155f0bb1d7ae34be03991a9f3a5c41"
+  },
+  {
+    "path": "tests/paperwork-capacity-api-finalizer.test.mjs",
+    "sha256": "c4862cfeb6008f4324222f406f826d376295a69e0f7f2f522784da8a7b50f42e"
+  },
+  {
+    "path": "tests/paperwork-capacity-metrics.test.ts",
+    "sha256": "8b22458e455a072f347e803639a73b44916e9442ff8a3359b0929297c080011b"
+  },
+  {
+    "path": "tests/paperwork-capacity-probe-driver.test.mjs",
+    "sha256": "ae6359c745551caae54fdd6816423687ed2bab4aeab2c2d051cfeaac0d47cb22"
+  },
+  {
+    "path": "tests/paperwork-capacity-provenance.test.mjs",
+    "sha256": "5bf370a9990d2a3431c0065281f681658cfd1505e105d7c15647414b25012d32"
+  },
+  {
+    "path": "tests/paperwork-capacity-storage.test.ts",
+    "sha256": "3174495ab35d82031261ad5e30c6ac0ee5a769e643dc52886de2ea5a1c654dd4"
+  },
+  {
+    "path": "tests/passpilot-appointment-eligibility-races.integration.test.ts",
+    "sha256": "41055f47716f284a52a42f404a2be338bbd1f5ba7fed3fccb94dd776e8fda00e"
+  },
+  {
+    "path": "tests/passpilot-appointments-rls.test.ts",
+    "sha256": "0e07be0c0c5127c31f0d2f8ac586116bbcf7d37b79cf5f4fce86ad165b2b471a"
+  },
+  {
+    "path": "tests/passpilot-appointments.integration.test.ts",
+    "sha256": "6d06c702494bac863795ef4e2732be8c92ea789dd8cf09794bbc48bede1f93b0"
+  },
+  {
+    "path": "tests/passpilot-appointments.test.ts",
+    "sha256": "3c5351e1482a46d15f1d03191027c5e93a4c0266b7345144cf02a32ae88862c9"
+  },
+  {
+    "path": "tests/passpilot-canonical-class-migration-contract.test.ts",
+    "sha256": "3e7c6d75c18d94baa32b77ad4da4933099a85cdce8a25e2039776bdb2172bc6d"
+  },
+  {
+    "path": "tests/passpilot-canonical-runtime.test.ts",
+    "sha256": "461a444860fa32fe4945a9b4e175ca921f69b59b59ec83606348af534953f978"
+  },
+  {
+    "path": "tests/passpilot-clean-cutover-cli.test.ts",
+    "sha256": "ee7e8c0e805cc1a8255fb2ef4037c080d1682d5c032ae1780aa8aea60cd510d5"
+  },
+  {
+    "path": "tests/passpilot-clean-cutover-runtime.test.ts",
+    "sha256": "34e20dc362256c0736eaf4aae809afad3ee5b6985ca72347046a26199bd9279a"
+  },
+  {
+    "path": "tests/passpilot-kiosk-schedule.integration.test.ts",
+    "sha256": "f8028250ba397046e3afc318e5953476039aff611e9e419ef69fb18fe9162515"
+  },
+  {
+    "path": "tests/passpilot-kiosk-schedule.test.ts",
+    "sha256": "c11ae36c12ef93bb1d778c54bf03394c2a52ac119aec48bc674c19e5e84f3c47"
+  },
+  {
+    "path": "tests/passpilot-kiosk-sessions.test.ts",
+    "sha256": "7e29e662acedc7a7991f941b297d13fccb9ba3e0e76ab9c98cd672f6d8c7580f"
+  },
+  {
+    "path": "tests/passpilot-legacy-multiclass.test.ts",
+    "sha256": "344456c129a3052d6ca9b2ca628c00b32afc99335fe6a3282ce563c79ea900ca"
+  },
+  {
+    "path": "tests/passpilot-overdue-lifecycle.test.ts",
+    "sha256": "a4c29ddaeee6916efbbd4bd8565ca63569c96877907bc34d38ae53f2e5c12f01"
+  },
+  {
+    "path": "tests/passpilot-report-issuers.test.ts",
+    "sha256": "4261c7841ff35be8659ad26ed7c4cb76e61679e1ace589a795f72d66968ab929"
+  },
+  {
+    "path": "tests/passpilot-reports-v2.integration.test.ts",
+    "sha256": "fa9ef55e09a1d8c6619567e22a038d3d9588ccf0e618864515933a22b2b4a45f"
+  },
+  {
+    "path": "tests/passpilot-reports-v2.test.ts",
+    "sha256": "39ef20f5ac9ea8d7d8c66c34af58f52953f9a229314ab4cf62b6ee40e4d6861f"
+  },
+  {
+    "path": "tests/passpilot-rules-contract.test.ts",
+    "sha256": "256a473799e26a69e949694f435b55ab5392631800208df2ccac36332493e983"
+  },
+  {
+    "path": "tests/passpilot-rules-rls.test.ts",
+    "sha256": "a1ad4d9cd213dca20af46390d88669750f80dff1532979b1f81b3173088258bc"
+  },
+  {
+    "path": "tests/passpilot-rules.integration.test.ts",
+    "sha256": "61f8d59c7c9abfaad717e20b3af2070e75bd18e85441310f2ffce88d8b8d794a"
+  },
+  {
+    "path": "tests/passpilot-rules.test.ts",
+    "sha256": "86a52b7fb2caec7426de08d2c15496e822e93f86467c462bd5544483a1db1485"
+  },
+  {
+    "path": "tests/passpilot-school-year.integration.test.ts",
+    "sha256": "aac8b401d81cdcc1ea41acd2a74f33518c36c037d9efdab648003fb3a7bd7550"
+  },
+  {
+    "path": "tests/passpilot-settings.test.ts",
+    "sha256": "7223f25a53cc0aa0b7123a2491b10177d69327528fbdd2730d4d4131fb1aaa2f"
+  },
+  {
+    "path": "tests/password-hashing.test.ts",
+    "sha256": "292f1179008e5192133c0048dc95f269c317368782237142a1eda36ea11dce2f"
+  },
+  {
+    "path": "tests/powershell-json-datekind-conformance.test.ps1",
+    "sha256": "e3381bed1d2ac4b1adfb6655223429b8192a4e1d6311f2d7f85779599bc479c4"
+  },
+  {
+    "path": "tests/predeploy-safety.test.ts",
+    "sha256": "67ea42cbed84b0c5ff3e9f29238f476d7d40569bbeef09616b38c050b3de5871"
+  },
+  {
+    "path": "tests/private-chat-release-floor.test.ts",
+    "sha256": "7065cb99907b94968826b0d995523a8cb0b279716000e81cf5c29536fdd26f48"
+  },
+  {
+    "path": "tests/private-load-artifact-acl.test.mjs",
+    "sha256": "e2f1878e52636bcb27585d81fafce6cb3363e703ef69beb42c3178c7a0653740"
+  },
+  {
+    "path": "tests/private-load-usage-profiles.test.mjs",
+    "sha256": "3bc4b59c7e1ee3c8bc7f92ec545123719d2a1fc5b37625538392d3cd72ec36a7"
+  },
+  {
+    "path": "tests/private-pdf-processing.test.ts",
+    "sha256": "9e4139d5d6ce992219a6daf67e6083e7d5727ee8277f5d599e928973a0daaf61"
+  },
+  {
+    "path": "tests/product-entitlement.test.ts",
+    "sha256": "039286e23ab58cc853d3e83e64de1059c8e32e0b3a7adc5dc0d4ff94f6186c2b"
+  },
+  {
+    "path": "tests/product-runtime-config-deploy.test.ps1",
+    "sha256": "d5d1dc264f04796c40610a36c9456811bd92a8a8e9ad8f137996ca11fbf8c82b"
+  },
+  {
+    "path": "tests/production-terraform-profile.test.ts",
+    "sha256": "7903e8ecadc14512a20339609cf4926eb54dc889d251627c94329ac1984bba9f"
+  },
+  {
+    "path": "tests/public-registration-retired-route.test.ts",
+    "sha256": "a604045296167be1edddc8898aba3196aa1efbfc81519400491efa02cfd309cd"
+  },
+  {
+    "path": "tests/public-registration-retired.test.ts",
+    "sha256": "d98d29729d4ac008e2b0566ff4744f17a4f56d395ed9cfac318c4a0a719f0c70"
+  },
+  {
+    "path": "tests/realtime-producer-shutdown.test.ts",
+    "sha256": "5e1414db0380405144e9e5a467ab03858aba1b9c9d2d93c9de03aea5cc4bbd35"
+  },
+  {
+    "path": "tests/redis-ready-waiter.test.ts",
+    "sha256": "b37d9cb146038c6bf9c4031420a6fb8472a2f7b007407eed802790ed86c390dc"
+  },
+  {
+    "path": "tests/release-build-contract.test.mjs",
+    "sha256": "49f37cae51f8e123b9147da9495ca4ea53bf45ac5ae6cf4f077aee2a346cf4c4"
+  },
+  {
+    "path": "tests/release-control-ownership.test.mjs",
+    "sha256": "e9394ea2440bd12526cdc3aad030e0252106eab4c7b1f59151c7032bcf66089d"
+  },
+  {
+    "path": "tests/reliability-diagnostics.test.ts",
+    "sha256": "78045b7dad141668e8db7f20b682165912d0b969f6631168483c52d6a9639b21"
+  },
+  {
+    "path": "tests/restriction-resource-preview.test.ts",
+    "sha256": "97ed1ccd24d2f4ab266c8f153b07171bb5e7ac4f11923f24e0e6ef2a23959b7d"
+  },
+  {
+    "path": "tests/restriction-resource-resolver.test.ts",
+    "sha256": "11304e1dd711927c571ef1f15570fe549b846778549f894f23c84769e3f0fe2d"
+  },
+  {
+    "path": "tests/restriction-resources.test.ts",
+    "sha256": "8cde0b2ee246ae48e7cdbf2547821a0393bdf5006863d73065ae800280caf644"
+  },
+  {
+    "path": "tests/rls-allowlist-drift.test.ts",
+    "sha256": "f50639311794d769854f0f5e2082b10ccd24d4d97ee17dff869e9ab33350e4f7"
+  },
+  {
+    "path": "tests/rls-enforcement.integration.test.ts",
+    "sha256": "726d42ae7811c1a53a5109e45e177f32de19ddadacf8250661fa8c2fbe991481"
+  },
+  {
+    "path": "tests/rls-policy.test.ts",
+    "sha256": "6614f51619767ee85ff99288d3c1fc76af8500e0fd32c158a9d2b5c7b3e63fb1"
+  },
+  {
+    "path": "tests/rls-registry-consistency.test.ts",
+    "sha256": "764c9e42aa17df1a50369fc697a8aa1a04fdc43cac8c891301f38c6d9a208579"
+  },
+  {
+    "path": "tests/rls-tenant-context.test.ts",
+    "sha256": "7793186535f22ed7ac2a79d0b485702dc8e12e4667d81214c4074579dd96daeb"
+  },
+  {
+    "path": "tests/roster-integrations.integration.test.ts",
+    "sha256": "9396015b088d6e8e9919f56afbb48ac84aadb311d6914ab3be6cf64ebe6340a0"
+  },
+  {
+    "path": "tests/roster-integrations.test.ts",
+    "sha256": "baebef5395866b5b2b65785894d02c78885cbae5e18429a2fdde28d3cd33984d"
+  },
+  {
+    "path": "tests/runtime-config.test.ts",
+    "sha256": "52098d21080e18078da4d1b307c3d7d8221ab43093baea0b8b602e5eec5bfd22"
+  },
+  {
+    "path": "tests/runtime-log-privacy.test.ts",
+    "sha256": "e7a28205ba12b78c411ee73c87f8347546603cf2f7a056d91629f235e8fdcb15"
+  },
+  {
+    "path": "tests/runtime-performance-metrics.test.ts",
+    "sha256": "3b9124da2befc40e1d62a6964bdb00a0207781b8ba9bbdba4c203eca024d16d4"
+  },
+  {
+    "path": "tests/safe-student.test.ts",
+    "sha256": "0504c2fc62329d92608684322ce8fee82339688394814486805845c882452c75"
+  },
+  {
+    "path": "tests/safety-center-migration.integration.test.ts",
+    "sha256": "bd943c213a042505e67645279179243d0ae6574fd3382c645cdac0df8f63b6f1"
+  },
+  {
+    "path": "tests/safety-center.integration.test.ts",
+    "sha256": "0150933c6d87dbaccb8aa4dbf19ecf16da13e121498234ed472cc4c02d99f8fa"
+  },
+  {
+    "path": "tests/safety-notification-bundling.integration.test.ts",
+    "sha256": "da4094433ec65c81be2cabd4b9ec6b52e5b4d3e16ddec59ab4a9201da228a8b1"
+  },
+  {
+    "path": "tests/safety-notification-model.test.ts",
+    "sha256": "0b34bfd86651f28eb15605f18e600fb34a601e019298f482d332ae4066768faa"
+  },
+  {
+    "path": "tests/safety-notification-transport.test.ts",
+    "sha256": "a62a22b75891541347d08e0674f071a2806a1a90a3642e7959682bd741555109"
+  },
+  {
+    "path": "tests/safety-report-pagination.integration.test.ts",
+    "sha256": "1ec97042922b5a643282e4d88cfc4b26bf2e67ba8bbfff601fb8eecc9b9e11f2"
+  },
+  {
+    "path": "tests/safety-url.test.ts",
+    "sha256": "36945c82aa1f7ba663b016e4e84208e8f0a97591ac4b1296ccdd85c1b7e18e70"
+  },
+  {
+    "path": "tests/scheduler-lock.test.ts",
+    "sha256": "993eb8ea4c16ae3d5db68e0db1337d792e985ad3322d5cc2929c7ed7ea1815bc"
+  },
+  {
+    "path": "tests/school-discipline-validation.test.ts",
+    "sha256": "cc10729d38dfc98de8d2464b2f772789ffb2cd6cab9cc9fb9241e1d5d70ef6eb"
+  },
+  {
+    "path": "tests/school-discipline.integration.test.ts",
+    "sha256": "eea9041ed3da21ad306b6eef917e83e4b10be6999d13c514e51adc56207d8698"
+  },
+  {
+    "path": "tests/school-domain-guard-routes.test.ts",
+    "sha256": "b49bba21e8c8e8da5454f30083a95e6343baca2ac72845c052583e7a617dda1c"
+  },
+  {
+    "path": "tests/school-domain-resolution.test.ts",
+    "sha256": "d9a302c63ca0f218b83455f9169cb7ba6e07ec73f356f893a082c57d81460541"
+  },
+  {
+    "path": "tests/school-identity.test.ts",
+    "sha256": "d77c676341882593f0fa198267ac07522f6064aefeb9f47dbed311906ecb7db1"
+  },
+  {
+    "path": "tests/school-lifecycle-inquiries.test.ts",
+    "sha256": "ef7a20918d193bdefb5648b54f1d02b6f70c798f98a7122d7d67d3203be3a279"
+  },
+  {
+    "path": "tests/school-time-cache.test.ts",
+    "sha256": "df77e3bef5161f37e8f014171c912a889041a108c3d7461a322b2905139b96de"
+  },
+  {
+    "path": "tests/security-headers.test.ts",
+    "sha256": "d288e785c2b1c635daf747ffd7c858cc080155d3982a24493dc41959043b1b02"
+  },
+  {
+    "path": "tests/sentry-scrubbing.test.ts",
+    "sha256": "4539a5e22b0e9c5f276b3fb8bf1ecf0b16ba227405bf1efce8cc564070019bbf"
+  },
+  {
+    "path": "tests/service-shutdown.test.ts",
+    "sha256": "ad6d074b1b44e3df498ffe633b4d8a37c86111f00e416da6e7e54e1f03d58099"
+  },
+  {
+    "path": "tests/session-idle-timeout.test.ts",
+    "sha256": "6bb312977e6482ff22538002a38a5835825ad6b50000c210c57eababd64d3992"
+  },
+  {
+    "path": "tests/session-pool-isolation.test.ts",
+    "sha256": "b38d4da8d2696d8072244caf5ed7a900c09a5018303f579ec3e4e8bd32ed509f"
+  },
+  {
+    "path": "tests/setup-passpilot-appointments-ci.ts",
+    "sha256": "be0b97fd49f317c373e89648a1087f92ed844b7346cc77c0dda872dc532655db"
+  },
+  {
+    "path": "tests/setup-rls-ci.ts",
+    "sha256": "397443a5d8b0e2e43114914ab6e6ef8d3a06a4d75cabbb56910d96e9aba9796b"
+  },
+  {
+    "path": "tests/shared-teaching-resources-migration.test.ts",
+    "sha256": "9c4df1f0b66123c228b6f012020dbcecddea8c65c7430e4dce41e5fd7c37530e"
+  },
+  {
+    "path": "tests/shared-teaching-resources-routes.test.ts",
+    "sha256": "9997f72b3a66207d8eac1b294fbbec2a5b652a309457e6d8bacec366e9fdecb3"
+  },
+  {
+    "path": "tests/shared-teaching-resources.test.ts",
+    "sha256": "dd1272aca2cc20e3faa93dcff91186fd7d3ed13ce705f055f6acbec701200467"
+  },
+  {
+    "path": "tests/single-flight.test.ts",
+    "sha256": "d4eb3defc70ea96e8b16d9698efef2462a9d6c1bbb042dff78d18bbcc30e9169"
+  },
+  {
+    "path": "tests/soc2-ai-privacy-evidence.test.ts",
+    "sha256": "d97ed047b26ed8a19c51099d45a4c82d31099618c228b86ed84ab6daa1a41317"
+  },
+  {
+    "path": "tests/soc2-ai-private-evidence-kit.test.ts",
+    "sha256": "260e0316cd8e1a7dd0b506bf93477f497e1d0046b3e14a17c81e68e378592a53"
+  },
+  {
+    "path": "tests/soc2-approval-queue.test.ts",
+    "sha256": "306af0c8327e1df602ca874783d2bf129e9d662dbd20f9d39839bf72a151fe58"
+  },
+  {
+    "path": "tests/soc2-dashboard-service.test.ts",
+    "sha256": "83209c4b8dc041a74dcbf0b6d71699222f057fd547d0b4d647575a48ad61be94"
+  },
+  {
+    "path": "tests/soc2-deployment-evidence.test.ts",
+    "sha256": "7cb02174fa6c51a286a5d7417e1f23e65648b0c22366028545c41b5d6f11f0ab"
+  },
+  {
+    "path": "tests/soc2-github-approval-issue.test.ts",
+    "sha256": "94e6d48f51c653615c0d18d012e204830eec36d80b3e601d2338233d59e266e4"
+  },
+  {
+    "path": "tests/soc2-governance-evidence.test.ts",
+    "sha256": "9b8ff84a60b984f665a77fc418c8c4fbd504dbe380084395b9c1b57d6e817be9"
+  },
+  {
+    "path": "tests/soc2-incident-evidence.test.ts",
+    "sha256": "fdddea2044f3e1ae65fc4e1c858d40e537dc232e0789d5eaf8a2a3565c0f9d9c"
+  },
+  {
+    "path": "tests/soc2-incident-private-evidence-kit.test.ts",
+    "sha256": "280a64d4a764948b29f5f7173fdcf136e1c8dff8df9ae618cf69b480e05f8e1c"
+  },
+  {
+    "path": "tests/soc2-monitoring-evidence.test.ts",
+    "sha256": "b0c1d2099975072be318e0666e7a5aeede1314483b9ce1f83fe06751d3c28a75"
+  },
+  {
+    "path": "tests/soc2-monitoring-private-evidence-kit.test.ts",
+    "sha256": "e14e3291884c0c6983020dbea716e61f2ec71dab57f91a6b79d5b9c37fed90f8"
+  },
+  {
+    "path": "tests/soc2-private-evidence-readiness.test.ts",
+    "sha256": "d88631f097df60ee63ff858b6fcfa27aa8aa7b1006eac4dc9d17d2a223488c34"
+  },
+  {
+    "path": "tests/soc2-privileged-access-evidence.test.ts",
+    "sha256": "2997b859b5d27de49b3429b3053a4a8737363d81805415eb772d6ba7f793fece"
+  },
+  {
+    "path": "tests/soc2-privileged-access-private-evidence-kit.test.ts",
+    "sha256": "87e920f35e03129af359987b8b60fc0d77ef616241b30981c00f27be6c4b5ba6"
+  },
+  {
+    "path": "tests/soc2-tenant-isolation-evidence.test.ts",
+    "sha256": "c78d87b35bd7d2fa9851065d37c04bd689d03af77129e5a5be15f9a09659d1d1"
+  },
+  {
+    "path": "tests/staff-assignment-integrity-readiness.test.ts",
+    "sha256": "ed495e4598780d3b9680b13a883ed35860f5abc3ed4152ab778920693694ab5c"
+  },
+  {
+    "path": "tests/staff-assignment-lifecycle.test.ts",
+    "sha256": "913b451135e06380db2df4ef2f8aff22fc1d4eac859aa0351911080b2a4d990a"
+  },
+  {
+    "path": "tests/staff-auth-version-contract.test.ts",
+    "sha256": "4d4b42cefdb571eec9a36f2abc3021061ef68edc3e7155a3f2ca4eb40ee22d16"
+  },
+  {
+    "path": "tests/staff-credential-realtime-contract.test.ts",
+    "sha256": "44e4e606ab3b28521f540aabb4d60ef6aa19640139e1396cd0c768fa44f1f9e1"
+  },
+  {
+    "path": "tests/staff-identity-integrity.integration.test.ts",
+    "sha256": "eeead0ded99b9e6f31000dfd8966319cc4eaeee4adc056e5e47bea325b0fc65f"
+  },
+  {
+    "path": "tests/staff-identity-lifecycle.test.ts",
+    "sha256": "4cedf8311c7c015c7c6da13544e6c15502041b3e0602cd6445ee65b29742877a"
+  },
+  {
+    "path": "tests/staff-identity-migration-contract.test.ts",
+    "sha256": "badedca3f19e53da53cdf93744bc1704b7782b19e975433eb51cff0336c110e3"
+  },
+  {
+    "path": "tests/staff-identity-monitoring.test.ts",
+    "sha256": "22084314c9f6e596b427af70a16cef639d08caec882aaef2f4350636555d93bb"
+  },
+  {
+    "path": "tests/staff-password-login-contract.test.ts",
+    "sha256": "d3999f3d3b626f5198c96911f6abead67be591b5238cbd0d215caa21f4a41158"
+  },
+  {
+    "path": "tests/staff-password-login-policy.test.ts",
+    "sha256": "6ef969093d13ccc26a5dc890aad0f107d254f03436ab85a9d49a23a6ec96be34"
+  },
+  {
+    "path": "tests/student-device-index-contract.test.ts",
+    "sha256": "9df53e3003fa578108a810f75233e8e7cbd0b2548c1becd3f3d2089b7c76c245"
+  },
+  {
+    "path": "tests/student-email-domain.test.ts",
+    "sha256": "a0ea1c46476d7e032d441eeefc895b74057a87742963b403c2c48b5221e4c555"
+  },
+  {
+    "path": "tests/student-email-policy.test.ts",
+    "sha256": "0ff39debaa935fb3447b4ba1bd19e741c385383f7e4f521e561d64c354e3875e"
+  },
+  {
+    "path": "tests/student-information-evaluation.test.ts",
+    "sha256": "9453f49b6bffc50b1c58207e0037bbcc53ea20179ea3d83a5f25591296bf10ba"
+  },
+  {
+    "path": "tests/student-information-processing.test.ts",
+    "sha256": "4d95576baab2296e263cfa3dcb925cb92679c54272f336be63aed563e9788cc7"
+  },
+  {
+    "path": "tests/student-information.integration.test.ts",
+    "sha256": "271800e4f38d0ccf64e54622dbdfca0435418815cfe5cc4eb3c5a113abc1eeaa"
+  },
+  {
+    "path": "tests/student-removal-lifecycle.test.ts",
+    "sha256": "327e98e1240efb88a79ccca84f63b8557a93cee4f9f5b5e3cf6dacb0d6499942"
+  },
+  {
+    "path": "tests/student-removal-runtime-contract.test.ts",
+    "sha256": "b95ae21e6b65847c2a1aa3d0277b0e6fe74cabe20c10cd52b81bd1a31b842409"
+  },
+  {
+    "path": "tests/super-admin-school-counts.integration.test.ts",
+    "sha256": "02b9e38a1dcd159c191e72efae097a58b1f81151308a4f3631e445c47b0547c6"
+  },
+  {
+    "path": "tests/tenant-context-cleanup.test.ts",
+    "sha256": "5db1adcdd49eeef78dd6efae5a582fe15bb7cd74bc3401a8a3d2681d0d3738a3"
+  },
+  {
+    "path": "tests/tenant-context-reuse.integration.test.ts",
+    "sha256": "9d1e21c83d498a4ca8fb0d884b6b30a2d1bb9a05e3155d0406fdba350a24fcbf"
+  },
+  {
+    "path": "tests/terraform-alarm-ecs-names.test.ts",
+    "sha256": "2f28e858d6a6ffe24b392fd7e437508373e5ed4f90e3aa7e43a984a5c2fde4a3"
+  },
+  {
+    "path": "tests/terraform-classpilot-turn.test.ts",
+    "sha256": "f109f45de73eb434236718435b4b1b3e1ff88b4d686c4465909521dfffecde4e"
+  },
+  {
+    "path": "tests/terraform-secret-state-detachment.test.ts",
+    "sha256": "86276d093e3df7bbca1bde4c024c547d12141f1686456fc2b2391111dd17b149"
+  },
+  {
+    "path": "tests/terraform-state-backup.test.ps1",
+    "sha256": "b9d154f47bc7b27fbda506d368d0cf8e5d291d7846599adee180c63695d0a838"
+  },
+  {
+    "path": "tests/test-environment.mjs",
+    "sha256": "e9854a4e9142f94c5482615701c6238142f51c230398a2a8dd039706eb8caefe"
+  },
+  {
+    "path": "tests/typecheck-debt-baseline.json",
+    "sha256": "3500e65893b6e9cb0693d0946a75472a11216e869922688dd17913969564ab98"
+  },
+  {
+    "path": "tests/unsafe-cast-baseline.json",
+    "sha256": "b1f55e79f9a51f9cc6d27c50c8356ba677a7acd744af88898d8d1f3aa2600f16"
+  },
+  {
+    "path": "tests/usage-capacity-diagnostics.test.ts",
+    "sha256": "ad493ad737e7ec11c9898391a40481709420f05f6842fcf9d41b4866f51cf0f1"
+  },
+  {
+    "path": "tests/web-session.test.ts",
+    "sha256": "d362f7147e126df835bf9c317e20e709febecb260bfa1ed74493295293af0bec"
+  },
+  {
+    "path": "tests/ws-redis-ordered-publish.test.ts",
+    "sha256": "3c3a42a55d9bf21ce9792d59b27b1e219658bff958c0811e9e640aab1d8d4339"
+  },
+  {
+    "path": "tsconfig.json",
+    "sha256": "8f5e764158b8e02f7f170fa008a09a3fa0431aefe43d87395e0278007cea0032"
+  }
+]

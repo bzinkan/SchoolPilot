@@ -1,0 +1,442 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T11:04:35.688Z",
+  "sourceHead": "1b554955d35ae0ad02f389c427eae7291370244b",
+  "sourceState": "Uncommitted test-only fixture follow-up after the listing checkpoint. No application, production monitor, rollback, helper library or CI workflow edits in this follow-up.",
+  "status": "four_owned_fixture_lifetimes_corrected_full_mock_suite_passed",
+  "ciFailure": {
+    "source": "35712eb162632cb444c6464e30ce6064e989ef23",
+    "runId": 37114624863,
+    "artifactId": 11272015561,
+    "failure": "Generic valid-401 monitor did not start.",
+    "observedCause": "The production monitor rejected its configured generator process binding as not live before the first sample.",
+    "exactSubcauseKnown": false,
+    "limitation": "Retained evidence cannot distinguish an expired 30-second fixture from unavailable process/path/start-time binding. The fixture lifetime was shorter than the existing 60-second startup allowance.",
+    "original204MonitorException": "Remains unexplained; the unavailable-probe case passed with its expected load reason in the subsequent 35712 run."
+  },
+  "change": "Only four sibling fatal-case harnesses now publish actual PID/start/path/nonce readiness and remain owned until release or verified rollback containment. Release is committed atomically; the abandonment ceiling is derived from existing test-only watchdogs. Live normal completion requires exit0. Already-exited completion is allowed only after the existing successful rollback assertion, with exact identity/status retained. All original monitor assertions and production timeouts are unchanged.",
+  "validation": {
+    "lifecycleAttempt01": {
+      "assertions": 9,
+      "passed": true,
+      "scope": "Initial readiness, owner release and failed-case cleanup."
+    },
+    "targetedAttempt01": {
+      "finishedAt": "2026-10-03T10:44:29.6600866Z",
+      "monitorBefore": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "testAfter": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "appChangedPaths": [],
+      "startedAt": "2026-10-03T10:41:54.3856437Z",
+      "exitCode": 1,
+      "monitorAfter": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "command": "pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1 -LiveHarnessCasesOnly",
+      "sourceUnchanged": true,
+      "testBefore": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "check": "targeted",
+      "passed": false,
+      "failure": "New helper incorrectly required graceful exit0 after the monitor intentionally terminated its generator during successful Application rollback; retained as a fixture defect."
+    },
+    "lifecycleAttempt02": {
+      "assertions": 14,
+      "passed": true,
+      "scope": "Corrected already-contained completion and rejection of unknown nonzero exits."
+    },
+    "targetedAttempt02": {
+      "finishedAt": "2026-10-03T10:51:54.5831522Z",
+      "monitorAfter": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "appChangedPaths": [],
+      "check": "targeted",
+      "sourceUnchanged": true,
+      "command": "pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1 -LiveHarnessCasesOnly",
+      "exitCode": 0,
+      "testAfter": "cb755d6f1e862d6821e59e0fd207abf17eaee186bd09a3e25ad9fec67474132c",
+      "monitorBefore": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "testBefore": "cb755d6f1e862d6821e59e0fd207abf17eaee186bd09a3e25ad9fec67474132c",
+      "startedAt": "2026-10-03T10:48:44.0289060Z",
+      "assertions": 194,
+      "passed": true,
+      "scope": "Startup prerequisites, original missing-probe cases and all four fatal rollback cases before final atomic-release hardening."
+    },
+    "finalLifecycle": {
+      "assertions": 15,
+      "passed": true,
+      "scope": "Actual ready identity, staged release ignored until commit, owner release+exit0, unverified nonzero rejection, failure cleanup."
+    },
+    "finalFailureDiagnostics": {
+      "assertions": 5,
+      "passed": true
+    },
+    "fullSuite": {
+      "startedAt": "2026-10-03T10:54:04.7805099Z",
+      "appChangedPaths": [],
+      "testAfter": "dbc6d4df4bdf5444e61befc005079cd3ca37721e6811922b9040fd56ba358f0a",
+      "check": "full",
+      "finishedAt": "2026-10-03T11:01:06.7314812Z",
+      "monitorBefore": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "command": "pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1",
+      "sourceUnchanged": true,
+      "exitCode": 0,
+      "monitorAfter": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+      "testBefore": "dbc6d4df4bdf5444e61befc005079cd3ca37721e6811922b9040fd56ba358f0a",
+      "assertions": 380,
+      "durationSeconds": 420.7,
+      "passed": true,
+      "scope": "Default full AWS mock suite, with no targeted selector and all original assertions."
+    },
+    "parseErrors": 0,
+    "diffCheckExitCode": 0
+  },
+  "finalProof": {
+    "monitorSha256": "9f805b9bcd132ea5008b3253c3116feaf1f93bf64011659218f270a0ca6b437b",
+    "recordedAt": "2026-10-03T11:04:34.5954373Z",
+    "cloudOperations": 0,
+    "parseErrors": 0,
+    "fixtureCleanup": [
+      {
+        "absent": true,
+        "name": "schoolpilot-rollout-test-3c951b7a9407421391778dc8c3a052b2"
+      }
+    ],
+    "appChangedPaths": [],
+    "head": "1b554955d35ae0ad02f389c427eae7291370244b",
+    "matchingOwnedProcesses": [],
+    "testSha256": "dbc6d4df4bdf5444e61befc005079cd3ca37721e6811922b9040fd56ba358f0a",
+    "diffCheckExitCode": 0
+  },
+  "preparationFailure": "An external text-replacement draft expanded a replacement token unexpectedly. That unapplied draft and receipt are retained; corrected before repository mutation or test execution.",
+  "cleanup": "Full-suite owned-process drain passed. Its exact temporary fixture is absent and no matching process remains. Release-file cleanup remains inside verified owned temporary paths.",
+  "productionActions": 0,
+  "capacityAccepted": false,
+  "limitations": [
+    "Fresh final-head CI is still required.",
+    "This does not establish the exact subcause of the prior CI binding failure.",
+    "No production timeout, resource limit, monitoring authority or rollback assertion was weakened."
+  ],
+  "sanitation": "Local profile prefixes, ANSI escapes, database URL/access-key patterns sanitized. Only logs, code and bounded synthetic mock receipts are archived; no environment, credentials, Terraform state or encrypted backup files. Short archive filenames prevent Windows path-length failures. Raw originals remain unchanged outside Git.",
+  "files": [
+    {
+      "file": "001-archive.mjs.gz",
+      "originalRelativePath": "local/archive.mjs",
+      "rawBytes": 8096,
+      "rawSha256": "5fa00bad07bfbc08e65016eed45551410e2b15c9b9ab569f741fc03acab860ce",
+      "sanitizedBytes": 8130,
+      "sanitizedSha256": "0aebfa59946c4b5745cb1138c95d01f1eef63b1c84134a8d79c73aadf7908002",
+      "gzipSha256": "fea6ed4e89ae3059211ec8682b1f198a3d0591998704dd505219f8993430226b"
+    },
+    {
+      "file": "002-diagnostics-01.log.gz",
+      "originalRelativePath": "local/diagnostics-01.log",
+      "rawBytes": 50,
+      "rawSha256": "75b2d394dda3f54df7cae4f9b1070c8367a95e2bb1d1db462e1ebedb228c0351",
+      "sanitizedBytes": 50,
+      "sanitizedSha256": "75b2d394dda3f54df7cae4f9b1070c8367a95e2bb1d1db462e1ebedb228c0351",
+      "gzipSha256": "b4b965e109c8b1ab993667daddb92dc162e68e3bc87f6eb8fe8d220845ec0cbe"
+    },
+    {
+      "file": "003-diff-check.log.gz",
+      "originalRelativePath": "local/diff-check.log",
+      "rawBytes": 131,
+      "rawSha256": "9cef1fa46d77c710ffde1b10bb83659585e3c43f2ae9e26161f891333bc3481d",
+      "sanitizedBytes": 131,
+      "sanitizedSha256": "9cef1fa46d77c710ffde1b10bb83659585e3c43f2ae9e26161f891333bc3481d",
+      "gzipSha256": "26361ceed55e066f179e67eb0c2b219ed4f8e53b883ba527981783a5ccfc729a"
+    },
+    {
+      "file": "004-final-focused.json.gz",
+      "originalRelativePath": "local/final-focused.json",
+      "rawBytes": 195,
+      "rawSha256": "e9115a51e48a8585edd6aa7e166d16f1bffaaee5bee90fdc1f87b98389e85bd5",
+      "sanitizedBytes": 195,
+      "sanitizedSha256": "e9115a51e48a8585edd6aa7e166d16f1bffaaee5bee90fdc1f87b98389e85bd5",
+      "gzipSha256": "50631c6e8bbb87944c30794a6228744d39547ae62d70b8aa16a5bd76d02edb56"
+    },
+    {
+      "file": "005-final-source-proof.json.gz",
+      "originalRelativePath": "local/final-source-proof.json",
+      "rawBytes": 555,
+      "rawSha256": "64d03a2b09d358f1414eb86655f655743723b379948dadcfdaeb200e00304b20",
+      "sanitizedBytes": 555,
+      "sanitizedSha256": "64d03a2b09d358f1414eb86655f655743723b379948dadcfdaeb200e00304b20",
+      "gzipSha256": "9e8d34ee96278913ec15a24211ef18b08bf303ca4aebfc29457f53f592bf20f8"
+    },
+    {
+      "file": "006-final.patch.gz",
+      "originalRelativePath": "local/final.patch",
+      "rawBytes": 22331,
+      "rawSha256": "68e542da5f26f07680e42985276d50a2e8614bf99055dc504eaac0bee1710e6c",
+      "sanitizedBytes": 22331,
+      "sanitizedSha256": "68e542da5f26f07680e42985276d50a2e8614bf99055dc504eaac0bee1710e6c",
+      "gzipSha256": "8dbc8e8fac1b9d23837fd520ed2465c7e73fc5c51b6860cde8be9bb4ce3dab14"
+    },
+    {
+      "file": "007-full-01.json.gz",
+      "originalRelativePath": "local/full-01.json",
+      "rawBytes": 615,
+      "rawSha256": "0169822d5af313099283b44fb44af82117a3a486df76c5dcfe48fbbd219d4b3c",
+      "sanitizedBytes": 615,
+      "sanitizedSha256": "0169822d5af313099283b44fb44af82117a3a486df76c5dcfe48fbbd219d4b3c",
+      "gzipSha256": "c73429d79c6a755ebcb3f3faf19cd1b31684280668e2e474211b74062f8f7b14"
+    },
+    {
+      "file": "008-full-01.log.gz",
+      "originalRelativePath": "local/full-01.log",
+      "rawBytes": 2288,
+      "rawSha256": "797e63472fcd4af575e2265dde5323d94d8aad227b44611ae0c1f10aff668db9",
+      "sanitizedBytes": 2342,
+      "sanitizedSha256": "ee9eff5d940cbf69dd6688e9610237827e38c79b0d985e8d718cef4b6f6756b4",
+      "gzipSha256": "2e01825981632295c1471493228e78efb189c64a8e8dda73ad45c7231c39662b"
+    },
+    {
+      "file": "009-helpers.ps1.gz",
+      "originalRelativePath": "local/helpers.ps1",
+      "rawBytes": 8601,
+      "rawSha256": "830e7e6a0b9c5bb3c79113b2262c79d056f288ac32ce2a345b8089455b987a55",
+      "sanitizedBytes": 8601,
+      "sanitizedSha256": "830e7e6a0b9c5bb3c79113b2262c79d056f288ac32ce2a345b8089455b987a55",
+      "gzipSha256": "0827a94f8804cea23a206da96083dbdad94691f7dea3156b78a19bd4d7c19b84"
+    },
+    {
+      "file": "010-lifecycle-01.json.gz",
+      "originalRelativePath": "local/lifecycle-01.json",
+      "rawBytes": 158,
+      "rawSha256": "d8bd81a797f50ac3e90bfea6e076d9ed912dc94e120bf9dcc35886a94e5c9049",
+      "sanitizedBytes": 158,
+      "sanitizedSha256": "d8bd81a797f50ac3e90bfea6e076d9ed912dc94e120bf9dcc35886a94e5c9049",
+      "gzipSha256": "0be61a2b344c94e0b3401e2f1fde8ed32609e55383ef043ff077fb2fc2bd376b"
+    },
+    {
+      "file": "011-lifecycle-01.log.gz",
+      "originalRelativePath": "local/lifecycle-01.log",
+      "rawBytes": 45,
+      "rawSha256": "1808d7b50d0c0f1d577d54cbe5cd96be81837e29e46aa98ce4ec11f0617e28de",
+      "sanitizedBytes": 45,
+      "sanitizedSha256": "1808d7b50d0c0f1d577d54cbe5cd96be81837e29e46aa98ce4ec11f0617e28de",
+      "gzipSha256": "298bea306e8528df613a65edb4bbb90c6200bb49c6395dd45c74c9c3feef24d4"
+    },
+    {
+      "file": "012-lifecycle-02.json.gz",
+      "originalRelativePath": "local/lifecycle-02.json",
+      "rawBytes": 157,
+      "rawSha256": "c668e2f50f66a7d66fcb14ccb904bd519e0089b1eb48d1a642f8738957a8cad3",
+      "sanitizedBytes": 157,
+      "sanitizedSha256": "c668e2f50f66a7d66fcb14ccb904bd519e0089b1eb48d1a642f8738957a8cad3",
+      "gzipSha256": "13c6c66f4e714f88a2b4a1c5214d777b0ff94ee0009bb5f5e1504ad52bbae223"
+    },
+    {
+      "file": "013-lifecycle-02.log.gz",
+      "originalRelativePath": "local/lifecycle-02.log",
+      "rawBytes": 46,
+      "rawSha256": "e267534ddebe06d675a31292f68018a1ea917ca6396be626682d6ce2df890ac2",
+      "sanitizedBytes": 46,
+      "sanitizedSha256": "e267534ddebe06d675a31292f68018a1ea917ca6396be626682d6ce2df890ac2",
+      "gzipSha256": "174c833b28ae32bfdeeed452b05fd8efede1e3c8372d72fb00e42dc7ccb6ffd6"
+    },
+    {
+      "file": "014-lifecycle-03.log.gz",
+      "originalRelativePath": "local/lifecycle-03.log",
+      "rawBytes": 46,
+      "rawSha256": "4804cd851f793ccdcb7a54ce7d35c251cc389b80f6436e1f957dc81e5a8ce842",
+      "sanitizedBytes": 46,
+      "sanitizedSha256": "4804cd851f793ccdcb7a54ce7d35c251cc389b80f6436e1f957dc81e5a8ce842",
+      "gzipSha256": "2f234bd5ce0f73b2d3283a7b1ba728b0a20a751bee64223e12e69d19ceceb002"
+    },
+    {
+      "file": "015-parse-proposed-01.json.gz",
+      "originalRelativePath": "local/parse-proposed-01.json",
+      "rawBytes": 81,
+      "rawSha256": "35b9526989a00ad51c8afce3434189508d472fa4bc0d3072388e7fb632af9dfd",
+      "sanitizedBytes": 81,
+      "sanitizedSha256": "35b9526989a00ad51c8afce3434189508d472fa4bc0d3072388e7fb632af9dfd",
+      "gzipSha256": "cb8d47a30268ed2007112b13add87777d6158b9e6b86ebf6decba9c96b2e5edc"
+    },
+    {
+      "file": "016-preparation-invalid-replacement-01.json.gz",
+      "originalRelativePath": "local/preparation-invalid-replacement-01.json",
+      "rawBytes": 347,
+      "rawSha256": "8535d9f56a23ff84606c9adee3a44812509552f578067fc46bbd606e28443541",
+      "sanitizedBytes": 351,
+      "sanitizedSha256": "47fe30738de33f3166aad73904437f22821c96a1f032834ca17bd58e3428fd27",
+      "gzipSha256": "c1fdb3c507176653e0763c6fe39bca90f62f0678580af42cc2deb1c0f6fa5662"
+    },
+    {
+      "file": "017-preparation.json.gz",
+      "originalRelativePath": "local/preparation.json",
+      "rawBytes": 347,
+      "rawSha256": "2b9fb57100016749b2c7d448de248d0cb90fd524609ff8d7a9c88768d0408f76",
+      "sanitizedBytes": 351,
+      "sanitizedSha256": "d03d56a490a87b8137b419c228bff2a6b00871e4cc0999385bb7bd1f68a1c985",
+      "gzipSha256": "d6698f495c8d5f6419e48c2e08cc24e6c2a77a2b6a3ea3e6abe784b6b29d547a"
+    },
+    {
+      "file": "018-prepare.mjs.gz",
+      "originalRelativePath": "local/prepare.mjs",
+      "rawBytes": 3219,
+      "rawSha256": "19472e0b6ffd468849ea8f79cc9cdc64acd79fe724f8a879cadc2f0e7e0bd78c",
+      "sanitizedBytes": 3231,
+      "sanitizedSha256": "2fa466a587a064934865f0f32e77fd41630aea44f652a6dda63b251a36232760",
+      "gzipSha256": "8743ca9bdfe822990a5d12a8bb3a6ff4e437bc038969db8437727df99b62b020"
+    },
+    {
+      "file": "019-run-check.ps1.gz",
+      "originalRelativePath": "local/run-check.ps1",
+      "rawBytes": 1820,
+      "rawSha256": "46acadbc9ce237b75880a69e47233b92186cfe13126affd22b5464c570ea96bb",
+      "sanitizedBytes": 1832,
+      "sanitizedSha256": "4ec50c7bdad57eda363e7bc11cbaae9b70456c3b05d5b286474379b4ca3152d6",
+      "gzipSha256": "8030473c7a7dca79ac7df51e31d1b5d17510bfb1daea07fcfa224a9306937298"
+    },
+    {
+      "file": "020-targeted-01.json.gz",
+      "originalRelativePath": "local/targeted-01.json",
+      "rawBytes": 641,
+      "rawSha256": "7b44b4aad21b078635f46203fab351aaa9911adbce772cf76e3aa89adbc2481b",
+      "sanitizedBytes": 641,
+      "sanitizedSha256": "7b44b4aad21b078635f46203fab351aaa9911adbce772cf76e3aa89adbc2481b",
+      "gzipSha256": "d43318ca7c7834a5f8909fa354330596f6f6a32b613403e17aaf8d54a8ebad73"
+    },
+    {
+      "file": "021-targeted-01.log.gz",
+      "originalRelativePath": "local/targeted-01.log",
+      "rawBytes": 544,
+      "rawSha256": "240b82e376bc17d02a9bdcf3acc6e01e4cc4663b6eb403833d96990c0f261ff5",
+      "sanitizedBytes": 556,
+      "sanitizedSha256": "f71c3febee4aa938d56c47def66bd9eb8a5f87dedfea3be1a46bf947264936e6",
+      "gzipSha256": "b2f808aead0d2d5b63cfcf9676dad97186f76149e79e40fcf120a28f1e08198f"
+    },
+    {
+      "file": "022-targeted-02.json.gz",
+      "originalRelativePath": "local/targeted-02.json",
+      "rawBytes": 641,
+      "rawSha256": "11baa9be4cae046100c69bf30883d29d32a445eeb0e70f943ab17d6dce1525ea",
+      "sanitizedBytes": 641,
+      "sanitizedSha256": "11baa9be4cae046100c69bf30883d29d32a445eeb0e70f943ab17d6dce1525ea",
+      "gzipSha256": "232f14c9dadab447c27aa00c1f5d6b6c9a664fed53d85825cbed63e30b61a90d"
+    },
+    {
+      "file": "023-targeted-02.log.gz",
+      "originalRelativePath": "local/targeted-02.log",
+      "rawBytes": 51,
+      "rawSha256": "3171d06684629872d47e3c867ee3e804de89d51590962e41f9231216d0b18151",
+      "sanitizedBytes": 51,
+      "sanitizedSha256": "3171d06684629872d47e3c867ee3e804de89d51590962e41f9231216d0b18151",
+      "gzipSha256": "bd99744c90a21b0abdf176494961785d9006e66e5e4749ed4a223aa41de8e84a"
+    },
+    {
+      "file": "024-mock-monitor-failure.json.gz",
+      "originalRelativePath": "local/targeted-failure-evidence/rollout-failure-8a5995c29cfe45afab863273d10a331f/mock-monitor-failure.json",
+      "rawBytes": 29891,
+      "rawSha256": "f722c08bfa4c021b3de8c04dae723b34db5236f0a164f8399028db4d4fc3f33f",
+      "sanitizedBytes": 29891,
+      "sanitizedSha256": "f722c08bfa4c021b3de8c04dae723b34db5236f0a164f8399028db4d4fc3f33f",
+      "gzipSha256": "a42afe63ba3217abbdd114b6fad13bfffda2f5a1cebd3e409b2808a1526f1135"
+    },
+    {
+      "file": "025-test.attempt-01.ps1.gz",
+      "originalRelativePath": "local/test.attempt-01.ps1",
+      "rawBytes": 465348,
+      "rawSha256": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "sanitizedBytes": 465348,
+      "sanitizedSha256": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "gzipSha256": "775b04f07cff7bbe2bd36d32f69380bd01b8794da4cc698e49ee03166ce84037"
+    },
+    {
+      "file": "026-test.attempt-02.ps1.gz",
+      "originalRelativePath": "local/test.attempt-02.ps1",
+      "rawBytes": 467410,
+      "rawSha256": "cb755d6f1e862d6821e59e0fd207abf17eaee186bd09a3e25ad9fec67474132c",
+      "sanitizedBytes": 467410,
+      "sanitizedSha256": "cb755d6f1e862d6821e59e0fd207abf17eaee186bd09a3e25ad9fec67474132c",
+      "gzipSha256": "caf820d9cd136ee75ac623a8a4761e2e6c7b19bc878113a5c035c617cdf09943"
+    },
+    {
+      "file": "027-test.before.ps1.gz",
+      "originalRelativePath": "local/test.before.ps1",
+      "rawBytes": 457060,
+      "rawSha256": "9bc2de84099a7fbd6ff96ca1ecce5501723dfa56b3b77533c239c93af4d10204",
+      "sanitizedBytes": 457060,
+      "sanitizedSha256": "9bc2de84099a7fbd6ff96ca1ecce5501723dfa56b3b77533c239c93af4d10204",
+      "gzipSha256": "295480c4cb0fe5ba6b5ac81bc84495c3b1a6c27345076a8415adc71e4900b6ac"
+    },
+    {
+      "file": "028-test.final.ps1.gz",
+      "originalRelativePath": "local/test.final.ps1",
+      "rawBytes": 467891,
+      "rawSha256": "dbc6d4df4bdf5444e61befc005079cd3ca37721e6811922b9040fd56ba358f0a",
+      "sanitizedBytes": 467891,
+      "sanitizedSha256": "dbc6d4df4bdf5444e61befc005079cd3ca37721e6811922b9040fd56ba358f0a",
+      "gzipSha256": "423e6b1609455a72e37b6db67fcaa283e768d836ef0001df9a6de5d9b2e518c2"
+    },
+    {
+      "file": "029-test.proposed-invalid-replacement-01.ps1.gz",
+      "originalRelativePath": "local/test.proposed-invalid-replacement-01.ps1",
+      "rawBytes": 920542,
+      "rawSha256": "f494dc3018fd9aaecf8243ad0b453bcb03c1f75c2d11272699c92c3adf4315d2",
+      "sanitizedBytes": 920542,
+      "sanitizedSha256": "f494dc3018fd9aaecf8243ad0b453bcb03c1f75c2d11272699c92c3adf4315d2",
+      "gzipSha256": "23ba9b20cfd2596772b57d352c29e731b5e2a36754022e0e63fcca727dbafad1"
+    },
+    {
+      "file": "030-test.proposed.ps1.gz",
+      "originalRelativePath": "local/test.proposed.ps1",
+      "rawBytes": 465348,
+      "rawSha256": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "sanitizedBytes": 465348,
+      "sanitizedSha256": "4f2210eb11bc2931850f40018990ffbdb9afbb5120e4c78db3fe26e68327aedb",
+      "gzipSha256": "775b04f07cff7bbe2bd36d32f69380bd01b8794da4cc698e49ee03166ce84037"
+    },
+    {
+      "file": "031-all-workflows-final.json.gz",
+      "originalRelativePath": "ci-35712/all-workflows-final.json",
+      "rawBytes": 895,
+      "rawSha256": "aa913a7c8b847746f858ce766bff83ca8dfbb1f33ba4c2d32be75cc7120b550e",
+      "sanitizedBytes": 895,
+      "sanitizedSha256": "aa913a7c8b847746f858ce766bff83ca8dfbb1f33ba4c2d32be75cc7120b550e",
+      "gzipSha256": "02a37100145c77637e1ede40fd29cdc3c528fc49f713a8e6942b65ba89d69b56"
+    },
+    {
+      "file": "032-mock-monitor-failure.json.gz",
+      "originalRelativePath": "ci-35712/artifact/rollout-failure-146230435fd9460fa1f8b100d9471c1a/mock-monitor-failure.json",
+      "rawBytes": 30721,
+      "rawSha256": "ae8566958e12c54ed013a572964fb60a9c21113a79e4c7b2ae9dcb310b8494a7",
+      "sanitizedBytes": 30721,
+      "sanitizedSha256": "ae8566958e12c54ed013a572964fb60a9c21113a79e4c7b2ae9dcb310b8494a7",
+      "gzipSha256": "f673519a0a6d06332a2957589e06b02b17c9007487eee1860949c2a73a0d96bb"
+    },
+    {
+      "file": "033-artifacts.json.gz",
+      "originalRelativePath": "ci-35712/artifacts.json",
+      "rawBytes": 13001,
+      "rawSha256": "55ce6bb4d280345051e24529c5d48b9f520019dc40e5ea96833e54d20e155433",
+      "sanitizedBytes": 13001,
+      "sanitizedSha256": "55ce6bb4d280345051e24529c5d48b9f520019dc40e5ea96833e54d20e155433",
+      "gzipSha256": "a87a5a1e8cdccd7fcb63208dad1fe7c2406de2d61d6b87ca0dd142c983b13df5"
+    },
+    {
+      "file": "034-exact-head-summary.json.gz",
+      "originalRelativePath": "ci-35712/exact-head-summary.json",
+      "rawBytes": 4667,
+      "rawSha256": "4ad1e3f98efced82749aed2183af5b27706d3f4c4d065d1e19ca025c01bedf7c",
+      "sanitizedBytes": 4667,
+      "sanitizedSha256": "4ad1e3f98efced82749aed2183af5b27706d3f4c4d065d1e19ca025c01bedf7c",
+      "gzipSha256": "b088086cbf938b63f4581bd448ff718f9e3ea1df4c097d73bee8a6e879dcf388"
+    },
+    {
+      "file": "035-full-job.log.gz",
+      "originalRelativePath": "ci-35712/full-job.log",
+      "rawBytes": 62988,
+      "rawSha256": "b9cb287eb7991c14372eec2633e42dc435b40d8e7da6a6de5b87eb4588a5c4c6",
+      "sanitizedBytes": 61438,
+      "sanitizedSha256": "fdf8c0e19ce11a3faadd82bf2cb3f3e219509d5aec6ecde6afe08c7963148248",
+      "gzipSha256": "15733bb5c1d5fcb6d3984e903efa039054f7a6b7b21e6b7ea72dc6b7d305b524"
+    },
+    {
+      "file": "036-run.json.gz",
+      "originalRelativePath": "ci-35712/run.json",
+      "rawBytes": 48745,
+      "rawSha256": "bda16bbc583ce20147e81a8de7c416c16dcc065f16541b4af9bd1b933c49cac5",
+      "sanitizedBytes": 48745,
+      "sanitizedSha256": "bda16bbc583ce20147e81a8de7c416c16dcc065f16541b4af9bd1b933c49cac5",
+      "gzipSha256": "d08a9300c406cfa5c0e68ed4b1df1c944151da289afc41e6520619fd61d323b8"
+    }
+  ]
+}

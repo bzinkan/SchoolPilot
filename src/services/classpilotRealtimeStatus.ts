@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { redisCommand } from "../middleware/rateLimiter.js";
 import type { ClasspilotClassroomStateSnapshot } from "./classpilotClassroomState.js";
+import { focusStatusSchema, type ClasspilotFocusStatus } from "./classpilotFocus.js";
 import { classpilotTimestampMsOrNull } from "./classpilotTimestamp.js";
 
 export const CLASSPILOT_REALTIME_SCHEMA_VERSION = 2;
@@ -124,6 +125,7 @@ export type ClasspilotRealtimeStatus = {
     cameraActive: boolean;
   };
   classroomState?: ClasspilotClassroomStateSnapshot;
+  focus?: ClasspilotFocusStatus;
   enforcementHealth?: "synced" | "pending" | "failed" | "unsupported" | "expired";
   restrictionAuthState?: ClasspilotRestrictionAuthState;
   /** Exact school SSO policy revision the extension reports as applied. */
@@ -155,6 +157,7 @@ export type ClasspilotRealtimeReadResult =
   | { status: "miss" | "unavailable" | "mismatch" | "expired" | "rejected" };
 
 export type ClasspilotRealtimeWriteInput = {
+  focus?: unknown;
   schoolId: string;
   studentId: string;
   studentSessionId: string;
@@ -175,6 +178,8 @@ export type ClasspilotRealtimeWriteInput = {
   cameraActive?: unknown;
   screenshotHealth?: unknown;
   classificationPending?: boolean;
+  /** Classification already persisted by the server with this exact heartbeat. */
+  aiClassification?: ClasspilotRealtimeClassification;
   extensionVersion?: unknown;
   clientProtocolVersion?: unknown;
   acceptedCapabilities?: unknown;
@@ -775,6 +780,10 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   ) {
     snapshot.classroomState = row.classroomState as ClasspilotClassroomStateSnapshot;
   }
+  if (row.focus !== undefined) {
+    const focus = focusStatusSchema.safeParse(row.focus);
+    if (focus.success) snapshot.focus = focus.data;
+  }
   if (["synced", "pending", "failed", "unsupported", "expired"].includes(String(row.enforcementHealth))) {
     snapshot.enforcementHealth = row.enforcementHealth as ClasspilotRealtimeStatus["enforcementHealth"];
   }
@@ -851,6 +860,12 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
       cameraActive: input.cameraActive === true,
     },
     classificationPending: input.classificationPending === true,
+    ...(input.aiClassification ? { aiClassification: {
+      category: boundedString(input.aiClassification.category, 64),
+      contentCategory: optionalString(input.aiClassification.contentCategory, 64) ?? null,
+      teacherIntentSource: optionalString(input.aiClassification.teacherIntentSource, 64) ?? null,
+      safetyAlert: optionalString(input.aiClassification.safetyAlert, 64) ?? null,
+    } } : {}),
   };
   const favicon = normalizeFavicon(input.favicon);
   const activeFlightPathName = optionalString(input.activeFlightPathName, 256);
@@ -885,6 +900,10 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;
+  if (input.focus !== undefined) {
+    const focus = focusStatusSchema.safeParse(input.focus);
+    if (focus.success) snapshot.focus = focus.data;
+  }
   if (input.enforcementHealth) snapshot.enforcementHealth = input.enforcementHealth;
   if (["idle", "in_progress", "returning", "complete", "timed_out"].includes(
     String(input.restrictionAuthState)

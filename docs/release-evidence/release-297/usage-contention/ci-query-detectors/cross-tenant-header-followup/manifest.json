@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T05:28:56.728Z",
+  "status": "runtime_header_source_contract_repaired",
+  "primaryManifest": "../manifest.json",
+  "primaryManifestSha256": "b046c35e5078802fb5fd9297e9f294694209508dee6150c1426d8a833f0354c2",
+  "sourceHead": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+  "remoteCi": {
+    "jobId": "111133120162",
+    "status": "failed original ordinary/cross-tenant database job preserved",
+    "findings": "Same four live-binding detector cases, plus the static runtime-security header assertion that captured only the first line of the now-multiline heartbeat registration."
+  },
+  "test": {
+    "file": "tests/classpilot-runtime-security-contract.test.ts",
+    "sha256": "82a216db107edc7d5b1bcc33317ed7a423b8570a0cfec50cdef34d2226af9e9e",
+    "change": "Capture the complete route header through the handler arrow; keep the canonical entitlement/middleware assertion before the body.",
+    "owner": "Root",
+    "result": {
+      "tests": 27,
+      "pass": 27,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    }
+  },
+  "attempts": [
+    {
+      "log": "entitlement-before.log.gz",
+      "exitCode": 1,
+      "status": "module_import_configuration_failed",
+      "reason": "DATABASE_URL absent; no assertion red proof claimed."
+    },
+    {
+      "log": "entitlement-after.log.gz",
+      "exitCode": 1,
+      "status": "module_import_configuration_failed",
+      "reason": "DATABASE_URL absent; no assertion red proof claimed."
+    },
+    {
+      "log": "entitlement-after-02.log.gz",
+      "exitCode": 0,
+      "status": "27_static_contract_tests_passed",
+      "configuration": "Synthetic unreachable loopback database URI for module import only; no production access"
+    }
+  ],
+  "productionMutations": 0,
+  "limitations": [
+    "The successful focused source-contract run used an unreachable loopback database URL solely for module import and made no native database correctness claim.",
+    "Remote failed CI remains failed; final-head CI reruns are separate.",
+    "The primary CI-detector archive and every raw original remain unchanged."
+  ],
+  "sanitation": "UTF8/LF plus workstation-path, connection URL, token, email, UUID and SQL-password redaction; original/sanitized/gzip hashes verified.",
+  "files": [
+    {
+      "file": "entitlement-after-02.json.gz",
+      "rawBytes": 227,
+      "rawSha256": "069d58fd216f23f768ea3bdbfe46f70d5ec02a9226a10ec1659f41922c84ca62",
+      "sanitizedSha256": "586f3cacb5e9c2b227576f62da64e56a6d63ee73f9d225b5bfa2a1c122a5783f",
+      "gzipSha256": "429391d5669ba33d9f3cff66ed98b8a5f7823d68c2a60092f2a344e623c8386d",
+      "gzipBytes": 198
+    },
+    {
+      "file": "entitlement-after-02.log.gz",
+      "rawBytes": 7794,
+      "rawSha256": "cf50b7a8bcbcb064421fc061fcb5a6e7164848899ecd37ba9ec8a3a3f193cdcc",
+      "sanitizedSha256": "6f134c42337b52643003465bf660009bcb9d50a230d38fb75dc7fd9ebdcd2f37",
+      "gzipSha256": "907381edc095702dedd316fc3450c664d492a9540c0929b6c139532336a13498",
+      "gzipBytes": 1764
+    },
+    {
+      "file": "entitlement-after.json.gz",
+      "rawBytes": 115,
+      "rawSha256": "4adff899df65305fd02f5980d382d5fe798f7488363a72ca700d533e34738e1f",
+      "sanitizedSha256": "a45d3b06e6dac6084f0f741454f525e5f2fd63ff64b3dfcfa772e2b8e43f1c8c",
+      "gzipSha256": "94322d732a9bdf308ae34085e3444fc8da315d96c5ee35a0a6dbfb4e5e78eb52",
+      "gzipBytes": 121
+    },
+    {
+      "file": "entitlement-after.log.gz",
+      "rawBytes": 1199,
+      "rawSha256": "ea46c165e9157429fc53d2276e26a8bad292bfb6e24340b54821cc9f5ef8d693",
+      "sanitizedSha256": "024e8ea3c784e765da0f14417f6fe712467f706eb3fdc3cdf2517d7ad88d879b",
+      "gzipSha256": "be9beaa7637e94c26bc9d6167eafb577e1cfd312425255edec2eb828d763c40d",
+      "gzipBytes": 588
+    },
+    {
+      "file": "entitlement-before.json.gz",
+      "rawBytes": 23,
+      "rawSha256": "c34bc644b4dfc96082e294ccb49ac40bdf34a3c659c956ffef43981ed30b2234",
+      "sanitizedSha256": "01614b0e7bf86220a2287c6fd76f9b3a5c06913c2e0762c9eb3958c397f0bbee",
+      "gzipSha256": "d0e68350f4a240d7d996a7f2a0457323658d64e585124e340ec087b1562f335a",
+      "gzipBytes": 40
+    },
+    {
+      "file": "entitlement-before.log.gz",
+      "rawBytes": 1199,
+      "rawSha256": "dffd43b036d29f0ec6999666adc768e65ad4b5db5d7bfba123c175c75d8f2af1",
+      "sanitizedSha256": "ab1d90e3627dda85064eb7eb249b1dbef78a01d5d7a782a342d0284e5685993c",
+      "gzipSha256": "99e006ca2760cb590c8765bb5a8343905798fabb7cc713a97951d45cdd7624a8",
+      "gzipBytes": 588
+    },
+    {
+      "file": "ci-cross-tenant-db.log.gz",
+      "rawBytes": 2557542,
+      "rawSha256": "3fd436c55bf37e94899c25953a99362b561130b112b93ab896957149e9a86dfc",
+      "sanitizedSha256": "ef023b139c1475f7651e4cb5e416a6357b1bb416f7efd33b2d5fdd6e112dcd8d",
+      "gzipSha256": "3f76dc549c657ddf6941b1cae4a2677c82ea84b98f3c2ccc6f7704f315704c89",
+      "gzipBytes": 361548
+    }
+  ]
+}

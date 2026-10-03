@@ -8,6 +8,7 @@ const HOT_PATH_METRICS_INTERVAL_MS = 60_000;
 export type HeartbeatHotPathCounter =
   | "heartbeatCryptoAuth"
   | "heartbeatRecorded"
+  | "heartbeatOptionalTelemetryFailures"
   | "heartbeatInactiveSession"
   | "heartbeatReplacedSession"
   | "manualSessionLeaseRenewed"

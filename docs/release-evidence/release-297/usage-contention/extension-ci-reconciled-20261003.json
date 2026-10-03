@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "observedAtUtc": "2026-10-03T01:20:01.7072974+00:00",
+  "command": "gh pr view 123 --repo bzinkan/ClassPilot --json number,url,headRefOid,baseRefName,state,isDraft,mergeStateStatus,statusCheckRollup",
+  "sourceSha": "8069a9c9bd50352e187847158b356a69edc4e45d",
+  "status": "OPEN",
+  "draft": true,
+  "mergeStateStatus": "CLEAN",
+  "successfulChecks": 10,
+  "failedChecks": 0,
+  "cancelledChecks": 0,
+  "runs": [
+    "37048485018",
+    "37048477885"
+  ],
+  "reconciliation": "Previously cancelled sibling run37048477885 was rerun successfully at the same source head. This refresh does not claim merge, publication, a new package, or live acceptance.",
+  "archive": {
+    "file": "extension-ci-reconciled-20261003.json.gz",
+    "rawSha256": "0fcf60184ae8594c0241f38c20705f7c5ef32ed9c5b6c3c7dfde7c1c4697ca2b",
+    "sanitizedSha256": "0fcf60184ae8594c0241f38c20705f7c5ef32ed9c5b6c3c7dfde7c1c4697ca2b",
+    "archiveSha256": "d36b02f274a9afda99be2ef0f381225b1e369369d642053162ca7467f102d82b",
+    "sanitation": "Read-only GitHub PR metadata contains no secrets or application data; retained without content changes."
+  }
+}

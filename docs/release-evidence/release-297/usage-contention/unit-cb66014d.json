@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:27:47.687Z",
+  "sourceCommit": "cb66014d70a275405a5469257b37debe8d20ea18",
+  "status": "frozen_source_unit_suite_passed_with_explicit_skips",
+  "command": "npm run test:unit",
+  "resolvedCommand": "node scripts/run-test-lane.mjs unit",
+  "commandProvenance": "Core command printed in retained npm log; outer logging wrapper not recorded here.",
+  "exitCode": 0,
+  "tests": 1709,
+  "passed": 1705,
+  "failed": 0,
+  "skipped": 4,
+  "skippedCases": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "limitation": "This unit lane does not execute the four skipped integration-dependent cases and does not establish capacity, final CI or deployment readiness.",
+  "log": {
+    "file": "unit-cb66014d.log.gz",
+    "rawFileName": "release297-usage-frozen-unit.log",
+    "rawBytes": 448630,
+    "rawSha256": "b4a6cf6a25ea56319d54baa0a8e0d7b5f6da99162eef33f24e4ba32ed37e2366",
+    "sanitizedBytes": 436884,
+    "sanitizedSha256": "aed8fe5b7e50187f979892cade5951c95c466bc995d94155e7839d82b89d7129",
+    "gzipSha256": "5f6970b8a0f15f6923caa6c0eb84cc9884e8f8988bba2938f5a37224599e5759"
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:34:53.566Z",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "Incremental shared worktree; exact run-time compiled tree not captured. No application/source changes in this follow-up; external native probe strengthened only.",
+    "preparationScriptSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809"
+  },
+  "scope": "Direct canonical missing-control ownership proof, supplementing retained original native attempts.",
+  "validation": {
+    "predicate": "hasCurrentClasspilotStudentControlAuthority with exact school/student/teachingSessionId, called under lockClasspilotStudentControlAuthorities in a transaction inside restricted runWithTenantContext",
+    "before": false,
+    "after": true,
+    "schools": 2,
+    "currentSessionsPerSchool": 100,
+    "controlsPerSchool": 500,
+    "staffBindingsPerSchool": 100,
+    "nonemptyRestrictions": 0,
+    "invalidBindings": 0,
+    "foreignControlsVisible": 0,
+    "exactCommandTargetsAccepted": true,
+    "poolsClosed": true,
+    "ownedContainerRemoved": true
+  },
+  "limitations": [
+    "Full HTTP/WebSocket preflight and final source-bound acceptance remain required.",
+    "This native proof creates no workload/capacity or deployment claim.",
+    "Original command-before failure remains the earlier staff authority failure; the new direct canonical predicate independently proves missing-control authority before preparation."
+  ],
+  "commands": [
+    "pwsh -NoProfile -File <external>/release297-control-preparation-native.ps1"
+  ],
+  "sanitation": "Credentials and token-shaped strings and user-home paths redacted; schema dump omitted.",
+  "files": [
+    {
+      "file": "native-03-native.log.gz",
+      "status": "passed",
+      "originalSha256": "681ea6ebe76b8fb9bbd64b3abb15208678e4a0e781ea1bd1191d7a9cdec89c4e",
+      "sanitizedSha256": "681ea6ebe76b8fb9bbd64b3abb15208678e4a0e781ea1bd1191d7a9cdec89c4e",
+      "archiveSha256": "ec91e4cca20b99ab5c4adc162411572c4ab845a5c8626cdce78e998b39c48094"
+    },
+    {
+      "file": "native-03-native-result.json.gz",
+      "status": "passed",
+      "originalSha256": "cabb9e009638bfec152c98b09dc25da133670aa712a9c6e06e390f29862b14f7",
+      "sanitizedSha256": "cabb9e009638bfec152c98b09dc25da133670aa712a9c6e06e390f29862b14f7",
+      "archiveSha256": "e4e5fdbb6928ca1b9693e29948bdf9d5c9c0ee57fed1a9bcbd6a02ce5a75409c"
+    },
+    {
+      "file": "native-03-execution.json.gz",
+      "status": "passed",
+      "originalSha256": "ef6c30f3793b75ea69b1635c660043c633b9bce077582b36cfb6eaa998e8293e",
+      "sanitizedSha256": "ef6c30f3793b75ea69b1635c660043c633b9bce077582b36cfb6eaa998e8293e",
+      "archiveSha256": "af53f37b0b25376885696446cfb8e751d6b8742e630a100b38c69823f4c6a10f"
+    },
+    {
+      "file": "native-03-cleanup.log.gz",
+      "status": "passed",
+      "originalSha256": "0027c2d6db5dc54e5f1be712a4a5310d37bff1fb2f935109f4dc6449c5201055",
+      "sanitizedSha256": "0027c2d6db5dc54e5f1be712a4a5310d37bff1fb2f935109f4dc6449c5201055",
+      "archiveSha256": "89e8b2cef1891869fdb1d811222450ad9f183f5deacd52fc7b0c7e696d1ce175"
+    },
+    {
+      "file": "native-03-probe.mjs.gz",
+      "status": "reproduction_source",
+      "originalSha256": "824df449f8caa1d56ddfeaf619f0a5217d637238c042ec6102c6e9753c8255f0",
+      "sanitizedSha256": "01ff263e1e4ac5a322ad3068a40b2dcaaa35474b52da7e67260012938bae9c0d",
+      "archiveSha256": "17a54708a26ecadde880602fee54e80438261e293c6c9e5a819c007926a7d8d2"
+    }
+  ]
+}

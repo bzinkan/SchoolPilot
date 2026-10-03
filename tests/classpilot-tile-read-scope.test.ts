@@ -4,6 +4,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import pg from "pg";
+import { CLASSPILOT_SUPERVISION_REPORTS_SQL } from "../src/db/classpilotSupervisionReportsMigration.js";
 
 // These values must be set before importing any application module. The test
 // models the production API process (not the scheduler worker) and deliberately
@@ -66,7 +68,6 @@ const {
   devices,
   groupStudents,
   groupTeachers,
-  groups,
   heartbeats,
   productLicenses,
   schoolMemberships,
@@ -223,6 +224,22 @@ async function waitForMainPoolDrain(timeoutMs = 2_000): Promise<void> {
 before(async () => {
   assert.equal((pool as any).options.max, 16);
   assert.equal((sessionPool as any).options.max, 2);
+
+  // Drizzle-only CI does not include the migration-owned supervision report
+  // tables. Install this exact existing contract independently of test order.
+  const connectionString = process.env.ADMIN_DATABASE_URL ?? process.env.DATABASE_URL;
+  assert.ok(connectionString);
+  assert.ok(["localhost", "127.0.0.1", "::1"].includes(new URL(connectionString).hostname));
+  const fixture = new pg.Client({ connectionString });
+  await fixture.connect();
+  try {
+    if (!(await fixture.query("SELECT to_regclass('public.classpilot_supervision_report_segments') AS table_name")).rows[0].table_name) {
+      await fixture.query(CLASSPILOT_SUPERVISION_REPORTS_SQL);
+      const role = (await pool.query("SELECT current_user AS role")).rows[0].role;
+      assert.match(role, /^[a-zA-Z_][a-zA-Z0-9_]*$/);
+      await fixture.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON classpilot_supervision_report_segments,classpilot_supervision_student_reports,classpilot_supervision_summary_deliveries TO "${role}"`);
+    }
+  } finally { await fixture.end(); }
 
   schoolA = await createSchool({
     name: `${tag} A`,
@@ -391,16 +408,13 @@ before(async () => {
       },
     ]);
 
-    const [group] = await db
-      .insert(groups)
-      .values({
-        schoolId: schoolA.id,
-        teacherId: teacher.id,
-        name: `${tag} active class`,
-        groupType: "admin_class",
-        status: "active",
-      })
-      .returning({ id: groups.id });
+    const group = await storage.createGroup({
+      schoolId: schoolA.id,
+      teacherId: teacher.id,
+      name: `${tag} active class`,
+      groupType: "admin_class",
+      status: "active",
+    });
     assert.ok(group?.id);
     activeGroupId = group.id;
     await db.insert(groupStudents).values(
@@ -458,7 +472,6 @@ after(async () => {
   try {
     await asSystem(async () => {
       const schoolNamePattern = `${tag}%`;
-      const userEmailPattern = `${tag}-%`;
       const devicePattern = `${tag}-%`;
       await db.execute(sql`
         DELETE FROM classpilot_supervision_students
@@ -479,16 +492,15 @@ after(async () => {
           WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
         )
       `);
-      await db.execute(sql`
-        DELETE FROM group_teachers
-        WHERE group_id IN (
-          SELECT id FROM groups
-          WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
-        )
+      const ownedGroups = await db.execute<{ id: string }>(sql`
+        SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
       `);
       await db.execute(sql`
         DELETE FROM groups
         WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
+      `);
+      if (ownedGroups.rows.length) await db.execute(sql`
+        DELETE FROM group_teachers WHERE group_id IN (${sql.join(ownedGroups.rows.map(row => sql`${row.id}`), sql`, `)})
       `);
       await db.execute(sql`DELETE FROM heartbeats WHERE device_id LIKE ${devicePattern}`);
       await db.execute(sql`DELETE FROM student_sessions WHERE device_id LIKE ${devicePattern}`);
@@ -506,8 +518,8 @@ after(async () => {
         DELETE FROM school_memberships
         WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
       `);
-      await db.execute(sql`DELETE FROM schools WHERE name LIKE ${schoolNamePattern}`);
-      await db.execute(sql`DELETE FROM users WHERE email LIKE ${userEmailPattern}`);
+      // Retain school/staff history roots under the canonical lifecycle guards.
+      for (const school of [schoolA, schoolB].filter(Boolean)) await storage.softDeleteSchool(school.id);
     });
   } finally {
     classpilotScreenshotFallback.clear();
@@ -1143,7 +1155,7 @@ describe("ClassPilot tile-read tenant scope", () => {
         .set({ teachingSessionId: null, supervisionContextId: contextId })
         .where(and(eq(classpilotStudentControlStates.schoolId, schoolA.id), eq(classpilotStudentControlStates.studentId, studentId))));
       const history = await timeline();
-      assert.equal(history.status, 200);
+      assert.equal(history.status, 200, JSON.stringify(history.body));
       assert.equal((await timeline(studentId, `supervisionContextId=${contextId}`, coTeacher, '1')).status, 403, 'Stale tenure cannot read current history');
       assert.deepEqual(history.body.events.filter((event: { title: string }) => event.title.startsWith(tag)).map((event: { title: string }) => event.title), [`${tag} during assignment`]);
       assert.equal((await timeline(otherStudentId)).status, 403, 'Unassigned students have no context history');
@@ -1322,8 +1334,8 @@ describe("ClassPilot tile-read tenant scope", () => {
       assert.ok(studentSession);
       await db.insert(heartbeats).values({ schoolId: schoolA.id, studentId: student.id, deviceId,
         activeTabTitle: "Unattended class page", activeTabUrl: "https://example.invalid/unattended", timestamp: now });
-      const [group] = await db.insert(groups).values({ schoolId: schoolA.id, teacherId: offlineTeacher.id,
-        name: `${tag} unattended class`, groupType: "admin_class", status: "active" }).returning();
+      const group = await storage.createGroup({ schoolId: schoolA.id, teacherId: offlineTeacher.id,
+        name: `${tag} unattended class`, groupType: "admin_class", status: "active" });
       assert.ok(group);
       await db.insert(groupStudents).values({ groupId: group.id, studentId: student.id });
       await db.insert(groupTeachers).values({ groupId: group.id, teacherId: coTeacher.id, role: "co-teacher" });
@@ -1627,6 +1639,13 @@ describe("ClassPilot tile-read tenant scope", () => {
     assert.equal((await requestJson(path, teacher)).status, 403);
     assert.equal((await batchRequest()).status, 200);
 
+    // Revoke an unassigned administrator; a current primary teacher cannot be
+    // suspended or converted to a parent until their assignments are resolved.
+    const membershipBatch = () => postJson('/api/classpilot/tiles/screenshots',
+      { studentIds: [authorizedStudentIds[0]] }, admin);
+    assert.equal((await requestJson(path, admin)).status, 404);
+    assert.equal((await membershipBatch()).status, 200);
+
     const updateMembership = (values: Record<string, unknown>) =>
       asSystem(async () => {
         await db
@@ -1634,7 +1653,7 @@ describe("ClassPilot tile-read tenant scope", () => {
           .set(values)
           .where(
             and(
-              eq(schoolMemberships.userId, teacher.id),
+              eq(schoolMemberships.userId, admin.id),
               eq(schoolMemberships.schoolId, schoolA.id)
             )
           );
@@ -1642,23 +1661,23 @@ describe("ClassPilot tile-read tenant scope", () => {
 
     await updateMembership({ status: "suspended" });
     try {
-      assert.equal((await requestJson(path, teacher)).status, 403);
-      assert.equal((await batchRequest()).status, 403);
+      assert.equal((await requestJson(path, admin)).status, 403);
+      assert.equal((await membershipBatch()).status, 403);
     } finally {
       await updateMembership({ status: "active" });
     }
-    assert.equal((await requestJson(path, teacher)).status, 403);
-    assert.equal((await batchRequest()).status, 200);
+    assert.equal((await requestJson(path, admin)).status, 404);
+    assert.equal((await membershipBatch()).status, 200);
 
     await updateMembership({ role: "parent" });
     try {
-      assert.equal((await requestJson(path, teacher)).status, 403);
-      assert.equal((await batchRequest()).status, 403);
+      assert.equal((await requestJson(path, admin)).status, 403);
+      assert.equal((await membershipBatch()).status, 403);
     } finally {
-      await updateMembership({ role: "teacher" });
+      await updateMembership({ role: "admin" });
     }
-    assert.equal((await requestJson(path, teacher)).status, 403);
-    assert.equal((await batchRequest()).status, 200);
+    assert.equal((await requestJson(path, admin)).status, 404);
+    assert.equal((await membershipBatch()).status, 200);
 
     await asSystem(async () => {
       await db
@@ -1738,7 +1757,8 @@ describe("ClassPilot tile-read tenant scope", () => {
     }
 
     assert.equal(responses.length, 40);
-    assert.ok(responses.every((response) => response.status === 200));
+    assert.ok(responses.every((response) => response.status === 200),
+      JSON.stringify(responses.filter(response => response.status !== 200).map(response => ({ status: response.status, body: response.body }))));
     assert.ok(responses.every((response) => response.rateLimit === "5000"));
     assert.ok(pool.totalCount > 0);
     assert.ok(pool.totalCount <= 18);

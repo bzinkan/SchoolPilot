@@ -13,9 +13,9 @@ import { resolveHistoryDates } from "./classpilotBrowsingHistoryModel.js";
  *
  * Presented days are the requested local dates, clipped to today, to the
  * school's retention window (a day whose start is older than the retention
- * cutoff is withheld, as for browsing domains) and to the first day the rollup
- * has produced for the school (earlier days were never computed, which is not
- * the same as zero). No response contains a device identifier.
+ * cutoff is withheld, as for browsing domains) and to successful school/day
+ * computation records. Gaps are unavailable, including dates between successful
+ * days; only a completed empty day is zero. No response contains a device id.
  */
 
 export const CLASSPILOT_DIGITAL_USAGE_SCOPES = ["school", "grade", "class", "student"] as const;
@@ -114,10 +114,15 @@ export type ClasspilotDigitalUsageReport = {
     /** First local date whose whole day is inside the retention window. */
     retainedFrom: string;
     partiallyExpired: boolean;
-    /** First local date the rollup has produced for this school, if any. */
+    /** First successfully computed date inside the retained requested range, if any. */
     computedFrom: string | null;
     partiallyComputed: boolean;
-    /** The dates actually presented in totals and byDay (null when none). */
+    /** Retained, non-future requested days and their successful computations. */
+    requestedDays: number;
+    computedDays: number;
+    /** Never present these gaps as observed zero usage. */
+    unavailableDates: string[];
+    /** First/last presented dates; unavailableDates describes any internal holes. */
     presentedFrom: string | null;
     presentedTo: string | null;
   };
@@ -235,25 +240,53 @@ async function resolveScope(
   };
 }
 
-async function topDomains(
+async function usageAggregates(
   executor: Executor,
-  options: { schoolId: string; from: string; to: string; filter: SQL; classification: "educational" | "non-educational" }
-): Promise<Array<{ domain: string; seconds: number }>> {
-  const rows = rowsOf(await executor.execute(sql`
-    SELECT rollup.domain, SUM(rollup.seconds)::bigint AS seconds
+  options: { schoolId: string; from: string; to: string; filter: SQL }
+): Promise<Array<Record<string, unknown>>> {
+  // Collapse the retained fine grain during its single ledger-joined scan.
+  // Materialize only student-days and domain totals; reusing all raw grains
+  // across the two reports otherwise spills large histories to temporary I/O.
+  return rowsOf(await executor.execute(sql`
+    WITH grouped AS MATERIALIZED (
+    SELECT rollup.usage_date, rollup.student_id, rollup.domain, rollup.classification,
+      GROUPING(rollup.usage_date, rollup.student_id) AS grain_kind,
+      SUM(rollup.seconds)::bigint AS monitored,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'educational')::bigint AS instructional,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'non-educational')::bigint AS off_task,
+      SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'unknown')::bigint AS unknown,
+      SUM(rollup.heartbeat_count)::bigint AS heartbeats
     FROM classpilot_usage_rollups AS rollup
+    JOIN classpilot_usage_rollup_days AS day
+      ON day.school_id = rollup.school_id AND day.usage_date = rollup.usage_date
     WHERE rollup.school_id = ${options.schoolId}
       AND rollup.usage_date >= ${options.from}::date
       AND rollup.usage_date <= ${options.to}::date
-      AND rollup.classification = ${options.classification}
-      AND rollup.domain <> ''
       ${options.filter}
-    GROUP BY rollup.domain
-    HAVING SUM(rollup.seconds) > 0
-    ORDER BY SUM(rollup.seconds) DESC, rollup.domain ASC
-    LIMIT ${CLASSPILOT_DIGITAL_USAGE_TOP_DOMAINS}
+    GROUP BY GROUPING SETS ((rollup.usage_date, rollup.student_id), (rollup.classification, rollup.domain))
+    ), summary AS (
+      SELECT usage_date::text AS usage_date, GROUPING(usage_date) AS total_row,
+        COALESCE(SUM(monitored), 0)::bigint AS monitored,
+        COALESCE(SUM(instructional), 0)::bigint AS instructional,
+        COALESCE(SUM(off_task), 0)::bigint AS off_task,
+        COALESCE(SUM(unknown), 0)::bigint AS unknown,
+        COUNT(DISTINCT student_id)::int AS students,
+        COALESCE(SUM(heartbeats), 0)::bigint AS heartbeats
+      FROM grouped WHERE grain_kind = 0 GROUP BY GROUPING SETS ((usage_date), ())
+    ), ranked_domains AS (
+      SELECT classification, domain, monitored AS seconds,
+        ROW_NUMBER() OVER (PARTITION BY classification ORDER BY monitored DESC, domain ASC) AS rank
+      FROM grouped
+      WHERE grain_kind = 3 AND classification IN ('educational', 'non-educational') AND domain <> '' AND monitored > 0
+    )
+    SELECT 'summary' AS row_kind, summary.*, NULL::text AS classification,
+      NULL::text AS domain, NULL::bigint AS seconds FROM summary
+    UNION ALL
+    SELECT 'domain', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      classification, domain, seconds FROM ranked_domains
+      WHERE rank <= ${CLASSPILOT_DIGITAL_USAGE_TOP_DOMAINS}
+    ORDER BY row_kind, classification, seconds DESC, domain ASC
   `));
-  return rows.map((row) => ({ domain: String(row.domain), seconds: count(row.seconds) }));
 }
 
 async function readReport(
@@ -274,17 +307,29 @@ async function readReport(
   const cutoff = new Date(options.now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
   const cutoffDate = localDateInTimeZone(cutoff, timeZone);
   const retainedFrom = localDateStartUtc(cutoffDate, timeZone) >= cutoff ? cutoffDate : addLocalDays(cutoffDate, 1);
-  const [coverage] = rowsOf(await executor.execute(sql`
-    SELECT MIN(rollup.usage_date)::text AS computed_from
-    FROM classpilot_usage_rollups AS rollup
-    WHERE rollup.school_id = ${options.schoolId}
-  `));
-  const computedFrom = typeof coverage?.computed_from === "string" ? coverage.computed_from : null;
   const today = dates.today;
-  const presentedTo = dates.endDate < today ? dates.endDate : today;
-  const presentedFrom = [dates.startDate, retainedFrom, computedFrom ?? presentedTo]
+  const eligibleTo = dates.endDate < today ? dates.endDate : today;
+  const eligibleFrom = [dates.startDate, retainedFrom]
     .reduce((latest, date) => (date > latest ? date : latest));
-  const hasPresented = computedFrom !== null && presentedFrom <= presentedTo;
+  const coverage = rowsOf(await executor.execute(sql`
+    SELECT usage_date::text AS usage_date, computed_at, is_final
+    FROM classpilot_usage_rollup_days
+    WHERE school_id = ${options.schoolId}
+      AND usage_date >= ${eligibleFrom}::date AND usage_date <= ${eligibleTo}::date
+    ORDER BY usage_date
+  `));
+  const covered = new Map(coverage.filter((day) => typeof day.usage_date === "string")
+    .map((day) => [String(day.usage_date), day]));
+  const unavailableDates: string[] = [];
+  let requestedDays = 0;
+  for (let date = eligibleFrom; date <= eligibleTo; date = addLocalDays(date, 1)) {
+    requestedDays++;
+    if (!covered.has(date)) unavailableDates.push(date);
+  }
+  const computedFrom = coverage.length ? String(coverage[0]!.usage_date) : null;
+  const presentedFrom = computedFrom;
+  const presentedTo = coverage.length ? String(coverage[coverage.length - 1]!.usage_date) : null;
+  const hasPresented = presentedFrom !== null && presentedTo !== null;
 
   const report: ClasspilotDigitalUsageReport = {
     schemaVersion: 1,
@@ -300,7 +345,10 @@ async function readReport(
       retainedFrom,
       partiallyExpired: dates.startDate < retainedFrom,
       computedFrom,
-      partiallyComputed: computedFrom === null || dates.startDate < computedFrom,
+      partiallyComputed: unavailableDates.length > 0,
+      requestedDays,
+      computedDays: covered.size,
+      unavailableDates,
       presentedFrom: hasPresented ? presentedFrom : null,
       presentedTo: hasPresented ? presentedTo : null,
     },
@@ -314,46 +362,29 @@ async function readReport(
   };
   if (!hasPresented) return report;
 
-  const aggregate = rowsOf(await executor.execute(sql`
-    SELECT rollup.usage_date::text AS usage_date,
-      GROUPING(rollup.usage_date) AS total_row,
-      COALESCE(SUM(rollup.seconds), 0)::bigint AS monitored,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'educational'), 0)::bigint AS instructional,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'non-educational'), 0)::bigint AS off_task,
-      COALESCE(SUM(rollup.seconds) FILTER (WHERE rollup.classification = 'unknown'), 0)::bigint AS unknown,
-      COUNT(DISTINCT rollup.student_id)::int AS students,
-      COALESCE(SUM(rollup.heartbeat_count), 0)::bigint AS heartbeats,
-      MAX(rollup.computed_at) AS computed_at
-    FROM classpilot_usage_rollups AS rollup
-    WHERE rollup.school_id = ${options.schoolId}
-      AND rollup.usage_date >= ${presentedFrom}::date
-      AND rollup.usage_date <= ${presentedTo}::date
-      ${scope.filter}
-    GROUP BY GROUPING SETS ((rollup.usage_date), ())
-  `));
+  const aggregate = await usageAggregates(executor, {
+    schoolId: options.schoolId, from: presentedFrom, to: presentedTo, filter: scope.filter,
+  });
   const byDate = new Map<string, Record<string, unknown>>();
   let totalRow: Record<string, unknown> | undefined;
   for (const row of aggregate) {
-    if (Number(row.total_row) === 1) totalRow = row;
+    if (row.row_kind === "domain") {
+      const target = row.classification === "educational" ? report.topEducationalDomains : report.topNonEducationalDomains;
+      target.push({ domain: String(row.domain), seconds: count(row.seconds) });
+    } else if (Number(row.total_row) === 1) totalRow = row;
     else if (typeof row.usage_date === "string") byDate.set(row.usage_date, row);
   }
   let computedAt: Date | null = null;
-  for (let date = presentedFrom; date <= presentedTo; date = addLocalDays(date, 1)) {
+  for (const [date, completion] of covered) {
     const row = byDate.get(date);
-    const dayComputedAt = asDate(row?.computed_at);
+    const dayComputedAt = asDate(completion.computed_at);
     if (dayComputedAt && (!computedAt || dayComputedAt > computedAt)) computedAt = dayComputedAt;
-    const dayEnd = localDateStartUtc(addLocalDays(date, 1), timeZone);
-    const state: ClasspilotDigitalUsageDay["state"] = row
-      ? (dayComputedAt && dayComputedAt >= dayEnd ? "final" : "live")
-      : (date < today ? "final" : "live");
+    const state: ClasspilotDigitalUsageDay["state"] = completion.is_final === true ? "final" : "live";
     report.byDay.push({ date, state, ...(row ? totalsOf(row) : emptyTotals()) });
   }
   report.totals = totalRow ? totalsOf(totalRow) : emptyTotals();
   report.computedAt = computedAt ? computedAt.toISOString() : null;
   report.dataState = report.byDay.some((day) => day.state === "live") ? "live" : "final";
-  const window = { schoolId: options.schoolId, from: presentedFrom, to: presentedTo, filter: scope.filter };
-  report.topEducationalDomains = await topDomains(executor, { ...window, classification: "educational" });
-  report.topNonEducationalDomains = await topDomains(executor, { ...window, classification: "non-educational" });
   return report;
 }
 
@@ -445,6 +476,9 @@ export function classpilotDigitalUsageCsv(report: ClasspilotDigitalUsageReport):
     ["Retained from", report.range.retainedFrom],
     ["Partially expired", report.range.partiallyExpired ? "yes" : "no"],
     ["Computed from", report.range.computedFrom ?? ""],
+    ["Computed days", report.range.computedDays],
+    ["Requested retained days", report.range.requestedDays],
+    ["Unavailable dates", report.range.unavailableDates.join("; ")],
     ["Data state", report.dataState],
     ["Generated at", report.generatedAt],
     ["Note", report.note],

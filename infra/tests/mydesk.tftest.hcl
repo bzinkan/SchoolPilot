@@ -129,7 +129,7 @@ run "classpilot_usage_rollups_rls_target_is_registry_valid" {
   assert {
     condition = (
       length(local.rls_configured_tables) == 126 &&
-      toset(local.rls_configured_tables) == toset(local.rls_post_expand_tables)
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
     )
     error_message = "The reviewed Monitored Browser Time rollup target must be accepted without pre-admitting it in production."
   }
@@ -337,5 +337,50 @@ run "contact_imports_do_not_require_discipline_imports" {
     mydesk_mode                        = "on"
     mydesk_ai_import_mode              = "off"
     student_information_ai_import_mode = "on"
+  }
+}
+
+run "usage_computation_ledger_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupDaysPostExpand.tables)
+  }
+  assert {
+    condition     = length(setsubtract(toset(jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotUsageRollupDaysPostExpand.tables), local.rls_post_expand_tables)) == 0 && contains(local.rls_post_expand_tables, "classpilot_usage_rollup_days")
+    error_message = "The complete target must retain prior admissions and add the computation ledger."
+  }
+}
+run "passpilot_appointments_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.passpilotAppointmentsPostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_configured_tables) == 128 &&
+      toset(local.rls_configured_tables) == toset(local.rls_registry.inventories.passpilotAppointmentsPostExpand.tables) &&
+      contains(local.rls_configured_tables, "passpilot_appointments") &&
+      length(setsubtract(toset(local.rls_configured_tables), toset(local.rls_post_expand_tables))) == 0
+    )
+    error_message = "The historical 128-table appointments inventory must remain accepted as an exact preserved subset of the current target."
+  }
+}
+
+run "classpilot_private_chat_lifecycle_target" {
+  command = plan
+  variables {
+    environment        = "test"
+    rls_enabled_tables = join(",", jsondecode(file("../src/config/rlsRegistry.json")).inventories.classpilotPrivateChatLifecyclePostExpand.tables)
+  }
+  assert {
+    condition = (
+      length(local.rls_post_expand_tables) == 129 &&
+      length(local.rls_configured_tables) == 129 &&
+      toset(local.rls_configured_tables) == toset(concat(local.rls_registry.inventories.passpilotAppointmentsPostExpand.tables, ["classpilot_private_chat_threads"])) &&
+      toset(local.rls_post_expand_tables) == toset(local.rls_configured_tables)
+    )
+    error_message = "The current 129-table target must preserve the exact historical appointments inventory and append only classpilot_private_chat_threads."
   }
 }

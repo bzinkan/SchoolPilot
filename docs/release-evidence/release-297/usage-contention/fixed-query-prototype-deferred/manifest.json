@@ -1,0 +1,387 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T07:23:58.081Z",
+  "status": "deferred_experiment_not_in_application",
+  "baseline": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+  "prototypeManifestSha256": "083b0e5dbcc14f2c41828b4d5f6f38c60b41b6844d7276f66db41dcaba807fc1",
+  "prototypeFilesRemoved": [
+    "src/lib/fixedScalarQuery.ts",
+    "src/services/classpilotFixedQueries.ts",
+    "tests/fixed-scalar-query.test.ts",
+    "tests/classpilot-fixed-queries.test.ts",
+    "tests/fixtures/classpilot-fixed-fence-sql.json"
+  ],
+  "sourceIntegration": false,
+  "nativeAcceptance": false,
+  "capacityAcceptance": false,
+  "productionMutations": 0,
+  "cpuEvidence": "../ingest-cpu-bcb2b33c-01/manifest.json",
+  "cpuProfileRawSha256": "42e636511e38756f1b15bcc91929883f0dc41feba51c3c201f67edbc7b88db60",
+  "scope": "Supplement to immutable CPU evidence; adds later caller analysis and separate compile-only experiments. Original CPU archive unchanged.",
+  "benchmarks": {
+    "literal": {
+      "shapes": 6,
+      "rounds": 5,
+      "iterationsPerCase": 1000,
+      "medianMsPer1000": {
+        "live_binding_current": 60.711900000000014,
+        "live_binding_flat": 6.272200000000112,
+        "final_fence_current": 115.05020000000013,
+        "final_fence_flat": 6.77579999999989,
+        "foreground_fence_current": 82.43629999999985,
+        "foreground_fence_flat": 8.370300000000043,
+        "screenshot_session_current": 144.7256,
+        "screenshot_session_flat": 5.6819000000000415,
+        "screenshot_control_current": 55.57230000000004,
+        "screenshot_control_flat": 2.661100000000033,
+        "screenshot_candidate_current": 204.5985999999998,
+        "screenshot_candidate_flat": 6.1229999999995925
+      },
+      "databaseCalls": 0,
+      "equivalence": {
+        "live_binding": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 9,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        },
+        "final_fence": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 10,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        },
+        "foreground_fence": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 14,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        },
+        "screenshot_session": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 9,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        },
+        "screenshot_control": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 3,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        },
+        "screenshot_candidate": {
+          "twoDistinctBindingsExactSqlAndParameterOrder": true,
+          "parameterCount": 8,
+          "encoders": "Captured compiled values are UUID/text/number/null; no Date or custom encoder in these predicates. Native row decoding/locking remains separately required."
+        }
+      }
+    },
+    "guarded": {
+      "shapes": 3,
+      "rounds": 5,
+      "iterationsPerCase": 1000,
+      "medianMsPer1000": {
+        "live_binding_old": 54.87780000000021,
+        "live_binding_flat": 28.621500000000196,
+        "final_fence_old": 85.4082999999996,
+        "final_fence_flat": 30.057600000000093,
+        "foreground_fence_old": 70.19219999999996,
+        "foreground_fence_flat": 43.42560000000003
+      },
+      "databaseCalls": 0,
+      "exactSqlParamsTypings": true
+    }
+  },
+  "verification": {
+    "prototypeHashMatches": 5,
+    "helperUnitFinal": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
+    },
+    "targetedStrictTypesExit": 0,
+    "castRatchetExit": 0,
+    "factoryUnit": {
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0
+    }
+  },
+  "attempts": [
+    {
+      "scope": "literal benchmark",
+      "attempt": 1,
+      "status": "failed",
+      "reason": "External extraction retained an export in new Function."
+    },
+    {
+      "scope": "literal benchmark",
+      "attempt": 2,
+      "status": "failed",
+      "reason": "External SQL extraction ended early."
+    },
+    {
+      "scope": "literal benchmark",
+      "attempt": 3,
+      "status": "passed",
+      "reason": "Corrected external extraction;0database calls."
+    },
+    {
+      "scope": "helper focused unit",
+      "attempt": 1,
+      "status": "8passed1failed",
+      "reason": "Test placeholder template discarded UUID column encoder; corrected explicit per-occurrence Param provenance."
+    },
+    {
+      "scope": "helper focused unit",
+      "attempt": 2,
+      "status": "9passed"
+    },
+    {
+      "scope": "helper focused unit",
+      "attempt": 3,
+      "status": "10passed",
+      "reason": "Added mixed-encoder repeated-name and typed-null coverage."
+    },
+    {
+      "scope": "guarded benchmark",
+      "attempt": 1,
+      "status": "failed",
+      "reason": "External mixed CommonJS/ESM Drizzle instances mismatched noop decoder identity."
+    },
+    {
+      "scope": "guarded benchmark",
+      "attempt": 2,
+      "status": "passed",
+      "reason": "Consistent ESM SQL source instance;0database calls."
+    }
+  ],
+  "assessment": [
+    "Original6shape literal benchmark preserves SQL text and ordered scalar params on2bindings but does not validate native locking or builder row decoding. Screenshot candidate contains duplicate scheduled_end_at columns; raw object-row substitution needs aliases and schema decoders.",
+    "Guarded canonical prototype eliminates pasted predicate drift, retains per-occurrence encoders and rejects unsupported inputs. Actual guarded benchmark savings are much smaller than unchecked literal construction.",
+    "Approximate0.8seconds per6000offers is workload arithmetic, not measured end-to-end improvement. Complexity outweighed the bounded unproven benefit, so all5prototypefiles were removed from active source.",
+    "No additional global-mapper mutation hardening was implemented after the deferral decision. Original tests and review limitations are retained."
+  ],
+  "sanitation": "UTF8/LF and local filesystem/connection/token redaction in archives only; raw files unchanged and raw/sanitized/gzip hashes recorded.",
+  "files": [
+    {
+      "file": "prototype/manifest.json.gz",
+      "rawBytes": 1080,
+      "rawSha256": "083b0e5dbcc14f2c41828b4d5f6f38c60b41b6844d7276f66db41dcaba807fc1",
+      "sanitizedSha256": "b3f04ebf53de142fcda718f5d93f7c7f9210547efba8d0195f04561ea5bc15d6",
+      "gzipSha256": "635a436806f04358f0864a9ae9615337a8634aac1f45568a94fffbfa288b6047"
+    },
+    {
+      "file": "prototype/src/lib/fixedScalarQuery.ts.gz",
+      "rawBytes": 5729,
+      "rawSha256": "714bfad7c9e53ac6fb3e6e00bf4c493a96648627eba695cfcf7cc258e2fde9a1",
+      "sanitizedSha256": "714bfad7c9e53ac6fb3e6e00bf4c493a96648627eba695cfcf7cc258e2fde9a1",
+      "gzipSha256": "5d83204231c68a33e4c40deb6536d18f8e9ffe8d1556a58e1c92050b3e8d7679"
+    },
+    {
+      "file": "prototype/src/services/classpilotFixedQueries.ts.gz",
+      "rawBytes": 6032,
+      "rawSha256": "d720de6a8fa9f9ea07bdbfeb8b0289ec6ec421818b6ebb5e180daa23ffb91204",
+      "sanitizedSha256": "d720de6a8fa9f9ea07bdbfeb8b0289ec6ec421818b6ebb5e180daa23ffb91204",
+      "gzipSha256": "5cb105fe94e19444664ee6131b46250970b59acbea179c6c7cb76e8a1e1eb63b"
+    },
+    {
+      "file": "prototype/tests/classpilot-fixed-queries.test.ts.gz",
+      "rawBytes": 4424,
+      "rawSha256": "90e6a24648344f4a794bf6a3173992552395e6bbc4e5f5e7ffff40bccddf1e6a",
+      "sanitizedSha256": "90e6a24648344f4a794bf6a3173992552395e6bbc4e5f5e7ffff40bccddf1e6a",
+      "gzipSha256": "2cdbcd4f4c0277e66ffe53a3945d17f7896956c305a967a00a361c2922204142"
+    },
+    {
+      "file": "prototype/tests/fixed-scalar-query.test.ts.gz",
+      "rawBytes": 6767,
+      "rawSha256": "75c17213de0a5c52196fc9ed6012bd713d17b4c528d96f715f6fb6baed15b59a",
+      "sanitizedSha256": "75c17213de0a5c52196fc9ed6012bd713d17b4c528d96f715f6fb6baed15b59a",
+      "gzipSha256": "b6adc386b061adab34f788c69e80994e45803caaef15f1b777f6901059cbd8e0"
+    },
+    {
+      "file": "prototype/tests/fixtures/classpilot-fixed-fence-sql.json.gz",
+      "rawBytes": 8547,
+      "rawSha256": "70f395217c9b5671d0d07690023e188eb6fcf6668ad0a8a81df12e55e8a34703",
+      "sanitizedSha256": "70f395217c9b5671d0d07690023e188eb6fcf6668ad0a8a81df12e55e8a34703",
+      "gzipSha256": "69deda36c57c88e537c9d8bad299ba99d1451288e69c0ec17aecdfc4c154de6e"
+    },
+    {
+      "file": "literal-compile/flat-factory-candidates.json.gz",
+      "rawBytes": 9810,
+      "rawSha256": "e8d0170b064611d358275d1806e0c4f8d8f27beb0616bc28ab51b2db644dabd0",
+      "sanitizedSha256": "e8d0170b064611d358275d1806e0c4f8d8f27beb0616bc28ab51b2db644dabd0",
+      "gzipSha256": "7e2087aa2f3b191634faee6ccaebfa8759a4dd7ccc038cf65e47aa1fdd5446ff"
+    },
+    {
+      "file": "literal-compile/result.json.gz",
+      "rawBytes": 7033,
+      "rawSha256": "34a51b2c10a506aeac254c9977c46ee3848256986f7cf3401f63cb3613f8e603",
+      "sanitizedSha256": "34a51b2c10a506aeac254c9977c46ee3848256986f7cf3401f63cb3613f8e603",
+      "gzipSha256": "1fa2677ad50714bc7c7f5afd38791a510ab2327b1a910325f0c95575b2073ed0"
+    },
+    {
+      "file": "guarded-compile/result.json.gz",
+      "rawBytes": 2432,
+      "rawSha256": "a29549d8c9d5fd11cc31d9ed9df6a7c855d6fc2f7055a6937d987ef5dc25507e",
+      "sanitizedSha256": "a29549d8c9d5fd11cc31d9ed9df6a7c855d6fc2f7055a6937d987ef5dc25507e",
+      "gzipSha256": "b84416a99ca1af74bcc44ac8a3a5666137c4688f2079769fca6612ac84de8139"
+    },
+    {
+      "file": "helper-proof/casts-01.log.gz",
+      "rawBytes": 91,
+      "rawSha256": "10b2c5fbb2b063582a4281c1f355089c2d515ad6325804e5bea911ee67cf60b8",
+      "sanitizedSha256": "bc029798e42b2897a253622e14fcfc935dd545bd2ae6d990e2f6578823519138",
+      "gzipSha256": "d4ced1cd4595fdb3543b01562327ce9c73c2ab23ae89fb9eb10205cd76a5752e"
+    },
+    {
+      "file": "helper-proof/fixed-scalar-query.test.ts.gz",
+      "rawBytes": 6767,
+      "rawSha256": "75c17213de0a5c52196fc9ed6012bd713d17b4c528d96f715f6fb6baed15b59a",
+      "sanitizedSha256": "75c17213de0a5c52196fc9ed6012bd713d17b4c528d96f715f6fb6baed15b59a",
+      "gzipSha256": "b6adc386b061adab34f788c69e80994e45803caaef15f1b777f6901059cbd8e0"
+    },
+    {
+      "file": "helper-proof/fixedScalarQuery.ts.gz",
+      "rawBytes": 5729,
+      "rawSha256": "714bfad7c9e53ac6fb3e6e00bf4c493a96648627eba695cfcf7cc258e2fde9a1",
+      "sanitizedSha256": "714bfad7c9e53ac6fb3e6e00bf4c493a96648627eba695cfcf7cc258e2fde9a1",
+      "gzipSha256": "5d83204231c68a33e4c40deb6536d18f8e9ffe8d1556a58e1c92050b3e8d7679"
+    },
+    {
+      "file": "helper-proof/focused-01.log.gz",
+      "rawBytes": 5063,
+      "rawSha256": "ea360933586d3afb223dce967651bf2a90f91d8c010e3139a404092b88371420",
+      "sanitizedSha256": "8ad2920f0b340a63536853c55b8b67ecfcde31428c278fb3ae00be6a10f91f6e",
+      "gzipSha256": "897b3d4dbeb966f44eaac53c5afb9e8d196870c615a297a99818f3562d5d4938"
+    },
+    {
+      "file": "helper-proof/focused-02.log.gz",
+      "rawBytes": 2448,
+      "rawSha256": "4bd7bd64a29a4985facac20ec332ef5c9b505082b5250701ece007ab0013b088",
+      "sanitizedSha256": "9c3dd4b6899978c309fff6691e9011df30042e147bcf237c042b81a71decaa9b",
+      "gzipSha256": "de021d45edc563438573e84de7e920901a4fdefa65dde90a5bf08411266ea270"
+    },
+    {
+      "file": "helper-proof/focused-03.log.gz",
+      "rawBytes": 2702,
+      "rawSha256": "7043e7717f7a47b668cf3c2ffd2b1e9f7baee015c1c58e962928d4a5b94c2c16",
+      "sanitizedSha256": "2dcbd5258ae95df575cd30ecfef2ce53783bc4a2cd2aea83e4b2c79e94f46d4d",
+      "gzipSha256": "f690157f3545399149252b040f477706ac924b2f576dc7d972c8542279570b89"
+    },
+    {
+      "file": "helper-proof/targeted-types-01.log.gz",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "helper-proof/targeted-types-02.log.gz",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-query-compile-bcb2.mjs.gz",
+      "rawBytes": 7489,
+      "rawSha256": "bb5559a97455ecfdc6572386d79d14ea2075da64393afe4a1a2d3aa4ac9fa72a",
+      "sanitizedSha256": "546f871fb69d823b068f655b85d950f60d69363c54ea57f1baea17e24f73dd48",
+      "gzipSha256": "dd7d2de60ad96b6c4b981472bf1d6b42387d46a85e3506d73a5fbb4e163b1420"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-query-compile-bcb2.log.gz",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-query-compile-bcb2-attempt-01.log.gz",
+      "rawBytes": 319,
+      "rawSha256": "0b41f785df9fc939285b5995ca115b64999520beb0f720d0a558c4e09645bd10",
+      "sanitizedSha256": "c8066323a03c464359da7804971f7881a99e790eb98b3709fdade2165868e508",
+      "gzipSha256": "21fc215559a69e292a4d6fbec84a3c1720fcda508b876fe3f15ce3d8111b7b2a"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-query-compile-bcb2-attempt-02.log.gz",
+      "rawBytes": 323,
+      "rawSha256": "e76b99a72f2cd0f911afca7b3b64482e9aeae41f12c37ab40aba0faa5c6a1712",
+      "sanitizedSha256": "0168e815b32f53d22e3e0cbece948ee9b232cbae7d513674e19e7a085a65dbeb",
+      "gzipSha256": "eee3a13f25535a6acceaf8ae7fdf184b5cac8f4c5370e62c5edf307d8fb8ada3"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-query-compile-bcb2-attempt-03.log.gz",
+      "rawBytes": 639,
+      "rawSha256": "b3e9d3b3c9c1291a25d14665850f8ccea6de6c64ab51b5688905e51bc64bc68b",
+      "sanitizedSha256": "35824b2f72635427507c169f0f3c932d0322fbe2573865366d812beb8e8f73e2",
+      "gzipSha256": "b883c3b31f51747886228b7c74603a06db82be8ac61edb305dfb73ada34d57da"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-benchmark-01.mjs.gz",
+      "rawBytes": 7112,
+      "rawSha256": "76d2cbe8c76d47210b2474dea32ceac6cbe784d119bed3a9a2d545f3b0890dc1",
+      "sanitizedSha256": "76d2cbe8c76d47210b2474dea32ceac6cbe784d119bed3a9a2d545f3b0890dc1",
+      "gzipSha256": "8468df0cdb0e59c9587b88440f540e9a800aa07d6285a54bbf96daefb4625b9c"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-benchmark-01.log.gz",
+      "rawBytes": 841,
+      "rawSha256": "c6f94d44c0a31cc31707162c8d82c7e3408c9a9d8c2727d67e70f1ee650620f0",
+      "sanitizedSha256": "7449872ee0bf702ec0a6b089f0a2677efdaf27e17e0a3703352f645071c05f3d",
+      "gzipSha256": "849767a73534261e596981a0bd844c0f98794d754b0b6f6de48e6f37e026c283"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-benchmark-02.mjs.gz",
+      "rawBytes": 7173,
+      "rawSha256": "2df256682b04f63d6dbfb1a0d2ee482584f75b12ca3487cc0308a718fa9ff795",
+      "sanitizedSha256": "2df256682b04f63d6dbfb1a0d2ee482584f75b12ca3487cc0308a718fa9ff795",
+      "gzipSha256": "45d2777f211082483eff739100e2beb7a1a217b02796ba1ab08a0037a01d92d0"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-benchmark-02.log.gz",
+      "rawBytes": 365,
+      "rawSha256": "7d9cadc9918ee0d7259eed1a74b85342d914347ddc8bce13c95d93cdabe10672",
+      "sanitizedSha256": "e06a5654b59fa9511e62ad38ef4f77e610c79c30615a26a6b5099ee9d6cb9d24",
+      "gzipSha256": "2618543cc7f3328d7781c6db79517495b2093b7002e728b45821e50f2e7470ef"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-fixture.mjs.gz",
+      "rawBytes": 5296,
+      "rawSha256": "7fbd96844eb539cd6cd83cbeb7528c9dd42c7abf3f25272f0f9ab96487d51888",
+      "sanitizedSha256": "7fbd96844eb539cd6cd83cbeb7528c9dd42c7abf3f25272f0f9ab96487d51888",
+      "gzipSha256": "270e3543bd4cd47783972f1c61b1775c2c82d874d717e3f12f69202d9f207921"
+    },
+    {
+      "file": "scripts-and-logs/release297-fixed-factory-unit-01.log.gz",
+      "rawBytes": 3116,
+      "rawSha256": "4d2895f44a3276f14304c705163ec148678bfd79151d2a30ff524ea86ae6a354",
+      "sanitizedSha256": "a5085bc0fcf1061260dbd9112ef9e361578ccdf565ca5808a6f5c022d8da939e",
+      "gzipSha256": "59b5cfc59265c52bade42f5229f5cd05c5f085bdc63835283fb495bdc3a030a9"
+    },
+    {
+      "file": "scripts-and-logs/release297-profile-bcb2-callers.mjs.gz",
+      "rawBytes": 2500,
+      "rawSha256": "c05937da711bfff5c111eeecfaf1d02871179c07f114cbd358d226eec6f3ae8d",
+      "sanitizedSha256": "d2c6963ec971914e58259f5570a3f9abfcc87f921dd11bbe0042fe3decb85817",
+      "gzipSha256": "44080745a0f7b33557c08e92dbf22c9994d70704a0a066c971167d7c9461fd47"
+    },
+    {
+      "file": "scripts-and-logs/release297-analyze-api-profile.mjs.gz",
+      "rawBytes": 2934,
+      "rawSha256": "963093428fbdc9e558398b6f25932b748043833ab93a0fe4856adaeeb39d6374",
+      "sanitizedSha256": "963093428fbdc9e558398b6f25932b748043833ab93a0fe4856adaeeb39d6374",
+      "gzipSha256": "dfbfa91765bccf1c0d11f413688ab0aa5485204f0752f288c9b9d763bc65d8b2"
+    },
+    {
+      "file": "later-cpu-analysis/api-independent-callers.json.gz",
+      "rawBytes": 129043,
+      "rawSha256": "41f7f500dab25128b0b105ae7629c55fcd9aa20a88c1c653ec42fb09acfb7d18",
+      "sanitizedSha256": "41f7f500dab25128b0b105ae7629c55fcd9aa20a88c1c653ec42fb09acfb7d18",
+      "gzipSha256": "67f37de9fc8d36e712cb6bcd86a874b60e03d724b7226fc378c666cbd24eccb4"
+    },
+    {
+      "file": "later-cpu-analysis/api-independent-callers-summary.log.gz",
+      "rawBytes": 14106,
+      "rawSha256": "543924659e0ae86d3abaee0b36e3a951901518c914fa3297a421de0e6d254be4",
+      "sanitizedSha256": "543924659e0ae86d3abaee0b36e3a951901518c914fa3297a421de0e6d254be4",
+      "gzipSha256": "b995bbf4eda6f3e8531b984262e55c4165c7a88002681d6fcbc868dc82d272c6"
+    }
+  ]
+}

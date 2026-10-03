@@ -1,0 +1,507 @@
+{
+  "schemaVersion": 1,
+  "source": "0e427e3ca9b82125e0bb8692176accad21f4f699",
+  "applicationChanges": 0,
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "attempts": [
+    {
+      "run": "bcc00af73422",
+      "exit": 1,
+      "cleanup": true,
+      "timingReleased": false,
+      "misleadingReadyReceiptPreserved": true,
+      "note": "Restricted-role DDL and wrapped-error assertion failures; gate denied; no benchmark."
+    },
+    {
+      "run": "32a5b4aefe65",
+      "exit": 0,
+      "pass": 15,
+      "fail": 0,
+      "skip": 0,
+      "cleanup": true,
+      "timingReleased": true,
+      "sourceAndRuntimeUnchanged": true
+    }
+  ],
+  "scope": "External matched-runtime native component comparison only. Not application throughput or release acceptance.",
+  "sanitization": "Connection URLs and credential fields removed; Temp path normalized; synthetic fixture identifiers removed from logs. No envfiles or populated fixture snapshots included.",
+  "files": [
+    {
+      "path": "attempt-01/api-inspect-after.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\api-inspect-after.json",
+      "originalSha256": "a226a2c2896417b54c1c9f3876f713aad3c12d462a1718641c79fdedd9b327b5",
+      "sanitizedSha256": "2d85be4e60e1414bc939858a4ec72a86a71fb8c947ceef450709395d607cc9f4",
+      "gzipSha256": "6fd731fdb4afde7511eb80d1a8f200dbe51843457438f821be5aa7b74f26a507"
+    },
+    {
+      "path": "attempt-01/api-inspect-before.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\api-inspect-before.json",
+      "originalSha256": "d08dfb79568dbbd342ea93bf54585786f928ba2235b4f1ace5f8ce4a5df5ee24",
+      "sanitizedSha256": "43645ecb8769c4b56cabeda56a1e74f445c671f4373963b0a055c6fa0641e612",
+      "gzipSha256": "47248aa948f568234c70844960a76ea29da3a9f6a61412938893b61f14078577"
+    },
+    {
+      "path": "attempt-01/cleanup.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\cleanup.json",
+      "originalSha256": "9c00950794dc8f7f0c92a116b821665752459cd66352ed96acdf3104d1560ca0",
+      "sanitizedSha256": "038fe9da0b1ffd79bd52f3fc3c884f499587cbab304ff450029f8eb823574435",
+      "gzipSha256": "c0151cb586005819a5f89053f7ac6781a6ad8017aef75ca10fa0e265e148f7ab"
+    },
+    {
+      "path": "attempt-01/environment-keys.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\environment-keys.json",
+      "originalSha256": "0f4e828e9f3424afc0e09cc1b5b08ea468511d36b8d9b30d90aa15a81ab74d82",
+      "sanitizedSha256": "6db8af996ca8d516a763022e25e45faed5f17de8c76f8eac7b05fbd667788180",
+      "gzipSha256": "8625be498d8aedf3e7dce4010cacdcf97735b141b73289a348e89a66f98f6621"
+    },
+    {
+      "path": "attempt-01/execution.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\execution.json",
+      "originalSha256": "580bc0e264863bc159889c78a5507658bd339ec6d0eacf27ef9fdc4fdd3689de",
+      "sanitizedSha256": "d99319c33e7646a0c12a3beb7c7109af0d8bfc951e95e07614bfcaf449f8f7db",
+      "gzipSha256": "5d2d972a6f4834778e999f211aa7cb234782ee04fa273bc23b261075dd53a28e"
+    },
+    {
+      "path": "attempt-01/exit.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\exit.json",
+      "originalSha256": "99b1c3902c4245afae3972cf843b68387a9b229080d60f4000d64d94f4c2fa4b",
+      "sanitizedSha256": "49d14e36a5e20e82303b46e1476d05df6c6c3c96215f5016125c6ec093cb7ee5",
+      "gzipSha256": "af89b30df4e88f12f04e4ebc0bc84f18fca103860a890a7e2694a1bf627c02dd"
+    },
+    {
+      "path": "attempt-01/native.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\native.log",
+      "originalSha256": "c0ea28102ab87382c7eea7e3a50aa51f50317874b98a7786c4aa6ab7c5ff2461",
+      "sanitizedSha256": "c5dcaa7d9f8629b990ee216710d5f8f9289112d5921362d26758a820bc377db8",
+      "gzipSha256": "b91b1d4f7d4b6b495952f0b010872f19571ca63fa3199119000a2556020f1da1"
+    },
+    {
+      "path": "attempt-01/native.stderr.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\native.stderr.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "attempt-01/plan.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\plan.json",
+      "originalSha256": "85d76ac4ecb14de3308b399693b449d9d986a207ee2f52bc8c91be1f861281a3",
+      "sanitizedSha256": "a6ea6ddf74c9527dd81ed0b3b3a52be57d3bcda2e2f213d0b670a9939f0ffb3d",
+      "gzipSha256": "130f60dee4cb279ae5f108231e78a63d2a3f2ba40aa2edfe1dd966cc2cdf95ad"
+    },
+    {
+      "path": "attempt-01/postgres-inspect.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\postgres-inspect.json",
+      "originalSha256": "05e27a022be0abac3590f728ae6331918ceb344deb42522a089141160c4083ba",
+      "sanitizedSha256": "bf3230ffb88273fbe58cca528c293dc2223046595d5f625bf70633dc3ee50067",
+      "gzipSha256": "cb942f8f5f470d03378469a147ec934c6c95030aaa4397515fd804c9e530c23e"
+    },
+    {
+      "path": "attempt-01/prototype-manifest.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-manifest.json",
+      "originalSha256": "9b7a2088334babd843b0a07a1e0551743d80883704f1ae56ffec63bf56f5cf58",
+      "sanitizedSha256": "9b7a2088334babd843b0a07a1e0551743d80883704f1ae56ffec63bf56f5cf58",
+      "gzipSha256": "8f7f31b7d8ab34d267f6d1da2c3786bf722e7387ed899496bca9cd83f187101e"
+    },
+    {
+      "path": "attempt-01/prototype-source/adapt-native.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\adapt-native.mjs",
+      "originalSha256": "655803d76755f753fa68ec7343e1e1a9a0c59b73fdf118e575ee8aedd7ba67fb",
+      "sanitizedSha256": "655803d76755f753fa68ec7343e1e1a9a0c59b73fdf118e575ee8aedd7ba67fb",
+      "gzipSha256": "7c0814bad141c54d513c80aba58e33695ec3aa357aa7a17261f0d938d1ab9926"
+    },
+    {
+      "path": "attempt-01/prototype-source/canonical-capture.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\canonical-capture.mjs",
+      "originalSha256": "d53716084e6c32bbfba82b49ece0388f46d5f11a968528bea4f3530c41c2efbf",
+      "sanitizedSha256": "d53716084e6c32bbfba82b49ece0388f46d5f11a968528bea4f3530c41c2efbf",
+      "gzipSha256": "4e84459371f62518f3e394e426295778922c15afc5393d6e2860ea3d7b0f7d18"
+    },
+    {
+      "path": "attempt-01/prototype-source/capture-generation.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\capture-generation.json",
+      "originalSha256": "759fd0e23ded6162bc9ee1261a6807750ddf011804b239124ad2c28477dc96b1",
+      "sanitizedSha256": "39550433d946a0d1749979a22cece766f8f5ecdae2e1d72804ce856969b129c3",
+      "gzipSha256": "2ecaad7a4d2b179a19cd5ac8b08b1b1152585cdb921f01c93851973332838759"
+    },
+    {
+      "path": "attempt-01/prototype-source/DESIGN.md.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\DESIGN.md",
+      "originalSha256": "818dbd4b0f5a6ef2530c342da675c3d21a000962dc0d6c5d71c7bf8462ef8bf8",
+      "sanitizedSha256": "818dbd4b0f5a6ef2530c342da675c3d21a000962dc0d6c5d71c7bf8462ef8bf8",
+      "gzipSha256": "b124e45776b35284bf22e707e65e61a5bc8d59236bbdc72fcf4a6b23e0b97362"
+    },
+    {
+      "path": "attempt-01/prototype-source/entry.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\entry.mjs",
+      "originalSha256": "4e87fb6343a7235a43227988a02eca8b89520923d7da327b75fc66f1eb6987c8",
+      "sanitizedSha256": "4e87fb6343a7235a43227988a02eca8b89520923d7da327b75fc66f1eb6987c8",
+      "gzipSha256": "35188f4b118d6eeccadbe84b66436377d9a79f23ac312d461e0a7a585204bc46"
+    },
+    {
+      "path": "attempt-01/prototype-source/fixedScalarQuery-source.ts.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\fixedScalarQuery-source.ts",
+      "originalSha256": "3c81053e74fde179ee905974ba733d8d2c8c089f603ccb37e38b5347307db1e4",
+      "sanitizedSha256": "3c81053e74fde179ee905974ba733d8d2c8c089f603ccb37e38b5347307db1e4",
+      "gzipSha256": "1272c96868b1b4eb34971a92df6f6dcf3e0668d33d5b89ea0365dfb722fbc853"
+    },
+    {
+      "path": "attempt-01/prototype-source/fixedScalarQuery.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\fixedScalarQuery.mjs",
+      "originalSha256": "66ee3507806a764d3d41bbbe5d4c4d07eb20f6334fa09e05f128ad482b3953ca",
+      "sanitizedSha256": "66ee3507806a764d3d41bbbe5d4c4d07eb20f6334fa09e05f128ad482b3953ca",
+      "gzipSha256": "674bda62b029cd21f6d9450181c65396067b2b72855f6e804b314a4b38bdd7d8"
+    },
+    {
+      "path": "attempt-01/prototype-source/generate-capture.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\generate-capture.mjs",
+      "originalSha256": "13e8b810392fcd009e34fe39c6043d835751b5746688cc5ce6b1e06494591dcc",
+      "sanitizedSha256": "13e8b810392fcd009e34fe39c6043d835751b5746688cc5ce6b1e06494591dcc",
+      "gzipSha256": "0e67b614f3dd97908ccf2675714360f816033ebb2793d821e0939297695c2c01"
+    },
+    {
+      "path": "attempt-01/prototype-source/manifest.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\manifest.json",
+      "originalSha256": "9b7a2088334babd843b0a07a1e0551743d80883704f1ae56ffec63bf56f5cf58",
+      "sanitizedSha256": "9b7a2088334babd843b0a07a1e0551743d80883704f1ae56ffec63bf56f5cf58",
+      "gzipSha256": "8f7f31b7d8ab34d267f6d1da2c3786bf722e7387ed899496bca9cd83f187101e"
+    },
+    {
+      "path": "attempt-01/prototype-source/native-proof.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\native-proof.mjs",
+      "originalSha256": "5513c995dd94e87a107b27f9a4e6a3f57265d1a2c56efda3cd036cb198f2aadf",
+      "sanitizedSha256": "5513c995dd94e87a107b27f9a4e6a3f57265d1a2c56efda3cd036cb198f2aadf",
+      "gzipSha256": "14986cfd624102775f5133195dbed4afc50193760ab6b66faae5d444b3008d63"
+    },
+    {
+      "path": "attempt-01/prototype-source/owned-executor.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\owned-executor.mjs",
+      "originalSha256": "fd39eb121a9668b911ceec94aa3fcd6ad1e3ff041894e9f6e9f45c9b9ff4bdbd",
+      "sanitizedSha256": "fd39eb121a9668b911ceec94aa3fcd6ad1e3ff041894e9f6e9f45c9b9ff4bdbd",
+      "gzipSha256": "1c197235d3e241895e998279c1888be69639149a945c84c8a723e31e9d9f975a"
+    },
+    {
+      "path": "attempt-01/prototype-source/run-linux.ps1.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\run-linux.ps1",
+      "originalSha256": "96b19d746d427abcadb565573d1b20c79659ed79369e79a04fcc94e436ca9fd2",
+      "sanitizedSha256": "5e717b55d0985d6d6b0dfaebf54ca34dd495158aa4bf06eeaf26d3a356314d9b",
+      "gzipSha256": "f39aec9df05a36e0c6afd09c9bbd5ea339460498fe5121a24c75d358f52e9902"
+    },
+    {
+      "path": "attempt-01/prototype-source/timing-gate.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\prototype-source\\timing-gate.mjs",
+      "originalSha256": "4d5836418b1920d6dfc37bcb68db5f45477398d39725caeb4f500e690ae2ea1a",
+      "sanitizedSha256": "4d5836418b1920d6dfc37bcb68db5f45477398d39725caeb4f500e690ae2ea1a",
+      "gzipSha256": "48f670dcc0efc8b25b8933440ca7b5527446cd363b658236f170d86701ad3711"
+    },
+    {
+      "path": "attempt-01/ready.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\ready.json",
+      "originalSha256": "10db63addc738d5e3ee154b5f65fa0f6420b822df9888dced0eb37f3081a141b",
+      "sanitizedSha256": "0d9014b608d7838ae10d6b5de3e87002fac0ecf149bbbb94fccf50103c7f376b",
+      "gzipSha256": "2e2fcd9fa6fc89b4372b7b870ea35a9e1754e4e67354fa42a7940d111f039388"
+    },
+    {
+      "path": "attempt-01/restore.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\restore.log",
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "path": "attempt-01/role.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\role.log",
+      "originalSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "path": "attempt-01/root-gate-decision.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\root-gate-decision.json",
+      "originalSha256": "852f2fa71987c0960d314e2dca425c60edbd3b5927912ab5228aaa34b04e2811",
+      "sanitizedSha256": "d6f3470e4830fba37a32062fb5e9277833638bb47f54fcede8c304f1e499414d",
+      "gzipSha256": "177cf6f5961c0db3d793461b8b0625393785241ead09a5281876aec70dc54943"
+    },
+    {
+      "path": "attempt-01/runtime-after.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\runtime-after.json",
+      "originalSha256": "a8e7be89254db95a3b5de72848a3f10c01f7254ec20a9d059a34832948e94875",
+      "sanitizedSha256": "a8e7be89254db95a3b5de72848a3f10c01f7254ec20a9d059a34832948e94875",
+      "gzipSha256": "3eb59c75c98684c8431b45d741aa0b7ea1115b5526425e71e2a6a1b58988d990"
+    },
+    {
+      "path": "attempt-01/runtime-before.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\runtime-before.json",
+      "originalSha256": "45bec40b27f3693ea687df3d5ba9c762f3da095b38609d9be6541f3b5db05106",
+      "sanitizedSha256": "45bec40b27f3693ea687df3d5ba9c762f3da095b38609d9be6541f3b5db05106",
+      "gzipSha256": "bcb05eea1579d60fd6fa488466beb1d9fad9065c891b41fed16966670263c900"
+    },
+    {
+      "path": "attempt-01/schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-bcc00af73422\\schema.sql",
+      "originalSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "sanitizedSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "gzipSha256": "f75bf0952dc8848016cbe7e6c601e12bbb718f38b5572f609ed6f196fbbb78b4"
+    },
+    {
+      "path": "attempt-02/api-inspect-after.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\api-inspect-after.json",
+      "originalSha256": "ea42a8808c483806fb6a6f5652cc67c42016df8bf690ed4eb35865a01cc2352b",
+      "sanitizedSha256": "3816d80dcc7974ecc1a0d065e1f6903d9880d45e96e39a20653f2e1a4795f02b",
+      "gzipSha256": "5052ae90d3c582cc3bce8bb9a757f7f6907080bf2d0f23e91b1002ac65b3693d"
+    },
+    {
+      "path": "attempt-02/api-inspect-before.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\api-inspect-before.json",
+      "originalSha256": "4f87b8d187c67f6a1b70d70a87fe3c1d016eb762d979e358d934fa8c01843507",
+      "sanitizedSha256": "cb10b6385b4d876355d9194623148574c071124f2107fb72a0a3b5ce562e3719",
+      "gzipSha256": "0cc5d28f7f854910393b781100a333dbb126cf75d433a09cc01aa0564885a2ad"
+    },
+    {
+      "path": "attempt-02/cleanup.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\cleanup.json",
+      "originalSha256": "42a0327e7c5c9d7e3e14e398458d55a8c5af8035ea2b1b44a918f1c6f3644ec0",
+      "sanitizedSha256": "8fbb1e051d8f9f353ea4a6a25f310abe36d6bb6454e62db95d9c84f49ada6866",
+      "gzipSha256": "ac265535153bc12457cb9fa7c231a7e3f9bee55a0b4d51425b6848690840c63e"
+    },
+    {
+      "path": "attempt-02/environment-keys.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\environment-keys.json",
+      "originalSha256": "0f4e828e9f3424afc0e09cc1b5b08ea468511d36b8d9b30d90aa15a81ab74d82",
+      "sanitizedSha256": "6db8af996ca8d516a763022e25e45faed5f17de8c76f8eac7b05fbd667788180",
+      "gzipSha256": "8625be498d8aedf3e7dce4010cacdcf97735b141b73289a348e89a66f98f6621"
+    },
+    {
+      "path": "attempt-02/execution.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\execution.json",
+      "originalSha256": "8fa888e69a1bc48d455ea43979d1660c842af3d34701f78f6bded52755f27dbf",
+      "sanitizedSha256": "db3dd16dc93eab63a9229ad98c2a56057381afd19e0b6eb85b53a4965a747737",
+      "gzipSha256": "ecf1fab7cef847ead042be6a8aa91c73ade54f7e262c7f95bade77c14b0be674"
+    },
+    {
+      "path": "attempt-02/exit.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\exit.json",
+      "originalSha256": "07cf01e9507e3c4f78abbb9d428ed8cc28389387156f6c3c7ce13c33aa4ea5d1",
+      "sanitizedSha256": "ae64e4f5a41e556588f2d3455fa32695242fd177ea313b8d4e2fa4b7975eb083",
+      "gzipSha256": "e5f768b99967de41af017f01ae7ed3d9738d0b9d52f832a715ff47ddbde04ded"
+    },
+    {
+      "path": "attempt-02/native-result.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\native-result.json",
+      "originalSha256": "7a298e63918b0a48589f01295d9b283a771ebbc68272554e578346af2ce76e98",
+      "sanitizedSha256": "7a298e63918b0a48589f01295d9b283a771ebbc68272554e578346af2ce76e98",
+      "gzipSha256": "24c639cd5acb5cd8716c1eb2d131b39fe0bdc30daa61574a5e69d3a673f97baa"
+    },
+    {
+      "path": "attempt-02/native.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\native.log",
+      "originalSha256": "79e1661c41ed3acfa021e0318d5d0c4fd9fc0883a6698d997616b05f9a9e3c3b",
+      "sanitizedSha256": "2832f398ea151e263ffd368c8de1e98520489e8356847abbda7e890c05edea78",
+      "gzipSha256": "5a98e7710f181d34a875966871f89e1895f2055876325c6c50f97111e00d9ce8"
+    },
+    {
+      "path": "attempt-02/native.stderr.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\native.stderr.log",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "path": "attempt-02/plan.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\plan.json",
+      "originalSha256": "93d550429f67d34f45acdbe9ec655d48e6688c056fd995f581d2465f7ef0042f",
+      "sanitizedSha256": "e19df6ee24365e8c0b18162f76e787b6623947d76970c6430cb08946c07885a0",
+      "gzipSha256": "2c02a5a5a1e89d11a6c90f03349b397bc5b557bd3ca7b33878e5ccf268e7d346"
+    },
+    {
+      "path": "attempt-02/postgres-inspect.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\postgres-inspect.json",
+      "originalSha256": "497a2beee53e28bb500123a692c040f6c7820600d2ee3cb343123e3bc28bfb04",
+      "sanitizedSha256": "a6fa35455fad85280f12b2940d7d121080a84608e1fd31e7d1b831ed057930a3",
+      "gzipSha256": "d6f5cc27c3b26080a61c950feba4549f30660622283ebce0791a04b3226f0a79"
+    },
+    {
+      "path": "attempt-02/prototype-manifest.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-manifest.json",
+      "originalSha256": "5cff144d17f54c0cecd96013743bdf0d35b2c687113f747e2647e3c0100d015b",
+      "sanitizedSha256": "5cff144d17f54c0cecd96013743bdf0d35b2c687113f747e2647e3c0100d015b",
+      "gzipSha256": "c6729d6114f4b62f43143c16d7cf589e0e7fe3793217c6f1ac41175d41257951"
+    },
+    {
+      "path": "attempt-02/prototype-source/adapt-native.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\adapt-native.mjs",
+      "originalSha256": "655803d76755f753fa68ec7343e1e1a9a0c59b73fdf118e575ee8aedd7ba67fb",
+      "sanitizedSha256": "655803d76755f753fa68ec7343e1e1a9a0c59b73fdf118e575ee8aedd7ba67fb",
+      "gzipSha256": "7c0814bad141c54d513c80aba58e33695ec3aa357aa7a17261f0d938d1ab9926"
+    },
+    {
+      "path": "attempt-02/prototype-source/canonical-capture.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\canonical-capture.mjs",
+      "originalSha256": "d53716084e6c32bbfba82b49ece0388f46d5f11a968528bea4f3530c41c2efbf",
+      "sanitizedSha256": "d53716084e6c32bbfba82b49ece0388f46d5f11a968528bea4f3530c41c2efbf",
+      "gzipSha256": "4e84459371f62518f3e394e426295778922c15afc5393d6e2860ea3d7b0f7d18"
+    },
+    {
+      "path": "attempt-02/prototype-source/capture-generation.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\capture-generation.json",
+      "originalSha256": "759fd0e23ded6162bc9ee1261a6807750ddf011804b239124ad2c28477dc96b1",
+      "sanitizedSha256": "39550433d946a0d1749979a22cece766f8f5ecdae2e1d72804ce856969b129c3",
+      "gzipSha256": "2ecaad7a4d2b179a19cd5ac8b08b1b1152585cdb921f01c93851973332838759"
+    },
+    {
+      "path": "attempt-02/prototype-source/correct-native-precheck.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\correct-native-precheck.mjs",
+      "originalSha256": "9013cd3d0609b108590da9c51799ab32dc9bba97bd3902627553318912bc3393",
+      "sanitizedSha256": "9013cd3d0609b108590da9c51799ab32dc9bba97bd3902627553318912bc3393",
+      "gzipSha256": "3aecd468da08af8cbb90402b0604b80c297430ca678eb4665ca7eae6cc53be96"
+    },
+    {
+      "path": "attempt-02/prototype-source/DESIGN.md.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\DESIGN.md",
+      "originalSha256": "818dbd4b0f5a6ef2530c342da675c3d21a000962dc0d6c5d71c7bf8462ef8bf8",
+      "sanitizedSha256": "818dbd4b0f5a6ef2530c342da675c3d21a000962dc0d6c5d71c7bf8462ef8bf8",
+      "gzipSha256": "b124e45776b35284bf22e707e65e61a5bc8d59236bbdc72fcf4a6b23e0b97362"
+    },
+    {
+      "path": "attempt-02/prototype-source/entry.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\entry.mjs",
+      "originalSha256": "4e87fb6343a7235a43227988a02eca8b89520923d7da327b75fc66f1eb6987c8",
+      "sanitizedSha256": "4e87fb6343a7235a43227988a02eca8b89520923d7da327b75fc66f1eb6987c8",
+      "gzipSha256": "35188f4b118d6eeccadbe84b66436377d9a79f23ac312d461e0a7a585204bc46"
+    },
+    {
+      "path": "attempt-02/prototype-source/fixedScalarQuery-source.ts.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\fixedScalarQuery-source.ts",
+      "originalSha256": "3c81053e74fde179ee905974ba733d8d2c8c089f603ccb37e38b5347307db1e4",
+      "sanitizedSha256": "3c81053e74fde179ee905974ba733d8d2c8c089f603ccb37e38b5347307db1e4",
+      "gzipSha256": "1272c96868b1b4eb34971a92df6f6dcf3e0668d33d5b89ea0365dfb722fbc853"
+    },
+    {
+      "path": "attempt-02/prototype-source/fixedScalarQuery.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\fixedScalarQuery.mjs",
+      "originalSha256": "66ee3507806a764d3d41bbbe5d4c4d07eb20f6334fa09e05f128ad482b3953ca",
+      "sanitizedSha256": "66ee3507806a764d3d41bbbe5d4c4d07eb20f6334fa09e05f128ad482b3953ca",
+      "gzipSha256": "674bda62b029cd21f6d9450181c65396067b2b72855f6e804b314a4b38bdd7d8"
+    },
+    {
+      "path": "attempt-02/prototype-source/generate-capture.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\generate-capture.mjs",
+      "originalSha256": "13e8b810392fcd009e34fe39c6043d835751b5746688cc5ce6b1e06494591dcc",
+      "sanitizedSha256": "13e8b810392fcd009e34fe39c6043d835751b5746688cc5ce6b1e06494591dcc",
+      "gzipSha256": "0e67b614f3dd97908ccf2675714360f816033ebb2793d821e0939297695c2c01"
+    },
+    {
+      "path": "attempt-02/prototype-source/manifest.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\manifest.json",
+      "originalSha256": "5cff144d17f54c0cecd96013743bdf0d35b2c687113f747e2647e3c0100d015b",
+      "sanitizedSha256": "5cff144d17f54c0cecd96013743bdf0d35b2c687113f747e2647e3c0100d015b",
+      "gzipSha256": "c6729d6114f4b62f43143c16d7cf589e0e7fe3793217c6f1ac41175d41257951"
+    },
+    {
+      "path": "attempt-02/prototype-source/native-proof.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\native-proof.mjs",
+      "originalSha256": "03157a19c67bb8d80b0737177c07e37882b56e6788e0505f53f94b29b7debf83",
+      "sanitizedSha256": "03157a19c67bb8d80b0737177c07e37882b56e6788e0505f53f94b29b7debf83",
+      "gzipSha256": "56983b545af86facb183825b363d7327c4ab2af833e4c79fcd23c774a70a6fb0"
+    },
+    {
+      "path": "attempt-02/prototype-source/owned-executor.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\owned-executor.mjs",
+      "originalSha256": "fd39eb121a9668b911ceec94aa3fcd6ad1e3ff041894e9f6e9f45c9b9ff4bdbd",
+      "sanitizedSha256": "fd39eb121a9668b911ceec94aa3fcd6ad1e3ff041894e9f6e9f45c9b9ff4bdbd",
+      "gzipSha256": "1c197235d3e241895e998279c1888be69639149a945c84c8a723e31e9d9f975a"
+    },
+    {
+      "path": "attempt-02/prototype-source/run-linux.ps1.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\run-linux.ps1",
+      "originalSha256": "96b19d746d427abcadb565573d1b20c79659ed79369e79a04fcc94e436ca9fd2",
+      "sanitizedSha256": "5e717b55d0985d6d6b0dfaebf54ca34dd495158aa4bf06eeaf26d3a356314d9b",
+      "gzipSha256": "f39aec9df05a36e0c6afd09c9bbd5ea339460498fe5121a24c75d358f52e9902"
+    },
+    {
+      "path": "attempt-02/prototype-source/timing-gate.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\prototype-source\\timing-gate.mjs",
+      "originalSha256": "4d5836418b1920d6dfc37bcb68db5f45477398d39725caeb4f500e690ae2ea1a",
+      "sanitizedSha256": "4d5836418b1920d6dfc37bcb68db5f45477398d39725caeb4f500e690ae2ea1a",
+      "gzipSha256": "48f670dcc0efc8b25b8933440ca7b5527446cd363b658236f170d86701ad3711"
+    },
+    {
+      "path": "attempt-02/ready.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\ready.json",
+      "originalSha256": "62eba23725674bd95752455c5e6736b8dbdc36f5969fdfe9f78fb7c00b0844bf",
+      "sanitizedSha256": "6ea57116e27a4dc61452b94d08a92b18c21c2aea5e978ac19371bd2e8741c9fb",
+      "gzipSha256": "4b212e5c40e829a69fbf7f147d959b3c672e27c741d8ee94b17304a4affe1477"
+    },
+    {
+      "path": "attempt-02/release-observed.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\release-observed.json",
+      "originalSha256": "fec8cbbf42eb7659b0372d2b9de363587d6d25f16b7c0f8289a586f74d5fd181",
+      "sanitizedSha256": "971eb48e3f30bad55dba7304b3b2f38c8d12f0ae7875a480b9540b640e7cdfef",
+      "gzipSha256": "3804e9772e83beb7b8f700e85e30d86a0d753ccc4d8528134dbf83895c1ab26d"
+    },
+    {
+      "path": "attempt-02/restore.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\restore.log",
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "path": "attempt-02/role.log.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\role.log",
+      "originalSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "path": "attempt-02/root-gate-decision.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\root-gate-decision.json",
+      "originalSha256": "5e0f470ef04bbb87ecec3a18d405d1c769f3bbf2058ffa6a14f8fd40500db8c3",
+      "sanitizedSha256": "6a80949bc77244311d7878b4483f8a4049c3a366fe47fe75c96278e4273335e2",
+      "gzipSha256": "2632ffd8aa826f87abec61b6f6340300b323912651f48990fd4d7d15d27c7acf"
+    },
+    {
+      "path": "attempt-02/runtime-after.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\runtime-after.json",
+      "originalSha256": "fc675d7c950a77a9c90729dccfa2d82f71d068c2699d7259e221844a76fc9b2a",
+      "sanitizedSha256": "fc675d7c950a77a9c90729dccfa2d82f71d068c2699d7259e221844a76fc9b2a",
+      "gzipSha256": "156cfb1a980ad0231fb11b907900270384c752d5cb0dd730908e16eb258d0a0b"
+    },
+    {
+      "path": "attempt-02/runtime-before.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\runtime-before.json",
+      "originalSha256": "de59bddfd3a4a2bcffaf6831fee5614ffe79e7425db5a6302eb81f681b969d1b",
+      "sanitizedSha256": "de59bddfd3a4a2bcffaf6831fee5614ffe79e7425db5a6302eb81f681b969d1b",
+      "gzipSha256": "a474951a190438083fb88c94bc4406747e1d54912648c3b8e3b85550cc001852"
+    },
+    {
+      "path": "attempt-02/schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-32a5b4aefe65\\schema.sql",
+      "originalSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "sanitizedSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "gzipSha256": "f75bf0952dc8848016cbe7e6c601e12bbb718f38b5572f609ed6f196fbbb78b4"
+    },
+    {
+      "path": "analysis/compact.mjs.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-analysis-01\\compact.mjs",
+      "originalSha256": "7f32a86023f86f3773f79d6bb9eadcb5997a376ba25f36481fa87655ce40d1ab",
+      "sanitizedSha256": "7f32a86023f86f3773f79d6bb9eadcb5997a376ba25f36481fa87655ce40d1ab",
+      "gzipSha256": "f4c8f475c5f56501effc4aa1a074121feb0bec72a56d5012b484a8080f5cda12"
+    },
+    {
+      "path": "analysis/FINDINGS.md.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-analysis-01\\FINDINGS.md",
+      "originalSha256": "2ad7c01db8f642c91f942180a311e3d0e063bd4f9445c58cae387b4d414f5eef",
+      "sanitizedSha256": "2ad7c01db8f642c91f942180a311e3d0e063bd4f9445c58cae387b4d414f5eef",
+      "gzipSha256": "3efa8f8b8ac288839f75fbc54bf30e9f68f89474333da3dbf76cff10c9ef8ce6"
+    },
+    {
+      "path": "analysis/summary.json.gz",
+      "originalPath": "<TEMP>\\release297-owned-pg-linux-analysis-01\\summary.json",
+      "originalSha256": "6c3f43676e4c17de9eaf14a65d9907940f7fe49d3b04fcf51f8711c15b265c05",
+      "sanitizedSha256": "6c3f43676e4c17de9eaf14a65d9907940f7fe49d3b04fcf51f8711c15b265c05",
+      "gzipSha256": "89434edb6608c4f6d6d1fb12646c9dd7cb29f4cad34dd0c3d4b0fa67f32649e4"
+    }
+  ]
+}

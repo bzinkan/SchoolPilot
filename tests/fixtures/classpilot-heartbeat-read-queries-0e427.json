@@ -1,0 +1,64 @@
+{
+  "source": "0e427e3ca9b82125e0bb8692176accad21f4f699",
+  "values": {
+    "schoolId": "fixture-school",
+    "studentId": "fixture-student",
+    "studentSessionId": "fixture-session",
+    "deviceId": "fixture-device",
+    "teachingSessionId": "fixture-class",
+    "controlRevision": 8
+  },
+  "shapes": {
+    "locked_school": {
+      "sql": "select \"id\", \"status\", \"is_active\", \"plan_status\", \"active_until\", \"disabled_at\", \"deleted_at\" from \"schools\" where \"schools\".\"id\" = $1 limit $2 for share",
+      "params": [
+        "fixture-school",
+        1
+      ]
+    },
+    "locked_license": {
+      "sql": "select \"id\" from \"product_licenses\" where (\"product_licenses\".\"school_id\" = $1 and \"product_licenses\".\"product\" = $2 and \"product_licenses\".\"status\" = $3 and (\"product_licenses\".\"expires_at\" is null or \"product_licenses\".\"expires_at\" > clock_timestamp())) limit $4 for share",
+      "params": [
+        "fixture-school",
+        "CLASSPILOT",
+        "active",
+        1
+      ]
+    },
+    "screenshot_session": {
+      "sql": "select \"student_sessions\".\"id\", \"student_sessions\".\"started_at\", \"student_sessions\".\"auth_kind\", \"student_sessions\".\"manual_lease_expires_at\" from \"student_sessions\" inner join \"students\" on (\"students\".\"id\" = \"student_sessions\".\"student_id\" and \"students\".\"school_id\" = $1 and \"students\".\"status\" = $2) inner join \"devices\" on (\"devices\".\"device_id\" = \"student_sessions\".\"device_id\" and \"devices\".\"school_id\" = $3) where (\"student_sessions\".\"id\" = $4 and \"student_sessions\".\"student_id\" = $5 and \"student_sessions\".\"device_id\" = $6 and (\"student_sessions\".\"is_active\" = $7 and \"student_sessions\".\"ended_at\" is null and (\"student_sessions\".\"auth_kind\" <> $8 or (\"student_sessions\".\"manual_lease_expires_at\" is not null and \"student_sessions\".\"manual_lease_expires_at\" > clock_timestamp())))) limit $9 for share",
+      "params": [
+        "fixture-school",
+        "active",
+        "fixture-school",
+        "fixture-session",
+        "fixture-student",
+        "fixture-device",
+        true,
+        "manual_shared",
+        1
+      ]
+    },
+    "screenshot_control": {
+      "sql": "select \"teaching_session_id\", \"supervision_context_id\", \"revision\", \"scheduled_end_at\", \"hard_expires_at\", \"updated_at\" from \"classpilot_student_control_states\" where (\"classpilot_student_control_states\".\"school_id\" = $1 and \"classpilot_student_control_states\".\"student_id\" = $2) limit $3 for share",
+      "params": [
+        "fixture-school",
+        "fixture-student",
+        1
+      ]
+    },
+    "screenshot_candidate": {
+      "sql": "select \"teaching_sessions\".\"id\", \"teaching_sessions\".\"start_time\", \"teaching_sessions\".\"roster_snapshot_completed_at\", \"teaching_sessions\".\"scheduled_end_at\", \"classpilot_student_control_states\".\"revision\", \"classpilot_student_control_states\".\"updated_at\", \"classpilot_student_control_states\".\"scheduled_end_at\", \"classpilot_student_control_states\".\"hard_expires_at\" from \"classpilot_student_control_states\" inner join \"teaching_sessions\" on (\"teaching_sessions\".\"id\" = \"classpilot_student_control_states\".\"teaching_session_id\" and \"teaching_sessions\".\"school_id\" = $1 and \"teaching_sessions\".\"session_mode\" = $2 and \"teaching_sessions\".\"end_time\" is null and \"teaching_sessions\".\"roster_snapshot_completed_at\" is not null) inner join \"classpilot_session_students\" on (\"classpilot_session_students\".\"school_id\" = $3 and \"classpilot_session_students\".\"teaching_session_id\" = \"teaching_sessions\".\"id\" and \"classpilot_session_students\".\"student_id\" = $4) where (\"classpilot_student_control_states\".\"school_id\" = $5 and \"classpilot_student_control_states\".\"student_id\" = $6 and \"classpilot_student_control_states\".\"teaching_session_id\" = $7 and \"classpilot_student_control_states\".\"supervision_context_id\" is null and \"classpilot_student_control_states\".\"hard_expires_at\" is not null and \"classpilot_student_control_states\".\"hard_expires_at\" > now() and (\"classpilot_student_control_states\".\"scheduled_end_at\" is null or \"classpilot_student_control_states\".\"scheduled_end_at\" > now()) and (\"teaching_sessions\".\"scheduled_end_at\" is null or \"teaching_sessions\".\"scheduled_end_at\" > now())) limit $8 for share",
+      "params": [
+        "fixture-school",
+        "live",
+        "fixture-school",
+        "fixture-student",
+        "fixture-school",
+        "fixture-student",
+        "fixture-class",
+        1
+      ]
+    }
+  }
+}

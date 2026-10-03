@@ -64,7 +64,7 @@ describe("class chat oversight", () => {
     const seen = ids.indexOf("classpilot-chat-seen-state-20260918");
     assert.ok(seen < ids.indexOf(classpilotChatOversightMigration.id));
     assert.ok(ids.indexOf(classpilotChatOversightMigration.id) < ids.indexOf(classpilotChatTranscriptIndexMigration.id));
-    assert.equal(ids.at(-1), "20260824_staff_identity_integrity_contract");
+    assert.ok(ids.indexOf(classpilotChatTranscriptIndexMigration.id) < ids.indexOf("20260824_staff_identity_integrity_contract"));
     const index = await source("src/index.ts");
     assert.match(index, /await pool\.query\(CLASSPILOT_CHAT_SEEN_STATE_SQL\);\s+await pool\.query\(CLASSPILOT_CHAT_OVERSIGHT_SQL\);\s+await pool\.query\(CLASSPILOT_CHAT_TRANSCRIPT_INDEX_SQL\);/);
   });
@@ -128,6 +128,11 @@ describe("class chat oversight", () => {
     assert.match(remove_route, /logAuditStrict\(\{[\s\S]*action: "classpilot\.chat\.message_deleted"/);
     assert.doesNotMatch(remove_route, /content:|\.content\b/);
     const close = chat.slice(chat.indexOf('router.post("/teacher/close-chat"'), chat.indexOf("router.", chat.indexOf('router.post("/teacher/close-chat"') + 10));
-    assert.equal(close.match(/action: "classpilot\.chat\.closed"/g)?.length, 2, "both authority paths audit a close");
+    assert.match(close,/authorizeClasspilotTeacherCloseChat/);
+    assert.match(close,/authorizeScheduledTeacherStudentAction\(\{ schoolId, closeChat:true/);
+    const lifecycle=await source("src/services/classpilotPrivateChatLifecycle.ts");
+    assert.match(lifecycle,/await database\.execute\(sql`INSERT INTO audit_logs[\s\S]*'classpilot.chat.closed'/,"shared lifecycle closure audits in the same transaction");
+    const audit=lifecycle.slice(lifecycle.indexOf("await database.execute(sql`INSERT INTO audit_logs"),lifecycle.indexOf("return token;"));
+    assert.doesNotMatch(audit,/content:|\.content\b/);
   });
 });

@@ -915,8 +915,8 @@ test('Manage Tabs exposes a capability-gated tab limit that routes through the a
   const limitMutation = dashboard.slice(limitMutationStart, limitMutationEnd);
   assert.match(
     limitMutation,
-    /postActiveCommand\('limit-tabs', \{ maxTabs \}, \{ studentIds \}\)/,
-    'the tab limit must go through the capability-checked active command path',
+    /postActiveCommand\('limit-tabs', \{ maxTabs \}, recipients \? snapshotRecipientOptions\(recipients\) : \{ studentIds \}\)/,
+    'the tab limit must go through the capability-checked active command path, to frozen or tile students',
   );
   assert.match(
     limitMutation,
@@ -1026,4 +1026,446 @@ test('sign-out-only selection closes command dialogs and cannot fall back to cla
     dashboard,
     /pollPending=\{nonRestrictionSelectionActive \|\| subgroupCommandsDisabled/,
   );
+});
+
+test('classroom dialogs freeze recipients when they open and send them as explicit studentIds', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const between = (startMarker, endMarker) => {
+    const start = dashboard.indexOf(startMarker);
+    assert.ok(start >= 0, `missing ${startMarker}`);
+    const end = dashboard.indexOf(endMarker, start + startMarker.length);
+    assert.ok(end > start, `missing ${endMarker} after ${startMarker}`);
+    return dashboard.slice(start, end);
+  };
+
+  for (const [testId, kind] of [
+    ['dialog-send-message', 'message'],
+    ['dialog-attention-mode', 'attention'],
+    ['dialog-timer', 'timer'],
+    ['dialog-poll', 'poll'],
+    ['dialog-open-tab', 'open-tab'],
+    ['dialog-apply-flight-path', 'flight-path'],
+    ['dialog-apply-block-list', 'block-list'],
+  ]) {
+    const dialog = between(`data-testid="${testId}"`, '</Dialog>');
+    assert.doesNotMatch(dialog, /selectedStudentIds\.size/, `${testId} must not describe live ticks`);
+    assert.doesNotMatch(dialog, /targetBannerLabel/, `${testId} must not describe the live target banner`);
+    assert.match(
+      dialog,
+      new RegExp(`<CommandRecipients summaryAs=\\{DialogDescription\\} \\{\\.\\.\\.recipientDialogProps\\('${kind}'\\)\\} />`),
+      `${testId} must list its frozen recipients`,
+    );
+    assert.match(dialog, /data-recipient-send=""/, `${testId} must mark the button that confirms a partial send`);
+    assert.match(
+      dialog,
+      /onKeyDown=\{ignoreHeldEnter\}[^\n]*data-recipient-send=""/,
+      `${testId} must not let a held Enter confirm a partial send`,
+    );
+    assert.match(dialog, /data-recipient-autofocus=""/, `${testId} must open in its first field, not on the recipient list`);
+    assert.match(
+      dashboard,
+      new RegExp(`onOpenChange=\\{\\(open\\) => \\(open \\? setShow\\w+Dialog\\(true\\) : closeRecipientDialog\\('${kind}'\\)\\)\\}>\\s*<DialogContent[^>]*data-testid="${testId}"`),
+      `closing ${testId} must discard its frozen recipients`,
+    );
+    const [, contentProps] = dashboard.match(new RegExp(`<DialogContent([^>]*)data-testid="${testId}"`));
+    assert.match(contentProps, /onOpenAutoFocus=\{focusRecipientDialogField\}/, `${testId} must focus its marked field when it opens`);
+    assert.match(contentProps, /max-h-\[calc\(100dvh-2rem\)\][^"]*overflow-y-auto/, `${testId} must scroll on a short screen instead of clipping its buttons`);
+  }
+  const recipients = await readFile(
+    new URL('../src/products/classpilot/components/CommandRecipients.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    recipients,
+    /<ul\s[^>]*aria-label="Recipients"\s+tabIndex=\{0\}/,
+    'a long recipient list must be reachable, and scrollable, by keyboard',
+  );
+  assert.match(
+    between('const ignoreHeldEnter = (event) => {', '\n  };'),
+    /if \(event\.key === 'Enter' && event\.repeat\) event\.preventDefault\(\);/,
+  );
+  assert.match(
+    between('const focusRecipientDialogField = (event) => {', '\n  };'),
+    /querySelector\?\.\('\[data-recipient-autofocus\]'\);\s*if \(!field\) return;\s*event\.preventDefault\(\);\s*field\.focus\(/,
+  );
+
+  for (const [mutation, post] of [
+    ['const sendMessageMutation = useMutation', /postClassroomCommand\('teacher-message', \{ message \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const attentionModeMutation = useMutation', /postClassroomCommand\('attention-mode', \{ active, message \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const timerMutation = useMutation', /postClassroomCommand\('timer', payload, snapshotRecipientOptions\(recipients\)\)/],
+    ['const pollMutation = useMutation', /postClassroomCommand\('poll', \{ action: 'start', question, options \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const openTabMutation = useMutation', /postActiveCommand\('open-tab', \{ url \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const applyFlightPathMutation = useMutation', /postActiveCommand\('apply-flight-path', \{ flightPathId \}, snapshotRecipientOptions\(recipients\)\)/],
+    ['const applyBlockListMutation = useMutation', /postActiveCommand\('apply-block-list', \{ blockListId \}, snapshotRecipientOptions\(recipients\)\)/],
+  ]) {
+    assert.match(between(mutation, 'onSuccess'), post, `${mutation} must post the frozen recipients`);
+  }
+  assert.match(
+    between('const snapshotRecipientOptions = (recipients) => {', '\n  };'),
+    /throw new Error\(RECIPIENTS_MISSING_MESSAGE\)[\s\S]{0,200}recipients\.scopeKey !== activityScopeRef\.current\) throw new Error\(RECIPIENTS_SCOPE_CHANGED_MESSAGE\)[\s\S]{0,80}return \{ studentIds: \[\.\.\.recipients\.studentIds\] \}/,
+    'a send without recipients, or after the class changed, must fail closed instead of resolving a class target',
+  );
+  // Release, stop/pause/resume/extend and close keep their server-derived audience.
+  assert.match(dashboard, /: postClassroomCommand\('attention-mode', \{ active, message \}\)\)/);
+  assert.match(dashboard, /: postClassroomCommand\('timer', payload\)\)/);
+  assert.match(dashboard, /postClassroomCommand\('poll', \{ action: 'close', pollId \}\)/);
+
+  const opener = between('const openRecipientDialog = (kind, commandType, commandPayload = {}) => {', 'const clearRecipientSnapshot');
+  assert.match(opener, /assertClassroomCommandSelectionIsolation\(commandType, selectedServerSignOutStudentIds\.size\)/);
+  assert.match(opener, /dashboardCapabilities\.allows\(commandType\)/);
+  assert.match(opener, /const snapshot = captureRecipientSnapshot\(commandType, commandPayload\);/);
+  const capture = between('const captureRecipientSnapshot = ', 'const openRecipientDialog');
+  assert.match(capture, /overrideStudentIds = null\) => snapshotCommandRecipients\(\{/);
+  assert.match(capture, /resolveActiveCommandTarget\(overrideStudentIds, \{ commandType, commandPayload \}\)/);
+  assert.match(capture, /scopeKey: activityScopeKey,\s*view: studentView,/);
+  const refusal = opener.slice(opener.indexOf('} catch (error) {'));
+  assert.match(refusal, /^\} catch \(error\) \{[\s\S]{0,700}toast\(\{\s*variant: 'destructive',[\s\S]{0,120}description: recipientDialogRefusalMessage\(error, \{[\s\S]{0,400}return false;\s*\}\s*\};/, 'an unavailable target must explain itself and not open the dialog');
+  assert.doesNotMatch(refusal, /recipientDialogSetters|setRecipientSnapshot/, 'a refused dialog must not open or keep recipients');
+  assert.match(opener, /setRecipientSnapshot\(\{ kind, snapshot, unavailableIds: null, confirmIds: null, notice: '' \}\);\s*recipientDialogSetters\[kind\]\(true\);\s*return true;/);
+  assert.match(dashboard, /onClick=\{\(\) => openRecipientDialog\('open-tab', 'open-tab', \{ url: '' \}\)\} disabled=\{subgroupCommandsDisabled \|\| nonRestrictionSelectionActive\} data-testid="button-open-tab"/);
+  assert.match(dashboard, /onSendMessage=\{subgroupCommandsDisabled \|\| !dashboardCapabilities\.allows\('teacher-message'\) \? undefined : \(\) => openRecipientDialog\('message', 'teacher-message'/);
+  assert.match(dashboard, /onPollClick=\{\(\) => activePoll \? setShowPollResultsDialog\(true\) : openRecipientDialog\('poll', 'poll'/);
+  assert.match(dashboard, /onPreset=\{\(preset\) => \{\s*if \(!openRecipientDialog\('poll', 'poll'/);
+  assert.match(dashboard, /onTimerClick=\{\(\) => timerActive \? handleStopTimer\(\) : openRecipientDialog\('timer', 'timer'/);
+  assert.match(dashboard, /onAttentionClick=\{\(\) => attentionActive \? setShowAttentionDialog\(true\) : openRecipientDialog\('attention', 'attention-mode'/);
+
+  const take = between('const takeSnapshotRecipients = ', 'const snapshotRecipientOptions');
+  assert.match(take, /snapshot\.scopeKey !== activityScopeRef\.current \|\| snapshot\.view !== studentView/);
+  assert.match(take, /planRecipientSend\(\{\s*snapshot,\s*confirmIds: entry\.confirmIds,\s*commandableIds: commandableRecipientIds\(commandType, commandPayload\),\s*repeatGesture,\s*\}\)/);
+  assert.match(take, /if \(step\.action === 'ignore'\) return null;/);
+  assert.match(take, /if \(step\.action === 'ask'\) \{[^}]*\}\);\s*return null;\s*\}/, 'a lost recipient needs a second explicit send');
+  assert.match(take, /if \(step\.action === 'restored'\) \{[\s\S]{0,300}return null;\s*\}/, 'a returning recipient is asked about, not silently skipped');
+  assert.equal(take.match(/studentIds:/g)?.length, 1, 'only the planned send returns studentIds');
+  assert.match(take, /studentIds: \[\.\.\.step\.studentIds\],/);
+
+  for (const [handler, mutation, kind, send] of [
+    ['const handleSendMessage = (event) => {', 'sendMessageMutation', 'message', 'sendMessageMutation.mutate({ message, recipients });'],
+    ['const handleAttentionMode = (active, event) => {', 'attentionModeMutation', 'attention', 'attentionModeMutation.mutate({ active: true, message: attentionMessage, recipients });'],
+    ['const handleStartTimer = (event) => {', 'timerMutation', 'timer', "timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage, recipients });"],
+    ['const handleCreatePoll = (event) => {', 'pollMutation', 'poll', 'pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions, recipients });'],
+    ['const handleOpenTab = (event) => {', 'openTabMutation', 'open-tab', 'openTabMutation.mutate({ url: normalizedUrl, recipients });'],
+    ['const handleApplyFlightPath = (event) => {', 'applyFlightPathMutation', 'flight-path', 'applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName, recipients });'],
+    ['const handleApplyBlockList = (event) => {', 'applyBlockListMutation', 'block-list', 'applyBlockListMutation.mutate({ blockListId: selectedBlockListId, recipients });'],
+  ]) {
+    const source = between(handler, send);
+    assert.match(source, new RegExp(`if \\(${mutation}\\.isPending \\|\\| recipientSendBusyRef\\.current === '${kind}'\\) return;`), `${handler} must ignore a second send while one is in flight`);
+    assert.match(source, new RegExp(`takeSnapshotRecipients\\('${kind}'`), `${handler} must send only frozen recipients`);
+    assert.match(source, new RegExp(`if \\(!recipients\\) return;\\s*recipientSendBusyRef\\.current = '${kind}';\\s*$`), `${handler} must mark the send busy before mutating`);
+    assert.match(between(`const ${mutation} = useMutation`, '\n  });'), new RegExp(`onSettled: [^\\n]*releaseRecipientSend\\('${kind}'\\)`), `${mutation} must release its busy mark when it settles`);
+  }
+  assert.match(between('data-testid="dialog-send-message"', 'data-testid="input-send-message"'), /e\.key !== 'Enter' \|\| e\.shiftKey \|\| e\.nativeEvent\.isComposing\) return;\s*e\.preventDefault\(\);\s*if \(e\.repeat\) return;/);
+  assert.match(between('data-testid="dialog-open-tab"', 'data-testid="input-open-tab-url"'), /e\.key !== 'Enter' \|\| e\.nativeEvent\.isComposing \|\| openTabMutation\.isPending\) return;\s*if \(e\.repeat\) \{ e\.preventDefault\(\); return; \}/);
+  assert.match(between('const recipientDeliveryToast = ', '\n  };'), /commandRecipientsSummary\(/, 'the toast names the audience without claiming delivery');
+
+  for (const marker of [
+    'if (!signOutOnlySelectionActive) return;',
+    'if (!scheduledClassEnabled) return;',
+  ]) {
+    assert.match(between(marker, '}, ['), /setRecipientSnapshot\(null\);/, `${marker} must discard frozen recipients with the dialogs it closes`);
+  }
+  // A signed-out (deferred restriction) selection closes every dialog except
+  // Apply Flight Path and Apply Block List, which keep their frozen recipients.
+  assert.match(
+    between('if (!lateSignInRestrictionSelectionActive) return;', '}, ['),
+    /setRecipientSnapshot\(\(current\) => \(\['flight-path', 'block-list'\]\.includes\(current\?\.kind\) \? current : null\)\);/,
+    'a deferred-restriction selection must discard frozen recipients only with the dialogs it closes',
+  );
+  assert.match(between('const handleAdminObservedSessionChange', 'const handleStopLiveView'), /setSkipTodayGroup\(null\);\s*setRecipientSnapshot\(null\);/);
+  assert.match(dashboard, /throw new Error\(RECIPIENTS_UNAVAILABLE_MESSAGE\);/);
+  assert.doesNotMatch(dashboard, /Clear the selection and try again/);
+});
+
+test('the Messages roster and the student grid share one last-name order, and roster rows carry no message text', async () => {
+  const [dashboard, roster, rosterList] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/lib/chatRoster.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatRosterList.jsx', import.meta.url), 'utf8'),
+  ]);
+  // One comparator: the grid's inline last-name sorts are gone.
+  assert.match(dashboard, /import \{ compareStudentsByLastName \} from '\.\.\/lib\/studentOrder';/);
+  assert.doesNotMatch(dashboard, /getLastName|localeCompare\(\w+\(b\.studentName\)\)/, 'no second copy of the student order');
+  assert.match(
+    dashboard,
+    /const filteredClassStudents = sessionFilteredStudents\s+\.filter\([\s\S]{0,300}?\}\)\s+\.sort\(compareStudentsByLastName\);/,
+    'the class grid sorts with the shared comparator',
+  );
+  assert.match(roster, /import \{ compareStudentsByLastName \} from '\.\/studentOrder\.js';/);
+  assert.match(roster, /\[\.\.\.\(students \|\| \[\]\)\]\.sort\(compareStudentsByLastName\)/, 'the roster sorts with the same comparator');
+  // The roster is the whole class: never the grid's search or subgroup filter.
+  assert.match(dashboard, /buildMessagingRoster\(\{\s*students: sessionFilteredStudents,\s*monitoringByStudent: monitoringDisplaysByStudent,/);
+  assert.doesNotMatch(dashboard, /buildMessagingRoster\(\{\s*students: filtered/);
+
+  const { buildMessagingRoster } = await import('../src/products/classpilot/lib/chatRoster.js');
+  const { compareStudentsByLastName } = await import('../src/products/classpilot/lib/studentOrder.js');
+  const students = [
+    { studentId: 'c', studentName: 'Cy Zed' },
+    { studentId: 'a', studentName: 'Ada Student' },
+    { studentId: 'b', studentName: 'ben adams' },
+    { studentId: 'd', studentName: 'Ann Student' },
+  ];
+  const rows = buildMessagingRoster({
+    students,
+    conversations: [{ studentId: 'a', studentName: 'Ada Student', unreadCount: 1, lastItem: { message: 'private words' }, lastAt: '2026-09-18T14:00:00.000Z', items: [] }],
+  });
+  assert.deepEqual(rows.map((row) => row.studentId), [...students].sort(compareStudentsByLastName).map((row) => row.studentId));
+  assert.equal(JSON.stringify(rows).includes('private words'), false, 'a roster row never carries what a student wrote');
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row).sort(), ['canMessage', 'hasThread', 'mark', 'name', 'srStatus', 'studentId', 'unreadCount', 'word']);
+  }
+
+  // A row renders only primitives: no preview, time or avatar.
+  assert.doesNotMatch(rosterList, /\blastItem\b|\blastAt\b|\.message\b|\.items\b|formatChatTimestamp|<time\b|\binitials\(/);
+  const rowProps = rosterList.match(/const RosterRow = memo\(function RosterRow\(\{([\s\S]*?)\}\)/)?.[1];
+  assert.ok(rowProps, 'RosterRow is memoised');
+  assert.deepEqual(
+    rowProps.split(',').map((prop) => prop.trim()).filter(Boolean).sort(),
+    ['canMessage', 'current', 'focusable', 'hasThread', 'mark', 'name', 'onOpen', 'readinessKind', 'readinessLabel', 'srStatus', 'studentId', 'unreadCount', 'word'],
+  );
+});
+
+test('a selection cleared automatically is refused, never widened, and every classroom send names its students', async () => {
+  const dashboard = await readFile(
+    new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url),
+    'utf8',
+  );
+  const between = (startMarker, endMarker) => {
+    const start = dashboard.indexOf(startMarker);
+    assert.ok(start >= 0, `missing ${startMarker}`);
+    const end = dashboard.indexOf(endMarker, start + startMarker.length);
+    assert.ok(end > start, `missing ${endMarker} after ${startMarker}`);
+    return dashboard.slice(start, end);
+  };
+
+  // The shared guard: the final resolver refuses the subgroup/class fallback
+  // while a loss stands, except for controls whose audience the server derives.
+  assert.match(
+    between('const resolveActiveCommandTarget = (', 'const getActiveCommandStudents'),
+    /selectionLoss: commandType && commandAudienceIsServerDerived\(commandType, commandPayload\)\s*\? null\s*: activeSelectionLoss,/,
+  );
+  // A lost selection belongs to one school and viewer, schedule boundary, view
+  // and (Class view only) class authority revision: buildSelectionScopeKey
+  // leaves the class session out of the Claimed view's scope.
+  assert.match(
+    dashboard,
+    /const selectionScopeKey = buildSelectionScopeKey\(\{\s*readerKey: classReaderKey, transitionKey: scheduledTransitionKey, view: studentView, authorityKey: effectiveAuthorityKey,\s*\}\);/,
+    'a lost selection belongs to one school, schedule boundary, view and Class-view authority revision',
+  );
+  assert.match(dashboard, /const activeSelectionLoss = selectionLoss\?\.scopeKey === selectionScopeKey \? selectionLoss : null;/);
+
+  // Every automatic clearing records what it removed, with its cause; the
+  // scope effect that drops a previous scope's loss is declared after them.
+  const trim = between('const keepTick = (studentId) => (', '}, [lateSignInRestrictionEligibleStudentIds, monitoringDisplaysByStudent, selectionScopeKey, studentView]);');
+  assert.match(
+    trim,
+    /^const keepTick = \(studentId\) => \(\s*monitoringDisplaysByStudent\.get\(studentId\)\?\.telemetryCurrent\s*\|\| lateSignInRestrictionEligibleStudentIds\.has\(studentId\)\s*\);/,
+    'a signed-out tick for restrictions after sign-in is not dropped as stopped reporting; the binding check validates it',
+  );
+  assert.ok(
+    dashboard.indexOf('const lateSignInRestrictionEligibleStudentIds = useMemo(') < dashboard.indexOf(trim),
+    'the trim reads the late-sign-in eligibility it is declared after',
+  );
+  assert.match(trim, /if \(keepTick\(studentId\)\) next\.add\(studentId\);/);
+  assert.match(trim, /const previousIds = \[\.\.\.selectedStudentIdsRef\.current\];\s*const keptIds = previousIds\.filter\(keepTick\);/);
+  assert.match(trim, /selectionLossScopeRef\.current === selectionScopeKey\) \{\s*setSelectionLoss\(\(current\) => recordSelectionLoss\(current, \{\s*previousIds, keptIds, scopeKey: selectionScopeKey, reason: 'stopped-reporting',\s*\}\)\);/);
+  assert.doesNotMatch(dashboard, /if \(monitoringDisplaysByStudent\.get\(studentId\)\?\.telemetryCurrent\) next\.add\(studentId\);/, 'one telemetry trim only');
+  const bindingRecord = dashboard.indexOf("previousIds: previousCommandIds, keptIds: keptCommandIds, scopeKey: selectionScopeKey, reason: 'session-changed',");
+  // A scope change drops the old scope's loss but keeps one recorded for the
+  // new scope in the same commit (an automatic Class/Claimed switch).
+  const scopeReset = dashboard.search(/selectionLossScopeRef\.current = selectionScopeKey;\s*setSelectionLoss\(\(current\) => \(current\?\.scopeKey === selectionScopeKey \? current : null\)\);/);
+  assert.ok(dashboard.indexOf(trim) < bindingRecord && bindingRecord < scopeReset, 'record in both trims, then reset on a scope change');
+  assert.doesNotMatch(dashboard, /selectionLossScopeRef\.current = selectionScopeKey;\s*setSelectionLoss\(null\);/, 'a scope change never drops the new scope\'s loss');
+  // The supervision groups shown changed under ticked students, in the same
+  // scope or by an automatic Class/Claimed switch: recorded for the view now
+  // shown (with the chosen group and a selection already lost), so one-click
+  // actions never reach every claimed student or the whole class.
+  const automaticTarget = between('// The supervision groups shown changed (one ended, or one was assigned)', '}, [classReaderKey, studentView, automaticTestingTargetKey, clearStudentDetails]);');
+  assert.match(
+    automaticTarget,
+    /const previousScopeKey = selectionLossScopeRef\.current;\s*const scopeKey = selectionScopeKeyRef\.current;\s*const automaticViewSwitch = previousScopeKey !== scopeKey && !studentViewChosenRef\.current\s*&& selectionScopeKeepsBoundary\(previousScopeKey, scopeKey\);\s*if \(previousScopeKey === scopeKey \|\| automaticViewSwitch\) \{/,
+    'only a view staff did not pick, in the same school and boundary, carries the selection',
+  );
+  assert.match(automaticTarget, /const previousIds = \[\.\.\.selectedStudentIdsRef\.current\];\s*if \(selectedSubgroupIdRef\.current\) previousIds\.push\(selectedSubgroupIdRef\.current\);/);
+  assert.match(automaticTarget, /previousIds: current\?\.scopeKey === previousScopeKey \? \[\.\.\.\(current\.lostIds \|\| \[\]\), \.\.\.previousIds\] : previousIds,\s*keptIds: \[\], scopeKey, reason: 'groups-changed',/);
+  assert.ok(automaticTarget.indexOf("reason: 'groups-changed'") < automaticTarget.indexOf('setSelectedStudentIds(new Set());'));
+  // The refs it reads are updated (layout) before it runs.
+  for (const ref of [
+    /const selectedSubgroupIdRef = useRef\(selectedSubgroupId\);\s*useLayoutEffect\(\(\) => \{ selectedSubgroupIdRef\.current = selectedSubgroupId; \}, \[selectedSubgroupId\]\);/,
+    /const studentViewChosenRef = useRef\(studentViewChosen\);\s*useLayoutEffect\(\(\) => \{ studentViewChosenRef\.current = studentViewChosen; \}, \[studentViewChosen\]\);/,
+  ]) {
+    const declared = dashboard.search(ref);
+    assert.ok(declared > 0 && declared < dashboard.indexOf(automaticTarget), `${ref} must be declared before the supervision-groups effect`);
+  }
+  const viewHook = await readFile(
+    new URL('../src/products/classpilot/lib/useScheduledTestingView.js', import.meta.url),
+    'utf8',
+  );
+  assert.match(viewHook, /studentViewChosen: Boolean\(manualSelection\),/, 'a view staff picked is never an automatic switch');
+  // A removed subgroup is a lost target, never a silent whole class.
+  const removedGroup = between('&& !subgroups.some((subgroup) => subgroup.id === selectedSubgroupId)', '}, [selectedSubgroupId, subgroups]);');
+  assert.match(removedGroup, /const previousIds = \[\.\.\.selectedStudentIdsRef\.current, selectedSubgroupId\];\s*const scopeKey = selectionScopeKeyRef\.current;\s*if \(selectionLossScopeRef\.current === scopeKey\) \{\s*setSelectionLoss\(\(current\) => recordSelectionLoss\(current, \{\s*previousIds, keptIds: \[\], scopeKey, reason: 'group-removed',/);
+  assert.match(dashboard, /const selectionScopeKeyRef = useRef\(selectionScopeKey\);\s*useLayoutEffect\(\(\) => \{ selectionScopeKeyRef\.current = selectionScopeKey; \}, \[selectionScopeKey\]\);/);
+  // A new class, school or mode starts with no lost selection, except one
+  // recorded for the view now shown. In an unchanged scope, a class session
+  // starting or ending leaves Claimed-view ticks alone, and Class-view ticks
+  // cleared when the class became unavailable are recorded.
+  const modeResetEnd = dashboard.indexOf('}, [currentUser?.id, dashboardCapabilities.mode, effectiveActivity?.id, school?.id]);');
+  assert.ok(modeResetEnd > 0, 'missing the class/mode reset effect');
+  const modeReset = dashboard.slice(dashboard.lastIndexOf('useEffect(() => {', modeResetEnd), modeResetEnd);
+  assert.match(
+    modeReset,
+    /const scopeKey = selectionScopeKeyRef\.current;\s*if \(selectionLossScopeRef\.current === scopeKey\) \{[\s\S]*?if \(studentViewRef\.current === 'claimed'\) return;[\s\S]*?const previousIds = \[\.\.\.selectedStudentIdsRef\.current\];\s*if \(previousIds\.length > 0\) \{\s*setSelectionLoss\(\(current\) => recordSelectionLoss\(current, \{\s*previousIds, keptIds: \[\], scopeKey, reason: 'class-unavailable',\s*\}\)\);\s*\}\s*\} else \{[\s\S]*?setSelectionLoss\(\(current\) => \(current\?\.scopeKey === scopeKey \? current : null\)\);\s*\}\s*setSelectedStudentIds\(new Set\(\)\);\s*setSelectedServerSignOutStudentIds\(new Set\(\)\);\s*setSelectedStudentBindingSnapshots\(new Map\(\)\);\s*$/,
+  );
+  assert.doesNotMatch(modeReset, /setSelectionLoss\(null\)/, 'a class session change never silently drops a lost selection');
+  assert.match(between('if (!scheduledClassEnabled) return;', '}, ['), /setRecipientSnapshot\(null\);\s*setSelectionLoss\(null\);/);
+  // Returning or releasing a student unticks only that student; it never
+  // clears the other ticks (which would leave every claimed student targeted).
+  assert.match(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectedStudentIds\(\(prev\) => \{[\s\S]*!removed\.has\(studentId\)/);
+  assert.doesNotMatch(between('const deselectStudents = (studentIds = []) => {', '\n  };'), /setSelectionLoss/);
+  assert.match(between('const releaseClaimMutation = useMutation', 'onError'), /onSuccess: \(_data, variables\) => \{ if \(variables\.scope === supervisionScopeRef\.current\) \{ deselectStudents\(variables\.students\.map\(\(student\) => student\.studentId\)\);/);
+  assert.doesNotMatch(between('const releaseClaimMutation = useMutation', 'const endTestingMutation'), /clearSelection\(\)/);
+  assert.match(between('const returnToClassMutation = useMutation', 'onError'), /deselectStudents\(variables\?\.studentIds\);/);
+
+  // Only the teacher's own choices clear a loss. "Choose again" only moves
+  // focus: commands stay refused until the teacher actually chooses.
+  assert.ok((between('const toggleStudentSelection = (studentId) => {', 'const selectAll = () => {').match(/setSelectionLoss\(null\);/g) || []).length >= 4);
+  for (const [start, end] of [
+    ['const selectAll = () => {', '\n  };'],
+    ['const clearSelection = () => {', '\n  };'],
+    ['const acceptSelectionLossFallback = () => {', '\n  };'],
+    ['const handleStudentViewChange = (view) => {', '\n  };'],
+  ]) {
+    assert.match(between(start, end), /setSelectionLoss\(null\);/, `${start} must clear a lost selection`);
+  }
+  const chooseAgain = between('const chooseStudentsAgain = () => {', '\n  };');
+  assert.doesNotMatch(chooseAgain, /setSelectionLoss/, '"Choose again" keeps the fallback refused until the teacher chooses');
+  assert.match(chooseAgain, /const selectableIds = new Set\(selectableStudents\.map\(\(student\) => student\.studentId\)\);/, 'focus goes to a student the teacher can tick, not a stale one');
+  assert.match(chooseAgain, /if \(checkbox\) checkbox\.focus\(\);\s*else focusSelectionTarget\(\);/);
+  assert.match(between('const acceptSelectionLossFallback = () => {', '\n  };'), /focusSelectionTarget\(\);\s*setSelectionLoss\(null\);/, 'focus moves to the target before the notice goes away');
+  assert.match(dashboard, /<div ref=\{selectionTargetRef\} tabIndex=\{-1\}[^>]*data-testid="badge-selection-count">/);
+  assert.match(dashboard, /onChange=\{\(event\) => \{\s*setSelectionLoss\(null\);\s*setSelectedSubgroupId\(event\.target\.value\);/);
+  // The status region stays mounted so the notice is announced when it appears.
+  assert.match(dashboard, /<div role="status" data-testid="selection-lost-region">\s*\{selectionLossActive \? \(\s*<div className="[^"]*" data-testid="selection-lost-notice">/);
+  const notice = between('data-testid="selection-lost-notice"', '\n        ) : null}');
+  assert.match(notice, /\{selectionLostMessage\(activeSelectionLoss\.count, \{ scope: selectionLossScope, reason: activeSelectionLoss\.reason \}\)\}/);
+  assert.match(notice, /onClick=\{chooseStudentsAgain\} data-testid="button-selection-lost-choose-again">Choose again</);
+  assert.match(notice, /onClick=\{acceptSelectionLossFallback\} data-testid="button-selection-lost-use-all">\{selectionLossActionLabel\(selectionLossScope\)\}</);
+
+  // postActiveCommand never resolves a live target for a missing list.
+  assert.match(
+    between('const postActiveCommand = ', 'const clickRecipientIds'),
+    /if \(!Array\.isArray\(options\.studentIds\) \|\| options\.studentIds\.length === 0\) \{\s*throw new Error\(RECIPIENTS_MISSING_MESSAGE\);\s*\}\s*return studentView === "claimed"/,
+  );
+  assert.doesNotMatch(dashboard, /postActiveCommand\('apply-(?:flight-path|block-list)', \{ \w+ \}\)/, 'Apply Flight Path and Apply Block List must not post without studentIds');
+  assert.match(between('const clickRecipientIds = ', '\n  };'), /return resolveActiveCommandTarget\(null, \{ commandType, commandPayload \}\)\.targetStudentIds;/);
+
+  // Apply Flight Path and Apply Block List freeze their recipients when they open.
+  assert.match(dashboard, /onClick=\{\(\) => openRecipientDialog\('flight-path', 'apply-flight-path'\)\}[^\n]*data-testid="button-apply-flight-path"/);
+  assert.match(dashboard, /onClick=\{\(\) => openRecipientDialog\('block-list', 'apply-block-list'\)\}[^\n]*data-testid="button-apply-block-list"/);
+  assert.match(dashboard, /onClick=\{\(\) => \{ if \(!openRecipientDialog\('block-list', 'apply-block-list'\)\) return; setSelectedBlockListId\(bl\.id\);/);
+  // Only the dialogs' own onOpenChange (`open ? setShow…(true) : close…`) may
+  // set them open directly; every opener goes through openRecipientDialog.
+  assert.doesNotMatch(dashboard, /setShowApply(?:FlightPath|BlockList)Dialog\(true\)(?!\s*:)/, 'no opener may skip the frozen recipients');
+  for (const probe of ['() => { setShowApplyFlightPathDialog(true); }', '() => { setShowApplyBlockListDialog(true) }', '() => setShowApplyFlightPathDialog(true)}']) {
+    assert.match(probe, /setShowApply(?:FlightPath|BlockList)Dialog\(true\)(?!\s*:)/, `the opener check catches ${probe}`);
+  }
+  assert.match(dashboard, /const flightPathDomainRestrictionMessage = restrictionMessageForStudents\(recipientSnapshotRows\('flight-path'\)\);/);
+
+  // Toolbar Manage Tabs uses its frozen list for the tabs it shows and for
+  // bulk close and the tab limit; a tile's names exactly one student.
+  assert.match(between('const openManageTabs = (studentIds = null) => {', '\n  };'), /if \(studentIds === null\) \{\s*if \(!openRecipientDialog\('manage-tabs', 'close-tabs', \{ closeAll: true \}\)\) return;/);
+  assert.match(dashboard, /const manageTabsStudents = manageTabsStudentIds\s*\? getActiveCommandStudents\(manageTabsStudentIds\)\s*: recipientSnapshotRows\('manage-tabs', 'close-tabs', \{ closeAll: true \}\);/);
+  assert.match(between('const handleCloseAllTabs = (event) => {', '\n  };'), /takeSnapshotRecipients\('manage-tabs', 'close-tabs', \{ closeAll: true \}, \{ repeatGesture: event\?\.detail > 1, action: 'close-all-tabs' \}\);[\s\S]*closeTabsMutation\.mutate\(\{ closeAll: true, recipients \}\);/);
+  assert.match(between('const sendTabLimit = (maxTabs, event, action) => {', '\n  };'), /takeSnapshotRecipients\('manage-tabs', 'limit-tabs', \{ maxTabs \}, \{ repeatGesture: event\?\.detail > 1, action \}\);\s*if \(!recipients\) return;[\s\S]*limitTabsMutation\.mutate\(\{ maxTabs, recipients, draft \}\);/);
+  // "Clear limit" empties the field only once a clear has gone through, and
+  // not over a limit typed since; a refused or failed clear leaves it alone.
+  assert.match(between('const handleClearTabLimit = (event) => {', '\n  };'), /^const handleClearTabLimit = \(event\) => \{\s*sendTabLimit\(null, event, 'clear-tab-limit'\);\s*$/);
+  assert.doesNotMatch(between('const sendTabLimit = (maxTabs, event, action) => {', 'const handleCloseAllTabs'), /setTabLimitDraft\(/, 'pressing a send never empties the field');
+  assert.match(
+    between('const limitTabsMutation = useMutation', 'onError'),
+    /onSuccess: \(data, variables\) => \{[\s\S]*if \(variables\?\.maxTabs === null\) setTabLimitDraft\(\(current\) => \(current === variables\.draft \? '' : current\)\);/,
+  );
+  assert.match(between('const closeTabsMutation = useMutation', 'onSuccess'), /postActiveCommand\('close-tabs', payload, recipients \? snapshotRecipientOptions\(recipients\) : \{ studentIds \}\)/);
+  const tabsDialog = between('data-testid="dialog-tabs"', '</Dialog>');
+  assert.match(tabsDialog, /<CommandRecipients summaryAs=\{DialogDescription\} offerCancel=\{false\} \{\.\.\.recipientDialogProps\('manage-tabs'\)\} \/>/);
+  assert.match(tabsDialog, /onClick=\{handleCloseAllTabs\} onKeyDown=\{ignoreHeldEnter\}[^\n]*data-testid="button-close-all-tabs"/);
+  assert.doesNotMatch(tabsDialog, /manageTabsStudents\.map/, 'bulk close must not re-read a live student list');
+  assert.match(dashboard, /onOpenChange=\{\(open\) => \(open \? setShowCloseTabsDialog\(true\) : closeManageTabsDialog\(\)\)\}>\s*<DialogContent[^>]*data-testid="dialog-tabs"/);
+  assert.match(between('const closeManageTabsDialog = () => {', '\n  };'), /clearRecipientSnapshot\('manage-tabs'\);/);
+
+  // Class tools starts go to the selection resolved when pressed, explicitly.
+  assert.match(between('const runClassToolsCommand = async', '\n  };'), /explicitTargets: !commandAudienceIsServerDerived\(type, payload\),/);
+  assert.match(dashboard, /Boolean\(scheduledSupervisionId\) \|\| options\.explicitTargets === true \|\| hasUnavailableCommandTarget/);
+
+  // Block List Status removes from the current target and names it.
+  const blockListStatus = between('data-testid="dialog-block-list-viewer"', 'data-testid="button-remove-all-block-lists"');
+  assert.match(blockListStatus, /Remove Block List from the current target/);
+  assert.match(blockListStatus, /Target: \{displayedTargetBannerLabel\}\./);
+  assert.doesNotMatch(blockListStatus, /from All Students/);
+  assert.match(dashboard, /onClick=\{handleRemoveBlockList\}[^\n]*data-testid="button-remove-all-block-lists"/);
+});
+
+test('Messages follows the class and school switches together, and Class tools never names a target the Send Message dialog refuses', async () => {
+  const [dashboard, workspace, composer] = await Promise.all([
+    readFile(new URL('../src/products/classpilot/pages/Dashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatWorkspace.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/products/classpilot/components/ChatComposer.jsx', import.meta.url), 'utf8'),
+  ]);
+  // One effective hard switch (class && school) gates the roster, need reply
+  // and the reply box; a pause (fabState) is not part of it, so a paused class
+  // keeps its roster and the teacher can still write.
+  assert.match(workspace, /const messagingEnabled = studentMessagingEnabled && schoolMessagingEnabled;/);
+  assert.match(workspace, /const canStartConversations = messagingEnabled && chatAvailable;/);
+  assert.match(workspace, /const composerDisabled = !messagingEnabled \|\| Boolean\(selectedId && \(!canReplyToStudent\(selectedId\) \|\| pendingReplyStudentIds\?\.has\(selectedId\)\)\);/);
+  assert.match(workspace, /\(canStartConversations \? rosterRows : rosterRows\.filter\(\(row\) => row\.hasThread\)\)/, 'messaging off lists existing threads only');
+  assert.match(workspace, /answerableConversations\(conversations, \{ rosterById: rosterKnown \? rosterById : null, canStart: canStartConversations \}\)/, 'need reply follows the same switch');
+  assert.doesNotMatch(workspace, /(?:canStartConversations|composerDisabled|messagingEnabled) = [^\n;]*pause/, 'a pause never gates writing');
+  // The school banner outranks the class banner; nothing can be paused while
+  // either switch is off.
+  assert.match(workspace, /\{!schoolMessagingEnabled \? \([\s\S]{0,400}data-testid="chat-school-off-banner"[\s\S]{0,300}\) : !studentMessagingEnabled && \(/);
+  assert.match(workspace, /\{onTogglePause && messagingEnabled && \(/);
+  assert.match(workspace, /\{pause && messagingEnabled && \(/);
+  // Either banner sits in one live region that is always present, so a switch
+  // turned off elsewhere is announced. A conversation that has not started
+  // closes while messaging is off instead of waiting hidden to come back.
+  assert.match(workspace, /<div role="status"[^>]*data-testid="chat-off-region">\s*\{!schoolMessagingEnabled \? \(/);
+  assert.match(workspace, /const unstartedConversationHidden = visible && chatAvailable && !messagingEnabled\s*&& Boolean\(selectedStudentId\) && !selected;/);
+  assert.match(workspace, /if \(unstartedConversationHidden\) onSelectConversation\(null\);/);
+  // Focus a switch takes moves only on turning messaging off, only when the
+  // teacher had it in Messages, and only to the open conversation or a note:
+  // typing on at the announce button would open a message to the whole class,
+  // and at another student's row could open that student's reply box.
+  assert.match(workspace, /const turnedOff = previousMessagingEnabledRef\.current && !messagingEnabled;/);
+  assert.match(workspace, /\(list\?\.querySelector\('\[data-roster-id\]\[aria-current="true"\]'\)\s*\|\| backButtonRef\.current\s*\|\| noSelectionRef\.current\s*\|\| headingRef\.current\)\?\.focus\(\);/);
+  assert.doesNotMatch(workspace, /querySelector\('button'\)/, 'never the first button in the list, the announce button');
+  assert.match(workspace, /onFocus=\{rememberFocus\} onBlur=\{forgetFocusTheTeacherMoved\}>/);
+  assert.match(workspace, /document\.addEventListener\('pointerdown', forgetOnOutsidePointer, true\);/);
+  // The reply box, Send and every quick reply follow the switch, so nothing
+  // replaces the draft it keeps.
+  assert.equal(composer.match(/disabled=\{disabled\}/g)?.length, 3, '"Got it", the other quick replies and the box');
+  assert.match(composer, /disabled=\{!canSend\}/);
+  // A tile starts a conversation only while both switches are on.
+  assert.match(dashboard, /const classAndSchoolMessagingEnabled = classMessagingEnabled && schoolMessagingEnabled;/);
+  assert.match(dashboard, /canStartChat=\{classAndSchoolMessagingEnabled && chat\.canReplyTo\(student\.studentId\)\}/);
+  assert.match(dashboard, /studentMessagingEnabled=\{classMessagingEnabled\}\s*schoolMessagingEnabled=\{schoolMessagingEnabled\}/);
+
+  // While a selection the Dashboard cleared stands, the Class tools footer and
+  // the announce button use the command resolver's own guard, and the Target
+  // badge the same wording; the announce click goes through the dialog
+  // opener, whose SELECTION_LOST refusal explains why nothing opened.
+  assert.match(dashboard, /const selectionLossActive = selectionLossBlocksFallback\(activeSelectionLoss, selectedStudentIds\);/);
+  assert.match(dashboard, /recipientLabel=\{classToolsRecipientLabel\(\{\s*selectedCount: selectedStudentIds\.size,[\s\S]{0,200}?selectionLost: selectionLossActive,/);
+  assert.match(dashboard, /broadcastLabel=\{broadcastButtonLabel\(\{\s*selectedCount: selectedStudentIds\.size,[\s\S]{0,200}?selectionLost: selectionLossActive,/);
+  assert.match(dashboard, /: selectionLossActive && selectedServerSignOutStudentIds\.size === 0\s*\? SELECTION_CLEARED_TARGET_LABEL/);
+  assert.doesNotMatch(dashboard, /'Selection cleared · choose students again'/, 'one copy of the wording');
+  // Students ticked for sign-out only block every other control, the Send
+  // Message dialog included, so the footer and the announce button name that
+  // selection first, in the Target badge's words.
+  assert.match(dashboard, /recipientLabel=\{classToolsRecipientLabel\(\{[\s\S]{0,600}?signOutOnlyCount: selectedServerSignOutStudentIds\.size,/);
+  assert.match(dashboard, /broadcastLabel=\{broadcastButtonLabel\(\{[\s\S]{0,600}?signOutOnlyCount: selectedServerSignOutStudentIds\.size,/);
+  assert.match(dashboard, /: selectedServerSignOutStudentIds\.size > 0\s*\? signOutOnlySelectionLabel\(selectedServerSignOutStudentIds\.size\)/);
+  assert.doesNotMatch(dashboard, /selected for sign-out only/, 'one copy of that wording too');
+  assert.match(dashboard, /onSendMessage=\{[^\n]*\(\) => openRecipientDialog\('message', 'teacher-message', \{ message: '' \}\)\}/);
 });

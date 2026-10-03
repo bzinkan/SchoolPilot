@@ -28,7 +28,9 @@ test('legacy conversion requires an explicit measurement preview and preserves i
     assert(await t.page.getByRole('button', { name: 'Preview measurements' }).isDisabled());
     await t.page.getByLabel('Measured room width').fill('30\' 4.5"'); await t.page.getByRole('button', { name: 'Preview measurements' }).click();
     await t.page.getByRole('button', { name: 'Apply measured room' }).waitFor(); assert.equal(t.state.charts[0].layout.version, 1);
+    const savedResponse = t.page.waitForResponse(response => response.request().method() === 'PATCH' && new URL(response.url()).pathname === `/api/mydesk/seating-charts/${chart.id}`);
     await t.page.getByRole('button', { name: 'Apply measured room' }).click(); await t.page.getByRole('button', { name: 'Save chart', exact: true }).click();
+    const response = await savedResponse; assert.equal(response.status(), 200); assert.equal(await response.finished(), null);
     await t.page.getByRole('button', { name: 'Seat 1, Avery Lee, locked' }).waitFor();
     const saved = t.state.charts[0].layout; assert.equal(saved.version, 2); assert.deepEqual(saved.seats.map(s => [s.id, s.studentId, s.locked]), chart.layout.seats.map(s => [s.id, s.studentId, s.locked]));
     assert(t.requests.some(r => r.method === 'GET' && r.path.endsWith('/chart-a'))); assert.deepEqual(t.errors, []);

@@ -1,0 +1,18 @@
+{
+  "comparedTo": "release297-contention-final-checks-06/source-after.json",
+  "sourceFileCount": 1155,
+  "sourceFileSetUnchanged": true,
+  "changed": [
+    {
+      "path": "tests/classpilot-telemetry-owner-projection.integration.test.ts",
+      "beforeSha256": "f98a9da09c785fb83ededea2cb7c4e672c13ac3bb32530a190d4983b773e9368",
+      "afterSha256": "c3f572c1894b7ff461b4f39da89cde5ae3b5ddae7e13d64d5ce1e6a30cc0b377"
+    }
+  ],
+  "applicationAndBuildInputsUnchanged": true,
+  "unitSelectionCount": 210,
+  "unitSelectionSha256": "05bba47c0d137eb1cb923bc8ea758ca816955f1995be6c195ac7141b35d864a6",
+  "allSelectedUnitBytesUnchanged": true,
+  "nativeLane": "rls (also included by db lane)",
+  "reason": "Only the native fixture adapter changed; the lane script and every source selected by unit, plus all production/build inputs, match successful run06 receipts."
+}

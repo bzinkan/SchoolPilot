@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T00:06:23.283Z",
+  "sourceRevision": "9f1580615d72f6b0647abac27677773b03a88269",
+  "sourceDirty": true,
+  "capacityAccepted": false,
+  "reason": "Pre-measurement terminal flush permanently set classification shuttingDown, forcing subsequent ordinary rows through individual immediate persistence; nonterminal quiescence now preserves the existing100-row/250ms batching policy.",
+  "tests": {
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test tests/heartbeat-hot-path-optimization.test.ts tests/private-load-usage-profiles.test.mjs",
+    "total": 60,
+    "passed": 60,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "coverage": [
+      "Existing heartbeat hot-path checks plus two behavioral nonterminal-drain regressions.",
+      "All load-profile checks, including CPU-profile6000-offer preservation and rejection as capacity evidence.",
+      "Worker lazy-proxy instrumentation real receiver, callback/promise overloads, scoped filtering and failures.",
+      "Coordinator preflight quiesce versus post-traffic terminal drain wiring."
+    ],
+    "earlier38CaseHarnessRun": "The earlier38-case focused harness guard set is covered by the full60-case run here; the added nonterminal drain wiring guard is also included. No separate original38-case raw log was retained."
+  },
+  "red": {
+    "file": "red-result.json",
+    "kind": "tool-result summary; not a fabricated full raw log",
+    "total": 2,
+    "failed": 2,
+    "reason": "batcher.drainPending is not a function before production method was added"
+  },
+  "types": {
+    "file": "types-result.json",
+    "kind": "complete content-free tool-output transcript in structured form; no separate raw type-check log was saved",
+    "command": "npm run check",
+    "exitCode": 0,
+    "diagnostics": []
+  },
+  "originalsRetainedAt": "<local-temp>/release297-batching-preflight-fix",
+  "sourceHashes": {
+    "tests/heartbeat-hot-path-optimization.test.ts": "cfa3d2ea720fed3234875ca75ba6aaafee598df2ba12bce2f0198b67a6113d67",
+    "scripts/load/usage/release-enabled-profile.test.mjs": "72d062b17b8058fd7500d47ee63a9d0f8d6f9b7b59ad6ec218ac54dcbd5aa717",
+    "src/services/heartbeatClassificationBatcher.ts": "16af164319980aae9085e5cec10827ddecacef7099c256b232e10bdda9907a3a",
+    "scripts/load/usage/release-enabled-scale.mjs": "096684ba0563e9f7215d2d3d589f082243b2db0c5378caad90542676ce1d3ec7",
+    "scripts/load/usage/release-enabled-process.mjs": "567f003df97688af07c804a851a767c7ffeb13eb322a1ade2ce49c296d44c708",
+    "scripts/load/usage/release-enabled-instrumentation.mjs": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+    "scripts/load/usage/release-enabled-profile.mjs": "45bc110e37b39b2536c1532d8f9ecaa33910621d52a8ad8ca5f5e190a99c2a4c",
+    "scripts/load/usage/run-release-enabled-scale.ps1": "282c9ffd1c5184f642566f18f32d61f257c6bb67147a163ba4331f8c7f7c9f96",
+    "tests/private-load-usage-profiles.test.mjs": "3bc4b59c7e1ee3c8bc7f92ec545123719d2a1fc5b37625538392d3cd72ec36a7"
+  },
+  "entries": [
+    {
+      "originalRelativeName": "focused-green.log",
+      "storedFile": "focused-green.log.gz",
+      "rawBytes": 15683,
+      "rawSha256": "2d8c1f71b89a7db86f81aa979eb788e86fa4e00c5d768bc0e3d00c18566144bc",
+      "sanitizedBytes": 15683,
+      "sanitizedSha256": "2d8c1f71b89a7db86f81aa979eb788e86fa4e00c5d768bc0e3d00c18566144bc",
+      "storedSha256": "c546ffea92e2a69baf8a9635b728683429126e18db0e0d1ca6fe977b3945b4ad"
+    },
+    {
+      "originalRelativeName": "red-result.json",
+      "storedFile": "red-result.json",
+      "rawBytes": 630,
+      "rawSha256": "ab552863318f4af33bbb1b08da6fd4a882ddb3d8b99ae253c1c92c222d886bc7",
+      "sanitizedBytes": 630,
+      "sanitizedSha256": "ab552863318f4af33bbb1b08da6fd4a882ddb3d8b99ae253c1c92c222d886bc7",
+      "storedSha256": "ab552863318f4af33bbb1b08da6fd4a882ddb3d8b99ae253c1c92c222d886bc7"
+    },
+    {
+      "originalRelativeName": "types-result.json",
+      "storedFile": "types-result.json",
+      "rawBytes": 208,
+      "rawSha256": "0da0cbb993283cb080d5eaa08f4d180a8d88a79633a5c4590d833c06bda7ca9a",
+      "sanitizedBytes": 208,
+      "sanitizedSha256": "0da0cbb993283cb080d5eaa08f4d180a8d88a79633a5c4590d833c06bda7ca9a",
+      "storedSha256": "0da0cbb993283cb080d5eaa08f4d180a8d88a79633a5c4590d833c06bda7ca9a"
+    },
+    {
+      "originalRelativeName": "manifest.json",
+      "storedFile": "original-source-binding.json",
+      "rawBytes": 815,
+      "rawSha256": "de3b57dcf0c7c76414c59ab0c6e995c5bde8750b265a52a6bff67b20ce581007",
+      "sanitizedBytes": 815,
+      "sanitizedSha256": "de3b57dcf0c7c76414c59ab0c6e995c5bde8750b265a52a6bff67b20ce581007",
+      "storedSha256": "de3b57dcf0c7c76414c59ab0c6e995c5bde8750b265a52a6bff67b20ce581007"
+    }
+  ],
+  "limitations": [
+    "Dirty development source checkpoint, not final-source capacity acceptance.",
+    "Source byte hashes certify the checked files; subsequent application changes require their own checks.",
+    "Combined02 remains unchanged failed evidence with a nonrepresentative batching workload caveat.",
+    "No fixture, production data, secrets, browser enforcement or deployment acceptance is represented."
+  ]
+}

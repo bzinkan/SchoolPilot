@@ -1,0 +1,247 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:34:53.620Z",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "Incremental lock-only dependency remediation; preceding tsc-alias removal evidence retained unchanged.",
+    "lockSha256": "dc099eaee2b1089c2ca5bb3e0960138bf542d34e7841da6fa7a82d7c665ae6c2",
+    "rootPackageManifestChangedByThisSlice": false
+  },
+  "change": {
+    "updatedVersions": [
+      {
+        "package": "node_modules/body-parser",
+        "before": "1.20.6",
+        "after": "1.20.8"
+      },
+      {
+        "package": "node_modules/express",
+        "before": "4.22.2",
+        "after": "4.22.3"
+      },
+      {
+        "package": "node_modules/ip-address",
+        "before": "10.5.0",
+        "after": "10.7.3"
+      },
+      {
+        "package": "node_modules/qs",
+        "before": "6.15.2",
+        "after": "6.16.0"
+      },
+      {
+        "package": "node_modules/side-channel",
+        "before": "1.1.0",
+        "after": "1.1.1"
+      },
+      {
+        "package": "node_modules/side-channel-list",
+        "before": "1.0.0",
+        "after": "1.0.1"
+      }
+    ],
+    "addedPackages": 0,
+    "removedPackages": 0,
+    "dependencyChain": "express/body-parser require qs~6.16.0; qs requires side-channel^1.1.1 which requires side-channel-list^1.0.1; ip-address10.7.3 satisfies existing express-rate-limit^10.2.0 dependency.",
+    "rootRangesBroadened": false,
+    "overridesAdded": false
+  },
+  "commands": [
+    "In isolated directory: npm update express body-parser qs ip-address --package-lock-only --ignore-scripts --no-audit --no-fund",
+    "npm audit --json --package-lock-only",
+    "npm audit --omit=dev --json --package-lock-only",
+    "npm --prefix schoolpilot-app audit --json --package-lock-only",
+    "gh api advisories/<GHSA ID>",
+    "npm view <exact package@version> version dependencies dist.integrity --json"
+  ],
+  "validation": {
+    "audits": {
+      "backend-audit-after.json": {
+        "info": 0,
+        "low": 0,
+        "moderate": 4,
+        "high": 0,
+        "critical": 0,
+        "total": 4
+      },
+      "backend-production-audit-after.json": {
+        "info": 0,
+        "low": 0,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 0
+      },
+      "frontend-audit-after.json": {
+        "info": 0,
+        "low": 1,
+        "moderate": 0,
+        "high": 0,
+        "critical": 0,
+        "total": 1
+      }
+    },
+    "backendProductionAdvisories": 0,
+    "highCriticalAdvisoriesAcrossBackendFrontend": 0,
+    "gateUnchanged": true
+  },
+  "remaining": {
+    "backend": "4 moderate development-chain advisory entries: drizzle-kit/@esbuild-kit/esbuild; no production entries.",
+    "frontend": "1 low esbuild development-server advisory."
+  },
+  "limitations": [
+    "Clean npm ci, final combined build/unit/CI are owned by parent and recorded separately.",
+    "Audit reflects registry/advisory state at recorded time; no high-gate waiver or suppression introduced.",
+    "This is dependency evidence, not a deployment green light."
+  ],
+  "sanitation": "Credentials, tokens, and user-home paths redacted; npm registry URLs and integrity metadata retained.",
+  "files": [
+    {
+      "file": "package-lock.before.json.gz",
+      "status": "recorded",
+      "originalSha256": "a6c5985f819a5c6891736fff7c7993d83dc4170693ed8cab5f716b02132046bf",
+      "sanitizedSha256": "a6c5985f819a5c6891736fff7c7993d83dc4170693ed8cab5f716b02132046bf",
+      "archiveSha256": "8c34a63824d69b71eb98a23b36d40308febd7511ef301e9b2ddcd17a06357256"
+    },
+    {
+      "file": "package-lock.json.gz",
+      "status": "recorded",
+      "originalSha256": "dc099eaee2b1089c2ca5bb3e0960138bf542d34e7841da6fa7a82d7c665ae6c2",
+      "sanitizedSha256": "dc099eaee2b1089c2ca5bb3e0960138bf542d34e7841da6fa7a82d7c665ae6c2",
+      "archiveSha256": "10f7aed6868569e4fb8fd7c98697638c01c1e4b90e6a7722a890047d1ef10b37"
+    },
+    {
+      "file": "package.json.gz",
+      "status": "recorded",
+      "originalSha256": "9dd31abf3f1927a8c086e86787925e3f097d9c54fc4d208d0af985a520fa1be6",
+      "sanitizedSha256": "9dd31abf3f1927a8c086e86787925e3f097d9c54fc4d208d0af985a520fa1be6",
+      "archiveSha256": "6b525dd3f7da8c38d169ea5fb7a9207a411c6ad34d73a0a664a4eeba5d0d0136"
+    },
+    {
+      "file": "lock-diff.json.gz",
+      "status": "recorded",
+      "originalSha256": "e726ca56d56766fe99105fce0d2b88fa7c0766fb6e794d1d0abf0616669e37a2",
+      "sanitizedSha256": "e726ca56d56766fe99105fce0d2b88fa7c0766fb6e794d1d0abf0616669e37a2",
+      "archiveSha256": "b86e1d933e8f613619493a323c6700c1bd09997ec7553b7a7a167cd45cb51873"
+    },
+    {
+      "file": "targeted-update.log.gz",
+      "status": "recorded",
+      "originalSha256": "259c4fa2f9f1d0afd8b4eb23f45f6fdf748b9475b5112992df5bbf33e078dcd4",
+      "sanitizedSha256": "259c4fa2f9f1d0afd8b4eb23f45f6fdf748b9475b5112992df5bbf33e078dcd4",
+      "archiveSha256": "8f48c00b37bd1871d8f31c80412f639dc3c98f44216afdc648317a825b52d6e2"
+    },
+    {
+      "file": "backend-audit-after.json.gz",
+      "status": "recorded",
+      "originalSha256": "6456c0287a04a072115b0ab4d454b3d717b23e05f3ebaa1752c5be54e6c1ad87",
+      "sanitizedSha256": "6456c0287a04a072115b0ab4d454b3d717b23e05f3ebaa1752c5be54e6c1ad87",
+      "archiveSha256": "5d89c87ed969ebc8211f18582d88fa878c640e233a4ee2cf6f62adf6c808e8f2"
+    },
+    {
+      "file": "backend-production-audit-after.json.gz",
+      "status": "recorded",
+      "originalSha256": "c53777ecabcece7a5206fd51134dd541d508f6e40a30c50ef5b97fd4e5bb71e1",
+      "sanitizedSha256": "c53777ecabcece7a5206fd51134dd541d508f6e40a30c50ef5b97fd4e5bb71e1",
+      "archiveSha256": "8c5ecaa5df8f939d6679c69e1492f27b35324918363fb4985bb6af482407ba4c"
+    },
+    {
+      "file": "frontend-audit-after.json.gz",
+      "status": "recorded",
+      "originalSha256": "f512d4f26619ecf39d86ced60e1c6bd3c6b5f836371c13c4e28a96b2f95919e9",
+      "sanitizedSha256": "f512d4f26619ecf39d86ced60e1c6bd3c6b5f836371c13c4e28a96b2f95919e9",
+      "archiveSha256": "acc38b44217d0e339d6a56d649adc69fe7cb43f02d3117f2f11c2a38566cc77a"
+    },
+    {
+      "file": "audit-exits.json.gz",
+      "status": "recorded",
+      "originalSha256": "ff98bfa1145daabfb86814584d54272c3c0eb15f7634c336b4d6f8749c782a51",
+      "sanitizedSha256": "ff98bfa1145daabfb86814584d54272c3c0eb15f7634c336b4d6f8749c782a51",
+      "archiveSha256": "3d2d8bb915865085e1f0b25459020f171eec8531b60d6dbc5485882a9c2fb232"
+    },
+    {
+      "file": "body-parser-1.20.8-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "f619f69995aa0f1744722b36b8bad20473046598b45a660272abefd537ad2ebf",
+      "sanitizedSha256": "f619f69995aa0f1744722b36b8bad20473046598b45a660272abefd537ad2ebf",
+      "archiveSha256": "7092bd8b8023e6b85f37fe47a326bb3496d151f91fd09bc9553b2ad4c5d33cd6"
+    },
+    {
+      "file": "express-4.22.3-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "90f4470abb850724803d8eb4cdfb4f0117a5bcfb76d714e12ce0bda4e8e7bc32",
+      "sanitizedSha256": "90f4470abb850724803d8eb4cdfb4f0117a5bcfb76d714e12ce0bda4e8e7bc32",
+      "archiveSha256": "59b0f197690c7380a00e3078acf78b883018aa69e704c9b7d3375a89f4d8bac0"
+    },
+    {
+      "file": "GHSA-4mjr-xmp4-gh2g.json.gz",
+      "status": "recorded",
+      "originalSha256": "a05126ed4c0391ca382037a11569516061009df245b6934bbad6d409c6f50f5c",
+      "sanitizedSha256": "a05126ed4c0391ca382037a11569516061009df245b6934bbad6d409c6f50f5c",
+      "archiveSha256": "4be478a2afa26230d01a2a12202771ce51a54ea06ba3692c57552a2996822c2c"
+    },
+    {
+      "file": "GHSA-h3mg-xc3c-68pw.json.gz",
+      "status": "recorded",
+      "originalSha256": "f8aa7f0a99417d9a142385fc02e51885d23657da00a9555efb7e9dc9d8f5497f",
+      "sanitizedSha256": "f8aa7f0a99417d9a142385fc02e51885d23657da00a9555efb7e9dc9d8f5497f",
+      "archiveSha256": "6f12354b51ed1d6be19ca26cb0ac50538cb90b965965509c0fa959dd69b57658"
+    },
+    {
+      "file": "GHSA-j6r3-76f7-8jcv.json.gz",
+      "status": "recorded",
+      "originalSha256": "d199cc0e342e59103d8de6fc1aa9d5fdf1ab0668bddfc543f0500d8645ee8b16",
+      "sanitizedSha256": "d199cc0e342e59103d8de6fc1aa9d5fdf1ab0668bddfc543f0500d8645ee8b16",
+      "archiveSha256": "7b5b39676b7257e02e0eabca05c4f4dcc0dad4ceeb882b3ee4df29d91026225f"
+    },
+    {
+      "file": "ip-address-10.7.3-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "9704a626133a6918ac24183408bd7c310a9c638ebba8959cc7d58621a1cfa204",
+      "sanitizedSha256": "9704a626133a6918ac24183408bd7c310a9c638ebba8959cc7d58621a1cfa204",
+      "archiveSha256": "228a13000d603d2cebf13d008ff327f7bfe07e7340c3771d49c0eda2ef43f253"
+    },
+    {
+      "file": "qs-6.16.0-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "c221f3bec1c2840a4db8477bcceda09d7b4350d1f1777039154f575e0eb6e16d",
+      "sanitizedSha256": "c221f3bec1c2840a4db8477bcceda09d7b4350d1f1777039154f575e0eb6e16d",
+      "archiveSha256": "7b500624e32f9a1f53998f7c6ebc844c56df1a5feccde67b3700bbb536e85445"
+    },
+    {
+      "file": "registry-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "file": "side-channel-1.1.1-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "81591aa72acdbf99fecf3caf7f701576124518f4774cefe923f6d202357ee4fa",
+      "sanitizedSha256": "81591aa72acdbf99fecf3caf7f701576124518f4774cefe923f6d202357ee4fa",
+      "archiveSha256": "b00208fe9e254e6b91dd877ef9a1830120882e821e1b7578d80c6a7caf7d84e1"
+    },
+    {
+      "file": "side-channel-list-1.0.1-metadata.json.gz",
+      "status": "recorded",
+      "originalSha256": "375bfd69808842ed70594ca681391cc5dc0116aa8a7975178267303ee2b465dc",
+      "sanitizedSha256": "375bfd69808842ed70594ca681391cc5dc0116aa8a7975178267303ee2b465dc",
+      "archiveSha256": "84249c160a57ecc7c9ecf31e04217512cddc556151eb7164bb6c4c102e9e04e8"
+    },
+    {
+      "file": "before-backend-audit-after.json.gz",
+      "status": "retained_prior_audit",
+      "originalSha256": "335196ddc0a28d08d38a41d958e2c899c3b30a1ac124b52f03103acc5483b295",
+      "sanitizedSha256": "335196ddc0a28d08d38a41d958e2c899c3b30a1ac124b52f03103acc5483b295",
+      "archiveSha256": "518c4c6bc3cdb0b213e4950249589127f27e3db174e6317b2e2aa2cbf44e41b9"
+    },
+    {
+      "file": "before-backend-production-audit-after.json.gz",
+      "status": "retained_prior_audit",
+      "originalSha256": "32b75ad1cee679c80042ce92dd410e00ddb12f53a666ebc17e719b7da113ac61",
+      "sanitizedSha256": "32b75ad1cee679c80042ce92dd410e00ddb12f53a666ebc17e719b7da113ac61",
+      "archiveSha256": "2a7382b5431b1e0d6779ca364c4bb336ac161f697672192b14ee89e472f781eb"
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T06:22:34.249Z",
+  "sourceBase": "7cf86cf1c326cc3e9c3c52122549ca730b856522",
+  "sourceStatus": "reviewed uncommitted tooling-only correction; application/schema unchanged",
+  "branch": "codex/release297-legacy-image-scan",
+  "sourceFiles": [
+    {
+      "file": "scripts/deploy.sh",
+      "sha256": "bf16f059f0419765997a479d6d51b54e550443206e76ee4b3036dd472e7563bb"
+    },
+    {
+      "file": "scripts/verify-legacy-deploy-image.mjs",
+      "sha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54"
+    },
+    {
+      "file": "tests/deploy-legacy-image-gate.test.mjs",
+      "sha256": "e33ce3b62f0af056b6793eaff63af27a87b399b43331292bf2a3c651e7feb492"
+    }
+  ],
+  "results": {
+    "focused": "24/24 pass, 0 skip/fail",
+    "existingDeploymentContracts": "22/22 pass, 0 skip/fail",
+    "failedAttempt03": "Fixture-only CRLF extraction assertion; retained unchanged; newline normalization in04 restores actual EXIT-trap proof",
+    "native": "Exact scanBuiltImage helper executed against retained ed5599 image on pinned local npipe engine; export/scanner/receipt/owned cleanup pass; path with spaces",
+    "nativeLimit": "No new image build. CLI clean-source guard and ECR registry bindings covered by pure tests; no registry operation executed",
+    "syntax": "Bash and Node pass"
+  },
+  "gate": "All HIGH/CRITICAL block regardless of fix availability",
+  "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+  "counts": {
+    "UNKNOWN": 0,
+    "LOW": 0,
+    "MEDIUM": 0,
+    "HIGH": 0,
+    "CRITICAL": 0
+  },
+  "image": {
+    "source": "ed5599de0191b4b9961ed907586e1fc153ebd63b",
+    "imageId": "sha256:b81c75130c16f029ab34391638480685d82e6609cf84153e4f0c688f01c23cf7",
+    "configDigest": "sha256:6bec93c6e1357b5295295eae44a0ea9980bc8204bc8e6091f764403905f0ece9",
+    "archiveSha256": "d2b84a535b8ce53b769026b958d43b43a6d4a9444e82ebf992fb97624237f5d4",
+    "archivePath": "C:/Users/zinka/AppData/Local/Temp/release297 legacy scan native 01/schoolpilot-image-scan-ypSOfh/input/image.tar",
+    "scanReceiptSha256": "159b8e9c4507b3007f42f67b6c80d80d4e4bca6703888b2a0a395e2d37a943c7"
+  },
+  "externalEvidenceDirectory": "C:/Users/zinka/AppData/Local/Temp/release297 legacy scan native 01/schoolpilot-image-scan-ypSOfh",
+  "cleanup": {
+    "complete": true,
+    "ownedScanner": "schoolpilot-image-scan-14580014-0031-4cc3-8ce7-787c2f9c305d"
+  },
+  "worktreeCreation": "Managed operation47a5cc60 failed Windows path length; explicit shorter git worktree succeeded; attach refused non-managed. No checkout removed/relocated. Full receipt retained.",
+  "awsCommandsExecuted": 0,
+  "registryPushes": 0,
+  "productionMutations": 0,
+  "deploymentApproval": false,
+  "records": [
+    {
+      "file": "source-receipt.json.gz",
+      "rawSha256": "e2d303fb227ea862071b114e08bd6c794cf2a7c14326e42797ea821b1b861c47",
+      "sanitizedSha256": "e2d303fb227ea862071b114e08bd6c794cf2a7c14326e42797ea821b1b861c47",
+      "archiveSha256": "fd0218d9b651c08c6f6c2c7bb1096bb6391a267efbdc8ea894f307a3d2b5d783",
+      "rawBytes": 3192
+    },
+    {
+      "file": "focused-01.log.gz",
+      "rawSha256": "42b0cf5e4103306307cdc885ee63ba68cceae2174492c1070cffc4e6e2d49093",
+      "sanitizedSha256": "42b0cf5e4103306307cdc885ee63ba68cceae2174492c1070cffc4e6e2d49093",
+      "archiveSha256": "f79f14f07103e036844e11661c041ec32a5cdc57ff786196aec68b811da3f3ed",
+      "rawBytes": 3889
+    },
+    {
+      "file": "focused-02.log.gz",
+      "rawSha256": "ad536175730b620579079c2dcd1fd6982e7e947e15faa11a13f0b6afe709a69e",
+      "sanitizedSha256": "ad536175730b620579079c2dcd1fd6982e7e947e15faa11a13f0b6afe709a69e",
+      "archiveSha256": "12dda4e07e4eff61fb85568d98fd2bdd9f5e9429052796c58224d2ce09323a48",
+      "rawBytes": 4804
+    },
+    {
+      "file": "focused-03.log.gz",
+      "rawSha256": "80f134cd2305918b1c94beadc98bef2d44c47508dadee5f23ac9e583376a027c",
+      "sanitizedSha256": "80f134cd2305918b1c94beadc98bef2d44c47508dadee5f23ac9e583376a027c",
+      "archiveSha256": "cb31de95269fe1f1a10f00e5eaf364f97a93cb7aa31f8a1c7b816f83e7d3222d",
+      "rawBytes": 4287
+    },
+    {
+      "file": "focused-04.log.gz",
+      "rawSha256": "c50dbe5b89affce6a5375b9f21b6a654f2c61fd76e9771b077e4373536876923",
+      "sanitizedSha256": "c50dbe5b89affce6a5375b9f21b6a654f2c61fd76e9771b077e4373536876923",
+      "archiveSha256": "af389086d60931b3332f4a665bb802fd1f0079da2af1a9890f1359a2fa50c0aa",
+      "rawBytes": 5022
+    },
+    {
+      "file": "existing-contracts.log.gz",
+      "rawSha256": "21986e8cd3dbe5254cf6ba01223468cc14d00a91dcceeef1cca8c66d4f7c4ac9",
+      "sanitizedSha256": "21986e8cd3dbe5254cf6ba01223468cc14d00a91dcceeef1cca8c66d4f7c4ac9",
+      "archiveSha256": "3bdfd7d0f4e17b64a850e46c7d00e375d4e2afc05241f96b79b80e0ddfdae36c",
+      "rawBytes": 5846
+    },
+    {
+      "file": "native-runner.mjs.gz",
+      "rawSha256": "37cc226b89a6e274912b6ab7c87f06730e4f45f4e08517d3c49a7883516a3a85",
+      "sanitizedSha256": "37cc226b89a6e274912b6ab7c87f06730e4f45f4e08517d3c49a7883516a3a85",
+      "archiveSha256": "13c4aebd816d67ebea24efd354c6218237aba0a2571aa890f8f2e1aef5c2e918",
+      "rawBytes": 1628
+    },
+    {
+      "file": "native.log.gz",
+      "rawSha256": "b9e17718c9e585bbf9ac8cfbf5996d12eae5a5756285011235eee829a6410dce",
+      "sanitizedSha256": "d3d460e6029e0b49cdaf4e69c88c7494a9080b0c152d5bc5b5bcea781da8a141",
+      "archiveSha256": "e9004f1c4a73808a83dccaedafcbe72b950a8ef6e356f31a5ead767d30a1c1d7",
+      "rawBytes": 483
+    },
+    {
+      "file": "native-run.json.gz",
+      "rawSha256": "e0ac63538b78b1b41dc664409da03956e5fced83cdac17974546e0e12f84ec4e",
+      "sanitizedSha256": "e0e508022700dcb5ac1dab62d6bc728dbd85d22ad868b58b387a4a2a73a10a61",
+      "archiveSha256": "910ca1b023932a6232b5c328abd396b4384d66383cfe21a33ee160f1962ce047",
+      "rawBytes": 404
+    },
+    {
+      "file": "native-result.json.gz",
+      "rawSha256": "4a0e95780cdbd8448d19b80b26addd06a269db575793be08198c3ec61bf228fb",
+      "sanitizedSha256": "dd870927f655ece25b807cc416b9d44173ed2090f2f659ecc8cce91e32a18fb9",
+      "archiveSha256": "f8865bbec1bf31860871db362e3f3a54fadd3c18a01ade5070cdad9320f78dbe",
+      "rawBytes": 417
+    },
+    {
+      "file": "scan-receipt.json.gz",
+      "rawSha256": "159b8e9c4507b3007f42f67b6c80d80d4e4bca6703888b2a0a395e2d37a943c7",
+      "sanitizedSha256": "159b8e9c4507b3007f42f67b6c80d80d4e4bca6703888b2a0a395e2d37a943c7",
+      "archiveSha256": "f2b97d011edf543d2c897658c91c4a5b8daaf45d5e937738d4f5d7b31814bf9e",
+      "rawBytes": 888
+    },
+    {
+      "file": "cleanup.json.gz",
+      "rawSha256": "f90810e049d60ffa9862602d9471ae93fe1ca00d41209a1755d71bd83e394f02",
+      "sanitizedSha256": "f90810e049d60ffa9862602d9471ae93fe1ca00d41209a1755d71bd83e394f02",
+      "archiveSha256": "a2a7a819576651638255d3a6b12d9f9728053933a03f528b509ec8034adffe3c",
+      "rawBytes": 104
+    },
+    {
+      "file": "full-scan.json.gz",
+      "rawSha256": "fff69066f4f8eca89c6802a70bf30100c9a5d02cf1c083b56f87b7a4341fbe04",
+      "sanitizedSha256": "fff69066f4f8eca89c6802a70bf30100c9a5d02cf1c083b56f87b7a4341fbe04",
+      "archiveSha256": "35b99db375209148cd11b77d5e83b03ce83becef44157602f050c4f11f2a76b9",
+      "rawBytes": 356675
+    },
+    {
+      "file": "scanner.stdout.log.gz",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63",
+      "rawBytes": 0
+    },
+    {
+      "file": "scanner.stderr.log.gz",
+      "rawSha256": "fb2e540a4b416d10802a2aa5e86641fd2019e5b3d433b129593b7022d60b2c0d",
+      "sanitizedSha256": "fb2e540a4b416d10802a2aa5e86641fd2019e5b3d433b129593b7022d60b2c0d",
+      "archiveSha256": "01009818fd78b4b28521b1ff42c5271b5f50e81b6a323e559d8511e4e1db0ae7",
+      "rawBytes": 10608
+    },
+    {
+      "file": "scanner-db-metadata.json.gz",
+      "rawSha256": "d89ef88c051628fed376f3309a0af2d5580193a341615da1978811878d420fc9",
+      "sanitizedSha256": "d89ef88c051628fed376f3309a0af2d5580193a341615da1978811878d420fc9",
+      "archiveSha256": "934122120e9ce67a67ffd73291793402eefa07b1e6bf7c33e41537b2b4c3f085",
+      "rawBytes": 153
+    }
+  ]
+}

@@ -1,0 +1,311 @@
+{
+  "schemaVersion": 1,
+  "recordType": "incremental focused bounded heartbeat authority optimization validation",
+  "recordedAt": "2026-10-02T19:20:54.986Z",
+  "productCommits": {
+    "outbox": "65873bfefb6e42c8d0685d2170571329f059b15b",
+    "entitlement": "0e9e50df41a07ff1c11f1f9e67e23d74b371a607",
+    "cleanup": "e87d2b1b89c012e8ac484292c52b03fc525551d8"
+  },
+  "sourceBinding": "Working native proofs were committed as named product/test bytes. Clean plain application checks followed; later cleanup-only e87d2b1b independently rerun by privacy lane. Per-run binding distinguishes tested bytes and fixture-only edits. Original logs did not embed commands/source SHA; reproduction commands and source bindings are session-recorded.",
+  "trackedSources": {
+    "src/services/storage.ts": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "19ce553e4f60c4e816923120f80116d1352177e1",
+      "lfSha256": "dd29a901e3b3ea87349d49aecb924f22f2f6062bee2081853261e1f263f5dab0"
+    },
+    "src/services/classpilotEntitlement.ts": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "ca2663a95ac12ad296df2ded52ac089a9447ec79",
+      "lfSha256": "b3d19be5e530bea88d88cd855895e0fec5410cba5e388fcec31ace9a0274b05e"
+    },
+    "tests/classpilot-private-chat-lifecycle.integration.test.ts": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "a443ab888391f327800af0e28b00077ad697c9af",
+      "lfSha256": "53964bdec4a66633f21d2e4c05820a98d347298b1e980e995b454e35d8ba8972"
+    },
+    "tests/classpilot-entitlement-native.integration.test.ts": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "0de5fe513e5fa4b6b342ec04c70fecfb5c2378f5",
+      "lfSha256": "3afccd688cb22f70e6962851050c792998761ee183f0c6f6c3ab5eb9daefc5c1"
+    },
+    "tests/classpilot-control-state-delivery-authority-contract.test.ts": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "6cea0bafd3ecc898d016b8010b0c054c0e7edbbc",
+      "lfSha256": "e47be31648a823d97ae61cc53ede00ef5b3cb68f53a1a051c48adbd14df14188"
+    },
+    "scripts/run-test-lane.mjs": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "644501ebc7e3e92a221c20243531e45a3c22df06",
+      "lfSha256": "f63c57bd15d6c31fd28db88ad9cf2e34dd42075fcba5d59a9f322cae75c4cc0c"
+    },
+    "scripts/run-local-workspace-tests.ps1": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "5f23693cb134367a2df7f6032fc5fafa44bcba31",
+      "lfSha256": "4162f360de930937d068614ae567b725b9dd7ed861c1fc31aa5a303bce9adb66"
+    },
+    "src/config/rlsRegistry.json": {
+      "commit": "e87d2b1b89c012e8ac484292c52b03fc525551d8",
+      "gitBlob": "ad5f30717ee7a142196a0cec592071cfc5744f03",
+      "lfSha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4"
+    }
+  },
+  "finalCombinedAcceptanceClaimed": false,
+  "capacityAcceptanceClaimed": false,
+  "baselineRedExecuted": false,
+  "operations": {
+    "syntheticLocalPostgresOnly": true,
+    "realAwsOrProduction": false,
+    "capacityMeasurement": false,
+    "poolOrDeadlineChanges": false,
+    "schemaChanges": false
+  },
+  "database": {
+    "ownedDatabase": "schoolpilot_redesign_usage_fastpaths_20261002",
+    "schemaSource": "schoolpilot_redesign_release297_usage_20261002",
+    "selectedInventory": "classpilotPrivateChatLifecyclePostExpand",
+    "admittedTenantTables": 129,
+    "completeMigrationLedgerRecords": 53,
+    "restrictedAppRole": "generated NOSUPERUSER NOBYPASSRLS NOINHERIT nonowner role",
+    "roleCleanup": "Helper DROP OWNED/DROP ROLE completed per log; helper retains owned database. e87 cleanup retires only owned school roots canonically.",
+    "entitlementNativeRole": "ADMIN privileged SQL even when helper configures restricted application role; not RLS proof"
+  },
+  "runs": [
+    {
+      "id": "outbox-native-ordinary",
+      "result": "passed",
+      "tests": 55,
+      "pass": 55,
+      "fail": 0,
+      "skipped": 0,
+      "durationMs": 25787.3255,
+      "binding": "Storage/private test bytes subsequently committed at65873bfe; ordinary privileged application fixture. Working entitlement draft was not accepted by this suite.",
+      "testsFiles": [
+        "tests/classpilot-private-chat-lifecycle.integration.test.ts"
+      ],
+      "reproductionCommand": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_usage_fastpaths_20261002 -RlsInventory classpilotPrivateChatLifecyclePostExpand -TestFiles @('tests/classpilot-private-chat-lifecycle.integration.test.ts')",
+      "rawLogFile": "empty-outbox-native-green-2.log",
+      "rawLogSha256": "8e7d4ed15ea7c9a8d9d194df76c0995ee6bba6a8300a7863080dff363583cb6f",
+      "archiveEntry": "outbox-native-ordinary"
+    },
+    {
+      "id": "entitlement-native-ordinary",
+      "result": "passed",
+      "tests": 13,
+      "pass": 13,
+      "fail": 0,
+      "skipped": 0,
+      "durationMs": 3798.2477,
+      "binding": "Qualified entitlement/test bytes subsequently committed at0e9e50df. Native SQL uses ADMIN; not restricted-role proof. Cleanup tightened afterward by e87d2b1b.",
+      "testsFiles": [
+        "tests/classpilot-entitlement-native.integration.test.ts"
+      ],
+      "reproductionCommand": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_usage_fastpaths_20261002 -RlsInventory classpilotPrivateChatLifecyclePostExpand -TestFiles @('tests/classpilot-entitlement-native.integration.test.ts')",
+      "rawLogFile": "entitlement-native-green-2.log",
+      "rawLogSha256": "bf0e95e6de9645eabe605b5ae4e0380027d3b4f022540ea0b7535391e48b9161",
+      "archiveEntry": "entitlement-native-ordinary"
+    },
+    {
+      "id": "combined-restricted-and-contract",
+      "result": "passed",
+      "tests": 84,
+      "pass": 84,
+      "fail": 0,
+      "skipped": 0,
+      "durationMs": 30375.5851,
+      "binding": "Exact product0e9e50df.55 private cases use restricted application role,13 entitlement native cases deliberately use ADMIN,16 source-contract cases. e87d2b1b cleanup assertions followed.",
+      "restricted": true,
+      "testsFiles": [
+        "tests/classpilot-entitlement-native.integration.test.ts",
+        "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+        "tests/classpilot-control-state-delivery-authority-contract.test.ts"
+      ],
+      "reproductionCommand": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_usage_fastpaths_20261002 -RlsInventory classpilotPrivateChatLifecyclePostExpand -Restricted -TestFiles @('tests/classpilot-entitlement-native.integration.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts','tests/classpilot-control-state-delivery-authority-contract.test.ts')",
+      "rawLogFile": "fastpaths-restricted-and-authority.log",
+      "rawLogSha256": "5c4cd2885238c8df0713134d434b7dee76be423a6dc0ccb0b70735c512a604e8",
+      "archiveEntry": "combined-restricted-and-contract"
+    },
+    {
+      "id": "application-check",
+      "result": "passed",
+      "exitCode": 0,
+      "reproductionCommand": "npm.cmd run check",
+      "binding": "Clean product0e9e50df; before test-only e87d2b1b.",
+      "rawLogFile": "fastpaths-final-check.log",
+      "rawLogSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveEntry": "application-check"
+    },
+    {
+      "id": "application-build",
+      "result": "passed",
+      "exitCode": 0,
+      "reproductionCommand": "npm.cmd run build",
+      "binding": "Clean product0e9e50df; before test-only e87d2b1b.",
+      "rawLogFile": "fastpaths-final-build.log",
+      "rawLogSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "archiveEntry": "application-build"
+    },
+    {
+      "id": "test-types",
+      "result": "passed",
+      "exitCode": 0,
+      "reproductionCommand": "npm.cmd run check:tests",
+      "diagnostics": {
+        "actual": 438,
+        "ceiling": 534,
+        "applicationErrors": 0
+      },
+      "binding": "e87d2b1b application/test source; uncommitted capacity-evidence docs only.",
+      "rawLogFile": "fastpaths-test-types.log",
+      "rawLogSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveEntry": "test-types"
+    },
+    {
+      "id": "test-casts",
+      "result": "passed",
+      "exitCode": 0,
+      "reproductionCommand": "npm.cmd run check:test-casts",
+      "casts": {
+        "asAny": 689,
+        "asUnknownAs": 7,
+        "tsIgnore": 0,
+        "tsExpectError": 0
+      },
+      "binding": "e87d2b1b application/test source; uncommitted capacity-evidence docs only.",
+      "rawLogFile": "fastpaths-casts.log",
+      "rawLogSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveEntry": "test-casts"
+    },
+    {
+      "id": "superseded-outbox-test-order",
+      "result": "superseded failure",
+      "tests": 55,
+      "pass": 54,
+      "fail": 1,
+      "skipped": 0,
+      "durationMs": 24790.437,
+      "binding": "Uncommitted draft; adopted-state tests ran before original first-adoption case. Moved new tests after it; product unchanged. Superseded55/55.",
+      "testsFiles": [
+        "tests/classpilot-private-chat-lifecycle.integration.test.ts"
+      ],
+      "reproductionCommand": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_usage_fastpaths_20261002 -RlsInventory classpilotPrivateChatLifecyclePostExpand -TestFiles @('tests/classpilot-private-chat-lifecycle.integration.test.ts')",
+      "rawLogFile": "empty-outbox-native-green.log",
+      "rawLogSha256": "d764e5f600a08fc06ad7bcb7509622d0d52707d0bd5e23069a9707c71167f18d",
+      "archiveEntry": "superseded-outbox-test-order"
+    },
+    {
+      "id": "superseded-entitlement-correlation",
+      "result": "superseded failure",
+      "tests": 13,
+      "pass": 12,
+      "fail": 1,
+      "skipped": 0,
+      "durationMs": 4677.8895,
+      "binding": "Uncommitted draft; Drizzle unqualified interpolated nested projection columns, falsely denied active school. Native positive caught this; literal qualified product_licenses.school_id=schools.id and fields fixed before0e9e50df. Superseded13/13.",
+      "testsFiles": [
+        "tests/classpilot-entitlement-native.integration.test.ts"
+      ],
+      "reproductionCommand": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_usage_fastpaths_20261002 -RlsInventory classpilotPrivateChatLifecyclePostExpand -TestFiles @('tests/classpilot-entitlement-native.integration.test.ts')",
+      "rawLogFile": "entitlement-native-green.log",
+      "rawLogSha256": "aa459cffaec7bdb60967fb2bf71d4d514c056f24fa8dd431301b6ddbb8b2092b",
+      "archiveEntry": "superseded-entitlement-correlation"
+    }
+  ],
+  "independentReview": {
+    "reviewer": "/root/privacy_library_pass",
+    "productSemantics": "No actionable product finding after final qualified SQL rereview; earlier static review preceded recorded failed draft.",
+    "currentCombinedMatrixReported": {
+      "ordinary": 75,
+      "restrictedPrivateAndRls": 62,
+      "fail": 0,
+      "skipped": 0
+    },
+    "evidence": "Independent lane owns separate exact-source archive; this manifest does not duplicate those raw logs."
+  },
+  "limits": [
+    "First100rps combined capacity envelope failed at4ce644af; immutable record remains and Usage activation is closed.",
+    "Focused checks do not establish corrected-source100rps throughput or three cold passes.",
+    "13 entitlement cases are privileged native SQL;55 private cases are restricted in combined84 suite;16 source-contract assertions.",
+    "Root adds a later private receiver case; its current56-case proof is owned by independent lane."
+  ],
+  "archive": {
+    "file": "bounded-authority-fastpaths-0e9e50df.logs.ndjson.gz",
+    "sha256": "3a79b03d609aa5e4de78ae001740aede89248bfe31b85453446515178f9209ad",
+    "uncompressedSha256": "74ddbc0a39e9872710a8acef1937ca470653ae15bbcc86d3878c1a44c73a652c",
+    "records": [
+      {
+        "id": "outbox-native-ordinary",
+        "rawName": "empty-outbox-native-green-2.log",
+        "rawBytes": 24111,
+        "rawSha256": "8e7d4ed15ea7c9a8d9d194df76c0995ee6bba6a8300a7863080dff363583cb6f",
+        "sanitizedBytes": 23751,
+        "sanitizedSha256": "818f8f1f18118bc142f69ea6f470d1b5985887eced93b232416356821e220884"
+      },
+      {
+        "id": "entitlement-native-ordinary",
+        "rawName": "entitlement-native-green-2.log",
+        "rawBytes": 5066,
+        "rawSha256": "bf0e95e6de9645eabe605b5ae4e0380027d3b4f022540ea0b7535391e48b9161",
+        "sanitizedBytes": 4972,
+        "sanitizedSha256": "450d94fd7dde9ff4856e92a627479548987a58556cde178289b23b8ff3243087"
+      },
+      {
+        "id": "combined-restricted-and-contract",
+        "rawName": "fastpaths-restricted-and-authority.log",
+        "rawBytes": 24923,
+        "rawSha256": "5c4cd2885238c8df0713134d434b7dee76be423a6dc0ccb0b70735c512a604e8",
+        "sanitizedBytes": 24379,
+        "sanitizedSha256": "2bf0b292ec56e86f9bfe7889bd52f44807d18dbae19231a327833f020dbc4733"
+      },
+      {
+        "id": "application-check",
+        "rawName": "fastpaths-final-check.log",
+        "rawBytes": 51,
+        "rawSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+        "sanitizedBytes": 47,
+        "sanitizedSha256": "12652975a3b03117abbcc6550586f75df88990995b7237999814218ccc3e0c19"
+      },
+      {
+        "id": "application-build",
+        "rawName": "fastpaths-final-build.log",
+        "rawBytes": 55,
+        "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+        "sanitizedBytes": 51,
+        "sanitizedSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c"
+      },
+      {
+        "id": "test-types",
+        "rawName": "fastpaths-test-types.log",
+        "rawBytes": 204,
+        "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+        "sanitizedBytes": 199,
+        "sanitizedSha256": "718d56591c1784c9fd403388377ce8a2a1b8c73676d415ee615ba6bb5c5a6fc1"
+      },
+      {
+        "id": "test-casts",
+        "rawName": "fastpaths-casts.log",
+        "rawBytes": 181,
+        "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+        "sanitizedBytes": 176,
+        "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce"
+      },
+      {
+        "id": "superseded-outbox-test-order",
+        "rawName": "empty-outbox-native-green.log",
+        "rawBytes": 24861,
+        "rawSha256": "d764e5f600a08fc06ad7bcb7509622d0d52707d0bd5e23069a9707c71167f18d",
+        "sanitizedBytes": 24421,
+        "sanitizedSha256": "f9fe827c781a9a37fdb9a69fe3368d250ce0131e0a533e82be558c0590d80cf8"
+      },
+      {
+        "id": "superseded-entitlement-correlation",
+        "rawName": "entitlement-native-green.log",
+        "rawBytes": 6200,
+        "rawSha256": "aa459cffaec7bdb60967fb2bf71d4d514c056f24fa8dd431301b6ddbb8b2092b",
+        "sanitizedBytes": 6013,
+        "sanitizedSha256": "311a9e3b12b5805710922734ce43cd9e4d7c62b2c046137ff807e55943f6a851"
+      }
+    ],
+    "sanitization": "LF line endings and own workspace path only; raw hashes retained; no credentials/JWT-shaped strings found."
+  }
+}

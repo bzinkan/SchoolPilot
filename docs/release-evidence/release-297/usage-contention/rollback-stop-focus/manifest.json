@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T03:07:54.193Z",
+  "source": {
+    "baseCommit": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+    "commit": "ff94f21e6cc91075e7e82f0d28b434ef43f4a118",
+    "branch": "codex/release297-compatible-rollback-sso",
+    "pushed": true,
+    "clean": true,
+    "files": {
+      "src/services/classpilotCommandDispatcher.ts": "8789ebc964b35eceabba1b6e636d2f51956b79d2017c2b9f8541d2a9960e4779",
+      "tests/classpilot-stop-focus-frame.test.ts": "f5294afe772cf3818b5d0c0e0d269d22ddb0378a5a3356170861a3a13e7a4c8d",
+      "scripts/run-test-lane.mjs": "e59aa3e2c66c9073296907e59e75485f26593aad0c2fff453d3bc0c6434cf498",
+      "package.json": "60bc37eb503035e376e6bc87898d16471309caece03add8ba762f59041ac8e06",
+      "package-lock.json": "1225cab8fcd31ac11b49ad5cf3dc199a4d090b12f6c4f5cd6f0496fd85f3b2cc"
+    },
+    "primaryPureTestSha256": "f5294afe772cf3818b5d0c0e0d269d22ddb0378a5a3356170861a3a13e7a4c8d"
+  },
+  "scope": "Narrow Stop Focus transport backport: complete exact V2 binding required, invalid/missing tuple or revision fails closed, no capability gate added; DB_SERIAL lane and identical focused regression copied.",
+  "validation": {
+    "pureBefore": {
+      "pass": 0,
+      "fail": 3,
+      "skipped": 0
+    },
+    "pureAfter": {
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0
+    },
+    "typeCheckExit": 0,
+    "historicalBuildExit": 0,
+    "lane": "db",
+    "manifestAndDependenciesUnchanged": true
+  },
+  "commands": [
+    "node --import ./tests/test-environment.mjs --import tsx --test tests/classpilot-stop-focus-frame.test.ts",
+    "npm run check",
+    "npm run build",
+    "node scripts/run-test-lane.mjs list",
+    "git diff --check",
+    "git commit -m \"fix: preserve exact authority on Stop Focus cleanup\"",
+    "git push origin HEAD"
+  ],
+  "relatedPrimaryNativeEvidence": {
+    "path": "<temp>/release297-stop-focus-native-5aced9737d32",
+    "reportedBy": "usage_plan_diagnosis",
+    "restrictedIntegrationCases": 14,
+    "ownerBackedPureFocusCases": 15,
+    "claim": "Primary working-tree native proof, not execution against this rollback commit."
+  },
+  "limitations": [
+    "No Docker/image rebuild, scan, native backport test or production action performed in this task.",
+    "Build used pre-existing installed modules; no fresh npm ci is claimed. Rollback image build must use the committed lockfile.",
+    "Primary worktree remained untouched."
+  ],
+  "files": [
+    {
+      "file": "pure-red.log.gz",
+      "status": "expected_regression_failure",
+      "originalSha256": "cc159d24912bc71bb4ee137aa2fa3865e10c6039da8884e989f172385dc8361d",
+      "sanitizedSha256": "d3081f3121fe01279a1a9c7284e40b541758c715832c9dc3c33045e6dd25841e",
+      "archiveSha256": "6516469cd53d39d140bfa6321d4747f0ec42f5e1f781c6f78ad316cb9b20903e"
+    },
+    {
+      "file": "pure-green.log.gz",
+      "status": "passed",
+      "originalSha256": "cabf9a381ac974132a7d5ce35caf40cde4879b9607c64bbf6208f58c146b00e6",
+      "sanitizedSha256": "cabf9a381ac974132a7d5ce35caf40cde4879b9607c64bbf6208f58c146b00e6",
+      "archiveSha256": "6418072e4f550332a292a0c0265fcc3205eaea07b3c4d628d948a4c540756225"
+    },
+    {
+      "file": "check.log.gz",
+      "status": "passed",
+      "originalSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveSha256": "81cfb2d18cc731ab6728460c7fcb80525562667c06cf37456241345411477281"
+    },
+    {
+      "file": "build.log.gz",
+      "status": "passed",
+      "originalSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "archiveSha256": "9422a52380ba189f53368094aaf66fa53bed1a7c35b56196cf362c4468755af0"
+    },
+    {
+      "file": "check-build-result.json.gz",
+      "status": "passed",
+      "originalSha256": "21564d2bc05551acc943be1b29e87467fe6fd11f53c26e6f7ae2a02206247ed7",
+      "sanitizedSha256": "21564d2bc05551acc943be1b29e87467fe6fd11f53c26e6f7ae2a02206247ed7",
+      "archiveSha256": "dcb19fbacf9592314ebd3a68db53d5597987bd4fd75e54077a98256805d98ac5"
+    },
+    {
+      "file": "lane-proof.log.gz",
+      "status": "passed",
+      "originalSha256": "72cae08cbd67d57fe21aa18b9cc8595db3c9d36ddd8369090f055bdfeef2225b",
+      "sanitizedSha256": "72cae08cbd67d57fe21aa18b9cc8595db3c9d36ddd8369090f055bdfeef2225b",
+      "archiveSha256": "22c3466e7062fd6660a509f4059256e3530906b0df18d73f543b4c9e7b4f5fb8"
+    }
+  ]
+}

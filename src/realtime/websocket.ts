@@ -1,9 +1,16 @@
+import { privateChatMessageLifecycle } from "../services/classpilotPrivateChatLifecycle.js";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "http";
 import { randomUUID } from "crypto";
+import { prepareClasspilotFocusCleanupFrame } from "../services/classpilotFocusCleanup.js";
 import { safeErrorMetadata } from "../util/safeLogging.js";
 import { getClasspilotMonitoringPolicy, resolveClasspilotMonitoringPolicy, classpilotFullMonitoringDeadline } from "../services/classpilotMonitoringPolicy.js";
 import { getSchoolWebsitePolicy } from "../services/classpilotSchoolWebsitePolicy.js";
+import {
+  focusStatusChanged,
+  readClasspilotFocusStatusEnvelope,
+  readFocusOpenIntent,
+} from "../services/classpilotFocus.js";
 import {
   isClasspilotCapabilityActive,
   negotiateClasspilotSurfaceProtocol,
@@ -69,6 +76,7 @@ import {
   acknowledgeTeacherChatDelivery,
   classpilotTeacherChatAckRejection,
   withClasspilotStudentControlDeliveryAuthority,
+  classpilotStudentRelayMessageAllowed,
   withClasspilotStudentWebSocketBootstrapAuthority,
 } from "../services/storage.js";
 import {
@@ -198,6 +206,10 @@ export function drainWebSocketWork(): Promise<void> {
  * task and perform the local send while that same lock is held; socket-local
  * binding metadata alone can describe a retired same-device session.
  */
+// Admission/rollback tooling requires this receiving-side lifecycle fence in
+// addition to the durable writer and reversible dark-deployment bridge.
+export const PRIVATE_CHAT_RELAY_VERSION = 1;
+
 export async function deliverClasspilotStudentBindingRedisMessage(
   target: Extract<WsRedisTarget, { kind: "student-binding" }>,
   message: unknown
@@ -207,8 +219,9 @@ export async function deliverClasspilotStudentBindingRedisMessage(
     return await webSocketWork.track(runWithTenantContext({ schoolId: target.schoolId }, async () => {
       const delivery = await withClasspilotStudentControlDeliveryAuthority(
         target,
-        () => undefined,
-        () => sendToStudentBindingLocal(target, message, {
+        (database) => classpilotStudentRelayMessageAllowed(target, message, database),
+        (_claimed, allowed) => !!allowed && (allowed.expiresAt === null || allowed.expiresAt > Date.now())
+          && sendToStudentBindingLocal(target, message, {
           requiredCapability: target.requiredCapability,
           requiredCapabilities: target.requiredCapabilities,
         })
@@ -1248,10 +1261,10 @@ export function setupWebSocket(
                       studentId: payload.studentId,
                       studentSessionId: activeSession.id,
                       deviceId,
+                      freezeSsoPolicy: true,
                     },
                     async (transactionDb) => {
                       authStage = "bootstrap_projection";
-                      await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
                       // Read state only after taking the same student-control
                       // lock used by command persistence and session transfer.
                       // A push committed before this socket was registered can
@@ -1301,6 +1314,9 @@ export function setupWebSocket(
                           })
                         : { classroomState: null, withheld: false };
                       const classroomState = authDelivery.classroomState;
+                      const focusCleanup = authDelivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
+                        classroomStateRow, { schoolId, deviceId, studentId: payload.studentId, studentSessionId: activeSession.id },
+                        protocol.acceptedCapabilities) : null;
                       const screenshotPolicy = await resolveClasspilotScreenshotPolicy({
                         schoolId,
                         studentId: payload.studentId,
@@ -1331,6 +1347,7 @@ export function setupWebSocket(
                       return {
                         fab,
                         classroomState,
+                        focusCleanup,
                         screenshotPolicy,
                         deliveryWithheld: authDelivery.withheld,
                       };
@@ -1380,7 +1397,7 @@ export function setupWebSocket(
                           deviceId,
                           studentId: payload.studentId,
                           studentSessionId: activeSession.id,
-                          controlRevision: prepared.classroomState?.revision ?? 0,
+                          controlRevision: prepared.classroomState?.revision ?? prepared.focusCleanup?.exactBinding.controlRevision ?? 0,
                         }),
                         settings: {
                           policyRevision: schoolWebsitePolicy.policyRevision,
@@ -1396,12 +1413,14 @@ export function setupWebSocket(
                         // If the new student has no desired row, omitting the
                         // field would preserve the former student's controls.
                         classroomState: prepared.classroomState,
+                        ...(prepared.focusCleanup ? { focusCleanup: prepared.focusCleanup } : {}),
                       }));
                       for (const { message: teacherMessage } of teacherReplies) {
                         ws.send(JSON.stringify({
                           type: "teacher-message",
                           _msgId: teacherMessage.id,
                           chatMessageId: teacherMessage.id,
+                messageKind:"private", privateChatLifecycle:privateChatMessageLifecycle(teacherMessage),
                           messageId: teacherMessage.id,
                           ...(teacherMessage.supervisionContextId
                             ? { ...classpilotCommandAuthorityEnvelope({ supervisionContextId: teacherMessage.supervisionContextId }),
@@ -1828,6 +1847,7 @@ export function setupWebSocket(
           const acknowledged = await runWithTenantContext({ schoolId: client.schoolId }, () =>
             acknowledgeTeacherChatDelivery({
               chatMessageId: messageId,
+              privateChatLifecycle:message.privateChatLifecycle,
               schoolId: client.schoolId!,
               studentId: client.studentId!,
               studentSessionId: client.studentSessionId!,
@@ -1841,6 +1861,7 @@ export function setupWebSocket(
           if (acknowledged?.message.supervisionContextId) {
             const payload = { type: "chat-message-delivery", supervisionContextId: acknowledged.message.supervisionContextId,
               messageId, studentId: acknowledged.message.studentId, deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message),
               seenAt: acknowledged.message.seenAt, errorMessage: acknowledged.message.errorMessage };
             const context = await runWithTenantContext({ schoolId: client.schoolId }, () =>
               requireScheduledClassroomContext({ schoolId: client.schoolId!, supervisionContextId: acknowledged.message.supervisionContextId! })
@@ -1861,6 +1882,7 @@ export function setupWebSocket(
               messageId,
               studentId: acknowledged.message.studentId,
               deliveryStatus: acknowledged.message.deliveryStatus,
+          privateChatLifecycle:privateChatMessageLifecycle(acknowledged.message),
               seenAt: acknowledged.message.seenAt,
               errorMessage: acknowledged.message.errorMessage,
             };
@@ -1891,6 +1913,7 @@ export function setupWebSocket(
           && message.type === "classroom-state-ack"
         ) {
           const appliedRevision = Number(message.appliedRevision);
+          const reportedFocusStatus = readClasspilotFocusStatusEnvelope(message);
           const appliedAuthPolicyRevision = (
             typeof message.appliedAuthPolicyRevision === "number"
             && Number.isSafeInteger(message.appliedAuthPolicyRevision)
@@ -1941,6 +1964,7 @@ export function setupWebSocket(
                   lateSignInOriginPending: !deferredBindingAlreadyApplied
                     && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
                   restrictionAuthRevisionMismatch,
+                  focusStatusChanged: focusStatusChanged(controlState.desiredState, reportedFocusStatus),
                 });
                 if (!ackRequired) return undefined;
               }
@@ -1954,10 +1978,15 @@ export function setupWebSocket(
                 outcome,
                 error: message.error ? String(message.error) : null,
                 acceptedCapabilities: client.acceptedCapabilities,
+                focusStatus: reportedFocusStatus,
               });
             });
             if (acknowledgedState?.sourceCommandId) {
               scheduleCommandUpdate(client.schoolId, acknowledgedState.sourceCommandId);
+            }
+            if (acknowledgedState && acknowledgedState.revision > appliedRevision) {
+              const { syncClasspilotControlStatesToActiveDevices } = await import("../services/classpilotControlStateDelivery.js");
+              await syncClasspilotControlStatesToActiveDevices(client.schoolId, [client.studentId]).catch(() => 0);
             }
             if (
               acknowledgedState
@@ -2023,12 +2052,16 @@ export function setupWebSocket(
                       },
                     })
                   : { classroomState: null, withheld: false };
-                return delivery;
+                const focusCleanup = delivery.withheld ? await prepareClasspilotFocusCleanupFrame(transactionDb,
+                  state, { schoolId: client.schoolId!, studentId: client.studentId!, studentSessionId: client.studentSessionId!,
+                    deviceId: client.deviceId! }, client.acceptedCapabilities ?? []) : null;
+                return { ...delivery, focusCleanup };
               },
               (_claimed, delivery) => {
                 if (ws.readyState !== WebSocket.OPEN) {
                   throw new Error("Student WebSocket closed during classroom-state recovery");
                 }
+                if (delivery.focusCleanup) ws.send(JSON.stringify(delivery.focusCleanup));
                 if (delivery.withheld) return;
                 const delivered = delivery.classroomState;
                 // Queue the authoritative frame synchronously while the same
@@ -2159,6 +2192,7 @@ export function setupWebSocket(
                 appliedAuthPolicyRevision:
                   classpilotAckAppliedAuthPolicyRevision(message),
                 result: rawResult,
+                acceptedCapabilities: client.acceptedCapabilities,
                 errorMessage: boundedError,
               })
             );
@@ -2172,6 +2206,10 @@ export function setupWebSocket(
           }
 
           if (outcome.target) scheduleCommandUpdate(client.schoolId, commandId);
+          if (outcome.target && readFocusOpenIntent(outcome.target.result)?.state === "committed") {
+            const { syncClasspilotControlStatesToActiveDevices } = await import("../services/classpilotControlStateDelivery.js");
+            await syncClasspilotControlStatesToActiveDevices(client.schoolId, [client.studentId]).catch(() => 0);
+          }
           if (ackId) {
             ws.send(JSON.stringify({
               type: "command-ack-receipt",

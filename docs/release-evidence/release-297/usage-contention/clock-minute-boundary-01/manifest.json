@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T18:07:28.632Z",
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "failedRun": 37142256438,
+  "failedJob": 111259006983,
+  "scope": "Test-only live-clock bracketing correction; production deploy.sh and application unchanged.",
+  "result": "Real Git Bash TZif probe passed. Forced minute/day boundaries passed; original equality failed on forced minute crossing; wrong value remains rejected.",
+  "limitation": "Original CI values were not logged; minute-boundary causality is inferred from exit94 and timestamps. Subsequent full CI is required.",
+  "records": [
+    {
+      "archive": "failed-ci-job.log.gz",
+      "rawSha256": "70886dcc9c98f74ba54b5fd85bc7136d26521227db31e8254c8469636f4451b0",
+      "sanitizedSha256": "70886dcc9c98f74ba54b5fd85bc7136d26521227db31e8254c8469636f4451b0",
+      "archiveSha256": "a7fa659c26c7a9abf4899f67a6c52d48a914cbba134e72bfd7158cdd9fd0c6bd",
+      "bytes": 40459,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "proof-runner.ps1.gz",
+      "rawSha256": "9963ddcfcd7eeb550309fbc30eb45bafd58c659f13fc12da9570fe68c587cfc6",
+      "sanitizedSha256": "9963ddcfcd7eeb550309fbc30eb45bafd58c659f13fc12da9570fe68c587cfc6",
+      "archiveSha256": "35432ccf8e04903cbc726a8a3d4710fc69664107dba6e7e669e699a577f89311",
+      "bytes": 3081,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "test-before.ps1.gz",
+      "rawSha256": "7468f9a9e05de43260f0f4e596d5cd493877ef4c9c4d9147b29d9b8e4dd121b6",
+      "sanitizedSha256": "7468f9a9e05de43260f0f4e596d5cd493877ef4c9c4d9147b29d9b8e4dd121b6",
+      "archiveSha256": "57d382822a3a41220ae807f6821c9d567e470db9a2b8c199c3e307ce10adcf22",
+      "bytes": 2187,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "test-after.ps1.gz",
+      "rawSha256": "adb9419de7052e8c4d3212716c7bed746d51ffba215c86663c536c4bbc03aab2",
+      "sanitizedSha256": "adb9419de7052e8c4d3212716c7bed746d51ffba215c86663c536c4bbc03aab2",
+      "archiveSha256": "b2104256f1cf9cbe75c3ad39370052c6018d8e727739417c925f75b92715898e",
+      "bytes": 2623,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "result.json.gz",
+      "rawSha256": "f80bbb4a8989659e239aa1fcfbd13f92f24a93c6ea2df730f02457ad8839ffb6",
+      "sanitizedSha256": "f80bbb4a8989659e239aa1fcfbd13f92f24a93c6ea2df730f02457ad8839ffb6",
+      "archiveSha256": "8ddf6f38e1805d39805150c8a97693776b03469684fce3ce3388473a28892426",
+      "bytes": 1212,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "minute.log.gz",
+      "rawSha256": "55d7a1889bd7f40e163c5f04a21fc021da754accafe52e2437164ca1e611728f",
+      "sanitizedSha256": "55d7a1889bd7f40e163c5f04a21fc021da754accafe52e2437164ca1e611728f",
+      "archiveSha256": "4c24a4368f7f81c9e2799a717b57c7948c67e7563927d0c1613d8f7fdb525fe5",
+      "bytes": 148,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "day.log.gz",
+      "rawSha256": "145bcb5ea0479241c1e8eee34014ce7d651a21be5a8320ae9c0e527550894a76",
+      "sanitizedSha256": "145bcb5ea0479241c1e8eee34014ce7d651a21be5a8320ae9c0e527550894a76",
+      "archiveSha256": "beffeee0eb234dd76a712c80332ec8782eb04482983be18cbab38cb9cbaec578",
+      "bytes": 148,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "original-minute-failure.log.gz",
+      "rawSha256": "55d7a1889bd7f40e163c5f04a21fc021da754accafe52e2437164ca1e611728f",
+      "sanitizedSha256": "55d7a1889bd7f40e163c5f04a21fc021da754accafe52e2437164ca1e611728f",
+      "archiveSha256": "4c24a4368f7f81c9e2799a717b57c7948c67e7563927d0c1613d8f7fdb525fe5",
+      "bytes": 148,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    },
+    {
+      "archive": "wrong-result-refused.log.gz",
+      "rawSha256": "88c5116b27d6cb9b084ee8d8e65d39842d2c6496f2d766ec37d1566fcfe8b603",
+      "sanitizedSha256": "88c5116b27d6cb9b084ee8d8e65d39842d2c6496f2d766ec37d1566fcfe8b603",
+      "archiveSha256": "461ebb0291852665d89a7eec0e9d59ff1597d4a45acce5f6e0c39dfb3a777d5e",
+      "bytes": 148,
+      "sanitization": "Retained exactly; public CI and local synthetic clock checks only."
+    }
+  ]
+}

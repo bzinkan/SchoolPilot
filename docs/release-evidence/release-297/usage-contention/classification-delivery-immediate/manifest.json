@@ -1,0 +1,337 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T03:56:38.413Z",
+  "status": "focused_correctness_and_immediate_classification_verified",
+  "baseSourceRevision": "59f0e43110779b298df51cdba9ef7ff3de22e6a4",
+  "worktreeDirty": true,
+  "sourceBinding": [
+    {
+      "file": "src/routes/classpilot/devices.ts",
+      "sha256": "912736e8fd5d85d2374312d04e8a0b7ff8c2b3be51b0699053538b6572d2948b"
+    },
+    {
+      "file": "src/services/aiClassification.ts",
+      "sha256": "75b6c48c3e448065f76dd628cd93d7b8b96d192a2f7ac1d96a9fde23534d4c15"
+    },
+    {
+      "file": "src/services/classpilotRealtimeStatus.ts",
+      "sha256": "1bbb577468d65ef40a9b1950a5fe1aa42fb3ae0ab50ae4705b4c480ab088171b"
+    },
+    {
+      "file": "src/services/heartbeatHotPathMetrics.ts",
+      "sha256": "a4a68eabe50f2d0988e38b851312a75b4ede9462b6c2f978c2571d958ccb69fe"
+    },
+    {
+      "file": "tests/classpilot-heartbeat-classification-delivery.test.ts",
+      "sha256": "ed927c28d83d1816db50650d9ac7269d67d5418604e2d1e3c64f10db1df644e6"
+    },
+    {
+      "file": "tests/classpilot-heartbeat-immediate-classification.test.ts",
+      "sha256": "9af1c2a3897f1706dd29b6e4f29e0839f4a5d9566bce1e0a0911d7095b94072a"
+    },
+    {
+      "file": "tests/classpilot-realtime-status.test.ts",
+      "sha256": "f94680ce3310be8d695d0f1501033691a38dc5ad8085aa30635b399d8ff78413"
+    }
+  ],
+  "sourceBindingLimit": "Source snapshots captured after focused tests. The independent classifier probe separately records identical before/after bytes. Final combined source, including later cumulative-counter instrumentation, requires the root combined build/types/unit and capacity checks; this archive is not a clean-source release receipt.",
+  "correctnessRegression": {
+    "red": {
+      "tests": 5,
+      "passed": 2,
+      "failed": 3,
+      "exitCode": 1,
+      "source": "unchanged base route"
+    },
+    "green": {
+      "tests": 47,
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "expansion": "The original five-case test revision was expanded with ordering, null-completion, immutable initial-cache and async-fallback regressions; the archived final suite has more cases. Do not treat all47 as red-to-green.",
+    "retainedIntermediateFailure": "Barrier race attempt01 failed only because the test called nonexistent frontend applyStudentRealtimeEvent; attempt02 calls the actual applyStudentRealtimeEvents consumer and passes20/20."
+  },
+  "independentClassifier": {
+    "passed": true,
+    "checks": 47,
+    "mockedFetches": 20,
+    "sourceUnchanged": true,
+    "sourceSha256": "75b6c48c3e448065f76dd628cd93d7b8b96d192a2f7ac1d96a9fde23534d4c15",
+    "baselineTsSha256": "2eefaad8a8e8688716ed7f26ec6eff3f81a646df4c52135119222bf8915f87bb",
+    "scope": "Canonical classifier differential against base59f0 with mocked provider and fixed clock; no provider/network/database calls. Covers unsafe-query precedence, school-domain isolation, AI-tool priority, URL/title/model cache keys and TTL."
+  },
+  "behavior": [
+    "Historical classification registration precedes optional foreground publication and stale-current return. Historical persistence remains exact-heartbeat scoped.",
+    "Current classification effects wait for foreground publication to settle; failure and stale/synchronous exits release the barrier. Actual frontend consumer regression preserves full metadata before later classification.",
+    "Publication failure is best effort and counted; locked authority gates remain unchanged and classification-publication failure cannot suppress legitimate current safety handling.",
+    "Only canonical known-list/school-domain educational results with no safety alert enter original INSERT, after SSO sanitation and existing Chrome-prefix exclusion. RETURNING must confirm every classification field before async work is skipped.",
+    "Initial tile/realtime/memory states carry persisted classification. Unknown, safety, AI-tool, missing-output and mismatched-output cases retain the ordinary asynchronous path."
+  ],
+  "limits": [
+    "No measured capacity claim; failed Combined05 remains failed independently of this correction.",
+    "Route regressions execute extracted actual route code with controlled collaborators; native storage owner/restricted evidence is separately archived by the storage owner.",
+    "No browser-device test, deployment, activation, authority-result cache, new database schema, pool increase or timeout increase."
+  ],
+  "commands": [
+    "node --import tsx --test tests/classpilot-heartbeat-classification-delivery.test.ts",
+    "node --import tsx --test tests/classpilot-heartbeat-immediate-classification.test.ts tests/classpilot-heartbeat-classification-delivery.test.ts tests/classpilot-heartbeat-recovery-delivery.test.ts tests/classpilot-safety-action.test.ts tests/classpilot-realtime-status.test.ts",
+    "node --import tsx <TEMP>/release297-classification-independent-01/probe.mjs"
+  ],
+  "sanitization": "Only local user path prefix replaced with <USER>; test inputs are explicitly synthetic. Raw originals remain external and are hash-bound. No cookies, credentials, fixture identities or populated database snapshots included.",
+  "artifacts": [
+    {
+      "file": "release297-classification-delivery-red.log.gz",
+      "original": "<TEMP>\\release297-classification-delivery-red.log",
+      "rawSha256": "05a193eb87eb4b9369967459e47aea3056da3fb3b60488c06f9cc91a44db861b",
+      "sanitizedSha256": "219838dba11e60725fd6cacee4a7ce9ebdb1ba3cdc54575bd8c8d32bf2a7eefd",
+      "storedSha256": "70cdaf17bf4e211212ea0a77a4cb42cf7cdf5fdb9fbf833561ad67488c6b1d1c",
+      "rawBytes": 4121,
+      "storedBytes": 1033
+    },
+    {
+      "file": "release297-classification-delivery-green.log.gz",
+      "original": "<TEMP>\\release297-classification-delivery-green.log",
+      "rawSha256": "0a88d0014a9c8b42636c95c0f00e37d8b963073507eca0b9bcaa22ac5f212307",
+      "sanitizedSha256": "0a88d0014a9c8b42636c95c0f00e37d8b963073507eca0b9bcaa22ac5f212307",
+      "storedSha256": "47b8a3a1e89b5fe5f3bedb77dcb10dd5ef74518ecd9061aae00906f7a31b92f0",
+      "rawBytes": 2496,
+      "storedBytes": 677
+    },
+    {
+      "file": "release297-classification-delivery-green-02.log.gz",
+      "original": "<TEMP>\\release297-classification-delivery-green-02.log",
+      "rawSha256": "dc510dcc98535b9be74ab2c33352b818eb38e5d83981ff1e3836505f49fde239",
+      "sanitizedSha256": "dc510dcc98535b9be74ab2c33352b818eb38e5d83981ff1e3836505f49fde239",
+      "storedSha256": "bff97674357becbca59b5d260f4089620b64e16836e7e8be5b6a7c149b1d6e1f",
+      "rawBytes": 4932,
+      "storedBytes": 1178
+    },
+    {
+      "file": "release297-classification-barrier-green.log.gz",
+      "original": "<TEMP>\\release297-classification-barrier-green.log",
+      "rawSha256": "6325c20ec1ee2b2cc8cffb4ed8526c60eed0d7221540d64abbbea1fb496d0163",
+      "sanitizedSha256": "6325c20ec1ee2b2cc8cffb4ed8526c60eed0d7221540d64abbbea1fb496d0163",
+      "storedSha256": "a9ca4f0f51c57da9956a9287f9d343b386e89af1638e125286fb888efd25ecfd",
+      "rawBytes": 1344,
+      "storedBytes": 423
+    },
+    {
+      "file": "release297-classification-barrier-races.log.gz",
+      "original": "<TEMP>\\release297-classification-barrier-races.log",
+      "rawSha256": "933900e003249fb0201c07c570eb96b1d2fb364c013b94b0500232794d7f34e9",
+      "sanitizedSha256": "2416782f6076a8f9f448e7ea9c07a280d8beed70206224939620efbe690cb0c6",
+      "storedSha256": "7865180e212e2bfb57f43eebeb399ad8ce1a6b9f2fbf1d5ad087d5e680e748e9",
+      "rawBytes": 2622,
+      "storedBytes": 839
+    },
+    {
+      "file": "release297-classification-barrier-races-02.log.gz",
+      "original": "<TEMP>\\release297-classification-barrier-races-02.log",
+      "rawSha256": "15be3c7bd96241a397a400988a8d523f23044785acb287fc0e8414bd467fbc28",
+      "sanitizedSha256": "15be3c7bd96241a397a400988a8d523f23044785acb287fc0e8414bd467fbc28",
+      "storedSha256": "00d84960dabf672e1b1b3e0c5d45e4bab1b2c368a51bb236da58236452f703da",
+      "rawBytes": 5589,
+      "storedBytes": 1297
+    },
+    {
+      "file": "release297-classification-immediate-focused-01.log.gz",
+      "original": "<TEMP>\\release297-classification-immediate-focused-01.log",
+      "rawSha256": "d46cb480d863e304c883c3264634db747fdcdd2f4a9345b1e324663daab31267",
+      "sanitizedSha256": "d46cb480d863e304c883c3264634db747fdcdd2f4a9345b1e324663daab31267",
+      "storedSha256": "e6a56517f8e2862344438213f2d3bace3ea7aa144269b7f6ba096bd18e1047e2",
+      "rawBytes": 7862,
+      "storedBytes": 1761
+    },
+    {
+      "file": "release297-classification-immediate-focused-02.log.gz",
+      "original": "<TEMP>\\release297-classification-immediate-focused-02.log",
+      "rawSha256": "a5aed75bb61c0d20df647b5e10c8d7b6d902e7359e8aea600c32c54f6af2707b",
+      "sanitizedSha256": "a5aed75bb61c0d20df647b5e10c8d7b6d902e7359e8aea600c32c54f6af2707b",
+      "storedSha256": "71e6a63faa8e84308a6d8ad2d23f13b4f5b99e296c393eab6a435627721d314c",
+      "rawBytes": 12209,
+      "storedBytes": 2552
+    },
+    {
+      "file": "independent-attempt-01.log.gz",
+      "original": "<TEMP>\\release297-classification-independent-01\\attempt-01.log",
+      "rawSha256": "feb93295953aba05b257a971aa67bed71ac78fc887a9e8fa361781a9e2ac5c71",
+      "sanitizedSha256": "feb93295953aba05b257a971aa67bed71ac78fc887a9e8fa361781a9e2ac5c71",
+      "storedSha256": "e2ddc6a882c5af3675923c5a3e867cb7d03e333040c16a858d89ab1bd07c559c",
+      "rawBytes": 222785,
+      "storedBytes": 3462
+    },
+    {
+      "file": "independent-attempt-02.log.gz",
+      "original": "<TEMP>\\release297-classification-independent-01\\attempt-02.log",
+      "rawSha256": "ca9571e66ff5598279f4261f742fd7cbe757da0e6fdac2d04fc382bc985aee0d",
+      "sanitizedSha256": "ca9571e66ff5598279f4261f742fd7cbe757da0e6fdac2d04fc382bc985aee0d",
+      "storedSha256": "95ae40c8e1ebb2ae4c2b05e279289338e663c4d9de9d9e81113aaca5fd3077cc",
+      "rawBytes": 222784,
+      "storedBytes": 3457
+    },
+    {
+      "file": "independent-baseline-aiClassification.mjs.gz",
+      "original": "<TEMP>\\release297-classification-independent-01\\baseline-aiClassification.mjs",
+      "rawSha256": "a421ba967dfa505e871c3d53ff0828054403010b300f14dafda740223702ca8e",
+      "sanitizedSha256": "8ef049342044ae6fbc107194fbb61c498668f7309123711de977ee59a4c4086a",
+      "storedSha256": "8a2814c466063068d07b9e17a5f526b3d6f2ffd9bbae47a30fb719f0909439e0",
+      "rawBytes": 51108,
+      "storedBytes": 16464
+    },
+    {
+      "file": "independent-baseline-aiClassification.ts.gz",
+      "original": "<TEMP>\\release297-classification-independent-01\\baseline-aiClassification.ts",
+      "rawSha256": "2eefaad8a8e8688716ed7f26ec6eff3f81a646df4c52135119222bf8915f87bb",
+      "sanitizedSha256": "2eefaad8a8e8688716ed7f26ec6eff3f81a646df4c52135119222bf8915f87bb",
+      "storedSha256": "0427fcf2a11748a27da761268923713bd32872cbf97dbaf0667e9e2a982bf5b2",
+      "rawBytes": 52338,
+      "storedBytes": 17390
+    },
+    {
+      "file": "independent-hashes.json",
+      "original": "<TEMP>\\release297-classification-independent-01\\hashes.json",
+      "rawSha256": "797428240a55af98270c0a13b0b8d5c32926de4e0fde2e513916bb9c71fbf930",
+      "sanitizedSha256": "3eebbf7d1d0f28678f239367ac43aaa3a63ae759bac9a3a68a5e5ee448b9b451",
+      "storedSha256": "3eebbf7d1d0f28678f239367ac43aaa3a63ae759bac9a3a68a5e5ee448b9b451",
+      "rawBytes": 1031,
+      "storedBytes": 981
+    },
+    {
+      "file": "independent-probe.mjs.gz",
+      "original": "<TEMP>\\release297-classification-independent-01\\probe.mjs",
+      "rawSha256": "d463bdd53e207b9db0f792f6ccfac4c8c3bb40bc4fa62fe5ba5a12fd7d69cc9a",
+      "sanitizedSha256": "ec4b76ddec07d31f802e4d047fc6ca37c102c6f46b828770c4908c8c7d038a57",
+      "storedSha256": "d963cf76fcf476e45d10115b4ce0c041b6905d7acf33cb95bcdbf064842b0018",
+      "rawBytes": 5219,
+      "storedBytes": 1986
+    },
+    {
+      "file": "independent-result.json",
+      "original": "<TEMP>\\release297-classification-independent-01\\result.json",
+      "rawSha256": "50efc7ca8ff4dec8d9cd2521ed08551bd85733d4bb72b0087fc3d269bfbdde3e",
+      "sanitizedSha256": "50efc7ca8ff4dec8d9cd2521ed08551bd85733d4bb72b0087fc3d269bfbdde3e",
+      "storedSha256": "50efc7ca8ff4dec8d9cd2521ed08551bd85733d4bb72b0087fc3d269bfbdde3e",
+      "rawBytes": 8795,
+      "storedBytes": 8795
+    },
+    {
+      "file": "independent-source-after-02.json",
+      "original": "<TEMP>\\release297-classification-independent-01\\source-after-02.json",
+      "rawSha256": "09fe5064ce6183df33af1ec42b750fe85f19dc3c616823a3701b24665e0005eb",
+      "sanitizedSha256": "faeaad84f9df5b6cc4e61b8e20bfff56284d5fe4230e5801a0e25d3597497393",
+      "storedSha256": "faeaad84f9df5b6cc4e61b8e20bfff56284d5fe4230e5801a0e25d3597497393",
+      "rawBytes": 210,
+      "storedBytes": 200
+    },
+    {
+      "file": "independent-source-before-02.json",
+      "original": "<TEMP>\\release297-classification-independent-01\\source-before-02.json",
+      "rawSha256": "09fe5064ce6183df33af1ec42b750fe85f19dc3c616823a3701b24665e0005eb",
+      "sanitizedSha256": "faeaad84f9df5b6cc4e61b8e20bfff56284d5fe4230e5801a0e25d3597497393",
+      "storedSha256": "faeaad84f9df5b6cc4e61b8e20bfff56284d5fe4230e5801a0e25d3597497393",
+      "rawBytes": 210,
+      "storedBytes": 200
+    },
+    {
+      "file": "correctness-only-classpilot-heartbeat-classification-delivery.test.ts.gz",
+      "original": "<TEMP>\\release297-classification-correctness-only\\classpilot-heartbeat-classification-delivery.test.ts",
+      "rawSha256": "b9f881104645ff6bbc92205dc36af9bb435b95bebeac065ed51505f867a2689a",
+      "sanitizedSha256": "b9f881104645ff6bbc92205dc36af9bb435b95bebeac065ed51505f867a2689a",
+      "storedSha256": "010bfc1ef40cc44373b47afc024dc21bfc59feab12818d1b3a5e1724c5ad93cb",
+      "rawBytes": 10471,
+      "storedBytes": 3155
+    },
+    {
+      "file": "correctness-only-correctness-only.patch.gz",
+      "original": "<TEMP>\\release297-classification-correctness-only\\correctness-only.patch",
+      "rawSha256": "697c9a7a53e849783e21300a7b5de4cce1f81314f3ea86b466279bbbf8ed2c5f",
+      "sanitizedSha256": "697c9a7a53e849783e21300a7b5de4cce1f81314f3ea86b466279bbbf8ed2c5f",
+      "storedSha256": "dd0e5830044e49244873839bb61ac7912288c6dc583c47f607dbaa5833224730",
+      "rawBytes": 30530,
+      "storedBytes": 5490
+    },
+    {
+      "file": "source-src__routes__classpilot__devices.ts.gz",
+      "original": "<WORKTREE>\\src\\routes\\classpilot\\devices.ts",
+      "rawSha256": "912736e8fd5d85d2374312d04e8a0b7ff8c2b3be51b0699053538b6572d2948b",
+      "sanitizedSha256": "912736e8fd5d85d2374312d04e8a0b7ff8c2b3be51b0699053538b6572d2948b",
+      "storedSha256": "ccf3c408f3217d308d77679da9cc9c86b81bbdd0ca374315aeec1ce447cc349f",
+      "rawBytes": 255575,
+      "storedBytes": 52278
+    },
+    {
+      "file": "source-src__services__aiClassification.ts.gz",
+      "original": "<WORKTREE>\\src\\services\\aiClassification.ts",
+      "rawSha256": "75b6c48c3e448065f76dd628cd93d7b8b96d192a2f7ac1d96a9fde23534d4c15",
+      "sanitizedSha256": "75b6c48c3e448065f76dd628cd93d7b8b96d192a2f7ac1d96a9fde23534d4c15",
+      "storedSha256": "737653afa5d51999f2621db8e76e06395250158bb451be552eb8e1806fbd34f9",
+      "rawBytes": 53523,
+      "storedBytes": 17725
+    },
+    {
+      "file": "source-src__services__classpilotRealtimeStatus.ts.gz",
+      "original": "<WORKTREE>\\src\\services\\classpilotRealtimeStatus.ts",
+      "rawSha256": "1bbb577468d65ef40a9b1950a5fe1aa42fb3ae0ab50ae4705b4c480ab088171b",
+      "sanitizedSha256": "1bbb577468d65ef40a9b1950a5fe1aa42fb3ae0ab50ae4705b4c480ab088171b",
+      "storedSha256": "157fb6390eb0935b377d3a61728ec59b7179aa71e60f503b1f8aacad43cd7e95",
+      "rawBytes": 46275,
+      "storedBytes": 9546
+    },
+    {
+      "file": "source-src__services__heartbeatHotPathMetrics.ts.gz",
+      "original": "<WORKTREE>\\src\\services\\heartbeatHotPathMetrics.ts",
+      "rawSha256": "a4a68eabe50f2d0988e38b851312a75b4ede9462b6c2f978c2571d958ccb69fe",
+      "sanitizedSha256": "a4a68eabe50f2d0988e38b851312a75b4ede9462b6c2f978c2571d958ccb69fe",
+      "storedSha256": "754e42836fa1ebbb3130d769127286ec581781b251fef38c5a48e490e0d3875b",
+      "rawBytes": 15187,
+      "storedBytes": 3886
+    },
+    {
+      "file": "source-tests__classpilot-heartbeat-classification-delivery.test.ts.gz",
+      "original": "<WORKTREE>\\tests\\classpilot-heartbeat-classification-delivery.test.ts",
+      "rawSha256": "ed927c28d83d1816db50650d9ac7269d67d5418604e2d1e3c64f10db1df644e6",
+      "sanitizedSha256": "ed927c28d83d1816db50650d9ac7269d67d5418604e2d1e3c64f10db1df644e6",
+      "storedSha256": "d5fa7cb980cd4787471fb2ee7b132e5ca629934334e9b6a10323601e34d3cc49",
+      "rawBytes": 11842,
+      "storedBytes": 3343
+    },
+    {
+      "file": "source-tests__classpilot-heartbeat-immediate-classification.test.ts.gz",
+      "original": "<WORKTREE>\\tests\\classpilot-heartbeat-immediate-classification.test.ts",
+      "rawSha256": "9af1c2a3897f1706dd29b6e4f29e0839f4a5d9566bce1e0a0911d7095b94072a",
+      "sanitizedSha256": "9af1c2a3897f1706dd29b6e4f29e0839f4a5d9566bce1e0a0911d7095b94072a",
+      "storedSha256": "9d5b2894f2af8bdf30c4e466ae11cc6069c4943a48621c82016542dfe9d2efa9",
+      "rawBytes": 9175,
+      "storedBytes": 2758
+    },
+    {
+      "file": "source-tests__classpilot-realtime-status.test.ts.gz",
+      "original": "<WORKTREE>\\tests\\classpilot-realtime-status.test.ts",
+      "rawSha256": "f94680ce3310be8d695d0f1501033691a38dc5ad8085aa30635b399d8ff78413",
+      "sanitizedSha256": "f94680ce3310be8d695d0f1501033691a38dc5ad8085aa30635b399d8ff78413",
+      "storedSha256": "b628b960f35af0e2fbcf00c89b84ec49dc47d631c25d6295bae4ecc53f60dd40",
+      "rawBytes": 30760,
+      "storedBytes": 6430
+    },
+    {
+      "file": "baseline-src__routes__classpilot__devices.ts.gz",
+      "original": "git blob",
+      "rawSha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0",
+      "sanitizedSha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0",
+      "storedSha256": "b815d4cc078c2064c9fcca4801878e5d709424c4e5bd42ec481533a0076ab20e",
+      "rawBytes": 250833,
+      "storedBytes": 51258
+    },
+    {
+      "file": "baseline-src__services__aiClassification.ts.gz",
+      "original": "git blob",
+      "rawSha256": "2eefaad8a8e8688716ed7f26ec6eff3f81a646df4c52135119222bf8915f87bb",
+      "sanitizedSha256": "2eefaad8a8e8688716ed7f26ec6eff3f81a646df4c52135119222bf8915f87bb",
+      "storedSha256": "0427fcf2a11748a27da761268923713bd32872cbf97dbaf0667e9e2a982bf5b2",
+      "rawBytes": 52338,
+      "storedBytes": 17390
+    }
+  ]
+}

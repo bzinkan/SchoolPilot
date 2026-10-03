@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T05:00:39.574Z",
+  "status": "full_unit_rerun_passed",
+  "scope": "Root-run complete unit lane after the static limiter assertion correction; no checks were rerun by archivist.",
+  "source": {
+    "head": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+    "state": "Uncommitted release changes included and byte-bound; clean checkpoint and remote CI remain separate.",
+    "files": 1159,
+    "beforeAfterDeepEqual": true,
+    "runnerReportedUnchanged": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz"
+  },
+  "runner": {
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-08.ps1",
+    "startedAt": "2026-10-03T04:57:05.7183775Z",
+    "finishedAt": "2026-10-03T04:58:28.1892465Z",
+    "checks": [
+      {
+        "command": "npm run test:unit",
+        "startedAt": "2026-10-03T04:57:05.7222556Z",
+        "finishedAt": "2026-10-03T04:58:27.7868894Z",
+        "exitCode": 0,
+        "log": "test-unit.log"
+      }
+    ],
+    "configuration": "DATABASE_URL absent, matching ordinary unit CI; individual unit fixtures configure their own imports",
+    "environment": {
+      "NODE_ENV": "test",
+      "SCHEDULER_ENABLED": "false",
+      "REDIS_URL": "empty",
+      "DATABASE_URL": "absent",
+      "DOTENV_CONFIG_PATH": "absent external dotenv"
+    }
+  },
+  "unit": {
+    "tests": 1779,
+    "pass": 1775,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 4,
+    "todo": 0
+  },
+  "conditionalSkips": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ],
+  "conditionalSkipDetails": [
+    {
+      "suite": "PIN retries through the production route, compatibility rewrite and real middleware",
+      "test": "ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected",
+      "file": "tests/classpilot-student-signin-route-diagnostics.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "GoPilot Redis relay",
+      "test": "delivers a duplicate message ID exactly once across two relay instances",
+      "file": "tests/gopilot-redis-relay.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    },
+    {
+      "suite": "student-device teacher-tile index contract",
+      "test": "parses inspected index key columns as a text array",
+      "file": "tests/student-device-index-contract.test.ts",
+      "condition": "!process.env.DATABASE_URL"
+    },
+    {
+      "suite": "ordered WebSocket Redis publication",
+      "test": "retains the newest attempted revision across a subscriber reconnect",
+      "file": "tests/ws-redis-ordered-publish.test.ts",
+      "condition": "!process.env.TEST_REDIS_URL"
+    }
+  ],
+  "failedTapEntries": [],
+  "priorCheckBinding": {
+    "manifest": "../combined-checks-attempt-07/manifest.json",
+    "manifestSha256": "8f12d4879cf5d0dca6176aaea29d57e3c7f5b41a0976547ea1707af9e821978d",
+    "priorStatus": "failed unit suite retained unchanged",
+    "priorSourceBeforeAfterEqual": true,
+    "sameSourcePathSet": true,
+    "changedFiles": [
+      {
+        "path": "scripts/load/usage/release-enabled-drain.mjs",
+        "beforeSha256": "8ec71d26ad6d070a3caf81f235e52d232d3b94044819429a14fb4a71fe96f177",
+        "afterSha256": "98e7da0dbe4bd10d0b1f49cc8cfc71792402442accac0e5fbdb9980713543c51"
+      },
+      {
+        "path": "scripts/load/usage/release-enabled-drain.test.mjs",
+        "beforeSha256": "2f77cacd9a004e57e5a4dc5640ca6ef6b4f73a40c69bab8f1037f8fb4660261f",
+        "afterSha256": "b1d3d5da733c893efe6d749d79268a2d3588e6b2dbffd2385aa39e8b33b6ca7a"
+      },
+      {
+        "path": "tests/classpilot-signin-ingress-diagnostics.test.ts",
+        "beforeSha256": "57a85346baac451880c2f010d11aeb34cf7a7c018b04dbd9981c91fd29fa0406",
+        "afterSha256": "9b5cc247efef4801c4ec45c70eb7e7f2aa058542f360f25e13016b0259f36d5e"
+      }
+    ],
+    "applicationAndPackageBytesUnchanged": true,
+    "checks": [
+      {
+        "command": "npm run build",
+        "startedAt": "2026-10-03T04:52:03.0612683Z",
+        "finishedAt": "2026-10-03T04:52:50.1461413Z",
+        "exitCode": 0,
+        "log": "build.log"
+      },
+      {
+        "command": "npm run check:tests",
+        "startedAt": "2026-10-03T04:52:50.1511696Z",
+        "finishedAt": "2026-10-03T04:53:55.8662639Z",
+        "exitCode": 0,
+        "log": "check-tests.log"
+      },
+      {
+        "command": "npm run check:test-casts",
+        "startedAt": "2026-10-03T04:53:55.8681785Z",
+        "finishedAt": "2026-10-03T04:53:56.4534131Z",
+        "exitCode": 0,
+        "log": "check-test-casts.log"
+      }
+    ],
+    "scope": "Build, test-type and cast checks passed attempt07. All captured application files and package/config bytes are identical in08; only the listed two load harness files and static unit assertion changed. This does not relabel07 unit results or claim a second build/type run.",
+    "harnessFollowupEvidence": "../complete-server-drain/"
+  },
+  "limits": [
+    "Four conditional cases remain skipped; owner/restricted native and Redis integration evidence are separate.",
+    "No capacity, final CI, browser acceptance, deployment or activation is claimed.",
+    "Every original07 failure and raw08 record is preserved unchanged."
+  ],
+  "sanitization": "User-home paths, connection URLs and JWT-shaped values redacted. Original, sanitized and gzip hashes recorded and verified.",
+  "files": [
+    {
+      "file": "checks.json.gz",
+      "originalSha256": "e7420a787fb73e38229f00b791987e2222182a8b42a0e922285783d9a4dc5859",
+      "sanitizedSha256": "e7420a787fb73e38229f00b791987e2222182a8b42a0e922285783d9a4dc5859",
+      "archiveSha256": "64e398fd428d8f06d1bdffe108d52c2b2b6a2e1fe5bd26b8a70d50dcadc3de8d",
+      "sourceBytes": 182,
+      "archiveBytes": 149,
+      "gzipVerified": true
+    },
+    {
+      "file": "result.json.gz",
+      "originalSha256": "49a97f297d134b79e3109b7d19d4820c96eb6cd9110a5d42a2bc4f8a1e4c4269",
+      "sanitizedSha256": "664e143a8f6e344c2a629136c230f25dc3d7b5e82c75b395166d0fe25719691e",
+      "archiveSha256": "cf5ff5752815d476f96cf33348075ac7080d35ad74d7c8a05898800a2c7d8f84",
+      "sourceBytes": 871,
+      "archiveBytes": 520,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "2f03431c4d86222fce1864e86b49baba33e4556adfa49f832cc11d7c366515fc",
+      "sanitizedSha256": "2f03431c4d86222fce1864e86b49baba33e4556adfa49f832cc11d7c366515fc",
+      "archiveSha256": "533e569780845ce34a7f37f95f98605c4fba0ec4b828fc580c092fa49608d925",
+      "sourceBytes": 174939,
+      "archiveBytes": 55486,
+      "gzipVerified": true
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "2f03431c4d86222fce1864e86b49baba33e4556adfa49f832cc11d7c366515fc",
+      "sanitizedSha256": "2f03431c4d86222fce1864e86b49baba33e4556adfa49f832cc11d7c366515fc",
+      "archiveSha256": "533e569780845ce34a7f37f95f98605c4fba0ec4b828fc580c092fa49608d925",
+      "sourceBytes": 174939,
+      "archiveBytes": 55486,
+      "gzipVerified": true
+    },
+    {
+      "file": "test-unit.log.gz",
+      "originalSha256": "3c094359f112547be177749494ff87eb052677722aed8a2c04f7812c2b1332d3",
+      "sanitizedSha256": "3c094359f112547be177749494ff87eb052677722aed8a2c04f7812c2b1332d3",
+      "archiveSha256": "2b524da2cc1c979f8726ac6c08b655fc84da11da473821a2364b2a45ca25305f",
+      "sourceBytes": 468998,
+      "archiveBytes": 78978,
+      "gzipVerified": true
+    },
+    {
+      "file": "release297-final-checks-08.ps1.gz",
+      "originalSha256": "0e0c9c8ac6c051c1780fbe59ff5a1b7e33834e48072b39ad6f28dbc2f4f36215",
+      "sanitizedSha256": "d696dfabcfadade2ed4fe16aae194962d8bfac5c46313259e6f0dc896b959590",
+      "archiveSha256": "17a41cda7b79c69f7f4809fe4d7034eff5e274a3ad9e2652b001ac2877ca9487",
+      "sourceBytes": 2553,
+      "archiveBytes": 1206,
+      "gzipVerified": true
+    }
+  ]
+}

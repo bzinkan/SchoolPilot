@@ -38,7 +38,10 @@ const studentInformationInventory: RlsRegistryInventory = rlsRegistry.inventorie
 const teacherPreferencesInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotTeacherPreferencesPostExpand;
 const importProcessingStagesInventory: RlsRegistryInventory = rlsRegistry.inventories.importProcessingStagesPostExpand;
 const passpilotRulesInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotRulesPostExpand;
-const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotUsageRollupsPostExpand;
+const usageRollupsInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotUsageRollupsPostExpand;
+const usageDaysInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotUsageRollupDaysPostExpand;
+const appointmentsInventory: RlsRegistryInventory = rlsRegistry.inventories.passpilotAppointmentsPostExpand;
+const currentInventory: RlsRegistryInventory = rlsRegistry.inventories.classpilotPrivateChatLifecyclePostExpand;
 
 /** Exact audit snapshot; never rewrite this list to describe a future rollout. */
 export const RLS_HISTORICAL_OBSERVED_PRODUCTION_TABLES: readonly string[] =
@@ -88,7 +91,7 @@ export function isReviewedRlsEnforcementRequest(tables: readonly string[]): bool
 
 /** Fail fast if the machine-readable registry loses its semantic invariants. */
 export function assertRlsRegistryIntegrity(): void {
-  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, currentInventory];
+  const inventories = [historicalInventory, postExpandInventory, roadmapInventory, supervisionWorkspaceInventory, activityReportsInventory, classToolsInventory, kioskScheduleInventory, mydeskInventory, mydeskSeatingInventory, mydeskImportsInventory, mydeskWorkspaceInventory, schoolDisciplineInventory, studentInformationInventory, teacherPreferencesInventory, importProcessingStagesInventory, passpilotRulesInventory, usageRollupsInventory, usageDaysInventory, appointmentsInventory, currentInventory];
   for (const inventory of inventories) {
     if (inventory.count !== inventory.tables.length) {
       throw new Error(

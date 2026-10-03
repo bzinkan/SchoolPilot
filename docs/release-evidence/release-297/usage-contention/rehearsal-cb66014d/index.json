@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:27:47.667Z",
+  "sourceCommit": "cb66014d70a275405a5469257b37debe8d20ea18",
+  "baselineSha": "7af9d0dd5bc2bd3e13b96d35a577725e07f8b678",
+  "compatibleRollbackSha": "08802d020a3c51beea504140f923126ab518aac6",
+  "originalRecord": {
+    "path": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-local-rehearsal-cb66014d-01\\rehearsal.json",
+    "sha256": "6e380399d2b5348f2e16849dbc18041fe9a1391aad50d36989ebaad0ea08f3d4",
+    "archivedFile": "rehearsal.json.gz"
+  },
+  "command": "node scripts/release/rehearse-local-upgrade.mjs C:/Users/zinka/.codex/worktrees/release297-baseline-rehearsal/SchoolPilot 7af9d0dd5bc2bd3e13b96d35a577725e07f8b678 C:/Users/zinka/AppData/Local/Temp/release297-local-rehearsal-cb66014d-01 C:/Users/zinka/.codex/worktrees/release297-compatible-rollback/SchoolPilot 08802d020a3c51beea504140f923126ab518aac6 *> $env:TEMP\\release297-local-rehearsal-cb66014d-01.log; exit $LASTEXITCODE",
+  "workingDirectory": "SchoolPilot release worktree",
+  "shell": "PowerShell",
+  "commandProvenance": "Exact invocation supplied by the executing parent agent; original output preserved.",
+  "passed": true,
+  "counts": {
+    "baselineMigrationIds": 44,
+    "candidateMigrationIds": 53,
+    "retainedTenantTables": 129
+  },
+  "contractSemantics": "Baseline legacy bootstrap already applied the staff-identity contract. The files named candidate-contract-adoption/candidate-adopted-contract record idempotent explicit-flag re-entry; they do NOT prove an unadopted-to-adopted transition.",
+  "verified": "Local candidate expansion, repeat, already-adopted contract re-entry, compatible rollback migration re-entry, candidate re-entry, and unchanged ledger/catalog snapshots after the first candidate expansion.",
+  "limitations": [
+    "Synthetic empty baseline reconstructed from serving source; actual production catalog and migration ledger were not exported or proven.",
+    "Restricted-role verification is an empty-fixture catalog/permission smoke only, not populated cross-school isolation.",
+    "Local schema re-entry does not prove production image/task-pair rollback or restoration of production data.",
+    "The original field names and logs are preserved unchanged; this index corrects their interpretation."
+  ],
+  "cleanup": {
+    "generatedContainerRemoved": true
+  },
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "baseline-aliases.log.gz",
+      "rawFileName": "baseline-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "baseline-contract.json.gz",
+      "rawFileName": "baseline-contract.json",
+      "rawBytes": 27646,
+      "rawSha256": "fedb873b1c81ede8c4efa6f3070a4684d2aa852054274ccce5fa3db4f5b3a26e",
+      "sanitizedBytes": 27646,
+      "sanitizedSha256": "fedb873b1c81ede8c4efa6f3070a4684d2aa852054274ccce5fa3db4f5b3a26e",
+      "gzipSha256": "6093851e6037031f87fa66d9927f360115f810b721be34f2f0eb4ab730c81ca7"
+    },
+    {
+      "file": "baseline-legacy.log.gz",
+      "rawFileName": "baseline-legacy.log",
+      "rawBytes": 11653,
+      "rawSha256": "ae39a1d7fccd642d99fdc552f5bcf91f0f32ab72594da25a278faceb00ef6f5d",
+      "sanitizedBytes": 11653,
+      "sanitizedSha256": "ae39a1d7fccd642d99fdc552f5bcf91f0f32ab72594da25a278faceb00ef6f5d",
+      "gzipSha256": "f0a9a75ff3369e5a79d349f9479144e15fdd895cd6a26ded97bec378947cef74"
+    },
+    {
+      "file": "baseline-schema.log.gz",
+      "rawFileName": "baseline-schema.log",
+      "rawBytes": 319,
+      "rawSha256": "435fce1d11ca76bd54e958c8b009b071fad06730a3ac30167d02e57f58fc5f69",
+      "sanitizedBytes": 319,
+      "sanitizedSha256": "435fce1d11ca76bd54e958c8b009b071fad06730a3ac30167d02e57f58fc5f69",
+      "gzipSha256": "592ce764168064734aea939d6acfd3544936fa866a8c6e72d24daa3fe3c3a777"
+    },
+    {
+      "file": "baseline-typescript.log.gz",
+      "rawFileName": "baseline-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "baseline-versioned.log.gz",
+      "rawFileName": "baseline-versioned.log",
+      "rawBytes": 3015,
+      "rawSha256": "2bf809ae617f2ad04c176e7138057bb4c2833e1972a6f8cd4fef3459b4b7aace",
+      "sanitizedBytes": 3015,
+      "sanitizedSha256": "2bf809ae617f2ad04c176e7138057bb4c2833e1972a6f8cd4fef3459b4b7aace",
+      "gzipSha256": "9e22dbde7d363d7e9f3fe1db65340b93b9a811d7108e61edd510e8f40ff96fac"
+    },
+    {
+      "file": "candidate-adopted-contract.json.gz",
+      "rawFileName": "candidate-adopted-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "candidate-after-rollback-contract.json.gz",
+      "rawFileName": "candidate-after-rollback-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "candidate-after-rollback.log.gz",
+      "rawFileName": "candidate-after-rollback.log",
+      "rawBytes": 3593,
+      "rawSha256": "f7e5c21d46cdb9711faa00a04a7d3d136de06c2dca783878febbe7594f13d772",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "f7e5c21d46cdb9711faa00a04a7d3d136de06c2dca783878febbe7594f13d772",
+      "gzipSha256": "cfecc487ab65605b34ec161ca06365bac5950d4323681cd8378d8165bfd226e7"
+    },
+    {
+      "file": "candidate-aliases.log.gz",
+      "rawFileName": "candidate-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "candidate-contract-adoption.log.gz",
+      "rawFileName": "candidate-contract-adoption.log",
+      "rawBytes": 3593,
+      "rawSha256": "afd0b70174d0edea48bc49a0d51e3c78cdbfdaf207eff9462db0d7b76b35346b",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "afd0b70174d0edea48bc49a0d51e3c78cdbfdaf207eff9462db0d7b76b35346b",
+      "gzipSha256": "b8f5e9c03239cbd0811714db52a6ac509e0f82d3a468a81df728486e56996518"
+    },
+    {
+      "file": "candidate-contract.json.gz",
+      "rawFileName": "candidate-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "candidate-repeat-contract.json.gz",
+      "rawFileName": "candidate-repeat-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "candidate-repeat.log.gz",
+      "rawFileName": "candidate-repeat.log",
+      "rawBytes": 3593,
+      "rawSha256": "e42754ffa0945332a5af99025b74f258191b7560811657a511fc19efd7324c4d",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "e42754ffa0945332a5af99025b74f258191b7560811657a511fc19efd7324c4d",
+      "gzipSha256": "f7592fa981b3d5ce4d55650fd51a0a1e4c46565957f55424f99f7813bb5eca11"
+    },
+    {
+      "file": "candidate-retained-contract.json.gz",
+      "rawFileName": "candidate-retained-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "candidate-retained-contract.log.gz",
+      "rawFileName": "candidate-retained-contract.log",
+      "rawBytes": 3593,
+      "rawSha256": "c24d46eb54afa5fc1a8441c058ca22a9d8388d4081e4ff761a7603d13411b9a1",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "c24d46eb54afa5fc1a8441c058ca22a9d8388d4081e4ff761a7603d13411b9a1",
+      "gzipSha256": "c0079112ede4efb971b1777a43747620a714dc78b60666b008b2d81e9a7da9e6"
+    },
+    {
+      "file": "candidate-typescript.log.gz",
+      "rawFileName": "candidate-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "candidate-versioned.log.gz",
+      "rawFileName": "candidate-versioned.log",
+      "rawBytes": 3602,
+      "rawSha256": "f7ea291ef0e8acd16b8e3994a383b8551ad28918547af8ab10ee1c1f29042e83",
+      "sanitizedBytes": 3602,
+      "sanitizedSha256": "f7ea291ef0e8acd16b8e3994a383b8551ad28918547af8ab10ee1c1f29042e83",
+      "gzipSha256": "1ccc1040009cdcc4d9f7451483b5e5efae8aafe40dd47b5a5444b9da4ea64f2a"
+    },
+    {
+      "file": "compatible-rollback-contract.json.gz",
+      "rawFileName": "compatible-rollback-contract.json",
+      "rawBytes": 31156,
+      "rawSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "sanitizedBytes": 31156,
+      "sanitizedSha256": "2c389b796823f0cd6cbcc7949cf7a4397f6c60599a4a584c5563f680ba435bc0",
+      "gzipSha256": "412af57335274d07a5eb1e0376f1c5741c9e7f048b894ba13f41767f4737d92f"
+    },
+    {
+      "file": "compatible-rollback-migrations.log.gz",
+      "rawFileName": "compatible-rollback-migrations.log",
+      "rawBytes": 3593,
+      "rawSha256": "bf5e95f5211ffc465930b54b4445417464cbb55638e3144a75b0e9fe4b3083df",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "bf5e95f5211ffc465930b54b4445417464cbb55638e3144a75b0e9fe4b3083df",
+      "gzipSha256": "a51833b952be0abf5818c838b4cf92bf9d8879cc388fbd2afe063603117183fd"
+    },
+    {
+      "file": "rehearsal.json.gz",
+      "rawFileName": "rehearsal.json",
+      "rawBytes": 4572,
+      "rawSha256": "6e380399d2b5348f2e16849dbc18041fe9a1391aad50d36989ebaad0ea08f3d4",
+      "sanitizedBytes": 4572,
+      "sanitizedSha256": "6e380399d2b5348f2e16849dbc18041fe9a1391aad50d36989ebaad0ea08f3d4",
+      "gzipSha256": "ec96767822161eb80925906f118d53122bd016e7af868a85eae3022fd5a7f81c"
+    },
+    {
+      "file": "rollback-aliases.log.gz",
+      "rawFileName": "rollback-aliases.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "rollback-typescript.log.gz",
+      "rawFileName": "rollback-typescript.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "invocation.log.gz",
+      "rawFileName": "release297-local-rehearsal-cb66014d-01.log",
+      "rawBytes": 3772,
+      "rawSha256": "43905d74d395e43cc3b40ff0594e2595980ef2ccd466e0945c25d8ebb16be5d0",
+      "sanitizedBytes": 3771,
+      "sanitizedSha256": "882ff955e5438d98a476ff0df1850bdd04ad55fa095811f3f54e80ed225e6f96",
+      "gzipSha256": "52a1a6655d0df5583f6092b1013706ed46997f9dae31f657bb01dd8ddc73ae11"
+    }
+  ]
+}

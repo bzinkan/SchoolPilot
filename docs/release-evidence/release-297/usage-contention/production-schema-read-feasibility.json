@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-02T23:06:11.0818164Z",
+  "observationDate": "2026-10-02",
+  "scope": "Read-only network feasibility for an actual production schema/catalog and migration-ledger export. No database connection, secret retrieval, cloud resource/task creation or production mutation was performed.",
+  "awsContext": {
+    "region": "us-east-1",
+    "cluster": "schoolpilot-production-cluster",
+    "databaseIdentifier": "schoolpilot-production-db",
+    "vpcId": "vpc-0e286e71a65c73ecb"
+  },
+  "observations": {
+    "database": {
+      "status": "available",
+      "publiclyAccessible": false,
+      "port": 5432,
+      "iamDatabaseAuthenticationEnabled": false,
+      "securityGroupId": "sg-0810105afb1453cc7",
+      "inbound": [
+        {
+          "protocol": "tcp",
+          "fromPort": 5432,
+          "toPort": 5432,
+          "sourceSecurityGroupId": "sg-08af33c99e705a4b7",
+          "cidrSources": []
+        }
+      ]
+    },
+    "services": [
+      {
+        "name": "schoolpilot-production-api",
+        "taskDefinitionFamilyRevision": "schoolpilot-production-api-emergency:163",
+        "enableExecuteCommand": false,
+        "securityGroupIds": [
+          "sg-08af33c99e705a4b7"
+        ],
+        "assignPublicIp": "ENABLED"
+      },
+      {
+        "name": "schoolpilot-production-scheduler-worker",
+        "taskDefinitionFamilyRevision": "schoolpilot-production-scheduler-worker:179",
+        "enableExecuteCommand": false,
+        "securityGroupIds": [
+          "sg-08af33c99e705a4b7"
+        ],
+        "assignPublicIp": "ENABLED"
+      }
+    ],
+    "ssmManagedInstanceCount": 0,
+    "clientVpnEndpointCount": 0,
+    "nonTerminatedVpcInstances": [
+      {
+        "name": "schoolpilot-production-classpilot-turn-a",
+        "state": "stopped"
+      },
+      {
+        "name": "schoolpilot-production-classpilot-turn-b",
+        "state": "stopped"
+      }
+    ]
+  },
+  "commands": [
+    "aws rds describe-db-instances --region us-east-1 --db-instance-identifier schoolpilot-production-db --query 'DBInstances[0].{Status:DBInstanceStatus,Public:PubliclyAccessible,Endpoint:Endpoint.Address,Port:Endpoint.Port,Vpc:DBSubnetGroup.VpcId,SecurityGroups:VpcSecurityGroups[*].VpcSecurityGroupId,IamAuth:IAMDatabaseAuthenticationEnabled}' --output json",
+    "aws ssm describe-instance-information --region us-east-1 --query 'InstanceInformationList[*].{Id:InstanceId,Status:PingStatus,Type:ResourceType,Platform:PlatformName}' --output json",
+    "aws ecs describe-services --region us-east-1 --cluster schoolpilot-production-cluster --services schoolpilot-production-api schoolpilot-production-scheduler-worker --query 'services[*].{Name:serviceName,ExecuteEnabled:enableExecuteCommand,Task:taskDefinition,Network:networkConfiguration}' --output json",
+    "aws ec2 describe-security-groups --region us-east-1 --group-ids sg-0810105afb1453cc7 --query 'SecurityGroups[*].{Id:GroupId,Name:GroupName,Inbound:IpPermissions}' --output json",
+    "aws ec2 describe-instances --region us-east-1 --filters Name=vpc-id,Values=vpc-0e286e71a65c73ecb Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[*].Instances[*].{Id:InstanceId,State:State.Name,Name:Tags[?Key==`Name`].Value|[0],PublicIp:PublicIpAddress,PrivateIp:PrivateIpAddress}' --output json",
+    "aws ec2 describe-client-vpn-endpoints --region us-east-1 --query 'ClientVpnEndpoints[*].{Id:ClientVpnEndpointId,VpcId:VpcId,Status:Status.Code}' --output json"
+  ],
+  "repositoryInspection": {
+    "guidance": "CLAUDE.md Production Deployment: private RDS is not directly accessible; documented schema changes use a deploy-script one-off migration task.",
+    "precedent": "scripts/run-mydesk-readiness.ps1 registers and runs a bounded inspection task using the existing network and DATABASE_URL secret reference, but exports only the six My Desk tables and three migration records. It was read, not executed.",
+    "fullCatalogHttpEndpoint": "No documented or implemented full-catalog export endpoint found in the reviewed repository routes/CLI documentation."
+  },
+  "conclusion": {
+    "existingUsableReadPathEstablished": false,
+    "actualProductionCatalogObtained": false,
+    "actualProductionMigrationLedgerObtained": false,
+    "localRehearsalStatus": "Reconstructed from the observed serving source and admission. Not an export of the actual production schema.",
+    "operationalPrerequisite": "Separately authorize a bounded read-only full-catalog inspector task after the release preparation/merge boundary, using an exact reviewed image and existing ECS network/security group and secret reference; alternatively supply a schema-only/catalog and checksum-ledger export from an already approved operator network path.",
+    "prohibitedWorkarounds": [
+      "No TURN startup",
+      "No ECS Exec enablement",
+      "No security-group changes",
+      "No new tunnel or cloud task without separate authorization",
+      "No database credential retrieval merely to probe access"
+    ]
+  },
+  "evidenceLimits": [
+    "Read-only AWS metadata establishes the inspected resources at observation time; it does not prove the entire account has no other privately managed access route.",
+    "No connection to the production database was attempted.",
+    "Raw command outputs are retained in the agent tool transcript; this JSON is a sanitized structured observation, not a raw-output archive.",
+    "Recheck service and network metadata before any later authorized operation."
+  ],
+  "productionMutations": 0,
+  "secretReads": 0
+}

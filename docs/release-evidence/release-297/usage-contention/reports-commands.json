@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "workdir": "C:/Users/zinka/.codex/worktrees/release-stabilization-297/SchoolPilot",
+  "environment": {
+    "NODE_ENV": "test",
+    "RLS_GUC_ENABLED": true,
+    "SCHEDULER_ENABLED": false,
+    "REDIS_URL": "empty",
+    "RLS_ENABLED_TABLES": "classpilotPrivateChatLifecyclePostExpand inventory, 129 tables",
+    "secrets": "Generated per isolated fixture in memory; omitted from all evidence. No production credentials."
+  },
+  "ownerBroad": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-usage-admission.integration.test.ts tests/classpilot-usage-rollup.test.ts",
+  "restrictedBroad": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-usage-admission.integration.test.ts tests/classpilot-usage-rollup-rls.test.ts",
+  "ownerAndRestrictedFocused": "node --import ./tests/test-environment.mjs --import tsx --test --test-concurrency=1 tests/classpilot-usage-admission.integration.test.ts",
+  "unitFinal": "node --import tsx --test tests/classpilot-usage-admission.test.ts tests/classpilot-usage-execution.test.ts tests/classpilot-usage-request.test.ts tests/classpilot-usage-coverage.test.ts tests/classpilot-usage-rollup-sql.test.ts",
+  "bootstrap": [
+    "Read-only schema-only pg_dump from local schoolpilot-db, database schoolpilot_redesign_usage_release297_20261002, using --no-owner --no-privileges.",
+    "Create a new randomly named container/database, bound only to 127.0.0.1, using the donor image digest, --cpus 2 and --memory 2g.",
+    "Restore the schema into the empty owned database. Do not mutate the schema donor or run production tests.",
+    "Run the owner lane using the generated fixture owner. Create a separate LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT application role with only schema usage, table SELECT/INSERT/UPDATE/DELETE and sequence usage/select.",
+    "Run the restricted lane with DATABASE_URL and DATABASE_URL_PRIVILEGED both pointing to that restricted role. ADMIN_DATABASE_URL remains the isolated fixture owner for test setup only; report request context uses the restricted pool.",
+    "Before deleting the owned fixture, verify its exact generated container name and codex.usage-native ownership label; archive the cleanup output."
+  ],
+  "bootstrapLimit": "Schema restore is not a full migration rehearsal. The current helper gained OnlyAdmission between attempts; this command description is not an exact frozen-source reproduction of every historical invocation."
+}

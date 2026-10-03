@@ -1,0 +1,1569 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T07:02:06.461Z",
+  "status": "failed_full_traffic_diagnostic_with_cpu_profiling",
+  "sourceRevision": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+  "sourceClean": true,
+  "sourceAtFinish": {
+    "revision": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+    "clean": true
+  },
+  "sourceUnchangedAtFinish": true,
+  "sourceHashes": {
+    "local-usage-scale.mjs": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+    "prepare-release-control-ownership.mjs": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+    "release-enabled-drain.mjs": "98e7da0dbe4bd10d0b1f49cc8cfc71792402442accac0e5fbdb9980713543c51",
+    "release-enabled-drain.test.mjs": "b1d3d5da733c893efe6d749d79268a2d3588e6b2dbffd2385aa39e8b33b6ca7a",
+    "release-enabled-generator.mjs": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+    "release-enabled-instrumentation.mjs": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+    "release-enabled-postgres-pressure.mjs": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+    "release-enabled-process.mjs": "a48c7b1bb1a74707736d5f2003e083667ce5ac7513fea4991de464345a7c9c3a",
+    "release-enabled-profile.mjs": "64926c46e435a0ef7923e8b9a748fd24cffb40e47da5a780acd407485b7163cc",
+    "release-enabled-profile.test.mjs": "29f0c7c85af667407d0799141ed69f6f83da1757126b0eecc4c135502884d840",
+    "release-enabled-protocol.mjs": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+    "release-enabled-scale.mjs": "053bbc7612c40d82ebcd82b5901419fe49509581f92f6897e220c3382e3dc35c",
+    "run-release-enabled-scale.ps1": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384"
+  },
+  "sourceVerification": {
+    "observedAt": "2026-10-03T07:02:05.937Z",
+    "sourceRevision": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+    "sourceCleanAtStart": true,
+    "sourceAtFinish": {
+      "revision": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+      "clean": true
+    },
+    "sourceUnchangedAtFinish": true,
+    "loadScriptHashChecks": [
+      {
+        "file": "local-usage-scale.mjs",
+        "recordedRawSha256": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+        "currentRawSha256": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "prepare-release-control-ownership.mjs",
+        "recordedRawSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+        "currentRawSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-drain.mjs",
+        "recordedRawSha256": "98e7da0dbe4bd10d0b1f49cc8cfc71792402442accac0e5fbdb9980713543c51",
+        "currentRawSha256": "98e7da0dbe4bd10d0b1f49cc8cfc71792402442accac0e5fbdb9980713543c51",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-drain.test.mjs",
+        "recordedRawSha256": "b1d3d5da733c893efe6d749d79268a2d3588e6b2dbffd2385aa39e8b33b6ca7a",
+        "currentRawSha256": "b1d3d5da733c893efe6d749d79268a2d3588e6b2dbffd2385aa39e8b33b6ca7a",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-generator.mjs",
+        "recordedRawSha256": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+        "currentRawSha256": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-instrumentation.mjs",
+        "recordedRawSha256": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+        "currentRawSha256": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-postgres-pressure.mjs",
+        "recordedRawSha256": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+        "currentRawSha256": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-process.mjs",
+        "recordedRawSha256": "a48c7b1bb1a74707736d5f2003e083667ce5ac7513fea4991de464345a7c9c3a",
+        "currentRawSha256": "a48c7b1bb1a74707736d5f2003e083667ce5ac7513fea4991de464345a7c9c3a",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-profile.mjs",
+        "recordedRawSha256": "64926c46e435a0ef7923e8b9a748fd24cffb40e47da5a780acd407485b7163cc",
+        "currentRawSha256": "64926c46e435a0ef7923e8b9a748fd24cffb40e47da5a780acd407485b7163cc",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-profile.test.mjs",
+        "recordedRawSha256": "29f0c7c85af667407d0799141ed69f6f83da1757126b0eecc4c135502884d840",
+        "currentRawSha256": "29f0c7c85af667407d0799141ed69f6f83da1757126b0eecc4c135502884d840",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-protocol.mjs",
+        "recordedRawSha256": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+        "currentRawSha256": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "release-enabled-scale.mjs",
+        "recordedRawSha256": "053bbc7612c40d82ebcd82b5901419fe49509581f92f6897e220c3382e3dc35c",
+        "currentRawSha256": "053bbc7612c40d82ebcd82b5901419fe49509581f92f6897e220c3382e3dc35c",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      },
+      {
+        "file": "run-release-enabled-scale.ps1",
+        "recordedRawSha256": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384",
+        "currentRawSha256": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384",
+        "match": true,
+        "normalizedContentMatchesGit": true
+      }
+    ],
+    "semantics": "Original run reports clean unchanged source. Current raw script hashes still match the recorded run; content normalized only for CRLF/LF comparison matches Git objects. Mixed Windows checkout line endings explain failed raw Git-hash attempt01."
+  },
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory <TEMP>/release297-ingest-cpu-bcb2b33c-01 -Phase ingest -DiagnosticOnly -CollectApiCpuProfile",
+  "exitCode": 1,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "diagnosticOnly": true,
+  "startedAt": "2026-10-03T06:55:48.668Z",
+  "finishedAt": "2026-10-03T06:57:05.141Z",
+  "phaseDurationMs": 67878.8831,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5380,
+    "succeeded": 5148,
+    "failed": 232,
+    "refusedAtInFlightLimit": 620,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 16.81149999999616,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2690,
+        "succeeded": 2570,
+        "failed": 120,
+        "refused": 310
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2690,
+        "succeeded": 2578,
+        "failed": 112,
+        "refused": 310
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 232
+    },
+    "offerWindowMs": 59991.1618,
+    "outstandingAtEndOfOffering": 991,
+    "totalIncludingDrainMs": 67872.0508,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5380,
+      "minMs": 289.41010000000097,
+      "p50Ms": 10949.054999999993,
+      "p95Ms": 12728.704199999996,
+      "maxMs": 14117.1689
+    }
+  },
+  "insertedObservations": 5254,
+  "reportsExecuted": 0,
+  "workersExecuted": 0,
+  "lifecycleExecuted": false,
+  "cpuProfile": {
+    "enabled": true,
+    "file": "api.cpuprofile",
+    "samplingIntervalMicroseconds": 1000,
+    "includesStartupAndDrain": true,
+    "capacityEvidence": false,
+    "sha256": "42e636511e38756f1b15bcc91929883f0dc41feba51c3c201f67edbc7b88db60",
+    "bytes": 3973887,
+    "samples": 49024,
+    "startTime": 1463460978028,
+    "endTime": 1463537302024
+  },
+  "profileAnalysisSummary": {
+    "source": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+    "profileSha256": "42e636511e38756f1b15bcc91929883f0dc41feba51c3c201f67edbc7b88db60",
+    "measurement": {
+      "from": 1463469236020,
+      "until": 1463537115995,
+      "durationSeconds": 67.879975,
+      "sampledSeconds": 67.879975,
+      "acceptedSamples": 43629
+    },
+    "semantics": "V8 statistical wall-clock samples limited to API reset through drained snapshot; inclusive stacks overlap. Profiling overhead means this is diagnostic only.",
+    "exclusive": [
+      {
+        "name": "writev",
+        "url": "",
+        "line": 0,
+        "microseconds": 5706523,
+        "samples": 3616,
+        "milliseconds": 5707,
+        "percent": 8.41
+      },
+      {
+        "name": "is",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/entity.js",
+        "line": 3,
+        "microseconds": 4441100,
+        "samples": 2850,
+        "milliseconds": 4441,
+        "percent": 6.54
+      },
+      {
+        "name": "(garbage collector)",
+        "url": "",
+        "line": 0,
+        "microseconds": 2832853,
+        "samples": 1819,
+        "milliseconds": 2833,
+        "percent": 4.17
+      },
+      {
+        "name": "(idle)",
+        "url": "",
+        "line": 0,
+        "microseconds": 2821185,
+        "samples": 1812,
+        "milliseconds": 2821,
+        "percent": 4.16
+      },
+      {
+        "name": "runMicrotasks",
+        "url": "",
+        "line": 0,
+        "microseconds": 2546838,
+        "samples": 1633,
+        "milliseconds": 2547,
+        "percent": 3.75
+      },
+      {
+        "name": "(program)",
+        "url": "",
+        "line": 0,
+        "microseconds": 1729249,
+        "samples": 1122,
+        "milliseconds": 1729,
+        "percent": 2.55
+      },
+      {
+        "name": "addFields",
+        "url": "file:///<WORKTREE>/node_modules/pg/lib/result.js",
+        "line": 82,
+        "microseconds": 1723437,
+        "samples": 1108,
+        "milliseconds": 1723,
+        "percent": 2.54
+      },
+      {
+        "name": "(anonymous)",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/sql/sql.js",
+        "line": 83,
+        "microseconds": 1656425,
+        "samples": 1067,
+        "milliseconds": 1656,
+        "percent": 2.44
+      },
+      {
+        "name": "writeBuffer",
+        "url": "",
+        "line": 0,
+        "microseconds": 1545810,
+        "samples": 986,
+        "milliseconds": 1546,
+        "percent": 2.28
+      },
+      {
+        "name": "buildQueryFromSourceParams",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/sql/sql.js",
+        "line": 70,
+        "microseconds": 1487173,
+        "samples": 959,
+        "milliseconds": 1487,
+        "percent": 2.19
+      },
+      {
+        "name": "isClasspilotCapabilityActive",
+        "url": "file:///<WORKTREE>/dist/services/classpilotProtocol.js",
+        "line": 272,
+        "microseconds": 1019046,
+        "samples": 653,
+        "milliseconds": 1019,
+        "percent": 1.5
+      },
+      {
+        "name": "PgDatabase",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/pg-core/db.js",
+        "line": 17,
+        "microseconds": 820928,
+        "samples": 531,
+        "milliseconds": 821,
+        "percent": 1.21
+      },
+      {
+        "name": "sql",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/sql/sql.js",
+        "line": 283,
+        "microseconds": 759430,
+        "samples": 488,
+        "milliseconds": 759,
+        "percent": 1.12
+      },
+      {
+        "name": "(anonymous)",
+        "url": "file:///<WORKTREE>/dist/routes/classpilot/devices.js",
+        "line": 3009,
+        "microseconds": 649551,
+        "samples": 415,
+        "milliseconds": 650,
+        "percent": 0.96
+      },
+      {
+        "name": "(anonymous)",
+        "url": "",
+        "line": 0,
+        "microseconds": 620967,
+        "samples": 399,
+        "milliseconds": 621,
+        "percent": 0.91
+      }
+    ],
+    "inclusive": [
+      {
+        "name": "(root)",
+        "url": "",
+        "line": 0,
+        "microseconds": 67879975,
+        "samples": 43629,
+        "milliseconds": 67880,
+        "percent": 100
+      },
+      {
+        "name": "processTicksAndRejections",
+        "url": "node:internal/process/task_queues",
+        "line": 72,
+        "microseconds": 48852869,
+        "samples": 31362,
+        "milliseconds": 48853,
+        "percent": 71.97
+      },
+      {
+        "name": "runMicrotasks",
+        "url": "",
+        "line": 0,
+        "microseconds": 47341694,
+        "samples": 30389,
+        "milliseconds": 47342,
+        "percent": 69.74
+      },
+      {
+        "name": "startActiveSpan",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/tracing.js",
+        "line": 6,
+        "microseconds": 20082698,
+        "samples": 12865,
+        "milliseconds": 20083,
+        "percent": 29.59
+      },
+      {
+        "name": "then",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/query-promise.js",
+        "line": 20,
+        "microseconds": 17103929,
+        "samples": 10964,
+        "milliseconds": 17104,
+        "percent": 25.2
+      },
+      {
+        "name": "target.<computed>",
+        "url": "file:///<WORKTREE>/scripts/load/usage/release-enabled-instrumentation.mjs",
+        "line": 7,
+        "microseconds": 11076455,
+        "samples": 7068,
+        "milliseconds": 11076,
+        "percent": 16.32
+      },
+      {
+        "name": "execute",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/pg-core/query-builders/select.js",
+        "line": 795,
+        "microseconds": 10618628,
+        "samples": 6822,
+        "milliseconds": 10619,
+        "percent": 15.64
+      },
+      {
+        "name": "(anonymous)",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/pg-core/query-builders/select.js",
+        "line": 796,
+        "microseconds": 10522001,
+        "samples": 6762,
+        "milliseconds": 10522,
+        "percent": 15.5
+      },
+      {
+        "name": "(anonymous)",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/node-postgres/session.js",
+        "line": 101,
+        "microseconds": 10429050,
+        "samples": 6657,
+        "milliseconds": 10429,
+        "percent": 15.36
+      },
+      {
+        "name": "query",
+        "url": "file:///<WORKTREE>/node_modules/pg/lib/client.js",
+        "line": 668,
+        "microseconds": 10332137,
+        "samples": 6592,
+        "milliseconds": 10332,
+        "percent": 15.22
+      },
+      {
+        "name": "execute",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/node-postgres/session.js",
+        "line": 100,
+        "microseconds": 10002877,
+        "samples": 6386,
+        "milliseconds": 10003,
+        "percent": 14.74
+      },
+      {
+        "name": "_pulseQueryQueue",
+        "url": "file:///<WORKTREE>/node_modules/pg/lib/client.js",
+        "line": 616,
+        "microseconds": 9746884,
+        "samples": 6215,
+        "milliseconds": 9747,
+        "percent": 14.36
+      },
+      {
+        "name": "queryWithCache",
+        "url": "file:///<WORKTREE>/node_modules/drizzle-orm/pg-core/session.js",
+        "line": 36,
+        "microseconds": 9515417,
+        "samples": 6068,
+        "milliseconds": 9515,
+        "percent": 14.02
+      },
+      {
+        "name": "submit",
+        "url": "file:///<WORKTREE>/node_modules/pg/lib/query.js",
+        "line": 152,
+        "microseconds": 9479338,
+        "samples": 6044,
+        "milliseconds": 9479,
+        "percent": 13.96
+      },
+      {
+        "name": "emit",
+        "url": "node:events",
+        "line": 465,
+        "microseconds": 9271298,
+        "samples": 5961,
+        "milliseconds": 9271,
+        "percent": 13.66
+      }
+    ]
+  },
+  "serverDrain": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.3927000000112457,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.1732000000047265,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "performance": {
+    "apiCpuMicroseconds": {
+      "user": 63687000,
+      "system": 18375000
+    },
+    "apiEventLoop": {
+      "p50Ms": 22.249471,
+      "p95Ms": 28.000255,
+      "maxMs": 72.417279,
+      "utilization": 0.9996401860574061
+    },
+    "apiAcquisitions": {
+      "count": 17004,
+      "failures": 232,
+      "maxMs": 5054.090099999998
+    },
+    "apiPeakHeld": 16,
+    "apiPeakWaiting": 986,
+    "apiOperations": {
+      "auth": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 19,
+          "totalMs": 291.1268000000018,
+          "maxMs": 29.614400000000387
+        }
+      },
+      "heartbeat_persistence": {
+        "counters": {
+          "checkoutAttempts": 5336,
+          "checkoutSuccess": 5254,
+          "checkoutFailure": 82,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 5254,
+          "totalMs": 161484.0185,
+          "maxMs": 179.2564999999995
+        },
+        "sql": {
+          "count": 22719,
+          "totalMs": 170133.06489999982,
+          "maxMs": 70.9307000000008
+        }
+      },
+      "heartbeat_final_delivery": {
+        "counters": {
+          "checkoutAttempts": 6244,
+          "checkoutSuccess": 6138,
+          "checkoutFailure": 106,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 6138,
+          "totalMs": 883609.6577000013,
+          "maxMs": 675.0586000000003
+        },
+        "sql": {
+          "count": 121316,
+          "totalMs": 831540.3253999992,
+          "maxMs": 76.08009999999922
+        }
+      },
+      "heartbeat_background": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "api_limiter": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "heartbeat_middleware": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "heartbeat_handler": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 188
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "usage_report_admission": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "usage_report": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "usage_worker": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "tenant_request": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "tenant_background": {
+        "counters": {
+          "checkoutAttempts": 44,
+          "checkoutSuccess": 44,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 44,
+          "totalMs": 1469.464,
+          "maxMs": 66.80799999999726
+        },
+        "sql": {
+          "count": 158,
+          "totalMs": 1676.618300000031,
+          "maxMs": 32.31109999999899
+        }
+      },
+      "unclassified": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 1766,
+          "totalMs": 12442.862300000026,
+          "maxMs": 67.31000000000131
+        }
+      }
+    },
+    "postgresPressure": {
+      "valid": true,
+      "settingsStable": true,
+      "groups": {
+        "wal": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "wal_records": "154818",
+            "wal_fpi": "5399",
+            "wal_bytes": "46450804",
+            "wal_buffers_full": "0",
+            "wal_write": "11007",
+            "wal_sync": "10998"
+          },
+          "timingsMs": null
+        },
+        "bgwriter": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": true,
+          "counters": {
+            "checkpoints_timed": "0",
+            "checkpoints_req": "0",
+            "buffers_checkpoint": "0",
+            "buffers_clean": "22174",
+            "maxwritten_clean": "186",
+            "buffers_backend": "4733",
+            "buffers_backend_fsync": "0",
+            "buffers_alloc": "90787"
+          },
+          "timingsMs": {
+            "checkpoint_write_time": 0,
+            "checkpoint_sync_time": 0
+          }
+        },
+        "database": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "xact_commit": "47023",
+            "xact_rollback": "4",
+            "blks_read": "90020",
+            "blks_hit": "15052935",
+            "tup_returned": "7730166",
+            "tup_fetched": "6962236",
+            "tup_inserted": "5350",
+            "tup_updated": "2030",
+            "tup_deleted": "29",
+            "temp_files": "0",
+            "temp_bytes": "0",
+            "deadlocks": "0"
+          },
+          "timingsMs": null
+        }
+      },
+      "semantics": "Read-only counters from the owned PostgreSQL instance; statistics are asynchronously published and are not exact per-operation attribution. WAL/bgwriter counters are instance-wide; database counters cover this fixture. Timing disabled means unavailable, never a measured zero."
+    }
+  },
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Diagnostic ingestion failed\n\nfalse !== true\n"
+  },
+  "workload": {
+    "profile": {
+      "name": "release-enabled-isolated-100rps-v1",
+      "students": 500,
+      "classes": 100,
+      "studentsPerClass": 5,
+      "periods": 6,
+      "lessonMinutes": 50,
+      "passingMinutes": 10,
+      "observationsPerStudent": 2000,
+      "cadenceSeconds": 10,
+      "domainDwellSeconds": 200,
+      "domainsPerStudent": 8,
+      "domainsSchoolWide": 200,
+      "rawPerSchool": 1000000,
+      "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+      "aiDecisionRowsPerSchool": 10000,
+      "aiDecisionsPerStudent": 20,
+      "aiDecisionEveryObservations": 100,
+      "aiDecisionCadenceSeconds": 1000,
+      "aiDecisionCategory": "matches the selected heartbeat",
+      "httpOffering": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "fullWorkerAcceptanceMs": 48000,
+      "classPilot": {
+        "extensionVersion": "2.9.7",
+        "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+        "sourceFile": "extension/service-worker.js",
+        "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+        "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+        "capabilities": [
+          "helpRequestsV1",
+          "questionParkingV1",
+          "timerControlsV1",
+          "lessonActivitiesV1",
+          "exitTicketsV1",
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "scopedAuthorityChecksV1",
+          "scheduledClassroomV1",
+          "authBoundTelemetryV1",
+          "exactBindingAckV2",
+          "exactTabCloseV2",
+          "studentAuthGatePresenceV1",
+          "lateSignInRestrictionSsoV1",
+          "restrictionAuthPassThroughV1",
+          "preciseRestrictionResourcesV1",
+          "restrictionPortalFirstV1",
+          "afterHoursSafetyOnlyV1",
+          "schoolWebsiteBlockEnforcementV1",
+          "studentChatIdempotencyV1",
+          "screenshotTrackingWindowLeaseV1",
+          "screenshotActiveObservationCadenceV1",
+          "screenshotObservationLeaseV1",
+          "safetyEvidenceCaptureV1",
+          "liveViewIceServersV1",
+          "kioskLaunchTicketV1",
+          "kioskLaunchTicketV2",
+          "managedDeviceContinuityV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1",
+          "domainPreservingRestrictionsV1",
+          "chatPauseV1",
+          "chatSeenAckV1",
+          "focusTabV1",
+          "privateChatLifecycleV1"
+        ]
+      },
+      "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.",
+      "apiTasks": 1,
+      "apiMainPool": 16,
+      "apiSessionPool": 2,
+      "workerPool": 5,
+      "observerPool": 2,
+      "staffAuthentication": "real-password-login-and-session-cookie",
+      "capabilityModes": {
+        "preciseRestrictionResourcesV1": "on",
+        "focusTabV1": "on",
+        "privateChatLifecycleV1": "on"
+      },
+      "reportOffers": {
+        "waves": 4,
+        "maximumParallel": 16,
+        "total": 64,
+        "csvAfterConcurrent": 8,
+        "rangesInDays": [
+          1,
+          7,
+          30,
+          365
+        ]
+      },
+      "publicRequestDeadlineMs": 20000,
+      "preflightDevicesPerSchool": 5,
+      "drainCoverage": "Known Promise-returning API/heartbeat middleware, full heartbeat handlers, scoped operations, raw pool work, classification/WebSocket producers and tenant releases. HTTP response lifetime supplements callback middleware; an aborted pre-handler response is never certified as fully completed.",
+      "reporting": "100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance"
+    },
+    "canonicalActiveControlPreparation": {
+      "schemaVersion": 1,
+      "sourceRevision": "bcb2b33c6ef08243a1147d9818cfe3d668ea3f27",
+      "coldFixtureSha256": "04f0acfda3fe3e38ef84bc06ea5a192ff34588fc8db168ee37f20e4cd203a02f",
+      "scriptSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+      "passed": true,
+      "poolsClosed": true,
+      "schools": [
+        {
+          "schoolIndex": 0,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        },
+        {
+          "schoolIndex": 1,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        }
+      ]
+    },
+    "preparation": {
+      "seedMs": 235618.659,
+      "fixtureCounts": [
+        {
+          "school_id": "synthetic-school-0",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        },
+        {
+          "school_id": "synthetic-school-1",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        }
+      ],
+      "heavyDeviceBindings": [
+        {
+          "schoolIndex": 0,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        },
+        {
+          "schoolIndex": 1,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        }
+      ],
+      "aiDecisionBindings": [
+        {
+          "schoolIndex": 0,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        },
+        {
+          "schoolIndex": 1,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        }
+      ],
+      "preparationStage": {
+        "kind": "complete"
+      }
+    },
+    "preparedStateSha256": "04f0acfda3fe3e38ef84bc06ea5a192ff34588fc8db168ee37f20e4cd203a02f"
+  },
+  "resources": {
+    "postgres": {
+      "cpu": 4,
+      "memoryBytes": 4294967296,
+      "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6"
+    },
+    "redis": {
+      "imageDigest": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2"
+    },
+    "nodeOldSpaceMiB": 512,
+    "pools": {
+      "api": 16,
+      "session": 2,
+      "worker": 5,
+      "observer": 2
+    },
+    "processModel": "Separate local Windows API, worker and generator Node processes; production CPU equivalence is not claimed.",
+    "coldPostgresRestart": true,
+    "hostFilesystemCachesFlushed": false
+  },
+  "admission": {
+    "restrictedNonOwnerRole": true,
+    "rlsInventory": "classpilotPrivateChatLifecyclePostExpand",
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "admittedTables": 129,
+    "currentFixtureMigrations": true
+  },
+  "interpretation": [
+    "Diagnostic only: the full6000-offer ingestion workload failed. Profiling overhead and absence of concurrent reports/workers/lifecycle prevent capacity or deployment acceptance.",
+    "5148 heartbeats succeeded,232 failed,620 were refused at the in-flight bound, and none were offered late.5254 observations persisted; client success and database writes are distinct counts.",
+    "API consumed82.062 CPU seconds during67.879975 measured wall seconds with0.9996402 event-loop utilization,232 connection-acquisition failures and72.42ms maximum loop delay.",
+    "Raw CPU profile is retained in full with filesystem-prefix sanitation only. Analysis clips to the67.879975s reset-to-drained-snapshot window and43629samples; inclusive stacks overlap and statistical samples are not exact function CPU costs.",
+    "Both API and worker server drains completed with every physical gauge zero and0abortedresponses; client outstanding count was0 and childShutdownClean=true. The acceptance failure is traffic capacity, not drain certification.",
+    "Original clean start and finish source receipts both bind bcb2b33c and sourceUnchangedAtFinish=true. Recorded raw harness hashes still match current bytes, whose LF-normalized content was checked against that Git revision; no current-tree clean claim is substituted for those receipts.",
+    "External archive attempt01 incorrectly compared raw mixed-line-ending Windows files with normalized Git blobs. Its assertion failed before any archive was created; failure and correction are retained. No original run evidence was changed.",
+    "No reports, historical workers, lifecycle simulation, current-day correctness oracle or CSV export were run in this ingestion-only diagnostic."
+  ],
+  "cleanup": {
+    "childShutdownClean": true,
+    "observedAtUtc": "2026-10-03T06:59:17.6816313Z",
+    "dockerEndpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+    "ownedContainersAbsent": true,
+    "ownedProcessesAbsent": true,
+    "containers": [
+      {
+        "name": "schoolpilot-usage-scale-736a7faa00ea",
+        "present": false
+      },
+      {
+        "name": "schoolpilot-usage-redis-736a7faa00ea",
+        "present": false
+      }
+    ],
+    "processes": [
+      {
+        "role": "api",
+        "recordedPid": 93812,
+        "present": false
+      },
+      {
+        "role": "worker",
+        "recordedPid": 78640,
+        "present": false
+      },
+      {
+        "role": "generator",
+        "recordedPid": 77752,
+        "present": false
+      }
+    ],
+    "scope": "Read-only exact-name/PID observation; no unrelated process or container changed."
+  },
+  "schema": {
+    "inputRawSha256": "3272b554e512566448b87fdd33f51e2f23be695368f8e9c6955dc8b6b2d1e113",
+    "postConvergenceRawSha256": "87573d6da1880697516dee4dd7f03167c0d361aa91c5b27dd3098e5b39cd3c39",
+    "fingerprint": {
+      "rawSha256": "87573d6da1880697516dee4dd7f03167c0d361aa91c5b27dd3098e5b39cd3c39",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "UTF8/LF; remove only pg_dump restrict/unrestrict security nonce lines; preserve all DDL"
+    }
+  },
+  "omitted": [
+    {
+      "file": "cold-fixture-state.json",
+      "rawBytes": 183028,
+      "rawSha256": "04f0acfda3fe3e38ef84bc06ea5a192ff34588fc8db168ee37f20e4cd203a02f",
+      "reason": "Populated identities and credentials excluded from shareable archive; raw original retained externally."
+    }
+  ],
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "api-independent-callers-summary.log.gz",
+      "originalFile": "api-independent-callers-summary.log",
+      "rawBytes": 14106,
+      "rawSha256": "543924659e0ae86d3abaee0b36e3a951901518c914fa3297a421de0e6d254be4",
+      "sanitizedBytes": 14106,
+      "sanitizedSha256": "543924659e0ae86d3abaee0b36e3a951901518c914fa3297a421de0e6d254be4",
+      "gzipSha256": "b995bbf4eda6f3e8531b984262e55c4165c7a88002681d6fcbc868dc82d272c6"
+    },
+    {
+      "file": "api-independent-callers.json.gz",
+      "originalFile": "api-independent-callers.json",
+      "rawBytes": 129043,
+      "rawSha256": "41f7f500dab25128b0b105ae7629c55fcd9aa20a88c1c653ec42fb09acfb7d18",
+      "sanitizedBytes": 129043,
+      "sanitizedSha256": "41f7f500dab25128b0b105ae7629c55fcd9aa20a88c1c653ec42fb09acfb7d18",
+      "gzipSha256": "67f37de9fc8d36e712cb6bcd86a874b60e03d724b7226fc378c666cbd24eccb4"
+    },
+    {
+      "file": "api-profile-analysis-summary.log.gz",
+      "originalFile": "api-profile-analysis-summary.log",
+      "rawBytes": 17439,
+      "rawSha256": "821fab804f791cc1fa67316a883922c9648b90fe90ff9483bd23d360a07bae87",
+      "sanitizedBytes": 15138,
+      "sanitizedSha256": "9b99d3352e31a963b2b123cfdfdd6f1d563e7ddfb728c4cc92264c41191644c4",
+      "gzipSha256": "9aa843cfbcbf2094b6a81ee007a7a5a18acac3ab9dc4d809190708472b348a03"
+    },
+    {
+      "file": "api-profile-analysis.json.gz",
+      "originalFile": "api-profile-analysis.json",
+      "rawBytes": 619278,
+      "rawSha256": "bc574a1d64340bda4924b7e68cda1023ab3277423676a7ae172054b491067ef8",
+      "sanitizedBytes": 532843,
+      "sanitizedSha256": "7b32014643d9e8df1509d671fca3b1bc42fa2e55d05237647d801c4454665fb3",
+      "gzipSha256": "ec53d02ec78b4856638c1d5386de2b85d44226cc666fa1f21b1c23bacd0d7b6d"
+    },
+    {
+      "file": "api.cpuprofile.gz",
+      "originalFile": "api.cpuprofile",
+      "rawBytes": 3973887,
+      "rawSha256": "42e636511e38756f1b15bcc91929883f0dc41feba51c3c201f67edbc7b88db60",
+      "sanitizedBytes": 3701602,
+      "sanitizedSha256": "dc739eae9d1af324169a2a6645630da5e8a85ad3ad840876b9b4f3f861e0076a",
+      "gzipSha256": "2d6cbb8f0a186efbfba0c69ec66d458cb817305e37ae7e3de66d8c1b7ec6f011"
+    },
+    {
+      "file": "api.log.gz",
+      "originalFile": "api.log",
+      "rawBytes": 44530,
+      "rawSha256": "ab8141f8d9ef6c7ae071729cacf35000830581b332d773eac20155e3d7223f39",
+      "sanitizedBytes": 39316,
+      "sanitizedSha256": "2de8b872c92a61962bead895b3255ff498fb6cadb2b6aa5a0a81e9d397374d19",
+      "gzipSha256": "7f3e30a843b39d0e98db9a38a0d773933b7af4fa0da7086be7bb89ca4edb9476"
+    },
+    {
+      "file": "build.log.gz",
+      "originalFile": "build.log",
+      "rawBytes": 42,
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedBytes": 38,
+      "sanitizedSha256": "293f3ae59b47b581fac6b4817aa1422d14ff3d4d21a6581e67ddbc35f5aaa98f",
+      "gzipSha256": "d8ff3c6e74dba5899df769a43ec409aba515dc83b0d5f2b988e9907c86bd50d0"
+    },
+    {
+      "file": "cold-restart.log.gz",
+      "originalFile": "cold-restart.log",
+      "rawBytes": 38,
+      "rawSha256": "239a703b988af125d8bce935b7ac7563daa37398fd890f3a2ada4102f383a0b1",
+      "sanitizedBytes": 37,
+      "sanitizedSha256": "5af21e9d85e69a69a42ed10dbf014f1bc7ceb516d755bb8c1dc9d847c1e0e66e",
+      "gzipSha256": "2ce4603af8f6800d840c70e3629a41f6ee9af62188ee829c7c1638914c0dc0d5"
+    },
+    {
+      "file": "cold-restarted-state.json.gz",
+      "originalFile": "cold-restarted-state.json",
+      "rawBytes": 229,
+      "rawSha256": "ec75a7d485c148cb5f9ee49ef96bb0b439beaa757595b5d7453df9feb9ca8cac",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "680af67cdfcf4b1859d16a510656f615cc2d1c2bd49eff81ae9ec7516a59a828",
+      "gzipSha256": "54b4b6323e33a86bb0957cd2eec88ae59da51950c8d7947226d8fad36bc9ee5c"
+    },
+    {
+      "file": "container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "6dc43acab2f4bb95ce6ed8354e1eacd7cb6a9151b7e902ecbdcec68b669464ef",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "626ca602b06786f1296f42be808fae018791bead91eadff7ca6be9a4088efa86",
+      "gzipSha256": "90444a3ececd296eb886b4f39aae362f006acd833c3802a28d20f53a0df7c8ea"
+    },
+    {
+      "file": "container-final-state.json.gz",
+      "originalFile": "container-final-state.json",
+      "rawBytes": 229,
+      "rawSha256": "ec75a7d485c148cb5f9ee49ef96bb0b439beaa757595b5d7453df9feb9ca8cac",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "680af67cdfcf4b1859d16a510656f615cc2d1c2bd49eff81ae9ec7516a59a828",
+      "gzipSha256": "54b4b6323e33a86bb0957cd2eec88ae59da51950c8d7947226d8fad36bc9ee5c"
+    },
+    {
+      "file": "container-final-stats.json.gz",
+      "originalFile": "container-final-stats.json",
+      "rawBytes": 248,
+      "rawSha256": "10a6aa07bdf7881797307904cd3a377ba37e615820b7a385d9e0026066e6ba80",
+      "sanitizedBytes": 247,
+      "sanitizedSha256": "bcee6be11919de837c8ba604fa3eca0f7a467f48faa12273d4d181cee9c103bf",
+      "gzipSha256": "443768035ee0fa363504abadecbc87fdbef9b8a193e5ac103d95c9cf256625e7"
+    },
+    {
+      "file": "execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 1600,
+      "rawSha256": "b835a21ad957ba876c8947ebf1f278c440469e9a5956351b6223337def2756fe",
+      "sanitizedBytes": 1569,
+      "sanitizedSha256": "7974af017ba4777ddfd7179085c853800ad0466044c20db28bd7c477df0636fb",
+      "gzipSha256": "d53d978108cbf28d4e3b83ae9e0c829da8514dc6985cfae0b9c840c1cc61324d"
+    },
+    {
+      "file": "fixture-legacy-convergence.log.gz",
+      "originalFile": "fixture-legacy-convergence.log",
+      "rawBytes": 12561,
+      "rawSha256": "dfc284b002351b7ac55aaa2782b91982700037ed5605a5cbc7ff64d7995ce4fe",
+      "sanitizedBytes": 12425,
+      "sanitizedSha256": "b35885d2bad11666ad16a98bb6c88e3a751615a18492867693b684e7add4640c",
+      "gzipSha256": "2747f7b3e632f6ec531885e035a7efeb6cea93a666b5c088f7ad55dabfeb28be"
+    },
+    {
+      "file": "fixture-versioned-migrations.log.gz",
+      "originalFile": "fixture-versioned-migrations.log",
+      "rawBytes": 3648,
+      "rawSha256": "3d16539178e5332c9c4ba9c5fbc8d9ab775f14e43eb7351000dcc4cbcec4d5ef",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "27064a7dbdcbc4ff5fce5689c6341ab3a4cec247951303c56aefc96579470a07",
+      "gzipSha256": "37184e47e8f9cc4e8c708f34e8d2aff41e5286f8dc985c61a12d707b463de6b6"
+    },
+    {
+      "file": "generator.log.gz",
+      "originalFile": "generator.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "local-docker-daemon.json.gz",
+      "originalFile": "local-docker-daemon.json",
+      "rawBytes": 116,
+      "rawSha256": "1152ec89135c312f1996c49a7442b1548c36816caae9ec4a37bf13b8c49dcc1d",
+      "sanitizedBytes": 111,
+      "sanitizedSha256": "d87793915480f94b5eedbf3e3f170c52fc0731f12bf30610ead311c24b368b29",
+      "gzipSha256": "69741db6865090818944fdd33f382d493cf4960e6752eaaddc0ab22c057c8ebb"
+    },
+    {
+      "file": "post-convergence-schema.sql.gz",
+      "originalFile": "post-convergence-schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "87573d6da1880697516dee4dd7f03167c0d361aa91c5b27dd3098e5b39cd3c39",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "87573d6da1880697516dee4dd7f03167c0d361aa91c5b27dd3098e5b39cd3c39",
+      "gzipSha256": "2a67839fb8100ba1d990f24f2026cf3021d25b9140c29d937213e6c2e6f1e60d"
+    },
+    {
+      "file": "preparation-fixture-contract.json.gz",
+      "originalFile": "preparation-fixture-contract.json",
+      "rawBytes": 35903,
+      "rawSha256": "1fc972d87abd7da808753da739121f8e1d0dd7e1be85f878ac4a591224814718",
+      "sanitizedBytes": 35903,
+      "sanitizedSha256": "1fc972d87abd7da808753da739121f8e1d0dd7e1be85f878ac4a591224814718",
+      "gzipSha256": "7f2f99f99067cae975d8c03f51695750ec29c9a206f255281592d77103c380bf"
+    },
+    {
+      "file": "preparation-metrics.json.gz",
+      "originalFile": "preparation-metrics.json",
+      "rawBytes": 45024,
+      "rawSha256": "a72fe5bf2dd4d06a418b52ce2cfadd9ed6b98700b874bc25decfcd85a72cbe81",
+      "sanitizedBytes": 44988,
+      "sanitizedSha256": "29e37a8a0a79c1ac112d9e79afb7ba4031152813669e38458acb0ab2b3a5ffc7",
+      "gzipSha256": "3c24c35e53b14c8149cc94d774a6634667564dbbf7537072cecd46a6ca93b295"
+    },
+    {
+      "file": "preparation.log.gz",
+      "originalFile": "preparation.log",
+      "rawBytes": 35347,
+      "rawSha256": "a6afe1fe2d6e11916a3fd6694e4992ef5701d69912b3d7c69a314a8e4a96d3bf",
+      "sanitizedBytes": 35197,
+      "sanitizedSha256": "1c029b2425602b4c5755d71bf087ccbfd96991da5c14008be37b7f2164e6ff24",
+      "gzipSha256": "d9889cced5c0b4a320408abe7b404a7a984b3b8165ee5b17ff9a3a53b7076342"
+    },
+    {
+      "file": "redis-create.log.gz",
+      "originalFile": "redis-create.log",
+      "rawBytes": 66,
+      "rawSha256": "360da56f4acc2bea45a243cbc0e56bb1284a258c0e5bdf44b108996c304cd56b",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "497a180275722b526e47efcab9594ad7c1c7d0f26b42fa1af145929a971d73ae",
+      "gzipSha256": "2e8dd1650fb2c690d9365e865bd41c2a2bd8386afb90e8d316425241c105921f"
+    },
+    {
+      "file": "redis-final-stats.json.gz",
+      "originalFile": "redis-final-stats.json",
+      "rawBytes": 242,
+      "rawSha256": "01c9b566ea18e23e25869e9530437a9aa21abcfc6f793d62fdec29bf4443928e",
+      "sanitizedBytes": 241,
+      "sanitizedSha256": "bf68fb2490f9e3f40790d3f3981554e89d89d362b70c10be81515d7e4516dfdb",
+      "gzipSha256": "8d38409985a82f3e567269ea3a4f272b00a20df543e17767d0a3972f94464ce1"
+    },
+    {
+      "file": "release-control-preparation.json.gz",
+      "originalFile": "release-control-preparation.json",
+      "rawBytes": 804,
+      "rawSha256": "30bc2966c672a5863bc72cf6b73f4dc9264891ce882e8e94f193b3f83bd2361f",
+      "sanitizedBytes": 804,
+      "sanitizedSha256": "30bc2966c672a5863bc72cf6b73f4dc9264891ce882e8e94f193b3f83bd2361f",
+      "gzipSha256": "35960d63c8eac880e816481414f5ed265e0c7dec3ef536646f400b330cd2496a"
+    },
+    {
+      "file": "release-control-preparation.log.gz",
+      "originalFile": "release-control-preparation.log",
+      "rawBytes": 3334,
+      "rawSha256": "45633a846a5a00d3c57696b1b32decff4a03a245256de155ee134f3cd55f7177",
+      "sanitizedBytes": 3309,
+      "sanitizedSha256": "3d1c332ddf57c5a40a9cb5b2ab6a547bf9cc536fbf828c471d0297a8ff28ef26",
+      "gzipSha256": "b59f6782695be751cdc1808f1a8f3fc44b46faaf88ceabeab98aec5a2e765038"
+    },
+    {
+      "file": "resource-caps.json.gz",
+      "originalFile": "resource-caps.json",
+      "rawBytes": 1560,
+      "rawSha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+      "sanitizedBytes": 1559,
+      "sanitizedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "gzipSha256": "e39c553d3f5c83bd03217b2c754ed2dcecda18c40c0917c83c80438d2c43936c"
+    },
+    {
+      "file": "scale.log.gz",
+      "originalFile": "scale.log",
+      "rawBytes": 254,
+      "rawSha256": "1a4a3f6e297c39be45099b90217e7a95bac2876a06bf7f0b56d5c299eec8f166",
+      "sanitizedBytes": 185,
+      "sanitizedSha256": "e25ef3ca8935ce497c71f64db4069a5e0df4d7577ed8081f96ab190e542fadb5",
+      "gzipSha256": "3baf244fb248fef7af911fbfb41b87bc5ed7013997b85f650a907d98fe7e1002"
+    },
+    {
+      "file": "schema-fingerprint.json.gz",
+      "originalFile": "schema-fingerprint.json",
+      "rawBytes": 290,
+      "rawSha256": "a6e7b01a0cfea292dad2e8a25633d7055351c1559e7a8e43517eca7d8f4480bb",
+      "sanitizedBytes": 285,
+      "sanitizedSha256": "09de8068ded143c0b62277b30e84fae740bacd05b6afbbb4208c51d9117a1267",
+      "gzipSha256": "46e93329a3c72e4f0cb3fc39ac7d015f94e7ad452e41b42747e895af5a96f3dc"
+    },
+    {
+      "file": "schema-only.sql.gz",
+      "originalFile": "schema-only.sql",
+      "rawBytes": 591139,
+      "rawSha256": "3272b554e512566448b87fdd33f51e2f23be695368f8e9c6955dc8b6b2d1e113",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "c688f18bad88d20ae96167500b2c9963eaf0bd3db66609a4b11898db08ffdada",
+      "gzipSha256": "1ef7f378ce284f00997731209def263c912e005aa3c0d1b190f1735995dc9ccc"
+    },
+    {
+      "file": "schema-restore.log.gz",
+      "originalFile": "schema-restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "usage-scale.json.gz",
+      "originalFile": "usage-scale.json",
+      "rawBytes": 489172,
+      "rawSha256": "c4ff7e795841e64110b5bf5eb5f507007f3eb2c7849a13b7cb051538d6f9f45b",
+      "sanitizedBytes": 489064,
+      "sanitizedSha256": "82c47964a7e6ba1db712db9d8ac60bbb2d9c699b849b1c552b87a47400bfb846",
+      "gzipSha256": "14ffc8927b5b7bdfdf084161a0de876e804d78bca4485da39b4191d50f1f7a6a"
+    },
+    {
+      "file": "worker.log.gz",
+      "originalFile": "worker.log",
+      "rawBytes": 5220,
+      "rawSha256": "98c5af8a5b6229d38c951638947ccc4e2ebe77818072f6398d3afc5daedc42e8",
+      "sanitizedBytes": 5176,
+      "sanitizedSha256": "c6775ac33cd01c2478da75263d253736219c8086e130d7907f462315c4523848",
+      "gzipSha256": "28c3173a3f56d9a91a168ab5ab8e078ddda1e824f46d5079af7a23585943a5ef"
+    },
+    {
+      "file": "runner.log.gz",
+      "originalFile": "release297-ingest-cpu-bcb2b33c-01.runner.log",
+      "rawBytes": 254,
+      "rawSha256": "1a4a3f6e297c39be45099b90217e7a95bac2876a06bf7f0b56d5c299eec8f166",
+      "sanitizedBytes": 185,
+      "sanitizedSha256": "e25ef3ca8935ce497c71f64db4069a5e0df4d7577ed8081f96ab190e542fadb5",
+      "gzipSha256": "3baf244fb248fef7af911fbfb41b87bc5ed7013997b85f650a907d98fe7e1002"
+    },
+    {
+      "file": "cleanup-observation.json.gz",
+      "originalFile": "release297-ingest-cpu-bcb2b33c-01-cleanup-observation.json",
+      "rawBytes": 800,
+      "rawSha256": "0c9bb1725cbc041664ee21f4aac4543966c3782f817d08c07098589851a41070",
+      "sanitizedBytes": 766,
+      "sanitizedSha256": "d6b11efd99b9a3bd5180f81d9dc7f29ebfa862c9b28f4918bad8c775cb56fa9a",
+      "gzipSha256": "ba4f3ad8ef4195f149af1a0bfb438531bb14d30cce29774866eaabc54a9993d6"
+    },
+    {
+      "file": "source-verification.json.gz",
+      "originalFile": "release297-ingest-cpu-bcb2b33c-01-source-verification.json",
+      "rawBytes": 4636,
+      "rawSha256": "b7fa61ff30a4580503db25a5a2847d6e291f5edef3433bc680864ca2e93f9c33",
+      "sanitizedBytes": 4636,
+      "sanitizedSha256": "b7fa61ff30a4580503db25a5a2847d6e291f5edef3433bc680864ca2e93f9c33",
+      "gzipSha256": "bc5e53c97c36d85bc5bb6eb06cec7e66ab035083743526903efab32959e4b345"
+    },
+    {
+      "file": "source-verification-attempt-01.json.gz",
+      "originalFile": "release297-ingest-cpu-bcb2b33c-01-source-verification-attempt-01.json",
+      "rawBytes": 2630,
+      "rawSha256": "b76c40d3de3f8cee38affdc35978a98ee402bdbf8eed9be0ce38812c6bc084ac",
+      "sanitizedBytes": 2630,
+      "sanitizedSha256": "b76c40d3de3f8cee38affdc35978a98ee402bdbf8eed9be0ce38812c6bc084ac",
+      "gzipSha256": "90d73d12a3bfdf0912b31f515610b554d785eefd3ce04d970c1335985ee99563"
+    },
+    {
+      "file": "archive-attempt-01.mjs.gz",
+      "originalFile": "release297-archive-ingest-cpu-bcb2b33c-01-attempt-01.mjs",
+      "rawBytes": 10086,
+      "rawSha256": "704943a5a5852686a0be7532c37029823cdc2ab9e2cacd05eea36d294233c473",
+      "sanitizedBytes": 10077,
+      "sanitizedSha256": "bd9c28de253dd0c17d8b89e499d4370ccb5916e9b1c4f67e67a5c077c89cc3fe",
+      "gzipSha256": "dc900de916d4978dbc970464ca16e31933aa8efa6505e5b57ce75c1886956430"
+    },
+    {
+      "file": "archive-attempt-01.log.gz",
+      "originalFile": "release297-ingest-cpu-bcb2b33c-01-archive-attempt-01.log",
+      "rawBytes": 698,
+      "rawSha256": "83579b9a20c3ebfcdb78c28f2bf8acac148df4a857ac706e3d98eb7fb0b6d134",
+      "sanitizedBytes": 651,
+      "sanitizedSha256": "06b336f34a2438e6d47b2a818dfad67d3edb5eacadc69b4dda0d2c36995bdee9",
+      "gzipSha256": "d156c670ed8cf2251fec2a94a0bb8fa45a09164ffb8153a0a476bda285ead566"
+    }
+  ],
+  "sanitation": "UTF8/LF; filesystem prefixes, connection URLs, tokens, cookies, emails, UUIDs and SQL passwords redacted in archive only. Full CPU profile structure and timings retained. Raw, sanitized and gzip hashes recorded separately."
+}

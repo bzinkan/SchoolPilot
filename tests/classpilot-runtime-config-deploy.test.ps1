@@ -37,6 +37,26 @@ function Get-ArgumentValue {
     return [string]$Arguments[$index + 1]
 }
 
+function New-TestRoadmapReleaseEvidence {
+    param([string]$Capability, [string]$SchoolId, [string]$ToolSha, [string]$AppSha, [string]$Digest, [DateTimeOffset]$Now)
+    return [ordered]@{
+        schemaVersion = 1; approvedAt = $Now.ToString('o'); approvedBy = 'bzinkan@school-pilot.net'
+        reason = 'Explicit test-only scoped managed-device validation waiver.'
+        validationLevel = 'synthetic_only'; managedValidation = 'waived_not_passed'
+        capability = $Capability; pilotSchoolId = $SchoolId; toolSha = $ToolSha; appSha = $AppSha; imageDigest = $Digest
+        classPilotTag = 'v2.9.7'; classPilotMergeSha = ('c' * 40); classPilotZipSha256 = ('d' * 64)
+        classPilotExtensionId = $script:ClassPilotExtensionId
+        contractFixtureSha256 = Get-FileSha256 -Path (Join-Path $repositoryRoot 'tests/fixtures/restriction-resource-matcher-cases.json')
+        testEvidenceSha256 = ('e' * 64)
+        checks = [ordered]@{
+            combinedCiPassed = $true; exactPackageVerified = $true; nativeChromePackagePassed = $true
+            crossRepositoryContractPassed = $true; unsupportedClientsFailClosed = $true
+            identityAndStaleBindingPassed = $true; offlineCleanupPassed = $true
+            attentionLessonAndChatRegressionsPassed = $true; announcementsRemainAvailable = $true
+        }
+    }
+}
+
 function New-TestTaskResponse {
     param(
         [ValidateSet("api", "worker")][string]$Role,
@@ -434,14 +454,14 @@ try {
         "screenshotActiveObservationCadenceV1", "studentAuthGatePresenceV1", "lateSignInRestrictionSsoV1",
         "restrictionAuthPassThroughV1", "scheduledClassroomV1", "afterHoursSafetyOnlyV1",
         "schoolWebsiteBlockEnforcementV1", "screenshotReadOnlyObservationV1", "preciseRestrictionResourcesV1",
-        "kioskLaunchTicketV1"
+        "kioskLaunchTicketV1", "focusTabV1", 'privateChatLifecycleV1'
     ) -join ",")) "The retired capability must keep its registry slot so serialized registries keep their byte order."
     Assert-Condition ($script:CapabilityFlags["preciseRestrictionResourcesV1"] -ceq "CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-pilot"] -ceq "preciseRestrictionResourcesV1" -and
         $script:RoadmapProfileCapabilities["precise-restriction-resources-off"] -ceq "preciseRestrictionResourcesV1" -and
         $script:AdditiveCapabilities -ccontains "preciseRestrictionResourcesV1" -and
         -not ($script:ActivationOrder -ccontains "preciseRestrictionResourcesV1")) `
-        "Precise restriction resources must be an additive roadmap capability with pilot and off profiles only."
+        "Precise restriction resources must remain additive and outside the legacy repaired activation prefix."
     Assert-Condition ($testRuntime.Environment.CLASSPILOT_CAP_PRECISE_RESTRICTION_RESOURCES_V1 -ceq "false" -and
         $testRollouts.preciseRestrictionResourcesV1.mode -ceq "off") `
         "Existing runtime profiles must leave precise restriction resources off."
@@ -1439,49 +1459,96 @@ try {
     $script:ClassPilotZipSha256 = $finalLateSignInZipSha256
     $script:ClassPilotExtensionId = $productionClassPilotExtensionId
 
-    # The precise-restriction pilot is refused until a reviewed follow-up binds the
-    # exact MANAGED-CHROMEBOOK VERIFIED ClassPilot 2.10.0 package; the off profile
-    # never needs it.
+    # Check the actual source/artifact identity before replacing it with synthetic
+    # bindings. These pins do not assert merge, publication or release acceptance.
+    $packaged297SourceSha = '065be165b5df704d84eb716e3fb914c1fed17f98'
+    $packaged297ZipSha256 = '82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575'
+    Assert-Condition ($script:PreciseRestrictionRequiredReleaseTag -ceq 'v2.9.7' -and
+        $script:PreciseRestrictionRequiredMergeSha -ceq $packaged297SourceSha -and
+        $script:PreciseRestrictionRequiredZipSha256 -ceq $packaged297ZipSha256) `
+        'Precise must bind the exact packaged 2.9.7 source and ZIP.'
+    Assert-Condition ($script:FocusTabRequiredReleaseTag -ceq 'v2.9.7' -and
+        $script:FocusTabRequiredMergeSha -ceq $packaged297SourceSha -and
+        $script:FocusTabRequiredZipSha256 -ceq $packaged297ZipSha256) `
+        'Focus must bind the same exact packaged 2.9.7 source and ZIP.'
+    $advertised297Path = Join-Path $repositoryRoot 'scripts/load/usage/classpilot-297-advertised-capabilities.json'
+    $advertised297Source = Get-Content -LiteralPath $advertised297Path -Raw | ConvertFrom-Json -Depth 10 -DateKind String
+    Assert-Condition ($advertised297Source.extensionVersion -ceq '2.9.7' -and
+        $advertised297Source.sourceCommit -ceq $packaged297SourceSha -and
+        @($advertised297Source.capabilities).Count -eq 39) `
+        'Cold arrivals must advertise the same exact packaged 2.9.7 source.'
+    Assert-PreciseRestrictionPilotReleaseEvidenceBound
+    Assert-FocusTabPilotReleaseEvidenceBound
+
+    # Empty pins must still refuse activation; the off profile never needs them.
+    $script:PreciseRestrictionRequiredMergeSha = ''
+    $script:PreciseRestrictionRequiredZipSha256 = ''
     Assert-Throws {
         ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
             schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
         })
-    } "The precise-restriction pilot must refuse until 2.10.0 release evidence is bound."
+    } "The precise-restriction pilot must refuse until 2.9.7 release evidence is bound."
     [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
         schemaVersion = 7; mode = "precise-restriction-resources-off"
     }))
     foreach ($partial in @(
-        @{ Tag = "v2.10.0"; Merge = ""; Zip = "" },
+        @{ Tag = "v2.9.7"; Merge = ""; Zip = "" },
         @{ Tag = "v2.9.6"; Merge = ("c" * 40); Zip = ("d" * 64) },
-        @{ Tag = "v2.10.0"; Merge = ("C" * 40); Zip = ("d" * 64) }
+        @{ Tag = "v2.9.7"; Merge = ("C" * 40); Zip = ("d" * 64) }
     )) {
         $script:PreciseRestrictionRequiredReleaseTag = $partial.Tag
         $script:PreciseRestrictionRequiredMergeSha = $partial.Merge
         $script:PreciseRestrictionRequiredZipSha256 = $partial.Zip
         Assert-Throws { Assert-PreciseRestrictionPilotReleaseEvidenceBound } `
-            "Partial or malformed 2.10.0 release evidence must not admit the precise-restriction pilot."
+            "Partial or malformed 2.9.7 release evidence must not admit the precise-restriction pilot."
     }
     # Test-only binding so the shared roadmap cases below can exercise the pilot.
-    $script:PreciseRestrictionRequiredReleaseTag = "v2.10.0"
+    $script:PreciseRestrictionRequiredReleaseTag = "v2.9.7"
     $script:PreciseRestrictionRequiredMergeSha = "c" * 40
     $script:PreciseRestrictionRequiredZipSha256 = "d" * 64
+
+    $script:FocusTabRequiredMergeSha = ''
+    $script:FocusTabRequiredZipSha256 = ''
+    Assert-Throws {
+        ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+            schemaVersion = 7; mode = "focus-tab-pilot"; pilotSchoolId = $testSchoolId
+        })
+    } "Focus activation must refuse until independent release evidence is bound."
+    [void](ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{ schemaVersion = 7; mode = "focus-tab-off" }))
+    foreach ($partial in @(
+        @{ Tag = ""; Merge = "c" * 40; Zip = "d" * 64 },
+        @{ Tag = "v2.9.7"; Merge = ""; Zip = "d" * 64 },
+        @{ Tag = "v2.9.7"; Merge = "C" * 40; Zip = "d" * 64 }
+    )) {
+        $script:FocusTabRequiredReleaseTag = $partial.Tag
+        $script:FocusTabRequiredMergeSha = $partial.Merge
+        $script:FocusTabRequiredZipSha256 = $partial.Zip
+        Assert-Throws { Assert-FocusTabPilotReleaseEvidenceBound } "Partial or malformed Focus evidence must refuse activation."
+    }
+    # Synthetic binding only, to exercise the generic pilot/off invariants.
+    $script:FocusTabRequiredReleaseTag = "v2.9.7"
+    $script:FocusTabRequiredMergeSha = "c" * 40
+    $script:FocusTabRequiredZipSha256 = "d" * 64
 
     $roadmapCases = @(
         @{ Capability = "afterHoursSafetyOnlyV1"; Prefix = "after-hours-safety-only" },
         @{ Capability = "schoolWebsiteBlockEnforcementV1"; Prefix = "school-website-block" },
         @{ Capability = "screenshotReadOnlyObservationV1"; Prefix = "read-only-observation" },
-        @{ Capability = "preciseRestrictionResourcesV1"; Prefix = "precise-restriction-resources" }
+        @{ Capability = "preciseRestrictionResourcesV1"; Prefix = "precise-restriction-resources" },
+        @{ Capability = "focusTabV1"; Prefix = "focus-tab" }
     )
     $roadmapSourceRuntime = $restrictionAuthPilotRuntime
     foreach ($roadmapCase in $roadmapCases) {
         $capability = [string]$roadmapCase.Capability
         $prefix = [string]$roadmapCase.Prefix
         $flag = [string]$script:CapabilityFlags[$capability]
-        Assert-Throws {
-            ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
-                schemaVersion = 7; mode = "$prefix-global-on"
-            })
-        } "Roadmap profiles must not admit an unreviewed global activation."
+        if ($capability -cnotin $script:RoadmapGlobalCapabilities) {
+            Assert-Throws {
+                ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
+                    schemaVersion = 7; mode = "$prefix-global-on"
+                })
+            } "Other roadmap profiles must not admit global activation."
+        }
         Assert-Throws {
             ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{
                 schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = "all"
@@ -1549,6 +1616,7 @@ try {
                 -SourceTaskDefinition $pilotSource -ContainerName "api"
         } "An active roadmap pilot must be disabled before another pilot admission."
         foreach ($badControl in @("global", "multiple-schools", "flag-only", "rollout-only", "partial")) {
+            if ($badControl -ceq 'global' -and $capability -cin $script:RoadmapGlobalCapabilities) { continue }
             $invalidSource = New-TransitionSourceTask -RuntimeConfiguration $roadmapPilot
             $invalidEnv = $invalidSource.containerDefinitions[0].environment
             $registryEntry = @($invalidEnv | Where-Object name -CEQ "CLASSPILOT_CAPABILITY_ROLLOUTS_JSON")[0]
@@ -2038,6 +2106,12 @@ try {
     $global:RuntimeConfigGitState.ShowRequests = [Collections.Generic.List[string]]::new()
     # A registry target (an older image) can be served from its own SHA.
     $global:RuntimeConfigGitState.ProtocolSourceBySha = @{}
+    $global:RuntimeConfigGitState.SourceByPath = @{}
+    $global:RuntimeConfigGitState.SourceBySha = @{}
+    $global:RuntimeConfigGitState.SourceShowRequests = [Collections.Generic.List[string]]::new()
+    foreach ($file in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/config/rlsRegistry.json','src/realtime/websocket.ts')) {
+        $global:RuntimeConfigGitState.SourceByPath[$file]=[IO.File]::ReadAllText((Join-Path $repositoryRoot $file))
+    }
     $global:SchoolPilotRuntimeConfigGitHandler = {
         param([string[]]$Arguments)
         if ($Arguments[0] -ceq "branch") { return $global:RuntimeConfigGitState.Branch }
@@ -2052,6 +2126,14 @@ try {
             } else { $global:RuntimeConfigGitState.ServingProtocolSource }
             if ($null -eq $protocolSource) { throw "Mocked git show failed." }
             return $protocolSource
+        }
+        if ($Arguments[0] -ceq 'show' -and $Arguments.Count -eq 2 -and $Arguments[1] -cmatch '^[0-9a-f]{40}:(?<path>.*)$' -and
+            $global:RuntimeConfigGitState.SourceByPath.ContainsKey($Matches.path)) {
+            $global:RuntimeConfigGitState.SourceShowRequests.Add($Arguments[1])
+            if ($global:RuntimeConfigGitState.SourceBySha.ContainsKey($Arguments[1])) {
+                return $global:RuntimeConfigGitState.SourceBySha[$Arguments[1]]
+            }
+            return $global:RuntimeConfigGitState.SourceByPath[$Matches.path]
         }
         throw "Unexpected mocked git operation."
     }
@@ -3673,12 +3755,36 @@ try {
         Write-TestJson -Path $roadmapProfilePath -Value ([pscustomobject]@{
             schemaVersion = 7; mode = "$prefix-pilot"; pilotSchoolId = $testSchoolId
         })
+        $roadmapAdmission = @{}
+        if ($null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")) {
+            $releasePath = Join-Path $testRoot "$prefix-release.json"
+            $release = New-TestRoadmapReleaseEvidence -Capability $roadmapCase.Capability -SchoolId $testSchoolId `
+                -ToolSha $toolSha -AppSha $appSha -Digest $digest -Now $now
+            Write-TestJson -Path $releasePath -Value $release
+            $roadmapAdmission = @{
+                PrivateRoadmapReleaseEvidencePath = $releasePath
+                ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $true
+            }
+            Assert-Throws {
+                New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $roadmapProfilePath `
+                    -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
+                    -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+            } 'Precise/Focus plan must fail without its scoped approval.'
+        }
         $roadmapPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
             -PrivateProfilePath $roadmapProfilePath -EvidenceRoot $evidenceRoot -AppSha $appSha `
-            -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now
+            -ImageDigest $digest -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now @roadmapAdmission
         $roadmapPlan = Read-RuntimePlan -Path $roadmapPlanResult.PlanPath -ExpectedSha256 $roadmapPlanResult.PlanSha256
+        $roadmapApplyAdmission = @{}
+        if ($null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")) {
+            $roadmapApplyAdmission = @{ ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $true }
+            Assert-Throws {
+                Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
+                    -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+            } 'Apply must independently require the scoped managed-waiver confirmation.'
+        }
         $roadmapApply = Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
-            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+            -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 @roadmapApplyAdmission
         Assert-Condition ($roadmapApply.status -ceq "applied") "Roadmap pilot must pass the guarded mocked plan/apply path."
         $roadmapApi = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateApiTaskDefinitionArn].taskDefinition
         $roadmapWorker = $global:RuntimeConfigTestState.TaskResponses[$roadmapApply.candidateWorkerTaskDefinitionArn].taskDefinition
@@ -3686,6 +3792,133 @@ try {
         $workerControls = Get-RuntimeCapabilityControls -Environment $roadmapWorker.containerDefinitions[0].environment
         Assert-Condition ((Get-CanonicalJsonSha256 -Value $apiControls) -ceq
             (Get-CanonicalJsonSha256 -Value $workerControls)) "Roadmap API and worker controls must be identical."
+        if ($roadmapCase.Capability -cin $script:RoadmapGlobalCapabilities) {
+            $isWaived = $null -ne (Get-RoadmapReleaseCapability -Mode "$prefix-pilot")
+            $releaseSnapshot = $null
+            if ($isWaived) {
+            Assert-Condition ($roadmapPlan.validationLevel -ceq 'synthetic_only' -and
+                $roadmapApply.managedValidation -ceq 'waived_not_passed') 'The exception must never claim managed validation passed.'
+            $releaseSnapshot = Read-StrictJsonSnapshot -Path $releasePath
+            $releaseArgs = @{
+                Mode = "$prefix-pilot"; PilotSchoolId = $testSchoolId; ToolSha = $toolSha; AppSha = $appSha
+                ImageDigest = $digest; RepositoryRoot = $repositoryRoot; Now = $now
+            }
+            foreach ($mutation in @(
+                @{ Name = 'capability'; Value = 'liveViewIceServersV1' },
+                @{ Name = 'managedValidation'; Value = 'passed' },
+                @{ Name = 'classPilotTag'; Value = 'v2.10.0' },
+                @{ Name = 'classPilotMergeSha'; Value = ('f' * 40) },
+                @{ Name = 'classPilotZipSha256'; Value = ('f' * 64) },
+                @{ Name = 'appSha'; Value = ('f' * 40) },
+                @{ Name = 'imageDigest'; Value = ('sha256:' + ('f' * 64)) },
+                @{ Name = 'pilotSchoolId'; Value = '22222222-2222-4222-8222-222222222222' },
+                @{ Name = 'contractFixtureSha256'; Value = ('f' * 64) },
+                @{ Name = 'approvedBy'; Value = @('bzinkan@school-pilot.net') },
+                @{ Name = 'approvedAt'; Value = $now.AddHours(-3).ToString('o') }
+            )) {
+                $invalid = $release | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.($mutation.Name) = $mutation.Value
+                Assert-Throws {
+                    Assert-RoadmapReleaseEvidence -EvidenceSnapshot ([pscustomobject]@{ Value = $invalid; Sha256 = ('e' * 64) }) @releaseArgs
+                } "The scoped approval must reject changed $($mutation.Name)."
+            }
+            $invalid = $release | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $invalid.checks.announcementsRemainAvailable = $false
+            Assert-Throws {
+                Assert-RoadmapReleaseEvidence -EvidenceSnapshot ([pscustomobject]@{ Value = $invalid; Sha256 = ('e' * 64) }) @releaseArgs
+            } 'A missing or false approval check must fail closed.'
+            $originalReleaseBytes = [IO.File]::ReadAllBytes($roadmapPlan.roadmapReleaseEvidencePath)
+            [IO.File]::AppendAllText($roadmapPlan.roadmapReleaseEvidencePath, ' ')
+            Assert-Throws {
+                Invoke-RuntimeConfigApply -Plan $roadmapPlan -PlanSha256 $roadmapPlanResult.PlanSha256 `
+                    -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 @roadmapApplyAdmission
+            } 'Changed private evidence bytes must refuse apply.'
+            [IO.File]::WriteAllBytes($roadmapPlan.roadmapReleaseEvidencePath, $originalReleaseBytes)
+            }
+
+            $globalProfilePath = Join-Path $testRoot "$prefix-global-profile.json"
+            Write-TestJson -Path $globalProfilePath -Value ([ordered]@{ schemaVersion = 7; mode = "$prefix-global-on" })
+            $livePath = Join-Path $testRoot "$prefix-live.json"
+            $live = [ordered]@{
+                schemaVersion = 1; reviewedAt = $now.ToString('o')
+                observedFrom = $now.AddMinutes(-35).ToString('o'); observedThrough = $now.AddMinutes(-5).ToString('o')
+                capability = $roadmapCase.Capability; pilotSchoolId = $testSchoolId; toolSha = $toolSha
+                appSha = $appSha; imageDigest = $digest
+                apiTaskDefinitionArn = $roadmapApply.candidateApiTaskDefinitionArn
+                workerTaskDefinitionArn = $roadmapApply.candidateWorkerTaskDefinitionArn
+                runtimeConfigurationSha256 = Get-ManagedRuntimeFingerprint -TaskDefinition $roadmapApi -ContainerName 'api'
+                releaseEvidenceSha256 = if ($isWaived) { $releaseSnapshot.Sha256 } else { $null }
+                observedActions = 3; logSha256 = ('e' * 64)
+                samples = [ordered]@{}
+                classPilotTag = 'v2.9.7'; classPilotMergeSha = ('c' * 40); classPilotZipSha256 = ('d' * 64)
+                classPilotExtensionId = $script:ClassPilotExtensionId
+                checks = [ordered]@{
+                    teachingPeriodObserved = $true; supportedClientNegotiated = $true; exactRecipientsVerified = $true
+                    resourceOrFocusEnforced = $true; completedOutcomeVerified = $true; staleAndOfflineCleanupVerified = $true
+                    unsupportedClientsFailClosed = $true; noAuthorizationOrPrivacyDefects = $true
+                    apiWorkerAndRosterHealthy = $true; announcementsRemainAvailable = $true
+                }
+            }
+            foreach ($name in @(Get-RoadmapPilotSampleNames -Mode "$prefix-global-on")) { $live.samples[$name] = 1 }
+            Write-TestJson -Path $livePath -Value $live
+            $globalArgs = @{
+                RepositoryRoot = $repositoryRoot; PrivateProfilePath = $globalProfilePath; EvidenceRoot = $evidenceRoot
+                AppSha = $appSha; ImageDigest = $digest; Now = $now
+                ApiTaskDefinitionArn = $roadmapApply.candidateApiTaskDefinitionArn
+                WorkerTaskDefinitionArn = $roadmapApply.candidateWorkerTaskDefinitionArn
+                PrivateRoadmapReleaseEvidencePath = if ($isWaived) { $releasePath } else { $null }
+                ConfirmProductionMutation = $true; ConfirmRoadmapManagedWaiver = $isWaived
+            }
+            Assert-Throws { New-RuntimeConfigPlan @globalArgs } 'Global promotion must require live pilot evidence.'
+            foreach ($mutation in @(
+                @{ Name = 'observedActions'; Value = 0 },
+                @{ Name = 'observedFrom'; Value = $now.AddMinutes(-10).ToString('o') },
+                @{ Name = 'observedFrom'; Value = $now.AddMinutes(-34).ToString('o') },
+                @{ Name = 'runtimeConfigurationSha256'; Value = ('f' * 64) },
+                @{ Name = 'apiTaskDefinitionArn'; Value = $apiSourceArn },
+                @{ Name = 'releaseEvidenceSha256'; Value = ('f' * 64) }
+            )) {
+                $invalid = $live | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.($mutation.Name) = $mutation.Value
+                Write-TestJson -Path $livePath -Value $invalid
+                Assert-Throws { New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                    "Global promotion must reject changed $($mutation.Name)."
+            }
+            foreach ($name in @($live.samples.Keys)) {
+                $invalid = $live | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+                $invalid.samples.$name = 0
+                Write-TestJson -Path $livePath -Value $invalid
+                Assert-Throws { New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                    "Global promotion must require an actual $name sample."
+            }
+            Write-TestJson -Path $livePath -Value $live
+            $globalPlanResult = New-RuntimeConfigPlan @globalArgs -PrivateRoadmapPilotEvidencePath $livePath
+            $globalPlan = Read-RuntimePlan -Path $globalPlanResult.PlanPath -ExpectedSha256 $globalPlanResult.PlanSha256
+            $globalApply = Invoke-RuntimeConfigApply -Plan $globalPlan -PlanSha256 $globalPlanResult.PlanSha256 `
+                -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -ConfirmProductionMutation -ConfirmRoadmapManagedWaiver:$isWaived
+            $globalApi = $global:RuntimeConfigTestState.TaskResponses[$globalApply.candidateApiTaskDefinitionArn].taskDefinition
+            $globalControls = Get-RuntimeCapabilityControls -Environment $globalApi.containerDefinitions[0].environment
+            Assert-Condition ($globalControls[$roadmapCase.Capability].flag -ceq 'true' -and
+                $globalControls[$roadmapCase.Capability].mode -ceq 'on' -and
+                @($globalControls[$roadmapCase.Capability].schoolIds).Count -eq 0 -and
+                $globalApply.managedValidation -ceq $(if ($isWaived) { 'waived_not_passed' } else { 'not_applicable' })) `
+                'Global promotion must automatically cover eligible new schools while preserving its actual evidence status.'
+            foreach ($other in @($script:AllCapabilities | Where-Object { $_ -cne $roadmapCase.Capability })) {
+                Assert-Condition ((Get-CanonicalJsonSha256 -Value $globalControls[$other]) -ceq
+                    (Get-CanonicalJsonSha256 -Value $apiControls[$other])) 'Global promotion must preserve every unrelated control.'
+            }
+            $alreadyGlobalArgs = $globalArgs.Clone()
+            $alreadyGlobalArgs.ApiTaskDefinitionArn = $globalApply.candidateApiTaskDefinitionArn
+            $alreadyGlobalArgs.WorkerTaskDefinitionArn = $globalApply.candidateWorkerTaskDefinitionArn
+            Assert-Throws { New-RuntimeConfigPlan @alreadyGlobalArgs -PrivateRoadmapPilotEvidencePath $livePath } `
+                'An already global capability is not fresh pilot evidence.'
+            if ($isWaived) { [IO.File]::Delete($globalPlan.roadmapReleaseEvidencePath) }
+            [IO.File]::Delete($globalPlan.roadmapPilotEvidencePath)
+            [void](Invoke-RuntimeConfigRollback -Plan $globalPlan -PlanSha256 $globalPlanResult.PlanSha256 `
+                -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+            Assert-Condition ($global:RuntimeConfigTestState.ApiCurrentArn -ceq $roadmapApply.candidateApiTaskDefinitionArn) `
+                'Rollback must restore the exact compatible pilot without requiring activation evidence.'
+        }
         $roadmapOffProfilePath = Join-Path $testRoot "$prefix-off-profile.json"
         Write-TestJson -Path $roadmapOffProfilePath -Value ([pscustomobject]@{ schemaVersion = 7; mode = "$prefix-off" })
         $roadmapOffPlanResult = New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot `
@@ -3716,6 +3949,155 @@ try {
         $roadmapPlanText = [IO.File]::ReadAllText($roadmapPlanResult.PlanPath)
         Assert-Condition (-not $roadmapPlanText.Contains($testSchoolId)) "Roadmap public plan evidence must not expose school IDs."
     }
+
+    # Private chat starts at the current school and promotes only after actual
+    # full lifecycle samples. Announcements/settings are never changed here.
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
+    Set-MockSourceRuntimeConfiguration -RuntimeConfiguration $globalRuntime
+    $privateInventory = ([IO.File]::ReadAllText((Join-Path $repositoryRoot 'src/config/rlsRegistry.json')) | ConvertFrom-Json -Depth 30 -DateKind String).inventories.classpilotPrivateChatLifecyclePostExpand
+    foreach ($contract in @(@{Arn=$apiSourceArn;Container='api'},@{Arn=$workerSourceArn;Container='scheduler-worker'})) {
+        $container=@($global:RuntimeConfigTestState.TaskResponses[$contract.Arn].taskDefinition.containerDefinitions | Where-Object name -CEQ $contract.Container)[0]
+        $container.environment += [pscustomobject]@{name='RLS_GUC_ENABLED';value='true'}
+        $container.environment += [pscustomobject]@{name='RLS_ENABLED_TABLES';value=($privateInventory.tables -join ',')}
+    }
+    $privateProfilePath=Join-Path $testRoot 'private-chat-profile.json'
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-pilot';pilotSchoolId=$testSchoolId})
+    $privateArgs=@{RepositoryRoot=$repositoryRoot;PrivateProfilePath=$privateProfilePath;EvidenceRoot=$evidenceRoot;AppSha=$appSha;ImageDigest=$digest;
+        ApiTaskDefinitionArn=$apiSourceArn;WorkerTaskDefinitionArn=$workerSourceArn;Now=$now}
+    $privateSource=New-TransitionSourceTask -RuntimeConfiguration $globalRuntime
+    $privateIntent=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-pilot';pilotSchoolId=$testSchoolId})
+    $privateRuntime=Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $privateIntent -SourceTaskDefinition $privateSource -ContainerName 'api'
+    foreach ($parent in @('scopedAuthorityChecksV1','studentChatIdempotencyV1')) {
+        $invalid=New-TransitionSourceTask -RuntimeConfiguration $privateRuntime
+        $environment=$invalid.containerDefinitions[0].environment
+        @($environment | Where-Object name -CEQ $script:CapabilityFlags[$parent])[0].value='false'
+        Assert-Throws {Get-RuntimeActivationState -Environment $environment -AllowBaseline} 'Private chat must require both negotiated authority/idempotency parents.'
+    }
+    foreach ($role in @('api','worker')) {
+        $arn=if($role -ceq 'api'){$apiSourceArn}else{$workerSourceArn}
+        $container=$global:RuntimeConfigTestState.TaskResponses[$arn].taskDefinition.containerDefinitions[0]
+        $entry=@($container.environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+        $full=$entry.value; $entry.value=$full.Replace(',classpilot_private_chat_threads','')
+        Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Either service missing the singleton admission must refuse private chat activation.'
+        $entry.value=$full
+        $guc=@($container.environment | Where-Object name -CEQ 'RLS_GUC_ENABLED')[0]
+        $guc.value='false'; Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Either service missing tenant GUC enforcement must refuse activation.'
+        $guc.value='true'
+    }
+    foreach ($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/realtime/websocket.ts')) {
+        $original=$global:RuntimeConfigGitState.SourceByPath[$path]
+        $global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
+        Assert-Throws {New-RuntimeConfigPlan @privateArgs} "A pre-lifecycle writer, sticky migration or relay must refuse activation ($path)."
+        $global:RuntimeConfigGitState.SourceByPath[$path]=$original
+    }
+    $originalRegistry=$global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']
+    $invalidRegistry=$originalRegistry | ConvertFrom-Json -Depth 30 -DateKind String
+    $invalidRegistry.inventories.classpilotPrivateChatLifecyclePostExpand.tables[0]='classpilot_private_chat_threads'
+    $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$invalidRegistry | ConvertTo-Json -Depth 30
+    Assert-Throws {New-RuntimeConfigPlan @privateArgs} 'Partial or duplicated129 inventory must refuse admission.'
+    $global:RuntimeConfigGitState.SourceByPath['src/config/rlsRegistry.json']=$originalRegistry
+    $privatePilotResult=New-RuntimeConfigPlan @privateArgs
+    $privatePilotPlan=Read-RuntimePlan -Path $privatePilotResult.PlanPath -ExpectedSha256 $privatePilotResult.PlanSha256
+    $privatePilotApply=Invoke-RuntimeConfigApply -Plan $privatePilotPlan -PlanSha256 $privatePilotResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privatePilotApi=$global:RuntimeConfigTestState.TaskResponses[$privatePilotApply.candidateApiTaskDefinitionArn].taskDefinition
+    $privatePilotControls=Get-RuntimeCapabilityControls -Environment $privatePilotApi.containerDefinitions[0].environment
+    Assert-Condition (@($privatePilotControls.privateChatLifecycleV1.schoolIds).Count -eq 1 -and
+        $privatePilotControls.privateChatLifecycleV1.schoolIds[0] -ceq $testSchoolId) 'Private chat activation must begin at the current school.'
+    $pilotOff=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='private-chat-lifecycle-off'})
+    $pilotOff=Resolve-SourcePreservingRuntimeConfiguration -RuntimeIntent $pilotOff -SourceTaskDefinition $privatePilotApi -ContainerName 'api'
+    Assert-AllowedRuntimeTransition -SourceTaskDefinition $privatePilotApi -ContainerName 'api' -TargetRuntimeConfiguration $pilotOff
+    Assert-Condition (@($pilotOff.EnabledCapabilities) -cnotcontains 'privateChatLifecycleV1') 'The pilot off profile must withdraw issuance while preserving the compatible release floor.'
+    $privateLive=[ordered]@{
+        schemaVersion=1;reviewedAt=$now.ToString('o');observedFrom=$now.AddMinutes(-35).ToString('o');observedThrough=$now.AddMinutes(-5).ToString('o')
+        capability='privateChatLifecycleV1';pilotSchoolId=$testSchoolId;toolSha=$toolSha;appSha=$appSha;imageDigest=$digest
+        apiTaskDefinitionArn=$privatePilotApply.candidateApiTaskDefinitionArn;workerTaskDefinitionArn=$privatePilotApply.candidateWorkerTaskDefinitionArn
+        runtimeConfigurationSha256=Get-ManagedRuntimeFingerprint -TaskDefinition $privatePilotApi -ContainerName 'api'
+        releaseEvidenceSha256=$null;observedActions=3;logSha256=('e'*64);samples=[ordered]@{}
+        classPilotTag='v2.9.7';classPilotMergeSha=('c'*40);classPilotZipSha256=('d'*64);classPilotExtensionId=$script:ClassPilotExtensionId
+        checks=[ordered]@{teachingPeriodObserved=$true;supportedClientNegotiated=$true;exactRecipientsVerified=$true
+            privateChatLifecycleEnforced=$true;completedOutcomeVerified=$true;staleAndOfflineCleanupVerified=$true
+            unsupportedClientsFailClosed=$true;noAuthorizationOrPrivacyDefects=$true;apiWorkerAndRosterHealthy=$true;announcementsRemainAvailable=$true}
+    }
+    foreach($name in @(Get-RoadmapPilotSampleNames -Mode 'private-chat-lifecycle-global-on')){$privateLive.samples[$name]=1}
+    $privateLivePath=Join-Path $testRoot 'private-chat-live.json'
+    Write-TestJson -Path $privateLivePath -Value $privateLive
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-on'})
+    $privateGlobalArgs=$privateArgs.Clone();$privateGlobalArgs.ApiTaskDefinitionArn=$privatePilotApply.candidateApiTaskDefinitionArn
+    $privateGlobalArgs.WorkerTaskDefinitionArn=$privatePilotApply.candidateWorkerTaskDefinitionArn;$privateGlobalArgs.ConfirmProductionMutation=$true
+    Assert-Throws {New-RuntimeConfigPlan @privateGlobalArgs} 'Private chat global promotion requires actual live evidence.'
+    $directGlobal=$privateArgs.Clone();$directGlobal.ConfirmProductionMutation=$true
+    Assert-Throws {New-RuntimeConfigPlan @directGlobal -PrivateRoadmapPilotEvidencePath $privateLivePath} 'Live evidence must not authorize skipping current-school pilot activation.'
+    foreach($name in @($privateLive.samples.Keys)){
+        $invalid=$privateLive | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $invalid.samples.$name=0;Write-TestJson -Path $privateLivePath -Value $invalid
+        Assert-Throws {New-RuntimeConfigPlan @privateGlobalArgs -PrivateRoadmapPilotEvidencePath $privateLivePath} "Private chat promotion requires actual $name coverage."
+    }
+    Write-TestJson -Path $privateLivePath -Value $privateLive
+    $privatePlanResult=New-RuntimeConfigPlan @privateGlobalArgs -PrivateRoadmapPilotEvidencePath $privateLivePath
+    $privatePlan=Read-RuntimePlan -Path $privatePlanResult.PlanPath -ExpectedSha256 $privatePlanResult.PlanSha256
+    $privateApply=Invoke-RuntimeConfigApply -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0 -ConfirmProductionMutation
+    $privateApi=$global:RuntimeConfigTestState.TaskResponses[$privateApply.candidateApiTaskDefinitionArn].taskDefinition
+    $privateControls=Get-RuntimeCapabilityControls -Environment $privateApi.containerDefinitions[0].environment
+    Assert-Condition ($privateControls.privateChatLifecycleV1.flag -ceq 'true' -and $privateControls.privateChatLifecycleV1.mode -ceq 'on' -and
+        @($privateControls.privateChatLifecycleV1.schoolIds).Count -eq 0) 'Private chat lifecycle reaches eligible future schools with no manual school pin.'
+    Write-TestJson -Path $privateProfilePath -Value ([ordered]@{schemaVersion=7;mode='private-chat-lifecycle-global-off'})
+    $privateOffArgs=$privateArgs.Clone(); $privateOffArgs.ApiTaskDefinitionArn=$privateApply.candidateApiTaskDefinitionArn; $privateOffArgs.WorkerTaskDefinitionArn=$privateApply.candidateWorkerTaskDefinitionArn
+    $privateOffResult=New-RuntimeConfigPlan @privateOffArgs
+    $privateOffPlan=Read-RuntimePlan -Path $privateOffResult.PlanPath -ExpectedSha256 $privateOffResult.PlanSha256
+    $privateOffApply=Invoke-RuntimeConfigApply -Plan $privateOffPlan -PlanSha256 $privateOffResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0
+    $privateOffApi=$global:RuntimeConfigTestState.TaskResponses[$privateOffApply.candidateApiTaskDefinitionArn].taskDefinition
+    $offControls=Get-RuntimeCapabilityControls -Environment $privateOffApi.containerDefinitions[0].environment
+    foreach($capability in $script:AllCapabilities) {
+        if($capability -ceq 'privateChatLifecycleV1'){continue}
+        Assert-Condition ((Get-CanonicalJsonSha256 -Value $privateControls[$capability]) -ceq (Get-CanonicalJsonSha256 -Value $offControls[$capability])) 'Private chat withdrawal must preserve all other capabilities.'
+    }
+    Assert-Condition ($offControls.privateChatLifecycleV1.mode -ceq 'off' -and
+        (Get-TaskFingerprint -TaskDefinition $privateApi -ContainerName 'api') -ceq (Get-TaskFingerprint -TaskDefinition $privateOffApi -ContainerName 'api')) `
+        'Withdrawal only changes capability controls; it preserves image, schema admission and persisted enforcement.'
+    $oldTarget='f' * 40
+    $global:RuntimeConfigGitState.ProtocolSourceBySha[$oldTarget]=$currentProtocolSource -replace '\r?\n\s*"privateChatLifecycleV1",',''
+    Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget} `
+        'Cap off must not make a pre-lifecycle image projection safe after enforcement can be latched.'
+    $global:RuntimeConfigGitState.ProtocolSourceBySha.Remove($oldTarget)
+    $relayTargetKey="${oldTarget}:src/realtime/websocket.ts"
+    $originalRelay=$global:RuntimeConfigGitState.SourceByPath['src/realtime/websocket.ts']
+    $preAdmissionSource=$privateOffApi | ConvertTo-Json -Depth 50 | ConvertFrom-Json -Depth 50
+    $preAdmissionTables=@($preAdmissionSource.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+    $preAdmissionTables.value=$preAdmissionTables.value.Replace(',classpilot_private_chat_threads','')
+    $global:RuntimeConfigGitState.SourceBySha[$relayTargetKey]=$originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;','')
+    $preAdmissionCapabilities=Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'school-website-block-off' -SourceTaskDefinition $preAdmissionSource -RegistryTargetAppSha $oldTarget
+    Assert-Condition ($preAdmissionCapabilities -ccontains 'privateChatLifecycleV1') 'Unrelated pre-admission projection must preserve legacy behavior until the thread bundle is admitted.'
+    foreach($invalidRelay in @($originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;',''),
+        $originalRelay.Replace('export const PRIVATE_CHAT_RELAY_VERSION = 1;','export const PRIVATE_CHAT_RELAY_VERSION = 2;'))) {
+        $global:RuntimeConfigGitState.SourceBySha[$relayTargetKey]=$invalidRelay
+        foreach($rollbackSource in @($privatePilotApi,$privateOffApi)) {
+            Assert-Throws {Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $rollbackSource -RegistryTargetAppSha $oldTarget} `
+                'Exact rollback projection must refuse a pre-relay image both during activation and after capability withdrawal.'
+        }
+    }
+    $global:RuntimeConfigGitState.SourceBySha.Remove($relayTargetKey)
+    [void](Get-RuntimeProjectionCapabilities -RepositoryRoot $repositoryRoot -AppSha $appSha -Mode 'private-chat-lifecycle-global-off' -SourceTaskDefinition $privateOffApi -RegistryTargetAppSha $oldTarget)
+    Assert-Condition ($global:RuntimeConfigGitState.SourceShowRequests -ccontains $relayTargetKey) 'Rollback relay source must be read from its exact target SHA.'
+    $unrelated=ConvertTo-RuntimeConfiguration -Profile ([pscustomobject]@{schemaVersion=7;mode='school-website-block-off'})
+    $privateSnapshot=[pscustomobject]@{ApiTask=[pscustomobject]@{taskDefinition=$privateOffApi};WorkerTask=[pscustomobject]@{taskDefinition=$global:RuntimeConfigTestState.TaskResponses[$privateOffApply.candidateWorkerTaskDefinitionArn].taskDefinition}}
+    foreach($path in @('src/services/classpilotPrivateChatLifecycle.ts','src/db/classpilotPrivateChatLifecycleMigration.ts','src/realtime/websocket.ts')){
+        $original=$global:RuntimeConfigGitState.SourceByPath[$path];$global:RuntimeConfigGitState.SourceByPath[$path]='pre-lifecycle legacy writer'
+        Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'The admitted floor must protect unrelated plans after private chat is off.'
+        $global:RuntimeConfigGitState.SourceByPath[$path]=$original
+    }
+    Assert-Condition ($global:RuntimeConfigGitState.SourceShowRequests -ccontains "${appSha}:src/realtime/websocket.ts") 'Serving relay source must be read from the exact app SHA, including capability off.'
+    $offGuc=@($privateOffApi.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_GUC_ENABLED')[0]
+    $offGuc.value='false'
+    Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'Withdrawal cannot bypass129 admission on an unrelated profile.'
+    $offGuc.value='true'
+    $offAdmission=@($privateOffApi.containerDefinitions[0].environment | Where-Object name -CEQ 'RLS_ENABLED_TABLES')[0]
+    $fullOffAdmission=$offAdmission.value;$offAdmission.value=$fullOffAdmission.Replace(',classpilot_private_chat_threads',', classpilot_private_chat_threads ')
+    Assert-Throws {Assert-PrivateChatRuntimeCompatibility -Runtime $unrelated -Snapshot $privateSnapshot -RepositoryRoot $repositoryRoot -AppSha $appSha} 'Whitespace cannot hide the admitted floor after private chat is off.'
+    $offAdmission.value=$fullOffAdmission
+    [void](Invoke-RuntimeConfigRollback -Plan $privateOffPlan -PlanSha256 $privateOffResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $privatePlan -PlanSha256 $privatePlanResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    [void](Invoke-RuntimeConfigRollback -Plan $privatePilotPlan -PlanSha256 $privatePilotResult.PlanSha256 -Now $now -ConvergenceAttempts 2 -ConvergenceIntervalSeconds 0)
+    Reset-MockDeploymentState -ApiArn $apiSourceArn -WorkerArn $workerSourceArn -Digest $digest -SecretArn $turnSecretArn
 
     # --- Registry projection: never write a capability the serving image cannot parse ---
     # An image older than roadmap PR 2 rejects the whole rollout registry (and so
@@ -3789,10 +4171,14 @@ try {
         schemaVersion = 7; mode = "precise-restriction-resources-pilot"; pilotSchoolId = $testSchoolId
     })
     $activationError = $null
+    $activationReleasePath = Join-Path $testRoot 'registry-projection-release.json'
+    Write-TestJson -Path $activationReleasePath -Value (New-TestRoadmapReleaseEvidence `
+        -Capability 'preciseRestrictionResourcesV1' -SchoolId $testSchoolId -ToolSha $toolSha -AppSha $appSha -Digest $digest -Now $now)
     try {
         [void](New-RuntimeConfigPlan -RepositoryRoot $repositoryRoot -PrivateProfilePath $activationProfilePath `
             -EvidenceRoot $evidenceRoot -AppSha $appSha -ImageDigest $digest `
-            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now)
+            -ApiTaskDefinitionArn $apiSourceArn -WorkerTaskDefinitionArn $workerSourceArn -Now $now `
+            -PrivateRoadmapReleaseEvidencePath $activationReleasePath -ConfirmProductionMutation -ConfirmRoadmapManagedWaiver)
     } catch { $activationError = $_.Exception.Message }
     Assert-Condition ($null -ne $activationError -and $activationError -cmatch 'would activate preciseRestrictionResourcesV1') `
         "Plan must refuse to activate a capability the serving image does not register."

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "originalManifestSha256": "50fce997e15658ca0475931c621166a42762166f66577463caf28456b8361dc3",
+  "path": "src/services/classpilotHeartbeatReadQueries.ts",
+  "beforeSha256": "93aae230b6b73c6d4a5d594aad1d21f95af3f9ff13c86f57d1a768283b91435a",
+  "afterSha256": "358701696c6ec5c134cbd8d06299f8f39aca3fa2d4698ebfcb7c7b550d3cca82",
+  "beforeBytes": 5685,
+  "afterBytes": 5685,
+  "trailingWhitespaceOnly": true,
+  "normalizedContentEqual": true,
+  "reason": "Parent removed final blank line caught by git diff --check after native/unit validation. Original test bindings and manifest retained unchanged.",
+  "validationScope": "No behavioral changes claimed. Parent owns rebuilt JavaScript equivalence receipt.",
+  "capacityAccepted": false
+}

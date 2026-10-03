@@ -188,6 +188,7 @@ export const passes = pgTable(
         AND ${table.activityNameSnapshot} IS NOT NULL AND ${table.gradeId} IS NULL AND ${table.classpilotGroupId} IS NULL)`),
     index("passes_school_id_idx").on(table.schoolId),
     index("passes_student_id_idx").on(table.studentId),
+    unique("passes_school_student_id_unique").on(table.schoolId, table.studentId, table.id),
     index("passes_teacher_id_idx").on(table.teacherId),
     index("passes_status_idx").on(table.status),
     uniqueIndex("passes_one_active_per_student")

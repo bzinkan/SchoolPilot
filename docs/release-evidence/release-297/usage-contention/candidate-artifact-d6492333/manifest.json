@@ -1,0 +1,314 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T08:18:23.340Z",
+  "status": "local_candidate_built_and_scanned",
+  "sourceRevision": "d6492333520608df1524c021999d9440a26149de",
+  "sourceInitiallyClean": true,
+  "sourceUnchangedAtBuildFinish": true,
+  "permanentArtifactDirectory": "<USER>/.codex/artifacts/release297-candidate-d6492333-01",
+  "permanentArtifactManifestSha256": "322b5f14fa1ab12f360b2cda522fa1d65250582ea64e7c625296e54295251589",
+  "rawReceiptsPreservedAtPermanentArtifact": true,
+  "image": {
+    "imageId": "sha256:d4df2a07f1f92568f44de2d774b64f138d030d53af1c8055729eb79f53773c36",
+    "imageIdKind": "index",
+    "indexDigest": "sha256:d4df2a07f1f92568f44de2d774b64f138d030d53af1c8055729eb79f53773c36",
+    "platformManifestDigest": "sha256:6625b4d5b6a8f1861ba71c44581b3c9a1787db40c4423a115f9676a540744ffc",
+    "configDigest": "sha256:aa091ba156e0d21017c85670647d370036871e35b98d482732d4647c1eae0253",
+    "exportIndexSha256": "59b12181a04a80681e1a7f63d32494fdfc99f31afb8ba31e0fd225707ccdc023",
+    "verifiedBlobDigests": [
+      "sha256:d4df2a07f1f92568f44de2d774b64f138d030d53af1c8055729eb79f53773c36",
+      "sha256:6625b4d5b6a8f1861ba71c44581b3c9a1787db40c4423a115f9676a540744ffc",
+      "sha256:b78193d08d93ddde8eea0e8103579f328a6e202b052855156c927f490060efa9"
+    ]
+  },
+  "os": "linux",
+  "architecture": "amd64",
+  "scan": {
+    "passed": true,
+    "scanner": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "gate": "All HIGH and CRITICAL findings block regardless of fix availability",
+    "counts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "fullReport": {
+      "path": "reports/trivy.json",
+      "sha256": "dd0ac97077896fa0dc3476f067699531097d7dbe4a932a3405867e4424f042fe"
+    },
+    "receipt": {
+      "path": "scan-receipt.json",
+      "sha256": "38364ad943a7b0625bcb9a29908b79770bf7bc033b9273649720a529b48e824f"
+    }
+  },
+  "export": {
+    "path": "input/image.tar",
+    "sha256": "59b845b4d5cd15f4d22d20214fab3b594e5dcaf2b1eb97bf6c4bd3278affdad0",
+    "bytes": 153934336
+  },
+  "compatibility": {
+    "embeddedReceipt": "embedded-compatibility.json",
+    "syntheticAdmissionReceipt": "synthetic-release-floor-proof.json",
+    "note": "Embedded markers and synthetic release-floor proof only. Not actual production catalog/admission or registered deployment bindings."
+  },
+  "omitted": [
+    {
+      "path": "input/image.tar",
+      "bytes": 153934336,
+      "sha256": "59b845b4d5cd15f4d22d20214fab3b594e5dcaf2b1eb97bf6c4bd3278affdad0",
+      "reason": "Large exact image archive remains in permanent local artifact directory; rehashed during this index creation."
+    },
+    {
+      "path": "cache/",
+      "reason": "Replaceable scanner cache excluded from original artifact preservation."
+    }
+  ],
+  "limits": [
+    "This artifact is built and scanned locally; it has not been pushed, deployed or activated.",
+    "Failed Combined09 capacity result remains failed. No Usage activation approval.",
+    "Rollback rehearsal, fresh production-state checks, remote CI and live acceptance are separate evidence.",
+    "OCI index digest, linux/amd64 manifest digest, image config digest and tar-file SHA256 are distinct identifiers."
+  ],
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0,
+  "capacityAccepted": false,
+  "productionDeployed": false,
+  "usageActivationApproved": false,
+  "files": [
+    {
+      "file": "archive-identities.mjs.gz",
+      "originalRelativePath": "archive-identities.mjs",
+      "rawSha256": "b0b70e11029c4a5c46c438f3396774b536ed8138c108186cc0a84ed8d7e64037",
+      "rawBytes": 2551,
+      "sanitizedSha256": "b0b70e11029c4a5c46c438f3396774b536ed8138c108186cc0a84ed8d7e64037",
+      "sanitizedBytes": 2551,
+      "gzipSha256": "24452e21847d6e22a2a2d41d44a5686dcb67bc4082010dc4f19d9a99771104d6",
+      "gzipBytes": 1152,
+      "gzipVerified": true
+    },
+    {
+      "file": "build-image-id.txt.gz",
+      "originalRelativePath": "build-image-id.txt",
+      "rawSha256": "52cc916f04e666762fa1f602842991ca9f6c309d75f40d758023acaac98af5c4",
+      "rawBytes": 71,
+      "sanitizedSha256": "52cc916f04e666762fa1f602842991ca9f6c309d75f40d758023acaac98af5c4",
+      "sanitizedBytes": 71,
+      "gzipSha256": "1eed7f43d399f9ee267a796e4f3b7c4345c660d2488ec92f324bcefc88d4c19d",
+      "gzipBytes": 77,
+      "gzipVerified": true
+    },
+    {
+      "file": "build.log.gz",
+      "originalRelativePath": "build.log",
+      "rawSha256": "5ecfde8f08eac895ee3aecbf564c2e4ed0e8abce1c3bf9d2e7d3662322814789",
+      "rawBytes": 10989,
+      "sanitizedSha256": "0469127d9e667b1d61d014b4b6b3ed4971aff4697b3e58ddc4a1d339e72f25f5",
+      "sanitizedBytes": 10987,
+      "gzipSha256": "9f9d5b67134f2243bd2eb52592c152201fd637e12c233571aaa9eabb3345dd73",
+      "gzipBytes": 3200,
+      "gzipVerified": true
+    },
+    {
+      "file": "candidate-preparation.json.gz",
+      "originalRelativePath": "candidate-preparation.json",
+      "rawSha256": "1dc91837cc6cb1dfe17769fb0f1e2f4d1329e0b9ad14cc3496680ae2982c28ec",
+      "rawBytes": 3539,
+      "sanitizedSha256": "a6b56ed24f0429fa222208b879b6ebccb042b6215549349169fc42e0ddad6437",
+      "sanitizedBytes": 3531,
+      "gzipSha256": "beb0127ad02358e5908f10941038c5db1a0bd0e6801b707f28d64faee8047593",
+      "gzipBytes": 1644,
+      "gzipVerified": true
+    },
+    {
+      "file": "cleanup.json.gz",
+      "originalRelativePath": "cleanup.json",
+      "rawSha256": "689171f448e0435f4bc3a9bbbdfb78a1ebfc63d95f71287e8ea871561b6e8f39",
+      "rawBytes": 104,
+      "sanitizedSha256": "16d3a23c9f27a5175def46c93f27195579f4b2ebc4572616e844cb287b4b55c7",
+      "sanitizedBytes": 84,
+      "gzipSha256": "9cda98c94479486a0ba1034aec6692e0c80ca6fb17c09ad2839d6b8f1190b50c",
+      "gzipBytes": 102,
+      "gzipVerified": true
+    },
+    {
+      "file": "embedded-compatibility.json.gz",
+      "originalRelativePath": "embedded-compatibility.json",
+      "rawSha256": "a88dd32d643a791f08095e5603d55bc05b8222634ca3e01d15e69a1ec6cbff25",
+      "rawBytes": 811,
+      "sanitizedSha256": "a88dd32d643a791f08095e5603d55bc05b8222634ca3e01d15e69a1ec6cbff25",
+      "sanitizedBytes": 811,
+      "gzipSha256": "67c44e13a96f35db58d707cb1f29ffb4ff37bc86ba70078f4d7c47294599111d",
+      "gzipBytes": 512,
+      "gzipVerified": true
+    },
+    {
+      "file": "embedded-compatibility.log.gz",
+      "originalRelativePath": "embedded-compatibility.log",
+      "rawSha256": "35eab949693987b37901bae25080152fe72be189fd6ab14afd0670cce0987255",
+      "rawBytes": 812,
+      "sanitizedSha256": "35eab949693987b37901bae25080152fe72be189fd6ab14afd0670cce0987255",
+      "sanitizedBytes": 812,
+      "gzipSha256": "25f8e8df5c653f6fc1053cb47b2d19f092eb6e075ea06139f45a45fb32592c10",
+      "gzipBytes": 513,
+      "gzipVerified": true
+    },
+    {
+      "file": "image-inspect.json.gz",
+      "originalRelativePath": "image-inspect.json",
+      "rawSha256": "ab540aa37e285c15058b413e366d4239c241f0f54f76b2768b2615877a36ec66",
+      "rawBytes": 2735,
+      "sanitizedSha256": "ab540aa37e285c15058b413e366d4239c241f0f54f76b2768b2615877a36ec66",
+      "sanitizedBytes": 2735,
+      "gzipSha256": "688ae8c2dfa0f96b2d8c5f5fe12e6cd59917703e5ebe8e89a24e6663bddd1c6b",
+      "gzipBytes": 1315,
+      "gzipVerified": true
+    },
+    {
+      "file": "inspect-compatibility.mjs.gz",
+      "originalRelativePath": "inspect-compatibility.mjs",
+      "rawSha256": "1220d472317b07b817dd405eaa30054ef596c902fa9ce4fe5909c92d040cdc7b",
+      "rawBytes": 2315,
+      "sanitizedSha256": "1220d472317b07b817dd405eaa30054ef596c902fa9ce4fe5909c92d040cdc7b",
+      "sanitizedBytes": 2315,
+      "gzipSha256": "558f5886de3921b2e1707af688c0b6c4a1b1d6ab33541d6c03cb247f7fff116f",
+      "gzipBytes": 991,
+      "gzipVerified": true
+    },
+    {
+      "file": "prepare-candidate.mjs.gz",
+      "originalRelativePath": "prepare-candidate.mjs",
+      "rawSha256": "41885c2b08bb99ef75979299bfe03887b731b9a4f42a64d720eb537cd91c6b89",
+      "rawBytes": 6828,
+      "sanitizedSha256": "41885c2b08bb99ef75979299bfe03887b731b9a4f42a64d720eb537cd91c6b89",
+      "sanitizedBytes": 6828,
+      "gzipSha256": "889dcbe109e1a57214b1fbd6e4259d0b5d77fd454ea58c6511d6f0110879b3c2",
+      "gzipBytes": 2872,
+      "gzipVerified": true
+    },
+    {
+      "file": "prove-synthetic-floor.mjs.gz",
+      "originalRelativePath": "prove-synthetic-floor.mjs",
+      "rawSha256": "c1d0b02e678c80533910098de5994ca28d1ad9c5ef3798aefe5c0b823eca50ff",
+      "rawBytes": 3500,
+      "sanitizedSha256": "c1d0b02e678c80533910098de5994ca28d1ad9c5ef3798aefe5c0b823eca50ff",
+      "sanitizedBytes": 3500,
+      "gzipSha256": "fabb3bc360b1bf0b71b13b7629b51226ce90674f2c357445f7114cd9e701020c",
+      "gzipBytes": 1501,
+      "gzipVerified": true
+    },
+    {
+      "file": "reports__scanner.stderr.log.gz",
+      "originalRelativePath": "reports/scanner.stderr.log",
+      "rawSha256": "eb41117ce8478a0bb8e510419ff9350d8d65856a52bcf88270060b490304d495",
+      "rawBytes": 10308,
+      "sanitizedSha256": "eb41117ce8478a0bb8e510419ff9350d8d65856a52bcf88270060b490304d495",
+      "sanitizedBytes": 10308,
+      "gzipSha256": "ffda54c6caa7bbc760698e1cb5243b3246efbc93b2aeac6cb0fd7fd198a0973c",
+      "gzipBytes": 1085,
+      "gzipVerified": true
+    },
+    {
+      "file": "reports__scanner.stdout.log.gz",
+      "originalRelativePath": "reports/scanner.stdout.log",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "rawBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "gzipBytes": 20,
+      "gzipVerified": true
+    },
+    {
+      "file": "reports__trivy.json.gz",
+      "originalRelativePath": "reports/trivy.json",
+      "rawSha256": "dd0ac97077896fa0dc3476f067699531097d7dbe4a932a3405867e4424f042fe",
+      "rawBytes": 356674,
+      "sanitizedSha256": "d98f733af63623e497a4bdc639ee0e26e32b046a7841b32f2e154b95ad126a6e",
+      "sanitizedBytes": 353366,
+      "gzipSha256": "e68fa04844a6d25c305126d6c21fdd50db04e6917f8cd31ad550d5ebd061619d",
+      "gzipBytes": 31203,
+      "gzipVerified": true
+    },
+    {
+      "file": "reviewed-legacy-image-gate.mjs.gz",
+      "originalRelativePath": "reviewed-legacy-image-gate.mjs",
+      "rawSha256": "8746f73e61d28510fbf2b333f14d7376d88c8a762c06dc001f1e3eaed6370c5a",
+      "rawBytes": 18842,
+      "sanitizedSha256": "8746f73e61d28510fbf2b333f14d7376d88c8a762c06dc001f1e3eaed6370c5a",
+      "sanitizedBytes": 18842,
+      "gzipSha256": "8bb9f163808889cf9755a566196685d90f2ad6f1c4be7e5719bb791e2f30174b",
+      "gzipBytes": 5749,
+      "gzipVerified": true
+    },
+    {
+      "file": "scan-receipt.json.gz",
+      "originalRelativePath": "scan-receipt.json",
+      "rawSha256": "38364ad943a7b0625bcb9a29908b79770bf7bc033b9273649720a529b48e824f",
+      "rawBytes": 888,
+      "sanitizedSha256": "38364ad943a7b0625bcb9a29908b79770bf7bc033b9273649720a529b48e824f",
+      "sanitizedBytes": 888,
+      "gzipSha256": "8c310197b485718d44dc4a5b582afe8714875d8baaeb8b8085b6723432dff3bf",
+      "gzipBytes": 582,
+      "gzipVerified": true
+    },
+    {
+      "file": "source.json.gz",
+      "originalRelativePath": "source.json",
+      "rawSha256": "09635fab2d44158f4eded336d99ec4433ac91e3eb49bd76508a4f647359e2bd2",
+      "rawBytes": 127,
+      "sanitizedSha256": "09635fab2d44158f4eded336d99ec4433ac91e3eb49bd76508a4f647359e2bd2",
+      "sanitizedBytes": 127,
+      "gzipSha256": "56cee7a1023070867b33669d985fd72b5a50601ac231bb3d4bcd0989f4fbd70a",
+      "gzipBytes": 131,
+      "gzipVerified": true
+    },
+    {
+      "file": "synthetic-api-task.json.gz",
+      "originalRelativePath": "synthetic-api-task.json",
+      "rawSha256": "3bf2c017358517270c98781d2d862d85455641d115b9d90c53f15a02d49ef6bf",
+      "rawBytes": 4088,
+      "sanitizedSha256": "3bf2c017358517270c98781d2d862d85455641d115b9d90c53f15a02d49ef6bf",
+      "sanitizedBytes": 4088,
+      "gzipSha256": "39355ea30488ad6315ce9b0619a4fb35285561e0bf34c562441a84b9e58efaab",
+      "gzipBytes": 1435,
+      "gzipVerified": true
+    },
+    {
+      "file": "synthetic-release-floor-proof.json.gz",
+      "originalRelativePath": "synthetic-release-floor-proof.json",
+      "rawSha256": "40f258c6afe0313a314dd7b7b88c7c07b65e2a09ac987a6b3b88d9d9004be0e8",
+      "rawBytes": 1035,
+      "sanitizedSha256": "40f258c6afe0313a314dd7b7b88c7c07b65e2a09ac987a6b3b88d9d9004be0e8",
+      "sanitizedBytes": 1035,
+      "gzipSha256": "4096f1b5564457efd9216a65c499e6da1a22a0d48b1086a000badd1e249f2236",
+      "gzipBytes": 626,
+      "gzipVerified": true
+    },
+    {
+      "file": "synthetic-worker-task.json.gz",
+      "originalRelativePath": "synthetic-worker-task.json",
+      "rawSha256": "af57974699ba3618729253bb43332062574e3b5b7a5a66a633d8b42b5d505003",
+      "rawBytes": 4102,
+      "sanitizedSha256": "af57974699ba3618729253bb43332062574e3b5b7a5a66a633d8b42b5d505003",
+      "sanitizedBytes": 4102,
+      "gzipSha256": "4268085b568a6892293845eb3d5fac2c924642c0d42c898c93eb70d30c485b75",
+      "gzipBytes": 1440,
+      "gzipVerified": true
+    },
+    {
+      "file": "artifact-manifest.json.gz",
+      "originalRelativePath": "artifact-manifest.json",
+      "rawSha256": "322b5f14fa1ab12f360b2cda522fa1d65250582ea64e7c625296e54295251589",
+      "rawBytes": 9702,
+      "sanitizedSha256": "6d30a98afc9724b99be198292ba5f6394fb2d4e2a33a2fa6cd93145af6f4afa2",
+      "sanitizedBytes": 9664,
+      "gzipSha256": "991e9b0a9ee4b228ecce38fdf50a6920ee3d31a41937ca22ec798b367014054b",
+      "gzipBytes": 2908,
+      "gzipVerified": true
+    }
+  ],
+  "sanitization": "User-home paths, connection URLs, JWT-shaped values, emails, UUIDs and literal SQL passwords redacted. Raw originals unchanged. Every raw/sanitized/gzip SHA256 retained and gzip roundtrip verified."
+}

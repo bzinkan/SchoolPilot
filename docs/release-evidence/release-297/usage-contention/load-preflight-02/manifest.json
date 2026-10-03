@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T22:44:36.015Z",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "sourceRevision": "08802d020a3c51beea504140f923126ab518aac6",
+  "sourceClean": false,
+  "sourceBinding": "Dirty implementation worktree. HEAD alone does not identify tested source; usage-scale.json retains the then-current new harness file hashes. Later fixes are not certified by this run.",
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-enabled-preflight-02 -DiagnosticOnly -Phase preflight",
+  "exitCode": 1,
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "Expected \"actual\" to be strictly unequal to:\n\n'unavailable'"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "interpretation": "Non-passing lifecycle: command target reported unavailable before ACK. Captured staff authority succeeded; the assertion did not record unavailable reason. Follow-up fixture corrections connect selected control students, use actual transport authority for ACKs and report the precise reason. Those later changes remain unverified by this record.",
+  "topology": {
+    "separateProcesses": {
+      "api": 93028,
+      "worker": 91180,
+      "generator": 86740
+    },
+    "pools": {
+      "api": 16,
+      "session": 2,
+      "worker": 5,
+      "observer": 2
+    },
+    "postgresCpu": 4,
+    "postgresMemoryBytes": 4294967296,
+    "redisCpu": 1,
+    "redisMemoryBytes": 268435456,
+    "nodeOldSpaceMiB": 512,
+    "observerPurpose": "Isolated fixture preparation and content-free pg_stat_activity samples; not an application pool",
+    "database": "Owned disposable non-production PostgreSQL; restricted non-owner app role;129 forced-RLS tables",
+    "redis": "Owned disposable loopback Redis; actual publisher/subscriber initialized",
+    "apiPrewarm": 16,
+    "readiness": true,
+    "realSessionCookieLogin": true,
+    "enabledCapabilitiesVerified": true
+  },
+  "fixtureCounts": [
+    {
+      "schoolIndex": 0,
+      "raw": 1000001,
+      "sessions": 36800,
+      "frozenRosterRows": 184000,
+      "aggregates": 541500
+    },
+    {
+      "schoolIndex": 1,
+      "raw": 1000001,
+      "sessions": 36800,
+      "frozenRosterRows": 184000,
+      "aggregates": 541500
+    }
+  ],
+  "cleanup": "Owned PostgreSQL/Redis containers removed; child process outputs preserved. No shared database was mutated.",
+  "omissions": [
+    "Populated fixture identity snapshot and credentials are not archived.",
+    "Input/output schema DDL are represented by raw and canonical hashes; this archive has no populated database export."
+  ],
+  "sanitation": "School UUIDs replaced with stable synthetic-school indices; other UUIDs, emails, connection URLs, JWTs and session-cookie values redacted. Raw hashes identify original local inputs; sanitized full logs are gzip archived.",
+  "schema": {
+    "rawSha256": "50067b088043647f90b4be79d56facc3e565baf190520b506e638dac510ec943",
+    "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+    "normalization": "Remove only pg_dump restrict/unrestrict nonce lines; normalize BOM and CRLF to UTF8/LF; retain all SQL and schema names.",
+    "populatedDataCopied": false
+  },
+  "files": [
+    {
+      "sourceFile": "usage-scale.json",
+      "storedFile": "usage-scale.json",
+      "rawSha256": "1f6745af0be6666b51470d44e0248f3004b5f51dfa13279c6855927f9cc668bd",
+      "sanitizedSha256": "773970d98f50c21d80f9e0c395d7c27f7a844bfb97bc3787663db8ab9ce29624",
+      "storedSha256": "773970d98f50c21d80f9e0c395d7c27f7a844bfb97bc3787663db8ab9ce29624",
+      "rawBytes": 85282,
+      "storedBytes": 85210
+    },
+    {
+      "sourceFile": "execution.json",
+      "storedFile": "execution.json",
+      "rawSha256": "4d343557054d68ff9408e5e4153e6e2e0a45a130156e86f56ad85bfbb9bd0b60",
+      "sanitizedSha256": "da1ca3b1dfe2e380cf79f7d27f784bce6af8df88dfbe2f3359894c6c49d4171c",
+      "storedSha256": "da1ca3b1dfe2e380cf79f7d27f784bce6af8df88dfbe2f3359894c6c49d4171c",
+      "rawBytes": 1570,
+      "storedBytes": 1540
+    },
+    {
+      "sourceFile": "resource-caps.json",
+      "storedFile": "resource-caps.json",
+      "rawSha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+      "sanitizedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "storedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "rawBytes": 1560,
+      "storedBytes": 1559
+    },
+    {
+      "sourceFile": "cold-restarted-state.json",
+      "storedFile": "cold-restarted-state.json",
+      "rawSha256": "3606cd976276f41446b51647a82fc5dea659012e1373a37af0facc2196027792",
+      "sanitizedSha256": "e918897f93a3e70f87a29d444b8b78eb1d9d58881e9b524d1c925592a2819cde",
+      "storedSha256": "e918897f93a3e70f87a29d444b8b78eb1d9d58881e9b524d1c925592a2819cde",
+      "rawBytes": 226,
+      "storedBytes": 225
+    },
+    {
+      "sourceFile": "container-final-state.json",
+      "storedFile": "container-final-state.json",
+      "rawSha256": "3606cd976276f41446b51647a82fc5dea659012e1373a37af0facc2196027792",
+      "sanitizedSha256": "e918897f93a3e70f87a29d444b8b78eb1d9d58881e9b524d1c925592a2819cde",
+      "storedSha256": "e918897f93a3e70f87a29d444b8b78eb1d9d58881e9b524d1c925592a2819cde",
+      "rawBytes": 226,
+      "storedBytes": 225
+    },
+    {
+      "sourceFile": "container-final-stats.json",
+      "storedFile": "container-final-stats.json",
+      "rawSha256": "bf68a4fd5acb75318ca808e73bab9dbd1497eb1cb5c884ae4e28e7882ecda49e",
+      "sanitizedSha256": "9741324ab9be49c8e88d837173a44e96af80f30ca02161e17b0e9e711a43e42d",
+      "storedSha256": "9741324ab9be49c8e88d837173a44e96af80f30ca02161e17b0e9e711a43e42d",
+      "rawBytes": 248,
+      "storedBytes": 247
+    },
+    {
+      "sourceFile": "redis-final-stats.json",
+      "storedFile": "redis-final-stats.json",
+      "rawSha256": "970dfe4a7f3754a3964f300f3d0a1d56417ce043ea43af1b57e8034496067919",
+      "sanitizedSha256": "775c6cbdbc5a535458511276a3a10c9a878c58c9a4eae3fdb033227bb4473199",
+      "storedSha256": "775c6cbdbc5a535458511276a3a10c9a878c58c9a4eae3fdb033227bb4473199",
+      "rawBytes": 244,
+      "storedBytes": 243
+    },
+    {
+      "sourceFile": "api.log",
+      "storedFile": "api.log.gz",
+      "rawSha256": "8d438262209cb85ae224f875c8f3f7110414368a5d1a111d517944682034c832",
+      "sanitizedSha256": "117ce5c99e99de67d8ed56e90a8f4e98665fa5325449bc7d9587b36c82cc3eca",
+      "storedSha256": "c36b4cf81982d693642d168e3ba99d7f27ee63688b4cc107970e62e92f4404a2",
+      "rawBytes": 3897,
+      "storedBytes": 1037
+    },
+    {
+      "sourceFile": "build.log",
+      "storedFile": "build.log.gz",
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedSha256": "772633829129174cb4182a3a35d82f3b55aa7db9b5c8cbb275c65451e5a9359c",
+      "storedSha256": "977be9f2bef8af0d3e664371252eb7babe006768802718fc58286764de16b627",
+      "rawBytes": 55,
+      "storedBytes": 68
+    },
+    {
+      "sourceFile": "cold-restart.log",
+      "storedFile": "cold-restart.log.gz",
+      "rawSha256": "456e3c7f6319ef839bc2bc23820441970ed5b67f9899b95964e3f2681ca52410",
+      "sanitizedSha256": "1ee6173233ab833808a0e35ea4ebdf86832b54ea6cdf775a344555a075993837",
+      "storedSha256": "9570f73f8ead5021f27e73d31adf9e641794b794da1c4f3ce9fd95e36bf12796",
+      "rawBytes": 38,
+      "storedBytes": 57
+    },
+    {
+      "sourceFile": "container-create.log",
+      "storedFile": "container-create.log.gz",
+      "rawSha256": "b59414b9ef047488aab3910e2cb9d69278bcd75799265b6c07eb49eaba0b8c58",
+      "sanitizedSha256": "18338c2d1537b74ba895858271b942391e29d0faf34754801e889b60395b3d97",
+      "storedSha256": "ff734dd35614cd1400d5e7e6613cfcb5e1fcd83c874b34e83d4f659a936497dc",
+      "rawBytes": 66,
+      "storedBytes": 72
+    },
+    {
+      "sourceFile": "fixture-legacy-convergence.log",
+      "storedFile": "fixture-legacy-convergence.log.gz",
+      "rawSha256": "01e5f1fa2101496ec760173c18e398db900f290ee627a96308d3376470d0d6bc",
+      "sanitizedSha256": "c3fa2d6afa853af455926cd6c1bdf38de932e381f9b4735079670d8d64a253ab",
+      "storedSha256": "a8cf327ba71831c1d16441fe5daea9660615669a8c7b9158b81fbb260c7dbfb8",
+      "rawBytes": 12578,
+      "storedBytes": 3092
+    },
+    {
+      "sourceFile": "fixture-versioned-migrations.log",
+      "storedFile": "fixture-versioned-migrations.log.gz",
+      "rawSha256": "a825379f841509b6cd6dd6160f87c7a1ac05a1a543fdd0b6bafc724337db5287",
+      "sanitizedSha256": "8ea90cd706dc7af9263170de9576403f04ccf8157ca1d3b598fbedb9492dc2d6",
+      "storedSha256": "2e1723828ec2d13c805b07158fd7684ccf7c8914faf50bd85ac42a082a569016",
+      "rawBytes": 3648,
+      "storedBytes": 830
+    },
+    {
+      "sourceFile": "generator.log",
+      "storedFile": "generator.log.gz",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "storedSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e",
+      "rawBytes": 0,
+      "storedBytes": 20
+    },
+    {
+      "sourceFile": "preparation.log",
+      "storedFile": "preparation.log.gz",
+      "rawSha256": "5bfa9f1fac08b76a118b1a631cf458ddd50aa9ff1280a68da2a7c2f56461b2b5",
+      "sanitizedSha256": "7ec6b499c94e743f2e86679345479ab36398d5aff4b8f5e7ccb2af79900ce790",
+      "storedSha256": "9e2c1b00c57e51880fcf7758677d3303113c808fe7a2e44589050f026a33763c",
+      "rawBytes": 87908,
+      "storedBytes": 4116
+    },
+    {
+      "sourceFile": "redis-create.log",
+      "storedFile": "redis-create.log.gz",
+      "rawSha256": "60741c99a1f0e8cc39bdc528bbb79a022a32a38e199a35a8a05b00864fc9cd68",
+      "sanitizedSha256": "f68c1f520866004e5f76859e0b76abdf367b938b226fd073a36abed17881816d",
+      "storedSha256": "f62fbcf1d4110bd4ac19ed48d964f3a4a8a6c60d202187151e9b3bd693db01ec",
+      "rawBytes": 66,
+      "storedBytes": 72
+    },
+    {
+      "sourceFile": "scale.log",
+      "storedFile": "scale.log.gz",
+      "rawSha256": "7f18641f7d161459a72a1e33536d5a82c676829c5bff835947001985b32acb3d",
+      "sanitizedSha256": "cf7a1e12dca5f569c7e31fa0e36e3cbb335cb23c56e8c521fc23ad6e42a8ee83",
+      "storedSha256": "06af65c5e4bb22a9ff042dd97e2925a4b36b523844e0dd406218f79ca312ad65",
+      "rawBytes": 252,
+      "storedBytes": 217
+    },
+    {
+      "sourceFile": "schema-restore.log",
+      "storedFile": "schema-restore.log.gz",
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "storedSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed",
+      "rawBytes": 20912,
+      "storedBytes": 232
+    },
+    {
+      "sourceFile": "worker.log",
+      "storedFile": "worker.log.gz",
+      "rawSha256": "26a21bbdbbba85910668aadea44d086a7e04c84f241c2f5d1f4173f45ef0e3a0",
+      "sanitizedSha256": "f318285da4cb4ec325625d595358df654ec764c9d8c8455a6c75b9e7e19606a4",
+      "storedSha256": "c5aa7455eecffae4d347c886f6e0110c34e8106d1fc945a91e744eb1b6b6f592",
+      "rawBytes": 2610,
+      "storedBytes": 562
+    }
+  ]
+}

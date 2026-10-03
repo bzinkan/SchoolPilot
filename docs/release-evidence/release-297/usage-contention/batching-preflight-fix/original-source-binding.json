@@ -1,0 +1,12 @@
+{
+  "sourceDirty": true,
+  "sourceHashes": {
+    "tests/heartbeat-hot-path-optimization.test.ts": "cfa3d2ea720fed3234875ca75ba6aaafee598df2ba12bce2f0198b67a6113d67",
+    "scripts/load/usage/release-enabled-profile.test.mjs": "72d062b17b8058fd7500d47ee63a9d0f8d6f9b7b59ad6ec218ac54dcbd5aa717",
+    "src/services/heartbeatClassificationBatcher.ts": "16af164319980aae9085e5cec10827ddecacef7099c256b232e10bdda9907a3a",
+    "scripts/load/usage/release-enabled-scale.mjs": "096684ba0563e9f7215d2d3d589f082243b2db0c5378caad90542676ce1d3ec7",
+    "scripts/load/usage/release-enabled-process.mjs": "567f003df97688af07c804a851a767c7ffeb13eb322a1ade2ce49c296d44c708"
+  },
+  "createdAt": "2026-10-03T00:03:30.9129930Z",
+  "purpose": "Nonterminal preflight quiescence regression evidence; not capacity acceptance"
+}

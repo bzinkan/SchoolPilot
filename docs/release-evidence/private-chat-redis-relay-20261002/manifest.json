@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "recordedOn": "2026-10-02",
+  "scope": "Delayed private-chat Redis receiving authority; local checkpoints, final integrated CI and capacity are separate",
+  "productionMutations": 0,
+  "database": "schoolpilot_redesign_private_chat_lifecycle_complete_20261002",
+  "finalProductRootCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+  "finalProductLocalCheckpoint": "f77be3c7e27294547719eb814845eb9667a6628e",
+  "finalTestBlobs": {
+    "service": "734ab401c82ecc8abb51e81f426828805b78dc2b",
+    "hermeticRls": "dd236f66d3bbd223c27f0bf61bf448befccfc593"
+  },
+  "debtBaselineBlob": "5fc2c47c4ae9172e4e498feac265914db8ec25e8",
+  "finalBridgeAndDedupAssertionsValidated": true,
+  "records": [
+    {
+      "file": "baseline-red.log.gz",
+      "status": "failed-reproduced",
+      "passed": 28,
+      "failed": 21,
+      "skipped": 0,
+      "sourceCheckpoint": "7f2969ae9c8b23e11b5627485e1486262aefed19",
+      "notes": "Service-only baseline matrix before bridge socket amendment and dedup-ID variant.",
+      "rawSha256": "ef26177249367650d06cbced52d5eec5efbeeedad34047abec5ff8af2cded844",
+      "sanitizedSha256": "ef26177249367650d06cbced52d5eec5efbeeedad34047abec5ff8af2cded844",
+      "archiveSha256": "d83f80cdcc6e4a42c0bfc55f5cfd6f69edc2c4fe254f2a6e53f9fe78cf71e7fc",
+      "credentialRedactions": 0,
+      "command": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle.integration.test.ts')"
+    },
+    {
+      "file": "ordinary-green.log.gz",
+      "status": "passed",
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCheckpoint": "8cb02862d1edc42d62b95f995236491e527aca35",
+      "notes": "Earlier privileged application fixture plus hermetic RLS suite; predates final bridge socket assertion and dedup-ID variant.",
+      "rawSha256": "f0a3b916bbb5b896207ba5072953144e17f05cc9fbeb8f5bd480aa09df6c8c09",
+      "sanitizedSha256": "f0a3b916bbb5b896207ba5072953144e17f05cc9fbeb8f5bd480aa09df6c8c09",
+      "archiveSha256": "259b175e935ee58a8348e1cfdff4e1337f217d207d274dd567aaa2fab0660485",
+      "credentialRedactions": 0,
+      "command": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts')"
+    },
+    {
+      "file": "restricted-green.log.gz",
+      "status": "passed",
+      "passed": 55,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCheckpoint": "8cb02862d1edc42d62b95f995236491e527aca35",
+      "notes": "Earlier restricted application fixture plus hermetic RLS suite; predates final bridge socket assertion and dedup-ID variant.",
+      "rawSha256": "f0eb464212136bf30b77a49eaaa872c82e4e1d304d01be70f4bd7d64e013f269",
+      "sanitizedSha256": "f0eb464212136bf30b77a49eaaa872c82e4e1d304d01be70f4bd7d64e013f269",
+      "archiveSha256": "f94387757c0a83fb962aae0a7bcac3ff164386790f882ff46601e6504be870b7",
+      "credentialRedactions": 0,
+      "command": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts') -Restricted"
+    },
+    {
+      "file": "final-ordinary-green.log.gz",
+      "status": "passed",
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+      "notes": "Final privileged synthetic application fixture plus hermetic RLS suite; includes final bridge and dedup assertions.",
+      "rawSha256": "42c996318dd3a8a9fb539e048ae4b4308a3d1323fb772b8115bce4eff7127bcd",
+      "sanitizedSha256": "42c996318dd3a8a9fb539e048ae4b4308a3d1323fb772b8115bce4eff7127bcd",
+      "archiveSha256": "a2fe852fc7bb64da439a6bbba92b1c6ffaee95d7554c1e09ef76d8c199a728d2",
+      "credentialRedactions": 0,
+      "command": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts')"
+    },
+    {
+      "file": "final-restricted-green.log.gz",
+      "status": "passed",
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+      "notes": "Final NOSUPERUSER/NOBYPASSRLS non-owner application fixture plus hermetic RLS suite; includes final bridge and dedup assertions.",
+      "rawSha256": "f820f087a4d1f023b55ebb3a67387e873bcb06f759466bbfce53814a60c1b7f4",
+      "sanitizedSha256": "f820f087a4d1f023b55ebb3a67387e873bcb06f759466bbfce53814a60c1b7f4",
+      "archiveSha256": "c436facd398106d1f7d94282d8f2b1275ce9bd0f767168189f585dce56b45b94",
+      "credentialRedactions": 0,
+      "command": "& ./scripts/run-local-workspace-tests.ps1 -Database schoolpilot_redesign_private_chat_lifecycle_complete_20261002 -TestFiles @('tests/classpilot-private-chat-lifecycle-rls.test.ts','tests/classpilot-private-chat-lifecycle.integration.test.ts') -Restricted"
+    },
+    {
+      "file": "stale-dist-types-red.log.gz",
+      "status": "failed-diagnostic",
+      "sourceCheckpoint": "8cb02862d1edc42d62b95f995236491e527aca35",
+      "notes": "Exit1: two TS2741 increases from old dist declaration lacking the new storage export; fresh build removes these without fixture/debt edits.",
+      "rawSha256": "844df0649e7a80c890814b018822dcf9232b3b25155bb0c29a7b14e7b3d12a6f",
+      "sanitizedSha256": "844df0649e7a80c890814b018822dcf9232b3b25155bb0c29a7b14e7b3d12a6f",
+      "archiveSha256": "f1fbfcdb233f89f699b1ae9acfa36844a607d393c9cc92a4a6e73431b09ec601",
+      "credentialRedactions": 0,
+      "command": "npm run check:tests"
+    },
+    {
+      "file": "final-build.log.gz",
+      "status": "passed",
+      "sourceCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+      "notes": "Fresh tsc/tsc-alias build.",
+      "rawSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "sanitizedSha256": "2117567e460c76b6cbc1fcb6eb521fb8577504597d0a8ad2eb9363ef1082ca48",
+      "archiveSha256": "9422a52380ba189f53368094aaf66fa53bed1a7c35b56196cf362c4468755af0",
+      "credentialRedactions": 0,
+      "command": "npm run build"
+    },
+    {
+      "file": "final-types.log.gz",
+      "status": "passed",
+      "sourceCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+      "notes": "438/534 existing test-only diagnostics; zero application/syntax errors; unchanged debt baseline.",
+      "rawSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "archiveSha256": "0bf64296e5751c143f80893a2f454a42ec269e1202d49738f89ae97a654ceca4",
+      "credentialRedactions": 0,
+      "command": "npm run check:tests"
+    },
+    {
+      "file": "final-casts.log.gz",
+      "status": "passed",
+      "sourceCheckpoint": "1bb763ab951cb1f9f0f2411307f28dbbabbf7146",
+      "notes": "Unsafe cast ratchet: asAny689, asUnknownAs7, tsIgnore0, tsExpectError0.",
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "archiveSha256": "96234f629f0c609c1748143d79c04eb74c92a5a1252b4e0f00b64a2f3fac0df0",
+      "credentialRedactions": 0,
+      "command": "npm run check:test-casts"
+    }
+  ]
+}

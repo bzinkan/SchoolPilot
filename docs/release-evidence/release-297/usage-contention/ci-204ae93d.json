@@ -1,0 +1,154 @@
+{
+  "observedAt": "2026-10-03T09:32:43.3422334Z",
+  "source": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+  "workflows": [
+    {
+      "conclusion": "success",
+      "databaseId": 37111559168,
+      "headSha": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559168",
+      "workflowName": "Gitleaks"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 37111559162,
+      "headSha": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559162",
+      "workflowName": "Trivy Container Scan"
+    },
+    {
+      "conclusion": "success",
+      "databaseId": 37111559163,
+      "headSha": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559163",
+      "workflowName": "CodeQL"
+    },
+    {
+      "conclusion": "failure",
+      "databaseId": 37111559159,
+      "headSha": "204ae93d0869f4fe6dda33e663a4f91d5321eee7",
+      "status": "completed",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159",
+      "workflowName": "CI"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "Backend (TypeScript + Build)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316385"
+    },
+    {
+      "name": "Frontend (Vite Build)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316483"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 3)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316538"
+    },
+    {
+      "name": "Detect changed paths",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316547"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 1)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316553"
+    },
+    {
+      "name": "RLS-enabled cross-tenant tests",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316566"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 2)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316573"
+    },
+    {
+      "name": "Cross-tenant isolation tests",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316587"
+    },
+    {
+      "name": "Frontend release-focused gates (shard 4)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170316597"
+    },
+    {
+      "name": "AWS rollout safety (PowerShell + Terraform)",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111170361721"
+    },
+    {
+      "name": "SOC 2 privileged access evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111171314681"
+    },
+    {
+      "name": "SOC 2 AI/privacy evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172128057"
+    },
+    {
+      "name": "SOC 2 monitoring evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172128100"
+    },
+    {
+      "name": "SOC 2 tenant isolation evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172435717"
+    },
+    {
+      "name": "SOC 2 deployment evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172435731"
+    },
+    {
+      "name": "SOC 2 incident evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172435733"
+    },
+    {
+      "name": "SOC 2 approval queue",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37111559159/job/111172474790"
+    }
+  ],
+  "failure": {
+    "expected": "load:<specific probe failure reason>",
+    "case": "start-gate-probe-unavailable",
+    "investigation": "in_progress",
+    "claim": "No root cause is established yet; do not relabel as a flake or passing.",
+    "test": "tests/aws-rollout-automation.test.ps1",
+    "actual": "monitor_exception"
+  },
+  "limits": [
+    "No capacity acceptance or production readiness.",
+    "Conditional test skips remain skips."
+  ]
+}

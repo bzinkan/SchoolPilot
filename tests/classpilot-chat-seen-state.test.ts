@@ -61,7 +61,7 @@ describe("teacher chat delivery state", () => {
     assert.equal(classpilotChatSeenStateMigration.mode, "transactional");
     const ids = schoolPilot27Migrations.map((migration) => migration.id);
     assert.ok(ids.indexOf("classpilot-chat-channel-control-20260918") < ids.indexOf(classpilotChatSeenStateMigration.id));
-    assert.equal(ids.at(-1), "20260824_staff_identity_integrity_contract");
+    assert.ok(ids.indexOf(classpilotChatSeenStateMigration.id) < ids.indexOf("20260824_staff_identity_integrity_contract"));
     const [schema, index] = await Promise.all([source("src/schema/classpilot.ts"), source("src/index.ts")]);
     assert.match(schema, /\$type<"sent" \| "delivered" \| "failed" \| "seen">\(\)/);
     assert.match(schema, /seenAt: timestamp\("seen_at", \{ withTimezone: true \}\)/);

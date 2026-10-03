@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": "precise-focus-2.9.7-package-identity-binding",
+  "sourceBaseCommit": "5493f9eaaf58a3e95325f53d8cd0892b1a208f8c",
+  "sourceAttribution": "Runtime suite ran before commit on the three exact UTF-8/LF file hashes below. The subsequently committed pin/test patch must match these hashes. This is focused working-tree proof, not later combined acceptance.",
+  "sourceHashes": {
+    "encoding": "UTF-8/LF",
+    "paths": {
+      "scripts/deploy-classpilot-runtime-config.ps1": "c05646f440da687aa3efe60bf80629db4b35e61595efad02af8b78ed1d63ea05",
+      "tests/classpilot-runtime-config-deploy.test.ps1": "6e2f2023c0abf60c9ea868604a7efac8865d3d875b3f2229f2456dcd4f4ea46f",
+      "scripts/load/usage/classpilot-297-advertised-capabilities.json": "3d9b47fef96634bf980668133ab1b2ac76b71e4ae236b6146340a7c614703919"
+    }
+  },
+  "command": {
+    "program": "pwsh",
+    "arguments": [
+      "-NoProfile",
+      "-File",
+      "tests/classpilot-runtime-config-deploy.test.ps1"
+    ]
+  },
+  "finishedAt": "2026-10-02T18:21:33.971Z",
+  "exitCode": 0,
+  "assertions": 1287,
+  "log": {
+    "file": "runtime-package-binding-065be165.txt",
+    "rawLogSha256": "77107bab759a487454ae89c9bc0d0cca6874b1e8254a729badb0dc8fa9afd791",
+    "utf8LfSha256": "f67c90cb68dd21e69441689dac38176951134ad851d608d274009ad9790daf2e"
+  },
+  "identity": {
+    "classPilotTag": "v2.9.7",
+    "classPilotPackagedSourceSha": "065be165b5df704d84eb716e3fb914c1fed17f98",
+    "classPilotZipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+    "extensionId": "iggbfegfcjkfieoemeolfmfnapepalca",
+    "legacyFieldMeaning": "RequiredMergeSha/classPilotMergeSha identify exact packaged source for these new profiles only; merge outcome is separate."
+  },
+  "checks": {
+    "actualPreciseAndFocusPinsVerifiedBeforeOverrides": true,
+    "arrivalAdvertisementSameSourceVerified": true,
+    "unboundPinsExplicitlyTested": true,
+    "existingMalformedAndWrongVersionTestsPreserved": true,
+    "historicalBindingsUnchanged": true,
+    "mockedAwsCliOnly": true
+  },
+  "claims": {
+    "packageIdentityVerified": true,
+    "fullPackageAcceptance": false,
+    "merged": false,
+    "releaseTagPublished": false,
+    "storePublished": false,
+    "productionOperations": false,
+    "capacityMeasured": false
+  },
+  "activationPrerequisites": "Precise/Focus still require fresh scoped release receipts and exact serving-source checks. Global promotion additionally requires live pilot receipts. Private lifecycle shares the identity pin and keeps its129/source/prerequisite gates; its pilot package acceptance is an explicit operator prerequisite, and global promotion requires its own live receipt."
+}

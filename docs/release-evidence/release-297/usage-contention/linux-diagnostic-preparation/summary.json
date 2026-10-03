@@ -1,0 +1,162 @@
+{
+  "source": "d6492333520608df1524c021999d9440a26149de",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "passed": false,
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Server work remained active after bounded drain; metrics preserved"
+  },
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5652,
+    "succeeded": 5652,
+    "failed": 0,
+    "refusedAtInFlightLimit": 348,
+    "lateOffers": 5,
+    "maxOfferLatenessMs": 142.663615999998,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2825,
+        "succeeded": 2825,
+        "failed": 0,
+        "refused": 175
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2827,
+        "succeeded": 2827,
+        "failed": 0,
+        "refused": 173
+      }
+    },
+    "offerWindowMs": 59989.715172000004,
+    "outstandingAtEndOfOffering": 989,
+    "totalIncludingDrainMs": 67419.790265,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5652,
+      "minMs": 411.9608909999997,
+      "p50Ms": 10120.143379000001,
+      "p95Ms": 11935.925760999999,
+      "maxMs": 12074.650740000001
+    }
+  },
+  "reportOffers": 64,
+  "reportPassed": 38,
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 15581.959165,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 36344.339791000006,
+      "correct": true
+    }
+  ],
+  "lifecyclePassed": true,
+  "apiAcquisitions": {
+    "count": 17254,
+    "failures": 0,
+    "maxMs": 4882.397294000002
+  },
+  "apiCpuMicroseconds": {
+    "user": 68941659,
+    "system": 13279546
+  },
+  "apiEventLoop": {
+    "p50Ms": 22.020095,
+    "p95Ms": 28.098559,
+    "maxMs": 92.864511,
+    "utilization": 0.9605959913992419
+  },
+  "serverDrain": {
+    "api": {
+      "complete": false,
+      "budgetMs": 20000,
+      "elapsedMs": 1.7424430000100983,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 23,
+      "failure": "DRAIN_UNVERIFIABLE_ABORT",
+      "stage": "verification"
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.106302999993204,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "childShutdownClean": false,
+  "allOwnedContainersCleanup": {
+    "cleanupPassed": true,
+    "resources": [
+      {
+        "role": "harness",
+        "removed": false,
+        "cleanupPassed": true,
+        "confirmedAbsent": true
+      },
+      {
+        "role": "redis",
+        "removed": true,
+        "cleanupPassed": true
+      },
+      {
+        "role": "postgres",
+        "removed": true,
+        "cleanupPassed": true
+      }
+    ]
+  },
+  "currentDayAndCsvVerificationCompleted": false,
+  "comparison": "Windows09 on identical d649 app:3677/6000 heartbeats,30/64 reports,1957 acquisition failures. Platform/runtime differs; no capacity pass."
+}

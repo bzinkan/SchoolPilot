@@ -1,0 +1,1327 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T06:44:43.196Z",
+  "status": "failed_combined_capacity_attempt",
+  "sourceRevision": "ff6b4c96d9b2db7fe11514d7dcd63bea36bdd32f",
+  "sourceCleanAtStart": true,
+  "sourceAtFinish": null,
+  "sourceUnchangedAtFinish": null,
+  "sourceFinishReceipt": "Normal finish comparison was not recorded because the drain assertion aborted; the separately timestamped post-run source observation proves clean exact ff6b4c96 without fabricating a normal finish receipt.",
+  "postRunSourceObservation": {
+    "observedAtUtc": "2026-10-03T06:41:45.4750231Z",
+    "head": "ff6b4c96d9b2db7fe11514d7dcd63bea36bdd32f",
+    "clean": true,
+    "status": [],
+    "scope": "Separate post-run observation, not a fabricated normal finish receipt"
+  },
+  "sourceHashes": {
+    "local-usage-scale.mjs": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+    "prepare-release-control-ownership.mjs": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+    "release-enabled-drain.mjs": "98e7da0dbe4bd10d0b1f49cc8cfc71792402442accac0e5fbdb9980713543c51",
+    "release-enabled-drain.test.mjs": "b1d3d5da733c893efe6d749d79268a2d3588e6b2dbffd2385aa39e8b33b6ca7a",
+    "release-enabled-generator.mjs": "e1339d98019dcca8aa5fa47732e15eeb46072e7b3c621aec014e5dacfe159cc0",
+    "release-enabled-instrumentation.mjs": "d30679a303da4ed02ecd7029b015627b1decd13eee149e6cd9707c324b993386",
+    "release-enabled-postgres-pressure.mjs": "3e89314ea1030c5fc988ec66f519d80b1634e07a2e8b0d5b8b31622a7126b56e",
+    "release-enabled-process.mjs": "a48c7b1bb1a74707736d5f2003e083667ce5ac7513fea4991de464345a7c9c3a",
+    "release-enabled-profile.mjs": "64926c46e435a0ef7923e8b9a748fd24cffb40e47da5a780acd407485b7163cc",
+    "release-enabled-profile.test.mjs": "29f0c7c85af667407d0799141ed69f6f83da1757126b0eecc4c135502884d840",
+    "release-enabled-protocol.mjs": "4eb7002e111c98c23e8dafc5c4c8b76e88e6b10ea308706701c40f41d0e851bf",
+    "release-enabled-scale.mjs": "053bbc7612c40d82ebcd82b5901419fe49509581f92f6897e220c3382e3dc35c",
+    "run-release-enabled-scale.ps1": "ea0a414458190f1359e8fcbd65261caa2298682dc5ab8395931069f9c6b6b384"
+  },
+  "command": "pwsh -NoProfile -File scripts/load/usage/run-release-enabled-scale.ps1 -SchemaDatabase schoolpilot_redesign_usage_release297_20261002 -OutputDirectory <TEMP>/release297-enabled-combined-08 -Phase combined",
+  "exitCode": 1,
+  "capacityAccepted": false,
+  "productionReadiness": false,
+  "diagnosticOnly": false,
+  "startedAt": "2026-10-03T06:39:02.998Z",
+  "finishedAt": null,
+  "finishReceipt": "Run aborted before normal finishedAt capture; external runner exit1 is retained.",
+  "phaseDurationMs": 68275.8509,
+  "clientWorkCompletedMs": 68272.8642,
+  "acceptance": null,
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5455,
+    "succeeded": 2692,
+    "failed": 2763,
+    "refusedAtInFlightLimit": 545,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 89.62519999999859,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2729,
+        "succeeded": 1347,
+        "failed": 1382,
+        "refused": 271
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2726,
+        "succeeded": 1345,
+        "failed": 1381,
+        "refused": 274
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 2763
+    },
+    "offerWindowMs": 59990.788100000005,
+    "outstandingAtEndOfOffering": 1000,
+    "totalIncludingDrainMs": 68269.1665,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5455,
+      "minMs": 689.3207000000002,
+      "p50Ms": 8636.038699999997,
+      "p95Ms": 14678.966699999997,
+      "maxMs": 16038.427000000003
+    }
+  },
+  "persistence": {
+    "insertedObservations": null,
+    "afterCounts": null,
+    "beforeCounts": [
+      {
+        "school_id": "synthetic-school-1",
+        "count": 6
+      },
+      {
+        "school_id": "synthetic-school-0",
+        "count": 6
+      }
+    ],
+    "acknowledgedSuccessfulHeartbeats": 2692,
+    "status": "Post-drain count was not executed; do not infer persisted rows from successful client responses or operation counters."
+  },
+  "reports": {
+    "1d": {
+      "count": 16,
+      "success": 16,
+      "statuses": {
+        "200": 16
+      },
+      "maxMs": 9721.527699999999
+    },
+    "7d": {
+      "count": 16,
+      "success": 0,
+      "statuses": {
+        "500": 16
+      },
+      "maxMs": 8676.709000000003
+    },
+    "30d": {
+      "count": 16,
+      "success": 4,
+      "statuses": {
+        "0": 10,
+        "200": 4,
+        "500": 2
+      },
+      "maxMs": 20006.985
+    },
+    "365d": {
+      "count": 16,
+      "success": 6,
+      "statuses": {
+        "0": 10,
+        "200": 6
+      },
+      "maxMs": 20007.8759
+    }
+  },
+  "reportTotals": {
+    "count": 64,
+    "success": 26,
+    "statuses": {
+      "0": 20,
+      "200": 26,
+      "500": 18
+    }
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 17880.829400000002,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 41720.5761,
+      "correct": true
+    }
+  ],
+  "workerTimingAcceptance": {
+    "limitMs": 48000,
+    "bothWithinLimit": true,
+    "bothCorrect": true,
+    "repeatedColdRunAcceptance": false
+  },
+  "correctness": {
+    "executed": false,
+    "passed": null,
+    "csvAuditCount": null,
+    "reason": "The drain-abort assertion ended the run before current-day correctness workers, invariant/oracle checks and post-load CSV exports."
+  },
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Server work remained active after bounded drain; metrics preserved"
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated",
+      "precise_command_ack"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "focus-tab HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"9a82ca1e-b2e2-459f-a0a7-a16505798ee4\"}\n\n500 !== 201\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "serverDrain": {
+    "api": {
+      "complete": false,
+      "budgetMs": 20000,
+      "elapsedMs": 1.420299999997951,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 11,
+      "failure": "DRAIN_UNVERIFIABLE_ABORT",
+      "stage": "verification"
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 2.087500000008731,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "performance": {
+    "apiCpuMicroseconds": {
+      "user": 49204000,
+      "system": 12844000
+    },
+    "apiEventLoop": {
+      "p50Ms": 21.872639,
+      "p95Ms": 31.342591,
+      "maxMs": 603.979775,
+      "utilization": 0.7461273249247924
+    },
+    "apiAcquisitions": {
+      "count": 15295,
+      "failures": 3008,
+      "maxMs": 5588.7772
+    },
+    "apiPeakHeld": 16,
+    "apiPeakWaiting": 1002,
+    "apiHttp": {
+      "activeResponses": 0,
+      "abortedResponses": 11
+    },
+    "apiOperationSummary": {
+      "auth": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 25,
+          "totalMs": 783.6562999999951,
+          "maxMs": 73.04089999999997
+        }
+      },
+      "heartbeat_persistence": {
+        "counters": {
+          "checkoutAttempts": 4584,
+          "checkoutSuccess": 3617,
+          "checkoutFailure": 967,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 16,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 3617,
+          "totalMs": 331891.5985,
+          "maxMs": 4546.6991999999955
+        },
+        "checkout": {
+          "count": 4584,
+          "totalMs": 13484337.19029997,
+          "maxMs": 5588.473399999999
+        },
+        "sql": {
+          "count": 15389,
+          "totalMs": 336289.97109999787,
+          "maxMs": 4438.130799999999
+        }
+      },
+      "heartbeat_final_delivery": {
+        "counters": {
+          "checkoutAttempts": 4827,
+          "checkoutSuccess": 3682,
+          "checkoutFailure": 1145,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 16,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 3682,
+          "totalMs": 665900.0441999999,
+          "maxMs": 1889.7932999999975
+        },
+        "checkout": {
+          "count": 4827,
+          "totalMs": 16213464.692299992,
+          "maxMs": 5586.522999999997
+        },
+        "sql": {
+          "count": 71708,
+          "totalMs": 643930.0408999962,
+          "maxMs": 1744.414300000004
+        }
+      },
+      "heartbeat_background": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "api_limiter": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "heartbeat_middleware": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "heartbeat_handler": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 1892
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "usage_report_admission": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 32,
+          "admissionDenied": 0,
+          "admissionCancelled": 16,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "usage_report": {
+        "counters": {
+          "checkoutAttempts": 32,
+          "checkoutSuccess": 27,
+          "checkoutFailure": 5,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 2,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 27,
+          "totalMs": 11456.326099999993,
+          "maxMs": 2300.503899999996
+        },
+        "checkout": {
+          "count": 32,
+          "totalMs": 72146.1975,
+          "maxMs": 5026.847399999999
+        },
+        "sql": {
+          "count": 281,
+          "totalMs": 11295.6463,
+          "maxMs": 2155.666400000002
+        }
+      },
+      "usage_worker": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "tenant_request": {
+        "counters": {
+          "checkoutAttempts": 3,
+          "checkoutSuccess": 3,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 1,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 3,
+          "totalMs": 6757.3148,
+          "maxMs": 5566.7304
+        },
+        "checkout": {
+          "count": 3,
+          "totalMs": 11065.360599999996,
+          "maxMs": 4990.0014999999985
+        },
+        "sql": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        }
+      },
+      "tenant_background": {
+        "counters": {
+          "checkoutAttempts": 299,
+          "checkoutSuccess": 282,
+          "checkoutFailure": 17,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 16,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 282,
+          "totalMs": 41777.11350000003,
+          "maxMs": 1301.6689000000006
+        },
+        "checkout": {
+          "count": 299,
+          "totalMs": 773946.5676999995,
+          "maxMs": 5089.3842
+        },
+        "sql": {
+          "count": 1059,
+          "totalMs": 42183.12000000009,
+          "maxMs": 1003.7832000000053
+        }
+      },
+      "unclassified": {
+        "counters": {
+          "checkoutAttempts": 0,
+          "checkoutSuccess": 0,
+          "checkoutFailure": 0,
+          "sqlFailure": 0,
+          "admissionAdmitted": 0,
+          "admissionDenied": 0,
+          "admissionCancelled": 0,
+          "heartbeatOptionalTelemetryFailures": 0,
+          "heartbeatHandlerFailures": 0
+        },
+        "activeCheckouts": 0,
+        "peakActiveCheckouts": 0,
+        "pendingCheckouts": 0,
+        "activeOperations": 0,
+        "hold": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "checkout": {
+          "count": 0,
+          "totalMs": 0,
+          "maxMs": 0
+        },
+        "sql": {
+          "count": 2877,
+          "totalMs": 21549.827800000094,
+          "maxMs": 1019.9701999999961
+        }
+      }
+    },
+    "postgresPressure": {
+      "valid": true,
+      "settingsStable": true,
+      "groups": {
+        "wal": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "wal_records": "1131420",
+            "wal_fpi": "17154",
+            "wal_bytes": "315365714",
+            "wal_buffers_full": "0",
+            "wal_write": "3106",
+            "wal_sync": "3049"
+          },
+          "timingsMs": null
+        },
+        "bgwriter": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": true,
+          "counters": {
+            "checkpoints_timed": "0",
+            "checkpoints_req": "0",
+            "buffers_checkpoint": "0",
+            "buffers_clean": "27289",
+            "maxwritten_clean": "263",
+            "buffers_backend": "123368",
+            "buffers_backend_fsync": "0",
+            "buffers_alloc": "282014"
+          },
+          "timingsMs": {
+            "checkpoint_write_time": 0,
+            "checkpoint_sync_time": 0
+          }
+        },
+        "database": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "xact_commit": "32926",
+            "xact_rollback": "5",
+            "blks_read": "511413",
+            "blks_hit": "15119666",
+            "tup_returned": "30282233",
+            "tup_fetched": "7322107",
+            "tup_inserted": "171984",
+            "tup_updated": "2021",
+            "tup_deleted": "30",
+            "temp_files": "31",
+            "temp_bytes": "405727392",
+            "deadlocks": "0"
+          },
+          "timingsMs": null
+        }
+      },
+      "semantics": "Read-only counters from the owned PostgreSQL instance; statistics are asynchronously published and are not exact per-operation attribution. WAL/bgwriter counters are instance-wide; database counters cover this fixture. Timing disabled means unavailable, never a measured zero."
+    },
+    "waitSamples": 260
+  },
+  "workload": {
+    "profile": {
+      "name": "release-enabled-isolated-100rps-v1",
+      "students": 500,
+      "classes": 100,
+      "studentsPerClass": 5,
+      "periods": 6,
+      "lessonMinutes": 50,
+      "passingMinutes": 10,
+      "observationsPerStudent": 2000,
+      "cadenceSeconds": 10,
+      "domainDwellSeconds": 200,
+      "domainsPerStudent": 8,
+      "domainsSchoolWide": 200,
+      "rawPerSchool": 1000000,
+      "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+      "aiDecisionRowsPerSchool": 10000,
+      "aiDecisionsPerStudent": 20,
+      "aiDecisionEveryObservations": 100,
+      "aiDecisionCadenceSeconds": 1000,
+      "aiDecisionCategory": "matches the selected heartbeat",
+      "httpOffering": {
+        "requestsPerSecond": 100,
+        "durationMs": 60000,
+        "schools": 2,
+        "devicesPerSchool": 500,
+        "deviceCadenceMs": 10000,
+        "maxInFlight": 1000,
+        "requestTimeoutMs": 20000,
+        "maxOfferLatenessMs": 100
+      },
+      "fullWorkerAcceptanceMs": 48000,
+      "classPilot": {
+        "extensionVersion": "2.9.7",
+        "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+        "sourceFile": "extension/service-worker.js",
+        "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+        "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+        "capabilities": [
+          "helpRequestsV1",
+          "questionParkingV1",
+          "timerControlsV1",
+          "lessonActivitiesV1",
+          "exitTicketsV1",
+          "classroomStateV1",
+          "fabStateRevisionV1",
+          "exactTabCloseV1",
+          "scopedAuthorityChecksV1",
+          "scheduledClassroomV1",
+          "authBoundTelemetryV1",
+          "exactBindingAckV2",
+          "exactTabCloseV2",
+          "studentAuthGatePresenceV1",
+          "lateSignInRestrictionSsoV1",
+          "restrictionAuthPassThroughV1",
+          "preciseRestrictionResourcesV1",
+          "restrictionPortalFirstV1",
+          "afterHoursSafetyOnlyV1",
+          "schoolWebsiteBlockEnforcementV1",
+          "studentChatIdempotencyV1",
+          "screenshotTrackingWindowLeaseV1",
+          "screenshotActiveObservationCadenceV1",
+          "screenshotObservationLeaseV1",
+          "safetyEvidenceCaptureV1",
+          "liveViewIceServersV1",
+          "kioskLaunchTicketV1",
+          "kioskLaunchTicketV2",
+          "managedDeviceContinuityV1",
+          "screenOnlyUnlockV1",
+          "durableChatAckV1",
+          "commandAckReceiptV1",
+          "classroomOverlayRestoreV1",
+          "liveViewNegotiationV1",
+          "domainPreservingRestrictionsV1",
+          "chatPauseV1",
+          "chatSeenAckV1",
+          "focusTabV1",
+          "privateChatLifecycleV1"
+        ]
+      },
+      "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.",
+      "apiTasks": 1,
+      "apiMainPool": 16,
+      "apiSessionPool": 2,
+      "workerPool": 5,
+      "observerPool": 2,
+      "staffAuthentication": "real-password-login-and-session-cookie",
+      "capabilityModes": {
+        "preciseRestrictionResourcesV1": "on",
+        "focusTabV1": "on",
+        "privateChatLifecycleV1": "on"
+      },
+      "reportOffers": {
+        "waves": 4,
+        "maximumParallel": 16,
+        "total": 64,
+        "csvAfterConcurrent": 8,
+        "rangesInDays": [
+          1,
+          7,
+          30,
+          365
+        ]
+      },
+      "publicRequestDeadlineMs": 20000,
+      "preflightDevicesPerSchool": 5,
+      "drainCoverage": "Known Promise-returning API/heartbeat middleware, full heartbeat handlers, scoped operations, raw pool work, classification/WebSocket producers and tenant releases. HTTP response lifetime supplements callback middleware; an aborted pre-handler response is never certified as fully completed.",
+      "reporting": "100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance"
+    },
+    "canonicalActiveControlPreparation": {
+      "schemaVersion": 1,
+      "sourceRevision": "ff6b4c96d9b2db7fe11514d7dcd63bea36bdd32f",
+      "coldFixtureSha256": "7c4246dde57bfdb1f91c92d0d6de5fab43595e8eec86851314d9317c4c59c67f",
+      "scriptSha256": "a8f33680291e43a6be9c26be06fdd19f4e761dea1ae4de6755e3a7ac47520809",
+      "passed": true,
+      "poolsClosed": true,
+      "schools": [
+        {
+          "schoolIndex": 0,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        },
+        {
+          "schoolIndex": 1,
+          "currentSessions": 100,
+          "rosterRows": 500,
+          "staffBindings": 100,
+          "controlRows": 500,
+          "invalidBindings": 0,
+          "nonemptyRestrictions": 0,
+          "backfilledSessions": 100
+        }
+      ]
+    },
+    "preparation": {
+      "seedMs": 311658.9154,
+      "fixtureCounts": [
+        {
+          "school_id": "synthetic-school-0",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        },
+        {
+          "school_id": "synthetic-school-1",
+          "raw": "1000001",
+          "sessions": "36800",
+          "frozen_roster_rows": "184000",
+          "aggregates": "541500"
+        }
+      ],
+      "heavyDeviceBindings": [
+        {
+          "schoolIndex": 0,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        },
+        {
+          "schoolIndex": 1,
+          "pairs": 500,
+          "devices": 500,
+          "invalid": 0
+        }
+      ],
+      "aiDecisionBindings": [
+        {
+          "schoolIndex": 0,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        },
+        {
+          "schoolIndex": 1,
+          "rows": 10000,
+          "students": 500,
+          "observations": 10000,
+          "invalid": 0,
+          "minperstudent": 20,
+          "maxperstudent": 20
+        }
+      ],
+      "preparationStage": {
+        "kind": "complete"
+      }
+    },
+    "preparedStateSha256": "7c4246dde57bfdb1f91c92d0d6de5fab43595e8eec86851314d9317c4c59c67f"
+  },
+  "resources": {
+    "postgres": {
+      "cpu": 4,
+      "memoryBytes": 4294967296,
+      "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6"
+    },
+    "redis": {
+      "imageDigest": "sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2"
+    },
+    "nodeOldSpaceMiB": 512,
+    "pools": {
+      "api": 16,
+      "session": 2,
+      "worker": 5,
+      "observer": 2
+    },
+    "apiWorkerGenerator": "Separate local Windows Node processes; no CPU cgroup equivalence to production is claimed.",
+    "coldPostgresRestart": true,
+    "hostFilesystemCachesFlushed": false
+  },
+  "admission": {
+    "restrictedNonOwnerRole": true,
+    "rlsInventory": "classpilotPrivateChatLifecyclePostExpand",
+    "registrySha256": "a68a8f7e026707ad54fa2a02f542ce10669d18687577608cb5d9ae4c2e00a5e4",
+    "admittedTables": 129,
+    "currentFixtureMigrations": true
+  },
+  "interpretation": [
+    "This run failed capacity and cannot support deployment or Usage activation. No final current-day correctness pass or post-load CSV audit is claimed.",
+    "6000 offered heartbeats produced2692 accepted successes,2763 started failures,545 in-flight refusals and0 late offers.26/64 reports succeeded with correct bodies;20 had status0 and18 returned500.",
+    "Both one-million-observation historical workers were correct and finished in17.8808294s and41.7205761s, below48s. This does not satisfy three repeated successful combined cold runs.",
+    "The lifecycle authenticated WebSockets and completed the precise command ACK milestone, then focus-tab returned500 instead of201. Later Focus/chat/cleanup and browser enforcement remain unproved.",
+    "API checkout saturation reached16 held and1002 waiting, with3008 checkout failures and1892 cumulative handler failures. The optional telemetry failure counter was0, but this does not establish successful delivery for requests that never reached optional telemetry. Handler failures are not exclusively post-response failures.",
+    "The final API drain reported all physical ownership gauges zero but correctly refused certification because11 responses had aborted. DRAIN_UNVERIFIABLE_ABORT is not a physical lease leak or deadline expiration.",
+    "The same conservative completeness assertion caused child shutdown to report failure and the runner used forced termination. A later read-only inventory confirms all owned child PIDs and containers absent; physical cleanup does not relabel childShutdownClean=false as true.",
+    "API used62.048 CPU seconds with74.61% loop utilization and603.98ms maximum delay. Historical workers ran concurrently; these aggregate results do not isolate telemetry fusion or another individual change as the cause, or prove future changes sufficient.",
+    "Current-day correctness/oracle workers, post-drain persistence count and post-load CSV audits were not executed because drain certification failed. The3617 successful persistence lease operations are not a verified final row count."
+  ],
+  "cleanup": {
+    "childShutdownClean": false,
+    "childCleanupFailure": true,
+    "observedAtUtc": "2026-10-03T06:43:40.9662222Z",
+    "dockerEndpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+    "ownedContainersAbsent": true,
+    "ownedProcessesAbsent": true,
+    "containers": [
+      {
+        "name": "schoolpilot-usage-scale-6bfdae8b86f5",
+        "present": false
+      },
+      {
+        "name": "schoolpilot-usage-redis-6bfdae8b86f5",
+        "present": false
+      }
+    ],
+    "processes": [
+      {
+        "role": "api",
+        "recordedPid": 90900,
+        "present": false
+      },
+      {
+        "role": "worker",
+        "recordedPid": 84712,
+        "present": false
+      },
+      {
+        "role": "generator",
+        "recordedPid": 95332,
+        "present": false
+      }
+    ],
+    "scope": "Read-only exact-name/PID observation after failed run; no unrelated container or process changed. Does not relabel shutdown certification failure."
+  },
+  "schema": {
+    "inputRawSha256": "f09beadefb56210868d50ecfedd43094801dcf8857b2fdce400c2e4fe7f72e15",
+    "postConvergenceRawSha256": "30e75d28b06c4b8f51b25b5a9f5181cef8fef6f0d3b031f3bce128f8a68f5510",
+    "fingerprint": {
+      "rawSha256": "30e75d28b06c4b8f51b25b5a9f5181cef8fef6f0d3b031f3bce128f8a68f5510",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "UTF8/LF; remove only pg_dump restrict/unrestrict security nonce lines; preserve all DDL"
+    }
+  },
+  "omitted": [
+    {
+      "file": "cold-fixture-state.json",
+      "rawBytes": 183029,
+      "rawSha256": "7c4246dde57bfdb1f91c92d0d6de5fab43595e8eec86851314d9317c4c59c67f",
+      "reason": "Populated identities and credentials excluded from shareable archive; original retained unchanged externally."
+    }
+  ],
+  "productionMutations": 0,
+  "files": [
+    {
+      "file": "api.log.gz",
+      "originalFile": "api.log",
+      "rawBytes": 223028,
+      "rawSha256": "a38db064f86a9e9323b078adbb39c8deb7d5593fea9a770a7018c0848f8a4504",
+      "sanitizedBytes": 223028,
+      "sanitizedSha256": "a38db064f86a9e9323b078adbb39c8deb7d5593fea9a770a7018c0848f8a4504",
+      "gzipSha256": "742edf65fcfad4877935688f9abf0353b59beb0db595475ddba06772c68a334d"
+    },
+    {
+      "file": "build.log.gz",
+      "originalFile": "build.log",
+      "rawBytes": 42,
+      "rawSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedBytes": 38,
+      "sanitizedSha256": "293f3ae59b47b581fac6b4817aa1422d14ff3d4d21a6581e67ddbc35f5aaa98f",
+      "gzipSha256": "d8ff3c6e74dba5899df769a43ec409aba515dc83b0d5f2b988e9907c86bd50d0"
+    },
+    {
+      "file": "cold-restart.log.gz",
+      "originalFile": "cold-restart.log",
+      "rawBytes": 38,
+      "rawSha256": "903b2d60e32603373772bd376c613b80fedc044c5ac1022dd0f5e5ef9abda38d",
+      "sanitizedBytes": 37,
+      "sanitizedSha256": "efe194d9fa20923e0c1dc68c04568af8e46a33e94d9250280280b317c7be154e",
+      "gzipSha256": "7947d54a6127c7e755837a4a2954b29d2a2c7023d353f1c94b1d01c9853d09f6"
+    },
+    {
+      "file": "cold-restarted-state.json.gz",
+      "originalFile": "cold-restarted-state.json",
+      "rawBytes": 229,
+      "rawSha256": "6b09c94b7a42984fb966f023d654863e8c047cb117fb334fd29830aeea688719",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "c9f6e7336cac7c6c7d37d0d85df56e3ee37423f692a32540acde8dbc9d3c1d4a",
+      "gzipSha256": "183d32daacbfb15d62694620e644dc23164503f8df0831795e598fb945943356"
+    },
+    {
+      "file": "container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "3e0d42a619a03231e69b8c0f11aaae19440bbb82533f608e9cd12922ad1762b9",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "70c62177d58e02fefd2232488d0a3a8a7dd7fc20c3a585c0047ebe5916330963",
+      "gzipSha256": "751e6cefab3510fdbc9d518e9d9d0de12a8adc09d1b0969c1063c2407572de0a"
+    },
+    {
+      "file": "container-final-state.json.gz",
+      "originalFile": "container-final-state.json",
+      "rawBytes": 229,
+      "rawSha256": "6b09c94b7a42984fb966f023d654863e8c047cb117fb334fd29830aeea688719",
+      "sanitizedBytes": 228,
+      "sanitizedSha256": "c9f6e7336cac7c6c7d37d0d85df56e3ee37423f692a32540acde8dbc9d3c1d4a",
+      "gzipSha256": "183d32daacbfb15d62694620e644dc23164503f8df0831795e598fb945943356"
+    },
+    {
+      "file": "container-final-stats.json.gz",
+      "originalFile": "container-final-stats.json",
+      "rawBytes": 249,
+      "rawSha256": "677e490dc4598115793cbfef9ae0812bd7e0c9b4f51235a48d34d7d113748fa1",
+      "sanitizedBytes": 248,
+      "sanitizedSha256": "787ba04f16c5b84763eb46cc6d91dd28f501e7745cf43f409ddf0ed59f5017b8",
+      "gzipSha256": "cf34f5f55cb896701722b37fce7bef6822e8d2176b8cef51b1f074a3d0105df1"
+    },
+    {
+      "file": "execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 1604,
+      "rawSha256": "643b39d2a2c3f2c5b34fc46e80637d3d6f3e021718fd616cec72eccb9820b0a6",
+      "sanitizedBytes": 1573,
+      "sanitizedSha256": "09088fb67a5745932c097685cb6856ad332e4bf7e74009d6dd0915bc1863c452",
+      "gzipSha256": "aa740011ac26a370467b609d032357cf16dbf5ef28e334e7c613bfc1a676371e"
+    },
+    {
+      "file": "fixture-legacy-convergence.log.gz",
+      "originalFile": "fixture-legacy-convergence.log",
+      "rawBytes": 12560,
+      "rawSha256": "d563b20844d94b1d74a085a373d1240f8b020109d51c8c97d1550e9542f461a5",
+      "sanitizedBytes": 12446,
+      "sanitizedSha256": "6a54c1138c25fcce261815da379a168025089c321f5d9026bb559ba2c3286611",
+      "gzipSha256": "d5ff4a2efb4990a61b8d00ad6c975ac7fe490bba564e075e65e241c57bdefca7"
+    },
+    {
+      "file": "fixture-versioned-migrations.log.gz",
+      "originalFile": "fixture-versioned-migrations.log",
+      "rawBytes": 3648,
+      "rawSha256": "1f28a8ea758ecbc42dc139133c0e98d213aac5d176434259936e032d5c5c08fe",
+      "sanitizedBytes": 3593,
+      "sanitizedSha256": "fd4a0dd0bae6e695796d825e4ef3007e987366616daaec08f0698269b5966f11",
+      "gzipSha256": "950997760938bd4d4bd9a0ebe5926556cc9aaf241bffa4e1a9a2d91220f2f6f2"
+    },
+    {
+      "file": "generator.log.gz",
+      "originalFile": "generator.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "local-docker-daemon.json.gz",
+      "originalFile": "local-docker-daemon.json",
+      "rawBytes": 116,
+      "rawSha256": "1152ec89135c312f1996c49a7442b1548c36816caae9ec4a37bf13b8c49dcc1d",
+      "sanitizedBytes": 111,
+      "sanitizedSha256": "d87793915480f94b5eedbf3e3f170c52fc0731f12bf30610ead311c24b368b29",
+      "gzipSha256": "69741db6865090818944fdd33f382d493cf4960e6752eaaddc0ab22c057c8ebb"
+    },
+    {
+      "file": "post-convergence-schema.sql.gz",
+      "originalFile": "post-convergence-schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "30e75d28b06c4b8f51b25b5a9f5181cef8fef6f0d3b031f3bce128f8a68f5510",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "30e75d28b06c4b8f51b25b5a9f5181cef8fef6f0d3b031f3bce128f8a68f5510",
+      "gzipSha256": "d4569d1d13736b57b2279a389170432433ebf7e4f03aa465a3dd3169564c42d7"
+    },
+    {
+      "file": "preparation-fixture-contract.json.gz",
+      "originalFile": "preparation-fixture-contract.json",
+      "rawBytes": 35903,
+      "rawSha256": "b19cb74b7d899eb6c9c5017d584efcb3958803dcee454bc131b5a5fee6f20018",
+      "sanitizedBytes": 35903,
+      "sanitizedSha256": "b19cb74b7d899eb6c9c5017d584efcb3958803dcee454bc131b5a5fee6f20018",
+      "gzipSha256": "3163dc55ac8a50861200949d828cc41e20e896a0426df4152c5e9ab3a4ee45d4"
+    },
+    {
+      "file": "preparation-metrics.json.gz",
+      "originalFile": "preparation-metrics.json",
+      "rawBytes": 45025,
+      "rawSha256": "f4974c7cd02e2c33fc8e727f8b1255011d12ce83d7071fc531be594be4bda81d",
+      "sanitizedBytes": 44989,
+      "sanitizedSha256": "7c595127806a60f425ca09a90c2b1ba77d474fc414b9aad6b1d2c85653dafe80",
+      "gzipSha256": "a273c3e21cd038f7076c3901dede06b5e249d729965a7a6fb1f906768ac105aa"
+    },
+    {
+      "file": "preparation.log.gz",
+      "originalFile": "preparation.log",
+      "rawBytes": 55332,
+      "rawSha256": "b468b6dc0c4dcb3afaf1aec5ba19c782cc69f5e472031cb16a82ed82047e53be",
+      "sanitizedBytes": 55310,
+      "sanitizedSha256": "b81723e1cff0925233895184f4c564cb8e68d0b675d8d5a89dfdc613557c5935",
+      "gzipSha256": "401b654c55ba6121e9de2c874db5e90783d70739c928bd2b4da4fc289d0763d1"
+    },
+    {
+      "file": "redis-create.log.gz",
+      "originalFile": "redis-create.log",
+      "rawBytes": 66,
+      "rawSha256": "a68e93c3b296351158e470be2ac76ecaa6501d26f5668be65e6586bfd44bb3b3",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "37ea28bd64eb11c11713dc637a80748a5bde3c22ae48f15ec7e3e58c2a39aa43",
+      "gzipSha256": "b5eff06b81f520777022bd5ae511a44825f6123b4e6e97f5356936a9262341f1"
+    },
+    {
+      "file": "redis-final-stats.json.gz",
+      "originalFile": "redis-final-stats.json",
+      "rawBytes": 244,
+      "rawSha256": "b08ac968993b7a0a1d9bb0bee2949d6bb1e6ded93e34947f2e9603f40a97d3de",
+      "sanitizedBytes": 243,
+      "sanitizedSha256": "3f377eb8123ed22c5354a1393840236fde484bb4b1f73520fef05aa35450515d",
+      "gzipSha256": "0c72044cfc1d69bc7ef8b9e1df0e4e6959d9d784ff27e0f4c3e463b97ae17ddb"
+    },
+    {
+      "file": "release-control-preparation.json.gz",
+      "originalFile": "release-control-preparation.json",
+      "rawBytes": 804,
+      "rawSha256": "ec817e407642d4cd03f3c393ad3133af33ccf67c5470f438913bff87da413a26",
+      "sanitizedBytes": 804,
+      "sanitizedSha256": "ec817e407642d4cd03f3c393ad3133af33ccf67c5470f438913bff87da413a26",
+      "gzipSha256": "fc69602e747efcdfe711090604aac9c9a8d8f08b928cc206349b06dc9da04588"
+    },
+    {
+      "file": "release-control-preparation.log.gz",
+      "originalFile": "release-control-preparation.log",
+      "rawBytes": 3334,
+      "rawSha256": "c2f6af2014c2cae81a905c6afc03f8ddbf512c163b4282cbc0b76d26b985e4e7",
+      "sanitizedBytes": 3331,
+      "sanitizedSha256": "61d6ae62c23309f7c92b49715bc830bc2f11c4ac99050b5b440108b08c709f85",
+      "gzipSha256": "9eed5d875e7c6e1d4489583fc4b755593dd9bf66e4ed5fa6f9d8fdf174999bad"
+    },
+    {
+      "file": "resource-caps.json.gz",
+      "originalFile": "resource-caps.json",
+      "rawBytes": 1560,
+      "rawSha256": "a21234603f7ac3bf23945b8e2ad0b4122e1f913754bb400dec4721c3171c6025",
+      "sanitizedBytes": 1559,
+      "sanitizedSha256": "3f67631bc56fda34b8613897352cf2154cf4b7655e524fc01976782b4b93018e",
+      "gzipSha256": "e39c553d3f5c83bd03217b2c754ed2dcecda18c40c0917c83c80438d2c43936c"
+    },
+    {
+      "file": "scale.log.gz",
+      "originalFile": "scale.log",
+      "rawBytes": 252,
+      "rawSha256": "331d45d53b304bfe186776b56272d52b70f1ab464933eec158f9d03c211dc705",
+      "sanitizedBytes": 186,
+      "sanitizedSha256": "1cb11e06a8f1aa3986d42f45b8d54f0961553d8ce4842be7c49c992fa712b1b2",
+      "gzipSha256": "98baa0a1d995705c9832611c26e6791b29d24c78cecdb6e409d421697396b263"
+    },
+    {
+      "file": "schema-fingerprint.json.gz",
+      "originalFile": "schema-fingerprint.json",
+      "rawBytes": 290,
+      "rawSha256": "2cdfd88f3a5a71e2723e2982eb4bb216f779de7ad5ff4e3b15867135e1b1437a",
+      "sanitizedBytes": 285,
+      "sanitizedSha256": "1b2875edb479c4109a9e370f75dc4974fb644b030f0df2bc97ddc82f1fed7383",
+      "gzipSha256": "c936b299055cf196af877712c1943680dbdd7a81c68bb4d7ee1098fbf9f90a08"
+    },
+    {
+      "file": "schema-only.sql.gz",
+      "originalFile": "schema-only.sql",
+      "rawBytes": 591139,
+      "rawSha256": "f09beadefb56210868d50ecfedd43094801dcf8857b2fdce400c2e4fe7f72e15",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "03172cd1f202ad846166ddd97923c7c88f1d84625e0babda25673692e75430df",
+      "gzipSha256": "f4f9c98b3b71aa00c900231acc7f9f01181cc8c0dea98e567b767f62c168ba6e"
+    },
+    {
+      "file": "schema-restore.log.gz",
+      "originalFile": "schema-restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "usage-scale.json.gz",
+      "originalFile": "usage-scale.json",
+      "rawBytes": 576575,
+      "rawSha256": "50be41b912a5d8f70204788da58d50dae11838294e4eea97a44ba6a0aafe1207",
+      "sanitizedBytes": 576503,
+      "sanitizedSha256": "0db48d898ae57b2106ea30be014df49b903774ef6297e801355248d2fa33cf3f",
+      "gzipSha256": "b7f2bb9d8dc9ea616c8cf27e6a2f008311f8e841d527402d88a80569e9fa0982"
+    },
+    {
+      "file": "worker.log.gz",
+      "originalFile": "worker.log",
+      "rawBytes": 5220,
+      "rawSha256": "9209c3c4b11cd8b3388bdfb7bcc72dd3e0a5a3a5ff1eaa64cb6a49949248dce3",
+      "sanitizedBytes": 5220,
+      "sanitizedSha256": "9209c3c4b11cd8b3388bdfb7bcc72dd3e0a5a3a5ff1eaa64cb6a49949248dce3",
+      "gzipSha256": "c9a0266720c951d87dfc6fef6a31ebb181c9cbfe2e00e4c8dbfe577aad0fb07e"
+    },
+    {
+      "file": "runner.log.gz",
+      "originalFile": "release297-enabled-combined-08.runner.log",
+      "rawBytes": 252,
+      "rawSha256": "331d45d53b304bfe186776b56272d52b70f1ab464933eec158f9d03c211dc705",
+      "sanitizedBytes": 186,
+      "sanitizedSha256": "1cb11e06a8f1aa3986d42f45b8d54f0961553d8ce4842be7c49c992fa712b1b2",
+      "gzipSha256": "98baa0a1d995705c9832611c26e6791b29d24c78cecdb6e409d421697396b263"
+    },
+    {
+      "file": "cleanup-observation.json.gz",
+      "originalFile": "release297-enabled-combined-08-cleanup-observation.json",
+      "rawBytes": 866,
+      "rawSha256": "9bf6d5dbb23c1700e0906c62face82ca4c5288f9d561ec9f460cffc48c9cb422",
+      "sanitizedBytes": 832,
+      "sanitizedSha256": "e1ea354d7e1a02fbbc58167a40fff94b78bda5ee600d96836865c224e6d35d1a",
+      "gzipSha256": "f6d26e3f35c8b1ffb2eb8ce6fa8fb508219e36e4c37e9def2d466f2b24786e67"
+    },
+    {
+      "file": "post-run-source.json.gz",
+      "originalFile": "release297-combined08-post-run-source.json",
+      "rawBytes": 232,
+      "rawSha256": "0871543d543d7f3a36f581f9886d1601d7fb8e59786a9f9ebf33f0e6cc89e305",
+      "sanitizedBytes": 225,
+      "sanitizedSha256": "3a34d8f8195baf1a9e5834021b977aa3ba485657ada64fc9210653b2058f14e5",
+      "gzipSha256": "2d1684c1ab2d4819b092d9485572b6ee9c6984c269c617c86e8813c58aa8d3f6"
+    },
+    {
+      "file": "operation-summary-analysis.json.gz",
+      "originalFile": "release297-combined08-operation-summary.json",
+      "rawBytes": 26581,
+      "rawSha256": "b50dd77864c80dde30f4f80d0cf2cbd78d6d9fef4854c1b875a6c776228a5c4b",
+      "sanitizedBytes": 25279,
+      "sanitizedSha256": "28125b11bc2e64ffef9404d3f5446ea85c8cd2036e8e159bf9f4b8dd6176e3a1",
+      "gzipSha256": "607f2b95d78cc5e6cbd94d3095ab1a673d3fa1ebfdf08a4737a6db3ce7856193"
+    }
+  ],
+  "sanitation": "UTF8/LF; workstation paths, connection URLs, tokens, cookies, emails, UUIDs and SQL passwords redacted; original raw files unchanged. Schema DDL preserved apart from sanitation; raw hashes separately recorded."
+}

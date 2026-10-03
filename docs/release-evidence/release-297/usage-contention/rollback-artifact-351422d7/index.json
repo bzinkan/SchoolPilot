@@ -1,0 +1,574 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T03:00:39.833Z",
+  "sourceCommit": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+  "status": "local_source_image_prepared_stop_focus_correction_pending",
+  "preparedAttempt": 2,
+  "sourceDependencyEvidence": "../production-dependency-audit/rollback-followup-manifest.json",
+  "supersedesDesignatedRollbackSource": "2bbcdb370eeeb182553097a2bd049e32bec93f9b",
+  "historicalArtifactsPreserved": true,
+  "usage": {
+    "rollupMode": "off",
+    "digitalUsageMode": "off",
+    "reason": "Rollback source excludes Usage contention corrections; both modes must remain off."
+  },
+  "image": {
+    "localTag": "schoolpilot-rollback-local:351422d75a1a-20261003025643",
+    "indexDigest": "sha256:f91e8fe58be25fde7198d2a1f98b41fba4482e36d3ba5411a72108e6495bef94",
+    "platformManifestDigest": "sha256:c7a977f4afc8bc542ae4fa5c3e07d73e3a59e64ad7423af3356fc4c0141a7568",
+    "configDigest": "sha256:6d0399e3d2d6ae2bcc7e93c9efa674f5e07589ad087eb5bd8da5fb5da7529f1c",
+    "localRepoDigests": [
+      "schoolpilot-rollback-local@sha256:f91e8fe58be25fde7198d2a1f98b41fba4482e36d3ba5411a72108e6495bef94"
+    ],
+    "platform": "linux/amd64",
+    "revisionLabel": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+    "apiCommand": [
+      "node",
+      "dist/index.js"
+    ],
+    "workerCommand": [
+      "node",
+      "dist/worker.js"
+    ],
+    "archive": "image.tar",
+    "archiveSha256": "aebbae7e0c08175cad6fc42d68649f18fce8331b8354e8bfb35ca49b2dc1b9c6",
+    "registryPublished": false,
+    "productionDigestBindingVerified": false
+  },
+  "scan": {
+    "scannerImage": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+    "gate": "Fixed HIGH/CRITICAL findings fail: --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1",
+    "allSeverityCounts": {
+      "UNKNOWN": 0,
+      "LOW": 0,
+      "MEDIUM": 0,
+      "HIGH": 0,
+      "CRITICAL": 0
+    },
+    "gateFindings": 0,
+    "gatePassed": true,
+    "databaseMetadata": {
+      "Version": 2,
+      "NextUpdate": "2026-10-04T01:08:10.865915193Z",
+      "UpdatedAt": "2026-10-03T01:08:10.865915767Z",
+      "DownloadedAt": "2026-10-03T02:59:35.350708973Z"
+    }
+  },
+  "compatibility": {
+    "passed": true,
+    "dependencyVersions": {
+      "express": "4.22.3",
+      "body-parser": "1.20.8",
+      "qs": "6.16.0",
+      "ip-address": "10.7.3",
+      "side-channel": "1.1.1",
+      "side-channel-list": "1.0.1"
+    },
+    "writerVersion": 1,
+    "bridgeVersion": 1,
+    "relayVersion": 1,
+    "inventoryCount": 129,
+    "stickyMigration": true,
+    "ssoLockOrderCorrection": true,
+    "monitoringOwnedLeaseCorrection": true,
+    "metadataReuseAbsent": true,
+    "usageContentionCorrectionAbsent": true,
+    "usageModesRequired": "both off",
+    "hashes": {
+      "writer": "eb2cb8ae359cb5a2701f9361931cfe2bfd9976e1d7fddb320177bccc6692aeba",
+      "relay": "b83504339340e562fa4e29b8c825618ca7c5f24c27be9281c13b7416bf6fba16",
+      "storage": "c5cb5496b0f30d7a2c3bc671755277dd883b3bcfd28a321a5f137f35ca813c69",
+      "migration": "c51cb406ce0fde01744fd1dff098b91f6d2a0e5547666756c82bd09cc5f27d1d",
+      "protocol": "0fd25026c78996a1052800b0538921b49106d334e719f13e01abf816fac894b4",
+      "registry": "0391c747c103c013e51dbec7ca35c54532d09e25df637fafd8ea8fef6447c235",
+      "tenant": "77931700ab3507ad64861ce9687415ee1aa3286fef705abf438e5a536658c7f3",
+      "monitoring": "2a90bedae71f8b293629b7dcbfaf6a1904545ed02b036207db5fdfe60850508f"
+    },
+    "scope": "Embedded file/marker/order validation only; no API/worker application process started or database connected."
+  },
+  "cacheCorrection": {
+    "attempt01": "Ordinary --pull build reused the cached runtime apk layer; scan found Alpine libpng1.6.58-r1, CVE-2026-46675, severityUNKNOWN, fixed1.6.59-r0. HIGH/CRITICAL gate passed but the residual finding was preserved and prompted another build.",
+    "attempt02": "Same clean source, Dockerfile and pinned scanner; docker build --pull --no-cache reran apk upgrade/install and installed libpng1.6.59-r0. Exact image/export digests changed; original attempt retained."
+  },
+  "stopFocusStatus": "A real server Stop Focus exact-binding defect was discovered during candidate preflight while this image built. The narrow correction must be reviewed and backported before selecting final rollback source/image.",
+  "migrationReentryStatus": "Final corrected candidate and corrected rollback re-entry remain pending; this351 image is not final release compatibility approval.",
+  "limitations": [
+    "Local source/image/scan proof only; no ECR push, cloud task registration, deployment or runtime activation.",
+    "Pure release-floor assertions use clearly marked synthetic task definitions and injected local source-image binding; no production binding is proved.",
+    "Final candidate image and migration/recovery rehearsal are separate and still pending.",
+    "Large image.tar files remain in external artifact directories with hashes retained here.",
+    "The source combines the reviewed SSO lock ordering and owned monitoring lease corrections with only six production dependency updates; source native/type evidence is recorded separately."
+  ],
+  "productionMutations": 0,
+  "sanitation": "Full metadata, scan reports, exact scripts and build/export logs retained after UTF8/LF and credential/workstation path redaction; all hashes verified.",
+  "attempts": [
+    {
+      "attempt": 1,
+      "status": "superseded_cached_libpng_fix_available",
+      "originalArtifactDirectory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-rollback-351422d7-01",
+      "originalArtifactManifestSha256": "4b134a70686c73b164e78c6060d639709bfeb3ae313ac3d0a90b77aca7d31e13",
+      "image": {
+        "localTag": "schoolpilot-rollback-local:351422d75a1a-20261003025203",
+        "indexDigest": "sha256:694f47780cb5b79c6e70dd9957a5232e2e1144458ff8f9692bdc1d203a275313",
+        "platformManifestDigest": "sha256:12e1e015a9b8bb0bc7860e1bbecf92f9b06d5d117eaf62dc81f866922b25cb38",
+        "configDigest": "sha256:628b269c74ce692accda4e0e65f4093c7be789e6e434d948f6e6ae0b95660b60",
+        "localRepoDigests": [
+          "schoolpilot-rollback-local@sha256:694f47780cb5b79c6e70dd9957a5232e2e1144458ff8f9692bdc1d203a275313"
+        ],
+        "platform": "linux/amd64",
+        "revisionLabel": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+        "apiCommand": [
+          "node",
+          "dist/index.js"
+        ],
+        "workerCommand": [
+          "node",
+          "dist/worker.js"
+        ],
+        "archive": "image.tar",
+        "archiveSha256": "01b4eb5ce4935dc50c082a36e5a98208be8c3c78a3d67a83e41afa72fb1d0426",
+        "registryPublished": false,
+        "productionDigestBindingVerified": false
+      },
+      "scan": {
+        "scannerImage": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+        "gate": "Fixed HIGH/CRITICAL findings fail: --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1",
+        "allSeverityCounts": {
+          "UNKNOWN": 1,
+          "LOW": 0,
+          "MEDIUM": 0,
+          "HIGH": 0,
+          "CRITICAL": 0
+        },
+        "gateFindings": 0,
+        "gatePassed": true,
+        "databaseMetadata": {
+          "Version": 2,
+          "NextUpdate": "2026-10-04T01:08:10.865915193Z",
+          "UpdatedAt": "2026-10-03T01:08:10.865915767Z",
+          "DownloadedAt": "2026-10-03T02:53:56.71373488Z"
+        }
+      },
+      "compatibility": {
+        "passed": true,
+        "dependencyVersions": {
+          "express": "4.22.3",
+          "body-parser": "1.20.8",
+          "qs": "6.16.0",
+          "ip-address": "10.7.3",
+          "side-channel": "1.1.1",
+          "side-channel-list": "1.0.1"
+        },
+        "writerVersion": 1,
+        "bridgeVersion": 1,
+        "relayVersion": 1,
+        "inventoryCount": 129,
+        "stickyMigration": true,
+        "ssoLockOrderCorrection": true,
+        "monitoringOwnedLeaseCorrection": true,
+        "metadataReuseAbsent": true,
+        "usageContentionCorrectionAbsent": true,
+        "usageModesRequired": "both off",
+        "hashes": {
+          "writer": "eb2cb8ae359cb5a2701f9361931cfe2bfd9976e1d7fddb320177bccc6692aeba",
+          "relay": "b83504339340e562fa4e29b8c825618ca7c5f24c27be9281c13b7416bf6fba16",
+          "storage": "c5cb5496b0f30d7a2c3bc671755277dd883b3bcfd28a321a5f137f35ca813c69",
+          "migration": "c51cb406ce0fde01744fd1dff098b91f6d2a0e5547666756c82bd09cc5f27d1d",
+          "protocol": "0fd25026c78996a1052800b0538921b49106d334e719f13e01abf816fac894b4",
+          "registry": "0391c747c103c013e51dbec7ca35c54532d09e25df637fafd8ea8fef6447c235",
+          "tenant": "77931700ab3507ad64861ce9687415ee1aa3286fef705abf438e5a536658c7f3",
+          "monitoring": "2a90bedae71f8b293629b7dcbfaf6a1904545ed02b036207db5fdfe60850508f"
+        },
+        "scope": "Embedded file/marker/order validation only; no API/worker application process started or database connected."
+      },
+      "files": [
+        {
+          "file": "attempt-01/build.log.gz",
+          "rawSha256": "a00e0b948dc6defb390945ef4edbb88f82258ee54882e63cffb0c6797db9e6f9",
+          "sanitizedSha256": "ad8b0c54e7276b6d0a96573097cfdd69e35ebc0456dcee4447d31c6dd44c75e6",
+          "archiveSha256": "ba8fad8a22a8d7c1a07a0a8f88002d56da32a3dcef163e6dda366c799e19961a",
+          "sourceBytes": 6643,
+          "archiveBytes": 2118
+        },
+        {
+          "file": "attempt-01/embedded-compatibility.json.gz",
+          "rawSha256": "d69a35c53fc2fdb9c6883643c154ed9b0dd70311f205833cbfed0cb880f87456",
+          "sanitizedSha256": "c7b005ad6c84f30fe8bc477a4460689b59939821b98421a34fb0083120654b07",
+          "archiveSha256": "f97fe710fe31a63622ddc618b11682420b2964219e2f64524726f393bfeb3bc8",
+          "sourceBytes": 1359,
+          "archiveBytes": 758
+        },
+        {
+          "file": "attempt-01/image-id.txt.gz",
+          "rawSha256": "7498cddbfcfcd64863f68bdc7b8aadb224047bb8ff9988a672b874b98d9d9136",
+          "sanitizedSha256": "7498cddbfcfcd64863f68bdc7b8aadb224047bb8ff9988a672b874b98d9d9136",
+          "archiveSha256": "70f53bae9067ff413d7f7739ba5942fe3f8448c904578b6f137ce130a86dfaa6",
+          "sourceBytes": 71,
+          "archiveBytes": 78
+        },
+        {
+          "file": "attempt-01/image-inspect.json.gz",
+          "rawSha256": "f0044423f9c1aa030d7f2cd60b22ad9cb84b21aa07200d448e42fb5967809b63",
+          "sanitizedSha256": "80d8e55946e0261bc92fd452683b01861af9ddb2dd6befca57397aee1178a5ef",
+          "archiveSha256": "a5834748739ea8e92bd61d7acf1bc89f9ad77a3cc5780e94e7a8ae017b56d394",
+          "sourceBytes": 3265,
+          "archiveBytes": 1327
+        },
+        {
+          "file": "attempt-01/inspect-compatibility.mjs.gz",
+          "rawSha256": "03cc6a806ae60c340dd6f17ced67c79291e5d68fb3e8780e2c1054d6453f07b6",
+          "sanitizedSha256": "478893cf3fc3148d2127e8137bc93820e0821c526a6f3a3c3e7c9a751d706fda",
+          "archiveSha256": "752bc69456ab5e0001c0170aed4d270d788c54375c4092965bf3379b9cb5c1a6",
+          "sourceBytes": 3565,
+          "archiveBytes": 1398
+        },
+        {
+          "file": "attempt-01/manifest.json.gz",
+          "rawSha256": "4b134a70686c73b164e78c6060d639709bfeb3ae313ac3d0a90b77aca7d31e13",
+          "sanitizedSha256": "4b134a70686c73b164e78c6060d639709bfeb3ae313ac3d0a90b77aca7d31e13",
+          "archiveSha256": "fecdb804edbbf20015606ae4e15808c11f60e29e67f520a240c079bc17485e9a",
+          "sourceBytes": 10167,
+          "archiveBytes": 4034
+        },
+        {
+          "file": "attempt-01/preparation.json.gz",
+          "rawSha256": "d41b9d37a67d74aeec5ff2581e5ec2a3808de9dade412297ced995b05d556fe3",
+          "sanitizedSha256": "3fd47f719c5c194a53362e01a6a3748033951c5c25f9b059148fbbc5ef96acb8",
+          "archiveSha256": "b66b10854c98c0437da85a3a0afdbcae4fa48e74d00979e2af2cc3a3ed70faa7",
+          "sourceBytes": 759,
+          "archiveBytes": 461
+        },
+        {
+          "file": "attempt-01/prepare-rollback.ps1.gz",
+          "rawSha256": "2ba68232f5293242e8bbeca81bff6b9d021e3f9acde85a814cf1261507a1d5a8",
+          "sanitizedSha256": "91ec2e48ab10787d76359265834ce3a4409e5dd1aa41cdda652db7252e7a5064",
+          "archiveSha256": "3371a619c557673a2e5db4494e4286c8fbf6885f748e48457e36a34c97d8926a",
+          "sourceBytes": 3484,
+          "archiveBytes": 1337
+        },
+        {
+          "file": "attempt-01/prove-synthetic-floor.mjs.gz",
+          "rawSha256": "f8b09f082c0a7f3627fd005aa5da5f1001d0ed3021ddfd2f48d6fcf44090774e",
+          "sanitizedSha256": "2790c67b8731b4712aace07d4fe0436cd69d033e6934a2df6d9cea7cb8195349",
+          "archiveSha256": "d470aa9c31cb0ba936770db92b8f6f99e01deabeb33bea554d5da3d4cfa9ebf8",
+          "sourceBytes": 3984,
+          "archiveBytes": 1725
+        },
+        {
+          "file": "attempt-01/save.log.gz",
+          "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63",
+          "sourceBytes": 0,
+          "archiveBytes": 20
+        },
+        {
+          "file": "attempt-01/synthetic-api-task.json.gz",
+          "rawSha256": "4255a1e0f7edd9d2e5c1bc450d6966e1ca2c2dc16b878b006eacfce79666a35a",
+          "sanitizedSha256": "4255a1e0f7edd9d2e5c1bc450d6966e1ca2c2dc16b878b006eacfce79666a35a",
+          "archiveSha256": "b665fdf85ae4448143167cdade854640eff9d1f1eef14e00591cfb7b54a2d094",
+          "sourceBytes": 4087,
+          "archiveBytes": 1438
+        },
+        {
+          "file": "attempt-01/synthetic-release-floor-proof.json.gz",
+          "rawSha256": "0cb5c6f0a964f91c21e974adc7c73cee78c995114bd0955b8d1ec1eb832eeec2",
+          "sanitizedSha256": "0cb5c6f0a964f91c21e974adc7c73cee78c995114bd0955b8d1ec1eb832eeec2",
+          "archiveSha256": "c5a948801cd1d4ebc9f7a3105d41adc8efbad0f001458d4d1c18e85f6fb733ef",
+          "sourceBytes": 1228,
+          "archiveBytes": 725
+        },
+        {
+          "file": "attempt-01/synthetic-worker-task.json.gz",
+          "rawSha256": "837faf56ab8872dfc3c616fd06f466160603a077c0dfd1512ffd89a124d8d6ca",
+          "sanitizedSha256": "837faf56ab8872dfc3c616fd06f466160603a077c0dfd1512ffd89a124d8d6ca",
+          "archiveSha256": "eebc6d8613e78c73433ef28c8135356ccebdbcc2e7a7c064b15283ebdb0759ec",
+          "sourceBytes": 4101,
+          "archiveBytes": 1445
+        },
+        {
+          "file": "attempt-01/trivy-all.json.gz",
+          "rawSha256": "fe8888578c447d7946ae70242aa67b976b9948cc47bf644dd40c7f04a782457d",
+          "sanitizedSha256": "fe8888578c447d7946ae70242aa67b976b9948cc47bf644dd40c7f04a782457d",
+          "archiveSha256": "cdd22206ba54ebbc638da1c6c06f6ed9732e01d4bcc6b1c043b8954738ae407d",
+          "sourceBytes": 358051,
+          "archiveBytes": 32943
+        },
+        {
+          "file": "attempt-01/trivy-all.log.gz",
+          "rawSha256": "a1d16965db6872aeb49d6a67008f5aab971d9bcd406e3c54c40035c952798c2a",
+          "sanitizedSha256": "2ffc2f74d194808ebee89140c868d198675464b860619083842c432016f3e3ea",
+          "archiveSha256": "8636e1bb6ff8efc36bc54e98d145f5f7e6bd435fbe4813211acde01dbae55912",
+          "sourceBytes": 10700,
+          "archiveBytes": 1211
+        },
+        {
+          "file": "attempt-01/trivy-database-metadata.json.gz",
+          "rawSha256": "eac36c0bd4f338a08ca5edd1e659155376145907ce79ba69a7aba33c18fe34bc",
+          "sanitizedSha256": "eac36c0bd4f338a08ca5edd1e659155376145907ce79ba69a7aba33c18fe34bc",
+          "archiveSha256": "501158d76fa5ff14d1f09a085217e9d97b57bb4c36bfe80d816a4c193873cd15",
+          "sourceBytes": 169,
+          "archiveBytes": 132
+        },
+        {
+          "file": "attempt-01/trivy-gate.json.gz",
+          "rawSha256": "80290a883e8892cb98eabc363aefc680c01f7fd997ce2cf25dbe942263eb6130",
+          "sanitizedSha256": "80290a883e8892cb98eabc363aefc680c01f7fd997ce2cf25dbe942263eb6130",
+          "archiveSha256": "96d9854e3a59aaaffaf4285b7740987496a1005a24a2f5735d3819356667bb9b",
+          "sourceBytes": 356842,
+          "archiveBytes": 32604
+        },
+        {
+          "file": "attempt-01/trivy-gate.log.gz",
+          "rawSha256": "6cf45d87a045ec3d75d9339b6d6903fd431512e7f787f07289b76dfae03b8938",
+          "sanitizedSha256": "6bce614efa138a2fab8e1f5b2af064f320bec5d9c66dea53599994ce4cccc5fb",
+          "archiveSha256": "7bf2ec0aab80ba34b7ffd61dcc0258a1d1a9f64e397d03d1b6cc94f9a5c3ff79",
+          "sourceBytes": 569,
+          "archiveBytes": 311
+        },
+        {
+          "file": "attempt-01/write-manifest.mjs.gz",
+          "rawSha256": "0eb29d2604e1130822a94ca83c84b5f38736505dd5c9c5d302bf0ad66c89ae58",
+          "sanitizedSha256": "136632f03de6a6a1be08ff71a36d16cb76ca6736ba14c3dc69d596f829a50185",
+          "archiveSha256": "d9d6132989100d2a8f761bb5524ba07e3b7c1c76134ed2f9fb676737b223da83",
+          "sourceBytes": 5487,
+          "archiveBytes": 2353
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "status": "prepared_image_stop_focus_correction_pending",
+      "originalArtifactDirectory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-compatible-rollback-351422d7-02",
+      "originalArtifactManifestSha256": "e9cb727ea4ed0749f217a97b3f2781a901f010cb4d819407eaabccdf522828fc",
+      "image": {
+        "localTag": "schoolpilot-rollback-local:351422d75a1a-20261003025643",
+        "indexDigest": "sha256:f91e8fe58be25fde7198d2a1f98b41fba4482e36d3ba5411a72108e6495bef94",
+        "platformManifestDigest": "sha256:c7a977f4afc8bc542ae4fa5c3e07d73e3a59e64ad7423af3356fc4c0141a7568",
+        "configDigest": "sha256:6d0399e3d2d6ae2bcc7e93c9efa674f5e07589ad087eb5bd8da5fb5da7529f1c",
+        "localRepoDigests": [
+          "schoolpilot-rollback-local@sha256:f91e8fe58be25fde7198d2a1f98b41fba4482e36d3ba5411a72108e6495bef94"
+        ],
+        "platform": "linux/amd64",
+        "revisionLabel": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+        "apiCommand": [
+          "node",
+          "dist/index.js"
+        ],
+        "workerCommand": [
+          "node",
+          "dist/worker.js"
+        ],
+        "archive": "image.tar",
+        "archiveSha256": "aebbae7e0c08175cad6fc42d68649f18fce8331b8354e8bfb35ca49b2dc1b9c6",
+        "registryPublished": false,
+        "productionDigestBindingVerified": false
+      },
+      "scan": {
+        "scannerImage": "aquasec/trivy@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa",
+        "gate": "Fixed HIGH/CRITICAL findings fail: --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1",
+        "allSeverityCounts": {
+          "UNKNOWN": 0,
+          "LOW": 0,
+          "MEDIUM": 0,
+          "HIGH": 0,
+          "CRITICAL": 0
+        },
+        "gateFindings": 0,
+        "gatePassed": true,
+        "databaseMetadata": {
+          "Version": 2,
+          "NextUpdate": "2026-10-04T01:08:10.865915193Z",
+          "UpdatedAt": "2026-10-03T01:08:10.865915767Z",
+          "DownloadedAt": "2026-10-03T02:59:35.350708973Z"
+        }
+      },
+      "compatibility": {
+        "passed": true,
+        "dependencyVersions": {
+          "express": "4.22.3",
+          "body-parser": "1.20.8",
+          "qs": "6.16.0",
+          "ip-address": "10.7.3",
+          "side-channel": "1.1.1",
+          "side-channel-list": "1.0.1"
+        },
+        "writerVersion": 1,
+        "bridgeVersion": 1,
+        "relayVersion": 1,
+        "inventoryCount": 129,
+        "stickyMigration": true,
+        "ssoLockOrderCorrection": true,
+        "monitoringOwnedLeaseCorrection": true,
+        "metadataReuseAbsent": true,
+        "usageContentionCorrectionAbsent": true,
+        "usageModesRequired": "both off",
+        "hashes": {
+          "writer": "eb2cb8ae359cb5a2701f9361931cfe2bfd9976e1d7fddb320177bccc6692aeba",
+          "relay": "b83504339340e562fa4e29b8c825618ca7c5f24c27be9281c13b7416bf6fba16",
+          "storage": "c5cb5496b0f30d7a2c3bc671755277dd883b3bcfd28a321a5f137f35ca813c69",
+          "migration": "c51cb406ce0fde01744fd1dff098b91f6d2a0e5547666756c82bd09cc5f27d1d",
+          "protocol": "0fd25026c78996a1052800b0538921b49106d334e719f13e01abf816fac894b4",
+          "registry": "0391c747c103c013e51dbec7ca35c54532d09e25df637fafd8ea8fef6447c235",
+          "tenant": "77931700ab3507ad64861ce9687415ee1aa3286fef705abf438e5a536658c7f3",
+          "monitoring": "2a90bedae71f8b293629b7dcbfaf6a1904545ed02b036207db5fdfe60850508f"
+        },
+        "scope": "Embedded file/marker/order validation only; no API/worker application process started or database connected."
+      },
+      "files": [
+        {
+          "file": "attempt-02/build.log.gz",
+          "rawSha256": "db2945bb1ca7005e2384fc58d194c22e11825d9d194747bb6ac801e7e7859137",
+          "sanitizedSha256": "979a26cb46697fbf21f7a1d777b0b48c2666b4c56b99ab250e82393e4c22808d",
+          "archiveSha256": "68281b0810aeab527134026f24caf81f2f74abd1f66f9fa7c2a5651f6071b14b",
+          "sourceBytes": 11502,
+          "archiveBytes": 3215
+        },
+        {
+          "file": "attempt-02/embedded-compatibility.json.gz",
+          "rawSha256": "d69a35c53fc2fdb9c6883643c154ed9b0dd70311f205833cbfed0cb880f87456",
+          "sanitizedSha256": "c7b005ad6c84f30fe8bc477a4460689b59939821b98421a34fb0083120654b07",
+          "archiveSha256": "f97fe710fe31a63622ddc618b11682420b2964219e2f64524726f393bfeb3bc8",
+          "sourceBytes": 1359,
+          "archiveBytes": 758
+        },
+        {
+          "file": "attempt-02/image-id.txt.gz",
+          "rawSha256": "41c9b560d9ef7bf1917dee75230d89c18eba4d67d1cb73646143a594a529ba88",
+          "sanitizedSha256": "41c9b560d9ef7bf1917dee75230d89c18eba4d67d1cb73646143a594a529ba88",
+          "archiveSha256": "e1bf618c3d2dfaca435fc3a5e2afcc73ed46380f9a8a99abc0b00253b89abd5c",
+          "sourceBytes": 71,
+          "archiveBytes": 77
+        },
+        {
+          "file": "attempt-02/image-inspect.json.gz",
+          "rawSha256": "207ea17a8612dffb9206bbee5c4f85f9eba8116e3ae05820d2c888c2e81ec723",
+          "sanitizedSha256": "9b0eb3a8b0734ff67b92b8bad8fe2acdbb5975d5ce9e24e258f49a29168403d0",
+          "archiveSha256": "fae2a13d5fd402496780b036b779f17fbb39e07a83d88a324bc1c39c91992b7f",
+          "sourceBytes": 3263,
+          "archiveBytes": 1326
+        },
+        {
+          "file": "attempt-02/inspect-compatibility.mjs.gz",
+          "rawSha256": "e628e5f7ccc116cbd909de2d9aa174978eafb1885d70c10c2c66a5b909fb1d19",
+          "sanitizedSha256": "88e00a9b91a9e9db65d191c285b26c59cf86088cab1d06379f8c2d8838a85168",
+          "archiveSha256": "c2ce790d1fcfd84dccaaf21b0ac9c55affe2f343620a4143137bacd4b07a4bb7",
+          "sourceBytes": 3567,
+          "archiveBytes": 1399
+        },
+        {
+          "file": "attempt-02/manifest.json.gz",
+          "rawSha256": "e9cb727ea4ed0749f217a97b3f2781a901f010cb4d819407eaabccdf522828fc",
+          "sanitizedSha256": "e9cb727ea4ed0749f217a97b3f2781a901f010cb4d819407eaabccdf522828fc",
+          "archiveSha256": "16be53c50baf672bcab1a462602139c3e035a254c342d78d881b3815c5689597",
+          "sourceBytes": 10169,
+          "archiveBytes": 4040
+        },
+        {
+          "file": "attempt-02/preparation.json.gz",
+          "rawSha256": "de8122037d2669f487ac81644f592a601560b5d546c28a0cb4b9227eca983e6d",
+          "sanitizedSha256": "3e4610561e14b8271e64eaae2b6de2e9ba95025d3bb9bb647bb1e74639533ee8",
+          "archiveSha256": "7cdcbbc72cab4c20b8a3e3305c746d34254b4f673eb8692b3820fc8f69ecc629",
+          "sourceBytes": 759,
+          "archiveBytes": 463
+        },
+        {
+          "file": "attempt-02/prepare-rollback.ps1.gz",
+          "rawSha256": "cc3b7820878826a7d4d6400b08ddcbc4d07a693a9332d86f1b9f9247e43012dc",
+          "sanitizedSha256": "6a6fc164cc7886b986bdb24bf2c59cf4285efd8b8afcb19558e028c886a8227c",
+          "archiveSha256": "8de8021406e7f8c820e48dc8eb3aea41285d85c3b54682460ab264330dcaf783",
+          "sourceBytes": 3497,
+          "archiveBytes": 1342
+        },
+        {
+          "file": "attempt-02/prove-synthetic-floor.mjs.gz",
+          "rawSha256": "50621e9158d88aab5e635701f349ad9f8f0066ef9095740572eaa6a486b29036",
+          "sanitizedSha256": "a59545be21e066ce46d8ea7bc2a91dc6c22ebdf81dd55fb778e4553e329e34dc",
+          "archiveSha256": "7b43f7be5851e1ea19d961c95daec128918e78beb5a1cd6134d46b6182d6814c",
+          "sourceBytes": 3986,
+          "archiveBytes": 1727
+        },
+        {
+          "file": "attempt-02/save.log.gz",
+          "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "archiveSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63",
+          "sourceBytes": 0,
+          "archiveBytes": 20
+        },
+        {
+          "file": "attempt-02/synthetic-api-task.json.gz",
+          "rawSha256": "a2305e8dadeac2bd1a1629c87d17dd4b4791c2953e4a5d481b36b54e5ec1d2a4",
+          "sanitizedSha256": "a2305e8dadeac2bd1a1629c87d17dd4b4791c2953e4a5d481b36b54e5ec1d2a4",
+          "archiveSha256": "d190c09175e77186034dee45da07794c11d4c997722279c58945ce201c227098",
+          "sourceBytes": 4087,
+          "archiveBytes": 1435
+        },
+        {
+          "file": "attempt-02/synthetic-release-floor-proof.json.gz",
+          "rawSha256": "84257bc9252554838f60c936236675d9260995810fc920791cfd7456235c2f1d",
+          "sanitizedSha256": "84257bc9252554838f60c936236675d9260995810fc920791cfd7456235c2f1d",
+          "archiveSha256": "a2cf5ea284c4dcb316178d88cf27df62a78b771208b7946c5531acf69cb3d534",
+          "sourceBytes": 1228,
+          "archiveBytes": 723
+        },
+        {
+          "file": "attempt-02/synthetic-worker-task.json.gz",
+          "rawSha256": "ddd3305e7ab3a46fe3a002d95b170c5f9ef2fb588cc6182d2abbc22012558ec2",
+          "sanitizedSha256": "ddd3305e7ab3a46fe3a002d95b170c5f9ef2fb588cc6182d2abbc22012558ec2",
+          "archiveSha256": "aad78831cc94cd4527e2be4b4b0fb3fb2dfb5ce634faac06d1e86b39bf7ba025",
+          "sourceBytes": 4101,
+          "archiveBytes": 1442
+        },
+        {
+          "file": "attempt-02/trivy-all.json.gz",
+          "rawSha256": "eb4288fca06f54c08885ad8e8b4891607ffb5b7c9514e2ce6f9db40c0bf3c512",
+          "sanitizedSha256": "eb4288fca06f54c08885ad8e8b4891607ffb5b7c9514e2ce6f9db40c0bf3c512",
+          "archiveSha256": "cf3b632596ab6daab4c83a38797906d5cb25859d884e3ababe49d516b10c13b9",
+          "sourceBytes": 356838,
+          "archiveBytes": 32779
+        },
+        {
+          "file": "attempt-02/trivy-all.log.gz",
+          "rawSha256": "9db70d062608a79bb5f28c237e14418c34e5a87ec55c9e9586a3b1cef717091f",
+          "sanitizedSha256": "2d26c58d56a4879af39a16a578a2fb5241ffa720d73de7e127c391002cdbe7c5",
+          "archiveSha256": "df651b056f37314ce058ceb95cadba01661cdc9e69e4297b007f70d853f9b99b",
+          "sourceBytes": 20417,
+          "archiveBytes": 1347
+        },
+        {
+          "file": "attempt-02/trivy-database-metadata.json.gz",
+          "rawSha256": "989ae053007eb8e84322c647bf702b44cc60d6d1f1dbfa2b95378958ef7f6ddd",
+          "sanitizedSha256": "989ae053007eb8e84322c647bf702b44cc60d6d1f1dbfa2b95378958ef7f6ddd",
+          "archiveSha256": "2965d88603fe12d0e1b229ccb6dc3068f3f813330b9752fc44e9af2d2b88688e",
+          "sourceBytes": 170,
+          "archiveBytes": 133
+        },
+        {
+          "file": "attempt-02/trivy-gate.json.gz",
+          "rawSha256": "4303f7a19505caeffc5aefa1315f4e08f58b6a415aee79d1c6209adc487c0ef4",
+          "sanitizedSha256": "4303f7a19505caeffc5aefa1315f4e08f58b6a415aee79d1c6209adc487c0ef4",
+          "archiveSha256": "c0b48c26beb8d6baa2088f9978ffbb881b93b1f1ebc249d827b765866e74220c",
+          "sourceBytes": 356838,
+          "archiveBytes": 32779
+        },
+        {
+          "file": "attempt-02/trivy-gate.log.gz",
+          "rawSha256": "03e138d0de9df06b53fb5f823840275bf68c7bcb21c8b0135808fee537f44a1d",
+          "sanitizedSha256": "64ad010aaa5afa0912965bdea9bd3158acea59c3c8d0c95386636929613b08a7",
+          "archiveSha256": "a8d64771efba9b462d3724e412e9cf5168f02c42d8beaaf1f890719adfa509a0",
+          "sourceBytes": 386,
+          "archiveBytes": 221
+        },
+        {
+          "file": "attempt-02/write-manifest.mjs.gz",
+          "rawSha256": "0a05bc97de1c9e5a328f59ad585e87c4f04d8f78442aa94d87a62e5a1db5da5e",
+          "sanitizedSha256": "8f6b27aef508aa0c333fa422232263d7d4dcb6130d8473d237e29f6ad983e10c",
+          "archiveSha256": "85fc9be361019c115535fa2aa80c052bcfe04e7b972f614011713a8b62350f91",
+          "sourceBytes": 5489,
+          "archiveBytes": 2352
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T03:10:46.524Z",
+  "status": "unit_and_production_type_checks_passed",
+  "scope": "Parent full unit run after Stop Focus V2 cleanup correction; separate root production TypeScript check; no tests rerun by archivist.",
+  "source": {
+    "head": "5a2c09968df0d10a80d5b2321b8658dacf0457da",
+    "state": "Incremental uncommitted release source; later commit/CI/capacity verification remains separate.",
+    "files": 1152,
+    "beforeAfterDeepEqual": true,
+    "runnerReportedUnchanged": true,
+    "dispatcherSha256": "027d998942466e00d706987ea5b4b85b9bd5d0e7fc13bd6dd775c37048e0e22e",
+    "dispatcherMatchesRootTypeCheck": true,
+    "beforeReceipt": "source-before.json.gz",
+    "afterReceipt": "source-after.json.gz"
+  },
+  "runner": {
+    "invocation": "pwsh -NoProfile -File <TEMP>/release297-final-checks-05.ps1",
+    "command": "npm run test:unit",
+    "unitExit": 0,
+    "startedAt": "2026-10-03T03:07:35.4608948Z",
+    "finishedAt": "2026-10-03T03:08:59.7267455Z",
+    "environment": {
+      "NODE_ENV": "test",
+      "SCHEDULER_ENABLED": "false",
+      "REDIS_URL": "empty",
+      "DATABASE_URL": "absent",
+      "DOTENV_CONFIG_PATH": "absent external dotenv"
+    }
+  },
+  "unit": {
+    "tests": 1756,
+    "pass": 1752,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 4,
+    "todo": 0
+  },
+  "conditionalSkips": [
+    "ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected",
+    "delivers a duplicate message ID exactly once across two relay instances",
+    "parses inspected index key columns as a text array",
+    "retains the newest attempted revision across a subscriber reconnect"
+  ],
+  "productionTypeCheck": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "head": "5a2c09968df0d10a80d5b2321b8658dacf0457da",
+    "finishedAt": "2026-10-03T03:05:10.3743921Z",
+    "dispatcherSha256": "027d998942466e00d706987ea5b4b85b9bd5d0e7fc13bd6dd775c37048e0e22e",
+    "sourceBinding": "Root receipt records dispatcher hash only; no separate all-file before/after snapshot claimed for this earlier type check."
+  },
+  "relatedEvidence": {
+    "stopFocusNative": "../stop-focus-v2-cleanup/manifest.json",
+    "rollbackStopFocus": "../rollback-stop-focus/manifest.json",
+    "indexNative": "../index-contract-native/manifest.json"
+  },
+  "limits": [
+    "Four conditional Redis/native unit cases remain skipped; this archive does not relabel them passed. Separate index-native proof covers its 3/3 existing suite without skips.",
+    "Stop Focus frame test is assigned to DB_SERIAL because its static imports require database configuration; separate primary proof covers 14 restricted integration cases and 15 owner-backed pure/Focus cases, not owner integration.",
+    "No new build, database workload, capacity result, remote CI or deployment approval is claimed.",
+    "All earlier failed attempts and evidence remain unchanged."
+  ],
+  "sanitation": "User-home paths, connection URLs and JWT-shaped values redacted; original/sanitized/archive hashes recorded; all gzip round trips verified.",
+  "files": [
+    {
+      "file": "result.json.gz",
+      "originalSha256": "e500c9af4aee3509c0a7622d922a0e007edf68b1bbb56e32c6e5aaeeb4f76881",
+      "sanitizedSha256": "c95bf372cebb8e5f26b57dbcf017270b440bef176f632affe3c2f34680f8ab79",
+      "archiveSha256": "3d036f2bcb2b8b6355bf47f1e4f813dbe45adfa6f39e54070277bd5c9a745107",
+      "sourceBytes": 603,
+      "archiveBytes": 417
+    },
+    {
+      "file": "source-before.json.gz",
+      "originalSha256": "d5ab8f9aa36843830326c601317077b6d3b823e9427d1b75e0ca38489f6aff24",
+      "sanitizedSha256": "d5ab8f9aa36843830326c601317077b6d3b823e9427d1b75e0ca38489f6aff24",
+      "archiveSha256": "9b1aa37ed91a3081751a71a9f0151921a53750c6fb9041dc8097eaf7c37da0d7",
+      "sourceBytes": 173815,
+      "archiveBytes": 56266
+    },
+    {
+      "file": "source-after.json.gz",
+      "originalSha256": "d5ab8f9aa36843830326c601317077b6d3b823e9427d1b75e0ca38489f6aff24",
+      "sanitizedSha256": "d5ab8f9aa36843830326c601317077b6d3b823e9427d1b75e0ca38489f6aff24",
+      "archiveSha256": "9b1aa37ed91a3081751a71a9f0151921a53750c6fb9041dc8097eaf7c37da0d7",
+      "sourceBytes": 173815,
+      "archiveBytes": 56266
+    },
+    {
+      "file": "unit.log.gz",
+      "originalSha256": "b617e1a7d93f3d239f4435582c6828299fcc63833804a778e277e8daf7b43e31",
+      "sanitizedSha256": "b617e1a7d93f3d239f4435582c6828299fcc63833804a778e277e8daf7b43e31",
+      "archiveSha256": "1f9cab1fdf99c0316272cf3750b6b661410f850f59fda267c5ed9b39794ef3da",
+      "sourceBytes": 461059,
+      "archiveBytes": 78593
+    },
+    {
+      "file": "release297-final-checks-05.ps1.gz",
+      "originalSha256": "86af0e23bc459a40fb01c56569c5ae2ee2488553fa6cf046327877f1195f3352",
+      "sanitizedSha256": "d2a1247085c5b6f984c4c4afd0d24d61e5258fe7c1deab5445c68e5b5e168f45",
+      "archiveSha256": "ff03297b397b64a0b235f91dfd3caae3ffec8555b65da2b7c2cdfbd49825966c",
+      "sourceBytes": 2037,
+      "archiveBytes": 1036
+    },
+    {
+      "file": "root-type-check.json.gz",
+      "originalSha256": "16c9ab3c52e91868ba1975a35cc8d094eecb9ba76e5189c2282fcbfe0e8bc6c4",
+      "sanitizedSha256": "16c9ab3c52e91868ba1975a35cc8d094eecb9ba76e5189c2282fcbfe0e8bc6c4",
+      "archiveSha256": "0fe20fb2eea9ecbab451f2b176ca2ba7b4aafc0c51b5c1328b0e89a7584e87ae",
+      "sourceBytes": 222,
+      "archiveBytes": 193
+    },
+    {
+      "file": "root-type-check.log.gz",
+      "originalSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "sanitizedSha256": "d0198dc59f5288852dbe34a9fb3698d729eadbd520fea668c5f640fd2ff05d58",
+      "archiveSha256": "81cfb2d18cc731ab6728460c7fcb80525562667c06cf37456241345411477281",
+      "sourceBytes": 51,
+      "archiveBytes": 71
+    }
+  ]
+}

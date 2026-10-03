@@ -1,0 +1,3444 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:10:11.564Z",
+  "sourceBinding": {
+    "capturedAt": "2026-10-02T22:33:26.507Z",
+    "kind": "frontend_aggregate_input_binding",
+    "baseHead": "08802d020a3c51beea504140f923126ab518aac6",
+    "source": [
+      {
+        "file": "schoolpilot-app/.gitignore",
+        "gitBlob": "0a47f3367c7bd6ab08504399c17eedc3091e1160"
+      },
+      {
+        "file": "schoolpilot-app/README.md",
+        "gitBlob": "25193f6dfd9c497e0c9ed06b18ccae936b7f77c2"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/.gitignore",
+        "gitBlob": "48354a3dfc4ad41c5c7af1451315d335cda7d611"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/.gitignore",
+        "gitBlob": "043df802a29f1f386a23cba600c84be8eee2a0c6"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/build.gradle",
+        "gitBlob": "90cf0bd52969e3e6f78724334e9368be8376abcf"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/capacitor.build.gradle",
+        "gitBlob": "1872ec814869f41c511c85004bc7d1987a7951d4"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/proguard-rules.pro",
+        "gitBlob": "f1b424510da51fd82143bc74a0a801ae5a1e2fcd"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
+        "gitBlob": "f2c2217efa5a746f23ea722450a40fe0ca3db099"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/AndroidManifest.xml",
+        "gitBlob": "99546932e025707acacb69c0b5168225f4003037"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/java/com/schoolpilot/gopilot/MainActivity.java",
+        "gitBlob": "940b8736f7ef83bb6c069646d90ae9fa354dd11a"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-land-hdpi/splash.png",
+        "gitBlob": "e31573b4fc93e60d171f4046c0220e1463075d9e"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-land-mdpi/splash.png",
+        "gitBlob": "f7a64923ea1a0565d25fa139c176d6bf42184e48"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-land-xhdpi/splash.png",
+        "gitBlob": "807725501bdd92e94e51e7b2b0006f69e0083a0b"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-land-xxhdpi/splash.png",
+        "gitBlob": "14c6c8fe39fcd51a0414866ad28cbe8ff3acb060"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-land-xxxhdpi/splash.png",
+        "gitBlob": "244ca2506dbe0fd8f6a05520ac7d1a629ea81438"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-port-hdpi/splash.png",
+        "gitBlob": "74faaa583c8221c27a8cb822c3fbe218bafa3299"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-port-mdpi/splash.png",
+        "gitBlob": "e944f4ad4e1ca1c8cf9a87b366acc01c4e5c1616"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-port-xhdpi/splash.png",
+        "gitBlob": "564a82ff954aec267492467c0169a270c4e8fea9"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-port-xxhdpi/splash.png",
+        "gitBlob": "bfabe6871a17a5e95b78fb30d49b7d2b4d2fe4c0"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-port-xxxhdpi/splash.png",
+        "gitBlob": "6929071268eb03ee0f088142b6523566b78550e2"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
+        "gitBlob": "c7bd21dbd86990cde81fea8abd3bf904b4546749"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable/ic_launcher_background.xml",
+        "gitBlob": "d5fccc538c179838bfdce779c26eebb4fa0b5ce9"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/drawable/splash.png",
+        "gitBlob": "f7a64923ea1a0565d25fa139c176d6bf42184e48"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/layout/activity_main.xml",
+        "gitBlob": "b5ad1387011da0894cc1d91f44f3bd77f5403f5d"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+        "gitBlob": "036d09bc5fd523323794379703c4a111d1e28a04"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+        "gitBlob": "036d09bc5fd523323794379703c4a111d1e28a04"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+        "gitBlob": "bd39a01daa756ba5f3b6f7ab27dc68c4b2952cb5"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-hdpi/ic_launcher_background.png",
+        "gitBlob": "83d63aa83b084b5468c21b1069826d8ccaff2962"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+        "gitBlob": "5da9520a6f1cf63b22a80a8f4768d86e44c2f3c4"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+        "gitBlob": "bd39a01daa756ba5f3b6f7ab27dc68c4b2952cb5"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+        "gitBlob": "56bee5c3923161025807942f47ee59d797b16fc4"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-mdpi/ic_launcher_background.png",
+        "gitBlob": "60687bf2f5d4fea29a0862d29171e7c34cd357af"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+        "gitBlob": "4a96c2bf1b27329e49eb963bc70b5bd85ac3709f"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+        "gitBlob": "56bee5c3923161025807942f47ee59d797b16fc4"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+        "gitBlob": "be12b67e24801bed79eec6600211ea5e2404c876"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xhdpi/ic_launcher_background.png",
+        "gitBlob": "08787f81bfb5bc961be2fc4eb7a2e36e83d02486"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+        "gitBlob": "809a52c941eca24b68276fe9a2ef24900510e777"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+        "gitBlob": "be12b67e24801bed79eec6600211ea5e2404c876"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+        "gitBlob": "d1efa73c59696ce67c7c501dd70d2fa0fa5c811d"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_background.png",
+        "gitBlob": "91ee18bc39bf82dbbd5835cbad68d05c512cb113"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+        "gitBlob": "4df5bad86fca6aa174034a0ad6023998263c4f9b"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+        "gitBlob": "d1efa73c59696ce67c7c501dd70d2fa0fa5c811d"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+        "gitBlob": "0b371939f43244d18fc1ee9b193be391514fa397"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png",
+        "gitBlob": "2ba49126ef4c10b5d30606e20ec652d7bd363c24"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+        "gitBlob": "f5a2749e97b2e111bb149fea4322f466bffe66b6"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+        "gitBlob": "0b371939f43244d18fc1ee9b193be391514fa397"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/values/ic_launcher_background.xml",
+        "gitBlob": "c5d5899fdf0a1b144bf341b29e0c66ba50bbcedd"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/values/strings.xml",
+        "gitBlob": "89ecd100ea91b5a6cc52b3efd8968fa085d85e8e"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/values/styles.xml",
+        "gitBlob": "be874e54a4a64059503427dbefeabcee2989549d"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/main/res/xml/file_paths.xml",
+        "gitBlob": "bd0c4d80d0473953333d5adb0d38ac713d0d648b"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
+        "gitBlob": "0297327842dfa194b316aec9730bb3c7349b7282"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/build.gradle",
+        "gitBlob": "f8f0e43b6d57dca414ad5c0683621397a4ed3c72"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/capacitor.settings.gradle",
+        "gitBlob": "17d1964616564cc1f479650de9b77693beb2f696"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/gradle.properties",
+        "gitBlob": "2e87c52f83c298527b1d1c747d496227dc0c6e71"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/gradle/wrapper/gradle-wrapper.jar",
+        "gitBlob": "1b33c55baabb587c669f562ae36f953de2481846"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/gradle/wrapper/gradle-wrapper.properties",
+        "gitBlob": "7705927e949fdfbe2bfa90ef9d397e6057ccf104"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/gradlew",
+        "gitBlob": "23d15a9367071145e9c79bb4ddf879d1fbe78b5d"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/gradlew.bat",
+        "gitBlob": "db3a6ac207e507b0bc1635a9f2c18d3b174e682e"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/settings.gradle",
+        "gitBlob": "3b4431d7724bd82d1aeb2ce59e7a0504b8869f81"
+      },
+      {
+        "file": "schoolpilot-app/android-gopilot/variables.gradle",
+        "gitBlob": "ee4ba41c46f546910a153b2938cad859cd7cd86e"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/.gitignore",
+        "gitBlob": "48354a3dfc4ad41c5c7af1451315d335cda7d611"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/.gitignore",
+        "gitBlob": "043df802a29f1f386a23cba600c84be8eee2a0c6"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/build.gradle",
+        "gitBlob": "5f191b20bd0e7f9da6c30457cab85bda26a82ddb"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/capacitor.build.gradle",
+        "gitBlob": "1872ec814869f41c511c85004bc7d1987a7951d4"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/proguard-rules.pro",
+        "gitBlob": "f1b424510da51fd82143bc74a0a801ae5a1e2fcd"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
+        "gitBlob": "f2c2217efa5a746f23ea722450a40fe0ca3db099"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/AndroidManifest.xml",
+        "gitBlob": "b06ddbfd891617511435188b2652da4f5ebe8e61"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/java/com/schoolpilot/passpilot/MainActivity.java",
+        "gitBlob": "edfd400adcc0ad61d3f689c104e4eb0227f324bd"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-land-hdpi/splash.png",
+        "gitBlob": "e31573b4fc93e60d171f4046c0220e1463075d9e"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-land-mdpi/splash.png",
+        "gitBlob": "f7a64923ea1a0565d25fa139c176d6bf42184e48"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-land-xhdpi/splash.png",
+        "gitBlob": "807725501bdd92e94e51e7b2b0006f69e0083a0b"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-land-xxhdpi/splash.png",
+        "gitBlob": "14c6c8fe39fcd51a0414866ad28cbe8ff3acb060"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-land-xxxhdpi/splash.png",
+        "gitBlob": "244ca2506dbe0fd8f6a05520ac7d1a629ea81438"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-port-hdpi/splash.png",
+        "gitBlob": "74faaa583c8221c27a8cb822c3fbe218bafa3299"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-port-mdpi/splash.png",
+        "gitBlob": "e944f4ad4e1ca1c8cf9a87b366acc01c4e5c1616"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-port-xhdpi/splash.png",
+        "gitBlob": "564a82ff954aec267492467c0169a270c4e8fea9"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-port-xxhdpi/splash.png",
+        "gitBlob": "bfabe6871a17a5e95b78fb30d49b7d2b4d2fe4c0"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-port-xxxhdpi/splash.png",
+        "gitBlob": "6929071268eb03ee0f088142b6523566b78550e2"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
+        "gitBlob": "c7bd21dbd86990cde81fea8abd3bf904b4546749"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable/ic_launcher_background.xml",
+        "gitBlob": "d5fccc538c179838bfdce779c26eebb4fa0b5ce9"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/drawable/splash.png",
+        "gitBlob": "f7a64923ea1a0565d25fa139c176d6bf42184e48"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/layout/activity_main.xml",
+        "gitBlob": "b5ad1387011da0894cc1d91f44f3bd77f5403f5d"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+        "gitBlob": "036d09bc5fd523323794379703c4a111d1e28a04"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+        "gitBlob": "036d09bc5fd523323794379703c4a111d1e28a04"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+        "gitBlob": "e9c1311ed783b630684ba872e198cf46662ab57f"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-hdpi/ic_launcher_background.png",
+        "gitBlob": "8e9e853468e8e878b3f29c835e570879dac0d726"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+        "gitBlob": "81a843b0634e0a453f05c5b1f23db907431c75c1"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+        "gitBlob": "e9c1311ed783b630684ba872e198cf46662ab57f"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+        "gitBlob": "2b0c504fde3a7dc63de393680fa4b6b21c3a029a"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-mdpi/ic_launcher_background.png",
+        "gitBlob": "17ed60ec80da909c305478d6566f4761f94746eb"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+        "gitBlob": "0994872a2a90d1170c795f2ad952e2576598747a"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+        "gitBlob": "2b0c504fde3a7dc63de393680fa4b6b21c3a029a"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+        "gitBlob": "48cb4ee4b5b1be207682bf6f02613d3f7a02b4ad"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xhdpi/ic_launcher_background.png",
+        "gitBlob": "f5c45a4fc5acb5d2639ec09c6356cfe694c9ed3a"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+        "gitBlob": "debe939c31a3e5fd4395818b9a12c9afb78ef937"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+        "gitBlob": "48cb4ee4b5b1be207682bf6f02613d3f7a02b4ad"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+        "gitBlob": "d03837d16999c94638f63c4fe8e0544fc08cd4c5"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_background.png",
+        "gitBlob": "a7729d95333be76d99ced85ddbf65dde343d6d03"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+        "gitBlob": "b02225d8ba19fca141254a6e7295cef61b61d4f5"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+        "gitBlob": "d03837d16999c94638f63c4fe8e0544fc08cd4c5"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+        "gitBlob": "b7a3df2b128bd21717423cad0d0b13a1f9f07879"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png",
+        "gitBlob": "9044fffa973595938e1ad388df425e07c514d2b0"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+        "gitBlob": "b07e9496c7aa0db389dc4b262dbf8d8c570e398d"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+        "gitBlob": "b7a3df2b128bd21717423cad0d0b13a1f9f07879"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/values/ic_launcher_background.xml",
+        "gitBlob": "c5d5899fdf0a1b144bf341b29e0c66ba50bbcedd"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/values/strings.xml",
+        "gitBlob": "27c48c90e2286ccb0463acbe75af327b9dfdb017"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/values/styles.xml",
+        "gitBlob": "be874e54a4a64059503427dbefeabcee2989549d"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/main/res/xml/file_paths.xml",
+        "gitBlob": "bd0c4d80d0473953333d5adb0d38ac713d0d648b"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
+        "gitBlob": "0297327842dfa194b316aec9730bb3c7349b7282"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/build.gradle",
+        "gitBlob": "f8f0e43b6d57dca414ad5c0683621397a4ed3c72"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/capacitor.settings.gradle",
+        "gitBlob": "17d1964616564cc1f479650de9b77693beb2f696"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/gradle.properties",
+        "gitBlob": "2e87c52f83c298527b1d1c747d496227dc0c6e71"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/gradle/wrapper/gradle-wrapper.jar",
+        "gitBlob": "1b33c55baabb587c669f562ae36f953de2481846"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/gradle/wrapper/gradle-wrapper.properties",
+        "gitBlob": "7705927e949fdfbe2bfa90ef9d397e6057ccf104"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/gradlew",
+        "gitBlob": "23d15a9367071145e9c79bb4ddf879d1fbe78b5d"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/gradlew.bat",
+        "gitBlob": "db3a6ac207e507b0bc1635a9f2c18d3b174e682e"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/settings.gradle",
+        "gitBlob": "3b4431d7724bd82d1aeb2ce59e7a0504b8869f81"
+      },
+      {
+        "file": "schoolpilot-app/android-passpilot/variables.gradle",
+        "gitBlob": "ee4ba41c46f546910a153b2938cad859cd7cd86e"
+      },
+      {
+        "file": "schoolpilot-app/browsing-history-regression.html",
+        "gitBlob": "2adda90e55b1f5193991d3f92228cb714b6ef00c"
+      },
+      {
+        "file": "schoolpilot-app/capacitor.config.ts",
+        "gitBlob": "813003708152ec1e82de77dafe7c4006cdfe51c0"
+      },
+      {
+        "file": "schoolpilot-app/capacitor.gopilot.config.ts",
+        "gitBlob": "813003708152ec1e82de77dafe7c4006cdfe51c0"
+      },
+      {
+        "file": "schoolpilot-app/capacitor.passpilot.config.ts",
+        "gitBlob": "ea6c657c34420676f3262acbf7302f929c49462f"
+      },
+      {
+        "file": "schoolpilot-app/classpilot-radix-regression.html",
+        "gitBlob": "7dbaf515e89d13a62d9ee99c8a15c3b744db167c"
+      },
+      {
+        "file": "schoolpilot-app/classpilot-student-data-regression.html",
+        "gitBlob": "e3a31b0ae7f171015249ffd28295e08c001490d7"
+      },
+      {
+        "file": "schoolpilot-app/classpilot-student-tile-regression.html",
+        "gitBlob": "f0554962d8837810d71ac3f780020b4af5cd90d8"
+      },
+      {
+        "file": "schoolpilot-app/eslint.config.js",
+        "gitBlob": "7f6d551961791d8182d2abc39ac78f2b87348ec6"
+      },
+      {
+        "file": "schoolpilot-app/index.html",
+        "gitBlob": "68895b801432dcac9db815141fade7bfc2900991"
+      },
+      {
+        "file": "schoolpilot-app/package-lock.json",
+        "gitBlob": "e45186bfb3c96600696cc565cfe58f6cce0a90d1"
+      },
+      {
+        "file": "schoolpilot-app/package.json",
+        "gitBlob": "3f3bfa1f5368afb0351f60c4f72f7d7ff04e6060"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/.gitignore",
+        "gitBlob": "7485327ced77893c4bd4b433cd0de22c706b1eb5"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/LICENSE",
+        "gitBlob": "b6951a99b4bed9f88c4a5df2e645b6452d5bad70"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/README.md",
+        "gitBlob": "696162017a52bd53bc611b02ea390b77c7d6b0ca"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/android/build.gradle",
+        "gitBlob": "3506bfd89852ef7f63c4d073bccf090a45028c58"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/android/src/main/AndroidManifest.xml",
+        "gitBlob": "94cbbcfc396aca20240417158bac4d52ba4e1a14"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/android/src/main/java/com/whitestein/securestorage/PasswordStorageHelper.java",
+        "gitBlob": "8147db1160b0a12709adee47294cad0c04b3129a"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/android/src/main/java/com/whitestein/securestorage/SecureStorageException.java",
+        "gitBlob": "89220bb6bfce5b74796229db45ce7523e2b49f80"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/android/src/main/java/com/whitestein/securestorage/SecureStoragePluginPlugin.java",
+        "gitBlob": "1f47f4eedcadd6b352ff8ef05ac4242742782d0c"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/dist/esm/definitions.d.ts",
+        "gitBlob": "7a675f73d043afa051573bf51f91b74fbe395a88"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/dist/esm/index.d.ts",
+        "gitBlob": "6673db16e406a3acf003253cb988cc9b15b6baf3"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/dist/esm/index.js",
+        "gitBlob": "2a445bf0791dff3a94af55987efcab64c4e68a90"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/dist/plugin.cjs.js",
+        "gitBlob": "26022e044b701b4623de93f00be1836d9a7ca517"
+      },
+      {
+        "file": "schoolpilot-app/plugins/capacitor-secure-storage-plugin/package.json",
+        "gitBlob": "28ff9c48d37cb96aa23de1390e95da0eedfcfcd8"
+      },
+      {
+        "file": "schoolpilot-app/public/favicon.svg",
+        "gitBlob": "f805389b476ae909a8010c13f6a0905a58121bd5"
+      },
+      {
+        "file": "schoolpilot-app/resources/gopilot/icon-background.png",
+        "gitBlob": "83bce480e5ead176342158eed2beb8275e9431d2"
+      },
+      {
+        "file": "schoolpilot-app/resources/gopilot/icon-foreground.png",
+        "gitBlob": "dbbf1d8042520715bba5587b3c7f55f314bae9ea"
+      },
+      {
+        "file": "schoolpilot-app/resources/gopilot/icon-only.png",
+        "gitBlob": "7ff063d83e02e285d02430ec723e219a6e270bc8"
+      },
+      {
+        "file": "schoolpilot-app/resources/gopilot/icon.png",
+        "gitBlob": "7ff063d83e02e285d02430ec723e219a6e270bc8"
+      },
+      {
+        "file": "schoolpilot-app/resources/gopilot/splash.png",
+        "gitBlob": "96d765ceb1048973a4f8c228ba9349ac2b282c2e"
+      },
+      {
+        "file": "schoolpilot-app/resources/passpilot/icon-background.png",
+        "gitBlob": "1825c84939f8e0874340f9f8b6185084fad31f2b"
+      },
+      {
+        "file": "schoolpilot-app/resources/passpilot/icon-foreground.png",
+        "gitBlob": "d8f9c7473ab61299b3a02456d0bae6c3d7f6deb0"
+      },
+      {
+        "file": "schoolpilot-app/resources/passpilot/icon-only.png",
+        "gitBlob": "3ad8ce883e24b8dcc2f33aa8596439b2af6397bd"
+      },
+      {
+        "file": "schoolpilot-app/resources/passpilot/icon.png",
+        "gitBlob": "3ad8ce883e24b8dcc2f33aa8596439b2af6397bd"
+      },
+      {
+        "file": "schoolpilot-app/resources/passpilot/splash.png",
+        "gitBlob": "d5fda86d53ec6407ffb1fae02aaaf4583c3605d0"
+      },
+      {
+        "file": "schoolpilot-app/safety-center-regression.html",
+        "gitBlob": "a63176fdfdc31d1bc664c8dd5f78c1aafd4b844d"
+      },
+      {
+        "file": "schoolpilot-app/scripts/admin-nested-operation-guards.test.mjs",
+        "gitBlob": "0002b7ef3806f9eff2a077ce15be5c046ea2ef99"
+      },
+      {
+        "file": "schoolpilot-app/scripts/admin-school-year.test.mjs",
+        "gitBlob": "be701685028088fc3fa9e9f8d8ecd38df52c3c12"
+      },
+      {
+        "file": "schoolpilot-app/scripts/admin-settings-browser.test.mjs",
+        "gitBlob": "cf8c7ab0bdd6cced13354e77d370a96344600b9b"
+      },
+      {
+        "file": "schoolpilot-app/scripts/admin-shell-browser.test.mjs",
+        "gitBlob": "f09d9de9daa7702f39c299861946f7fbc14c17db"
+      },
+      {
+        "file": "schoolpilot-app/scripts/assert-api-routing.mjs",
+        "gitBlob": "29c97ee91b6c31570bf957f629dba64cfea6fc1b"
+      },
+      {
+        "file": "schoolpilot-app/scripts/assert-classpilot-tile-batching.mjs",
+        "gitBlob": "a1559af2306799b25c090c0a63b76cecb0ee6ec6"
+      },
+      {
+        "file": "schoolpilot-app/scripts/browsing-history-browser.mjs",
+        "gitBlob": "911ae3e4388a5109967ec733047e4d00cfcf07e3"
+      },
+      {
+        "file": "schoolpilot-app/scripts/browsing-history-regression.jsx",
+        "gitBlob": "15d7835cc589c886d3c3558c8345fa97487443c8"
+      },
+      {
+        "file": "schoolpilot-app/scripts/central-email-copy-persistence.test.mjs",
+        "gitBlob": "8b4e140cfb8cd329c2ffb602ae3c1b90c0f94ef5"
+      },
+      {
+        "file": "schoolpilot-app/scripts/chat-roster.test.mjs",
+        "gitBlob": "ef65245eb8db71d160d1481bf597fef651ec1e31"
+      },
+      {
+        "file": "schoolpilot-app/scripts/chat-threads.test.mjs",
+        "gitBlob": "510a4316250a3b8aa6b6a1ae09a8eefd6e9e5c7e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/chat-timestamp.test.mjs",
+        "gitBlob": "21f0eeb548c4ec422b87ee931e46547588cdd6f4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/check-router-reachability.mjs",
+        "gitBlob": "75d3f6dad8594cbc274f7b66710d530a969f12e7"
+      },
+      {
+        "file": "schoolpilot-app/scripts/check-router-reachability.test.mjs",
+        "gitBlob": "fdc840598bb3ce4ca7918df005784f9be04fb311"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-command-context.test.mjs",
+        "gitBlob": "c3e9435b8611c87ede0647aaa17baf07ef6b5ffc"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-content-categories.test.mjs",
+        "gitBlob": "dbc4fd9d17b4ea8a3ada056e5cad2bce1360c4e0"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-coverage-summary.test.mjs",
+        "gitBlob": "604aed33549ac57b9f5954430b53a7a660c14e88"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-dashboard-isolation.test.mjs",
+        "gitBlob": "062ada5d1e870a62e774286c317470d8e4a8a88f"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-dashboard-load-state.test.mjs",
+        "gitBlob": "699c8d47b5ef17df84db5639832eca576b7e1536"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-guide-browser.py",
+        "gitBlob": "1a9bf30af1014ac959f6a272f57174d007ba4434"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-guide-content.test.mjs",
+        "gitBlob": "a113beb783a02d598d8cbdec4e812625260420ce"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-guide-markdown.mjs",
+        "gitBlob": "1ae550d9fec44884c6e4a45ba48022fb5dab8dd3"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-messages-roster-browser.test.mjs",
+        "gitBlob": "5fe273c998f97f61a21339a82ad131ee5973c2b9"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-radix-regression-browser.mjs",
+        "gitBlob": "78d577d2325b31aec4f70db5b43210bdf7e5d57c"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-radix-regression.jsx",
+        "gitBlob": "ee1e9e58ed84c82ad86b348e35de6a43fcec4429"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-read-recovery.test.mjs",
+        "gitBlob": "8bd9dd8aab64e2b5fe27f876d6827c9b2b4d20a3"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-realtime-cache.test.mjs",
+        "gitBlob": "36c42608a11b86fb2c501647a4a24ce2f1cd04cd"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-recipient-freeze.test.mjs",
+        "gitBlob": "30939f03be6392951adff1440916d80c90a4ee21"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-schedule-changes.test.mjs",
+        "gitBlob": "517fbb44acffb2315600c45c6619c88c7f5b8249"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-scheduling-browser.test.mjs",
+        "gitBlob": "6145ee00e2cb566f2d6a25aa4f5139ac573acf72"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-session-lifecycle.test.mjs",
+        "gitBlob": "e11c990f8e26506fa84304b7c505d9d27d52f3cc"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-session-monitoring-report.test.mjs",
+        "gitBlob": "65e403eefc8167486bb842590383e420f9d4cf3a"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-signal-loss.test.mjs",
+        "gitBlob": "ae1bb064be25347d06cc7d34dea5ad2b26501a8b"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-sso-policy.test.mjs",
+        "gitBlob": "01bc586af04dee705ee062ab03ff5166099f420e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-data-browser.mjs",
+        "gitBlob": "fd9b9346e288e694a166b27198688073570a8651"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-data-regression.jsx",
+        "gitBlob": "2a277d6ab0a438e3d8fd76118b7d1d5c091c582c"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-data.test.mjs",
+        "gitBlob": "4c1823a28a9361aec4c134f00dfe0143c6276155"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-portal-browser.test.mjs",
+        "gitBlob": "51007260f726a3353fef8f4c8b481c0474066ad5"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-removal-browser.mjs",
+        "gitBlob": "790e51e503dc879f23e0dba67ec63975f5e8d6f4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-tile-browser.mjs",
+        "gitBlob": "9f49b281b025154c714244ed7011993d01c12668"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-student-tile-regression.jsx",
+        "gitBlob": "adedc58e350af27a18dadc5759a973515e125cb7"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classpilot-tile-tabs.test.mjs",
+        "gitBlob": "b11570685fd28c3ceb677d7ca3d5e5b628a54db2"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classroom-actions-browser.test.mjs",
+        "gitBlob": "95f5dc3ec90c33f7a9e8449086cc47cef2020802"
+      },
+      {
+        "file": "schoolpilot-app/scripts/classroom-actions.test.mjs",
+        "gitBlob": "914894d243417f29fb7908a780116f5cfcf1f956"
+      },
+      {
+        "file": "schoolpilot-app/scripts/coverage-group-editor-browser.test.mjs",
+        "gitBlob": "908b1421781d6a8390802e8ff5d23d0d99f38936"
+      },
+      {
+        "file": "schoolpilot-app/scripts/coverage-supervision-workflow-browser.test.mjs",
+        "gitBlob": "823702cf46603754477ca5e54a575b0313caf389"
+      },
+      {
+        "file": "schoolpilot-app/scripts/dashboard-activity.test.mjs",
+        "gitBlob": "4ea48cb0fe5c6c57e5bbf7ef5a5564445848fe1c"
+      },
+      {
+        "file": "schoolpilot-app/scripts/dashboard-partition-inventory.test.mjs",
+        "gitBlob": "afd264068ec1c8caef671f9e2c307f7c5e983e3b"
+      },
+      {
+        "file": "schoolpilot-app/scripts/digital-usage-browser.test.mjs",
+        "gitBlob": "d843cb7513ae3eb8d5f237113398f6edb88f4c82"
+      },
+      {
+        "file": "schoolpilot-app/scripts/digital-usage.test.mjs",
+        "gitBlob": "987fe901bf6a0d3cafc0d9498fe1e5677b0c8c20"
+      },
+      {
+        "file": "schoolpilot-app/scripts/discipline-browser.test.mjs",
+        "gitBlob": "46ca72e10d33977ac6f1c3fc87089bd9a4ada2bf"
+      },
+      {
+        "file": "schoolpilot-app/scripts/fixtures/mydesk-synthetic-slips.png",
+        "gitBlob": "e995a3e0c2aab4f3122b06382ac94de0b9264077"
+      },
+      {
+        "file": "schoolpilot-app/scripts/focus-controls.test.mjs",
+        "gitBlob": "39699855cfc6b8a8bf3ea51b77f9a2ded223a818"
+      },
+      {
+        "file": "schoolpilot-app/scripts/frontend-attendance-selection-cleanup.test.mjs",
+        "gitBlob": "e2518b8be53822554f64d62eb3a9006de039bf45"
+      },
+      {
+        "file": "schoolpilot-app/scripts/frontend-dependency-audit.mjs",
+        "gitBlob": "03c9b9f95358feb2ea83e33f38c2aed76942de0a"
+      },
+      {
+        "file": "schoolpilot-app/scripts/generate-android-icons.mjs",
+        "gitBlob": "70c6ead7bd134e83cd9669928edac775ee18b7e8"
+      },
+      {
+        "file": "schoolpilot-app/scripts/generate-classpilot-guides.mjs",
+        "gitBlob": "8993c744d400e9afbddc48da77a3a55ffe8e6db8"
+      },
+      {
+        "file": "schoolpilot-app/scripts/generate-icons.mjs",
+        "gitBlob": "85dd88f7a216756329dd1d2401fefad755d4ca6b"
+      },
+      {
+        "file": "schoolpilot-app/scripts/gopilot-mobile-security.test.mjs",
+        "gitBlob": "e572bf2532a50e948a94dfdedb8e16a43b93b579"
+      },
+      {
+        "file": "schoolpilot-app/scripts/gopilot-staff-browser.mjs",
+        "gitBlob": "b70f975b775243a530a6501a1abe677fa6eacbc5"
+      },
+      {
+        "file": "schoolpilot-app/scripts/gopilot-staff-contracts.test.mjs",
+        "gitBlob": "878246b040db8947174a18fc621876ff06d0dce8"
+      },
+      {
+        "file": "schoolpilot-app/scripts/import-browser.test.mjs",
+        "gitBlob": "baf5c597b7cb604ec34b2975a96256f5dbf417a1"
+      },
+      {
+        "file": "schoolpilot-app/scripts/import-review-model.test.mjs",
+        "gitBlob": "b7e0f7f621f8bc6a69a689e472b866aa2eabc844"
+      },
+      {
+        "file": "schoolpilot-app/scripts/mobile-secure-storage-gates.mjs",
+        "gitBlob": "52ea173a56ea3cd2816737829cd83566d7865be4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/monitoring-interruptions.test.mjs",
+        "gitBlob": "268d17ffa922e62ffe15851b20b48a40bfd2e848"
+      },
+      {
+        "file": "schoolpilot-app/scripts/multi-role-ui.test.mjs",
+        "gitBlob": "ccd6ad1334cdabe2cc7f9f2c6338c2c8d41eb590"
+      },
+      {
+        "file": "schoolpilot-app/scripts/my-desk-browser.test.mjs",
+        "gitBlob": "ae529ea9d0eb21f2cfa6c12e6addf673fc3395f8"
+      },
+      {
+        "file": "schoolpilot-app/scripts/my-desk-model.test.mjs",
+        "gitBlob": "e1343c1f3572e025a1c83edd957c30fc3b6a134e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/my-desk-workspace-browser.test.mjs",
+        "gitBlob": "e76b1c5fba1c3373f3a9705a7cd62b602bf72a68"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-appointments-browser.test.mjs",
+        "gitBlob": "53cd39a4c2f7deb426deadf58236113364d6b561"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-appointments-model.test.mjs",
+        "gitBlob": "43518a4b4149a9a986530c540a431446f5e90289"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-canonical-classes.test.mjs",
+        "gitBlob": "b14f6600772dc34db4f9fbfc0d723031e266baaa"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-gate-kiosk-exit-browser.mjs",
+        "gitBlob": "92b349127e5b4196ec9bc774e636ed50c691be83"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-kiosk-controller-browser.mjs",
+        "gitBlob": "ef4c8002829d7a6d361a68291fadf38e2dd641b7"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-kiosk-controller.test.mjs",
+        "gitBlob": "bb6938a18bde88226a088cffa2bde774aadef068"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-kiosk-schedule-browser.test.mjs",
+        "gitBlob": "96ccd9618120ac581401759a1c5508fa265394fd"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-legacy-multiclass.test.mjs",
+        "gitBlob": "06d53ef06ef6380370031b7d0ef73a7cf6dc0bf4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-mobile-security.test.mjs",
+        "gitBlob": "bd622380da58e93d02a9e47b6812cf2db266fe40"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-pass-data.test.mjs",
+        "gitBlob": "7b5ae692be5810e5ea4fbfae5d314e5f4556424e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-reports-v2-browser.test.mjs",
+        "gitBlob": "56cb497172b627440d5c3f3e7e54ef177deb586c"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-reports-v2-model.test.mjs",
+        "gitBlob": "4420bb9ea278de9f98eaab5498032619a6874a34"
+      },
+      {
+        "file": "schoolpilot-app/scripts/passpilot-rules.test.mjs",
+        "gitBlob": "823de4382d99684b795c0f6bcf42f527f50d9bbb"
+      },
+      {
+        "file": "schoolpilot-app/scripts/private-chat-lifecycle.test.mjs",
+        "gitBlob": "16ee42ef062afb8d28d3af63620a9a96f01a6751"
+      },
+      {
+        "file": "schoolpilot-app/scripts/production-preview-smoke.mjs",
+        "gitBlob": "326e1086fd398b79d4e189038458db1580b3dcee"
+      },
+      {
+        "file": "schoolpilot-app/scripts/production-preview-smoke.test.mjs",
+        "gitBlob": "3bdb520b1d968cd2b6bba4907a51507de1ae439e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/restriction-resource-matcher.test.mjs",
+        "gitBlob": "925a4b4314f5592845bbacb6a168a972abe8b747"
+      },
+      {
+        "file": "schoolpilot-app/scripts/roster-review-browser.test.mjs",
+        "gitBlob": "9d51298cdbd476f1ed2c0e9d2a1df82df307f29e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/run-browsing-history-browser.mjs",
+        "gitBlob": "263ab4d6e23d848f5a2bb9c14b7ccaaf55e8e44f"
+      },
+      {
+        "file": "schoolpilot-app/scripts/safety-center-browser.mjs",
+        "gitBlob": "36e8776be21860dc305c92f89e72fc89e950dd47"
+      },
+      {
+        "file": "schoolpilot-app/scripts/safety-center-regression.jsx",
+        "gitBlob": "2326fc4df1396be6ab68bae93f84ee3bb3fddfb0"
+      },
+      {
+        "file": "schoolpilot-app/scripts/safety-login-return-browser.mjs",
+        "gitBlob": "fa727251f9150f68e2f01924c1db0878cbcf2fc4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/safety-login-return.test.mjs",
+        "gitBlob": "497d2af770be962d481e38f52fa6e59605bd83b9"
+      },
+      {
+        "file": "schoolpilot-app/scripts/schedule-day-planner-model.test.mjs",
+        "gitBlob": "0add16a72fb58235596a08672ead18d57a2ae8b4"
+      },
+      {
+        "file": "schoolpilot-app/scripts/schedule-profiles-browser.test.mjs",
+        "gitBlob": "ceace06d3ae52c62271699fa3104c3040ad25aac"
+      },
+      {
+        "file": "schoolpilot-app/scripts/school-calendar-persistence.test.mjs",
+        "gitBlob": "d4a025d99f0bf0913ed51627e56e343f906ea75e"
+      },
+      {
+        "file": "schoolpilot-app/scripts/school-settings-fixture.mjs",
+        "gitBlob": "cd0fcda96cb698e9cd92c439ebd06207c46f61d6"
+      },
+      {
+        "file": "schoolpilot-app/scripts/seating-browser.test.mjs",
+        "gitBlob": "5404818daed5a4dbdfa9a96c0b876ab418b0fd14"
+      },
+      {
+        "file": "schoolpilot-app/scripts/seating-model.test.mjs",
+        "gitBlob": "b800197d794aa506818d93659fd3c5029f13f704"
+      },
+      {
+        "file": "schoolpilot-app/scripts/shared-record-access-browser.test.mjs",
+        "gitBlob": "fee6db07c74a27b0d3b9af2752a4d0b751d29d52"
+      },
+      {
+        "file": "schoolpilot-app/scripts/staff-identity-contracts.test.mjs",
+        "gitBlob": "6c73391d106fc457069ff9cb1e36cb784efb81dc"
+      },
+      {
+        "file": "schoolpilot-app/scripts/student-information-browser.test.mjs",
+        "gitBlob": "6aea974bae357037fe49abf3d98867bb487958f1"
+      },
+      {
+        "file": "schoolpilot-app/scripts/student-information-model.test.mjs",
+        "gitBlob": "1453be43d8bda0c0df7d7c0147a3130998c1e946"
+      },
+      {
+        "file": "schoolpilot-app/scripts/student-overview-browser.test.mjs",
+        "gitBlob": "44852429c8237af93c3ac7b7e59c9599c4fd4f63"
+      },
+      {
+        "file": "schoolpilot-app/scripts/supervision-session-review-browser.test.mjs",
+        "gitBlob": "7ddb66d2713b9c7f16b6dac0cd92e605dd4eee2f"
+      },
+      {
+        "file": "schoolpilot-app/scripts/teaching-tools-browser.test.mjs",
+        "gitBlob": "5618b9b2c3371ee646eb662fb7622344ccdac70a"
+      },
+      {
+        "file": "schoolpilot-app/scripts/teaching-tools-library.test.mjs",
+        "gitBlob": "d6c38a205890816ffcf6264e521b3bf5b075d6ae"
+      },
+      {
+        "file": "schoolpilot-app/scripts/testing-schedule-prefill.test.mjs",
+        "gitBlob": "f270c1b316663c8c341cd2b7615c6a4d544a0154"
+      },
+      {
+        "file": "schoolpilot-app/scripts/web-lifecycle.test.mjs",
+        "gitBlob": "9d2d58ef49684186737807989ee66945a278384c"
+      },
+      {
+        "file": "schoolpilot-app/src/App.jsx",
+        "gitBlob": "ad4acf0a87d8bae84c2f3d0617d66808b5c0b87e"
+      },
+      {
+        "file": "schoolpilot-app/src/assets/react.svg",
+        "gitBlob": "6c87de9bb3358469122cc991d5cf578927246184"
+      },
+      {
+        "file": "schoolpilot-app/src/components/AttendancePanel.jsx",
+        "gitBlob": "42a7700cc5e2c355d7bea627819e4e84c5393a6d"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ThemeToggle.jsx",
+        "gitBlob": "2524cb84c0ca6e0c4db5c8a64bace88474c47b85"
+      },
+      {
+        "file": "schoolpilot-app/src/components/chat/AIChatButton.jsx",
+        "gitBlob": "dd9af80d262cc8c70b2eea57fe3f5d9b388bf81a"
+      },
+      {
+        "file": "schoolpilot-app/src/components/chat/AIChatPanel.jsx",
+        "gitBlob": "b96f773c7c1a56bc8f58296383426dcc75e09a6a"
+      },
+      {
+        "file": "schoolpilot-app/src/components/chat/ActionConfirmation.jsx",
+        "gitBlob": "f05191d29cfc7dba806a09c48251627e9a3bc2d3"
+      },
+      {
+        "file": "schoolpilot-app/src/components/chat/ChatMessage.jsx",
+        "gitBlob": "d9948f1106b02298be0248ed2a6af0e1213422e4"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/alert-dialog.jsx",
+        "gitBlob": "bb8370290cb8a08e3f9684959b6cb2ba014538ea"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/alert.jsx",
+        "gitBlob": "847c754a5976d380bda36d1f6beee69edc157e8f"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/avatar.jsx",
+        "gitBlob": "ea21a9306ed59056ef42ca4cc083c06759e4f307"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/badge.jsx",
+        "gitBlob": "631bfd703ead10c2efd2feba48e0c14b612a72af"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/button.jsx",
+        "gitBlob": "b9dad00f99ec43d37e4c163413311432ff243bd5"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/calendar.jsx",
+        "gitBlob": "e9f0262479fb5af3be6ce9f7ee5508f8e31e76da"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/card.jsx",
+        "gitBlob": "985e4c7a91a25b47ce52035d0e5c9096a923b4fb"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/checkbox.jsx",
+        "gitBlob": "24a417fdae8aaae9e4b97e2f2e5f3ec691d9f525"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/collapsible.jsx",
+        "gitBlob": "5c28cbcc3bce7cbda84857bd218da20dd7d3770f"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/command.jsx",
+        "gitBlob": "0f64e436a91e78c9eb04df911bb1cd04ad3ad529"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/dialog.jsx",
+        "gitBlob": "02d17f6689062b4f7404b81bd79b0f9d08e5822f"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/dropdown-menu.jsx",
+        "gitBlob": "06aad0a8ad00761f5ae17f9e1999d265db5da7db"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/form.jsx",
+        "gitBlob": "0fd022f35430a7077854ba369ee2b185f71a3a75"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/input.jsx",
+        "gitBlob": "6c8c50011072b6ae66018b7eca2f537069d77ce6"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/label.jsx",
+        "gitBlob": "6296875d08cfd59257826567521a196913180d12"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/popover.jsx",
+        "gitBlob": "9b0267e0720fd1e5a819173cedd85f8b14031728"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/progress.jsx",
+        "gitBlob": "427760b611a17c87e1384ad53f5341cba69847df"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/scroll-area.jsx",
+        "gitBlob": "1de50bed678603a7b920559e0390d6c61424099e"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/select.jsx",
+        "gitBlob": "5bc081c07af2cc65b0f9dc2e9a652c2380dfb493"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/separator.jsx",
+        "gitBlob": "81561fe2b0e9fd93e0258f6e3f0f7a45c82ab3e9"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/sheet.jsx",
+        "gitBlob": "3b3e00f565ff5bd28f3844fa763575a6f99bacff"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/skeleton.jsx",
+        "gitBlob": "9c5107021a80f35ea107bb5e1c592c5c8e1c3a41"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/switch.jsx",
+        "gitBlob": "ad01ed7253ea12309221eef94fbf62d8e8980db9"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/table.jsx",
+        "gitBlob": "8545ad96163969e71f20bd9ee11ec0ba80e772ba"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/tabs.jsx",
+        "gitBlob": "2d8becb06777df5f0a3fafb971a147466c5c9c52"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/textarea.jsx",
+        "gitBlob": "88f7e59c2f2a72cf0d02ef06140668313a3af834"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/toast.jsx",
+        "gitBlob": "68729a53f0d5678868f83b2c51f38380ac5fa4fd"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/toaster.jsx",
+        "gitBlob": "dfc7a6cf83068c4cad13170cf1d67522e8464734"
+      },
+      {
+        "file": "schoolpilot-app/src/components/ui/tooltip.jsx",
+        "gitBlob": "c4b8b7bfe451f5a8a35fff5a64a69fb2f29a125d"
+      },
+      {
+        "file": "schoolpilot-app/src/contexts/AuthContext.jsx",
+        "gitBlob": "d259921b78684f87e8196432cc167a7d4251e64a"
+      },
+      {
+        "file": "schoolpilot-app/src/contexts/LicenseContext.jsx",
+        "gitBlob": "f4e038820c675f9c0ee7c01b3050b69f151b76d6"
+      },
+      {
+        "file": "schoolpilot-app/src/contexts/NativeContext.jsx",
+        "gitBlob": "9fd9a537cb23ebb97c9e55947aeb6a6227c90573"
+      },
+      {
+        "file": "schoolpilot-app/src/contexts/SocketContext.jsx",
+        "gitBlob": "4389e33b5c81321c50f980e769a15c763c07c568"
+      },
+      {
+        "file": "schoolpilot-app/src/contexts/ThemeContext.jsx",
+        "gitBlob": "6919f58812e1360d9f45ed0cda1e016264df151a"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/use-mobile.js",
+        "gitBlob": "1ce0c6e9ea051a1933c133991ab1ddfac8f43050"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/use-students.js",
+        "gitBlob": "864279ce76fb97664a0dd1e142171505d8cc9601"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/use-toast.js",
+        "gitBlob": "0df641367a1c0f92b9ab532c7e3768e07d4210af"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/useAbsentStudents.js",
+        "gitBlob": "ebf9224c0cb94276b3d3586de171f9a27257ccfa"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/useChat.js",
+        "gitBlob": "45666f8d9539b6abbc774a013a08843b0f673815"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/useClassPilotAuth.js",
+        "gitBlob": "4a8cb1695f7c4244416aaa5def35cf9e1ae20f34"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/useGoPilotAuth.js",
+        "gitBlob": "09dd950e8013895405923dc099fef24a5d572afd"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/usePassPilotAuth.js",
+        "gitBlob": "16b8f27b7362a2a8bcbab5555b59efa5f499d98a"
+      },
+      {
+        "file": "schoolpilot-app/src/hooks/useWebRTC.js",
+        "gitBlob": "9130e85e023e2e9634b4082102c8588bebfa135b"
+      },
+      {
+        "file": "schoolpilot-app/src/index.css",
+        "gitBlob": "1be8366234d65a7f1ebe35bd7c5fbc8252400b8b"
+      },
+      {
+        "file": "schoolpilot-app/src/lib/classpilot-utils.js",
+        "gitBlob": "93f0f4b439d22021bb16d7711e42aa1693004d52"
+      },
+      {
+        "file": "schoolpilot-app/src/lib/date-utils.js",
+        "gitBlob": "6f0ad315e6c6654e8bf3547d3f663c91bb26e141"
+      },
+      {
+        "file": "schoolpilot-app/src/lib/queryClient.js",
+        "gitBlob": "c43f78902a1e10e940bfe96792639040833f7eb3"
+      },
+      {
+        "file": "schoolpilot-app/src/lib/runtimeTelemetry.js",
+        "gitBlob": "a5a5b6db6cb0cc23db45a049f465f529e8a63b79"
+      },
+      {
+        "file": "schoolpilot-app/src/lib/utils.js",
+        "gitBlob": "0ae73e11f9fa829d42e9c9f334ccc5c810a1e0cf"
+      },
+      {
+        "file": "schoolpilot-app/src/main.jsx",
+        "gitBlob": "b83ff37ebc850a32cd25bacd1fdb6c9738c04fe3"
+      },
+      {
+        "file": "schoolpilot-app/src/native/storage.js",
+        "gitBlob": "ee7d3b4e97f2f4067339df801db47ca3b57fdb5d"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/AuthCallback.jsx",
+        "gitBlob": "f42cb652fb1ac3f5f5094831b8df826f8b85f41c"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/GetStarted.jsx",
+        "gitBlob": "cd0532f44d62fd23157ce4e70424fb4d197423da"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/Landing.jsx",
+        "gitBlob": "7af88e087b7294a6cb34a3ec38651a876da0fdee"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/LandingV2.jsx",
+        "gitBlob": "6afd6a3baf82884ae85000948e49a54ed3054dd4"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/Login.jsx",
+        "gitBlob": "36c29e04267fc4d5a2993143dcb9e45c77ab7e5a"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/AITransparency.jsx",
+        "gitBlob": "f22e9d1ded29c4d128a4480e91bada74319165ba"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/DeleteAccount.jsx",
+        "gitBlob": "adbb5c3d16dda81e64b734b8ac9b27b19011e3b9"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/HecvatLite.jsx",
+        "gitBlob": "b1308fda6ddd585e96f1ae3cfad715c6de8c2a52"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx",
+        "gitBlob": "4169f016e3256d31e7807416113e58304f3956ed"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/Security.jsx",
+        "gitBlob": "1bd42c9ff38eca9eba1fb27ba5b22671d5774f44"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/SecurityPostureList.jsx",
+        "gitBlob": "49c49fb7a1273767f7bc9f205c5e707330bb1d79"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/SecuritySummary.jsx",
+        "gitBlob": "04ddd93e5c89c30329d6fe7f207f84a95a86348a"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/Subprocessors.jsx",
+        "gitBlob": "ae180f69b631737e42e7744ac78f1510c9d8983e"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/TermsOfService.jsx",
+        "gitBlob": "eb5fa6c313f7356e7e409aa9b2c9851338066f6b"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/markdownBlocks.d.ts",
+        "gitBlob": "be8e728569cc46dbbe934ac39827251d06b4bec4"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/markdownBlocks.js",
+        "gitBlob": "5ab04bbcb067d9d4fd29db60d8fdbef0b5cd4153"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/legal/securityPosture.js",
+        "gitBlob": "6e4762048883159669683485d868e9f19a13d190"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/products/ClassPilotLanding.jsx",
+        "gitBlob": "b7461e5108206b7fbe50293dd5dbffb421f01db3"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/products/GoPilotLanding.jsx",
+        "gitBlob": "35efde289d6659264cfe2d4dc1a4b6c609bca70f"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/products/PassPilotLanding.jsx",
+        "gitBlob": "438efb08a045c410f5b1a71c38e18339ca27049a"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/CreateSchool.jsx",
+        "gitBlob": "4f88441a53589eed01f0754b883ac3acaad0d5ac"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/Inquiries.jsx",
+        "gitBlob": "f62db8b5537e2fc4b48c93ffd9926a3a3b13297a"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/Monitoring.jsx",
+        "gitBlob": "f6d9d53993a5e53f86c97c3ca4b96285598ab09a"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/SchoolDetail.jsx",
+        "gitBlob": "edcb63d408b245f65a79e720ba16b1839117c5e9"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/SchoolsList.jsx",
+        "gitBlob": "f39debd136892cbbe68ff18170ce3b777d2697ca"
+      },
+      {
+        "file": "schoolpilot-app/src/pages/super-admin/Soc2.jsx",
+        "gitBlob": "121a93209c27049c479e1e5ecb6c61c411a89e8a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/calendarHistoryGuard.js",
+        "gitBlob": "ee7b83cf9eed760d8623fbe8e8cc55144b5d9815"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ChatComposer.jsx",
+        "gitBlob": "f5e48a124ec615d2b7e546d03e1b20b838903153"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ChatDrawer.jsx",
+        "gitBlob": "5432f5d4d851a68a06328e006ceb27008b2559b3"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ChatRosterList.jsx",
+        "gitBlob": "3d0f53cd2db2fe4bd585848bebf793c8400543fa"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ChatThread.jsx",
+        "gitBlob": "9c7be269078774cf39a183b5950d0676e81ad708"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ChatWorkspace.jsx",
+        "gitBlob": "3e9b5074784a50375c57da8acbed38ce909a6c15"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassPilotSidebar.jsx",
+        "gitBlob": "253ca0dd2a6b1cba95b112573c238a112a7670fa"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassToolsContent.jsx",
+        "gitBlob": "9250323c48b650e5ae3a0bafe52b4f88b7d9ee6e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassToolsPanel.jsx",
+        "gitBlob": "3a0a63d9d7cc25ef7ad04f924b4f9597b31b3132"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassToolsTemplates.jsx",
+        "gitBlob": "949fb26ae7b98acafb7e184a48b49ad7af63d95c"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassroomActions.jsx",
+        "gitBlob": "fbbf1aa57b7b89bfe9db5bce1d4d219fa8314119"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ClassroomWebsiteImport.jsx",
+        "gitBlob": "d92f9b0344909540e970d21c4c25ae286f4578fb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/CommandRecipients.jsx",
+        "gitBlob": "6285f8d2e6ce3588fd83593709dd9f692c87f20e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/CoverageStudentFilters.jsx",
+        "gitBlob": "8bc1dbbddf969a1166782feab299210c364e0d9a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineAccessPanel.jsx",
+        "gitBlob": "06f5c3f556b00a7d4a9d9cc5a10457c4ddde3b91"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineAttachment.jsx",
+        "gitBlob": "6d52828b0a92f644025640f29392f8c1ee77a66e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineCorrection.jsx",
+        "gitBlob": "4556c33c0becbb471f49b69262cb349fec0c33c6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineIncidentComposer.jsx",
+        "gitBlob": "69001a183ab656ae81cd5073b04a02b54b9feca4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineStudentLinks.jsx",
+        "gitBlob": "ebad56b40e40a62f5e05067b4e781a38074cea21"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/DisciplineSubmitButton.jsx",
+        "gitBlob": "1fd206c6009605332d0569f0346c03c89c805590"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/EditStudentDialog.jsx",
+        "gitBlob": "e77f07f3f8149db558e03c984e4069fbe6fa5c69"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/GuideLayout.jsx",
+        "gitBlob": "8bb05a503d6f5ccff058550fbdae15ee2c28edf8"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ImportForm.jsx",
+        "gitBlob": "5ca7df02e3527e5189e736ffb3a794463afdf1b8"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ImportPages.jsx",
+        "gitBlob": "95cfe7c4a3bc211705095de97cadb25230d7c90b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ImportShared.jsx",
+        "gitBlob": "527857730d29496ed35a80e634c4e698b9e7ad38"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ImportWorkspace.jsx",
+        "gitBlob": "658c278abf388fdfea695a6d5efaecc8feeb62f0"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/LastSeenTime.jsx",
+        "gitBlob": "08786e3c052eb43b045dc24050d090e49616e8c5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/LessonActivities.jsx",
+        "gitBlob": "dc13a7d3e26f0527deb195c62ee12e62aa709d75"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MonitoringHoursSettings.jsx",
+        "gitBlob": "dad68d6d915dcb1471afd2ce9a28ae154fb741a2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MonitoringInterruptionsPanel.jsx",
+        "gitBlob": "d964238197bc4aa8bd9ccefe15dd7f2900580564"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskAttachment.jsx",
+        "gitBlob": "22a88d275e4366f6f3c57de9cc43e717f0d3e775"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskClassIndex.jsx",
+        "gitBlob": "36d8d4645a18fd39f68e016acf4be9d01017a889"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskHeader.jsx",
+        "gitBlob": "cc2baeb301cbfe0993d21f068a6f41e37bc48eeb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskScopePicker.jsx",
+        "gitBlob": "4c375db5a4fb9cee07dc9259fd985321686301d5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskStudentAction.jsx",
+        "gitBlob": "caeda18cd470efc71c079603ac26baa182e34444"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskTabs.jsx",
+        "gitBlob": "58fbfca4224898a3aa4d2f0de688da69ab3ee6c1"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/MyDeskVisibility.jsx",
+        "gitBlob": "802fca5c2eecd80ca98d230569e6c3d4c11777d6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/NoteComposerDialog.jsx",
+        "gitBlob": "e6fe676e7db663adb71ba721ab2b4b89cbde8d23"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/PaperworkProgress.jsx",
+        "gitBlob": "73f4e9003ccaca9f60e9907fd90821c134633764"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/RemoteControlToolbar.jsx",
+        "gitBlob": "a6246021d510928580f96ef5d3587287750aa522"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/RestrictionScopeReview.jsx",
+        "gitBlob": "b8fb4e6ef7f336cf1c65304f332c08331cf204e5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ResumePaperwork.jsx",
+        "gitBlob": "0455d01b305ef583da6bbab4a0d8b97e109cf177"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/RosterChangeReview.jsx",
+        "gitBlob": "6b08fec4f787f1309914083ea9e3f50d252cff54"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/RosterIntegrations.jsx",
+        "gitBlob": "7baf41544458791b9580ef922bf6ca190bb219d6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/RosterManagement.jsx",
+        "gitBlob": "f96e077cdffad48271fcd5b1c259cb554b4ba81e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleAfterTesting.jsx",
+        "gitBlob": "6d7e0a001fa45ca82ea225ae456591757bdf5477"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleChangePolicyCard.jsx",
+        "gitBlob": "73d72bf1d087c450bf910362aa7148ce5b9cd94d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleChangeUI.jsx",
+        "gitBlob": "2dde2b65e57be104563f0e42721e3499adfc83de"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleClassForTime.jsx",
+        "gitBlob": "7f4e6e1889886b05841515a2435e7e16dd1de1a9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleDayPlanner.jsx",
+        "gitBlob": "f1b212e0dff990634bb443beb9d94417d56ed513"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleProfileDraftReview.jsx",
+        "gitBlob": "0910499b0bb095bd9544af7c2a86589cb0eb68bb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleProfiles.jsx",
+        "gitBlob": "7e5cbf86e881557d5ef7e0c4f9ee02a64b7eef78"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleProfilesOverview.jsx",
+        "gitBlob": "0f0f40f72f6697926ff9babd4740848eac0c7c68"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleRouteTabs.jsx",
+        "gitBlob": "b984f749805c0e5575cb5340c731ec5d95205770"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScheduleTestingGroupPicker.jsx",
+        "gitBlob": "5b6d4f1110cca257302384861bc1fff73400d92d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SchoolCalendarMonth.jsx",
+        "gitBlob": "f95f026ac8464a1b586b5b14e446a56e1b7ff824"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/ScreenshotPreviewDialog.jsx",
+        "gitBlob": "7b421c619385f89cd71b0f57d7342c31b4f487c5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingBoard.jsx",
+        "gitBlob": "2f388e7610e86b8f592963a6ab30f04476622d02"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingEditor.jsx",
+        "gitBlob": "265d64676166df73d5196be55fb317cfac735004"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingMeasuredBoard.jsx",
+        "gitBlob": "fef82adaa3d97bf40e54e167a91ec5e525187e3d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingPrint.jsx",
+        "gitBlob": "074940f84f0cb5470574dee7babc28ae46196fc5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingRoomDrawing.jsx",
+        "gitBlob": "57621003da0fb534db4ec32ef3d35188fb436db7"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SeatingRoomTools.jsx",
+        "gitBlob": "564eeed326cf9c066d0b796d49ff73128f071a57"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SessionMonitoringReportDialog.jsx",
+        "gitBlob": "55ffdba4c6ef06d21ffaec9700f444b3889c4cf8"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SharedRecordAccessBoundary.jsx",
+        "gitBlob": "37de87cbc260933e4a1cc0b29b6b0d660957ebf9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentBrowsingHistory.jsx",
+        "gitBlob": "2b578a792594d7d9362e3a93564872f5118ba533"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentChatTranscript.jsx",
+        "gitBlob": "d2da91ce33525d6783e24fbfb309771498beb24a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentContactFields.jsx",
+        "gitBlob": "b0fb6786916957adc24aad0eb610da363fbd76c9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentContactProfileEditor.jsx",
+        "gitBlob": "349e009c83fbde824333c61bd47aaaf82b6ab88f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentDataDialog.jsx",
+        "gitBlob": "67879c5beecc610fa91b67942facc3c4d1b3b54f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentDetailDrawer.jsx",
+        "gitBlob": "3f84c4a0253b3b59ddf2f3a42e140f5ddfd03904"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentInformationImport.jsx",
+        "gitBlob": "0380da782870b414a16ace99cbef38bc3e0ab7f4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentSsoPolicyCard.jsx",
+        "gitBlob": "b056052dda8ac725e7426057b649c36d5b950626"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentTile.jsx",
+        "gitBlob": "ee75a5c7280a1722aec4707e5a3cea2ebd1351c6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/StudentTileSkeleton.jsx",
+        "gitBlob": "9f925f5aacd5ecde484328a4f3565998b2bf9e81"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SupervisionGroupCategories.jsx",
+        "gitBlob": "2f543fcf54c91b5e91263fd5970a8334c4583dad"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SupervisionGroupDirectory.jsx",
+        "gitBlob": "a2308beed524b9c79a3d0b264497f884976b8cea"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SupervisionGroupEditor.jsx",
+        "gitBlob": "1c42fe380ff4a72f900d0de9eae71449b3eb8eaf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/SupervisionSessionDialog.jsx",
+        "gitBlob": "ec76224aa72a5d27749e4c20cb3af8a186f2c882"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/TeacherFab.jsx",
+        "gitBlob": "7b9a35d25c5d80b1a57b81a2f158eb210f56b44c"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/TeachingDefaults.jsx",
+        "gitBlob": "83119a94671309bc449e580cf7cc848f09254426"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/TeachingToolsLayout.jsx",
+        "gitBlob": "2b15319358fa9250c38696d5e992994aa413b805"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/VideoPortal.jsx",
+        "gitBlob": "13cdf3cd32b3ce2ec6c8e408827f51a8987947ef"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/AdminNavigationProvider.jsx",
+        "gitBlob": "dac71b90ec5f82440076bc8d5692c8e469bd4599"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/AdminOverview.jsx",
+        "gitBlob": "8826b145b0ab3db8be3606883724348b1c1b584c"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/AdminQueryBoundary.jsx",
+        "gitBlob": "01e98a80530deaecaa9ad3c2f87e8f09145a76f9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/ClassPilotAdminShell.jsx",
+        "gitBlob": "c43442b8dd83b0b32de9ca919abd55ab47f347c3"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/SchoolDataMaintenance.jsx",
+        "gitBlob": "c5aeb56b1aff5ad9e08204a7a77e74f7649f6c53"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/admin/SettingsSaveState.jsx",
+        "gitBlob": "8c18e8884b5e22f943976b31e76d9da0fc00b671"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/scheduleClassPlacement.js",
+        "gitBlob": "d829dfc4c02a83b5b796673966f489a4faa76b11"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/scheduleDayPlannerModel.js",
+        "gitBlob": "eb35ebfb16e76509db650bc069ac7648ce1be8fe"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/sidebar/GoPilotMiniView.jsx",
+        "gitBlob": "f2d9660efe3e7d77c442720f8be05cc75ce77843"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/sidebar/MyDeskMiniView.jsx",
+        "gitBlob": "02e21461ef8be5b121b781c97caac552dc78aa1e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/sidebar/PassPilotMiniView.jsx",
+        "gitBlob": "a76dc8274920ff5c58a44a0f8e42a0c6970c7d03"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/studentInformation.css",
+        "gitBlob": "c9edcbbd145ede8ef7be0da7ae0d458661e1643e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/studentTileFrame.css",
+        "gitBlob": "719091abae4b0568d2c568aa7743368fe13e87ad"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/supervisionGroupQueries.js",
+        "gitBlob": "8746641b9f5c1f41a8e23d4b5f58284ea7815abe"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/useScheduleOverviewClock.js",
+        "gitBlob": "2131c64b3f5ef499488e9db7be9ed2f8f3decab8"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/components/useScheduleProfileDraftReview.js",
+        "gitBlob": "025ed69597cbecbcb205d441bae8b1abba8a2cd6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/discipline.css",
+        "gitBlob": "c9939e2f3d2f8a03c7cbc894f0b312fff9fdd067"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/guides/adminGuideContent.js",
+        "gitBlob": "71c6f2f25ef445b014f7f66ffbd0b9d28265f491"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/guides/teacherGuideContent.js",
+        "gitBlob": "a63d4a9275dc56c37f3cd17f8b8142f4060ce811"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useAdminNavigation.js",
+        "gitBlob": "62bc29ab4d9478761f5a71dbc04d874f690c7eb4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useClassTools.js",
+        "gitBlob": "416aaade2045f51d36244bb772b639eb9a4b97c8"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useClasspilotSessionChat.js",
+        "gitBlob": "de1246a4b8858a15cb55b63d6656b3a1fab6d39f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useDecodedScreenshot.js",
+        "gitBlob": "cb8eaebf5e202d7e876cbd99a633e82c73ac78e9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useDiscipline.js",
+        "gitBlob": "429d63b63250c859955039c240d67c0169e42efa"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useMyDesk.js",
+        "gitBlob": "37c9247429db811acae42df41dea0ce86b695451"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useMyDeskScopeParams.js",
+        "gitBlob": "10cb8f1307d04c6e737674d2d6fafe307c228b4a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useObservationLease.js",
+        "gitBlob": "b49e968ef6d5ce355850760aacd019b6b2bbebba"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useResizablePanelWidth.js",
+        "gitBlob": "3c1c0a15e9cbe53663384fdc848d32a1454069b4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useRestrictionScopePreview.js",
+        "gitBlob": "60955d3349bc41e30b03169a5929287798960eed"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useRosterGradeSettings.js",
+        "gitBlob": "bf70265ff564b55459720c6832b557f32014cb20"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useScheduleChangeRefresh.js",
+        "gitBlob": "85cc31af03f340d3a640c0efa0398355ebb3fdd2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useSettingsDraft.js",
+        "gitBlob": "cf9597b247ea28ec5c6bca59a2a3331eadd76212"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useStudentInformationDraftGuard.js",
+        "gitBlob": "4418e91de4fcd32039f84040b426ee8f5863d881"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/hooks/useTileViewport.js",
+        "gitBlob": "420c2b7035c02a9d734272104cbd4db53ef8d8bd"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/imports.css",
+        "gitBlob": "e932694876f2474382f9fb3afbb49b7a2d4a9e29"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/adminNavigation.js",
+        "gitBlob": "f715527ec832cc2aaf4d5ff55da2100695d0fd4d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/adminNavigationHistory.js",
+        "gitBlob": "cd842b4b207576e411aa5d380ee4110b8efd5255"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/adminSchoolYear.js",
+        "gitBlob": "6fca0d094a9c908f873c90fc29cac61ddf9babbe"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/chatRoster.js",
+        "gitBlob": "2147a54ba95b5052fe7cde2393c95b759f6ddcd2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/chatThreads.js",
+        "gitBlob": "3ac51d2558b5d3c54924b4c09d9f926a843f4ee2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/chatTimestamp.js",
+        "gitBlob": "63fca961eae5a582554cd2fb3cf79f9f38382673"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/classpilotReadRecovery.js",
+        "gitBlob": "f8ed725f887c4c5ca2658bf7ef996a7b624868aa"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/classroomActions.js",
+        "gitBlob": "73ec1354b8f9de82a78428d201a73fea5d2decc3"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/commandDeliveryTruth.js",
+        "gitBlob": "6c9fbcfbaeea785166ce38276d133211d0c75eaa"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/contentCategories.js",
+        "gitBlob": "aa44730f7193cb10dbf0883a79db6061a818b2b2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/coverageStudentFilters.js",
+        "gitBlob": "fa3e4762e3cc341e0c7ba5efe43020032e3282ba"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/dashboardActivity.js",
+        "gitBlob": "ef216c24771904b653937365f44944f60023d516"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/dashboardCommandContext.js",
+        "gitBlob": "6596d980eae6deb61a02b868ddf826fe1c17f01b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/digitalUsage.js",
+        "gitBlob": "bcde8e7ac290d694c4ea7e9bab92d1ec4c17cd8f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/discipline.js",
+        "gitBlob": "d459dba0935790ec791f6a86a2ea69b1674182bf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/disciplineNavigation.js",
+        "gitBlob": "c3c73f565cdaee7350ec10aa392056305bb74cec"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/focusControls.js",
+        "gitBlob": "f406b9008dfff47b50e234398bfb716b81130e72"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/graceReconciliation.js",
+        "gitBlob": "3687f6a491f774fc0d1b16931b4f84af27262019"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/importReviewModel.js",
+        "gitBlob": "8db52560e0e60a0bdd56322cb04cf59596550f74"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/monitoringReconciliation.js",
+        "gitBlob": "5b4ae2aa1ce70b87b3f954141c663977e55cbb5e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/myDesk.js",
+        "gitBlob": "e73a8ebaaf4cf1a6c33b925a6e2d66009779da51"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/myDeskDates.js",
+        "gitBlob": "3351421d0c0d621dd71747b4d10aeaf75e4684c0"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/myDeskModel.js",
+        "gitBlob": "35dffdc068b8ab678ee39933404b946162fd1406"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/myDeskScopeModel.js",
+        "gitBlob": "60abe488e2e2cce046e9a608681b621213f7e674"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/myDeskTabsModel.js",
+        "gitBlob": "f6680c0b10e0a0156cb650cae38a31ebae28bd58"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/observationLeaseStatus.js",
+        "gitBlob": "6536db1f926548995dcfa7d0df703fff8ff15b71"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/privateChatLifecycle.js",
+        "gitBlob": "df9ed5eb3119be99e587d7164eca8175bc95de30"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/privateWorkspaceNavigation.js",
+        "gitBlob": "6967708c6e9db8aed54f3c5620c3eac752728ff4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/restrictionResourceMatcher.js",
+        "gitBlob": "70b7c2e40a3054c0cb9066f5aebdd5d55c0d3cc2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/scheduleChanges.js",
+        "gitBlob": "3f4442842c12e1053d824f0464039ee42f47376a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/seatingMeasuredModel.js",
+        "gitBlob": "fe94cc60c0c39cf2018b024c1e6930042ffcf491"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/seatingModel.js",
+        "gitBlob": "777838166d09e8df620df7ba90171aefe285b64c"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/sessionMonitoringReport.js",
+        "gitBlob": "1dc8e5c56c5316f380eb8691fd003755d950996e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/sharedRecordRefresh.js",
+        "gitBlob": "e6da2e64f5f279a4c9e79bd45f05998fedb5cc23"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentData.js",
+        "gitBlob": "98910ad4e2df72a3be41c2801a3b72cd4d25e702"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentInformationApi.js",
+        "gitBlob": "6abaa426f3956f728d09db3efec7adeb414e8f11"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentInformationModel.js",
+        "gitBlob": "2bfbdbe2c63b9fa4f0772e69f9a9b0a386fe19ed"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentMonitoringDisplay.js",
+        "gitBlob": "3cfb88df4582bed8f7ea7aea1246cac70ad754d2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentOrder.js",
+        "gitBlob": "69297d7a69aaa404017adcc2d7afbeb5f289bd0a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/studentRealtimeCache.js",
+        "gitBlob": "f1b11b9b4020d13fe6ef93ea73f4d4cfb18a3132"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/subgroupMembersQuery.js",
+        "gitBlob": "84e2534ac0c830134a33672057b15f6e40a295f5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/supervisionDashboardNavigation.js",
+        "gitBlob": "19fc837eeaa43b23bb9691a331e488cffc3dc18b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/teachingResourceLibrary.js",
+        "gitBlob": "a5220b5d14be864afe139e0db2d739f26610ca5b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/teachingTools.js",
+        "gitBlob": "a312f1d65759d74f313a1ce945b7e89b70a9a09b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/testingSchedulePrefill.js",
+        "gitBlob": "b13772a2e33cfc91364f6c9c98d1b0029546a1d4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/tileBatchPolling.js",
+        "gitBlob": "b1019964b0ac7d1e421551aeca9a60e3099d1c83"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/tileCachePrivacy.js",
+        "gitBlob": "6e80becefa5d08846c731da997525c8517bf5d44"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/tileTabFavicons.js",
+        "gitBlob": "6f9714e1ba9611f88b65bb42ad0366c4d4aa17e5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/lib/useScheduledTestingView.js",
+        "gitBlob": "5cb923eab5012bce1d6ab1042f0b4556c95de436"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/myDesk.css",
+        "gitBlob": "ea47eea0f48c337acc6ed99ba55a462f021a5054"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Admin.jsx",
+        "gitBlob": "ba36854801dc17648d01e0ab26084d9b1f4d309f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminAnalytics.jsx",
+        "gitBlob": "7ccf1ccd8b94b4fc603c2287523a930232bbdd31"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminAttendance.jsx",
+        "gitBlob": "7dbe861a2f835a0da6a04a5111437fc35eb9df99"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminClasses.jsx",
+        "gitBlob": "70bcc0491d5c68c512c0b9427b4a210b4b22daa6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminGuide.jsx",
+        "gitBlob": "9d295112fb4a6583054827a436adb1686658c8f3"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminScheduleChanges.jsx",
+        "gitBlob": "8e9272ab71688a57df4399480118a78b8d1661e4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminScheduling.jsx",
+        "gitBlob": "bbcbb43a08722bc5325ff90bce2abcac3a8b4d79"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/AdminUsage.jsx",
+        "gitBlob": "2a3696ecb6f973e2ba16c90e454d5892237b6482"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/ClassToolsPresentation.jsx",
+        "gitBlob": "60d6cd73e7bb0545809ff00d26a2dca6b53514d1"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Coverage.jsx",
+        "gitBlob": "52869f143f16f851ed097b437e93d83e0301678b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Dashboard.jsx",
+        "gitBlob": "fbc888a4750413cc0631135a5000738f84f9c2c2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Devices.jsx",
+        "gitBlob": "3f53822bcdc46393e97c56cc5cb82ff765f4d8e0"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/DisciplineRecords.jsx",
+        "gitBlob": "2eb6d07cf5a8931f0a0b348c621a8024befd8cdd"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/EmailMonitoring.jsx",
+        "gitBlob": "27354bdcac43206a218e20478a03e4ab41b469fb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/EmailMonitoringSetup.jsx",
+        "gitBlob": "52e4a5abc4c1cfe511f86a965401ff8ee8129d11"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Groups.jsx",
+        "gitBlob": "f8db4e4e9e15af16b1880c78f8b148b3a3f1e4fc"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/ITReadiness.jsx",
+        "gitBlob": "ef071df503deb96a9ce58f07b5808ea8b07d9d60"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Imports.jsx",
+        "gitBlob": "ac29466759ef06cd9b7e2a1d6d601d25e9ae8aae"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/MyDesk.jsx",
+        "gitBlob": "8cc589692e3b51d4fa4630f57b1f01fdd1f8300b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/MySettings.jsx",
+        "gitBlob": "ff51f3229bcf0b2737f3a905a5505c8125d44ea1"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Roster.jsx",
+        "gitBlob": "676c3fc40add128d3986aabd2e7753a8b293a6bb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/SafetyCenter.jsx",
+        "gitBlob": "da0b32f3d8def82219dc274d338841294263611a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/ScheduleChanges.jsx",
+        "gitBlob": "1975fa09c5c490c2514bf015a5ca92d985353060"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Seating.jsx",
+        "gitBlob": "e76be926c7a149f0fad68f60150fda96ce00e8a2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Settings.jsx",
+        "gitBlob": "6e573d41684eefc9d6929359f07bbce184116adb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/StudentInformation.jsx",
+        "gitBlob": "5114625f97c546f68ccc49f2b698103ed979a7c5"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/StudentLogs.jsx",
+        "gitBlob": "be25cfec35d9e235548e5d0b2064d1227f959602"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/StudentOverview.jsx",
+        "gitBlob": "aa183d9645c7a1ef1c398641e02ef507e1ae6430"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/Students.jsx",
+        "gitBlob": "9f31236942e9f255bf9835c0002c473cdf294436"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/pages/TeacherGuide.jsx",
+        "gitBlob": "07e250a721e316da502cf61c24c7c0d0fcc36d3d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/classpilot/seating.css",
+        "gitBlob": "a3e9f981be115c1fb85c0dec4783ade822da2e5f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/components/ui.jsx",
+        "gitBlob": "308009cb816c1bd3376714613bd2f638c4c8a91d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/DismissalDashboard.jsx",
+        "gitBlob": "b3dd16ff48ab139326de0754220392d39a72580d"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/GoPilotAccessDenied.jsx",
+        "gitBlob": "ba1e06556f9b44cdd8641dd8b725119e1be5bbab"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/JoinSchool.jsx",
+        "gitBlob": "eac3729c9710b1a21db48f14e498c9fe9deb3be4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/LinkChild.jsx",
+        "gitBlob": "eac3729c9710b1a21db48f14e498c9fe9deb3be4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/ParentApp.jsx",
+        "gitBlob": "eac3729c9710b1a21db48f14e498c9fe9deb3be4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/ParentOnboarding.jsx",
+        "gitBlob": "eac3729c9710b1a21db48f14e498c9fe9deb3be4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/SetupWizard.jsx",
+        "gitBlob": "bb245da65e91ba53b064a4fd459e5df151ddc502"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/TeacherView.jsx",
+        "gitBlob": "50274008eb3eb43a7b31565149a0935386b95229"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/AssignStudents.jsx",
+        "gitBlob": "d8dd34a9c9af3a46b11b227c4e92068ab2b7cb1c"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/AuthorizedPickupsTab.jsx",
+        "gitBlob": "be6d85989aa7e815ec644805a3488ed10f889f1e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/BusAssignments.jsx",
+        "gitBlob": "b967fc6119cc93b8d989efb0ee8543ffa19b56ca"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/CarNumbersTab.jsx",
+        "gitBlob": "d4a53c76650ef763d7111f15b8a1a8abbf5a7b51"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/DismissalConfig.jsx",
+        "gitBlob": "f5663a2543f1b1774dd58c41a96954f40949b262"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/HomeroomManager.jsx",
+        "gitBlob": "aee9efb439bb1bc7ef7a58bcdc5c3a13b01a2d25"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/ParentsTab.jsx",
+        "gitBlob": "8080e1b206c9070c2755320a10eee3a0cb317bfb"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/ReviewLaunch.jsx",
+        "gitBlob": "45ed81876c331e8d7833ddc1270d4b5ed787c176"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/SchoolSettingsTab.jsx",
+        "gitBlob": "c71668c311ae379be958ecd851f3ddf5aef8ebb4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/StaffManager.jsx",
+        "gitBlob": "081b24ed93a5dbea16a4d97c969e3e7d17db2814"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/StudentRoster.jsx",
+        "gitBlob": "47e43c1ec4c002fc0949ca1d30c58933696391ea"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/pages/setup/constants.jsx",
+        "gitBlob": "78c5a921c2926596c0309827f89edb422cd1c2ac"
+      },
+      {
+        "file": "schoolpilot-app/src/products/gopilot/utils/pickupZones.js",
+        "gitBlob": "2ca46db1f2407ab8186f23be038cd1c9ff9a48f6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/appointmentData.js",
+        "gitBlob": "0d6bc4f341f4fc8f66eb0ee15e6e903e32928971"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/appointmentModel.js",
+        "gitBlob": "17767e20ae002284dcaecd719944b0a742e61ce4"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/classData.js",
+        "gitBlob": "896e46fce3ef097f06243fb924a3fbf76f53ca58"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/AppShell.jsx",
+        "gitBlob": "458a8d659061abede9ebe37a0789ae01894384ae"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/AppointmentForm.jsx",
+        "gitBlob": "922eb0a7f84d0f6d2b05f4be301cbb3bd9e22fa6"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/AppointmentReminders.jsx",
+        "gitBlob": "cede8359f394d698575a2898d8777704ee49b3fe"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/CanonicalClassesView.jsx",
+        "gitBlob": "44a12b1820b2832a33fe4d153261e132dd05f7bf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/ClaimKioskDialog.jsx",
+        "gitBlob": "8513230f3706e067b7383b479015ec24169c1162"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/GateKioskExitBoundary.jsx",
+        "gitBlob": "e4bba3a80d0f06a54fc7dc4df7239528c42a32c7"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/KioskActivityBanner.jsx",
+        "gitBlob": "d1f08369207eba4fbfa7e91c24c8f05503fa7f90"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/KioskOfflineBanner.jsx",
+        "gitBlob": "153c62f097b13e19438823f73e9bcd8690a9d60e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/KioskScheduleSettings.jsx",
+        "gitBlob": "4ccc0036e8120d6f867d9f01e6c711cf2d52eeaf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/LivePassDuration.jsx",
+        "gitBlob": "6d72885a52b4d6bf42d4b425c3abc3a8fd2d6ece"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/admin/BillingView.jsx",
+        "gitBlob": "6404739fa0a7d06087ba1cec039e5eda3c669361"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/admin/ClassSourceSetup.jsx",
+        "gitBlob": "1681bb306a0dc93cbf8e5ffcb5ec4708da005caf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/admin/RulesTab.jsx",
+        "gitBlob": "fbe33bf2e56d190994128c8e0fbcece7d3a093e9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/admin/SchoolYearSetup.jsx",
+        "gitBlob": "aaa466f0e8027a13361ff603f3487986d665a23b"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/admin/SetupView.jsx",
+        "gitBlob": "bb0ab332f9a368e43756c1a3c59681802d9eaabf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/tabs/MyClassTab.jsx",
+        "gitBlob": "06845edb32203fcca51a11e7a8202e483c3a3432"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/tabs/PassesTab.jsx",
+        "gitBlob": "02f1091c675f459cd0a09984b72c21a701b94f8a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/tabs/ReportsTab.jsx",
+        "gitBlob": "05ea5f70bc775cabe33315752d7ed67e82f99dbe"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/tabs/ReportsV2.jsx",
+        "gitBlob": "137421be2fe36cb64fa1a41b7eb966214e5951df"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/components/tabs/RosterTab.jsx",
+        "gitBlob": "599298e1f7e8d0028a74bec1070d8271d2e7bd28"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/kioskController.js",
+        "gitBlob": "1d0281c75d7aecdfe3719dc66290f99f1793b3f3"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/kioskDeviceId.js",
+        "gitBlob": "2079ceb43645b9ef65b499bfd6fef8e762ad1ef0"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/kioskPinStore.js",
+        "gitBlob": "bdd4b553cde731299801db707e966b0f08fb0239"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Appointments.jsx",
+        "gitBlob": "174185e43ee3495b2b7b1854547d312228870620"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Dashboard.jsx",
+        "gitBlob": "93f057948a07ec382cc59226a93e14f14e88d6e1"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Kiosk.jsx",
+        "gitBlob": "5e6137245f4b68137d33ce6f824b6674f56721cf"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/KioskSimple.jsx",
+        "gitBlob": "0d549e4525d4055e2ec885bc97b0095977398565"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Passes.jsx",
+        "gitBlob": "c97e127b9fc44d4b7a47d7532f0366bdb9827fbd"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Settings.jsx",
+        "gitBlob": "b26462aa733a4bb1e8fbef96afd6faff475194a9"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/pages/Students.jsx",
+        "gitBlob": "4dac7b2d475fc269dd3d988f71b2dcc279aaea3f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/passCsv.js",
+        "gitBlob": "1d9d5288df0e2f198f25069cda5f7d987df90b6e"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/passData.js",
+        "gitBlob": "33c9e399b70cdd5a2d862d81807a6d3ef5615391"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/passDuration.js",
+        "gitBlob": "f6a878b2ab4095747027128935f7b8454eac73f2"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/reportData.js",
+        "gitBlob": "4603c3345b87a495617dc1848709fc055ae1991a"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/reportModel.js",
+        "gitBlob": "0a1d948d98f55e3e68cfe240cfa2e8614b6ce53f"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/selectedClassSession.js",
+        "gitBlob": "b8fa5b846273982b9dfb10886f7b66f8a2429d31"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/useKioskBoundary.js",
+        "gitBlob": "259097e5fff0ac9b847380818fc9b0aef009ab97"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/useKioskPollingController.js",
+        "gitBlob": "e774863a26a62aa98da0d40c3196e347209273ad"
+      },
+      {
+        "file": "schoolpilot-app/src/products/passpilot/useKioskSessions.js",
+        "gitBlob": "e6197c4e148efb3acf3d6d60f60cd0c7db42f7e8"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/Card.jsx",
+        "gitBlob": "7e7fe41978a25f1ad532a98bdd4e86e24fe26342"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/ClassPilotAdminOperationGuard.jsx",
+        "gitBlob": "b1e9b8e4f8ee0df64e2f404de4ed8733237abc2d"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/GoogleRosterConnectorPanel.jsx",
+        "gitBlob": "e9587178d5254e9cbc3b9b27b47fced8f139c7b9"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/ImportInClassPilotNotice.jsx",
+        "gitBlob": "d57c58f4d5a300819d6e612c4b53064810031d7c"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/SafetyLoginRedirect.jsx",
+        "gitBlob": "fc5481228caaac6e58399635455dff780ad8df63"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/Spinner.jsx",
+        "gitBlob": "dbe682a8a6c6888d275a716d981c86806e529c29"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/components/StaffAccessTransitionDialog.jsx",
+        "gitBlob": "acdb802ffb63d077b97ff86c4cfc067fdbb2fcf3"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/hooks/useStudentImportHome.js",
+        "gitBlob": "d6c3f5553c25aeebdbf8e3286e261920a08c3448"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/utils/api.js",
+        "gitBlob": "71471881c51d381eaea1cba7f2524d3e1820f1df"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/utils/constants.js",
+        "gitBlob": "999150cc425abd37b38c9693c14cabb1ad82fb71"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/utils/pricing.js",
+        "gitBlob": "31e10901f6729b1306da8531169c0916346254aa"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/utils/safetyLoginReturn.js",
+        "gitBlob": "29ba881a210c39e88c84235620486fbdf7e34a30"
+      },
+      {
+        "file": "schoolpilot-app/src/shared/utils/schoolRoles.js",
+        "gitBlob": "45aad71f130828f088cebbb329508d55ac74e48d"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/BottomNav.jsx",
+        "gitBlob": "bcfc59483f69900bf73369812387d951b64e58e7"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/Header.jsx",
+        "gitBlob": "75fc8a9eccfe7d58360ebf73c8e358fcc373162d"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/Layout.jsx",
+        "gitBlob": "da8a8fa8bd524a04ec47badf6b663482e7c875b3"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/ProductSwitcher.jsx",
+        "gitBlob": "ee6cecc6ee0ead2dde93ad1f5b8b41dc4b195b23"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/SchoolSwitcher.jsx",
+        "gitBlob": "65b1dd8c3b36e0c5ed84746f97a3f021f492107f"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/Sidebar.jsx",
+        "gitBlob": "35f873fe329caf8185303762c2a4a322c3765d57"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/widgets/GoWidget.jsx",
+        "gitBlob": "42bb42d28d411e13e57c18aeed6f8480d99f5da6"
+      },
+      {
+        "file": "schoolpilot-app/src/shell/widgets/PassWidget.jsx",
+        "gitBlob": "2fb85dc90da97d2f2adedc263f1a4f1596c0d6b3"
+      },
+      {
+        "file": "schoolpilot-app/vite.config.js",
+        "gitBlob": "2d8a34b34246fd5f8997580690c6082bcaed703c"
+      }
+    ],
+    "sourceManifestSha256": "b439236587431848ff9ea1fe135dd6c40dc9d81bdc840d44990fc20981321103",
+    "sourceState": "Uncommitted frontend corrections; compare every blob to frozen/final source before acceptance."
+  },
+  "frontendSourceUnchanged": true,
+  "sourceStatus": "Frontend blobs explicitly verified; match them to the release commit before claiming final-head equivalence.",
+  "command": "npm run test:release-focused",
+  "aggregateExitCode": 0,
+  "nodeRunnerTotals": {
+    "tests": 739,
+    "pass": 739,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "directBrowserScripts": "Completed in the same exit-0 aggregate; they are not included in Node-runner totals.",
+  "lintExitCode": 0,
+  "lintWarnings": 29,
+  "buildExitCode": 0,
+  "buildWarnings": "Existing chunk-size warnings retained in log.",
+  "logs": [
+    {
+      "file": "release297-usage-frontend-aggregate.log",
+      "rawSha256": "e0240ead9426bb6f809e153d4e29a8297ab1006e7c4de7c5ae244b77ca97f79e",
+      "sanitizedSha256": "78413a0186a856c300810f1438530fcea87b34ed3df94485ea4fc75c81a1a1d0"
+    },
+    {
+      "file": "release297-usage-frozen-frontend-lint.log",
+      "rawSha256": "83c07bc50febc27a2da0f75518d8688bb4ca6f38d29b7be8b83e4b2f3f6cb426",
+      "sanitizedSha256": "60ec581fd4176b2dcccc597ac9de95517f42cfcfc7829ee70e6e427498b396b8"
+    },
+    {
+      "file": "release297-usage-frozen-frontend-build.log",
+      "rawSha256": "2379549a2935415c7708805b66c5c8e9da1b5d5fc13e740daee6578677b77f4d",
+      "sanitizedSha256": "6e77f340dc7d9e2fd0124724021860a9692a901c15cdf268e974b62c6ed386b0"
+    }
+  ],
+  "archive": {
+    "file": "frontend-final-source.logs.ndjson.gz",
+    "sha256": "87812d36cf60093caf9747b13ac5f9fe8811fee6f668e6ced091e8db22fe2311"
+  },
+  "artifact": {
+    "location": "C:/Users/zinka/.codex/artifacts/release297-usage-frontend-20261002/frontend.tar",
+    "sha256": "7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f",
+    "files": [
+      {
+        "file": "assets/activity-l8FommHI.js",
+        "bytes": 268,
+        "sha256": "eabd981964c80fb51c1c2b3474f4015d273e48f8751f395d523e6fab4fa190d1"
+      },
+      {
+        "file": "assets/addDays-SRfaOCSp.js",
+        "bytes": 158,
+        "sha256": "8e5001ffe0f065828805a609a8767702104275c2e612698c73d13d6f2384df77"
+      },
+      {
+        "file": "assets/Admin-3QiC03XV.js",
+        "bytes": 60814,
+        "sha256": "e13174f43759e4919f9501e1c009ef43a0fe440da9e0538760c86b7be9a7ef40"
+      },
+      {
+        "file": "assets/AdminAnalytics-BGB3AlGo.js",
+        "bytes": 12186,
+        "sha256": "57e39a64c78b903cc118b1b253390510f4455793d6ae70d6bc89d8ce6405b472"
+      },
+      {
+        "file": "assets/AdminClasses-Cf_tmys8.js",
+        "bytes": 71066,
+        "sha256": "577c33b2b0c94b7e72aee5c518745490d91330cb02a50a20cf16524e4e5bcea9"
+      },
+      {
+        "file": "assets/AdminGuide-B5AmpS7A.js",
+        "bytes": 48863,
+        "sha256": "9334deeff254bc96745ad77f2048a1ab151e0ba3241f5485432481352f100a7f"
+      },
+      {
+        "file": "assets/AdminScheduleChanges-CBPC4Ltp.js",
+        "bytes": 21131,
+        "sha256": "fd5623bd2a1a515580dc89aab83926bbdd7b48b4a5f01091a7a0914690daf416"
+      },
+      {
+        "file": "assets/AdminScheduling-DK_y4CZx.js",
+        "bytes": 163098,
+        "sha256": "ebcebe034c2c92947f4d1cc07341ad91ded0c5fd11b6c570748dc05244f26ebc"
+      },
+      {
+        "file": "assets/AdminUsage-D1oeW3Kc.js",
+        "bytes": 19414,
+        "sha256": "ddb1cdb2574f220d4000b75e77f1845ccb3109356809bef995d42f1269173116"
+      },
+      {
+        "file": "assets/AITransparency-Ds_2iHTc.js",
+        "bytes": 10740,
+        "sha256": "f94765b7e8409b2a53a616f3f2ee528428bff116c328f8b238f11e475c8d1d10"
+      },
+      {
+        "file": "assets/appointmentModel-3jX6KWrU.js",
+        "bytes": 2851,
+        "sha256": "3cceb9b45ae06375d1595d8fe074078fc7a80aed709975e5ed7e712a0a5e8411"
+      },
+      {
+        "file": "assets/AppointmentReminders-DNjCn7IV.js",
+        "bytes": 5026,
+        "sha256": "93b0f907e468fbeb7a08856f4c5a878a2aa72ae42e71ee437c27488c7721512d"
+      },
+      {
+        "file": "assets/Appointments-DcQ2q9aP.js",
+        "bytes": 13801,
+        "sha256": "32b02ad1f463bbc28e9a5a6cc7c94d28480531206a75d2d28d7b8cdb84463ae6"
+      },
+      {
+        "file": "assets/arrow-left-iGkLnH_u.js",
+        "bytes": 199,
+        "sha256": "b58cdab8a000aabf2571674fdd633849c016ca8c2aa0cb340224c92cba14533b"
+      },
+      {
+        "file": "assets/arrow-right-C8-c1mw-.js",
+        "bytes": 199,
+        "sha256": "68e7fd73eaee672b9d80311e80a6ff9275296793604544b661a3a8c14a531d7d"
+      },
+      {
+        "file": "assets/badge-BNxFwkew.js",
+        "bytes": 761,
+        "sha256": "be0f9d635f6914f865155073e54c0c78743f0d7bc41115fbde18be826f22e458"
+      },
+      {
+        "file": "assets/bell-jGEs_QXO.js",
+        "bytes": 324,
+        "sha256": "149cebab135c2d998444ab0e8d2ebfc89f78470ac982133f9f624b05f355701b"
+      },
+      {
+        "file": "assets/book-open-check-Cp5p2fHG.js",
+        "bytes": 379,
+        "sha256": "b0be8411217531277da5aa0880d372bfaed6875bf91e0064e3a768cfd7227e45"
+      },
+      {
+        "file": "assets/building-complex-CkWhvdA2.js",
+        "bytes": 446,
+        "sha256": "2387c21f282d88a503836003a675c493cf78a82adbf4c87c53ae742ca891f379"
+      },
+      {
+        "file": "assets/calendar-days-BsZBI2ip.js",
+        "bytes": 526,
+        "sha256": "37281a929ed9bdf4588ce186524b92ec0bb145f799452461d18b13c6b193545d"
+      },
+      {
+        "file": "assets/car-ElZZ6F5O.js",
+        "bytes": 441,
+        "sha256": "24297241371e347a68eb1d1caf2ccff927b6205469a91d376095ba046e52e29b"
+      },
+      {
+        "file": "assets/card-DxJWSniS.js",
+        "bytes": 731,
+        "sha256": "3f42d41aa19beecb66f85837b48c07023457b07f7f6321026a2bae3f0fc78cd7"
+      },
+      {
+        "file": "assets/check-C-HOpEUE.js",
+        "bytes": 158,
+        "sha256": "66ffa45e8869d25a84b353be82078a62165fcebc7db4c61b47edc4292f2a2860"
+      },
+      {
+        "file": "assets/checkbox-Bwxo8YZ8.js",
+        "bytes": 724,
+        "sha256": "2de9133d1d63fd029fb711d9c3786a6579494acf8d37a5811e40e089bb3260b4"
+      },
+      {
+        "file": "assets/chevron-down-DEM7q2IX.js",
+        "bytes": 162,
+        "sha256": "08bf6b6e6d00771d361b9cff94f141c6ed22227059fe058d6d84cc8989f6e72c"
+      },
+      {
+        "file": "assets/chevron-left-Bi0St3bD.js",
+        "bytes": 164,
+        "sha256": "ded455b27a6635cf36ef4fa01638b700de3be996cc31d5969b0e212eb884e7bc"
+      },
+      {
+        "file": "assets/chevron-right-CMpCf-9_.js",
+        "bytes": 164,
+        "sha256": "084b5bf07f4eda8a47a5f96426e8163521b7da37ed26b875fa9cf697890a9b0b"
+      },
+      {
+        "file": "assets/circle-alert-DOdygcdv.js",
+        "bytes": 304,
+        "sha256": "7f092a64853b521295ac519daea27dc92f55d8f448d707bb808568f8638029b8"
+      },
+      {
+        "file": "assets/circle-check-CBxcxaz-.js",
+        "bytes": 244,
+        "sha256": "2a8f1c47ae2c371331171f4d725777b6984cc748af4b7d1d485e8b6e2cbcee78"
+      },
+      {
+        "file": "assets/circle-x-08A37XsM.js",
+        "bytes": 262,
+        "sha256": "7dd4ed23c246d5ce8b1ebd0b148b3dec4c59cbce30a510fe722c45a309e92e11"
+      },
+      {
+        "file": "assets/ClassPilotAdminShell-CiMi-V5u.js",
+        "bytes": 6243,
+        "sha256": "c96ef3a2ffbedde45e5b0e7cf90304722d51bce3b6cca019d4f7e648ea83c09f"
+      },
+      {
+        "file": "assets/ClassPilotLanding-D2GwBhwR.js",
+        "bytes": 31152,
+        "sha256": "c09f23d2d3e95e6d13b78be9830c6850784001a92ad7f3e234789a1f033dab53"
+      },
+      {
+        "file": "assets/ClassSourceSetup-DfwJeQXA.js",
+        "bytes": 20200,
+        "sha256": "533930f24063f8cd3ba9373130194fd041056037c9aa0ec9e2184d8caaf81903"
+      },
+      {
+        "file": "assets/ClassToolsPanel-DRqsOpub.js",
+        "bytes": 16983,
+        "sha256": "8c13e6d4a4f32c7854ee1e637aa13e628da1396d6fdfedbeb7ab1697c4a60a9a"
+      },
+      {
+        "file": "assets/ClassToolsPresentation-CJ8Ncpz3.js",
+        "bytes": 2817,
+        "sha256": "2b1684179c99f3c954da65afda91fc11cbb0494fc9b1b253d9cb59d18650fa96"
+      },
+      {
+        "file": "assets/clipboard-HNBfJEdg.js",
+        "bytes": 290,
+        "sha256": "ae27bcade190b386157377185abe0684e7c0ae8cbc138035ee9c1ab1af7fb91e"
+      },
+      {
+        "file": "assets/clipboard-list-Cz23bIkh.js",
+        "bytes": 445,
+        "sha256": "c5c58b9c14e660ca6af009e1a8acbc651a3990bee4122844c5e0895514fca5c3"
+      },
+      {
+        "file": "assets/clock-3-f6wOPMTw.js",
+        "bytes": 203,
+        "sha256": "1460587db94c131ca906304118ad3f29f57ec7bc5d2e83a5d75284bcfce6c3c4"
+      },
+      {
+        "file": "assets/clock-DXht2f8H.js",
+        "bytes": 203,
+        "sha256": "4ef74da58f46ce84aec1044b35518ba0cc95166ed910920ed403c21f9515b5ec"
+      },
+      {
+        "file": "assets/copy-DPnssuFG.js",
+        "bytes": 265,
+        "sha256": "ace9336f32b83b4f3224fceb5c8ae59c97ceacf8ecf03441ac73d566736e9cf6"
+      },
+      {
+        "file": "assets/Coverage-DhcCShb5.js",
+        "bytes": 54970,
+        "sha256": "1ee44ee1e1ab0215272eb33739149f15a5b591efb0cff4fc4044d9b507954e70"
+      },
+      {
+        "file": "assets/CreateSchool-CU7v_Ulm.js",
+        "bytes": 18511,
+        "sha256": "49ad529ad6c0a081408d2b01f20d77e08013a7b224d616ac952c663a162e3a70"
+      },
+      {
+        "file": "assets/Dashboard-C4W4TgAf.js",
+        "bytes": 515372,
+        "sha256": "993d8d8afbe0b20cc3a0746c8aeb13392e2ecd92a861c62e94daf0ea255647bf"
+      },
+      {
+        "file": "assets/Dashboard-D9yryEiH.css",
+        "bytes": 394,
+        "sha256": "3a2d9ded883faa0dd4a20ad9837785cb82fc83ea7d7988b6ae800eabae00b981"
+      },
+      {
+        "file": "assets/Dashboard-Dxm7pkCp.js",
+        "bytes": 201506,
+        "sha256": "3218edf72e81d7f205e13f8ef4f88547f24a41715a60b6925f7fe78108c70075"
+      },
+      {
+        "file": "assets/DayPicker-DMZ1Trnf.js",
+        "bytes": 48081,
+        "sha256": "644b91aa2d80392f64ddb7cf3bc0f61303ff98e04bcc745abdd70ba2ed15d8e7"
+      },
+      {
+        "file": "assets/DeleteAccount-BaO0NJjV.js",
+        "bytes": 3880,
+        "sha256": "be4406b0340dcb53ff3bc1931150a320c1119ae00fb3fe47165e33754cd50c75"
+      },
+      {
+        "file": "assets/dialog-CaSM0zZ3.js",
+        "bytes": 2049,
+        "sha256": "2f505e6ac5ffeb1aa21a3ec268ad4de5bda2938e4a5bf8e3d150f923b067b104"
+      },
+      {
+        "file": "assets/DismissalDashboard-C2FzdrN3.js",
+        "bytes": 68912,
+        "sha256": "81e6a1d23af3f42a146b7797ce7a88caf6339988b3ba2bba06e62660f2208854"
+      },
+      {
+        "file": "assets/download-Cw-n48JD.js",
+        "bytes": 266,
+        "sha256": "2648390d925e6a21aa7fb815732da5ec31c4c1d305e0953f0951cfd62d212ffd"
+      },
+      {
+        "file": "assets/dropdown-menu-D2oUTP-o.js",
+        "bytes": 1292,
+        "sha256": "2d22521b0a3eea9b20e958024d4e32b651cf5f45192325a777f9425b0931a40d"
+      },
+      {
+        "file": "assets/EditStudentDialog-Dbg2mb-r.js",
+        "bytes": 3711,
+        "sha256": "0102a694c64e8f30c236dc750d7c8cd7d8cb87d4ac67ac12e257dce289f5dcb3"
+      },
+      {
+        "file": "assets/ellipsis-X4raKRk3.js",
+        "bytes": 288,
+        "sha256": "38d692e98c33109ae17e5183f17be98de6eb3fa35f667ae171a72906383e1f4d"
+      },
+      {
+        "file": "assets/EmailMonitoring-BJahTQF2.js",
+        "bytes": 11360,
+        "sha256": "6329f451a93add709926577ee210be0d512dff377408ca009fff9faabe80ec47"
+      },
+      {
+        "file": "assets/EmailMonitoringSetup-BRf-Oio6.js",
+        "bytes": 11404,
+        "sha256": "bb8c70c4e4e3f8fe193fb9f3f07be039c21e6bdad7a91e8b1d88da3bab052763"
+      },
+      {
+        "file": "assets/external-link-CHLSeSOd.js",
+        "bytes": 285,
+        "sha256": "1ae7da8e1289c4b95a95cc3c7246f7df34479c601a49dd13f0914b3ac06e795c"
+      },
+      {
+        "file": "assets/eye-DwiIaMNv.js",
+        "bytes": 285,
+        "sha256": "75214b79e1619c1f8ac2ee1b3dc78067907eb6bc7b25323ca37999d66ee5820a"
+      },
+      {
+        "file": "assets/eye-off-CNK7pZk7.js",
+        "bytes": 464,
+        "sha256": "9631406bad91f83cce38e69f3ca56fcae80c90d0285553b71c96bb92a3097297"
+      },
+      {
+        "file": "assets/file-spreadsheet-mfNfn0Ty.js",
+        "bytes": 462,
+        "sha256": "4fb4bb734a05e7787f52df0972399991118368e33919c6ac12a64e1f8708dab5"
+      },
+      {
+        "file": "assets/format-Rio3kJ7e.js",
+        "bytes": 19788,
+        "sha256": "f5549c24300d9ae496475475f8a535b6a93f81eef994adcb207b1fd75de6ab89"
+      },
+      {
+        "file": "assets/GetStarted-RNIoRiU_.js",
+        "bytes": 8019,
+        "sha256": "4b5e3ef4f7a853d582b27f9453fa0c52896ae488c90aece9b58161fd68198530"
+      },
+      {
+        "file": "assets/GoogleRosterConnectorPanel-BnsjHfXu.js",
+        "bytes": 7546,
+        "sha256": "062c7a4dbd120b38c09d487930af730377522122a867ca79bef65ab30c87b44e"
+      },
+      {
+        "file": "assets/GoPilotAccessDenied--RANylIQ.js",
+        "bytes": 2169,
+        "sha256": "4458c73c66ed97a1e8c21c430c98c7d47f8c033a7003a039a1438e03d456b850"
+      },
+      {
+        "file": "assets/GoPilotLanding-cNiOeE5f.js",
+        "bytes": 11600,
+        "sha256": "7f1fce59ae3ffc2a2fb2e4cea674910bbee6144505b07a055b8a0043336e32e6"
+      },
+      {
+        "file": "assets/graduation-cap-CNHUDByF.js",
+        "bytes": 366,
+        "sha256": "52ced1f7b4e7e884edcc3bc4093ab156c378a2942ca6751eef2605ae70bc8ca2"
+      },
+      {
+        "file": "assets/GuideLayout-ueoLCwWp.js",
+        "bytes": 12620,
+        "sha256": "febd354aa2ac9401d42708e3ecdcd7d3d3fc6e688cac986d176644f3213e5dfd"
+      },
+      {
+        "file": "assets/HecvatLite-BjI82Fnf.js",
+        "bytes": 19452,
+        "sha256": "99d556adaf340508725344b693d97b9095b9fe773876a92d2f1d1faa98290b67"
+      },
+      {
+        "file": "assets/house-DxxbLnrn.js",
+        "bytes": 332,
+        "sha256": "5241f36b9f63a7bee2cd0d340026473718fc5259d6a23608e87e20b64a13ee0f"
+      },
+      {
+        "file": "assets/ImportInClassPilotNotice-CehFnIKq.js",
+        "bytes": 1803,
+        "sha256": "b5aadb7d108d54de844f271873554394095ae2f584f4edfe099bce8612f2f4c9"
+      },
+      {
+        "file": "assets/index-Ba0KyBmb.js",
+        "bytes": 618,
+        "sha256": "0ba80098dc8a23b33fd1283ed8c06f89a9ac89a9b74d5f7a6f5c514540505b09"
+      },
+      {
+        "file": "assets/index-BaoI4lKB.js",
+        "bytes": 8960,
+        "sha256": "3504d6008e6a98591437f30d9b42acf37576b619fc3f3f4df099f90c6340e392"
+      },
+      {
+        "file": "assets/index-BtbKi_If.js",
+        "bytes": 412,
+        "sha256": "d55f20a50df4e1b6b25ff2bd504cc02450f9de75ba1c155defbd21c6e894e6da"
+      },
+      {
+        "file": "assets/index-Bvh7IcZA.js",
+        "bytes": 645,
+        "sha256": "c8f085a34ad513dcb6b6d7373bb64d2d06f2982b102ca2b907df1ff8a57e1d29"
+      },
+      {
+        "file": "assets/index-CCdEzZo3.js",
+        "bytes": 454997,
+        "sha256": "24bf442802a9dc065b1babd719b16396563c6b0cea61ff4cca95b5fb84c6629e"
+      },
+      {
+        "file": "assets/index-DNi1GPeU.css",
+        "bytes": 183483,
+        "sha256": "6b50d4215f96ce346ac67d6fba867fed87686ea94469d1e0a1cb92bc76f07c0e"
+      },
+      {
+        "file": "assets/input-DA9hfId1.js",
+        "bytes": 566,
+        "sha256": "8ce101ad9b9c3888dff47e8a1e53117de45d83ee8e2be7a4f62cd23bfeec2069"
+      },
+      {
+        "file": "assets/Inquiries-XGoKe2pz.js",
+        "bytes": 9909,
+        "sha256": "7601d882f54632e4dd32e45d148bc5fe366812bfc8512eec8f2532b4fb841606"
+      },
+      {
+        "file": "assets/ITReadiness-BUEl3vX0.js",
+        "bytes": 15269,
+        "sha256": "814d0475d15fe15eaeeb502b58e11252eb9b54c435605e9ea568ff79ea8c868d"
+      },
+      {
+        "file": "assets/key-round-B7AEwD93.js",
+        "bytes": 389,
+        "sha256": "aceb899c2d33d4ec082f03605e07ea2545450e6262003bd0537dafdb6c33ceaf"
+      },
+      {
+        "file": "assets/Kiosk-PoBvyWCz.js",
+        "bytes": 17134,
+        "sha256": "33454fd89cf49196a39409aa538f94541597fae5f3c579dba16caa4953273d73"
+      },
+      {
+        "file": "assets/KioskSimple-BLnNmUPM.js",
+        "bytes": 21473,
+        "sha256": "330db8e8a9e3d165225cf8c5d0c07ffd35edbea92acd248972731e5f5546694a"
+      },
+      {
+        "file": "assets/label-BKknCPac.js",
+        "bytes": 347,
+        "sha256": "448e338f82a70d16324e4a89b6efa6e7b760b5b537dc7212df94525e6f1e1c00"
+      },
+      {
+        "file": "assets/layers-CbApF_Iz.js",
+        "bytes": 476,
+        "sha256": "e15efbb96bd7277656a814ff3fd0f6ff5473532ded26603d1c4c8d88a786eda3"
+      },
+      {
+        "file": "assets/loader-circle-uiH1vpDy.js",
+        "bytes": 199,
+        "sha256": "ecb425499adaa58ebf22bedbf65d17fedc84d8bee4bb26bf579baf6f20fcd3fb"
+      },
+      {
+        "file": "assets/lock-BJe0qSKx.js",
+        "bytes": 240,
+        "sha256": "3b28682c4d76c774b47a77ca340df24ef19263fdf8d066ca6934779f4dbfa983"
+      },
+      {
+        "file": "assets/log-out-CvUfbxiN.js",
+        "bytes": 264,
+        "sha256": "94d37870bef8898d60512b5ce5be9e9993ad4b4832c4637534bbb11bc0c42655"
+      },
+      {
+        "file": "assets/mail-pqTcSWL1.js",
+        "bytes": 247,
+        "sha256": "3341d9bf35c1a70ad3955a1cfc258170901c7c4556f03282d79fb4753cacc762"
+      },
+      {
+        "file": "assets/megaphone-8s2sqskY.js",
+        "bytes": 380,
+        "sha256": "4291e5f226f8fa3c99dad1993c52363f5335f1236c8dcfdc6fac65dda8ea7286"
+      },
+      {
+        "file": "assets/monitor-B9EZGV_n.js",
+        "bytes": 553,
+        "sha256": "82307c8c1b7cc05b0ba0cacf6ce643f0733f4cdd11e97ff5f4835db2320632a9"
+      },
+      {
+        "file": "assets/Monitoring-lcLKsZOJ.js",
+        "bytes": 24702,
+        "sha256": "cbee2adc2e291ac40fc061f27dff88c6fe999044ea6b9732ff4ddeaa47f5afa3"
+      },
+      {
+        "file": "assets/MonitoringInterruptionsPanel-XhNCF00a.js",
+        "bytes": 15387,
+        "sha256": "74c0778fa90d4b108aba692e0f6bd5695d3472168027d8475c7b73ca578b1673"
+      },
+      {
+        "file": "assets/MySettings-BKSDZ6-Z.js",
+        "bytes": 57316,
+        "sha256": "ffc62b8dadc0d1559a554b1261756460120fd59bb0d1dd77c0f87ae964c16b08"
+      },
+      {
+        "file": "assets/passData-9rIiC7BI.js",
+        "bytes": 6518,
+        "sha256": "2761f6770749e841f7d9a4ef1cd21a67c6afada47b8b4de9230b29ecdc4bd166"
+      },
+      {
+        "file": "assets/PassPilotLanding-CQtOHVLa.js",
+        "bytes": 8671,
+        "sha256": "8e13a609fff96c3970fb7e5e705dae4b2b3c1a83a3415c9dc3d0def0672fef6b"
+      },
+      {
+        "file": "assets/pickupZones-DTEz58pA.js",
+        "bytes": 221,
+        "sha256": "049fe97349d17903c61443ef8e6ee5b4dc0f8417113dacadf92f2b51c7d45eaa"
+      },
+      {
+        "file": "assets/popover-DeNul_K2.js",
+        "bytes": 832,
+        "sha256": "13d28b7e161588b4ff8214d7fb6aee148f4c35f1694be008a0e488c8a8e027b6"
+      },
+      {
+        "file": "assets/PrivacyPolicy-Yru0twBo.js",
+        "bytes": 23097,
+        "sha256": "d8e99c2b566ac7707a462e9a58cd9c75f3e0a8625cf52b7a1d0123f9cc12159e"
+      },
+      {
+        "file": "assets/refresh-cw-wwezUObJ.js",
+        "bytes": 355,
+        "sha256": "e42cf18f5aeadafddeee42bf908d53fc581bd4b575a4396058f1e7fcccfaf781"
+      },
+      {
+        "file": "assets/ReportsV2-DJ9H0jlC.js",
+        "bytes": 14352,
+        "sha256": "32e67675732dd8deb80240fab5009a9bae43e0391b744d703beed69b0bd00368"
+      },
+      {
+        "file": "assets/RestrictionScopeReview-CiZRH4wL.js",
+        "bytes": 10825,
+        "sha256": "77baa23a1fc7d8ff4e75afb82eb1c35fe8f380e84d9dc7ac04cc8bd2b5be620a"
+      },
+      {
+        "file": "assets/Roster-Cq0bKD0X.js",
+        "bytes": 24604,
+        "sha256": "6966d762c556e588fec45a23dbe92ad9e3eea11aa9f2a4f3b99370906e4b4c4b"
+      },
+      {
+        "file": "assets/rotate-ccw-clock-CW5GPpFx.js",
+        "bytes": 300,
+        "sha256": "c5a7e5d5987c38446d09aeccbc4ec7ef9883d08cf788bef8ea8d70e854eda025"
+      },
+      {
+        "file": "assets/rotate-ccw-CWBgxW9z.js",
+        "bytes": 234,
+        "sha256": "6726ab1d4479055f6e47460ff111c5c5fbb76a567107ca376ed1620b1206a899"
+      },
+      {
+        "file": "assets/route-CMoWIaFu.js",
+        "bytes": 288,
+        "sha256": "ab848dbcf0f37417e136338dd05e95e8477c37c64c86e28d790dd508a18bb312"
+      },
+      {
+        "file": "assets/RulesTab-AoLp4LS3.js",
+        "bytes": 14470,
+        "sha256": "24fc64835d2717e93749a2e4a0fe4ae343c5d4773f48051610222e3b081592c4"
+      },
+      {
+        "file": "assets/SafetyCenter-CtaRf_18.js",
+        "bytes": 16872,
+        "sha256": "da13d6478812631170db7a71b7c55c46573f8c2aa84f4edf04573338d531da3e"
+      },
+      {
+        "file": "assets/save-CaMGCogD.js",
+        "bytes": 361,
+        "sha256": "cf5577e0b04e6197e4026d1d20429fe802623a4df8ac7690f38dfb6915404b50"
+      },
+      {
+        "file": "assets/ScheduleChanges-C7QGVKyc.js",
+        "bytes": 6028,
+        "sha256": "5fff02c396136624c173900f0feb0241b0bfef46f682bfcaaa87fc00f0a2600b"
+      },
+      {
+        "file": "assets/scheduleChanges-Cb4Tru9I.js",
+        "bytes": 4691,
+        "sha256": "ad1e2ec23bd257345659d863857e0a805bcf5cff15d0e664de5607621168c48f"
+      },
+      {
+        "file": "assets/ScheduleRouteTabs-aZXLa2mZ.js",
+        "bytes": 2897,
+        "sha256": "ce7ceadba6bc8e018ce22a24544bd7d0e76f252e1561bdf56bba1fb6bd258fec"
+      },
+      {
+        "file": "assets/school-DqRs8NJp.js",
+        "bytes": 489,
+        "sha256": "79654bb5874dfdfac2d3f4d9f48e3da17b58b350677e58a73678d16e97b990fd"
+      },
+      {
+        "file": "assets/SchoolCalendarMonth-szqvgbBn.js",
+        "bytes": 23416,
+        "sha256": "d09d7e78ffe84abb7419b524b763deb435623609fc61b7f5fb29a7a76bdb0e70"
+      },
+      {
+        "file": "assets/SchoolDetail-BACHr8e-.js",
+        "bytes": 39484,
+        "sha256": "0e25db3aec18288f1ec66e2cb41cb49ba1d3db74322c76f774088b515ae9bd75"
+      },
+      {
+        "file": "assets/SchoolsList-B-rTyoIs.js",
+        "bytes": 16104,
+        "sha256": "71e0942687ad5a87a27c8d92ed816496d0f102ec31185ca2341aaa6d45bfee5c"
+      },
+      {
+        "file": "assets/SchoolYearSetup-BkT9FojN.js",
+        "bytes": 4919,
+        "sha256": "5576a27e4679b9fe08ba60b90c385cae7e39bf8e6e7d1015ddc43ded77665655"
+      },
+      {
+        "file": "assets/search-DB4VaprE.js",
+        "bytes": 203,
+        "sha256": "214184e2ee280630e36589d2af6c54cf53ba7059526653cfdb4ad2318964efd3"
+      },
+      {
+        "file": "assets/Security-OzP13fKg.js",
+        "bytes": 10304,
+        "sha256": "bfd7d040092e4aaf6e07d50725333bf0c914ad6b79266d01baf671ad3a515db3"
+      },
+      {
+        "file": "assets/SecurityPostureList-C2-U_3Pf.js",
+        "bytes": 6280,
+        "sha256": "cf501ff4321e41854945cd3aff597d77e6d4622594fffd25bc6b0a55dafd5570"
+      },
+      {
+        "file": "assets/SecuritySummary-Ce4B7KGa.js",
+        "bytes": 2879,
+        "sha256": "fbfa819bc6e23d1b1bf487a7998e2d6eaeaf97a7c72f61c081e3121d3806b87c"
+      },
+      {
+        "file": "assets/select-BPp8z2S2.js",
+        "bytes": 2889,
+        "sha256": "e36e3a948b5deccc7ae6ca45201fe31067e5d25b79ee256033db4d079066a8c2"
+      },
+      {
+        "file": "assets/selectedClassSession-DHTOid74.js",
+        "bytes": 2316,
+        "sha256": "d1cf1526ad4c0a62b72e15366b350e5b41fe812ecd464951d256cb95b131ba42"
+      },
+      {
+        "file": "assets/send-Bg1PhO9L.js",
+        "bytes": 324,
+        "sha256": "393226c6be383bea5bb54802e09d45ca95faa69dd6ef0787ecda1f5d99eb8fd1"
+      },
+      {
+        "file": "assets/settings-CTwZbCFF.js",
+        "bytes": 516,
+        "sha256": "68b70e5f25fbc16b843bd08f4c3ec11a48a674befbfe6e70f3f002f5d232eea9"
+      },
+      {
+        "file": "assets/Settings-urXNfB4U.js",
+        "bytes": 23992,
+        "sha256": "94506f20c5b2b3b56dcc33dbf7dc0f68ce8a18adf27eedacda6d88a57f5ccee8"
+      },
+      {
+        "file": "assets/SetupWizard-B60E-wXx.js",
+        "bytes": 149059,
+        "sha256": "d72d779d8c43d9da90f267522179216d378b72d0829f6e9d27870fbef9aa59f7"
+      },
+      {
+        "file": "assets/sheet-BIBmQO1V.js",
+        "bytes": 2141,
+        "sha256": "d23ac61451f92a7a24f0eeee330b45d9e34c466e594d7684de8e79b4ceaae5d3"
+      },
+      {
+        "file": "assets/shield-alert-CoIFjDB1.js",
+        "bytes": 387,
+        "sha256": "cdd174f0b85cd8fdb7ff7872c0f90c160f6efc6bc7c6baf58647af1d05774227"
+      },
+      {
+        "file": "assets/shield-BMrLGFgz.js",
+        "bytes": 306,
+        "sha256": "f07fb8d842f03ee693552467168842d9152e25313cebcb32f438b8e57b4c97b6"
+      },
+      {
+        "file": "assets/shield-check-DDUZPp-J.js",
+        "bytes": 354,
+        "sha256": "a45c4d6419e52cda9c70dfbd30d3055c367fa018340e8786fffd4f18e24ce1d2"
+      },
+      {
+        "file": "assets/skeleton-DuNeeAB3.js",
+        "bytes": 217,
+        "sha256": "ccbd094b309e9ea6ea9545f224ed8d5c8f03a8603d8cd6f3870fd4b5c4445eba"
+      },
+      {
+        "file": "assets/Soc2-BqVt9FSi.js",
+        "bytes": 19619,
+        "sha256": "091ea525bca7a3e1d2e61e41406a502fc467780a9a9d9ad2a8be06b3d66d19d5"
+      },
+      {
+        "file": "assets/sparkles-CtuWyy9z.js",
+        "bytes": 546,
+        "sha256": "605fc309ea85b4756b9dfd50769442a6d27030d3f04494fd644996e420de175b"
+      },
+      {
+        "file": "assets/square-pen-PCWaOziO.js",
+        "bytes": 394,
+        "sha256": "49ef3c0e9fa05c41d492fd72264a0bced88d5e8ca30e351369888531ff470caf"
+      },
+      {
+        "file": "assets/StaffAccessTransitionDialog-qyOXlSme.js",
+        "bytes": 10032,
+        "sha256": "b176c639fe32885c3dd31de9350ed69fbc6a7c20954f3a918a5ea0a58af12dc4"
+      },
+      {
+        "file": "assets/StudentDataDialog-DiA6d13m.js",
+        "bytes": 28904,
+        "sha256": "ce5f16a882bb7e29d4f6c151a024d6125c604090f93356b02feeb504982e3c38"
+      },
+      {
+        "file": "assets/Students-Cb1JaB_X.js",
+        "bytes": 54539,
+        "sha256": "22ba5b5d6f18c9c1be858802b5d24ade02d2456c581abfd860f67a019a67012a"
+      },
+      {
+        "file": "assets/Subprocessors-CKIEk-hJ.js",
+        "bytes": 13457,
+        "sha256": "8978bea52d5728ea406ba63b5fc0771542511ff28a2d31a804c256a52238583f"
+      },
+      {
+        "file": "assets/supervisionDashboardNavigation-DLSM5czg.js",
+        "bytes": 14687,
+        "sha256": "127a2d6031c4e187bd03eb6dc6b1dc06747597d7f73a5ba99d42a9cb9233d39f"
+      },
+      {
+        "file": "assets/switch-xyNNvjTN.js",
+        "bytes": 828,
+        "sha256": "bfae05599db0693b79f716673abb86c09b60903ff44bd958ad3c962286fd8d71"
+      },
+      {
+        "file": "assets/table-w2tkYDE4.js",
+        "bytes": 1088,
+        "sha256": "e0c7abbcbfea2a9ae6e6fcecf0f215dd391c3b84008330fcd592a6f86a88373b"
+      },
+      {
+        "file": "assets/tabs-C4T8wfpX.js",
+        "bytes": 1056,
+        "sha256": "e23c3ff7060679a03f0b4bd26f4902ec94020165a6a5c24fc8ab7875fc0c05e4"
+      },
+      {
+        "file": "assets/TeacherGuide-a3aEOUHG.js",
+        "bytes": 27935,
+        "sha256": "2a71356e627bcf831ae88b21e464171e59605cd8c976528345ced7aa3748c92e"
+      },
+      {
+        "file": "assets/TeacherView-Cji2bAUX.js",
+        "bytes": 28088,
+        "sha256": "362261ca070fd5b705f8236475f1b9e1ac92c42c2e1d0d0655c1208f42dd9cb3"
+      },
+      {
+        "file": "assets/TermsOfService-CEmFo7so.js",
+        "bytes": 19262,
+        "sha256": "c7bd6d69e02b073b2fcc44e259e72e8c1836200f27b198e94a1fd809cd810ac4"
+      },
+      {
+        "file": "assets/testingSchedulePrefill-DgyqDmCz.js",
+        "bytes": 17250,
+        "sha256": "f1fd77ac560c95f29383421be2340646d429587cfb4ad120154f53cda0594357"
+      },
+      {
+        "file": "assets/textarea-0vvnnSqB.js",
+        "bytes": 461,
+        "sha256": "662d14696dd815673ad77f23159787516967aacd83b93048cd99b3ab1877a573"
+      },
+      {
+        "file": "assets/ThemeToggle-DBQ9gk3r.js",
+        "bytes": 1244,
+        "sha256": "6e0e3d64b882c20b60788d70c9b71b77b155ed008e4e399ea4c17ac250e2c97a"
+      },
+      {
+        "file": "assets/timer-CqQL_leW.js",
+        "bytes": 267,
+        "sha256": "a268e5d81f51d94279e1903ff8ac89eed1bfb687ec72579c155d36c73d31cc14"
+      },
+      {
+        "file": "assets/trash-Dalnx6V3.js",
+        "bytes": 518,
+        "sha256": "adfe690fc7f0ed688372afd40eca30d300da1bd46c864885fd26695c802cf100"
+      },
+      {
+        "file": "assets/triangle-alert-8is-99AK.js",
+        "bytes": 326,
+        "sha256": "f9f75a2c925f49913f2f794255df81e01155337c9da946ba64b702793e58b60b"
+      },
+      {
+        "file": "assets/triangle-B395M_u4.js",
+        "bytes": 772,
+        "sha256": "0c95c92135bb32183983d33f979bcefe53c49ca691da0c3ec624b74f1b46c8d3"
+      },
+      {
+        "file": "assets/upload-CJ3lOAAA.js",
+        "bytes": 264,
+        "sha256": "a4bfffe718374a0cc081717f9149baf5f8ab7edc4d7f50e8915d76ad3dba7db8"
+      },
+      {
+        "file": "assets/useAbsentStudents-BiU5HrDD.js",
+        "bytes": 1013,
+        "sha256": "c50171337ef2f1d744bd992e7f865f9ca9ac9a548b761c0956002b8ef493c692"
+      },
+      {
+        "file": "assets/useClassPilotAuth-C2CUXBYm.js",
+        "bytes": 1053,
+        "sha256": "31c19710f927b60ddecf99970edfbc4003e1b196765c472fff55635417a53ca0"
+      },
+      {
+        "file": "assets/useGoPilotAuth-Iun2Y5JV.js",
+        "bytes": 1550,
+        "sha256": "7bad6d7738cc98bdc32edb91e1bde502b84cf101c71938f5606728db9159b545"
+      },
+      {
+        "file": "assets/useKioskPollingController-BH_51LiX.js",
+        "bytes": 10697,
+        "sha256": "137f0b33fe7e952e0e2cfd67120c1c2b224b6163f5c663909177a889ec885a53"
+      },
+      {
+        "file": "assets/user-check-CWEd_TWV.js",
+        "bytes": 272,
+        "sha256": "883afda73d78cb6a162109d6b19c270c0470f9e551dd70b76acfdc92aad199ca"
+      },
+      {
+        "file": "assets/user-plus-BTl_Zewi.js",
+        "bytes": 344,
+        "sha256": "b2cf8b60d17e41586b0905ea5767a0a593a010b6f2d8fdabf678b1b2881eab58"
+      },
+      {
+        "file": "assets/useRosterGradeSettings-JzKTpAtG.js",
+        "bytes": 2242,
+        "sha256": "8af09b37a6127a8e1641146a4d106d6f0ee611db46a4b34a42b3178840cee47b"
+      },
+      {
+        "file": "assets/users-D4tIsU7H.js",
+        "bytes": 340,
+        "sha256": "72f05903d879a3367fcbeaff9dc0054e73d022eb12ce9e93a92a9241a85af0fc"
+      },
+      {
+        "file": "assets/useScheduleChangeRefresh-DI_AqniJ.js",
+        "bytes": 14767,
+        "sha256": "2ec02d124f35ba8418cade8ca47a52397a2627902599f37b2deebfd9c920f64d"
+      },
+      {
+        "file": "assets/vendor-charts-BgnIT9fy.js",
+        "bytes": 409,
+        "sha256": "55d8c25d5e450ae7221ec77fa402cf8f187a83f54bd7f63a9b058679aae0610c"
+      },
+      {
+        "file": "assets/vendor-forms-nap9VVhp.js",
+        "bytes": 116318,
+        "sha256": "960451d1bad4dbccf185e0a9aaa0ee5891415f5a63903f295d897977d1e567d2"
+      },
+      {
+        "file": "assets/vendor-query-De67fZpb.js",
+        "bytes": 40280,
+        "sha256": "677858cea9b7cd6068bc993a0bddb1c0438e2c360b47668b7d7c7fc15f3f3430"
+      },
+      {
+        "file": "assets/vendor-radix-BC8qFHVc.js",
+        "bytes": 139592,
+        "sha256": "2cb496a4b9793cc4b7160e428305e5a82d54d2b2c36b444e88f749f973a0edc6"
+      },
+      {
+        "file": "assets/vendor-react-DmHq5u7o.js",
+        "bytes": 50644,
+        "sha256": "98a59ebef934addb6770adcf1ef7b77016a682f48812edbfc29d860a5b1a12ec"
+      },
+      {
+        "file": "assets/web-DKcLyb0y.js",
+        "bytes": 261,
+        "sha256": "c0917426afa64fc67b404820a560580dc6f80549862c326564b9624674137c22"
+      },
+      {
+        "file": "assets/web-DoS637f2.js",
+        "bytes": 984,
+        "sha256": "3d9424f6d2debf598c57736bb1bf878726c29b10f2221c0602e1e591d579efca"
+      },
+      {
+        "file": "assets/zod-CdRrAd1u.js",
+        "bytes": 2716,
+        "sha256": "ea55f7078953cdda3b4eccb8664bd8099110f2f6d1abda3a2fa42d1c364fb0ab"
+      },
+      {
+        "file": "favicon.svg",
+        "bytes": 272,
+        "sha256": "18f2908fb86998cf44040fe59619e756eae8d03ea368f6a8f01f1d35b2263acd"
+      },
+      {
+        "file": "index.html",
+        "bytes": 1336,
+        "sha256": "78cda4b25731ef53278fce2b93710f61e275319c76fb5ccb08ccedb2c70d6bbd"
+      }
+    ],
+    "contentManifestSha256": "73fb95716e0ddbea37d85f090b714e82d6532e7eaa595994d2ef3e88c1b890d7",
+    "buildCommand": "npm run build",
+    "buildWorkingDirectory": "schoolpilot-app",
+    "published": false
+  },
+  "productionMutations": 0
+}

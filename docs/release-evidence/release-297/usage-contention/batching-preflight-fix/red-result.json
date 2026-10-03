@@ -1,0 +1,16 @@
+{
+  "toolChunk": "28a2bd",
+  "failures": [
+    "keeps ordinary batching active after a nonterminal preflight drain",
+    "nonterminal drain waits for cache writes and batches enqueued while draining"
+  ],
+  "pass": 0,
+  "toolSession": 42960,
+  "sourceState": "new tests added before production implementation",
+  "error": "batcher.drainPending is not a function",
+  "exitCode": 1,
+  "kind": "captured-tool-result-summary",
+  "tests": 2,
+  "command": "node --import ./tests/test-environment.mjs --import tsx --test --test-name-pattern=\"nonterminal\" tests/heartbeat-hot-path-optimization.test.ts",
+  "failed": 2
+}

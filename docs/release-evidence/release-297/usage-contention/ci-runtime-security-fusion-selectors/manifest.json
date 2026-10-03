@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T06:48:20.032Z",
+  "status": "test_only_followup_passed_capacity_still_failed",
+  "scope": "Test-only selector correction after failed CI. No application changes; no native database rerun.",
+  "source": {
+    "head": "ff6b4c96d9b2db7fe11514d7dcd63bea36bdd32f",
+    "test": {
+      "path": "tests/classpilot-runtime-security-contract.test.ts",
+      "beforeSha256": "82a216db107edc7d5b1bcc33317ed7a423b8570a0cfec50cdef34d2226af9e9e",
+      "afterSha256": "e8a85cefd90d83f0102792925b7086b4f170213b55c40e4aed74260c7acabb58",
+      "proposalSha256": "3f1aca3a922124498f82fe60f56f7c7b1ff70b2a0894fe03e14cf7d547286c63",
+      "proposalAndAppliedEqualAfterCRLFNormalization": true
+    },
+    "applicationBindings": [
+      {
+        "path": "src/services/storage.ts",
+        "sha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105"
+      },
+      {
+        "path": "src/routes/classpilot/devices.ts",
+        "sha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193"
+      }
+    ],
+    "applicationPackageDiffToHeadEmpty": true
+  },
+  "failedCi": {
+    "log": "failed-ci-db-job.log.gz",
+    "originalSha256": "f06d4d7cf11cfdd25adcbbbfecb850f34c58fca01e0647bbcdedcc8a5f956e9d",
+    "cases": [
+      "FAB regex still selects old public delivery wrapper",
+      "Tracking policy regex counts direct route projection instead of owned reader and selects old public core body"
+    ],
+    "interpretation": "Two obsolete static selectors: public delivery name and direct route projection. These are preserved failures, not functional passes."
+  },
+  "followup": {
+    "result": {
+      "tests": 67,
+      "pass": 67,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0
+    },
+    "receipt": "followup-result.json.gz",
+    "patch": "runtime-security-selectors.patch.gz",
+    "preservedAssertions": [
+      "one FAB build under exact final transaction",
+      "explicit requestFabState or pending sync only",
+      "one negotiated projection reader, no direct route/persistence projection",
+      "same-transaction projection through heartbeat wrapper into private core",
+      "shared SSO lock before required preparation",
+      "tracking-window capability bypasses short circuit; delivered control revision retained"
+    ]
+  },
+  "performanceComparison": {
+    "file": "failed07-08-compact-comparison.json.gz",
+    "status": "both failed",
+    "scope": "Selected content-free scalar metrics; raw originals unchanged; no capacity claim."
+  },
+  "limits": [
+    "No dedicated before/after snapshot was captured for this focused command. Applied test content matches the external proposal after CRLF normalization; exact applied and proposal hashes are separately retained. Current application/package diff to frozen ff6 is empty.",
+    "Earlier native owner23/restricted23 proof is separate and is not relabeled rerun.",
+    "CI failure log remains unchanged; full affected CI lane must rerun after checkpoint."
+  ],
+  "sanitization": "User paths, connection URLs and JWT-shaped values removed; raw originals retained. Original, sanitized and gzip hashes verified.",
+  "files": [
+    {
+      "file": "after.test.ts.gz",
+      "originalSha256": "3f1aca3a922124498f82fe60f56f7c7b1ff70b2a0894fe03e14cf7d547286c63",
+      "sanitizedSha256": "3f1aca3a922124498f82fe60f56f7c7b1ff70b2a0894fe03e14cf7d547286c63",
+      "archiveSha256": "85b76199f1463306a9f20d06d131940929bcd0d10b376cff8be4888ba561cd6c",
+      "sourceBytes": 52949,
+      "archiveBytes": 11554,
+      "gzipVerified": true
+    },
+    {
+      "file": "applied.test.ts.gz",
+      "originalSha256": "e8a85cefd90d83f0102792925b7086b4f170213b55c40e4aed74260c7acabb58",
+      "sanitizedSha256": "e8a85cefd90d83f0102792925b7086b4f170213b55c40e4aed74260c7acabb58",
+      "archiveSha256": "550e2aba8bc92f94c08602078ad5ecccb77376282cb860c8de3e50441f0316bb",
+      "sourceBytes": 52986,
+      "archiveBytes": 11515,
+      "gzipVerified": true
+    },
+    {
+      "file": "archive-precheck-01.log.gz",
+      "originalSha256": "cdcdbf04bd45d4c92a64fb9488487c43193993c778cb4a5dae86c9b3d678f808",
+      "sanitizedSha256": "68a6f271df839385179e2148cece41d23b7c95e64a025b7b17e31e0a26d2b98a",
+      "archiveSha256": "28a4343306ca5785b52cae04f27c2ffcd78244bf539302cca14a03a04fd2559b",
+      "sourceBytes": 918,
+      "archiveBytes": 522,
+      "gzipVerified": true
+    },
+    {
+      "file": "before.test.ts.gz",
+      "originalSha256": "82a216db107edc7d5b1bcc33317ed7a423b8570a0cfec50cdef34d2226af9e9e",
+      "sanitizedSha256": "82a216db107edc7d5b1bcc33317ed7a423b8570a0cfec50cdef34d2226af9e9e",
+      "archiveSha256": "5a663cabe2182fe88d867823d380281191ebeab8943e07a7c80422e9e1424827",
+      "sourceBytes": 52123,
+      "archiveBytes": 11399,
+      "gzipVerified": true
+    },
+    {
+      "file": "failed07-08-compact-comparison.json.gz",
+      "originalSha256": "2cfcc1cb805574e57d7951750a1075dbd83a95297cefcc2a8202df368aad0ec4",
+      "sanitizedSha256": "2cfcc1cb805574e57d7951750a1075dbd83a95297cefcc2a8202df368aad0ec4",
+      "archiveSha256": "a8d829a2835c89100ae6d23ed41fa0b161092c8f382cf7893f85f6ce9da5d283",
+      "sourceBytes": 13055,
+      "archiveBytes": 2745,
+      "gzipVerified": true
+    },
+    {
+      "file": "focused-01.log.gz",
+      "originalSha256": "7f9e9c79f393d90372a6046ca0c9df7d65d02c3f07f96caa40842475483a0e81",
+      "sanitizedSha256": "7f9e9c79f393d90372a6046ca0c9df7d65d02c3f07f96caa40842475483a0e81",
+      "archiveSha256": "1e926c96b5c9c1eda1bddedabd0322e0c4652b48e39b5e21d64c902d9ad3ee30",
+      "sourceBytes": 19265,
+      "archiveBytes": 4066,
+      "gzipVerified": true
+    },
+    {
+      "file": "followup-result.json.gz",
+      "originalSha256": "867469a919e61feab44b6b273f62660db31c446574a496a5d3e1890fd721fc22",
+      "sanitizedSha256": "867469a919e61feab44b6b273f62660db31c446574a496a5d3e1890fd721fc22",
+      "archiveSha256": "0254eef0a9dbf33d805733a04a3827306e80a6e71d6d903650e38635adc61b1f",
+      "sourceBytes": 2239,
+      "archiveBytes": 1141,
+      "gzipVerified": true
+    },
+    {
+      "file": "receipt.json.gz",
+      "originalSha256": "bad2ee6f410c426b6b2e7cd72e457600658e9ccbd242d710aedbcb0665385929",
+      "sanitizedSha256": "bad2ee6f410c426b6b2e7cd72e457600658e9ccbd242d710aedbcb0665385929",
+      "archiveSha256": "dc0e99137afdcbb56b2a7b65081276c2cdb0255beec93d5a7668b0ba12966047",
+      "sourceBytes": 1412,
+      "archiveBytes": 775,
+      "gzipVerified": true
+    },
+    {
+      "file": "runtime-security-selectors.patch.gz",
+      "originalSha256": "c6879b5eb68523d26f5d80fd72d59f895086baffb6ab8dda451d47f1127f7f31",
+      "sanitizedSha256": "c6879b5eb68523d26f5d80fd72d59f895086baffb6ab8dda451d47f1127f7f31",
+      "archiveSha256": "14b225240a433d90a86834d7d87368040f59c01383c8258181a3747b87a7b06b",
+      "sourceBytes": 3870,
+      "archiveBytes": 1092,
+      "gzipVerified": true
+    },
+    {
+      "file": "failed-ci-db-job.log.gz",
+      "originalSha256": "f06d4d7cf11cfdd25adcbbbfecb850f34c58fca01e0647bbcdedcc8a5f956e9d",
+      "sanitizedSha256": "73b0f59ba6cc6af79d24e6a7cf9012920cc3599b72e01f025256575367a303fc",
+      "archiveSha256": "2029ca71c83df0e1d4878bb3c4f28dbc93d70ea7987a6d939d57fbad5473b03a",
+      "sourceBytes": 2676634,
+      "archiveBytes": 376943,
+      "gzipVerified": true
+    },
+    {
+      "file": "prepare-selector-patch.mjs.gz",
+      "originalSha256": "f352fcf072455a906c994e628231caf72d3b04348d20e13255cb90b0e4809fe4",
+      "sanitizedSha256": "f352fcf072455a906c994e628231caf72d3b04348d20e13255cb90b0e4809fe4",
+      "archiveSha256": "9ebb3acc9cd3856fae65fd30dd90350cae1738055fdba30a5d55bf0771857e81",
+      "sourceBytes": 5040,
+      "archiveBytes": 1701,
+      "gzipVerified": true
+    }
+  ]
+}

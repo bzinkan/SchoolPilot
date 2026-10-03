@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T23:05:47.788Z",
+  "command": "npm run test:unit",
+  "sourceState": "Uncommitted Usage corrections on 08802d020a3c51beea504140f923126ab518aac6; not final acceptance.",
+  "exitCode": 1,
+  "tests": 1709,
+  "passed": 1704,
+  "failed": 1,
+  "skipped": 4,
+  "failure": "classpilot-signin-ingress-diagnostics.test.ts retained a source-order assertion for the formerly unwrapped apiLimiter. It did not find the now guarded limiter. Updated assertion requires the actual guarded limiter and preserves the ordering invariant.",
+  "subsequentFocusedResult": "4/4 passed; a complete suite rerun is still required.",
+  "rawSha256": "aa2abf912fab57db9e621bb755b73087c1ab535b31793e782b3f97434230cd47",
+  "sanitizedSha256": "5547aa785890def99ce8e357cb1b9b451bda7fa57c096d117c8623b9177be894",
+  "archive": "unit-attempt-01.log.gz",
+  "archiveSha256": "7cdebfb69e402db861130acd676569964e282cc880c3edbb0e46982124b8990f",
+  "productionMutations": 0
+}

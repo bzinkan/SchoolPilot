@@ -1,10 +1,13 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 // RLS_SERIAL: meaningful only on the restricted, non-owner CI role with
 // RLS_GUC_ENABLED=true and classpilot_usage_rollups in RLS_ENABLED_TABLES.
@@ -127,7 +130,7 @@ after(async () => {
     // schools are retained records that cannot be hard-deleted.
     const bestEffort = (text: string, values: unknown[]) => system!.query(text, values).catch(() => undefined);
     if (system && schoolIds.length) {
-      for (const table of [TABLE, "heartbeats", "audit_logs", "students", "settings", "school_memberships", "product_licenses"]) {
+      for (const table of ["classpilot_usage_rollup_days", TABLE, "heartbeats", "audit_logs", "students", "settings", "school_memberships", "product_licenses"]) {
         await bestEffort(`DELETE FROM ${table} WHERE school_id = ANY($1::text[])`, [schoolIds]);
       }
       await bestEffort("DELETE FROM users WHERE id = ANY($1::text[])", [userIds]);
@@ -147,6 +150,8 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.ok(new Set((process.env.RLS_ENABLED_TABLES ?? "").split(",")).has(TABLE));
     const forced = await system!.query("SELECT relname FROM pg_class WHERE relname = $1 AND relrowsecurity AND relforcerowsecurity", [TABLE]);
     assert.equal(forced.rowCount, 1);
+    assert.ok(new Set((process.env.RLS_ENABLED_TABLES ?? "").split(",")).has("classpilot_usage_rollup_days"));
+    assert.equal((await system!.query("SELECT 1 FROM pg_class WHERE relname='classpilot_usage_rollup_days' AND relrowsecurity AND relforcerowsecurity")).rowCount, 1);
   });
 
   it("never turns school B heartbeats into school A rows on the scheduler pool", async () => {
@@ -193,6 +198,14 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.equal(deleted.rowCount, 0);
     const survived = await system!.query(`SELECT SUM(seconds)::int AS seconds FROM ${TABLE} WHERE school_id = $1`, [b!.schoolId]);
     assert.equal(survived.rows[0].seconds, 210);
+    await assert.rejects(inSchool(a!.schoolId, () => db.execute(sql`
+      INSERT INTO classpilot_usage_rollup_days(school_id,usage_date,day_start_at,day_end_at,processed_through)
+      VALUES(${b!.schoolId}, '2026-09-01', '2026-09-01T04:00:00Z', '2026-09-02T04:00:00Z', '2026-09-01T05:00:00Z')
+    `)), rejectedByPolicy);
+    const coverage = await inSchool(a!.schoolId, () => db.execute(sql`SELECT school_id FROM classpilot_usage_rollup_days WHERE school_id=${b!.schoolId}`));
+    assert.equal(coverage.rows.length, 0);
+    const unchanged = await inSchool(a!.schoolId, () => db.execute(sql`DELETE FROM classpilot_usage_rollup_days WHERE school_id=${b!.schoolId}`));
+    assert.equal(unchanged.rowCount, 0);
   });
 
   it("answers 404 for another school's student and school totals only for the caller's school over HTTP", async () => {
@@ -214,5 +227,50 @@ describe("Monitored Browser Time rollups under forced RLS", { skip: RLS ? false 
     assert.equal(own.status, 200);
     const audit = await system!.query("SELECT count(*)::int AS count FROM audit_logs WHERE school_id = $1 AND action = 'classpilot.usage.export'", [a!.schoolId]);
     assert.equal(audit.rows[0].count, 1, "the export audit is written on the request path under forced RLS");
+  });
+
+  it("matches frozen guard/report queries as a tenant role with nonempty AI, exclusions and foreign decisions", async () => {
+    const [a, b] = tenants;
+    const beat = (await system!.query("SELECT id FROM heartbeats WHERE school_id=$1 AND student_id=$2 ORDER BY timestamp,id LIMIT 1", [a!.schoolId,a!.students[0]])).rows[0].id;
+    const at = dayStart + 10 * 3600_000, window = rollup.classpilotUsageRollupDay(day,TIME_ZONE);
+    await system!.query(`INSERT INTO classpilot_ai_decisions(id,school_id,heartbeat_id,category,teacher_intent_source,created_at) VALUES
+      ($1,$2,$3,'educational',NULL,$4::timestamp),($5,$2,$3,'non-educational',NULL,$4::timestamp),
+      ($6,$7,$3,'educational',NULL,$8::timestamp),($9,$2,$3,'educational',NULL,$10::timestamp)`,
+      [`a-${randomUUID()}`,a!.schoolId,beat,wall(at+60_000),`z-${randomUUID()}`,randomUUID(),b!.schoolId,wall(at+120_000),randomUUID(),wall(dayStart-1000)]);
+    const reference = readFileSync(new URL("./fixtures/usage-before-fast-paths/attribution.sql",import.meta.url),"utf8");
+    const reports = readFileSync(new URL("./fixtures/usage-before-fast-paths/report.sql",import.meta.url),"utf8");
+    const candidate = rollup.CLASSPILOT_USAGE_ROLLUP_INSERT_SQL.split(",\ninserted AS (")[0] + " SELECT $4::date AS usage_date,grains.* FROM grains ORDER BY student_id,COALESCE(class_id,''),COALESCE(session_id,''),domain,classification";
+    const client = await pool.connect(), dialect = new PgDialect();
+    const transaction = { execute(statement: SQL) { const query=dialect.sqlToQuery(statement); return client.query(query.sql,query.params); } };
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await client.query("SELECT set_config('app.school_id',$1,true),set_config('app.is_super','off',true)",[a!.schoolId]);
+      for (const exclusions of [[],[{studentId:a!.students[0],start:wall(at+5000),end:wall(at+12_000)}],[{studentId:b!.students[0],start:wall(at),end:wall(at+120_000)}]]) {
+        const values=[a!.schoolId,wall(window.dayStartUtc.getTime()),wall(window.dayEndUtc.getTime()),day,JSON.stringify(exclusions)];
+        const expected=(await client.query(reference,values)).rows, actual=(await client.query(candidate,values)).rows;
+        assert.deepEqual(actual,expected);
+        assert.ok(actual.every(row=>a!.students.includes(row.student_id)));
+        assert.equal(actual.reduce((sum,row)=>sum+row.seconds,0),exclusions[0]?.studentId===a!.students[0]?195:210);
+      }
+      const foreign=[b!.schoolId,wall(window.dayStartUtc.getTime()),wall(window.dayEndUtc.getTime()),day,'[]'];
+      assert.deepEqual((await client.query(candidate,foreign)).rows,[],"guard CTEs cannot create rows for a school hidden by RLS");
+      const legacy=(await client.query(reports,[a!.schoolId,day,day,10,null,null])).rows;
+      const report=await read.getClasspilotDigitalUsage({schoolId:a!.schoolId,scope:"school",id:null,from:day,to:day,transaction:transaction as never});
+      const total=legacy.find(row=>Number(row.total_row)===1);
+      assert.deepEqual([report.totals.monitoredBrowserSeconds,report.totals.activeMonitoredStudents,report.totals.heartbeatCount],[Number(total.monitored),Number(total.students),Number(total.heartbeats)]);
+      assert.deepEqual(report.topEducationalDomains,legacy.filter(row=>row.row_kind==='domain'&&row.classification==='educational').map(row=>({domain:row.domain,seconds:Number(row.seconds)})));
+      await client.query("COMMIT");
+    } finally { await client.query("ROLLBACK"); client.release(); }
+  });
+
+  it("invalidates a direct tenant writer's own coverage without touching another school", async () => {
+    const [a, b] = tenants;
+    await inSchool(a!.schoolId, () => db.execute(sql`UPDATE classpilot_usage_rollups SET seconds=seconds WHERE school_id=${a!.schoolId}`));
+    const own = await inSchool(a!.schoolId, () => read.getClasspilotDigitalUsage({ schoolId: a!.schoolId, scope: "school", id: null, from: day, to: day }));
+    assert.equal(own.dataState, "unavailable");
+    assert.deepEqual(own.range.unavailableDates, [day]);
+    const other = await inSchool(b!.schoolId, () => read.getClasspilotDigitalUsage({ schoolId: b!.schoolId, scope: "school", id: null, from: day, to: day }));
+    assert.equal(other.dataState, "final");
+    assert.equal(other.totals.monitoredBrowserSeconds, 210);
   });
 });

@@ -1,0 +1,1033 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-02T22:28:22.730Z",
+  "scope": "Incremental Usage report admission, authorization, deadline, cancellation, strict audit and coverage regression evidence; not final release or capacity acceptance.",
+  "source": {
+    "baseCommit": "08802d020a3c51beea504140f923126ab518aac6",
+    "archiveTimeHead": "08802d020a3c51beea504140f923126ab518aac6",
+    "state": "shared dirty worktree, incremental uncommitted changes",
+    "exactRunTreeRecorded": false,
+    "note": "The baseline commit is context only. No exact commit or tree identifies the implementation used for each invocation. Tests and code advanced between runs and, for attempt 02, between owner and restricted lane starts. Archive-time source must not be retroactively attributed to an earlier attempt."
+  },
+  "commands": {
+    "file": "reports-commands.json",
+    "bytes": 2534,
+    "sha256": "aa8cb0e783db244a10cd1a2659a87b8a4ef1805dfbbd4556770e4654f025dc8d"
+  },
+  "developmentTranscriptSummaries": {
+    "file": "reports-development-attempts.json",
+    "bytes": 3345,
+    "sha256": "545b103e96bcd4c848f8e222eb936372156177e69d86496a051d5f9cca9fe5ee"
+  },
+  "fixture": {
+    "localOnly": true,
+    "loopbackOnly": true,
+    "separateOwnedContainers": true,
+    "cpuLimit": 2,
+    "memoryLimitGiB": 2,
+    "imageDigest": "sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6",
+    "schemaSource": "Read-only schema-only export from an existing local fixture; no donor writes.",
+    "fullMigrationRehearsal": false,
+    "migrationNote": "The broad owner Usage suite reapplies its rollup and completion-ledger migration SQL within the restored local schema. The full application migration sequence was not rehearsed by these report runs.",
+    "ownerLane": "Fixture owner: behavior and transaction checks, not restricted-role proof.",
+    "restrictedLane": "Separate non-owner role with NOSUPERUSER NOBYPASSRLS NOINHERIT and CRUD-only grants. Report requests force tenant GUCs; trusted fixture setup may use app.is_super. Broad attempts also run the existing Usage RLS suite.",
+    "cleanup": "All four generated containers removed after exact name and ownership-label verification. Cleanup stdout archived per attempt."
+  },
+  "runs": [
+    {
+      "id": "native-attempt-01",
+      "originalRunId": "a2b4d0a8770f",
+      "status": "failed",
+      "mode": "broad",
+      "execution": {
+        "ordinaryExit": 1,
+        "restrictedExit": 0,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-a2b4d0a8770f",
+        "database": "usage_native_a2b4d0a8770f",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "note": "Owner lane failed: immediate teacher denial returned 500 instead of 403. The response facade wrapped Express app, a function-valued property. Restricted lane passed. Corrected by restricting facade wrapping to response methods and preserving actual Node response identity; the initial failure is retained.",
+      "owner": {
+        "file": "reports-native-attempt-01-owner.log.gz",
+        "exitCode": 1,
+        "tap": {
+          "tests": 26,
+          "suites": 3,
+          "pass": 25,
+          "fail": 1,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 17928.8143
+        },
+        "privilege": "isolated fixture owner; this lane does not establish RLS"
+      },
+      "restricted": {
+        "file": "reports-native-attempt-01-restricted.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 14,
+          "suites": 2,
+          "pass": 14,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 16725.3119
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "support": [
+        "reports-native-attempt-01-execution.json.gz",
+        "reports-native-attempt-01-cleanup.log.gz",
+        "reports-native-attempt-01-container-create.log.gz",
+        "reports-native-attempt-01-restore.log.gz",
+        "reports-native-attempt-01-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "0fa25cef06fa95a05272e676cf279402ce9b5e9f08f01f20cc6fd8dad09750d6",
+      "schemaArchived": false
+    },
+    {
+      "id": "native-attempt-02",
+      "originalRunId": "b972bf55963a",
+      "status": "passed_incremental",
+      "mode": "broad",
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-b972bf55963a",
+        "database": "usage_native_b972bf55963a",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "note": "Both lanes passed after correction. Source changed between lane starts: owner had seven new admission cases; restricted had eight after the strict-audit failure case was added. These are not two runs of an identical frozen source snapshot. Existing Usage/ledger/retention/snapshot and restricted-role regressions also ran.",
+      "owner": {
+        "file": "reports-native-attempt-02-owner.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 26,
+          "suites": 3,
+          "pass": 26,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 99042.5591
+        },
+        "privilege": "isolated fixture owner; this lane does not establish RLS"
+      },
+      "restricted": {
+        "file": "reports-native-attempt-02-restricted.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 15,
+          "suites": 2,
+          "pass": 15,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 32249.7343
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "support": [
+        "reports-native-attempt-02-execution.json.gz",
+        "reports-native-attempt-02-cleanup.log.gz",
+        "reports-native-attempt-02-container-create.log.gz",
+        "reports-native-attempt-02-restore.log.gz",
+        "reports-native-attempt-02-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "395376e7832d32a975be9fecffbae6758f34f90d1e8c4e66d1625ad00366a577",
+      "schemaArchived": false
+    },
+    {
+      "id": "native-attempt-03",
+      "originalRunId": "5e117448bb25",
+      "status": "passed_incremental",
+      "mode": "focused",
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-5e117448bb25",
+        "database": "usage_native_5e117448bb25",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "note": "Focused confirmation includes strict-audit failure: a failed audit returns JSON 500 and sends no CSV; authority revocation, one-lease response ownership, cancellation and tenant rebinding also pass.",
+      "owner": {
+        "file": "reports-native-attempt-03-owner.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 8,
+          "suites": 1,
+          "pass": 8,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 12487.4116
+        },
+        "privilege": "isolated fixture owner; this lane does not establish RLS"
+      },
+      "restricted": {
+        "file": "reports-native-attempt-03-restricted.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 8,
+          "suites": 1,
+          "pass": 8,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 17916.2693
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "support": [
+        "reports-native-attempt-03-execution.json.gz",
+        "reports-native-attempt-03-cleanup.log.gz",
+        "reports-native-attempt-03-container-create.log.gz",
+        "reports-native-attempt-03-restore.log.gz",
+        "reports-native-attempt-03-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "75fb9a7394865e4bafd67988c4a29d55a0b7fd1c51414a1467a11d841510ec5f",
+      "schemaArchived": false
+    },
+    {
+      "id": "native-attempt-04",
+      "originalRunId": "4786eb6b26a7",
+      "status": "passed_incremental",
+      "mode": "focused",
+      "execution": {
+        "ordinaryExit": 0,
+        "restrictedExit": 0,
+        "source": "08802d020a3c51beea504140f923126ab518aac6",
+        "worktreeDirty": true,
+        "container": "schoolpilot-usage-native-4786eb6b26a7",
+        "database": "usage_native_4786eb6b26a7",
+        "schemaDonor": "schoolpilot_redesign_usage_release297_20261002",
+        "productionMutations": 0
+      },
+      "note": "Latest focused confirmation adds actual cookie sessions: unchanged school-session version succeeds; a queued version change returns SESSION_INVALIDATED, performs no export audit, destroys the session and prevents retry with the old cookie.",
+      "owner": {
+        "file": "reports-native-attempt-04-owner.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 9,
+          "suites": 1,
+          "pass": 9,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 3814.2052
+        },
+        "privilege": "isolated fixture owner; this lane does not establish RLS"
+      },
+      "restricted": {
+        "file": "reports-native-attempt-04-restricted.log.gz",
+        "exitCode": 0,
+        "tap": {
+          "tests": 9,
+          "suites": 1,
+          "pass": 9,
+          "fail": 0,
+          "cancelled": 0,
+          "skipped": 0,
+          "todo": 0,
+          "duration_ms": 4037.299
+        },
+        "privilege": "non-owner NOSUPERUSER NOBYPASSRLS NOINHERIT application role"
+      },
+      "support": [
+        "reports-native-attempt-04-execution.json.gz",
+        "reports-native-attempt-04-cleanup.log.gz",
+        "reports-native-attempt-04-container-create.log.gz",
+        "reports-native-attempt-04-restore.log.gz",
+        "reports-native-attempt-04-role.log.gz"
+      ],
+      "schemaDonorSnapshotSha256": "3cdabaa80f483ed2c13dad3e6b6c5d06a50badbc4aac2540be2f6cc0962c9b06",
+      "schemaArchived": false
+    }
+  ],
+  "unitFinal": {
+    "file": "reports-unit-final.log.gz",
+    "status": "passed_incremental",
+    "tap": {
+      "tests": 45,
+      "suites": 9,
+      "pass": 45,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "duration_ms": 4499.0997
+    }
+  },
+  "coverage": [
+    "Admission limits and fair per-school scheduling; cancellation/deadline queue removal; content-free admission timing and counter ownership.",
+    "Pre-auth deadline, early denial cleanup, late next/deny/throw suppression and no late response after expiry.",
+    "Post-queue credential/user, membership/role, school, entitlement and cookie school-session-version rechecks.",
+    "One scoped lease across fresh authorization, repeatable-read report and strict CSV audit; release before response serialization.",
+    "Cancellation closes only the owned connection; transaction rollback when aborted between statements; exactly-once release/discard; no post-release SQL; tenant GUC reset/rebinding.",
+    "Strict audit failure prevents CSV delivery; computed zero, unavailable coverage, Student Data and CSV contracts remain covered.",
+    "Broad rerun includes existing owner and restricted suites for repeatable-read snapshot during completed rollup replacement, retention/purge, atomic completion ledger, monotonic cutoffs and cross-school isolation."
+  ],
+  "limitations": [
+    "Every native attempt is retained, including the first failed owner lane. Earlier tool-only attempts are explicitly summarized, not fabricated as original logs.",
+    "Durations are test-run timing only. The fixtures are not the million-observation concurrent capacity workload and prove no supported capacity envelope.",
+    "Expected strict-audit fixture failures log audit and alert-delivery errors. Missing synthetic notification environment-variable names are not credentials.",
+    "No final combined-source check, migration rehearsal, managed-device check, production observation or deployment readiness is inferred.",
+    "Passing case counts refer to individual invocations; repeated or overlapping suites must not be summed as unique tests."
+  ],
+  "preservation": "Credential-shape scans passed for every archived record without redaction. Exact original bytes are preserved in gzip, and roundtrip/raw/archive hashes were verified. Original raw files remain outside the repository.",
+  "logs": [
+    {
+      "file": "reports-native-attempt-01-owner.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:07:46.549Z",
+      "rawBytes": 9091,
+      "sanitizedBytes": 9091,
+      "rawSha256": "a2a79cb3582837dff0bc51504ceb8b4f1b5eeb77710de7ecc1da8ad71da46d81",
+      "sanitizedSha256": "a2a79cb3582837dff0bc51504ceb8b4f1b5eeb77710de7ecc1da8ad71da46d81",
+      "archiveBytes": 2264,
+      "archiveSha256": "ca15998900eb70e848b016d7e5d9ef582d3decef7d5b15b7c338a83e7533b731",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 26,
+        "suites": 3,
+        "pass": 25,
+        "fail": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 17928.8143
+      }
+    },
+    {
+      "file": "reports-native-attempt-01-restricted.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:08:03.346Z",
+      "rawBytes": 11638,
+      "sanitizedBytes": 11638,
+      "rawSha256": "2f4ee25273458275bd9de5942cc1d1da705c56eb201f661fd2b9087cbe731281",
+      "sanitizedSha256": "2f4ee25273458275bd9de5942cc1d1da705c56eb201f661fd2b9087cbe731281",
+      "archiveBytes": 2479,
+      "archiveSha256": "67ea31cc3d0c6f8a139eb3c13e0299ca07e027e79678d0019dcbb2f5dc0b8742",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 14,
+        "suites": 2,
+        "pass": 14,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 16725.3119
+      }
+    },
+    {
+      "file": "reports-native-attempt-01-execution.json.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:08:03.439Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "4e9b1d80a882987cdbe47b700ff2717370f22d05e15cb461f100abca8f82901e",
+      "sanitizedSha256": "4e9b1d80a882987cdbe47b700ff2717370f22d05e15cb461f100abca8f82901e",
+      "archiveBytes": 234,
+      "archiveSha256": "72ae3045fb6db2eb9a56b2cbcc76032f4b12e9e7f23f8c96bdcc5bd3518641e5",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-01-cleanup.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:08:04.102Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "13379be8a3945a3ca9bb21bdad9d87aaf12efdd6bd69173d45a9a9153bdbc6ff",
+      "sanitizedSha256": "13379be8a3945a3ca9bb21bdad9d87aaf12efdd6bd69173d45a9a9153bdbc6ff",
+      "archiveBytes": 59,
+      "archiveSha256": "6a2aa71b7654e0e36186c137bff73ec1ea5da1174e2fda2173f88c4c32207f1c",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-01-container-create.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:07:21.176Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "6e5d68e7d45f0ceae83793fb9c38837d64d75698763201705fca5a9178312bc7",
+      "sanitizedSha256": "6e5d68e7d45f0ceae83793fb9c38837d64d75698763201705fca5a9178312bc7",
+      "archiveBytes": 74,
+      "archiveSha256": "19a3c08e01b5aa9713dd9d169e9d9238d2e8c563a99f5de7bb8c4ec498894de8",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-01-restore.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:07:28.182Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-01-role.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:07:28.448Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-02-owner.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:12:41.773Z",
+      "rawBytes": 17722,
+      "sanitizedBytes": 17722,
+      "rawSha256": "ddb5c8314b4e12171c4ef69d41d2c047a37b3ba7345cab7927fad576e0b996d8",
+      "sanitizedSha256": "ddb5c8314b4e12171c4ef69d41d2c047a37b3ba7345cab7927fad576e0b996d8",
+      "archiveBytes": 3691,
+      "archiveSha256": "66f83bb57d292675998ed130d9c941409a6d8378a5711761229033d2788aa8f3",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 26,
+        "suites": 3,
+        "pass": 26,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 99042.5591
+      }
+    },
+    {
+      "file": "reports-native-attempt-02-restricted.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:13:14.129Z",
+      "rawBytes": 12124,
+      "sanitizedBytes": 12124,
+      "rawSha256": "b77a32cc083350df2bbd277a16206b82847e048240291484e768393f8c0b1788",
+      "sanitizedSha256": "b77a32cc083350df2bbd277a16206b82847e048240291484e768393f8c0b1788",
+      "archiveBytes": 2687,
+      "archiveSha256": "fa950fc50f5776e3cc95a54be353ff30b8bc00c771d23cb42e55ea7eb4c3f694",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 15,
+        "suites": 2,
+        "pass": 15,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 32249.7343
+      }
+    },
+    {
+      "file": "reports-native-attempt-02-execution.json.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:13:14.227Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "37558523f2c776509177c2d87acb03a9d07bca6fcbd1d7fdb9812cbae79422d3",
+      "sanitizedSha256": "37558523f2c776509177c2d87acb03a9d07bca6fcbd1d7fdb9812cbae79422d3",
+      "archiveBytes": 233,
+      "archiveSha256": "b4287d4d85adf47074b686900dc89af3f57ce8ffa573b32aa9e06b3fae0b0243",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-02-cleanup.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:13:25.175Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "b6463e0d81ac6e37e11de09cd316479c3294a893e364c6b544a6615746b814cf",
+      "sanitizedSha256": "b6463e0d81ac6e37e11de09cd316479c3294a893e364c6b544a6615746b814cf",
+      "archiveBytes": 59,
+      "archiveSha256": "d3edeee3f84c59b3e8046d5517616471c88deb3340eb0aecf7bdfc82414b998d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-02-container-create.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:10:51.325Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "2070062110f655b877d55ade8659cbc8c305377f223043972c8f26ef13e3e65d",
+      "sanitizedSha256": "2070062110f655b877d55ade8659cbc8c305377f223043972c8f26ef13e3e65d",
+      "archiveBytes": 75,
+      "archiveSha256": "2446c0f418d9834a12f2588cbc4b94737a8b9c8a61552144be9aa358a72e565b",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-02-restore.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:11:02.230Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-02-role.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:11:02.558Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-03-owner.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:14:56.692Z",
+      "rawBytes": 2622,
+      "sanitizedBytes": 2622,
+      "rawSha256": "46f714fcbd54f04d1fdf4164c01df5e190f93d5f5dee9158e85d5a4e4a0f10c1",
+      "sanitizedSha256": "46f714fcbd54f04d1fdf4164c01df5e190f93d5f5dee9158e85d5a4e4a0f10c1",
+      "archiveBytes": 728,
+      "archiveSha256": "a7b824e10cbfe4738e23779dbdf9e6f8202ec35809d7c07997b72cf4cc25d772",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 8,
+        "suites": 1,
+        "pass": 8,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 12487.4116
+      }
+    },
+    {
+      "file": "reports-native-attempt-03-restricted.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:15:14.681Z",
+      "rawBytes": 2626,
+      "sanitizedBytes": 2626,
+      "rawSha256": "41492bf0daa6afa0226048dbf93d65079405915fb7316da622e2f6991356ef6f",
+      "sanitizedSha256": "41492bf0daa6afa0226048dbf93d65079405915fb7316da622e2f6991356ef6f",
+      "archiveBytes": 733,
+      "archiveSha256": "8b6bbb4ecbbb051ae60ec631afc1332dda44c3790ce68c931f1ab9de7ca29310",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 8,
+        "suites": 1,
+        "pass": 8,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 17916.2693
+      }
+    },
+    {
+      "file": "reports-native-attempt-03-execution.json.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:15:14.753Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "16b9265437c42e026b93778e73ced49180430bdbc4d66313690eb5344736256d",
+      "sanitizedSha256": "16b9265437c42e026b93778e73ced49180430bdbc4d66313690eb5344736256d",
+      "archiveBytes": 233,
+      "archiveSha256": "fb75876146fcd06ab468bbded80f2d7948b6df99263a3a16d1965f6a5c18efec",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-03-cleanup.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:15:31.663Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "41ccd453521d94e38ec222c9de1613d0e2ae03aa6a24c482d95956b98e367e74",
+      "sanitizedSha256": "41ccd453521d94e38ec222c9de1613d0e2ae03aa6a24c482d95956b98e367e74",
+      "archiveBytes": 59,
+      "archiveSha256": "a5c23d90d02e70e2e99385a8b6b739f65e3d749b7da646e27d53767cc90a69bb",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-03-container-create.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:14:03.664Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "6566213ec5520f695710d94d6aebf44ddb2e5b6c4247260cde9e9f80cb7c2dbc",
+      "sanitizedSha256": "6566213ec5520f695710d94d6aebf44ddb2e5b6c4247260cde9e9f80cb7c2dbc",
+      "archiveBytes": 75,
+      "archiveSha256": "a3ebd5bb5e92bc4dc8540e3541641f4478c62868d8f1c994250a3a0fa8f7b58a",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-03-restore.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:14:43.541Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-03-role.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:14:43.983Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-04-owner.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "ordinary.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:38.199Z",
+      "rawBytes": 2888,
+      "sanitizedBytes": 2888,
+      "rawSha256": "52565cb42d4155ebe7165016c172d650b369996df6b0d6f72f96863fff2bc840",
+      "sanitizedSha256": "52565cb42d4155ebe7165016c172d650b369996df6b0d6f72f96863fff2bc840",
+      "archiveBytes": 785,
+      "archiveSha256": "995687899779752b9ebf4955b25ae2c47e45486629d587b6881279e5501311cd",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 9,
+        "suites": 1,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 3814.2052
+      }
+    },
+    {
+      "file": "reports-native-attempt-04-restricted.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "restricted.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:42.292Z",
+      "rawBytes": 2885,
+      "sanitizedBytes": 2885,
+      "rawSha256": "531934680acbb958c492d1c44c2185e1b5beeb649cd87238a9d5f110db919e42",
+      "sanitizedSha256": "531934680acbb958c492d1c44c2185e1b5beeb649cd87238a9d5f110db919e42",
+      "archiveBytes": 782,
+      "archiveSha256": "fd0abe8d85a78a9f3fe3dfea51280c82d95b9e9e1de6da633319e02dee28359d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 9,
+        "suites": 1,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 4037.299
+      }
+    },
+    {
+      "file": "reports-native-attempt-04-execution.json.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "execution.json",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:42.364Z",
+      "rawBytes": 332,
+      "sanitizedBytes": 332,
+      "rawSha256": "17938238dbd28ecadc78aa4951e2d3ff911d10f35cb3dca964881b5264234200",
+      "sanitizedSha256": "17938238dbd28ecadc78aa4951e2d3ff911d10f35cb3dca964881b5264234200",
+      "archiveBytes": 233,
+      "archiveSha256": "853b7ec534076f148232674a6b784aea936cd2abb51693ee796c092e288e77fb",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-04-cleanup.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "cleanup.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:43.306Z",
+      "rawBytes": 39,
+      "sanitizedBytes": 39,
+      "rawSha256": "ba3d4f3ab538e171a449bc7cced88a118c0ebe310036b50201d316ff0f03d33f",
+      "sanitizedSha256": "ba3d4f3ab538e171a449bc7cced88a118c0ebe310036b50201d316ff0f03d33f",
+      "archiveBytes": 59,
+      "archiveSha256": "af200a79a6edc3a68808262484064555a76d5020c9d74c1f8ed3c48d890aaf80",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-04-container-create.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "container-create.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:19.208Z",
+      "rawBytes": 66,
+      "sanitizedBytes": 66,
+      "rawSha256": "fa75fb8000621d5b85d9df29645c2a0e90fe51b01ca82b9844f809c53327f70a",
+      "sanitizedSha256": "fa75fb8000621d5b85d9df29645c2a0e90fe51b01ca82b9844f809c53327f70a",
+      "archiveBytes": 74,
+      "archiveSha256": "509c0e1e7604db6547584d99da33d629f049d3e71cbd7c6bdccd71edf1098dfd",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-04-restore.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "restore.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:33.935Z",
+      "rawBytes": 20912,
+      "sanitizedBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "archiveBytes": 236,
+      "archiveSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-native-attempt-04-role.log.gz",
+      "category": "supporting_fixture_record",
+      "sourceFile": "role.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:18:34.219Z",
+      "rawBytes": 34,
+      "sanitizedBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "archiveBytes": 39,
+      "archiveSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true
+    },
+    {
+      "file": "reports-unit-final.log.gz",
+      "category": "test_stdout_stderr",
+      "sourceFile": "release297-usage-unit-final-3b1a2c10d86d4edd98443ed02fbd9773.log",
+      "sourceFileModifiedAtUtc": "2026-10-02T22:19:35.903Z",
+      "rawBytes": 11796,
+      "sanitizedBytes": 11796,
+      "rawSha256": "36de927c82db1731d22f402ea8182920db783d8437b34969721c56794ab8b319",
+      "sanitizedSha256": "36de927c82db1731d22f402ea8182920db783d8437b34969721c56794ab8b319",
+      "archiveBytes": 2596,
+      "archiveSha256": "1f9d539f8c60f51454e2395af6c9f2d509d6fa5bb37772fbe1b2e304137f3c7d",
+      "credentialRedactions": 0,
+      "credentialShapeScan": {
+        "privateKey": 0,
+        "awsAccessKey": 0,
+        "jwt": 0,
+        "databaseCredentialUrl": 0,
+        "bearerToken": 0,
+        "secretAssignment": 0
+      },
+      "gzipRoundtripVerified": true,
+      "tap": {
+        "tests": 45,
+        "suites": 9,
+        "pass": 45,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 4499.0997
+      }
+    }
+  ],
+  "operationalAcceptance": {
+    "finalSourceChecks": false,
+    "usageCapacity": false,
+    "productionDeployment": false,
+    "runtimeActivation": false,
+    "liveValidation": false,
+    "deploymentGreenLight": false
+  },
+  "productionMutations": 0,
+  "buildsDuringArchival": 0
+}

@@ -1,0 +1,1019 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T18:26:51.914Z",
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "scope": "Same-source e95 synthetic snapshot restore, no-workload cold restart, strict cleanup and pure owner/campaign proof. Historical b112 restore04 retained separately.",
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "snapshot": {
+    "path": "C:/Users/zinka/.codex/artifacts/release297-synthetic-prepared-e95-75d8f6205c5c",
+    "manifestSha256": "847c9b8d7a0e717e77b72f75ca06f2e89d3d5050cce17b8b5cd731bde4070330",
+    "immutable": true,
+    "originalManifestUnchanged": true,
+    "restoreProofSeparate": true
+  },
+  "native": {
+    "run": "9bfd1925e36c",
+    "passed": true,
+    "offeredRequests": 0,
+    "sourceModulesVerified": true,
+    "fullNativeSchemaEqual": true,
+    "migrations": 53,
+    "admittedTables": 129,
+    "restrictedNonOwnerRole": true,
+    "standardAnalyze": true,
+    "readOnlyCurrentClockHorizon": true,
+    "sameIdColdRestart": true,
+    "allClientsClosed": true,
+    "containerRemoved": true,
+    "recordedAnonymousVolumeRemoved": true
+  },
+  "tests": {
+    "cleanupAndHorizon": 25,
+    "journalAndStrictValidator": 132,
+    "receiptChronologyFollowup": 125,
+    "aggregate": 308,
+    "allPassed": true,
+    "aggregatePrecedesFinalReceiptChronologyFollowup": true
+  },
+  "limitations": [
+    "No actual restored full workload or13-receipt integration executed yet. Candidate execution remains disabled.",
+    "No production operations or capacity acceptance; no host cache flush.",
+    "Historical restore04 confirms container absence only; its old runner did not record/remove anonymous volume. No unknown historical volume was deleted.",
+    "The e95 snapshot remains immutable; every later use needs fresh source/date/control/authority checks.",
+    "Dump, populated state and role verifier contents remain private outside this packet."
+  ],
+  "sanitization": "Original hashes retained; credentials/private config contents excluded. Connection URLs, tokens and nonces redacted from safe records.",
+  "files": [
+    {
+      "path": "native-e95/analyze.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\analyze.log",
+      "originalBytes": 8,
+      "originalSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "sanitizedSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "gzipSha256": "f5bb2863b1faf97a1ac0a70fc16bc5f9efc4db2b2486f321ae9e582dfec71021"
+    },
+    {
+      "path": "native-e95/cleanup.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\cleanup.json",
+      "originalBytes": 422,
+      "originalSha256": "fc9017707e4aa0c375e5d21548afd87af1eeb23e99437021117db1f668d9c12b",
+      "sanitizedSha256": "fc9017707e4aa0c375e5d21548afd87af1eeb23e99437021117db1f668d9c12b",
+      "gzipSha256": "b71500fd4fa7535c0ff2c460bbf9b2e681cad48f2a38a3643126cd1c25cc804c"
+    },
+    {
+      "path": "native-e95/cold-restart-receipt.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\cold-restart-receipt.json",
+      "originalBytes": 1797,
+      "originalSha256": "1324d02da88e36f7896007d20270b462ecf437697c4a419a454594dfcdd77617",
+      "sanitizedSha256": "1324d02da88e36f7896007d20270b462ecf437697c4a419a454594dfcdd77617",
+      "gzipSha256": "8bfdd2d5edaf2a12510097a7b92bd8f154ceeb2d8e41876ddc66baf128bbc499"
+    },
+    {
+      "path": "native-e95/cold-restart.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\cold-restart.log",
+      "originalBytes": 65,
+      "originalSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "sanitizedSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "gzipSha256": "4dfd8aaf1e5bea7497cb6226b6cb8c3e1db5e03d56354634c5f2f2ad9efba44d"
+    },
+    {
+      "path": "native-e95/copy.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\copy.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "native-e95/create.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\create.log",
+      "originalBytes": 65,
+      "originalSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "sanitizedSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "gzipSha256": "4dfd8aaf1e5bea7497cb6226b6cb8c3e1db5e03d56354634c5f2f2ad9efba44d"
+    },
+    {
+      "path": "native-e95/database-receipt.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\database-receipt.json",
+      "originalBytes": 9940,
+      "originalSha256": "b38caacae906ae363ccaf916a1ee0c26fec280912ebccf3e663637c2fa18d316",
+      "sanitizedSha256": "b38caacae906ae363ccaf916a1ee0c26fec280912ebccf3e663637c2fa18d316",
+      "gzipSha256": "256bfb1ebcc168423515c66025651caaf2f91e14a3b8599cea8d70d671295bc0"
+    },
+    {
+      "path": "native-e95/database-validation.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\database-validation.json",
+      "originalBytes": 12856,
+      "originalSha256": "454a925baf81f1369f822dceca27f4c7f4a8b35b85f164eac747b9a03128f81b",
+      "sanitizedSha256": "454a925baf81f1369f822dceca27f4c7f4a8b35b85f164eac747b9a03128f81b",
+      "gzipSha256": "40864b267838c2db79d8c504fc14d6da162e0482f9c4118a777a714aea0b8c50"
+    },
+    {
+      "path": "native-e95/database-validation.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\database-validation.log",
+      "originalBytes": 88,
+      "originalSha256": "e95df10f27fbd3cb86970052900e28eaa545fe33179ebdb612cbd903e7c7c01b",
+      "sanitizedSha256": "e95df10f27fbd3cb86970052900e28eaa545fe33179ebdb612cbd903e7c7c01b",
+      "gzipSha256": "2f4f8a034b4aa34345ba66b95939b79061fbc733523a6686eafc81e8ee410db6"
+    },
+    {
+      "path": "native-e95/final-client-drain.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\final-client-drain.json",
+      "originalBytes": 174,
+      "originalSha256": "27749760fc40807263b9b13b80f2a2e41a097d11cde7d130ef1617a86f35c555",
+      "sanitizedSha256": "27749760fc40807263b9b13b80f2a2e41a097d11cde7d130ef1617a86f35c555",
+      "gzipSha256": "6a86c04c204cb8c580a539f2de935500d257d6c1f19e9b5220c7f04e50536390"
+    },
+    {
+      "path": "native-e95/fresh-role.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\fresh-role.log",
+      "originalBytes": 30,
+      "originalSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "bc2e8d3fce7d7509343416f0124ea21ce647ff6197c4b592fdaba5a517505820"
+    },
+    {
+      "path": "native-e95/owned-pg.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\owned-pg.json",
+      "originalBytes": 620,
+      "originalSha256": "de9104fbbc4a18d5eb5f97c3bed7d57c55ec2e28aae16185bbafb38edc70bd70",
+      "sanitizedSha256": "de9104fbbc4a18d5eb5f97c3bed7d57c55ec2e28aae16185bbafb38edc70bd70",
+      "gzipSha256": "a25f24663db0de517cf96ed9fa34f3f2f94143054178888ca7f20b500af2df77"
+    },
+    {
+      "path": "native-e95/pre-cold-validity-horizon.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\pre-cold-validity-horizon.json",
+      "originalBytes": 1003,
+      "originalSha256": "cb8bdb1abd2c065e38e7ad9139fbc52fd30da2ddfc4cd2c5197f884e0a15ef43",
+      "sanitizedSha256": "cb8bdb1abd2c065e38e7ad9139fbc52fd30da2ddfc4cd2c5197f884e0a15ef43",
+      "gzipSha256": "f39c84608984125296225deb2f945dd847dc91a95c8308e116f11495b4ffddf3"
+    },
+    {
+      "path": "native-e95/ready.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\ready.json",
+      "originalBytes": 1113,
+      "originalSha256": "bb0fa6111127d62b0652a38ff59ecd254f2cccf6760fde2e9493aae33b10f500",
+      "sanitizedSha256": "7652fec936edb4683c326d015dbec34f257527ff6a4f799911f7626d4ae37bb3",
+      "gzipSha256": "9702dc921bb7dfb064e99b8178accc69ab79fed6c9f44f427e2314594526ff5d"
+    },
+    {
+      "path": "native-e95/reference-create.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\reference-create.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "native-e95/reference-drop.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\reference-drop.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "native-e95/reference-rendered-schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\reference-rendered-schema.sql",
+      "originalBytes": 575955,
+      "originalSha256": "602fb57a439143b4b8c781c1d5b659f95e9ce21c49c539d0e74f40d3b2824f46",
+      "sanitizedSha256": "602fb57a439143b4b8c781c1d5b659f95e9ce21c49c539d0e74f40d3b2824f46",
+      "gzipSha256": "5a4b400bc266f5b9e2770a30cd6f1415e8e6c8153eeb92d8d757bf623910d151"
+    },
+    {
+      "path": "native-e95/reference-restore.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\reference-restore.log",
+      "originalBytes": 19399,
+      "originalSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "e1a39c2d22b9bba13ed6dee4236a2952da3652007910293c3a39c6c621561434"
+    },
+    {
+      "path": "native-e95/remove.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\remove.log",
+      "originalBytes": 65,
+      "originalSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "sanitizedSha256": "e8927290a110381b6536dc274d6b97e10461eae0e3460d725b4929429dde35c1",
+      "gzipSha256": "4dfd8aaf1e5bea7497cb6226b6cb8c3e1db5e03d56354634c5f2f2ad9efba44d"
+    },
+    {
+      "path": "native-e95/resource-caps.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\resource-caps.json",
+      "originalBytes": 81,
+      "originalSha256": "42d38c37732c6f23cc005a154060ad9dc0807a43ce75d3e42eb223cdfbd378b6",
+      "sanitizedSha256": "42d38c37732c6f23cc005a154060ad9dc0807a43ce75d3e42eb223cdfbd378b6",
+      "gzipSha256": "6883d73470d284402d17e4122f7b916b3e3152cc53961d0e3a58c9643c39dcd5"
+    },
+    {
+      "path": "native-e95/restore-sources.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\restore-sources.json",
+      "originalBytes": 480,
+      "originalSha256": "3cdcd318bb6ea5be9578a18fcf70c93913d0c99fa114da9b3f2fc5eb88afd4af",
+      "sanitizedSha256": "3cdcd318bb6ea5be9578a18fcf70c93913d0c99fa114da9b3f2fc5eb88afd4af",
+      "gzipSha256": "cb7e063f6821c1b0c13360de79c08d036f8ed49bf876d31b9b86cb162aba3b1d"
+    },
+    {
+      "path": "native-e95/restore.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\restore.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "native-e95/restored-schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\restored-schema.sql",
+      "originalBytes": 575955,
+      "originalSha256": "955c617069d352547608928ac4fb3023263a42f54e6b7abbccb3683ecf05addc",
+      "sanitizedSha256": "955c617069d352547608928ac4fb3023263a42f54e6b7abbccb3683ecf05addc",
+      "gzipSha256": "1482604145d995fdb39a413ff1f96ea227b30c59b6183afe7314ad5f904b8f6e"
+    },
+    {
+      "path": "native-e95/schema-comparison.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\schema-comparison.json",
+      "originalBytes": 616,
+      "originalSha256": "eea7bd57892558719b576363ca4bf01fe9c89c6d0f19e42582b38d1d03ca1026",
+      "sanitizedSha256": "eea7bd57892558719b576363ca4bf01fe9c89c6d0f19e42582b38d1d03ca1026",
+      "gzipSha256": "94aebfed1b9c029780cf666e415b774788a9f3aeb16112aa2ee2b7f1d3464cd0"
+    },
+    {
+      "path": "native-e95/snapshot-preparation.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\snapshot-preparation.json",
+      "originalBytes": 15775,
+      "originalSha256": "bf0e63ccce22dde465de16a2c95217b6ade63685568e1bcf854721aee6499e6f",
+      "sanitizedSha256": "bf0e63ccce22dde465de16a2c95217b6ade63685568e1bcf854721aee6499e6f",
+      "gzipSha256": "ae5ab0ca0bd61e543173be24d60f2a8ec046e36fc67a9acee9a82125ff635174"
+    },
+    {
+      "path": "native-e95/validity-horizon.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\validity-horizon.json",
+      "originalBytes": 958,
+      "originalSha256": "05b64402118a82be0d22f376f638605f159e0335f9f08332b4baa6a6374495d4",
+      "sanitizedSha256": "05b64402118a82be0d22f376f638605f159e0335f9f08332b4baa6a6374495d4",
+      "gzipSha256": "cee6f7d8a6eea13da4652df11a51a6fcdda6764b54cd6689752b35518b9479c5"
+    },
+    {
+      "path": "native-e95/zero-workload-proof.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\zero-workload-proof.json",
+      "originalBytes": 2150,
+      "originalSha256": "960f62cc0c9e4e88a8f82f6d1720ec6f3ae92142330d34b87e92cda4fb42d991",
+      "sanitizedSha256": "960f62cc0c9e4e88a8f82f6d1720ec6f3ae92142330d34b87e92cda4fb42d991",
+      "gzipSha256": "6167a257168c478b9b7ddd39655b1bb0d1461ac3574b33dfd132aba4b63a4ddc"
+    },
+    {
+      "path": "native-e95/zero-workload-release.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c\\zero-workload-release.json",
+      "originalBytes": 272,
+      "originalSha256": "43322bf82a366c249b572310415db8a63b6aefbdacdde57dcfcb6a463d2f4983",
+      "sanitizedSha256": "e82d4743759024fa4da86a007b7ba1de74611a4570a3f967a066704f2901d4c4",
+      "gzipSha256": "cb603b42f9151e6b6f8c838f2f6977008b63334c1608d4f343b73ea11c04099e"
+    },
+    {
+      "path": "source/adapters.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\adapters.test.mjs",
+      "originalBytes": 18016,
+      "originalSha256": "33354ad1516101170e773b98d3a17738d98860d74b38b5edc490a9739d68163d",
+      "sanitizedSha256": "872e8cb824798abf3c8422105637cc73de4d2eeb7ff54858f71bca5bb82a461b",
+      "gzipSha256": "53af7c72bb7f11d1a7dc3f138e23aab5f6f47d88dd8acfdecaa7b618caa1d87a"
+    },
+    {
+      "path": "source/authenticated-transport.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\authenticated-transport.mjs",
+      "originalBytes": 6425,
+      "originalSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "sanitizedSha256": "b6d996a8f69398f9e8b93fa4c24aabdd80e2c0ae4f721014c4ff83dab4e13232",
+      "gzipSha256": "9627c9fa13a767b4b5866787850856843eb08e0deec9981426279c1bf1a3881b"
+    },
+    {
+      "path": "source/build-role-helper.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\build-role-helper.mjs",
+      "originalBytes": 5532,
+      "originalSha256": "2eea9917ee94d8fe277d7e032224302e552b95b13d83091a76dc90a582e2eea8",
+      "sanitizedSha256": "2eea9917ee94d8fe277d7e032224302e552b95b13d83091a76dc90a582e2eea8",
+      "gzipSha256": "8851448f6e0685eb996c21dc4205ab04e03e8d84cd88e1efcaeebe5376f76488"
+    },
+    {
+      "path": "source/campaign-journal.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\campaign-journal.mjs",
+      "originalBytes": 16424,
+      "originalSha256": "30bafe75d6e60eebab85777536ab7108395d2fc4ed35a4ed3eb358370b0484b0",
+      "sanitizedSha256": "30bafe75d6e60eebab85777536ab7108395d2fc4ed35a4ed3eb358370b0484b0",
+      "gzipSha256": "b14a6480dd790d30085c9cf471f7ccb64343225cfbe7ac26aea3786d0610c93e"
+    },
+    {
+      "path": "source/campaign-journal.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\campaign-journal.test.mjs",
+      "originalBytes": 26843,
+      "originalSha256": "8d051f47f80fce2f8a85fc3a7fd8b79789219568e761375f1ec653c23c6e17b8",
+      "sanitizedSha256": "8d051f47f80fce2f8a85fc3a7fd8b79789219568e761375f1ec653c23c6e17b8",
+      "gzipSha256": "5cc75dc4f2cdd9ea931b33cee500b6abffcd58c406bf965b6d9b4059ca954519"
+    },
+    {
+      "path": "source/campaign-validation.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\campaign-validation.mjs",
+      "originalBytes": 32187,
+      "originalSha256": "c9a054372e9839d2b0b9e176b5d52cc619b5a9cb3aa7467951af4254926363a1",
+      "sanitizedSha256": "c9a054372e9839d2b0b9e176b5d52cc619b5a9cb3aa7467951af4254926363a1",
+      "gzipSha256": "69285e2398839fc6aec46a9e00dc3c0f3c4ce2947e3eebffb686def8858bd8e2"
+    },
+    {
+      "path": "source/campaign-validation.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\campaign-validation.test.mjs",
+      "originalBytes": 31149,
+      "originalSha256": "e276385b0d5c1663d58c2244a843123df503a7856da72a51accd5ae9dc5db4f6",
+      "sanitizedSha256": "e276385b0d5c1663d58c2244a843123df503a7856da72a51accd5ae9dc5db4f6",
+      "gzipSha256": "d8da98c1dbb9efec26b7b338ab1724377dee47cf704e41fda75c1815ec5c7299"
+    },
+    {
+      "path": "source/cleanup-linux-fixtures.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\cleanup-linux-fixtures.mjs",
+      "originalBytes": 3052,
+      "originalSha256": "ae302aff7c92af54e3a5fec22915d0675ffadfaa423edb52ae75ee4b49ec8906",
+      "sanitizedSha256": "ae302aff7c92af54e3a5fec22915d0675ffadfaa423edb52ae75ee4b49ec8906",
+      "gzipSha256": "06d6212d67d1084871260ceb66182b49579a01fead0417fd632b7c7eb70093ef"
+    },
+    {
+      "path": "source/cleanup-role-fixtures.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\cleanup-role-fixtures.mjs",
+      "originalBytes": 3867,
+      "originalSha256": "8d40e159b64a0ebe881163e616524dfac69789ed52078ea7948069fb3e5e8686",
+      "sanitizedSha256": "8d40e159b64a0ebe881163e616524dfac69789ed52078ea7948069fb3e5e8686",
+      "gzipSha256": "e88ed1e8f8410b48e05ab82b3943f558efa5f3e56a55612e29314fabb8c4fc2a"
+    },
+    {
+      "path": "source/coordinator-owner.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\coordinator-owner.mjs",
+      "originalBytes": 392,
+      "originalSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "sanitizedSha256": "a65c2ac4e07d2ae4e6d1a598c88a43b4b5fdb51c1915bb1ca6acad4c65cf8796",
+      "gzipSha256": "c10edf9a00454270c4137631c1ee12419782fd15c284c3b7955abca054e53df9"
+    },
+    {
+      "path": "source/coordinator-startup.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\coordinator-startup.mjs",
+      "originalBytes": 1932,
+      "originalSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "sanitizedSha256": "123d50c2d8d3d46c22a26226997dca3e3fdcc9eb081394d75503a1fbbd54bb16",
+      "gzipSha256": "8df08920880007f263ca53443a556258b6b38f015a17b3a567e70e72f4f7a391"
+    },
+    {
+      "path": "source/create-context.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\create-context.mjs",
+      "originalBytes": 6326,
+      "originalSha256": "3f6eb4027449d8994510092825d464ef4855d44c0d935aa9c19fc18b4a8fdbee",
+      "sanitizedSha256": "3f6eb4027449d8994510092825d464ef4855d44c0d935aa9c19fc18b4a8fdbee",
+      "gzipSha256": "73d159ed9611ee52b22d50eb5eb736c7039c69bb2e29871694aa919968db2809"
+    },
+    {
+      "path": "source/docker-host-adapter.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\docker-host-adapter.mjs",
+      "originalBytes": 4432,
+      "originalSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "sanitizedSha256": "5920c7b775b697a21ca312286a16d42e91ed465730ad2b1f73c2c7b4e5c10065",
+      "gzipSha256": "01f27c37c6bf7be8fe9808af3ebe2a359ab41eaed20890c65703528a35a4187b"
+    },
+    {
+      "path": "source/Dockerfile.roles.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\Dockerfile.roles",
+      "originalBytes": 1010,
+      "originalSha256": "7e28e69d911007587653b848a9d1402c4a3dc675c0f9ce263ce53faf39bb9874",
+      "sanitizedSha256": "7e28e69d911007587653b848a9d1402c4a3dc675c0f9ce263ce53faf39bb9874",
+      "gzipSha256": "f035e6aca20ffdf97190709df77be330ebf74f24f52a20f39ca8af74abee5ad9"
+    },
+    {
+      "path": "source/host-file-io.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\host-file-io.mjs",
+      "originalBytes": 2377,
+      "originalSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "sanitizedSha256": "d6010331a67ace3fd2881ea9333afee1bb6b3b051d427665cc3da0ebe644dfaa",
+      "gzipSha256": "17a1232ada8dccd4b2aa89860da62107a477e25e7c977a08a1d276c765f479bd"
+    },
+    {
+      "path": "source/host-lifecycle.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\host-lifecycle.mjs",
+      "originalBytes": 4216,
+      "originalSha256": "a1274952a49391c86f2f4504b4ab25b16f174ac922cf61573ebd4d2cc987056a",
+      "sanitizedSha256": "a1274952a49391c86f2f4504b4ab25b16f174ac922cf61573ebd4d2cc987056a",
+      "gzipSha256": "a94eb564c442e5fed26fffff38360984e92d9e7c7ca64b6fda695c90b33eb1fd"
+    },
+    {
+      "path": "source/host-orchestrator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\host-orchestrator.mjs",
+      "originalBytes": 4588,
+      "originalSha256": "9026ad033696d9fec1c4269c811f8e4ff25fe6f15110bb8a412ac2e31fe6ab8f",
+      "sanitizedSha256": "9026ad033696d9fec1c4269c811f8e4ff25fe6f15110bb8a412ac2e31fe6ab8f",
+      "gzipSha256": "9d0c4a5bbace1a81520b1ba28924b11571304262845fb7e01cdd05cfd24db145"
+    },
+    {
+      "path": "source/image-probe.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\image-probe.mjs",
+      "originalBytes": 1234,
+      "originalSha256": "c9dad47d0baf627aa8d71ff520a7da94bfa845aa288f3f4833ca9c430f0c2ad7",
+      "sanitizedSha256": "c9dad47d0baf627aa8d71ff520a7da94bfa845aa288f3f4833ca9c430f0c2ad7",
+      "gzipSha256": "9eed4935fd20157a0b78aac289239417d4249db73fae4856dce000dd6c16d546"
+    },
+    {
+      "path": "source/image-probe.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\image-probe.test.mjs",
+      "originalBytes": 1755,
+      "originalSha256": "e1e2fa0ed93d5a03f366016e1660583832fda9e1aa31ee349704fd3b4bcf2c31",
+      "sanitizedSha256": "e1e2fa0ed93d5a03f366016e1660583832fda9e1aa31ee349704fd3b4bcf2c31",
+      "gzipSha256": "fbab49e76fc62e17a6525d8ca10c113fde25d60e28122ea21ae47aa2fc3ff52a"
+    },
+    {
+      "path": "source/launch-role-scale.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\launch-role-scale.mjs",
+      "originalBytes": 4657,
+      "originalSha256": "e84f68a8bbf6ccddc4e3270516ffede85419a0143e2ce37679d41dbe6a67cb75",
+      "sanitizedSha256": "e84f68a8bbf6ccddc4e3270516ffede85419a0143e2ce37679d41dbe6a67cb75",
+      "gzipSha256": "da727d2ac447b2ac9b8a61eb112ed64c64155773cc6db968e56bfb2def145c76"
+    },
+    {
+      "path": "source/measurement-gate.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\measurement-gate.mjs",
+      "originalBytes": 2368,
+      "originalSha256": "81fa142fe28012ae5867b422ef3e0ef3b032608402dfd131fb0c19097f1fe52f",
+      "sanitizedSha256": "81fa142fe28012ae5867b422ef3e0ef3b032608402dfd131fb0c19097f1fe52f",
+      "gzipSha256": "922e2889ad9ad4f79d9308340fef47a9073ad36709564cf4622af40c01e0e728"
+    },
+    {
+      "path": "source/numerical-checks.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\numerical-checks.mjs",
+      "originalBytes": 3932,
+      "originalSha256": "9a99e617b93df5b99178a4956187a5c572d9d64fa160ef3035ce359cbf6fc158",
+      "sanitizedSha256": "9a99e617b93df5b99178a4956187a5c572d9d64fa160ef3035ce359cbf6fc158",
+      "gzipSha256": "ccced5290f95febf4d397cc822fd1a8c0ed532a73076c393c33699a180653e03"
+    },
+    {
+      "path": "source/numerical-checks.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\numerical-checks.test.mjs",
+      "originalBytes": 3186,
+      "originalSha256": "c4c4eacb06aa6e7d104b9f814e7c9042dbde4f3ed4aaf8b5ad4d2457d5272ed4",
+      "sanitizedSha256": "c4c4eacb06aa6e7d104b9f814e7c9042dbde4f3ed4aaf8b5ad4d2457d5272ed4",
+      "gzipSha256": "ea40aeb5508fcef5dc91169aea4843b0a13e21b3a6f9a20677c7e769c641ff35"
+    },
+    {
+      "path": "source/orchestrator.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\orchestrator.test.mjs",
+      "originalBytes": 8330,
+      "originalSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "sanitizedSha256": "83970b3e85e01e7af965c4bf1a85f9bc8706da0800f3b14db17b3ca932fdd0bb",
+      "gzipSha256": "4dbec2d0f4165bb9f9a9b9e8894b4ee676051c3de519bb0ea7f96392474a8034"
+    },
+    {
+      "path": "source/owned-ipc-core.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\owned-ipc-core.mjs",
+      "originalBytes": 7419,
+      "originalSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "sanitizedSha256": "f1d76dbc340effae589f1dda2116024b591bd0c95cdd0db8a72d7ea9cd1da7e5",
+      "gzipSha256": "96925c39f2549d45c7111fe6925d89d622d7f139a08705b2d97cc6781f351dc0"
+    },
+    {
+      "path": "source/patch-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\patch-coordinator.mjs",
+      "originalBytes": 7763,
+      "originalSha256": "92234ade65e4b4659086997adacefe974d8e28bbf53efc84630dc87073998396",
+      "sanitizedSha256": "92234ade65e4b4659086997adacefe974d8e28bbf53efc84630dc87073998396",
+      "gzipSha256": "78e7f04cf4ba6c6881d1475ceae03c8058c645d6b9a82abd1516d2122951dca3"
+    },
+    {
+      "path": "source/pool-readiness.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\pool-readiness.mjs",
+      "originalBytes": 1857,
+      "originalSha256": "faac90c881ea6d52c4fb1a15685ea353b408016ed328c52c8618124444ca26f9",
+      "sanitizedSha256": "faac90c881ea6d52c4fb1a15685ea353b408016ed328c52c8618124444ca26f9",
+      "gzipSha256": "bf16ff0a0d0e4b0981b77bcdbbcc6dee0e53fb077c333d60b90bf8dd5449d2ae"
+    },
+    {
+      "path": "source/prepare-context.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\prepare-context.ps1",
+      "originalBytes": 615,
+      "originalSha256": "16847328547744cc8c3fcf9e3e59543797ffbb6bc445bfb84b8e60597dc067e2",
+      "sanitizedSha256": "16847328547744cc8c3fcf9e3e59543797ffbb6bc445bfb84b8e60597dc067e2",
+      "gzipSha256": "cf47f0580af1bda47202b00fe9e656be6f46518c5514224b54a300d13ed65424"
+    },
+    {
+      "path": "source/profile.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\profile.mjs",
+      "originalBytes": 1498,
+      "originalSha256": "7431dc7403eb56b99975ccc90cdc3733a3aa9fb7ca7046cec00c94dc5f5356ad",
+      "sanitizedSha256": "7431dc7403eb56b99975ccc90cdc3733a3aa9fb7ca7046cec00c94dc5f5356ad",
+      "gzipSha256": "c580a96130b1c64e1ce49c781847ac7d7214bb898253d5fa6f30d271622048f0"
+    },
+    {
+      "path": "source/prototype.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\prototype.test.mjs",
+      "originalBytes": 8642,
+      "originalSha256": "ac16d2e9b2905bae51670f26a6abec791d850669bfdb1be6c23b2c6b3cdd1327",
+      "sanitizedSha256": "ac16d2e9b2905bae51670f26a6abec791d850669bfdb1be6c23b2c6b3cdd1327",
+      "gzipSha256": "b39de5e8f316cda3ceec2ce7ee6f15ccbc00d07ab5c517bc3c43dbaf9d7ba202"
+    },
+    {
+      "path": "source/README.md.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\README.md",
+      "originalBytes": 3181,
+      "originalSha256": "e9e4f791d58768f6c90f23b6ecc3160fb3ce96ecff254b0264b10841a7547272",
+      "sanitizedSha256": "e9e4f791d58768f6c90f23b6ecc3160fb3ce96ecff254b0264b10841a7547272",
+      "gzipSha256": "043914a0f314079479f30420c94f41a236b9be380adf166baa706fe4b4e6d4c1"
+    },
+    {
+      "path": "source/receipt-loader.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\receipt-loader.mjs",
+      "originalBytes": 5581,
+      "originalSha256": "2d75257394126a6752d8faba7cb07b03aa41e2120047a42eb7349206bed2d324",
+      "sanitizedSha256": "2d75257394126a6752d8faba7cb07b03aa41e2120047a42eb7349206bed2d324",
+      "gzipSha256": "64537d902b09be82e2868ea7096d277583929740e8cab8f8ebde5b8c8521bae2"
+    },
+    {
+      "path": "source/receipt-writer.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\receipt-writer.mjs",
+      "originalBytes": 4920,
+      "originalSha256": "884291deaaa79d32a41f7c161ec784ce37ca705b61dbd3986d5fb0951b8148a0",
+      "sanitizedSha256": "884291deaaa79d32a41f7c161ec784ce37ca705b61dbd3986d5fb0951b8148a0",
+      "gzipSha256": "8eeff9f1ce1a4e1ed9b243edc336149cfbebbe980658e9a842b64ec8e194b817"
+    },
+    {
+      "path": "source/receipt-writer.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\receipt-writer.test.mjs",
+      "originalBytes": 4452,
+      "originalSha256": "173b821d2402a1e7d7cdd517780603a5c385de0319758003b9051b7c9a5c6943",
+      "sanitizedSha256": "173b821d2402a1e7d7cdd517780603a5c385de0319758003b9051b7c9a5c6943",
+      "gzipSha256": "168a27805006fb4275c8b21ece92176372412853648a18a3eb5625b3280d398f"
+    },
+    {
+      "path": "source/restore-snapshot.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\restore-snapshot.mjs",
+      "originalBytes": 20266,
+      "originalSha256": "9dc65e0b300a9c1a307f23de0d71a5aed39f1296cf8aafcff97eee59908310dc",
+      "sanitizedSha256": "43cc68d8768c36ec24451a2f4b23cd71eb31f81a0f2240bf06ad30dc4cb0fac0",
+      "gzipSha256": "e5212cbe661d21806daa2b9ac6366637c2deac2b767995fee896f9d6c3602932"
+    },
+    {
+      "path": "source/restore-snapshot.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\restore-snapshot.test.mjs",
+      "originalBytes": 6070,
+      "originalSha256": "44734d13b86db36adeffd30daa65618e691b50686be40e410aa68b73ee79aef1",
+      "sanitizedSha256": "44734d13b86db36adeffd30daa65618e691b50686be40e410aa68b73ee79aef1",
+      "gzipSha256": "68d21d0d21bf7f06e9428111a300e5e7f058e98ad907f5a398a81e05c3990b12"
+    },
+    {
+      "path": "source/restored-role-scale.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\restored-role-scale.test.mjs",
+      "originalBytes": 5791,
+      "originalSha256": "2fa33f92c4ef78b06d47b8cfaeb7f9996bff5fcac5c2a65fd844cad9a3b04d8a",
+      "sanitizedSha256": "b7d90f18d5ab1c387f740e8181fcdec2083319f8da3eb9f8b0f38fb0144057fb",
+      "gzipSha256": "97520dcacb70eb6217e4f20464fc330dd5abc11123e27dc16689bf9ab4538069"
+    },
+    {
+      "path": "source/role-child-bootstrap.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-child-bootstrap.mjs",
+      "originalBytes": 5405,
+      "originalSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "sanitizedSha256": "fc3f0d515ab8ff0001c8d517b910e9a5aa378ff8fe8f074a57d9b2b2057a3316",
+      "gzipSha256": "fdfc08496a284579b16b847204391ced34cc13a54dca35856be02057e75419b3"
+    },
+    {
+      "path": "source/role-coordinator-bridge.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-coordinator-bridge.mjs",
+      "originalBytes": 7685,
+      "originalSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "sanitizedSha256": "1eab1001a5a78f20f1b5634479dd3178ddae418add6b95fce54340bfa35a93c1",
+      "gzipSha256": "04dfd1af021a68318d6ff051fe2c2b3742bb7070964ba57aca2fcc7f259f918e"
+    },
+    {
+      "path": "source/role-coordinator.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-coordinator.mjs",
+      "originalBytes": 3427,
+      "originalSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "sanitizedSha256": "3a071be939c72d7a13fb28523075f56437c1c07369e048976a1913c37f6a766b",
+      "gzipSha256": "fb2494a405f3149a351aa4559f8d938e70f7a98d2605d78cbbe448d83b47c01d"
+    },
+    {
+      "path": "source/role-environment.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-environment.mjs",
+      "originalBytes": 5281,
+      "originalSha256": "be7c203556a6a9cfa29f2326fa000714ded2a015946d6051fe9dbba4af22c891",
+      "sanitizedSha256": "fca19ebb0a6625893ae47a94704b2b88cc2792b3776216e74adbdf0c3c7baafb",
+      "gzipSha256": "13ef6dd9d8736e3f7d01ec668b22d517f28ce29b49c6d86475d7e58b5f5dcdbe"
+    },
+    {
+      "path": "source/role-plan.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-plan.mjs",
+      "originalBytes": 7072,
+      "originalSha256": "2f575de27663e3edef3bd209acbc7bf308d7221b82383e64a81f0356222855f2",
+      "sanitizedSha256": "2f575de27663e3edef3bd209acbc7bf308d7221b82383e64a81f0356222855f2",
+      "gzipSha256": "9aca361507bd6f7f00a1a48fdf64c3da2497d2e554ac4f15de7d1ac5c10f4dc4"
+    },
+    {
+      "path": "source/role-resources.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\role-resources.mjs",
+      "originalBytes": 2845,
+      "originalSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "sanitizedSha256": "61efd875114979ecd0eede738ac901a494d5aad17fc9834b95b5106b169ba865",
+      "gzipSha256": "afa095332064ea30bedff4e828e49b3ecee1f1462f3ccaa321e6adb5a152ad39"
+    },
+    {
+      "path": "source/run-restored-role-scale.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\run-restored-role-scale.mjs",
+      "originalBytes": 15490,
+      "originalSha256": "05740e4ceca6618cd0bae9338d4c51aa2c9ee156c2e6d61700cc99bfe4318e74",
+      "sanitizedSha256": "0305a45e734c030319f914c3eb09b685af6f890fc6b2d99e537eea5c986f02aa",
+      "gzipSha256": "dea07f68db18344f4479bcb65b720f5caafb22f1481dd23a1507a1a8bc6407cc"
+    },
+    {
+      "path": "source/run-role-scale.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\run-role-scale.ps1",
+      "originalBytes": 25753,
+      "originalSha256": "5f08930cb31a7d823c005907ea97921841f8a98c5814d161b71ebddc68d73961",
+      "sanitizedSha256": "8ca4f23e254f3db4ca6576c44f3b4d504d02370617c90fc877c979486b4b682a",
+      "gzipSha256": "bd0e1ce47f3bc85e5556306a9540a4349ea2df54f99429b56dfa2e8f506ef15b"
+    },
+    {
+      "path": "source/runtime-contract.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\runtime-contract.test.mjs",
+      "originalBytes": 6900,
+      "originalSha256": "aea7e85db0230a88cae6a692192d44f37eb1f851d1ea9ef289c57293863f543e",
+      "sanitizedSha256": "aea7e85db0230a88cae6a692192d44f37eb1f851d1ea9ef289c57293863f543e",
+      "gzipSha256": "cea5ddd908dbeb5346b15290e1f5540d36b7d041630bf00e3a868caf9dac99f6"
+    },
+    {
+      "path": "source/runtime-facts.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\runtime-facts.mjs",
+      "originalBytes": 3384,
+      "originalSha256": "7f07073375f5c8d162c64592df26500bf15973481a9d193a0447e28e701c06e6",
+      "sanitizedSha256": "7f07073375f5c8d162c64592df26500bf15973481a9d193a0447e28e701c06e6",
+      "gzipSha256": "755e48d06d80587b7456590daa17e55a171dbbe18f5d1cc1478c9f906159a2fb"
+    },
+    {
+      "path": "source/snapshot-contract.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\snapshot-contract.mjs",
+      "originalBytes": 2841,
+      "originalSha256": "af38b8dff9faf00fac4fc94b6b5f7b5e8e47b74eb5545edffae7301a6df3261c",
+      "sanitizedSha256": "af38b8dff9faf00fac4fc94b6b5f7b5e8e47b74eb5545edffae7301a6df3261c",
+      "gzipSha256": "70d13bfed6a6cd117d2104f7e08d4b52b19fc6f11ff5b2d7e8e407424f4b98c5"
+    },
+    {
+      "path": "source/snapshot-contract.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\snapshot-contract.test.mjs",
+      "originalBytes": 2979,
+      "originalSha256": "34d9d7a6fd695db7b198a720c6c1415ac1863c27cb17b4fa7092069fa827e31d",
+      "sanitizedSha256": "34d9d7a6fd695db7b198a720c6c1415ac1863c27cb17b4fa7092069fa827e31d",
+      "gzipSha256": "bebf8dd2a04941f579b35854c06fa9e8f1242c8f3429c36a93f96492aff0c2ce"
+    },
+    {
+      "path": "source/snapshot-validity-horizon.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\snapshot-validity-horizon.mjs",
+      "originalBytes": 2060,
+      "originalSha256": "5f122a1c26acef22c9d1d09926b74877f03c6199150ae9e6f99b5c0d7e4ba7a5",
+      "sanitizedSha256": "5f122a1c26acef22c9d1d09926b74877f03c6199150ae9e6f99b5c0d7e4ba7a5",
+      "gzipSha256": "bc2a74914c4d7e9fbdbd740c594888579f28f867ada4c5ab81b5114a521e3c7c"
+    },
+    {
+      "path": "source/snapshot-validity-horizon.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\snapshot-validity-horizon.test.mjs",
+      "originalBytes": 1539,
+      "originalSha256": "e097bc331a243056e68f9ecfafb369052b48be25b8f611b0441b45d7254e4433",
+      "sanitizedSha256": "e097bc331a243056e68f9ecfafb369052b48be25b8f611b0441b45d7254e4433",
+      "gzipSha256": "4862baf73eaf02ad7728591a0c0e6bf65a27d6ad2d12e082371612f75e26e60e"
+    },
+    {
+      "path": "source/suite.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\suite.mjs",
+      "originalBytes": 562,
+      "originalSha256": "b4bf433132c9b0a08fec731b28d51a4e2861cd4373ae4651907e99da56709c42",
+      "sanitizedSha256": "b4bf433132c9b0a08fec731b28d51a4e2861cd4373ae4651907e99da56709c42",
+      "gzipSha256": "0d5638ab323855d40e5e5cfc29e30fc07159a93e8583ae515e6de203b6ae519e"
+    },
+    {
+      "path": "source/validate-snapshot-database.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\validate-snapshot-database.mjs",
+      "originalBytes": 14016,
+      "originalSha256": "08a9e0c5fd7cbe862b760eaa3c09d04ddf07663d2a2fc60ec149fb3b12e93a47",
+      "sanitizedSha256": "08a9e0c5fd7cbe862b760eaa3c09d04ddf07663d2a2fc60ec149fb3b12e93a47",
+      "gzipSha256": "41e5510f6d32fd4d3c939b00fd9c00a6a06a2795daf575eb0b468c595f54d48d"
+    },
+    {
+      "path": "source/verify-runtime.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\scripts\\load\\usage\\roles\\verify-runtime.mjs",
+      "originalBytes": 3435,
+      "originalSha256": "b91e705b88433a55443d6ad1c98742455f46ee4d6ef11d996cdc90fbdf629228",
+      "sanitizedSha256": "b91e705b88433a55443d6ad1c98742455f46ee4d6ef11d996cdc90fbdf629228",
+      "gzipSha256": "4bc9c9aac5f6380563f98fbc771bfad37c8b3cdb4d6ff2fd481d917516f40cd4"
+    },
+    {
+      "path": "proof/release297-e95-restore-restart-proof-01.mjs.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-proof-01.mjs",
+      "originalBytes": 3130,
+      "originalSha256": "f7da8a5fe6aa9fccb11e1324b502572106c4c3b03a63a18a0655d51cf383ed28",
+      "sanitizedSha256": "f7da8a5fe6aa9fccb11e1324b502572106c4c3b03a63a18a0655d51cf383ed28",
+      "gzipSha256": "e4b8bbd771506ec5e990bafb5f9659c1a0d872908203fd68253eaec470885ae4"
+    },
+    {
+      "path": "proof/release297-e95-restore-restart-proof-01-config.json.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-proof-01-config.json",
+      "originalBytes": 912,
+      "originalSha256": "4540b15bb16c5ae815afa5da4d76a0c2db4ecbab95f3cfd418fd7655f80bcf92",
+      "sanitizedSha256": "d751e2d0e04cef83d33378e04a87c81468193764d190c8f3ae07ff7b5c92ce13",
+      "gzipSha256": "62a1fb1e11dd2f1fc622b885faa46fd7f1bd2786771373a8b576c2049fd6b1d9"
+    },
+    {
+      "path": "proof/release297-e95-restore-restart-proof-01.log.gz",
+      "originalPath": "<TEMP>\\release297-e95-restore-restart-proof-01.log",
+      "originalBytes": 586,
+      "originalSha256": "9b2ce5e440b0b077d9f5648f24d6317f59e1f326494a530968c33423208975c0",
+      "sanitizedSha256": "9b2ce5e440b0b077d9f5648f24d6317f59e1f326494a530968c33423208975c0",
+      "gzipSha256": "90239e2e1e671393e7947e00a3557b20f83e296ecba89affb2ecb6dc4575f3b7"
+    },
+    {
+      "path": "proof/release297-preserve-prepared-e95-01.log.gz",
+      "originalPath": "<TEMP>\\release297-preserve-prepared-e95-01.log",
+      "originalBytes": 278,
+      "originalSha256": "910aa83ca0046e2296491e0d705d4152acb229a18d39d594f005dc5bc1a004ba",
+      "sanitizedSha256": "910aa83ca0046e2296491e0d705d4152acb229a18d39d594f005dc5bc1a004ba",
+      "gzipSha256": "37ab9b1ed31616052d765c773fc2cf7678e0ae75f387f89158518bbfff8d4e40"
+    },
+    {
+      "path": "proof/release297-preserve-prepared-b112-01.mjs.gz",
+      "originalPath": "<TEMP>\\release297-preserve-prepared-b112-01.mjs",
+      "originalBytes": 7728,
+      "originalSha256": "b1595c2ea73a1d3b5d9da773672ab84385a21f1af79e14506794e1beed6c0f02",
+      "sanitizedSha256": "b1595c2ea73a1d3b5d9da773672ab84385a21f1af79e14506794e1beed6c0f02",
+      "gzipSha256": "5233089a271677d7c3255ce76a9a2f161773531c85ef9c3dd61caf1edef8efe8"
+    },
+    {
+      "path": "proof/release297-restored-cleanup-horizon-01.log.gz",
+      "originalPath": "<TEMP>\\release297-restored-cleanup-horizon-01.log",
+      "originalBytes": 5555,
+      "originalSha256": "48ed4cc640e289ade829d58efc4f5e1c03d6c41105a91d317d9e19a827f8b7b5",
+      "sanitizedSha256": "48ed4cc640e289ade829d58efc4f5e1c03d6c41105a91d317d9e19a827f8b7b5",
+      "gzipSha256": "4328f03bc476dc38d0b554240618cc47ca4f49a9ce296dcc8b2596a4e09d0e0d"
+    },
+    {
+      "path": "proof/release297-campaign-owner-validation-01.log.gz",
+      "originalPath": "<TEMP>\\release297-campaign-owner-validation-01.log",
+      "originalBytes": 24493,
+      "originalSha256": "ca0ee7aac8a737a30eb5458a5cec41862c8c8ebc6c4c42b356aae14ddfc6770f",
+      "sanitizedSha256": "ca0ee7aac8a737a30eb5458a5cec41862c8c8ebc6c4c42b356aae14ddfc6770f",
+      "gzipSha256": "3ad455697a6b5f07971b4ef304df6795aec8b6464e172c92d269d893c8fdad1d"
+    },
+    {
+      "path": "proof/release297-restored-receipt-order-01.log.gz",
+      "originalPath": "<TEMP>\\release297-restored-receipt-order-01.log",
+      "originalBytes": 22912,
+      "originalSha256": "f71907140be1cd478dde1b21c7d70677f4c381e5b68cc85f6e501ed63bb35f91",
+      "sanitizedSha256": "f71907140be1cd478dde1b21c7d70677f4c381e5b68cc85f6e501ed63bb35f91",
+      "gzipSha256": "8d26104a33453fc3718e37c29f163507a50bd78efe3080f36ace4a882a6fc5a3"
+    },
+    {
+      "path": "proof/release297-role-aggregate-03.log.gz",
+      "originalPath": "<TEMP>\\release297-role-aggregate-03.log",
+      "originalBytes": 64344,
+      "originalSha256": "f37e6b3d60e5608c8469fdad780458cf814ac771d80ca735b3656eb4aacbb89e",
+      "sanitizedSha256": "f37e6b3d60e5608c8469fdad780458cf814ac771d80ca735b3656eb4aacbb89e",
+      "gzipSha256": "c8e35334ccd9d0dfed285eef4ddc0896085840764916d2b962ee46505e95803a"
+    },
+    {
+      "path": "journal-proof/tests-01.log.gz",
+      "originalPath": "<TEMP>\\release297-campaign-journal-01\\tests-01.log",
+      "originalBytes": 4583,
+      "originalSha256": "cc9a58a2542f43be9fc0b84c8e23e0be06bca2884641e168dc28ba04552049d3",
+      "sanitizedSha256": "cc9a58a2542f43be9fc0b84c8e23e0be06bca2884641e168dc28ba04552049d3",
+      "gzipSha256": "863e8c3e14d9398103d9962ed39ee8d1b9985702e79fa09ab96da270f2c54ada"
+    },
+    {
+      "path": "journal-proof/tests-02.log.gz",
+      "originalPath": "<TEMP>\\release297-campaign-journal-01\\tests-02.log",
+      "originalBytes": 4960,
+      "originalSha256": "63ae62bda85c0d3ec3014ce331f13d1efa88eea8439acef5d1bc0e682b21d8da",
+      "sanitizedSha256": "63ae62bda85c0d3ec3014ce331f13d1efa88eea8439acef5d1bc0e682b21d8da",
+      "gzipSha256": "d3c4ef6431223551208457ae91f55a35210dbe7104e3f06ddb4eec58c4df4e7f"
+    },
+    {
+      "path": "snapshot/original-e95-manifest.json.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\artifacts\\release297-synthetic-prepared-e95-75d8f6205c5c\\manifest.json",
+      "originalBytes": 3875,
+      "originalSha256": "847c9b8d7a0e717e77b72f75ca06f2e89d3d5050cce17b8b5cd731bde4070330",
+      "sanitizedSha256": "8232e2c959a68c7c5f8578e6218c7eb0ca68006b466364d05269d60c86bb0d1d",
+      "gzipSha256": "7fec79cf3a263b17dc60fdef47ea070f84c6b690c0fffd73e07a37afec812d5f"
+    },
+    {
+      "path": "historical-restore04/analyze.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\analyze.log",
+      "originalBytes": 8,
+      "originalSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "sanitizedSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "gzipSha256": "f5bb2863b1faf97a1ac0a70fc16bc5f9efc4db2b2486f321ae9e582dfec71021"
+    },
+    {
+      "path": "historical-restore04/cleanup.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\cleanup.json",
+      "originalBytes": 171,
+      "originalSha256": "d54fcfd2645540bd7c09780297dac5dea69cb9b4da68ce92a36ce806c25ddf3d",
+      "sanitizedSha256": "d54fcfd2645540bd7c09780297dac5dea69cb9b4da68ce92a36ce806c25ddf3d",
+      "gzipSha256": "27793b7461262cb20ba59093e20b7b88075f8efd198992ac4ac9c6f78b0f9b44"
+    },
+    {
+      "path": "historical-restore04/copy.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\copy.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "historical-restore04/create.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\create.log",
+      "originalBytes": 65,
+      "originalSha256": "955fa3b655d575e1a80dbbe29d57c8ba4c1a895f538467153ee33617516e6e09",
+      "sanitizedSha256": "955fa3b655d575e1a80dbbe29d57c8ba4c1a895f538467153ee33617516e6e09",
+      "gzipSha256": "a7c4046ca3d9be2d68ae69c4db23a4518f66ad1c7145db5bf8454ad24b3609b0"
+    },
+    {
+      "path": "historical-restore04/database-validation.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\database-validation.json",
+      "originalBytes": 3002,
+      "originalSha256": "89c85b0f1e68a8fb1e9eda8f62f62c787e5e40b542f0fe24931b2f93662a6aae",
+      "sanitizedSha256": "89c85b0f1e68a8fb1e9eda8f62f62c787e5e40b542f0fe24931b2f93662a6aae",
+      "gzipSha256": "1ed1fc04b58b5f772d85c154fce935ea0953bf476be43078f8778102447d8326"
+    },
+    {
+      "path": "historical-restore04/database-validation.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\database-validation.log",
+      "originalBytes": 88,
+      "originalSha256": "e95df10f27fbd3cb86970052900e28eaa545fe33179ebdb612cbd903e7c7c01b",
+      "sanitizedSha256": "e95df10f27fbd3cb86970052900e28eaa545fe33179ebdb612cbd903e7c7c01b",
+      "gzipSha256": "2f4f8a034b4aa34345ba66b95939b79061fbc733523a6686eafc81e8ee410db6"
+    },
+    {
+      "path": "historical-restore04/fresh-role.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\fresh-role.log",
+      "originalBytes": 30,
+      "originalSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "bc2e8d3fce7d7509343416f0124ea21ce647ff6197c4b592fdaba5a517505820"
+    },
+    {
+      "path": "historical-restore04/handoff-complete.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\handoff-complete.json",
+      "originalBytes": 314,
+      "originalSha256": "4c765db0bda0454894da236cef174d46ac5e3dc519ec18778e6988799c0d75ba",
+      "sanitizedSha256": "a9152e263bd6414d8405db1db3909ecbd70b2249e9fcd21fdd07b724b46823cb",
+      "gzipSha256": "20c0e846c12dcab11b0e6e9c4d8c14c86cee2a45c0a0483c4416f0e304a0f09e"
+    },
+    {
+      "path": "historical-restore04/owned-pg.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\owned-pg.json",
+      "originalBytes": 525,
+      "originalSha256": "a552413b31f16961466bcfd0996ec3a702cea78ea8ffb1c942ca01e87a33694e",
+      "sanitizedSha256": "a552413b31f16961466bcfd0996ec3a702cea78ea8ffb1c942ca01e87a33694e",
+      "gzipSha256": "6a0560a3927896241c1cae747e0f1d37e9f083fc82dba73bff4903ee5053911b"
+    },
+    {
+      "path": "historical-restore04/ready.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\ready.json",
+      "originalBytes": 1124,
+      "originalSha256": "621ae9453745ca7cf00c9acfc655ebb6cbd4c3bb55e9e224e05b528b09e537f3",
+      "sanitizedSha256": "037ecc92aefb9f296a5207c08f3dd31bfca3b60022c63d6f0920d6edfdd14c93",
+      "gzipSha256": "910211dd87b2ac4050d2200d6908345c0fe6726679df191a29074fd01bba1780"
+    },
+    {
+      "path": "historical-restore04/reference-create.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\reference-create.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "historical-restore04/reference-drop.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\reference-drop.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "historical-restore04/reference-rendered-schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\reference-rendered-schema.sql",
+      "originalBytes": 575955,
+      "originalSha256": "7ed22d306fb716a4a43708a32824337c46177b97224677cf4d59e28b4066f23d",
+      "sanitizedSha256": "7ed22d306fb716a4a43708a32824337c46177b97224677cf4d59e28b4066f23d",
+      "gzipSha256": "049c6ea6144e29ac896858da9e4786a3304d2147b3261139de164e18f337b3f7"
+    },
+    {
+      "path": "historical-restore04/reference-restore.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\reference-restore.log",
+      "originalBytes": 19399,
+      "originalSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "e1a39c2d22b9bba13ed6dee4236a2952da3652007910293c3a39c6c621561434"
+    },
+    {
+      "path": "historical-restore04/remove.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\remove.log",
+      "originalBytes": 65,
+      "originalSha256": "955fa3b655d575e1a80dbbe29d57c8ba4c1a895f538467153ee33617516e6e09",
+      "sanitizedSha256": "955fa3b655d575e1a80dbbe29d57c8ba4c1a895f538467153ee33617516e6e09",
+      "gzipSha256": "a7c4046ca3d9be2d68ae69c4db23a4518f66ad1c7145db5bf8454ad24b3609b0"
+    },
+    {
+      "path": "historical-restore04/restore-sources.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\restore-sources.json",
+      "originalBytes": 762,
+      "originalSha256": "ac7b2f01fcb778a63011d4b8d1055bafc782f21d14e0c00b44b5f2b20a0e62f7",
+      "sanitizedSha256": "d01df3d1f03168cf45310dc2f785a4574098cffc123f13220345eb79610a10d3",
+      "gzipSha256": "d0169b7fe2247a72e9020ab280c2716e64cc94b54c5e8acee3a6deec3a42c1a0"
+    },
+    {
+      "path": "historical-restore04/restore.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\restore.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "historical-restore04/restored-schema.sql.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\restored-schema.sql",
+      "originalBytes": 575955,
+      "originalSha256": "5c61361e765de0830dc803185adaa0ac73cfd26c0bedf335efcaa59fd6d83a02",
+      "sanitizedSha256": "5c61361e765de0830dc803185adaa0ac73cfd26c0bedf335efcaa59fd6d83a02",
+      "gzipSha256": "2cc8b0cb9e3a3077ce8da46efa21969d7e53e60544bc164c8939b438120799bd"
+    },
+    {
+      "path": "historical-restore04/schema-comparison.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\schema-comparison.json",
+      "originalBytes": 525,
+      "originalSha256": "2184799a726a2b20dbe1ac51fce1bf86a2edd01de8e41591f2a17e22d23627b9",
+      "sanitizedSha256": "2184799a726a2b20dbe1ac51fce1bf86a2edd01de8e41591f2a17e22d23627b9",
+      "gzipSha256": "103dd6851b16ac855977a5467a110a7d04e540425be8c7323db7f92278a74fd3"
+    },
+    {
+      "path": "historical-restore04/validity-horizon.json.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\validity-horizon.json",
+      "originalBytes": 1070,
+      "originalSha256": "d3a1027c0c8461349f5bf9f9f05d80d847ed9cf30e4992a55f56b86ce7354d7f",
+      "sanitizedSha256": "d3a1027c0c8461349f5bf9f9f05d80d847ed9cf30e4992a55f56b86ce7354d7f",
+      "gzipSha256": "90d24839f502b77a1343cb036b466dc5d47b542e5bbfc1e3f0033df4e518a368"
+    },
+    {
+      "path": "historical-restore04/release297-restore-b112-snapshot-04.mjs.gz",
+      "originalPath": "<TEMP>\\release297-restore-b112-snapshot-04.mjs",
+      "originalBytes": 10133,
+      "originalSha256": "4f9d03646df5e5a4209e8ff50764be88a7ff0ca1de6ac22bd451d8fd4737929d",
+      "sanitizedSha256": "4e26e4e09ddca63699592443420860fb74818fa1790b2ed30ec550e9607765ca",
+      "gzipSha256": "7c24ed514d7075d48b5944e6602486aee5139dc4c8c4daa5c548ff30ac07f726"
+    },
+    {
+      "path": "historical-restore04/release297-restore-b112-snapshot-04-runner.log.gz",
+      "originalPath": "<TEMP>\\release297-restore-b112-snapshot-04-runner.log",
+      "originalBytes": 448,
+      "originalSha256": "9bb6f41888758aaddce401a585ba5de51a3f45d89e1636598768a5fc55965690",
+      "sanitizedSha256": "9bb6f41888758aaddce401a585ba5de51a3f45d89e1636598768a5fc55965690",
+      "gzipSha256": "6ff21a24e939947f746dde8294c2b2caf937fe096fdc866c1445483a27f71bc5"
+    },
+    {
+      "path": "historical-restore04/release297-snapshot-horizon-native-04.log.gz",
+      "originalPath": "<TEMP>\\release297-snapshot-horizon-native-04.log",
+      "originalBytes": 57,
+      "originalSha256": "14a2a8b631907ac8211983a3a5258ab1776e5d7b4f0f4c6da4eea365c9dcbe6d",
+      "sanitizedSha256": "14a2a8b631907ac8211983a3a5258ab1776e5d7b4f0f4c6da4eea365c9dcbe6d",
+      "gzipSha256": "97f25daa8866c2ba1e76f0276da104290020baeb4341077525a52400d52f3377"
+    },
+    {
+      "path": "archive-script.mjs.gz",
+      "originalPath": "<TEMP>\\release297-restored-owner-evidence-01.mjs",
+      "originalBytes": 7178,
+      "originalSha256": "177dd66c651764f1c38a048df116e1ddf3e9c06b2a3f248e283c1607b0e4185f",
+      "sanitizedSha256": "177dd66c651764f1c38a048df116e1ddf3e9c06b2a3f248e283c1607b0e4185f",
+      "gzipSha256": "28d6e6b21b00e705c46813b82e66cb28a3c7b0af1e4baf21d8be80ada247309f"
+    }
+  ],
+  "hashOnly": [
+    {
+      "path": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c-private\\postgres.env",
+      "bytes": 178,
+      "sha256": "089501c0f434a94a5e535ca204e7b150984e9362701d8cd9216a22407cba572f",
+      "reason": "Private fresh synthetic credentials; excluded contents."
+    },
+    {
+      "path": "<TEMP>\\release297-e95-restore-restart-9bfd1925e36c-private\\validation.json",
+      "bytes": 755,
+      "sha256": "6ca93696ab6cb1b93e1e3e97a2d35f1e1814be272ec2c9bbb26d573edb4dd794",
+      "reason": "Private fresh synthetic credentials; excluded contents."
+    },
+    {
+      "path": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\postgres.private.env",
+      "bytes": 180,
+      "sha256": "a0bbad2ddd9ce23372425bff608f8a48f1c8de7023b9bb9a6b57f3fff078e6fc",
+      "reason": "Historical private synthetic restore credentials."
+    },
+    {
+      "path": "<TEMP>\\release297-snapshot-restore-b112-21d021cbb765\\validation.private.json",
+      "bytes": 763,
+      "sha256": "1433991faca3ab08b522c7647ee51b9ea1321b2849d1a8f034451586e1b02054",
+      "reason": "Historical private synthetic restore credentials."
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-02T22:44:36.015Z",
+  "diagnosticOnly": true,
+  "equivalent": true,
+  "scope": "Two diagnostic preflight schemas only; does not certify future capacity runs.",
+  "normalization": "Remove only pg_dump restrict/unrestrict nonce lines; normalize BOM and CRLF to UTF8/LF; retain all SQL and schema names.",
+  "runs": [
+    {
+      "run": "load-preflight-01",
+      "rawSha256": "78d59e08425206776e39c67ee978b4b2fb4e024e53ea532af7d34cba607af6ea",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "Remove only pg_dump restrict/unrestrict nonce lines; normalize BOM and CRLF to UTF8/LF; retain all SQL and schema names.",
+      "populatedDataCopied": false
+    },
+    {
+      "run": "load-preflight-02",
+      "rawSha256": "50067b088043647f90b4be79d56facc3e565baf190520b506e638dac510ec943",
+      "canonicalSha256": "f11bfcf7a44d202bbb6e5828cf556b69db3524b218b388678ac46e481c8194a1",
+      "normalization": "Remove only pg_dump restrict/unrestrict nonce lines; normalize BOM and CRLF to UTF8/LF; retain all SQL and schema names.",
+      "populatedDataCopied": false
+    }
+  ]
+}

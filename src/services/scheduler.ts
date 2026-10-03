@@ -1,3 +1,4 @@
+import { expirePrivateChatDeliveries } from "./classpilotPrivateChatLifecycle.js";
 import { claimStudentInformationJobs, processStudentInformationClaim, cleanupStudentInformationImports } from "./studentInformationWorker.js";
 import type { Server as SocketServer } from "socket.io";
 import errorMonitor from "./errorMonitor.js";
@@ -41,6 +42,7 @@ import { publishWS } from "../realtime/ws-redis.js";
 import { broadcastGoPilot } from "../realtime/socketio.js";
 import { runSecurityChecks } from "./securityMonitor.js";
 import { purgeExpiredPasspilotPassDenials } from "./passpilotRules.js";
+import { maintainPasspilotAppointments } from "./passpilotAppointmentsLifecycle.js";
 import {
   getStaffIdentityIntegrityScanIntervalMinutes,
   runStaffIdentityIntegrityScan,
@@ -319,6 +321,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("cleanupSchoolDiscipline", async () => { try { await cleanupSchoolDiscipline(); } catch { console.error(JSON.stringify({event:"school_discipline_cleanup_failed"})); } });
     scheduleLockedJob("cleanupMyDeskImports", async () => { try { await cleanupMyDeskImports(); } catch { console.error(JSON.stringify({event:"mydesk_import_cleanup_failed"})); } });
     scheduleLockedJob("cleanupStudentInformationImports", async () => { try { await cleanupStudentInformationImports(); } catch { console.error(JSON.stringify({event:"student_information_cleanup_failed"})); } });
+    scheduleLockedJob("maintainPasspilotAppointments", async () => { try { await maintainPasspilotAppointments(schedulerPool); } catch { console.error(JSON.stringify({ event: "passpilot_appointments_maintenance_failed" })); } });
     scheduleLockedJob("discoverScheduleBoundarySchools", discoverScheduleBoundarySchools);
     scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
     scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
@@ -357,6 +360,7 @@ export function startScheduler(socketIo: SocketServer | null = null) {
     scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
   }, 60 * 1000);
   scheduleLockedJob("purgePasspilotPassDenials", purgePasspilotPassDenials);
+  scheduleLockedJob("maintainPasspilotAppointments", async () => { try { await maintainPasspilotAppointments(schedulerPool); } catch { console.error(JSON.stringify({ event: "passpilot_appointments_maintenance_failed" })); } });
   scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("expireClasspilotSupervisionContexts", expireClasspilotSupervisionContexts);
@@ -753,6 +757,7 @@ async function expireClasspilotSupervisionContexts() {
 async function expireClasspilotTransientCommands() {
   try {
     await expireClasspilotTransientCommandTargets({}, schedulerDb);
+    await expirePrivateChatDeliveries(schedulerDb,250);
   } catch (err) {
     console.error("[ClassPilot] Failed to expire transient commands");
     errorMonitor.trackError("scheduler_failure", err as Error, {
@@ -1282,7 +1287,7 @@ async function purgeExpiredHeartbeats() {
       await schedulerPool.query(`DELETE FROM daily_usage WHERE school_id = $1 AND date < $2`, [school.id, cutoffLocalDate]);
       // Monitored Browser Time rollups share the daily aggregate horizon. A
       // failure here must not skip this school's remaining retention steps.
-      await schedulerPool.query(`DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
+      await schedulerPool.query(`WITH removed AS (DELETE FROM classpilot_usage_rollups WHERE school_id = $1 AND usage_date < $2::date) DELETE FROM classpilot_usage_rollup_days WHERE school_id = $1 AND usage_date < $2::date`, [school.id, cutoffLocalDate]).catch((error) => {
         errorMonitor.trackError("scheduler_failure", error as Error, {
           job: "purgeExpiredHeartbeats", errorCode: "USAGE_ROLLUP_RETENTION_FAILED",
         });
