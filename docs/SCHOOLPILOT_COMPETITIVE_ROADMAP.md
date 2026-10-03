@@ -22,12 +22,18 @@ checks pass, but the capacity gate does not. The subsequent `5d543f40` checkout
 instrumentation correction passes regression/full-unit checks and local image
 scanning. The `6035239b` identity scheduler passes 66 focused cases, native
 owner/restricted checks and 1,868 unit cases (four conditional skips).
-[Current-source CI at `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json)
+[CI for that application at `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json)
 passes all 17 CI jobs and three security workflows. Final-source capacity and
 release preparation remain in progress. The subsequent isolated, profiled
 ingestion run completes 4,158/6,000 heartbeats despite zero late offers;
 API CPU saturation remains unresolved. Earlier checkpoint statements below
-are historical.
+are historical. Current application `0e427e3c` also fixes the exact 2.9.7
+package's Focus ACK field and JSONB-order-dependent repeated status writes.
+Its [64 focused and 15 restricted database tests](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
+pass, along with build/type/cast checks and [61 load-profile guards](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json).
+The combined synthetic lifecycle now requires the exact authorized public
+Focus state after the packaged ACK shape. Fresh CI, unprofiled capacity,
+compatible fallback correction and final artifacts remain pending.
 
 The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 separates waiting report requests from other main-pool requests with alternating

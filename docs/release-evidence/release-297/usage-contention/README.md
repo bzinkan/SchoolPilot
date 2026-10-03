@@ -3,6 +3,16 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+Current application `0e427e3c` includes the [Focus wire and semantic-equality
+correction](focus-status-wire-297-01/manifest.json): 64 focused cases, 15
+restricted-role database cases and build/type/cast checks pass. The actual
+2.9.7 ZIP remains unchanged. [Lifecycle harness evidence](focus-lifecycle-harness-01/manifest.json)
+records 61 passing guards and exact public state verification before synthetic
+command completion. No browser enforcement or capacity pass is claimed.
+Earlier CI below predates this correction; new CI and an unprofiled current
+baseline are required. Profiler overhead in the latest ingestion diagnostic
+has not been isolated. The modest SELECT-construction trial remains unadopted.
+
 Current October 3 checkpoint: the [resource-bounded `9630c009` diagnostic](linux-role-combined-9630-01/manifest.json)
 fails capacity: 2,704/6,000 heartbeats and 34/64 reports succeeded; complete
 historical rollups took 39.326/57.768 seconds including admission wait.

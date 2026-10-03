@@ -18,6 +18,17 @@ and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
 Current October 3 checkpoint: **Usage capacity has no accepted passing run**.
+The current application is `0e427e3ca9b82125e0bb8692176accad21f4f699`.
+Its [Focus wire correction](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
+accepts the exact 2.9.7 package's `focusStatus` on heartbeat and WebSocket ACKs,
+and compares validated status fields without depending on JSONB key order.
+The regression failed before correction; 64 focused cases, 15 restricted-role
+database cases and build/type/cast checks now pass. The
+[strengthened synthetic lifecycle](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json)
+verifies exact public Focus state before accepting command completion; all 61
+load-profile guards pass. Extension bytes are unchanged. Fresh combined CI,
+an unprofiled capacity baseline and the compatible fallback backport are pending.
+
 The [resource-bounded combined diagnostic at `9630c009`](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
 completed 2,704/6,000 heartbeats and 34/64 reports; the second complete historical
 rollup took 57.768 seconds including admission wait, above the 48-second gate.
@@ -186,9 +197,10 @@ recipient, enforcement, tenancy or deployment health checks.
 
 ## Current release selection and evidence
 
-This selection snapshot is based on application `6035239b` and documentation
-head `2378e04e`. **No final-source API/worker release candidate is selected.**
-The latest scanned local image, `5d543f40`, predates the current application.
+This selection snapshot is based on application `0e427e3c`.
+**No final-source API/worker release candidate is selected.** The latest scanned
+local image, `5d543f40`, predates the current application. Diagnostic builds do
+not select release artifacts.
 Final source, images, CI, capacity and recovery evidence must be reconciled
 before the separately authorized release steps below.
 
@@ -199,10 +211,10 @@ before the separately authorized release steps below.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | Current application: `6035239b`. [Full CI on documentation checkpoint `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json) passes all 17 CI jobs and three security workflows for the same application bytes. Later application changes and approved merged-main source require fresh CI. Conditional skips remain skips. |
-| Current contention correction / local checks | The [`6035239b` identity scheduling correction](release-evidence/release-297/usage-contention/fair-main-pool-user-identity-01/manifest.json) passes 66 focused cases, native owner/restricted cases, build/type/cast checks and 1,868 unit cases with four conditional skips. Current-source CI passes; actual-workload capacity and final artifact/recovery evidence remain pending. Earlier failures and repairs remain in the historical evidence index. |
-| API / worker artifacts | **No final-source release image selected.** The latest [locally scanned image, `5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json), has zero findings and embedded compatibility checks, but does not include `6035239b`. The retained [compatible fallback, `5c01944e`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json), includes the final heartbeat entitlement/binding fence and retains 129-table/lifecycle compatibility with both Usage modes off. Final candidate/fallback pairing, registry identities, approved merged-main bindings and production task pairs still require verification. Historical image manifests remain unchanged. |
-| Historical migration rehearsal | The [d6492333 rehearsal](release-evidence/release-297/usage-contention/rehearsal-d649-5c01/manifest.json) passes reconstructed baseline `7af9d0dd` → candidate `d6492333` → fallback `5c01944e` → candidate, preserving all 53 migration IDs and 129 tenant tables with owned-container cleanup. The empty baseline already adopted staff identity contracts; that adoption proves idempotent re-entry only. This historical rehearsal does not certify `6035239b` or a future final image. Final-source recovery rehearsal, actual production catalog/ledger verification and populated RLS checks remain required. |
+| Remote review source / CI | Current application: `0e427e3c`; fresh CI is pending. [Full CI at `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json) passes all 17 CI jobs and three security workflows for the preceding `6035239b` application. It does not certify the later Focus correction. Approved merged-main source also requires its own CI. Conditional skips remain skips. |
+| Current correction / local checks | The [Focus wire and semantic-equality correction](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json) passes 64 focused cases, 15 restricted-role database cases and build/type/cast checks. The [stronger lifecycle harness](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json) passes all 61 load-profile guards. The preceding identity scheduler has its own 66 focused/native and 1,868 unit results. Actual-workload capacity and final artifact/recovery evidence remain pending. |
+| API / worker artifacts | **No final-source release image selected.** The latest [locally scanned image, `5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json), has zero findings and embedded compatibility checks, but predates both identity scheduling and the Focus correction. The retained [fallback image, `5c01944e`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json), preserves the final heartbeat fence and 129-table/lifecycle compatibility with both Usage modes off; it requires the narrow Focus correction before final pairing. Final images, registry identities, approved merged-main bindings and production task pairs still require verification. Historical image manifests remain unchanged. |
+| Historical migration rehearsal | The [d6492333 rehearsal](release-evidence/release-297/usage-contention/rehearsal-d649-5c01/manifest.json) passes reconstructed baseline `7af9d0dd` → candidate `d6492333` → fallback `5c01944e` → candidate, preserving all 53 migration IDs and 129 tenant tables with owned-container cleanup. The empty baseline already adopted staff identity contracts; that adoption proves idempotent re-entry only. This historical rehearsal does not certify `0e427e3c` or a future final image. Final-source recovery rehearsal, actual production catalog/ledger verification and populated RLS checks remain required. |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |

@@ -17,12 +17,18 @@ development checkpoints below are historical and do not establish current readin
 
 ## Current preparation selections
 
+Application `0e427e3c` additionally corrects both Focus ACK wire surfaces and
+JSONB-order-dependent status writes. Its [64 focused and 15 restricted database
+passes](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
+and [61 lifecycle/profile guard passes](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json)
+are local evidence; fresh combined CI and capacity remain required.
+
 | Item | Selected source / limitation |
 |---|---|
-| Application | `6035239b` in #603; documentation checkpoint `2378e04e`. Current-source CI passes; capacity remains pending. |
-| Last completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the current application bytes. |
-| Local candidate image | [`5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json) is the latest scanned local image, but predates `6035239b`. No final-source release image is selected. |
-| Compatible fallback | [`5c01944ed1afb4241e270469c6477121bf48cd84`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json); final candidate pairing and recovery verification remain required. Earlier `ed5599de` and `351422d7` artifacts are historical. |
+| Application | `0e427e3ca9b82125e0bb8692176accad21f4f699` in #603; fresh CI and capacity remain pending. |
+| Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
+| Local candidate image | [`5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json) is the latest scanned local image, but predates current corrections. No final-source release image is selected. |
+| Compatible fallback | Retained image [`5c01944ed1afb4241e270469c6477121bf48cd84`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json) requires the narrow Focus backport before final pairing and recovery verification. Earlier `ed5599de` and `351422d7` artifacts remain historical. |
 | Operational readiness | No accepted Usage capacity run and no release execution approved. Follow the [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for the remaining gates and separate authorizations. |
 
 ## Historical preparation checkpoints
