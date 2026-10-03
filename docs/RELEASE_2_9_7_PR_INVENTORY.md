@@ -24,7 +24,7 @@ records 1,906 unit passes with no skips, 50 owner and 50 restricted native passe
 four restricted private-recovery passes, and build/type/cast checks. Its
 [final source binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
 preserves the post-test whitespace correction and compiled equivalence. New
-CI, candidate image and full combined capacity remain pending; no accepted
+CI and full combined capacity remain pending; no accepted
 capacity run or release execution is recorded.
 
 Application `0e427e3c` additionally corrects both Focus ACK wire surfaces and
@@ -41,7 +41,7 @@ persists; completed drain and cleanup do not establish capacity acceptance.
 |---|---|
 | Application | `b11202fc305198d76e73c5e6d711b7dc9ed2d938` in #603; focused/native/full-unit checks pass. CI and combined capacity on these application bytes remain pending. [CI at `5d031512`](release-evidence/release-297/usage-contention/ci-5d031512-final-01/manifest.json) covers the preceding `0e427e3c` application only. |
 | Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
-| Local candidate image | [`0e427e3c`](release-evidence/release-297/usage-contention/candidate-artifact-0e427e3c/manifest.json) is the latest scanned local diagnostic image, with documented build-cache reuse. No final-source release image is selected. Earlier images remain historical. |
+| Local candidate image | [`b11202fc`](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json) passes a fresh uncached build, pinned scan with zero findings, compatibility checks and cleanup. Its Linux/amd64 manifest is `sha256:e2ff94d03e7c35a58d81cc568865ccbec4ac3fc2d6c21d8a4ce2363c2f889f24`. Final release selection still requires accepted capacity and recovery pairing. Earlier images remain historical. |
 | Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. Its [fresh local image and scan](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass with zero findings, verified embedded compatibility and cleanup. Both Usage modes must remain off. Final-candidate recovery pairing remains required. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |
 | Operational readiness | No accepted Usage capacity run and no release execution approved. Follow the [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for the remaining gates and separate authorizations. |
 

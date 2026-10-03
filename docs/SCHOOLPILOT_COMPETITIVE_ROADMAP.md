@@ -20,8 +20,10 @@ bindings and mandatory-work sealing. [Checks](release-evidence/release-297/usage
 pass 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
 four restricted private-recovery cases, and build/type/cast checks. The
 [final binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
-records the whitespace cleanup and identical compiled output. CI, candidate
-image and combined capacity remain pending. There are zero accepted capacity
+records the whitespace cleanup and identical compiled output. The
+[fresh candidate image](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json)
+passes an uncached build, a pinned scan with zero findings and compatibility
+checks. CI, recovery pairing and combined capacity remain pending. There are zero accepted capacity
 runs. The preceding candidate-default ingestion diagnostic also failed; a
 larger effective V8 heap did not resolve saturation. No deployment green light
 or change to operational authorization is recorded.

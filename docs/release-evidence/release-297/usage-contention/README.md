@@ -15,6 +15,22 @@ The initial failing test run and fixture setup failure remain in the packet.
 The [final source binding](heartbeat-prepared-reads-implementation-01/final-binding.json)
 records the trailing-whitespace cleanup and identical rebuilt JavaScript.
 Full combined capacity and CI on this new application remain pending.
+Its [fresh local candidate image](candidate-artifact-b11202fc/manifest.json)
+passes `--pull --no-cache`, the pinned scan with zero findings, embedded
+129-table/lifecycle compatibility checks and exact-owned cleanup. The permanent
+image export is retained at
+`C:/Users/zinka/.codex/artifacts/release297-candidate-b11202fc-01`.
+No registry publication, deployment or accepted capacity is implied.
+The [frontend binding](frontend-b112-binding-01/receipt.json) verifies all 632
+tracked frontend input blobs still match the prior successful aggregate/build
+receipt and the retained artifact hash is unchanged. This is an equivalence
+check, not a new browser run or live backend/frontend acceptance.
+CI at `4d0ae92f` subsequently found one remaining source assertion in the
+ordinary database lane that expected the old inline entitlement queries.
+[The follow-up](runtime-entitlement-selector-followup-01/manifest.json) retains
+the failed job, updates the assertion to the canonical same-school shared-lock
+builders and passes all 27 focused tests. Application bytes are unchanged.
+The remaining CI result must be replaced by a successful current-head run.
 
 The [Linux prepared-query component comparison](heartbeat-prepared-linux-prototype-01/manifest.json)
 uses exact `0e427e3c` runtime bytes, one API CPU, 2 GiB container memory and the

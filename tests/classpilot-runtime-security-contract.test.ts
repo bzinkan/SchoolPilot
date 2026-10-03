@@ -619,10 +619,11 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
   });
 
   it("rechecks entitlement inside scheduled occurrence/start locks and login pickup", async () => {
-    const [scheduled, websocket, entitlement] = await Promise.all([
+    const [scheduled, websocket, entitlement, heartbeatQueries] = await Promise.all([
       source("src/services/classpilotScheduledStart.ts"),
       source("src/realtime/websocket.ts"),
       source("src/services/classpilotEntitlement.ts"),
+      source("src/services/classpilotHeartbeatReadQueries.ts"),
     ]);
     const preparation = scheduled.slice(
       scheduled.indexOf("async function prepareScheduledOccurrence"),
@@ -644,8 +645,18 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(scheduled, /startActiveScheduledClassesForTeacher[\s\S]*await assertClasspilotEntitled\(options\.schoolId\)/);
     assert.match(pickup, /assertClasspilotEntitled\(schoolId\)[\s\S]*startActiveScheduledClassesForTeacher/);
-    assert.match(entitlement, /options\.lock[\s\S]*schoolQuery\.for\("share"\)/);
-    assert.match(entitlement, /options\.lock[\s\S]*licenseQuery\.for\("share"\)/);
+    assert.match(entitlement, /await readHeartbeatSchool\(dbInstance, schoolId\)/);
+    assert.match(entitlement, /await readHeartbeatLicense\(dbInstance, schoolId\)/);
+    const schoolQuery = heartbeatQueries.slice(
+      heartbeatQueries.indexOf("export function heartbeatSchoolQuery"),
+      heartbeatQueries.indexOf("export function heartbeatLicenseQuery")
+    );
+    const licenseQuery = heartbeatQueries.slice(
+      heartbeatQueries.indexOf("export function heartbeatLicenseQuery"),
+      heartbeatQueries.indexOf("export function heartbeatSessionQuery")
+    );
+    assert.match(schoolQuery, /from\(schools\)[\s\S]*eq\(schools\.id, options\.schoolId\)[\s\S]*for\("share"\)/);
+    assert.match(licenseQuery, /from\(productLicenses\)[\s\S]*eq\(productLicenses\.schoolId, options\.schoolId\)[\s\S]*for\("share"\)/);
   });
 
   it("locks canonical entitlement inside command and FAB settings transactions", async () => {

@@ -25,7 +25,12 @@ four restricted private-chat cases, and build/type/cast checks. It caches query
 metadata only, preserves fresh authority checks, and seals mandatory work before
 delivery. The [final binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
 documents a whitespace-only cleanup with identical compiled JavaScript.
-Its candidate image, combined capacity and CI are pending. The earlier
+Its [fresh local candidate image](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json)
+passes an uncached build, a pinned scan with zero findings and embedded
+compatibility checks. Combined capacity, current CI and final recovery pairing
+remain pending. [CI's remaining inline-query assertion](release-evidence/release-297/usage-contention/runtime-entitlement-selector-followup-01/manifest.json)
+is corrected with 27 focused passes and no application change; the failed
+ordinary database job is retained and fresh CI is required. The earlier
 [candidate-default ingestion diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-candidate-default-0e427-01/manifest.json)
 on `0e427e3c` failed at 5,116/6,000 successes; removing the test-only old-space
 override did not resolve saturation. Runtime defaults do not prove live ECS
