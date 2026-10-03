@@ -27,7 +27,12 @@ skips, plus build/type/cast checks. All 1,243 captured source files stayed
 byte-identical across verification. The measured repeated-URL grain component
 improves by 36–39%; the all-distinct normalization kernel increases from 28.022
 to 41.495 ms per 6,000 rows. Neither result establishes complete capacity.
-Fresh e95 CI, image preparation and combined load verification are pending.
+The [fresh e95 image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json)
+passes its uncached build, pinned scan with zero findings and compatibility
+checks. The e95 CI rollout clock probe failed; its [test-only correction](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json)
+passes local real-clock and deterministic boundary checks without changing
+production deployment code. Full follow-up CI and combined load verification
+remain pending.
 
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
@@ -88,8 +93,9 @@ recipient, enforcement, tenancy or deployment health checks.
 
 ## Current release selection and evidence
 
-This selection snapshot includes application `e95a2b56`; its full CI and image
-preparation are pending. **No final-source API/worker release candidate is selected.**
+This selection snapshot includes application `e95a2b56`; its fresh local image
+passes build/scan/compatibility checks, while follow-up CI and capacity remain
+pending. **No final-source API/worker release candidate is selected.**
 The preceding b112 local image and its 6e251 recovery pair pass their stated checks,
 but Usage capacity remains failed. Reconcile final source, images, completed CI
 and accepted capacity before the separately authorized release steps below.
@@ -101,9 +107,9 @@ and accepted capacity before the separately authorized release steps below.
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | Current application `e95a2b56` is pushed to #603; its full CI is pending. Earlier [CI at `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) covers application `b11202fc`: all 17 jobs and three security workflows pass. The unfinished new role harness remains outside the committed source. Approved merged main requires its own checks. |
+| Remote review source / CI | Application `e95a2b56` is pushed to #603; a live-clock test failed in its rollout lane. The [test-only fix](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json) passes locally; full follow-up CI remains required. Earlier [CI at `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) covers b112. The unfinished new role harness remains outside the committed source. Approved merged main requires its own checks. |
 | Current correction / local checks | The [domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json) passes 1,906 unit cases, 25 owner and 12 restricted native cases, all without skips, and build/type/cast checks. It preserves all nine semantic grain columns against immutable b112 SQL. Prepared reads, Focus, privacy and lifecycle corrections remain included. |
-| API / worker artifacts | **No final release image selected.** The [fresh b112 image](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json) and [6e251 fallback](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass uncached builds, pinned scans with zero findings and compatibility checks. Linux platform digests are respectively `sha256:e2ff94d03e7c35a58d81cc568865ccbec4ac3fc2d6c21d8a4ce2363c2f889f24` and `sha256:57c216014e686cddb2dd9520015fc4e4b7f1688d892c8c1f36540ceb511043de`. Local adopted-state recovery passes with both Usage modes off. Registry identities, approved merged-main bindings and production task pairs remain unverified. |
+| API / worker artifacts | **No final release image selected.** The [fresh e95 image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json) passes an uncached build, pinned scan with zero findings and compatibility checks; Linux manifest `sha256:3b0816f59a00612b0bfb41e2b45e4767dbac2f7eba873d6354035cb24e523593`. The [6e251 fallback](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) remains compatible at the checked contract floor. The completed actual-image recovery pair used the preceding b112 candidate. Final capacity, recovery binding, registry identities, approved merged-main bindings and production task pairs remain unverified. |
 | Local recovery rehearsal | The [current b112/6e251 local rehearsal](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) verifies reconstructed empty baseline 7af9 → b112 → 6e251 → b112 with 53 migration IDs and 129 forced-RLS tables. Separate actual-image bundled-function checks preserve expired chat and exact Focus cleanup. These are synthetic source/schema and function proofs, not production catalog/data or service-traffic rollback verification. Earlier rehearsals remain historical. |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |

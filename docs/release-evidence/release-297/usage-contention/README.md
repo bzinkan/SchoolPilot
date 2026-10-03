@@ -12,9 +12,21 @@ before and after verification. The new native scenarios compare all nine
 semantic grain columns to immutable b112 SQL and exercise actual atomic writes
 and restricted tenant isolation. PostgreSQL/Redis container removal passed;
 the runner requested exact-owner `--volumes` removal, but did not independently
-enumerate anonymous-volume absence. Fresh image and combined load results remain
-pending. No capacity run is accepted. The [e95 frontend binding](frontend-e95-binding-01/receipt.json)
+enumerate anonymous-volume absence. The [fresh e95 image](candidate-artifact-e95a2b56/manifest.json)
+passes an uncached build, a pinned scan with zero findings and embedded
+compatibility checks. Its permanent export and identities are hash-verified;
+combined load results remain pending. No capacity run is accepted. The [e95 frontend binding](frontend-e95-binding-01/receipt.json)
 verifies unchanged source blobs and retained artifact bytes.
+
+The e95 CI rollout lane failed its live Eastern-clock equality probe across a
+minute boundary. [The test-only correction](clock-minute-boundary-01/manifest.json)
+retains the failed job and brackets the production helper call with independent
+before/after clock values, logging all three. The real Git Bash probe passes;
+forced minute/day transitions pass, the original equality fails at the forced
+minute transition, and an incorrect clock result is still rejected. Production
+`deploy.sh` is unchanged. Because the original failure did not log its two
+values, its precise minute-boundary cause remains an inference. Complete CI
+after this test correction is still required.
 
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
 public Drizzle SELECT definitions on an exclusively owned heartbeat connection.

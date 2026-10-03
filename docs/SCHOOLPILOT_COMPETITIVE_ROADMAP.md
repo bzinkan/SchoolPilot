@@ -19,8 +19,10 @@ normalizes exact repeated URLs once per student's rollup. Its [local checks](rel
 pass 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
 and build/type/cast checks. All nine semantic grain columns match immutable
 b112 SQL. A repeated-URL prototype improves, with a documented all-distinct
-kernel slowdown. Final-source capacity, image preparation and full CI remain
-pending; there is still no deployment green light.
+kernel slowdown. Its [fresh image](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json)
+passes build/scan/compatibility checks. Final-source capacity and complete
+follow-up CI remain pending after a [test-only rollout clock fix](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json);
+there is still no deployment green light.
 
 Preceding October 3 application `b11202fc305198d76e73c5e6d711b7dc9ed2d938`
 reuses heartbeat query definitions while retaining fresh authority, tenant
