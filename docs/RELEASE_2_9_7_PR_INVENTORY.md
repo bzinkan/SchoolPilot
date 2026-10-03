@@ -21,8 +21,15 @@ The latest [screenshot-reader correction in #603](release-evidence/release-297/u
 passes 2,012 unit cases, 190 owner/restricted database cases, four private-chat
 cases and build/type/cast checks. Its immutable 54th migration and startup
 permission checks retain the existing 129-table RLS inventory. Failed attempts
-remain preserved. A new image, current-head CI, three cold capacity passes and
-updated recovery evidence are still required; zero capacity runs are accepted.
+remain preserved. The [814844f3 image](release-evidence/release-297/usage-contention/candidate-artifact-814844f3/manifest.json)
+passes build/scan/compatibility checks and its [local recovery pair](release-evidence/release-297/usage-contention/recovery54-814844f3-01/manifest.json)
+passes with the complete 54-migration ledger. The first [registered candidate run](release-evidence/release-297/usage-contention/capacity-8148-attempt-01/manifest.json)
+fails: 3,042/6,000 successful heartbeats, 48/64 reports, workers 15.647/38.266
+seconds, and a failed classroom lifecycle. Correctness for persisted data and
+cleanup pass; zero capacity runs are accepted. CI passes 16/17 jobs plus all
+three security workflows. The one frontend race has a [test-only fix](release-evidence/release-297/usage-contention/frontend2-resize-814844f3-01/manifest.json)
+verified locally; new-head CI, three cold capacity passes and the original
+comparison are still required. The source-PR inclusion table is unchanged.
 
 Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds an exact-URL
 domain map per student, preserving classification, timing, tenant scope and

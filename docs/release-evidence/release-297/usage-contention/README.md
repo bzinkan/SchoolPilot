@@ -24,8 +24,42 @@ correction and passing rerun. Application and native-test inputs stayed identica
 The append-only 54th migration installs an invoker function with PUBLIC execution
 revoked; startup checks its definition and the actual runtime user's permission.
 Local fixture setup grants only the explicit fixture role. No production role
-is guessed. Updated source/image, schema-bound capacity and recovery acceptance
-remain pending; the accepted capacity-run count is zero.
+is guessed. The [814844f3 candidate artifact](candidate-artifact-814844f3/manifest.json)
+passes its uncached build, pinned scan with zero findings and compatibility
+checks. Its [local recovery rehearsal](recovery54-814844f3-01/manifest.json)
+preserves all 54 migrations, the exact invoker function and ACL, private-chat
+expiration, delivered history and exact Focus cleanup across candidate ->
+compatible fallback -> candidate. Both Usage modes remain off. It proves local
+synthetic bundled-function recovery, not production catalog or traffic recovery.
+
+The first [registered 814844f3 candidate attempt](capacity-8148-attempt-01/manifest.json)
+fails with 3,042/6,000 successful heartbeats, 2,266 HTTP 500s, 692 in-flight
+refusals and 408 late offers. Reports pass 48/64. Complete workers take
+15.647/38.266 seconds; numeric/coverage/tenant/CSV checks agree with actually
+persisted observations, but the classroom lifecycle fails. All 13 actual owner
+receipts, the immutable failed campaign entry, seed-only premeasurement abort,
+source/image/schema bindings and positive container/volume cleanup are retained.
+The validator's preparation and ownership failures are consequences of the
+coordinator's deliberate numerical-failure exit; the actual receipts are valid.
+No failed criterion is relaxed or relabeled. Zero capacity runs are accepted.
+
+The intended normal final-delivery client-call reduction, 20 to 17, occurred.
+It did not prevent 2,269 acquisitions from failing. Relative to the prior e95
+run, unchanged persistence hold increased from 36 to 63 ms, final-delivery hold
+from 176 to 240 ms, and sampled API WALWrite waits from 82 to 698. The API,
+generator and coordinator also recorded stalls. These observations do not
+isolate a screenshot-reader regression, a host cause or a connection leak.
+The fixture has one live owner per student; many-owner decoding is not supported
+as an explanation. No unchanged retry was used to hunt for a passing result.
+
+The same packet preserves final 814844f3 CI: 16/17 jobs and all three security
+workflows pass. The remaining responsive-layout assertion has a
+[test-only synchronization correction](frontend2-resize-814844f3-01/manifest.json):
+controlled delayed-resize red/green checks reproduce and fix the race, and all
+three actual roster browser tests pass. Assertions and timeouts are unchanged.
+A separate local full-shard attempt stops at an unrelated navigation-buffer
+failure before this suite; that failure remains preserved. New-head CI and
+three consecutive cold capacity passes plus the original comparison remain due.
 
 Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds the per-student
 exact-URL domain map measured below. [Implementation evidence](domain-map-implementation-e95a2b56/manifest.json)

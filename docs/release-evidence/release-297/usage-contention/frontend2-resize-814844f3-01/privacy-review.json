@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "files": 24,
+  "rawCiAndLocalFailuresRetained": true,
+  "scope": "Synthetic frontend fixtures, CI logs and content-free cleanup/resource counts. No fixture DB/env/dump, request payload or secret files.",
+  "redactions": [
+    "temporary path prefix",
+    "credential-shaped URLs/tokens",
+    "unrelated process inventory omitted from safe host receipt"
+  ],
+  "privateKeyAndAccessKeyPatternCheckPassed": true
+}

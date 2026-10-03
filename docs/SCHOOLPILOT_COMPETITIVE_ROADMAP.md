@@ -17,9 +17,16 @@ gate. SFU implementation and legacy media changes remain excluded.
 The latest October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
 passes 2,012 unit tests, 190 owner/restricted database checks, four private-chat
 checks and build/type/cast checks. It reduces client/database round trips while
-preserving authority, locks and tenant isolation. The additive 54th migration
-requires a new source-bound image, CI, capacity and recovery evidence. No full
-capacity run is accepted, and deployment and activation remain unapproved.
+preserving authority, locks and tenant isolation. The [814844f3 image](release-evidence/release-297/usage-contention/candidate-artifact-814844f3/manifest.json)
+and [local recovery pair](release-evidence/release-297/usage-contention/recovery54-814844f3-01/manifest.json)
+pass their checks with the additive 54th migration. However, the first
+[candidate capacity attempt](release-evidence/release-297/usage-contention/capacity-8148-attempt-01/manifest.json)
+fails: 3,042/6,000 heartbeats and 48/64 reports succeed; workers complete in
+15.647/38.266 seconds, but the classroom lifecycle fails. All receipts and failed
+results remain preserved. CI passes 16/17 jobs and three security workflows;
+the remaining browser race has a locally verified test-only correction.
+New-head CI and full capacity acceptance remain outstanding. Deployment and
+activation remain unapproved.
 
 Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3`
 normalizes exact repeated URLs once per student's rollup. Its [local checks](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)

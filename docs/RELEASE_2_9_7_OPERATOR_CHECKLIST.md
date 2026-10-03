@@ -25,9 +25,30 @@ failure and its test-only Windows newline correction remain preserved. All
 application and native-test inputs are identical between the passing database
 run and final unit run. The reader retains tenant isolation, separate database
 snapshots, locks and final authority checks while reducing client round trips.
-Its additive 54th migration requires a fresh image, final-source CI, a new
-schema-bound fixture, three accepted cold capacity runs and updated recovery
-evidence. None of these functional results establishes capacity acceptance.
+Its additive 54th migration is included in the [814844f3 candidate image](release-evidence/release-297/usage-contention/candidate-artifact-814844f3/manifest.json),
+which passes the uncached build, pinned scan with zero findings and compatibility
+checks. The [local recovery rehearsal](release-evidence/release-297/usage-contention/recovery54-814844f3-01/manifest.json)
+passes candidate -> compatible fallback -> candidate, preserving all 54 migrations,
+private-chat expiration and exact Focus cleanup. This is synthetic recovery,
+not verification of the current production catalog or service-traffic rollback.
+
+The first [registered candidate capacity attempt](release-evidence/release-297/usage-contention/capacity-8148-attempt-01/manifest.json)
+on `814844f344a45159152415b0fb6d7027f05b093e` **fails**: 3,042/6,000
+heartbeats succeed, 2,266 return 500, 692 are refused and 408 offers are late.
+Reports pass 48/64; complete workers finish in 15.647/38.266 seconds. Independent
+totals, coverage, tenant isolation and eight audited CSVs agree for the observations
+actually persisted, but the classroom lifecycle fails. All owners drain and the
+six exact containers plus PostgreSQL volume are verified absent. All 13 receipts,
+the failed journal entry and the seed-only premeasurement abort remain preserved.
+Fewer client queries did not establish capacity: the run also recorded increased
+WAL waits and runtime pauses, whose causes are not yet isolated.
+
+Final CI on 814844f3 passes 16/17 jobs and all three security workflows. The
+remaining responsive-layout test race has a [test-only synchronization correction](release-evidence/release-297/usage-contention/frontend2-resize-814844f3-01/manifest.json)
+with controlled red/green proof and all three targeted browser cases passing.
+An unrelated local shard navigation-buffer failure is retained; new-head CI is
+still required. Three consecutive accepted capacity runs and the original
+comparison remain outstanding. No deployment green light is given.
 
 The preceding load-tested application is `e95a2b56476b1225434c1b0f3907db46c9d84fe3`.
 Its [exact-URL domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)

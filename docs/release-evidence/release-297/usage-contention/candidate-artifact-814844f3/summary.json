@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "passed": true,
+  "buildMode": "Fresh local build with --pull --no-cache; exact source/runtime/scan guards retained; final artifact selection awaits capacity and release checks",
+  "scanCounts": {
+    "UNKNOWN": 0,
+    "LOW": 0,
+    "MEDIUM": 0,
+    "HIGH": 0,
+    "CRITICAL": 0
+  },
+  "image": {
+    "imageId": "sha256:60b3cfa93155d0e37f828b8968dcf8440bbcac7ca7db4acb2fcd4da58bb453f8",
+    "imageIdKind": "index",
+    "indexDigest": "sha256:60b3cfa93155d0e37f828b8968dcf8440bbcac7ca7db4acb2fcd4da58bb453f8",
+    "platformManifestDigest": "sha256:e160ed7e83c2bfc0f195b73e179a718beceaecd45fa042109f45c5432bafa9f4",
+    "configDigest": "sha256:b67bbf0b9dcbd40960ab3523c75e1928bc7625dc8fbfc0817125670d70e15d73",
+    "exportIndexSha256": "37a32afa2e7197152174231bfc5beab2afdb0029e68063c8a825ab830555952c",
+    "verifiedBlobDigests": [
+      "sha256:60b3cfa93155d0e37f828b8968dcf8440bbcac7ca7db4acb2fcd4da58bb453f8",
+      "sha256:e160ed7e83c2bfc0f195b73e179a718beceaecd45fa042109f45c5432bafa9f4",
+      "sha256:42ad1f2ba07c6362ebcaddc87219ecfbfdd183f22e6ce7aae24b2ffc345dd3ab"
+    ]
+  },
+  "artifactDirectory": "C:/Users/zinka/.codex/artifacts/release297-candidate-814844f3-01",
+  "artifactManifestSha256": "ea951bb79e40d9de7f56ef44df3adc84d068d5f9c4cf98451dbe96297cccece0",
+  "candidatePreparationSha256": "8147a836b62a52674a696af511f65633833a3dcf8428d925db148b05b2903766",
+  "scanReceiptSha256": "5dd45923fcf4e48c069568504ae64c8342cbd5891734103e842d444dd14b8c95",
+  "sourceBindingSha256": "71778068a01f2367996fef46b4dae98e6ac8a6d6c7d751133635a6aeceabf24b",
+  "frontendBindingSha256": "1c1329f76547b0f42e13bc68dd389193de3ce0a1a67a3000964a666cc48d583e",
+  "frontend": {
+    "sourceFiles": 632,
+    "tree": "516888f56ed06ce4acd8a1af32ae92cb8cb391fb",
+    "archiveSha256": "7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f",
+    "unchanged": true,
+    "rebuildPerformed": false
+  },
+  "productionMutations": 0,
+  "registryPushes": 0,
+  "taskRegistrations": 0,
+  "capacityAccepted": false,
+  "limitations": [
+    "Retained embedded compatibility probe proves 129-table/floors/Usage-off posture but does not independently inspect migration 54 or the new function inside the image. Native source/ACL proof is separate; actual final-image recovery remains pending.",
+    "No accepted capacity campaign, production readiness, registry push, deployment, new frontend build, or new browser execution is claimed."
+  ]
+}

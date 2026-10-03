@@ -624,6 +624,9 @@ test('chat roster: a switch turned off elsewhere is announced, closes a conversa
   await benRow.focus();
   await page.keyboard.press('Enter');
   await page.getByTestId('chat-thread-empty').waitFor();
+  // The empty thread can render before the resize event updates panel width.
+  // Back exists only after the workspace has committed its one-pane layout.
+  await page.getByTestId('chat-thread-back').waitFor();
   assert.equal(await page.getByTestId('chat-conversations').count(), 0, 'the thread replaces the list');
   await waitForFocus(page, 'chat-composer-input');
   await setSchoolMessaging(false);

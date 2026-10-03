@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "records": 26,
+  "redactedRecords": 4,
+  "allowed": "UTF-8 build/scan metadata, logs, helper source, source/frontend hash bindings",
+  "imageArchiveIncluded": false,
+  "databaseDumpIncluded": false,
+  "environmentFileIncluded": false,
+  "credentialsIncluded": false,
+  "redactions": [
+    "local database/Redis URLs",
+    "JWT-shaped tokens",
+    "temporary-directory prefix"
+  ],
+  "privateKeyAndAccessKeyPatternCheckPassed": true,
+  "scope": "Reviewed candidate-only build packet; no fixture, request, student, school, or production data."
+}

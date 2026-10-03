@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "baseSource": "814844f344a45159152415b0fb6d7027f05b093e",
+  "trackedFile": "schoolpilot-app/scripts/classpilot-messages-roster-browser.test.mjs",
+  "productionChanges": 0,
+  "ci": {
+    "run": 37153313271,
+    "job": 111291457200,
+    "conclusion": "failure",
+    "rawLogSha256": "ad900776b07a724457594f5140b3a6e6ecd0f78deabded0dbf91a21413f98b28",
+    "failureLine": 627,
+    "expected": 0,
+    "actual": 1,
+    "assertion": "the thread replaces the list",
+    "rerunRequested": false
+  },
+  "cause": {
+    "finding": "The test did not synchronize the responsive React layout after a viewport resize. An empty thread can render while panel width is still the prior value.",
+    "control": "An external fixture delays only trusted native resize-event delivery by 750ms, then invokes the unchanged application resize listeners.",
+    "red": "deferred=1, delivered=0, width=600; exact count1 versus0 failure",
+    "green": "deferred=1, delivered=1, width=600; all assertions pass",
+    "limitation": "The controlled model proves this race can cause the exact assertion; CI did not capture event timing, so its precise scheduling is not directly observed."
+  },
+  "change": "Wait for chat-thread-back, rendered only by the actual single-pane branch, before the existing unchanged zero-list assertion. No assertion, timeout or product behavior is relaxed.",
+  "checks": {
+    "controlledRed": {
+      "exitCode": 1,
+      "expectedFailure": true
+    },
+    "controlledGreen": {
+      "pass": 1,
+      "fail": 0
+    },
+    "actualRoster": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0
+    },
+    "affectedShard": {
+      "exitCode": 1,
+      "pass": 78,
+      "fail": 1,
+      "skip": 0,
+      "stoppedAfter": "33 pure schedule cases +46 schedule browser cases; npm stopped before later suites",
+      "unrelatedFailure": "schedule-profiles-browser.test.mjs:2444 case36 navigation net::ERR_NO_BUFFER_SPACE, before product assertions",
+      "sameCasePassedInExactCi": true,
+      "automaticRerun": false
+    }
+  },
+  "cleanup": {
+    "checkedAt": "2026-10-03T21:22:34.9677582+00:00",
+    "matchingOwnedNodeProcesses": 0,
+    "recentPlaywrightProcesses": 0,
+    "processesKilled": false,
+    "networkReset": false
+  },
+  "hostObservation": {
+    "tcpTotal": 453,
+    "states": [
+      {
+        "count": 132,
+        "state": "Bound"
+      },
+      {
+        "count": 30,
+        "state": "CloseWait"
+      },
+      {
+        "count": 84,
+        "state": "Established"
+      },
+      {
+        "count": 49,
+        "state": "Listen"
+      },
+      {
+        "count": 158,
+        "state": "TimeWait"
+      }
+    ],
+    "dynamicTcpStart": 49152,
+    "dynamicTcpPortCount": 16384,
+    "limitation": "Post-run snapshot only. It does not establish contemporaneous global port exhaustion; buffer-pressure cause remains unproven and no owned leak was observed."
+  },
+  "finalTestSha256": "458f680b43b4a8baf867a3cb905e29acfa2103eb9b536e81651a02006bf475da",
+  "rawEvidencePreserved": true,
+  "capacityAccepted": false
+}
