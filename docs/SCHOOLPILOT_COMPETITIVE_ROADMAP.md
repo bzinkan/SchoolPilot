@@ -14,6 +14,18 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
+The latest [combined diagnostic at `204ae93d`](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+remains failed: 4,840/6,000 heartbeats, 51/64 reports and 978 acquisition failures.
+Workers return correct historical totals below 48 seconds; aborted responses and
+unreached current-day/CSV checks prevent acceptance. Its exact local candidate
+passes the pinned image scan and embedded compatibility checks. The subsequent
+[test-only listing correction](release-evidence/release-297/usage-contention/test-lane-listing-flush/manifest.json)
+reproduces and fixes truncated Linux lane output, with 1,825 local unit passes
+(four existing skips) and 699 infrastructure passes. The [rollout fixture follow-up](release-evidence/release-297/usage-contention/rollout-live-harness-lifetime/manifest.json)
+passes all 380 default-suite assertions without changing production monitoring.
+Fresh complete CI, corrected combined capacity and final-source recovery rehearsal remain required. All
+earlier failed runs below are retained as historical evidence.
+
 The subsequent [inbox owner projection](release-evidence/release-297/usage-contention/inbox-projection/manifest.json)
 preserves fresh authority and all delivery fences while reducing repeated reads.
 Build/type/cast checks, 1,824 unit cases and both 21-case native role suites pass;
@@ -30,7 +42,7 @@ drain certification. Separate Linux processes shared one unrestricted container;
 this is a diagnostic topology, not a production capacity claim. Later application
 changes require new source-bound acceptance.
 
-The latest [combined attempt09 at d6492333](release-evidence/release-297/usage-contention/load-combined-09/manifest.json)
+The historical [combined attempt09 at d6492333](release-evidence/release-297/usage-contention/load-combined-09/manifest.json)
 also fails: 3,677 of 6,000 heartbeat offers and 30 of 64 reports succeeded,
 with 1,957 acquisition failures. Workers returned correct historical totals in
 17.983/38.501 seconds, and both optional failure counters were zero. Seventeen

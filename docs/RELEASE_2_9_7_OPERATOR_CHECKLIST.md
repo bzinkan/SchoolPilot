@@ -55,7 +55,12 @@ lane listing now waits for piped stdout to flush before exiting. Local checks
 pass 1,825 unit cases (four existing skips) and 699 infrastructure cases on
 unchanged source. The other failure identifies a test generator that was no
 longer live at binding validation; its exact underlying cause is not established.
-A fixture lifetime correction and fresh complete CI remain pending.
+The [fixture lifetime correction](release-evidence/release-297/usage-contention/rollout-live-harness-lifetime/manifest.json)
+passes the full 380-assertion rollout suite, 15 lifecycle assertions and five
+failure-evidence assertions. Mock generators now publish actual readiness and
+remain owned until atomic release or verified rollback containment. Production
+monitoring and rollback behavior are unchanged. Fresh complete CI remains
+required; neither historical exception is relabeled as a known resolved cause.
 
 The subsequent [Linux ingestion CPU diagnostic](release-evidence/release-297/usage-contention/linux-ingest-cpu-01/manifest.json)
 fails with 5,832 successful offers and 168 refused offers out of 6,000, despite

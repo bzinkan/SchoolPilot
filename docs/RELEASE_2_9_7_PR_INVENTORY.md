@@ -4,6 +4,18 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
+Current preparation remains in #603, with application source `204ae93d` and
+subsequent test/evidence-only checkpoints. Its [combined Linux diagnostic](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json)
+fails capacity (4,840/6,000 heartbeat offers, 51/64 reports, 978 acquisition
+failures), while its exact local image scan and compatibility checks pass.
+[CI and the listing correction](release-evidence/release-297/usage-contention/test-lane-listing-flush/manifest.json)
+retain the latest two CI failures and the verified Linux stdout-flush repair;
+1,825 local unit cases and 699 infrastructure cases pass, with four existing
+unit skips. The [rollout-fixture correction](release-evidence/release-297/usage-contention/rollout-live-harness-lifetime/manifest.json)
+passes all 380 default-suite assertions with production behavior unchanged.
+Fresh full CI and final capacity acceptance remain pending. The historical
+source-PR inclusion table is unchanged.
+
 The subsequent [inbox owner projection](release-evidence/release-297/usage-contention/inbox-projection/manifest.json)
 reduces repeated authority reads while preserving locks and delivery fences.
 Build/type/cast checks, 1,824 unit cases, 27 focused cases and 21 native cases

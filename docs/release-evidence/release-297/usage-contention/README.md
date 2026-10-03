@@ -39,8 +39,16 @@ red reproduction. The corrected local checkpoint passes 1,825 unit cases
 files. The separate rollout fixture failure now has captured diagnostics: its
 configured generator binding was no longer live when the monitor checked it.
 The evidence does not establish whether expiry or another binding mismatch
-caused that condition. A test-fixture lifetime correction is under verification;
-fresh full CI remains required.
+caused that condition.
+
+The [four-fixture lifetime correction](rollout-live-harness-lifetime/manifest.json)
+keeps each mock generator alive until owner release or verified rollback
+containment. Readiness binds its actual process identity; release is atomic.
+The full default rollout suite passes 380 assertions, with 15 lifecycle and five
+failure-evidence assertions also passing. The targeted helper failure remains
+preserved. No production monitor, rollback behavior or timeout changes are
+included. Fresh full CI remains required; the original binding subcause and
+older monitor exception are not retroactively declared resolved.
 
 The [inbox owner projection](inbox-projection/manifest.json) reduces the teaching
 inbox authority reads from five to two while retaining the fresh control-row

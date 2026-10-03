@@ -5,6 +5,8 @@ param(
     [switch]$AtomicJsonRaceOnly,
     [switch]$FailureDiagnosticsOnly,
     [switch]$StartGateCasesOnly,
+    [switch]$LiveHarnessLifecycleOnly,
+    [switch]$LiveHarnessCasesOnly,
     [ValidateRange(1, 20)]
     [int]$FiveMinuteTelemetryRepeatCount = 1
 )
@@ -34,6 +36,155 @@ function Assert-Condition {
     if (-not $Condition) { throw $Message }
 }
 
+$script:LiveHarnessLeases = [ordered]@{}
+
+function Start-OwnedLiveHarness {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Registry,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[a-z0-9-]+$')][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Directory
+    )
+    $resolvedDirectory = [IO.Path]::GetFullPath($Directory)
+    $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedDirectory.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Live harness fixture must remain inside the owned temporary tree.' }
+    if ($script:LiveHarnessLeases.Contains($Name)) { throw 'Live harness name is already owned.' }
+    $fixtureScript = Join-Path $resolvedDirectory "$Name-live-harness.ps1"
+    $readyPath = Join-Path $resolvedDirectory "$Name-harness-lifecycle.json"
+    $releasePath = Join-Path $resolvedDirectory "$Name-harness-release.txt"
+    foreach ($path in @($fixtureScript, $readyPath, $releasePath)) {
+        if (Test-Path -LiteralPath $path) { throw 'Live harness fixture paths must be fresh.' }
+    }
+    $nonce = [Guid]::NewGuid().ToString('N')
+    # Cover the existing fixture/monitor startup and completion budgets. This
+    # ceiling only prevents an abandoned test child from living indefinitely.
+    $maximumLifetimeSeconds = 2 * $script:MonitorStartupDeadlineSeconds + [math]::Ceiling($script:MonitorCompletionWatchdogMilliseconds / 1000)
+    $childSource = @'
+param([string]$ReadyPath, [string]$ReleasePath, [string]$Nonce, [int]$MaximumLifetimeSeconds)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$self = Get-Process -Id $PID
+$ready = [ordered]@{ nonce=$Nonce; id=$PID; startedAtUtc=$self.StartTime.ToUniversalTime().ToString('o'); path=[IO.Path]::GetFullPath([string]$self.Path); maximumLifetimeSeconds=$MaximumLifetimeSeconds }
+[IO.File]::WriteAllText("$ReadyPath.pending", ($ready | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+Move-Item -LiteralPath "$ReadyPath.pending" -Destination $ReadyPath
+while (-not (Test-Path -LiteralPath $ReleasePath)) {
+    if ($clock.Elapsed.TotalSeconds -ge $MaximumLifetimeSeconds) { throw 'Owned live harness reached its test safety ceiling before release.' }
+    Start-Sleep -Milliseconds 50
+}
+if ([IO.File]::ReadAllText($ReleasePath) -cne $Nonce) { throw 'Owned live harness release nonce does not match.' }
+'@
+    [IO.File]::WriteAllText($fixtureScript, $childSource, [Text.UTF8Encoding]::new($false))
+    $lease = [pscustomobject]@{ name=$Name; nonce=$nonce; readyPath=$readyPath; releasePath=$releasePath; identity=$null }
+    $script:LiveHarnessLeases.Add($Name, $lease)
+    Start-OwnedTestProcess -Registry $Registry -Name $Name `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoProfile','-File',$fixtureScript,'-ReadyPath',$readyPath,'-ReleasePath',$releasePath,'-Nonce',$nonce,'-MaximumLifetimeSeconds',[string]$maximumLifetimeSeconds) `
+        -StandardOutputPath (Join-Path $resolvedDirectory "$Name.out") `
+        -StandardErrorPath (Join-Path $resolvedDirectory "$Name.err")
+    $lease.identity = Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
+    while (-not (Test-Path -LiteralPath $readyPath) -and [DateTimeOffset]::UtcNow -lt $deadline) {
+        if ((Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name).hasExited) { break }
+        Start-Sleep -Milliseconds 50
+    }
+    Assert-Condition (Test-Path -LiteralPath $readyPath) "Owned live harness '$Name' did not publish readiness."
+    $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json -DateKind String
+    $identity = Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name
+    Assert-Condition (-not $identity.hasExited -and $ready.nonce -ceq $nonce -and $ready.id -eq $identity.id -and
+        $ready.startedAtUtc -ceq $identity.startedAtUtc.ToUniversalTime().ToString('o') -and
+        [string]::Equals($ready.path, [IO.Path]::GetFullPath($identity.path), [StringComparison]::OrdinalIgnoreCase)) `
+        "Owned live harness '$Name' readiness must match its actual PID, start time, path and nonce."
+    return $identity
+}
+
+function Release-OwnedLiveHarness {
+    param([Collections.IDictionary]$Registry, [string]$Name)
+    $lease = $script:LiveHarnessLeases[$Name]
+    if ($null -eq $lease) { throw 'Live harness release has no owned lease.' }
+    if (-not $Registry.Contains($Name)) { $script:LiveHarnessLeases.Remove($Name); return }
+    $identity = Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name
+    if ($null -ne $lease.identity -and ($identity.id -ne $lease.identity.id -or
+        $identity.startedAtUtc -ne $lease.identity.startedAtUtc -or
+        -not [string]::Equals($identity.path, $lease.identity.path, [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'Live harness release identity changed.'
+    }
+    if ($identity.hasExited) { return }
+    $pendingRelease = "$($lease.releasePath).pending"
+    [IO.File]::WriteAllText($pendingRelease, $lease.nonce, [Text.UTF8Encoding]::new($false))
+    [IO.File]::Move($pendingRelease, $lease.releasePath, $true)
+}
+
+function Complete-OwnedLiveHarness {
+    param([Collections.IDictionary]$Registry, [string]$Name, [switch]$RollbackCompleted)
+    $before = Get-OwnedTestProcessSnapshot -Registry $Registry -Name $Name
+    $alreadyContained = $RollbackCompleted -and $before.hasExited
+    $lease = $script:LiveHarnessLeases[$Name]
+    Release-OwnedLiveHarness -Registry $Registry -Name $Name
+    $result = Complete-OwnedTestProcess -Registry $Registry -Name $Name -TimeoutMilliseconds $script:MonitorCompletionWatchdogMilliseconds
+    $completionPath = Join-Path ([IO.Path]::GetDirectoryName($lease.readyPath)) "$Name-harness-completion.json"
+    [IO.File]::WriteAllText($completionPath, (@{
+        identity=$before; alreadyContained=[bool]$alreadyContained; rollbackAssertionPassed=[bool]$RollbackCompleted;
+        exitCode=$result.exitCode; registryReleased=(-not $Registry.Contains($Name)); timestamp=[DateTimeOffset]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+    Assert-Condition ($alreadyContained -or $result.exitCode -eq 0) "Owned live harness '$Name' must exit successfully after owner release unless already contained by verified rollback (exit=$($result.exitCode))."
+    $script:LiveHarnessLeases.Remove($Name)
+}
+
+function Release-AllOwnedLiveHarnesses {
+    param([Collections.IDictionary]$Registry)
+    $failures = [Collections.Generic.List[Exception]]::new()
+    foreach ($name in @($script:LiveHarnessLeases.Keys)) {
+        try { Release-OwnedLiveHarness -Registry $Registry -Name $name }
+        catch { $failures.Add($_.Exception) }
+    }
+    if ($failures.Count -gt 0) { throw [AggregateException]::new('Live harness release failed.', $failures.ToArray()) }
+}
+
+if ($LiveHarnessLifecycleOnly) {
+    $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('rollout-live-harness-proof-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixtureRoot)
+    try {
+        $normal = Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name 'normal-release' -Directory $fixtureRoot
+        $normalPendingRelease = "$($script:LiveHarnessLeases['normal-release'].releasePath).pending"
+        [IO.File]::WriteAllText($normalPendingRelease, 'incomplete nonce')
+        Start-Sleep -Milliseconds 300
+        Assert-Condition (-not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name 'normal-release').hasExited) 'A ready harness must remain alive while a release is only staged.'
+        Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name 'normal-release' -RollbackCompleted
+        Assert-Condition (-not (Test-Path -LiteralPath $normalPendingRelease)) 'Successful release must atomically consume the staged nonce file.'
+        Assert-Condition (-not $ownedTestProcesses.Contains('normal-release') -and -not $script:LiveHarnessLeases.Contains('normal-release')) 'Successful release must drain and forget only the owned child.'
+        [void](Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name 'unexpected-exit' -Directory $fixtureRoot)
+        [IO.File]::WriteAllText($script:LiveHarnessLeases['unexpected-exit'].releasePath, 'wrong-nonce')
+        $exitDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
+        while (-not (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name 'unexpected-exit').hasExited -and [DateTimeOffset]::UtcNow -lt $exitDeadline) { Start-Sleep -Milliseconds 50 }
+        Assert-Condition (Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name 'unexpected-exit').hasExited 'Wrong release nonce must terminate the synthetic child with an error.'
+        $unexpectedRejected = $false
+        try { Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name 'unexpected-exit' }
+        catch { $unexpectedRejected = $_.Exception.Message -match 'unless already contained by verified rollback' }
+        Assert-Condition $unexpectedRejected 'An unverified nonzero child exit must never count as successful fixture completion.'
+        Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses
+        [void](Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name 'failed-case' -Directory $fixtureRoot)
+        try { throw 'synthetic monitor case failure' }
+        catch { Assert-Condition ($_.Exception.Message -ceq 'synthetic monitor case failure') 'Cleanup must retain the original case failure.' }
+        finally {
+            Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses
+            Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses
+            Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses
+        }
+        Assert-Condition ($ownedTestProcesses.Count -eq 0 -and $script:LiveHarnessLeases.Count -eq 0) 'Failed case cleanup must leave no owned process or lease.'
+        Write-Host "Live harness lifecycle: PASS ($script:AssertionCount assertions)"
+    }
+    finally {
+        try { Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses }
+        finally { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses }
+        $resolvedFixture = [IO.Path]::GetFullPath($fixtureRoot)
+        $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedFixture.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected live harness proof cleanup path.' }
+        Remove-Item -LiteralPath $resolvedFixture -Recurse -Force
+        if ($null -ne $previousRolloutTestSentinel) { $env:SCHOOLPILOT_ROLLOUT_TEST_MODE=$previousRolloutTestSentinel } else { Remove-Item Env:SCHOOLPILOT_ROLLOUT_TEST_MODE -ErrorAction SilentlyContinue }
+    }
+    return
+}
+
 function Protect-MockDiagnosticText {
     param([AllowEmptyString()][string]$Text)
     $value = $Text -replace '\x1b\[[0-9;]*[A-Za-z]', ''
@@ -50,7 +201,7 @@ function Save-MockMonitorFailureEvidence {
     $destination = Join-Path $OutputRoot ('rollout-failure-' + [Guid]::NewGuid().ToString('N'))
     [void][IO.Directory]::CreateDirectory($destination)
     $files = @(Get-ChildItem -LiteralPath $FixtureRoot -Recurse -File -ErrorAction Stop |
-        Where-Object { $_.Name -match '(?:-aws-monitor\.jsonl|-monitor-result\.json|\.err)$' } |
+        Where-Object { $_.Name -match '(?:-aws-monitor\.jsonl|-monitor-result\.json|-harness-(?:lifecycle|completion)\.json|\.err)$' } |
         Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 12)
     $records = @()
     foreach ($file in $files) {
@@ -2714,10 +2865,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Remove-Item -LiteralPath $oomFlag -ErrorAction SilentlyContinue
         $uncorrelatedRunId = "uncorrelated-valid-403"
         $uncorrelatedHarness = "uncorrelated-harness"
-        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedHarness `
-            -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
-        $uncorrelatedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $uncorrelatedHarness
+        $uncorrelatedHarnessIdentity = Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name $uncorrelatedHarness -Directory $childRoot
         $uncorrelatedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $uncorrelatedRollback.runId = $uncorrelatedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($uncorrelatedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2757,15 +2905,12 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $uncorrelatedMonitor = $null
         $uncorrelatedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$uncorrelatedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($uncorrelatedResult.rollback.action -eq "Application" -and $uncorrelatedResult.rollback.exitCode -eq 0) "A valid synthetic 403 without a fresh rate-rule BlockedRequests datapoint must restore the application, not weaken WAF."
-        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $uncorrelatedHarness
+        Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name $uncorrelatedHarness -RollbackCompleted
         $uncorrelatedHarness = $null
 
         $genericRejectedRunId = "generic-valid-401"
         $genericRejectedHarness = "generic-rejected-harness"
-        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedHarness `
-            -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
-        $genericRejectedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $genericRejectedHarness
+        $genericRejectedHarnessIdentity = Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name $genericRejectedHarness -Directory $childRoot
         $genericRejectedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $genericRejectedRollback.runId = $genericRejectedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($genericRejectedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2805,15 +2950,12 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $genericRejectedMonitor = $null
         $genericRejectedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$genericRejectedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($genericRejectedResult.rollback.action -eq "Application" -and $genericRejectedResult.rollback.exitCode -eq 0) "Any valid workload 401 must invoke the reviewed application rollback."
-        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $genericRejectedHarness
+        Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name $genericRejectedHarness -RollbackCompleted
         $genericRejectedHarness = $null
 
         $combinedRunId = "combined-valid-401-rds-cpu"
         $combinedHarness = "combined-valid-401-rds-harness"
-        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedHarness `
-            -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
-        $combinedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $combinedHarness
+        $combinedHarnessIdentity = Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name $combinedHarness -Directory $childRoot
         $combinedRollbackPath = Join-Path $childRoot "combined-valid-401-rds-rollback.json"
         $combinedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $combinedRollback.runId = $combinedRunId
@@ -2880,17 +3022,14 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $combinedResult = Get-Content -LiteralPath $combinedResultPath -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($combinedResult.failures -contains "load:valid-http-401" -and $combinedResult.failures -contains "rds_cpu") "Combined regression must observe both the valid workload 401 and three consecutive RDS CPU breaches."
         Assert-Condition ($combinedResult.rollback.attempted -and $combinedResult.rollback.action -eq "Application" -and $combinedResult.rollback.exitCode -eq 0) "RDS capacity evidence must not select an unrelated PublicEcs mutation; the simultaneous valid-traffic 401 may invoke only its corresponding Application recovery (actual=$($combinedResult.rollback|ConvertTo-Json -Compress -Depth 20); stderr=$combinedError)."
-        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $combinedHarness
+        Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name $combinedHarness -RollbackCompleted
         $combinedHarness = $null
 
         $correlatedWafBlockFlag = Join-Path $childRoot "correlated-waf-block.flag"
         $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE = $correlatedWafBlockFlag
         $correlatedRunId = "correlated-valid-403"
         $correlatedHarness = "correlated-valid-403-harness"
-        Start-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedHarness `
-            -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30")
-        $correlatedHarnessIdentity = Get-OwnedTestProcessSnapshot -Registry $ownedTestProcesses -Name $correlatedHarness
+        $correlatedHarnessIdentity = Start-OwnedLiveHarness -Registry $ownedTestProcesses -Name $correlatedHarness -Directory $childRoot
         $correlatedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $correlatedRollback.runId = $correlatedRunId
         [IO.File]::WriteAllText($childRollbackConfigPath, ($correlatedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -2930,8 +3069,12 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $correlatedMonitor = $null
         $correlatedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$correlatedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($correlatedResult.rollback.action -eq "Waf" -and $correlatedResult.rollback.exitCode -eq 0) "A valid synthetic 403 corroborated by fresh device-rate BlockedRequests must switch only the reviewed WAF rate rules to COUNT."
-        Stop-OwnedTestProcess -Registry $ownedTestProcesses -Name $correlatedHarness
+        Complete-OwnedLiveHarness -Registry $ownedTestProcesses -Name $correlatedHarness -RollbackCompleted
         $correlatedHarness = $null
+        if ($LiveHarnessCasesOnly) {
+            Write-Host "Rollout live harness cases: PASS ($script:AssertionCount assertions)"
+            return
+        }
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -ErrorAction SilentlyContinue
 
         foreach ($raceKind in @("summary-pending", "partial-tail")) {
@@ -3986,7 +4129,7 @@ exit 0
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_STEP_FILE,Env:SCHOOLPILOT_TEST_METRIC_STEP_START,Env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS -ErrorAction SilentlyContinue
         # All earlier cases should have released their entries. Drain any
         # unexpected survivor before final-stage fixtures reuse rollback state.
-        Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses
+        try { Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses } finally { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses }
 
         $env:SCHOOLPILOT_TEST_REDIS_TYPE = "cache.t4g.micro"
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME = [DateTimeOffset]::UtcNow.ToString("o")
@@ -4240,7 +4383,7 @@ exit 0
     finally {
         if ($ownedTestProcesses.Count -gt 0) {
             try {
-                Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses
+                try { Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses } finally { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses }
             }
             catch {
                 $childBlockCleanupFailures.Add([InvalidOperationException]::new(
@@ -5848,7 +5991,7 @@ finally {
     # Process ownership is the first outer cleanup operation. Evidence/temp
     # deletion must never race a surviving child or inherited redirect handle.
     if ($ownedTestProcesses.Count -gt 0) {
-        try { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses }
+        try { try { Release-AllOwnedLiveHarnesses -Registry $ownedTestProcesses } finally { Stop-AllOwnedTestProcesses -Registry $ownedTestProcesses } }
         catch {
             $topLevelCleanupFailures.Add([InvalidOperationException]::new(
                 "Final owned process drain failed.",
