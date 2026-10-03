@@ -41,6 +41,7 @@ const RLS_SERIAL = new Set([
 
 const DB_SERIAL = new Set([
   "classpilot-lesson-prerequisite-frame.test.ts",
+  "classpilot-stop-focus-frame.test.ts",
   "passpilot-appointments.integration.test.ts",
   "passpilot-appointment-eligibility-races.integration.test.ts",
   "passpilot-school-year.integration.test.ts",
