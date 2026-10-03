@@ -9,7 +9,7 @@ restricted-role database cases and build/type/cast checks pass. The actual
 2.9.7 ZIP remains unchanged. [Lifecycle harness evidence](focus-lifecycle-harness-01/manifest.json)
 records 61 passing guards and exact public state verification before synthetic
 command completion. No browser enforcement or capacity pass is claimed.
-[CI on `8ecdbf72`](ci-8ecdbf72-final-01/manifest.json) passes all 17 CI jobs and
+[CI on `5d031512`](ci-5d031512-final-01/manifest.json) passes all 17 CI jobs and
 three security workflows for application `0e427e3c`. Later application changes
 and the resulting merged main still require their own checks.
 The October 3 [unprofiled ingestion diagnostic on `0e427e3c`](linux-role-ingest-unprofiled-0e427-01/manifest.json) also fails:
@@ -34,8 +34,13 @@ documented build-cache reuse; it is not selected as the final release artifact.
 [Fallback source `6e251f2d`](rollback-focus-wire-01/manifest.json) backports only
 the Focus correction and corresponding regression evidence. The red baseline,
 61 passing focused cases, 13 restricted-role cases, build/type/cast successes
-and retained 129-table/lifecycle/default-off floor are preserved. No new
-fallback image or final-source recovery pairing is claimed.
+and retained 129-table/lifecycle/default-off floor are preserved. Its
+[fresh local image](rollback-artifact-6e251f2d/manifest.json) now passes an
+uncached build, pinned scan with zero findings, embedded compatibility and
+Focus checks, and cleanup. The image export and its distinct index, Linux
+platform and configuration digests are preserved in the permanent artifact
+directory. Both Usage modes must remain off. Final-source recovery pairing
+and registry publication remain unperformed.
 
 Current October 3 checkpoint: the [resource-bounded `9630c009` diagnostic](linux-role-combined-9630-01/manifest.json)
 fails capacity: 2,704/6,000 heartbeats and 34/64 reports succeeded; complete
@@ -329,7 +334,7 @@ benchmarks; that did not justify adding a new compiler/encoder contract. All
 experimental source, passing and failed checks, and CPU follow-up analyses are
 retained. No native or capacity result is attributed to that experiment.
 
-The [latest fallback image](rollback-artifact-5c01944e/index.json) is built from
+The [historical fallback image](rollback-artifact-5c01944e/index.json) is built from
 clean `5c01944e`, including the final heartbeat expiry fence. Its uncached build,
 full pinned scan and embedded compatibility checks pass, with zero findings.
 Registry publication remains unperformed. The local d649/5c01 migration re-entry

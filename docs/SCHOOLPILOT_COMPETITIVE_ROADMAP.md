@@ -37,9 +37,12 @@ has the same narrow correction with 61 focused and 13 restricted database cases
 passing. The fresh [unprofiled ingestion diagnostic on `0e427e3c`](release-evidence/release-297/usage-contention/linux-role-ingest-unprofiled-0e427-01/manifest.json) still fails:
 5,139/6,000 heartbeats succeeded, 144 failed and 717 could not start at the
 in-flight ceiling; zero offers were late. CPU saturation remains unresolved.
-Drains and cleanup passed. [CI on `8ecdbf72`](release-evidence/release-297/usage-contention/ci-8ecdbf72-final-01/manifest.json)
+Drains and cleanup passed. [CI on `5d031512`](release-evidence/release-297/usage-contention/ci-5d031512-final-01/manifest.json)
 passes all 17 CI jobs and three security workflows for application `0e427e3c`.
-Accepted combined capacity, final images and recovery pairing remain pending.
+The [fresh `6e251f2d` fallback image](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json)
+passes its uncached build, vulnerability scan with zero findings and embedded
+compatibility checks; both Usage modes must remain off. Accepted combined
+capacity, the final candidate image and recovery pairing remain pending.
 Later application changes and merged main require fresh checks.
 
 The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
