@@ -26,8 +26,7 @@ passes an uncached build, a pinned scan with zero findings and compatibility
 checks. The [local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes synthetic source
 re-entry and actual-image function checks, including hard-off expiration and
 Focus cleanup. It does not establish production catalog or service-traffic
-rollback. Current-head application/browser/database and security checks pass;
-rollout-tool CI remains running.
+rollback. [Current-head CI at `a109fd27`](release-evidence/release-297/usage-contention/ci-a109fd27-final-01/manifest.json) passes all 17 jobs and all three security workflows.
 
 The [combined b112 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-b112-01/manifest.json) failed: 3,020 of
 6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the

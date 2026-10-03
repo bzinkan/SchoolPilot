@@ -30,8 +30,10 @@ ordinary database lane that expected the old inline entitlement queries.
 [The follow-up](runtime-entitlement-selector-followup-01/manifest.json) retains
 the failed job, updates the assertion to the canonical same-school shared-lock
 builders and passes all 27 focused tests. Application bytes are unchanged.
-At review head `a109fd27`, backend, frontend, browser and both database lanes
-pass, as do all three security workflows. Rollout-tool CI is still running.
+[CI at review head `a109fd27`](ci-a109fd27-final-01/manifest.json) passes all 17
+jobs and three security workflows, including rollout-tool validation. This
+exact-head evidence does not include the new uncommitted role harness or
+establish Usage capacity.
 
 The [combined b112 diagnostic](linux-role-combined-b112-01/manifest.json) failed: 3,020 of
 6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the
