@@ -15,6 +15,14 @@ import { markTenantPoolAcquisitionFailureReported } from "../util/operationalErr
 export { wasTenantPoolAcquisitionFailureReported } from "../util/operationalErrors.js";
 
 const pendingTenantReleases = new Set<Promise<void>>();
+// Exact fresh ALS-store identity proves ownership; captured contexts may outlive
+// their lease or observe the same physical client reused by another request.
+const ownedTenantStores = new WeakMap<PoolClient, TenantStore>();
+
+export function getOwnedTenantStore(): TenantStore | undefined {
+  const store = tenantALS.getStore();
+  return store && ownedTenantStores.get(store.client) === store ? store : undefined;
+}
 
 export function getTenantContextReleaseSnapshot(): { pending: number } {
   return { pending: pendingTenantReleases.size };
@@ -35,6 +43,8 @@ function trackTenantRelease(release: Promise<void>): Promise<void> {
 }
 
 async function resetAndReleaseTenantClient(client: PoolClient): Promise<void> {
+  // Revoke nested reuse before RESET starts, including while RESET awaits IO.
+  ownedTenantStores.delete(client);
   let resetError: Error | undefined;
   try {
     await client.query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)");
@@ -157,6 +167,7 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
     schoolId,
     isSuper,
   };
+  ownedTenantStores.set(client, store);
   tenantALS.run(store, () => next());
 };
 
@@ -186,6 +197,7 @@ export async function runWithTenantContext<T>(
       schoolId: opts.schoolId,
       isSuper: opts.isSuper,
     };
+    ownedTenantStores.set(client, store);
     return await tenantALS.run(store, fn);
   } finally {
     await releaseTenantClient(client);
