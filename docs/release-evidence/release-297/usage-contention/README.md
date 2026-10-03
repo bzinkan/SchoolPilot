@@ -9,9 +9,33 @@ restricted-role database cases and build/type/cast checks pass. The actual
 2.9.7 ZIP remains unchanged. [Lifecycle harness evidence](focus-lifecycle-harness-01/manifest.json)
 records 61 passing guards and exact public state verification before synthetic
 command completion. No browser enforcement or capacity pass is claimed.
-Earlier CI below predates this correction; new CI and an unprofiled current
-baseline are required. Profiler overhead in the latest ingestion diagnostic
-has not been isolated. The modest SELECT-construction trial remains unadopted.
+[CI on `8ecdbf72`](ci-8ecdbf72-final-01/manifest.json) passes all 17 CI jobs and
+three security workflows for application `0e427e3c`. Later application changes
+and the resulting merged main still require their own checks.
+The October 3 [unprofiled ingestion diagnostic on `0e427e3c`](linux-role-ingest-unprofiled-0e427-01/manifest.json) also fails:
+5,139/6,000 offered heartbeats succeeded, 144 failed and 717 were refused at
+the unchanged in-flight ceiling. Zero offers were late. API CPU was 70.991
+seconds over a 71.138-second phase, with 0.99877 event-loop utilization;
+144 physical checkout failures and zero SQL failures were recorded. All
+request/connection owners drained, all three child processes exited zero,
+the coordinator correctly exited one, and all six owned containers were
+removed. The result establishes saturation without a CPU profiler, but
+different application sources prevent a controlled profiler-overhead comparison.
+The modest SELECT-construction trial remains unadopted. This ingestion-only
+diagnostic is not one of the three required combined acceptance runs.
+
+The [exact helper and workload bindings](role-harness02-unprofiled-0e427-01/manifest.json)
+preserve the unchanged arrival contract, separate capped role containers,
+restricted application role and the root-released cold-start nonce. The
+[scanned local `0e427e3c` image](candidate-artifact-0e427e3c/manifest.json)
+and 21-file permanent artifact are preserved. This diagnostic image used
+documented build-cache reuse; it is not selected as the final release artifact.
+
+[Fallback source `6e251f2d`](rollback-focus-wire-01/manifest.json) backports only
+the Focus correction and corresponding regression evidence. The red baseline,
+61 passing focused cases, 13 restricted-role cases, build/type/cast successes
+and retained 129-table/lifecycle/default-off floor are preserved. No new
+fallback image or final-source recovery pairing is claimed.
 
 Current October 3 checkpoint: the [resource-bounded `9630c009` diagnostic](linux-role-combined-9630-01/manifest.json)
 fails capacity: 2,704/6,000 heartbeats and 34/64 reports succeeded; complete

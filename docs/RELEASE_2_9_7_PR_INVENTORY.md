@@ -21,14 +21,18 @@ Application `0e427e3c` additionally corrects both Focus ACK wire surfaces and
 JSONB-order-dependent status writes. Its [64 focused and 15 restricted database
 passes](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
 and [61 lifecycle/profile guard passes](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json)
-are local evidence; fresh combined CI and capacity remain required.
+are local evidence. [Combined CI on `8ecdbf72`](release-evidence/release-297/usage-contention/ci-8ecdbf72-final-01/manifest.json)
+passes all 17 CI jobs and three security workflows for this application. Its
+[unprofiled ingestion diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-unprofiled-0e427-01/manifest.json) fails at 5,139/6,000 successful heartbeats,
+with 144 failures, 717 in-flight refusals and zero late offers. CPU saturation
+persists; completed drain and cleanup do not establish capacity acceptance.
 
 | Item | Selected source / limitation |
 |---|---|
-| Application | `0e427e3ca9b82125e0bb8692176accad21f4f699` in #603; fresh CI and capacity remain pending. |
+| Application | `0e427e3ca9b82125e0bb8692176accad21f4f699` in #603; [CI at `8ecdbf72`](release-evidence/release-297/usage-contention/ci-8ecdbf72-final-01/manifest.json) is fully green. Capacity remains failed; later application changes need new checks. |
 | Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
-| Local candidate image | [`5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json) is the latest scanned local image, but predates current corrections. No final-source release image is selected. |
-| Compatible fallback | Retained image [`5c01944ed1afb4241e270469c6477121bf48cd84`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json) requires the narrow Focus backport before final pairing and recovery verification. Earlier `ed5599de` and `351422d7` artifacts remain historical. |
+| Local candidate image | [`0e427e3c`](release-evidence/release-297/usage-contention/candidate-artifact-0e427e3c/manifest.json) is the latest scanned local diagnostic image, with documented build-cache reuse. No final-source release image is selected. Earlier images remain historical. |
+| Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. New image and recovery pairing remain required. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |
 | Operational readiness | No accepted Usage capacity run and no release execution approved. Follow the [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for the remaining gates and separate authorizations. |
 
 ## Historical preparation checkpoints
