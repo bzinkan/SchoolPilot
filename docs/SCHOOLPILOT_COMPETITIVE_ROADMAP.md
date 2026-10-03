@@ -14,7 +14,19 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
-Current October 3 checkpoint: [full CI at `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
+Latest October 3 application `b11202fc305198d76e73c5e6d711b7dc9ed2d938`
+reuses heartbeat query definitions while retaining fresh authority, tenant
+bindings and mandatory-work sealing. [Checks](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
+pass 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
+four restricted private-recovery cases, and build/type/cast checks. The
+[final binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
+records the whitespace cleanup and identical compiled output. CI, candidate
+image and combined capacity remain pending. There are zero accepted capacity
+runs. The preceding candidate-default ingestion diagnostic also failed; a
+larger effective V8 heap did not resolve saturation. No deployment green light
+or change to operational authorization is recorded.
+
+Earlier October 3 checkpoint: [full CI at `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
 passes, while its [resource-bounded Usage diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
 fails at 2,704/6,000 heartbeats and 34/64 reports, with the second complete
 rollup taking 57.768 seconds including admission wait. Independent correctness
@@ -27,7 +39,7 @@ passes all 17 CI jobs and three security workflows. Final-source capacity and
 release preparation remain in progress. The subsequent isolated, profiled
 ingestion run completes 4,158/6,000 heartbeats despite zero late offers;
 API CPU saturation remains unresolved. Earlier checkpoint statements below
-are historical. Current application `0e427e3c` also fixes the exact 2.9.7
+are historical. Application `0e427e3c` also fixes the exact 2.9.7
 package's Focus ACK field and JSONB-order-dependent repeated status writes.
 Its [64 focused and 15 restricted database tests](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
 pass, along with build/type/cast checks and [61 load-profile guards](release-evidence/release-297/usage-contention/focus-lifecycle-harness-01/manifest.json).

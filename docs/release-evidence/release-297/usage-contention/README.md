@@ -3,7 +3,49 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
-Current application `0e427e3c` includes the [Focus wire and semantic-equality
+Latest application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
+public Drizzle SELECT definitions on an exclusively owned heartbeat connection.
+Every execution retains fresh bindings, canonical decoding and database locks;
+whole mandatory read tasks must settle before delivery. Recognized expired or
+sealed transaction tokens cannot fall through to an unguarded reference read.
+[Implementation evidence](heartbeat-prepared-reads-implementation-01/manifest.json)
+preserves 1,906 passing unit tests with no skips, 50 owner and 50 restricted-role
+native tests, four restricted private-recovery tests, and build/type/cast checks.
+The initial failing test run and fixture setup failure remain in the packet.
+The [final source binding](heartbeat-prepared-reads-implementation-01/final-binding.json)
+records the trailing-whitespace cleanup and identical rebuilt JavaScript.
+Full combined capacity and CI on this new application remain pending.
+
+The [Linux prepared-query component comparison](heartbeat-prepared-linux-prototype-01/manifest.json)
+uses exact `0e427e3c` runtime bytes, one API CPU, 2 GiB container memory and the
+historical 512 MiB old-space cap. All 15 native tests pass; the preceding failed
+fixture attempt, denied timing gate and cleanup receipts are retained. Across
+three alternating rounds of 1,000 eight-read sequences, canonical median CPU
+time is 3,963.9 ms versus 1,913.9 ms for five public Drizzle unnamed prepared
+SELECTs with the raw fences unchanged. This is component evidence, not a full
+heartbeat throughput forecast or accepted load run. The selected approach
+retains the canonical encoders and result mappers. The faster raw-driver
+alternative is not selected. [Earlier Windows experiments](heartbeat-prepared-windows-prototype-01/manifest.json)
+remain separate because their timing variation and runtime differ.
+
+The [candidate-default runtime diagnostic](linux-role-ingest-candidate-default-0e427-01/manifest.json)
+also fails on unchanged `0e427e3c` application bytes: 5,116/6,000 offered
+heartbeats succeeded, 260 failed and 624 were refused; zero offers were late.
+The API recorded 260 acquisition failures, 67.347 CPU seconds over a
+67.885-second phase and 0.99094 event-loop utilization. All connection and
+request owners drained, the role processes exited zero, the coordinator
+correctly exited one and all six owned containers were removed. Removing
+the historical 512 MiB API old-space override did not resolve saturation.
+The API's measured heap limit was 1,048 MiB under the unchanged 2 GiB
+container limit; worker and driver heap limits were 524 MiB. This explicitly
+named successor preserves the historical profile and original seeder.
+Candidate-image startup defaults are verified locally; live ECS command or
+environment overrides remain unverified. No capacity pass is claimed.
+The private synthetic prepared snapshot is retained outside Git with its
+source, schema, control and count evidence. Restore validation is required
+before any new test can use it; it is not a production backup.
+
+Preceding application `0e427e3c` includes the [Focus wire and semantic-equality
 correction](focus-status-wire-297-01/manifest.json): 64 focused cases, 15
 restricted-role database cases and build/type/cast checks pass. The actual
 2.9.7 ZIP remains unchanged. [Lifecycle harness evidence](focus-lifecycle-harness-01/manifest.json)

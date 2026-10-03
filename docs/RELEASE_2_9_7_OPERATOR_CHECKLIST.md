@@ -18,7 +18,20 @@ and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
 Current October 3 checkpoint: **Usage capacity has no accepted passing run**.
-The current application is `0e427e3ca9b82125e0bb8692176accad21f4f699`.
+The current application is `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
+Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
+passes 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
+four restricted private-chat cases, and build/type/cast checks. It caches query
+metadata only, preserves fresh authority checks, and seals mandatory work before
+delivery. The [final binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
+documents a whitespace-only cleanup with identical compiled JavaScript.
+Its candidate image, combined capacity and CI are pending. The earlier
+[candidate-default ingestion diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-candidate-default-0e427-01/manifest.json)
+on `0e427e3c` failed at 5,116/6,000 successes; removing the test-only old-space
+override did not resolve saturation. Runtime defaults do not prove live ECS
+settings. The following paragraphs retain preceding checkpoint evidence.
+
+Application `0e427e3ca9b82125e0bb8692176accad21f4f699` remains historical.
 Its [Focus wire correction](release-evidence/release-297/usage-contention/focus-status-wire-297-01/manifest.json)
 accepts the exact 2.9.7 package's `focusStatus` on heartbeat and WebSocket ACKs,
 and compares validated status fields without depending on JSONB key order.

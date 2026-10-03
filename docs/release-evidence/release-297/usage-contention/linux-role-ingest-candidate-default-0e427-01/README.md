@@ -1,0 +1,3 @@
+# Failed candidate-default runtime diagnostic
+
+Exact0e427/helper8bed; full6,000 offers:5,116 successful,260 failed,624 refused,0late. API260checkout failures. All owned resources removed; real coordinator exit1 retained. Runtime image defaults under unchanged cgroups were observed: APIheap1,048MiB, otherroles524MiB. This did not establish capacity or a meaningful success-count gain over the historical512flag run. No report/rollup workload or browser-enforcement acceptance is claimed. Original records and failed status remain unchanged. The private86MB prepared synthetic database is referenced by hash only and is not restore-tested.

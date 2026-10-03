@@ -1,0 +1,576 @@
+{
+  "schemaVersion": 1,
+  "scope": "Primary five-SELECT public unnamed prepared metadata integration; correctness/ownership proof only, no capacity claim",
+  "baseCommit": "8a2bc99989fbaa27c07fb16b0a4d75ec3bcafb58",
+  "applicationCommit": "uncommitted working tree, exact file hashes recorded",
+  "capacityAccepted": false,
+  "productionMutations": 0,
+  "checks": {
+    "build": {
+      "exit": 0,
+      "note": "Production bytes unchanged through final native proof; later changes were test fixtures/selectors only"
+    },
+    "typesFinal": {
+      "exit": 0,
+      "testDebt": 438,
+      "baseline": 534
+    },
+    "castsFinal": {
+      "exit": 0,
+      "asAny": 689,
+      "asUnknownAs": 7
+    },
+    "pureOwnership": {
+      "pass": 8,
+      "fail": 0
+    },
+    "queryAndProtocol": {
+      "pass": 22,
+      "fail": 0
+    },
+    "selectorAndGoldenFollowup": {
+      "pass": 21,
+      "fail": 0
+    },
+    "fullUnitAttempt01": {
+      "pass": 1900,
+      "fail": 3,
+      "skip": 3,
+      "note": "Two stale source selectors and real-DB index parser pointed at nonexistent dummy endpoint; three Redis cases conditional. Original log preserved."
+    },
+    "fullUnitAttempt02": {
+      "pass": 1906,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "temporaryRedisCleanup": true
+    }
+  },
+  "attempts": [
+    {
+      "id": "3ad32f654ffb",
+      "exit": 1,
+      "cleanup": true,
+      "sourceUnchanged": true,
+      "ownerAuthority": {
+        "pass": 46,
+        "fail": 0
+      },
+      "restrictedAuthority": {
+        "pass": 46,
+        "fail": 0
+      },
+      "restrictedPrivate": {
+        "pass": 4,
+        "fail": 0
+      },
+      "ownerPrivate": {
+        "pass": 0,
+        "fail": 4,
+        "note": "Runner incorrectly selected the existing restricted-only fixture for owner mode. Mandatory role assertion correctly refused setup; preserved, no assertion weakened."
+      }
+    },
+    {
+      "id": "f4393ad7f009",
+      "exit": 0,
+      "cleanup": true,
+      "sourceUnchanged": true,
+      "ownerAuthorityInboxIndex": {
+        "pass": 50,
+        "fail": 0,
+        "skip": 0
+      },
+      "restrictedAuthorityInboxIndex": {
+        "pass": 50,
+        "fail": 0,
+        "skip": 0
+      },
+      "restrictedPrivate": {
+        "pass": 4,
+        "fail": 0,
+        "skip": 0
+      }
+    }
+  ],
+  "retainedFailures": [
+    "Test-type attempt02: QueryBuilder did not satisfy NodePg SELECT type; test fixture corrected to public drizzle.mock(), application unchanged.",
+    "Root full-unit attempt01 source selectors were stale after private entry/builder extraction; the two exact ordering selectors were updated and21 focused tests passed. Root retains full-unit packet separately.",
+    "Native attempt01 owner private fixture setup refused owner/bypass as designed; final runner selects it only in restricted mode."
+  ],
+  "evidenceLimits": [
+    "Native statement counts and microbenchmark are correctness/component evidence, not required 6000-offer capacity acceptance.",
+    "Generic, unlocked, RLS-off, and WebSocket paths retain reference builders; no result or authority cache.",
+    "Root unit used the held fixture after native completion; private connection setup is removed and excluded."
+  ],
+  "sourceBindings": [
+    {
+      "path": "src/services/classpilotHeartbeatReadQueries.ts",
+      "sha256": "93aae230b6b73c6d4a5d594aad1d21f95af3f9ff13c86f57d1a768283b91435a"
+    },
+    {
+      "path": "src/services/classpilotHeartbeatPreparedReads.ts",
+      "sha256": "844d084ad65de6823409bb5daf25928aef4c396b2bb62a3e8737e429b4b23b21"
+    },
+    {
+      "path": "tests/classpilot-heartbeat-foreground-authority.integration.test.ts",
+      "sha256": "5e240c000503ec11f6f66d062da35852064a8c3e0c7e85f3b83dea2ae972b6ff"
+    },
+    {
+      "path": "tests/classpilot-heartbeat-inbox-authority.integration.test.ts",
+      "sha256": "4b326f6bc54f1f0ace075c095a848d0fb362098a41dfea6410945031969857b2"
+    },
+    {
+      "path": "tests/classpilot-private-chat-lifecycle.integration.test.ts",
+      "sha256": "999ddde1ccea742c270f15d375a9bc73b708b42d0e34f881076496bd4cade330"
+    },
+    {
+      "path": "tests/fixtures/classpilot-heartbeat-read-queries-0e427.json",
+      "sha256": "27de7f2ca85baaeea8b971a2ea152eacfbe4c6d5b12951c02c3b6a98177e9ad8"
+    },
+    {
+      "path": "src/services/storage.ts",
+      "sha256": "8333347f5f1deddb277da556cd01a669015dc6696b9235bf9abe576710181d6b"
+    },
+    {
+      "path": "src/services/classpilotEntitlement.ts",
+      "sha256": "2aff57cdf453f087b5323575bc96aec267d31c6930e96fff4753795fa0baa050"
+    },
+    {
+      "path": "src/middleware/tenantContext.ts",
+      "sha256": "50b101725c0c20b028c6c548a7733ca02bf14c2bbab694ceb8486ded77f9da5f"
+    },
+    {
+      "path": "dist/services/storage.js",
+      "sha256": "e0150f968f15f2297f57ed4d7bb70d0f9be167a81721c6d426e62d6b35a3886c"
+    },
+    {
+      "path": "dist/services/classpilotEntitlement.js",
+      "sha256": "6af9cf167ef5c2bfffdae415a8ef777484051dd8ef134d1e038e10cfddce6b62"
+    },
+    {
+      "path": "dist/middleware/tenantContext.js",
+      "sha256": "59e771402e11fa939cede5d8e85578f3a82538e05cc78c7966628c11b0116c6f"
+    },
+    {
+      "path": "dist/services/classpilotStudentSessionAuthority.js",
+      "sha256": "43c53f5a2700a6fb6cdd4a917b0a44c56e59d80e9d6e6793d4056fa03ed2aa00"
+    },
+    {
+      "path": "node_modules/drizzle-orm/package.json",
+      "sha256": "9fd30ce718965c19178ac6936462b77017f1fffe56865124d0cfe55850de09ff"
+    },
+    {
+      "path": "dist/services/classpilotHeartbeatPreparedReads.js",
+      "sha256": "d657cda9a179ce75c8082f5d580ee59c95af0aab09cccf5103136a9f6b1d4e11"
+    },
+    {
+      "path": "dist/services/classpilotHeartbeatReadQueries.js",
+      "sha256": "4f52923e25676bccd8c1bc8f84140fbca825f40e157d3174c43c251fbe2a243d"
+    },
+    {
+      "path": "tests/classpilot-sso-policy-delivery-contract.test.ts",
+      "sha256": "f55f24f8b68f2b467ab77ba4c89cceff5dd06efc4cc926ba15a462f520accca3"
+    },
+    {
+      "path": "tests/classpilot-student-session-recovery-contract.test.ts",
+      "sha256": "1cf3dca171d560d76301fa40b2e69d43c25a017d61c645a3d637c2e4c04e831b"
+    },
+    {
+      "path": "tests/student-device-index-contract.test.ts",
+      "sha256": "9df53e3003fa578108a810f75233e8e7cbd0b2548c1becd3f3d2089b7c76c245"
+    }
+  ],
+  "sanitization": "Connection URLs/JWTs, credential fields, synthetic UUIDs/emails and workstation prefixes redacted. Original raw logs remain unchanged. No populated fixture or private setup copied.",
+  "omitted": [
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\schema.sql",
+      "originalSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "reason": "Schema dump retained externally; no fixture identity contents required"
+    },
+    {
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\schema.sql",
+      "originalSha256": "02fbd9478f279df456f061283630d1ce3ca22278bdc9696f4622f334ff62cd64",
+      "reason": "Schema dump retained externally; no fixture identity contents required"
+    }
+  ],
+  "files": [
+    {
+      "path": "native-attempt-01/cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\cleanup.log",
+      "originalSha256": "656abef57dac1f0553fb5757314fa89d1cc4cca0761a57a484e8814529648cb2",
+      "sanitizedSha256": "656abef57dac1f0553fb5757314fa89d1cc4cca0761a57a484e8814529648cb2",
+      "gzipSha256": "a3aeceae744cad21bd9db22ad2e7734b3c6b97207cc41620878aef7d9d041862"
+    },
+    {
+      "path": "native-attempt-01/create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\create.log",
+      "originalSha256": "656abef57dac1f0553fb5757314fa89d1cc4cca0761a57a484e8814529648cb2",
+      "sanitizedSha256": "656abef57dac1f0553fb5757314fa89d1cc4cca0761a57a484e8814529648cb2",
+      "gzipSha256": "a3aeceae744cad21bd9db22ad2e7734b3c6b97207cc41620878aef7d9d041862"
+    },
+    {
+      "path": "native-attempt-01/execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\execution.json",
+      "originalSha256": "d1d7c690d9e35aec554f44723c9a0f0c269866ebff5ffd9ea2521e3e64c7a7c3",
+      "sanitizedSha256": "04b7dc38bae52586d6f2fb0a27978c7d7fd6f232b87eabecf5b08b86d640ca05",
+      "gzipSha256": "b440e7fd228a173551f095b05109159010171994fdeba1262eab5f23512a033a"
+    },
+    {
+      "path": "native-attempt-01/owner-authority.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\owner-authority.log",
+      "originalSha256": "22650040038c3c9f96d23d017d70332ff8a5cbec415cadce2999fad832cb04bc",
+      "sanitizedSha256": "22650040038c3c9f96d23d017d70332ff8a5cbec415cadce2999fad832cb04bc",
+      "gzipSha256": "b95d28a93566c08bcb0505b1e28ea162845c839650bedd689e0b0685731baa5f"
+    },
+    {
+      "path": "native-attempt-01/owner-private.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\owner-private.log",
+      "originalSha256": "73ddb565c58c7f2435144ad8a10c7757cdc1949f72cee4b5d8eeb2a5b8d247a9",
+      "sanitizedSha256": "b617666f2e2e97581a89d0ee19e2ffe56795a6fdcf1a1ef966bbfc924fe94922",
+      "gzipSha256": "b1843ca9f0cd2b5278fdc0c72b1750dea9fe9cbe8af61cab9511f40b3e3af801"
+    },
+    {
+      "path": "native-attempt-01/restore.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\restore.log",
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "path": "native-attempt-01/restricted-authority.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\restricted-authority.log",
+      "originalSha256": "64795fbda0ec357c2ada996be138cd2f8c17d0f3dc43f9ab6f7e737c814e8944",
+      "sanitizedSha256": "64795fbda0ec357c2ada996be138cd2f8c17d0f3dc43f9ab6f7e737c814e8944",
+      "gzipSha256": "76c84f18b467afe3ae3be6a6cae6fec6b132ce2c8b95077d6dfaf2fe2c39c2d3"
+    },
+    {
+      "path": "native-attempt-01/restricted-private.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\restricted-private.log",
+      "originalSha256": "b31660a841483f26cf206d737b1a9a2a93cefb78d89425d5bbd805b894a11dd1",
+      "sanitizedSha256": "b63eac9842f360fb826be55121d88f02fa3505de6785a712c709db65823f1c14",
+      "gzipSha256": "ff24ce65f20564f02031efc8af818dd09cb19fccabbde3f930de5f87658dde4f"
+    },
+    {
+      "path": "native-attempt-01/role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\role.log",
+      "originalSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "path": "native-attempt-01/source-after.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\source-after.json",
+      "originalSha256": "c4d03d54b63615ea319efdb8eaa1d39e4c98cd2ebb087a966982f905f0bd8286",
+      "sanitizedSha256": "20374955690d3e08227144fa131c0e2b7a63e6911d8d204584b07a9633979d38",
+      "gzipSha256": "cb9d4b42152b7b3ee041b337a8d8e90418aee34ae5e1f97a0e2474e3a6b4f6c2"
+    },
+    {
+      "path": "native-attempt-01/source-before.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-3ad32f654ffb\\source-before.json",
+      "originalSha256": "c4d03d54b63615ea319efdb8eaa1d39e4c98cd2ebb087a966982f905f0bd8286",
+      "sanitizedSha256": "20374955690d3e08227144fa131c0e2b7a63e6911d8d204584b07a9633979d38",
+      "gzipSha256": "cb9d4b42152b7b3ee041b337a8d8e90418aee34ae5e1f97a0e2474e3a6b4f6c2"
+    },
+    {
+      "path": "native-attempt-02/cleanup.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\cleanup.log",
+      "originalSha256": "eef4b34dfb1fe66f55963c5d79e6fcba6a7bbbbade4ac8a0da2e557f74118b20",
+      "sanitizedSha256": "eef4b34dfb1fe66f55963c5d79e6fcba6a7bbbbade4ac8a0da2e557f74118b20",
+      "gzipSha256": "c4c290b9aaa61e38d6174f0492a07d3d434446706561a1311ebaf768a0611482"
+    },
+    {
+      "path": "native-attempt-02/create.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\create.log",
+      "originalSha256": "eef4b34dfb1fe66f55963c5d79e6fcba6a7bbbbade4ac8a0da2e557f74118b20",
+      "sanitizedSha256": "eef4b34dfb1fe66f55963c5d79e6fcba6a7bbbbade4ac8a0da2e557f74118b20",
+      "gzipSha256": "c4c290b9aaa61e38d6174f0492a07d3d434446706561a1311ebaf768a0611482"
+    },
+    {
+      "path": "native-attempt-02/execution.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\execution.json",
+      "originalSha256": "ec723d14ce55534d8756a81385052e62de498ff866711d438a35d835d7c45d72",
+      "sanitizedSha256": "c7f03599d21d8418ce259356e0a5c3a708b3b32e8ded6753a65f3d8ef557645a",
+      "gzipSha256": "d7b9a5f171d02d1b6fd6a1bb07cf161e024d1235fae4c492068273accd5e402d"
+    },
+    {
+      "path": "native-attempt-02/owner-authority.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\owner-authority.log",
+      "originalSha256": "5a97074d22aec4a4b8d0c87f3de954712ae9df04cc158dcca60ca551da2ad7aa",
+      "sanitizedSha256": "0fb0a5f13c30ee58024162efe50a936859ad266c4f029650df9e7bc2421bc3c2",
+      "gzipSha256": "ab0776f0b78acc6079d3334f5f10b18b922de81477ecea93dfcdc7de45b74de3"
+    },
+    {
+      "path": "native-attempt-02/restore.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\restore.log",
+      "originalSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "gzipSha256": "2299af09ed0201f51cd7fc14306965663a2ef77ea782d625b05208c1575f2ed0"
+    },
+    {
+      "path": "native-attempt-02/restricted-authority.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\restricted-authority.log",
+      "originalSha256": "4c63e4f0596890f6c0543cb8d3106b2dcd7b343baf626ad5fa25d7e6e3e351ce",
+      "sanitizedSha256": "4c63e4f0596890f6c0543cb8d3106b2dcd7b343baf626ad5fa25d7e6e3e351ce",
+      "gzipSha256": "41b84f3cc8da798b9ac9cf821920c13495b92144353bb65295097e05e467d783"
+    },
+    {
+      "path": "native-attempt-02/restricted-private.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\restricted-private.log",
+      "originalSha256": "d37e6af7bb8d08590084ad5072dec550ec738f11264b8eca1d083b165b9b0aa3",
+      "sanitizedSha256": "2109a8d3e1259ba05cffac8519f1f809670b93ac623502912aad843cf6a3f339",
+      "gzipSha256": "75f16e3dc4f51525e0f78e7b4c8abf368dbd265aa9c19cf1354dc608a0333ea6"
+    },
+    {
+      "path": "native-attempt-02/role.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\role.log",
+      "originalSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "gzipSha256": "86f0f49723897659d6f78adcc910c01c85dcc0d6db7497343428d74e264b820d"
+    },
+    {
+      "path": "native-attempt-02/root-unit-ready.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\root-unit-ready.json",
+      "originalSha256": "206638620a005128e36fd6fe1cdf7230a3b52b591be61eb8db8d57ac3c442901",
+      "sanitizedSha256": "a53566273829c7d5b1a09e740b62dd944f76639d9d02911985db6311e937ec67",
+      "gzipSha256": "135e46bebcd42b5b5679cb867a0fe5696a4d69adaa3f92509efade0937d88afb"
+    },
+    {
+      "path": "native-attempt-02/root-unit-release.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\root-unit-release.json",
+      "originalSha256": "7dcac9b39a7b1fc995473ccce035e83d1915072881af6887b955e7e6f1aaec3c",
+      "sanitizedSha256": "dbd5fe80a9804b4196d0829abc3a4f7b3029d6fb22139fe66843ef452506065a",
+      "gzipSha256": "f5cbfd95fe25a301a8749d606c6d2ceaa6184b262c3c94ff410a491afbc94bbb"
+    },
+    {
+      "path": "native-attempt-02/source-after.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\source-after.json",
+      "originalSha256": "2d26ce17438d73ded5b41670029ea8f8e1b75a09547145f05114815372391541",
+      "sanitizedSha256": "618035a6085fc0c79474322a2c465d9f96544dac0569a8e1c6692818d9f6537c",
+      "gzipSha256": "fdb05f21768aa145e1666c1672877ef88ffc80bccac10bdfca07cbc5f783789b"
+    },
+    {
+      "path": "native-attempt-02/source-before.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-f4393ad7f009\\source-before.json",
+      "originalSha256": "2d26ce17438d73ded5b41670029ea8f8e1b75a09547145f05114815372391541",
+      "sanitizedSha256": "618035a6085fc0c79474322a2c465d9f96544dac0569a8e1c6692818d9f6537c",
+      "gzipSha256": "fdb05f21768aa145e1666c1672877ef88ffc80bccac10bdfca07cbc5f783789b"
+    },
+    {
+      "path": "full-unit-attempt-01/unit.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-01.log",
+      "originalSha256": "3036ac20f7ab9f420c7c797e630a17fb177a390e461c55a89a47730d74173df0",
+      "sanitizedSha256": "4c8830895aa58582fecb7b678143341a768db37c7d33cee5b03a396e7e21fa41",
+      "gzipSha256": "d865fcb314db328114a83c73fa7c1dd03e51a3385496aad2fde08c77856e7ef2"
+    },
+    {
+      "path": "full-unit-attempt-02/redis-fixture.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-02\\redis-fixture.json",
+      "originalSha256": "dc15382c01b50ab9c65cc0e446345dd6e0c8f31924bcdb4c1183c462996ae375",
+      "sanitizedSha256": "569ed85fe445b21d26420bf2db26a9f023889f9898b1bb3829c56e2c443a4140",
+      "gzipSha256": "23535b631b96abb76c4eb813b7db82acaeb78aa83496263993e5ef016f140cfd"
+    },
+    {
+      "path": "full-unit-attempt-02/redis-remove.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-02\\redis-remove.log",
+      "originalSha256": "66b5cfb9636cc782a2192309d43df3163e4080a633410cc3993276f5950683ed",
+      "sanitizedSha256": "66b5cfb9636cc782a2192309d43df3163e4080a633410cc3993276f5950683ed",
+      "gzipSha256": "f5998b84ea37e7f40b1a88e6f11ac800ece67da7fef714be4110706cb8323001"
+    },
+    {
+      "path": "full-unit-attempt-02/redis-stop.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-02\\redis-stop.log",
+      "originalSha256": "f509de26308c7b7fc83f8f8bd9cc5e337388ac189496b64f64e2ec79108995ea",
+      "sanitizedSha256": "f509de26308c7b7fc83f8f8bd9cc5e337388ac189496b64f64e2ec79108995ea",
+      "gzipSha256": "22c4df1c5614e084b26ac79d7b9f602ec13119badf67c4914b26897021c8e4ab"
+    },
+    {
+      "path": "full-unit-attempt-02/result.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-02\\result.json",
+      "originalSha256": "f143facf7200f9655e69b5e076c58c23ec28047a119e6bdc7218ed6fa4edef63",
+      "sanitizedSha256": "2bf77037f07dc8a18f0826cfa8774d85660b911be607fead8be0e30a9ca609dc",
+      "gzipSha256": "f592449ef474e897f86d055e08f817ce1dcf82cf396d4cc099755d5f7c2e0b56"
+    },
+    {
+      "path": "full-unit-attempt-02/unit.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-full-unit-02\\unit.log",
+      "originalSha256": "2d40618ace1f9461f969ad3bb4d6217f177c1b720dfc05d86f660ccc32a030af",
+      "sanitizedSha256": "dc2a0bd15a5b507ccc60ebbafa6f0187cc24d36879859579ac4d9f8b0ac1a78d",
+      "gzipSha256": "621c28fadd2b13c99e2e2079ec8ae7327a73c527188366c4afcbf44e6aa19b7f"
+    },
+    {
+      "path": "checks/release297-prepared-reads-native-01.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-01.ps1",
+      "originalSha256": "f8ce8ec8488e2789986e2c4d7c796a2944392e38397756317e393bde84ea1ea7",
+      "sanitizedSha256": "88cf6d46f75e1ffd8a7c561a5de62baf97aa9277184ede4482dec2d3965aaf97",
+      "gzipSha256": "839786858b304ce4e41b869e3a357396d5a3a07bc441e2870b340091a7452a65"
+    },
+    {
+      "path": "checks/release297-prepared-reads-native-02.ps1.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-02.ps1",
+      "originalSha256": "2360ca0d02de05df47e6da88149b8d6267c70dfe2e6188a0f65617bf5bd658ed",
+      "sanitizedSha256": "dc482348d5e43c734e686c3e2c37ede1ab548a904db08e2106d494f8e3624a6a",
+      "gzipSha256": "bb64e3793ba8de468469b2ebc0d35df078c3f3d2faee4f0bbb51a7c1739e10ae"
+    },
+    {
+      "path": "checks/release297-prepared-reads-native-runner-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-runner-01.log",
+      "originalSha256": "8703c635ee64eb221a97cb1ae3eaeac9af4bbaaaf942c02bb4ee9a0350629757",
+      "sanitizedSha256": "8703c635ee64eb221a97cb1ae3eaeac9af4bbaaaf942c02bb4ee9a0350629757",
+      "gzipSha256": "9f947897571106d67170d98c1947e098b46db90bc63f78e99882d13450982016"
+    },
+    {
+      "path": "checks/release297-prepared-reads-native-runner-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-native-runner-02.log",
+      "originalSha256": "e1fa1c8b03d52ba35769ed637a45ef3eb861212c0f82c3193c5b1952bf80e2bd",
+      "sanitizedSha256": "e1fa1c8b03d52ba35769ed637a45ef3eb861212c0f82c3193c5b1952bf80e2bd",
+      "gzipSha256": "290ff28ae25dc89776a1cbcf3422551f80e80d695d8f57b6af53c8924533c7e9"
+    },
+    {
+      "path": "checks/release297-prepared-reads-build-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-build-01.log",
+      "originalSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "sanitizedSha256": "155b9b08419d34111c92771ec5a65eebc3bdda66202fb631595c340db7b2cd76",
+      "gzipSha256": "693976655c901e7c8d546795a1e39065e7494fd594ca48bf13366ea14b1916de"
+    },
+    {
+      "path": "checks/release297-prepared-reads-types-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-types-01.log",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "path": "checks/release297-prepared-reads-types-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-types-02.log",
+      "originalSha256": "fbe1ff567a4109d7224d724b06baa0715aa0ecfabd62b29c1791f28fd3deeed2",
+      "sanitizedSha256": "fbe1ff567a4109d7224d724b06baa0715aa0ecfabd62b29c1791f28fd3deeed2",
+      "gzipSha256": "4e0eea9fcfe33cdc4209fe862ed85003c4a9214533e9eb1ae116180e2a2b118f"
+    },
+    {
+      "path": "checks/release297-prepared-reads-types-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-types-03.log",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "path": "checks/release297-prepared-reads-types-04.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-types-04.log",
+      "originalSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "sanitizedSha256": "e3060efb664fddb999254cfd472de0e6782b9b28ef0ed01ec52b9f1a378656cc",
+      "gzipSha256": "be34abf704397c92b09bcb16b189085fcaef74c6b938d2f256945cae244cc350"
+    },
+    {
+      "path": "checks/release297-prepared-reads-casts-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-casts-01.log",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f"
+    },
+    {
+      "path": "checks/release297-prepared-reads-casts-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-casts-02.log",
+      "originalSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "gzipSha256": "946f27ae9dde3fbff23a635ecf601870d4988706c2d52c964de7d1b5661b586f"
+    },
+    {
+      "path": "checks/release297-prepared-reads-unit-01.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-unit-01.log",
+      "originalSha256": "1c75624a33e0754afc1c2707484ec56c57c065570b15e15d0765c47cb1ccc087",
+      "sanitizedSha256": "1c75624a33e0754afc1c2707484ec56c57c065570b15e15d0765c47cb1ccc087",
+      "gzipSha256": "f1076f5abb6badd534cfef9c72328c6c05603f669c485f79f108b71a70cf114a"
+    },
+    {
+      "path": "checks/release297-prepared-reads-focused-02.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-reads-focused-02.log",
+      "originalSha256": "6ee817d02b94c468fa9a309ad8f1326917ea3b2031fc5de0b37c1ef640ff423a",
+      "sanitizedSha256": "6ee817d02b94c468fa9a309ad8f1326917ea3b2031fc5de0b37c1ef640ff423a",
+      "gzipSha256": "abdd1d217fbbcb14be14f60c893fa166f4b5145c643692bf706db631fdf65b29"
+    },
+    {
+      "path": "checks/release297-prepared-contracts-03.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-prepared-contracts-03.log",
+      "originalSha256": "0f21bbc1999043d4a757ef6db81877d712027204b1d9af1396edb89491aa7918",
+      "sanitizedSha256": "0f21bbc1999043d4a757ef6db81877d712027204b1d9af1396edb89491aa7918",
+      "gzipSha256": "a7d23b8ba94bf65cf10cedb3881e96e1c586182e49bd46ff43dea43da343ded6"
+    },
+    {
+      "path": "source/src/services/classpilotHeartbeatReadQueries.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\services\\classpilotHeartbeatReadQueries.ts",
+      "originalSha256": "93aae230b6b73c6d4a5d594aad1d21f95af3f9ff13c86f57d1a768283b91435a",
+      "sanitizedSha256": "93aae230b6b73c6d4a5d594aad1d21f95af3f9ff13c86f57d1a768283b91435a",
+      "gzipSha256": "11eae45ce1cb19ec451bd456f521f173be1f7f5e36b37f3d6b687da7bf529a71"
+    },
+    {
+      "path": "source/src/services/classpilotHeartbeatPreparedReads.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\services\\classpilotHeartbeatPreparedReads.ts",
+      "originalSha256": "844d084ad65de6823409bb5daf25928aef4c396b2bb62a3e8737e429b4b23b21",
+      "sanitizedSha256": "844d084ad65de6823409bb5daf25928aef4c396b2bb62a3e8737e429b4b23b21",
+      "gzipSha256": "224485b88dbbd8d4feabe5073f98fae168f6b1f12207cfeecd1123d430899942"
+    },
+    {
+      "path": "source/src/services/classpilotEntitlement.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\src\\services\\classpilotEntitlement.ts",
+      "originalSha256": "2aff57cdf453f087b5323575bc96aec267d31c6930e96fff4753795fa0baa050",
+      "sanitizedSha256": "2aff57cdf453f087b5323575bc96aec267d31c6930e96fff4753795fa0baa050",
+      "gzipSha256": "c8632e97e8fe9c40b1708f52628e22a4b1bfb771e9f3612c79bee2132004175b"
+    },
+    {
+      "path": "source/tests/classpilot-heartbeat-prepared-reads.test.mjs.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-heartbeat-prepared-reads.test.mjs",
+      "originalSha256": "c61e18e7500f9184d5a678b8100ff254503474c2eabd6bd66879cc7ffd4a288a",
+      "sanitizedSha256": "c61e18e7500f9184d5a678b8100ff254503474c2eabd6bd66879cc7ffd4a288a",
+      "gzipSha256": "e9e8f9c038ea46b42429c492737f15ef951adc677b26fd613846f819738a6508"
+    },
+    {
+      "path": "source/tests/classpilot-heartbeat-read-queries.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-heartbeat-read-queries.test.ts",
+      "originalSha256": "ff82f5f214ea38642fc07aedbf78bc8544e3dfb1b6e07069d6c118011e489b52",
+      "sanitizedSha256": "ff82f5f214ea38642fc07aedbf78bc8544e3dfb1b6e07069d6c118011e489b52",
+      "gzipSha256": "6d9b396cd5920e2398d0bc3f0a015244351e597fd46a6faadeacd0772da14776"
+    },
+    {
+      "path": "source/tests/fixtures/classpilot-heartbeat-read-queries-0e427.json.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\fixtures\\classpilot-heartbeat-read-queries-0e427.json",
+      "originalSha256": "27de7f2ca85baaeea8b971a2ea152eacfbe4c6d5b12951c02c3b6a98177e9ad8",
+      "sanitizedSha256": "27de7f2ca85baaeea8b971a2ea152eacfbe4c6d5b12951c02c3b6a98177e9ad8",
+      "gzipSha256": "bee91885f7a9d6f6edae05b944d4d4d00e802f2fc618842e788ae2e4b57645e7"
+    },
+    {
+      "path": "source/tests/classpilot-heartbeat-foreground-authority.integration.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-heartbeat-foreground-authority.integration.test.ts",
+      "originalSha256": "5e240c000503ec11f6f66d062da35852064a8c3e0c7e85f3b83dea2ae972b6ff",
+      "sanitizedSha256": "5e240c000503ec11f6f66d062da35852064a8c3e0c7e85f3b83dea2ae972b6ff",
+      "gzipSha256": "e5882832bb0f1534b6240b3a9e7cd1405813eb8b388c56d80ab08337b4083f91"
+    },
+    {
+      "path": "source/tests/classpilot-heartbeat-inbox-authority.integration.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-heartbeat-inbox-authority.integration.test.ts",
+      "originalSha256": "4b326f6bc54f1f0ace075c095a848d0fb362098a41dfea6410945031969857b2",
+      "sanitizedSha256": "4b326f6bc54f1f0ace075c095a848d0fb362098a41dfea6410945031969857b2",
+      "gzipSha256": "819b93773d4939f07972b936df29804e9f5c076f19bc5e65dcd26525286dc981"
+    },
+    {
+      "path": "source/tests/classpilot-private-chat-lifecycle.integration.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-private-chat-lifecycle.integration.test.ts",
+      "originalSha256": "999ddde1ccea742c270f15d375a9bc73b708b42d0e34f881076496bd4cade330",
+      "sanitizedSha256": "999ddde1ccea742c270f15d375a9bc73b708b42d0e34f881076496bd4cade330",
+      "gzipSha256": "6c48c871d9ecf53aeebc4426a0536f011318afde6d05da1f15fad25873ad9e34"
+    },
+    {
+      "path": "source/tests/classpilot-sso-policy-delivery-contract.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-sso-policy-delivery-contract.test.ts",
+      "originalSha256": "f55f24f8b68f2b467ab77ba4c89cceff5dd06efc4cc926ba15a462f520accca3",
+      "sanitizedSha256": "f55f24f8b68f2b467ab77ba4c89cceff5dd06efc4cc926ba15a462f520accca3",
+      "gzipSha256": "a9bcaecf38a61db43e29b411b9e8a8d3e306a3fb6f6fb262d9bd1a0160a01225"
+    },
+    {
+      "path": "source/tests/classpilot-student-session-recovery-contract.test.ts.gz",
+      "originalPath": "C:\\Users\\zinka\\.codex\\worktrees\\release-stabilization-297\\SchoolPilot\\tests\\classpilot-student-session-recovery-contract.test.ts",
+      "originalSha256": "1cf3dca171d560d76301fa40b2e69d43c25a017d61c645a3d637c2e4c04e831b",
+      "sanitizedSha256": "1cf3dca171d560d76301fa40b2e69d43c25a017d61c645a3d637c2e4c04e831b",
+      "gzipSha256": "2c7422f4e7747a0b72641c7dc0756c39cf1a7efd00480b5394966e692d9e08ce"
+    }
+  ]
+}
