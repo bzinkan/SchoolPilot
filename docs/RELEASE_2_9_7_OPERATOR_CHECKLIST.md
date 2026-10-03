@@ -48,11 +48,20 @@ at `6035239b` gives fresh credential-backed user lookups a separate fair turn,
 alongside ordinary work and admitted reports, in the same pool. Identity is
 rechecked after waiting; heartbeat entitlement retains its ordinary lane.
 All 66 focused cases, native owner/restricted cases, build/type/cast checks and
-1,868 unit cases pass (four conditional skips). Current-source CI, actual-workload
-capacity, final images and recovery rehearsal remain pending. The following development checkpoints retain their original
+1,868 unit cases pass (four conditional skips).
+[CI on `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json)
+passes all 17 CI jobs and the three security workflows for those application
+bytes. Actual-workload capacity, final images and recovery rehearsal remain
+pending. The following development checkpoints retain their original
 source-specific results; they do not supersede this current status.
 
-The [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
+## Historical development checkpoints
+
+The following paragraphs retain the status at each named source checkpoint.
+Use the current selection table below for release preparation; historical
+images and passing checks do not select the final release source.
+
+The [initial API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 adds alternating FIFO admission for report and other main-pool requests when
 Usage reporting is enabled. Default-off API, worker and session pools keep
 native scheduling. The existing configured connection limits and deadlines
@@ -60,10 +69,11 @@ remain unchanged. Build/type/cast checks, 38 focused tests, eight native driver
 cases and the actual application regression under owner and restricted roles
 pass. Cancellation retains ownership until cleanup finishes. Native logical
 pool limits are preserved; closing sockets are tracked through shutdown without
-claiming a stricter physical-socket ceiling. Combined capacity and final-source
-checks remain pending, and the older image below does not contain this change.
+claiming a stricter physical-socket ceiling. At that checkpoint, combined
+capacity and final-source checks were pending. The historical `9630c009` image
+below includes this initial scheduler; it predates the later identity lane.
 
-The [new local `9630c009` candidate](release-evidence/release-297/usage-contention/candidate-artifact-9630c009/manifest.json) has passed the pinned full image scan with
+The [historical local `9630c009` candidate](release-evidence/release-297/usage-contention/candidate-artifact-9630c009/manifest.json) has passed the pinned full image scan with
 zero findings and the embedded 129-table/lifecycle/default-off checks. Its
 Linux/amd64 manifest is
 `sha256:c3759c8b69acb47feb5dc1dc5416b77f9d5e1a2eccb76bbf1646c96d966a67c5`;
@@ -165,6 +175,8 @@ The comparison proves the two changed tests do not alter the application or any
 of the 60 infrastructure-selected files and their selector. Final-source capacity
 and fresh remote CI remain required.
 
+## Agreed live-validation boundary
+
 The owner approved 2.9.7 and explicitly replaced the two-managed-Chromebook
 prerequisite with documented live validation. Record that prerequisite as
 `waived_not_passed`, never as passed. This exception applies to precise resources
@@ -172,25 +184,31 @@ and Focus only and must bind the final source, serving image, extension identity
 ZIP hash and automated evidence. It does not waive confidentiality, authority,
 recipient, enforcement, tenancy or deployment health checks.
 
-## Release identities and evidence
+## Current release selection and evidence
 
-| Item | Required record / current state |
+This selection snapshot is based on application `6035239b` and documentation
+head `2378e04e`. **No final-source API/worker release candidate is selected.**
+The latest scanned local image, `5d543f40`, predates the current application.
+Final source, images, CI, capacity and recovery evidence must be reconciled
+before the separately authorized release steps below.
+
+| Item | Current selection / evidence limitation |
 |---|---|
-| SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`, freshly fetched October 2, 2026 |
+| SchoolPilot baseline | `996d965f0b044f8fc4d4bbc399c5ab3781fbac04`; remote main verified unchanged October 3, 2026 |
 | Integration branch | `codex/release-stabilization-297`; [SchoolPilot #603](https://github.com/bzinkan/SchoolPilot/pull/603), preserve original review branches |
 | ClassPilot lineage | #119 → #120 → #121 → #122, consolidated with stabilization in [ClassPilot #123](https://github.com/bzinkan/ClassPilot/pull/123) |
 | Extension identity | `iggbfegfcjkfieoemeolfmfnapepalca`; version 2.9.7 |
 | Public Store observation | October 2 public listing: 2.9.6, updated September 27. Pending developer submissions are not established by a public listing. |
-| Remote review source / CI | [Checkpoint `92307780`](release-evidence/release-297/usage-contention/ci-92307780.json) passes all four workflows and all 17 CI jobs. Its application/build inputs match `d6492333`. The preceding ordinary isolation failure and its [27-case test-only correction](release-evidence/release-297/usage-contention/runtime-security-clock-followup/manifest.json) remain retained. Conditional skips remain skips. Later application changes and approved merged-main source still require their own CI. |
-| Current contention correction / local checks | [Combined11](release-evidence/release-297/usage-contention/combined-checks-attempt-11/manifest.json) passed the build and 699 infrastructure cases, retaining four unit VM-context failures. [Follow-up12](release-evidence/release-297/usage-contention/combined-checks-attempt-12/manifest.json) passes types/casts and 1,823 unit cases with four named skips; application and infrastructure inputs are unchanged. [Owned inbox](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json) passes 48 focused and 19 owner plus 19 restricted-role cases. Final CI and capacity remain required. |
-| API / worker artifacts | [Exact local candidate d6492333](release-evidence/release-297/usage-contention/candidate-artifact-d6492333/manifest.json) passes uncached build, pinned scan with zero findings and embedded compatibility checks. Linux/amd64 manifest: `sha256:6625b4d5b6a8f1861ba71c44581b3c9a1787db40c4423a115f9676a540744ffc`; export SHA-256: `59b845b4d5cd15f4d22d20214fab3b594e5dcaf2b1eb97bf6c4bd3278affdad0`. [Compatible fallback 5c01944e](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json) also has zero findings; Linux/amd64 manifest: `sha256:269bfbc07e0f76adc79604b7a45ab18623dc7b9e2d6c77d913a696adb995de38`, export SHA-256: `ad8e6839d4afdb85a9171fcc27b499b60487603d0a2a0e7fef0e3806bfb22060`. Both retain 129-table/lifecycle compatibility and default-off Usage. These are local artifacts; registry identities, approved merged-main bindings and production task pairs remain separate. |
-| Migration rehearsal | [Reconstructed-baseline rehearsal at d6492333](release-evidence/release-297/usage-contention/rehearsal-d649-5c01/manifest.json) passes baseline `7af9d0dd` → candidate `d6492333` → compatible fallback `5c01944e` → candidate. It preserves all 53 migration IDs and 129 tenant tables, with successful owned-container cleanup. The empty baseline already adopted staff identity contracts; explicit adoption proves idempotent re-entry only. Actual production catalog/ledger verification and populated RLS checks remain separate; historical rehearsals are retained. |
+| Remote review source / CI | Current application: `6035239b`. [Full CI on documentation checkpoint `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json) passes all 17 CI jobs and three security workflows for the same application bytes. Later application changes and approved merged-main source require fresh CI. Conditional skips remain skips. |
+| Current contention correction / local checks | The [`6035239b` identity scheduling correction](release-evidence/release-297/usage-contention/fair-main-pool-user-identity-01/manifest.json) passes 66 focused cases, native owner/restricted cases, build/type/cast checks and 1,868 unit cases with four conditional skips. Current-source CI passes; actual-workload capacity and final artifact/recovery evidence remain pending. Earlier failures and repairs remain in the historical evidence index. |
+| API / worker artifacts | **No final-source release image selected.** The latest [locally scanned image, `5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json), has zero findings and embedded compatibility checks, but does not include `6035239b`. The retained [compatible fallback, `5c01944e`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json), includes the final heartbeat entitlement/binding fence and retains 129-table/lifecycle compatibility with both Usage modes off. Final candidate/fallback pairing, registry identities, approved merged-main bindings and production task pairs still require verification. Historical image manifests remain unchanged. |
+| Historical migration rehearsal | The [d6492333 rehearsal](release-evidence/release-297/usage-contention/rehearsal-d649-5c01/manifest.json) passes reconstructed baseline `7af9d0dd` → candidate `d6492333` → fallback `5c01944e` → candidate, preserving all 53 migration IDs and 129 tenant tables with owned-container cleanup. The empty baseline already adopted staff identity contracts; that adoption proves idempotent re-entry only. This historical rehearsal does not certify `6035239b` or a future final image. Final-source recovery rehearsal, actual production catalog/ledger verification and populated RLS checks remain required. |
 | Extension candidate source | `065be165b5df704d84eb716e3fb914c1fed17f98`; reviewed candidate, not an asserted merge or publication |
 | Extension ZIP | `82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575`; 24-file verifier passed; full native/package/Chrome acceptance recorded separately |
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |
 | Frontend aggregate | [Current frontend source-bound evidence](release-evidence/release-297/usage-contention/frontend-final-source.json): 739 Node-runner cases passed with zero skips, plus direct browser scripts; build and lint passed with 29 existing lint warnings. Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Reconcile its recorded frontend blobs with the eventual final release commit; this does not certify later backend changes. |
 | Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
-| Usage capacity | Held off. The latest [204ae93d combined diagnostic](release-evidence/release-297/usage-contention/linux-combined-204-01/manifest.json) fails with 4,840/6,000 successful heartbeat offers, 51/64 successful reports and 978 acquisition failures. Workers return correct historical totals in 19.107/42.142 seconds; 10 aborted responses prevent drain certification. Current-day/CSV verification and final source-equivalence completion are unavailable. Separate Linux roles shared one unrestricted container, so this is diagnostic evidence only. All owned fixtures were removed. Three consecutive final-source combined passes and the original comparison remain pending. Earlier failures remain in the evidence index. Both fixture schools are synthetic; DeSales is the sole live school. |
+| Usage capacity | **No accepted passing run; Usage remains off.** The latest [resource-bounded combined diagnostic, `9630c009`](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json), fails the original numerical gates and has an uncertified coordinator exit receipt. The subsequent [profiled ingestion diagnostic at `5d543f40`](release-evidence/release-297/usage-contention/linux-role-ingest-cpu-5d54-01/manifest.json) also fails: 4,158/6,000 heartbeats succeed, 1,087 fail and 755 are refused; zero offers are late. API CPU is saturated. Its coordinator exit 1 is accurately recorded and all owned containers are removed. Profiling/ingestion does not substitute for combined acceptance. Three consecutive cold final-source combined passes and the original comparison remain required. Both fixture schools are synthetic; DeSales is the sole live school. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)

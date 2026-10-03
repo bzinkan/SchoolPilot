@@ -1,0 +1,1 @@
+All four workflows and 20 jobs completed successfully on exact review head2378e04e927638b4bfa29a9ef67dabb0b5209f2b (application commit6035239b). Original GitHub status/step records are retained with hashes. No cancelled check is represented as passed. This establishes CI status only; measured capacity remains unresolved.

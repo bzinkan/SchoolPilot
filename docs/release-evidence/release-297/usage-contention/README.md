@@ -36,8 +36,31 @@ the previous scheduler, then 66 focused passes, eight native driver cases,
 owner/restricted application passes and 1,868 unit passes with four conditional
 skips. Build/type/cast checks pass. This corrects the observed pre-admission
 identity starvation; it does not establish heartbeat throughput or remove
-other authorization work from the ordinary queue. New-source CI and full
-capacity acceptance remain required.
+other authorization work from the ordinary queue.
+[CI on `2378e04e`](ci-2378e04e-final-01/manifest.json) passes all 17 CI jobs and
+three security workflows for these application bytes; full capacity acceptance
+remains required.
+
+The subsequent [resource-bounded ingestion CPU diagnostic at `5d543f40`](linux-role-ingest-cpu-5d54-01/manifest.json)
+fails without concurrent reports or historical rollups: 4,158/6,000 heartbeat
+offers succeed, 1,087 fail and 755 are refused. The actual driver records zero
+late offers (maximum 35 ms). API CPU totals 67.94 seconds over a 68.07-second
+measurement and 1,087 acquisition failures occur. SQL sampling predominantly
+finds API client waits, with no recorded lock-wait group. The profile supports
+reducing repeated query construction and transport work; it does not justify
+caching permission results or weakening authority fences. The corrected host
+receipt truthfully records coordinator exit 1, with unforced child shutdown and
+all six owned containers removed. This profiled diagnostic cannot count as
+combined acceptance. Raw data and the explicitly documented 1-microsecond
+profile-timestamp anomaly remain preserved.
+
+[Harness version 02 and driver calibration](linux-role-harness02-calibration-01/manifest.json)
+preserve the coordinator exit-receipt correction, owned profile-output proof,
+and both failed artificial burst-stress calibrations. The driver-only change
+to two CPUs leaves API/worker/PG resources unchanged. Those artificial stress
+cases explain driver behavior and do not add a new release prerequisite;
+actual offered traffic, deadlines, correctness and original acceptance gates
+remain authoritative.
 
 The [fair main-pool scheduler](fair-main-pool-scheduler-01/manifest.json) preserves
 the complete prototype failure history and final typed integration proof.

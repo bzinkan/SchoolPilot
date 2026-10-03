@@ -10,12 +10,27 @@ fails capacity (2,704/6,000 heartbeats, 34/64 reports, second complete worker
 57.768 seconds including queue wait). The subsequent `5d543f40` instrumentation
 correction has focused/native/full-unit evidence and a scanned local image.
 The `6035239b` identity scheduling correction now passes focused/native checks
-and 1,868 unit cases (four conditional skips); new-source CI and final-source
-capacity acceptance remain pending. No release
+and 1,868 unit cases (four conditional skips). CI on `2378e04e` passes for those
+application bytes; final-source capacity acceptance remains pending. No release
 execution is approved. The source-PR inclusion table is unchanged; the older
 development checkpoints below are historical and do not establish current readiness.
 
-Current preparation remains in #603. The new [API connection scheduler](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
+## Current preparation selections
+
+| Item | Selected source / limitation |
+|---|---|
+| Application | `6035239b` in #603; documentation checkpoint `2378e04e`. Current-source CI passes; capacity remains pending. |
+| Last completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the current application bytes. |
+| Local candidate image | [`5d543f40`](release-evidence/release-297/usage-contention/candidate-artifact-5d543f40/manifest.json) is the latest scanned local image, but predates `6035239b`. No final-source release image is selected. |
+| Compatible fallback | [`5c01944ed1afb4241e270469c6477121bf48cd84`](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json); final candidate pairing and recovery verification remain required. Earlier `ed5599de` and `351422d7` artifacts are historical. |
+| Operational readiness | No accepted Usage capacity run and no release execution approved. Follow the [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for the remaining gates and separate authorizations. |
+
+## Historical preparation checkpoints
+
+The following results and pending-work statements describe their recorded
+checkpoints. They do not replace the current selections above.
+
+The initial [API connection scheduler](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 has passed focused, native-driver and restricted-role regression checks; its
 combined capacity acceptance is pending. It applies only when Usage reporting
 is enabled and retains existing pool limits and deadlines. The preceding
@@ -24,18 +39,19 @@ historical. Their [combined Linux diagnostic](release-evidence/release-297/usage
 fails capacity (4,840/6,000 heartbeat offers, 51/64 reports, 978 acquisition
 failures), while its exact local image scan and compatibility checks pass.
 [CI and the listing correction](release-evidence/release-297/usage-contention/test-lane-listing-flush/manifest.json)
-retain the latest two CI failures and the verified Linux stdout-flush repair;
+retain the two CI failures recorded at that checkpoint and the verified Linux stdout-flush repair;
 1,825 local unit cases and 699 infrastructure cases pass, with four existing
 unit skips. The [rollout-fixture correction](release-evidence/release-297/usage-contention/rollout-live-harness-lifetime/manifest.json)
 passes all 380 default-suite assertions with production behavior unchanged.
-Fresh full CI and final capacity acceptance remain pending. The historical
-source-PR inclusion table is unchanged.
+At that checkpoint, fresh full CI and capacity acceptance were pending.
+The source-PR inclusion table is unchanged.
 
 The subsequent [inbox owner projection](release-evidence/release-297/usage-contention/inbox-projection/manifest.json)
 reduces repeated authority reads while preserving locks and delivery fences.
 Build/type/cast checks, 1,824 unit cases, 27 focused cases and 21 native cases
 under each database role pass; four conditional unit skips remain explicit.
-This application change needs its own CI and measured capacity acceptance.
+At that checkpoint, this application change still needed its own CI and
+measured capacity acceptance.
 
 [CI at `92307780`](release-evidence/release-297/usage-contention/ci-92307780.json)
 passes all four workflows and all 17 CI jobs, covering the `d6492333`
@@ -45,13 +61,13 @@ late, and 38/64 reports succeeded. Zero acquisition failures and workers below
 48 seconds do not override those failures or the 23 aborted responses. Later
 application changes need fresh acceptance; Usage remains off.
 
-The latest stabilization work remains in #603. [CI at `bcb2b33c`](release-evidence/release-297/usage-contention/ci-bcb2b33c.json)
+At the historical `bcb2b33c` checkpoint, [CI](release-evidence/release-297/usage-contention/ci-bcb2b33c.json)
 records 15 passing jobs and two failed jobs; both failures have retained local
 repairs. [Combined attempt08](release-evidence/release-297/usage-contention/load-combined-08/manifest.json)
 and the [subsequent ingestion diagnostic](release-evidence/release-297/usage-contention/ingest-cpu-bcb2b33c-01/manifest.json)
-remain failed capacity evidence. The latest [owned inbox correction](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json)
+remain failed capacity evidence. The [owned inbox correction](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json)
 has focused and owner/restricted-role regression evidence; combined capacity and
-new-head CI remain required. The exact compatible fallback is now
+new-head CI were still required at that checkpoint. The retained compatible fallback is
 `5c01944ed1afb4241e270469c6477121bf48cd84`, with its own
 [local image and scan evidence](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json).
 Neither candidate nor fallback has been deployed by this preparation work.
@@ -87,7 +103,7 @@ The [historical combined checks](release-evidence/release-297/usage-contention/c
 
 [Combined attempt06 at `25ba8686`](release-evidence/release-297/usage-contention/load-combined-06/manifest.json) remains failed capacity evidence: 3,668/6,000 heartbeat successes, 36/64 reports, 979 API acquisition failures and 144 telemetry failures. Both workers meet 48 seconds; current-day classification/totals, coverage and eight audited CSVs now pass. All tracked leases return to zero after drain. The same-source ingestion CPU diagnostic retains all 6,000 offers and is diagnostic only; it does not replace the required three consecutive combined passes. Final capacity, artifacts and release execution remain incomplete.
 
-The current [live-binding query correction](release-evidence/release-297/usage-contention/live-binding-query/manifest.json) preserves exact predicates and locks, with 15 owner and 15 restricted-role cases passing. [Complete server-drain tracking](release-evidence/release-297/usage-contention/complete-server-drain/manifest.json) retains ownership after HTTP completion and rejects aborted preflight uncertainty. The [earlier full unit rerun](release-evidence/release-297/usage-contention/combined-checks-attempt-08/manifest.json) passes 1,775 tests with zero failures and four named conditional skips; preceding build/type/cast checks cover identical application bytes. All 54 workload guards pass. Their subsequent [combined attempt07](release-evidence/release-297/usage-contention/load-combined-07/manifest.json) failed: 3,268/6,000 heartbeat offers and 32/64 reports succeeded, with 1,679 acquisition failures. Physical ownership reached zero, but 66 aborted responses prevented drain certification; current-day/CSV checks did not run. [CI at `7cf86cf1`](release-evidence/release-297/usage-contention/ci-7cf86cf1.json) finished with 14 successful and three failed jobs; security workflows passed. Source-layout detector repairs and the later control/SSO and telemetry changes need new-head acceptance.
+The historical [live-binding query correction](release-evidence/release-297/usage-contention/live-binding-query/manifest.json) preserves exact predicates and locks, with 15 owner and 15 restricted-role cases passing. [Complete server-drain tracking](release-evidence/release-297/usage-contention/complete-server-drain/manifest.json) retains ownership after HTTP completion and rejects aborted preflight uncertainty. The [earlier full unit rerun](release-evidence/release-297/usage-contention/combined-checks-attempt-08/manifest.json) passes 1,775 tests with zero failures and four named conditional skips; preceding build/type/cast checks cover identical application bytes. All 54 workload guards pass. Their subsequent [combined attempt07](release-evidence/release-297/usage-contention/load-combined-07/manifest.json) failed: 3,268/6,000 heartbeat offers and 32/64 reports succeeded, with 1,679 acquisition failures. Physical ownership reached zero, but 66 aborted responses prevented drain certification; current-day/CSV checks did not run. [CI at `7cf86cf1`](release-evidence/release-297/usage-contention/ci-7cf86cf1.json) finished with 14 successful and three failed jobs; security workflows passed. Source-layout detector repairs and the later control/SSO and telemetry changes need new-head acceptance.
 
 The separately prepared fallback source at the Stop Focus checkpoint is `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`
 on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
@@ -97,14 +113,20 @@ Both Usage modes stay off. The [preceding source/image evidence](release-evidenc
 is historical. The [exact351 source image evidence](release-evidence/release-297/usage-contention/rollback-artifact-351422d7/index.json)
 retains both builds: the uncached second build installed the fixed Alpine libpng
 package and passed pinned Trivy with zero findings. The newly discovered Stop Focus
-exact-binding repair has its [narrow fallback backport](release-evidence/release-297/usage-contention/rollback-stop-focus/manifest.json): three regressions fail before and pass after, and type/build checks pass. At that checkpoint a new exact image and final-schema re-entry were still required; the `351422d7` artifacts remain intermediate preparation. The newer image is recorded below.
-The newer compatible fallback is `ed5599de0191b4b9961ed907586e1fc153ebd63b`.
+exact-binding repair has its [narrow fallback backport](release-evidence/release-297/usage-contention/rollback-stop-focus/manifest.json): three regressions fail before and pass after, and type/build checks pass. At that checkpoint a new exact image and final-schema re-entry were still required; the `351422d7` artifacts remain intermediate preparation. The subsequent historical image is recorded below.
+The historical classification-delivery fallback was
+`ed5599de0191b4b9961ed907586e1fc153ebd63b`. It is superseded by the retained
+`5c01944e` fallback above, which also includes the final heartbeat entitlement
+and exact-binding fence. The `ed5599de` image is not the current fallback selection.
 Its [classification-delivery backport](release-evidence/release-297/usage-contention/rollback-classification-correctness/manifest.json)
 changes only the historical-classification/publication barrier, its fixed failure
 counter and regression. Five baseline failures are retained; 24 focused cases and
 build/type/cast checks pass. It does not include the performance projections or
-immediate-classification optimization. Its [exact uncached image](release-evidence/release-297/usage-contention/rollback-artifact-ed5599de/index.json) now passes the pinned full scan with zero findings and embedded compatibility checks. Final candidate-schema migration re-entry remains required. This fallback is not another merged source PR. Registry publication and production
+immediate-classification optimization. Its [historical exact uncached image](release-evidence/release-297/usage-contention/rollback-artifact-ed5599de/index.json) passed the pinned full scan with zero findings and embedded compatibility checks. At that checkpoint, final candidate-schema migration re-entry was still required. This fallback is not another merged source PR. Registry publication and production
 task bindings remain separate. Historical artifacts are retained.
+
+## Source PR inclusion inventory
+
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|
 | [SchoolPilot #547](https://github.com/bzinkan/SchoolPilot/pull/547) | already merged | `45dd3333ffb043c797ac095387c0c87e5d31a238` | main | Keep the AI assistant's Flight Path list to the teacher's own paths |

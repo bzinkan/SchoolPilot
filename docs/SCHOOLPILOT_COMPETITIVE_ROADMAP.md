@@ -22,8 +22,12 @@ checks pass, but the capacity gate does not. The subsequent `5d543f40` checkout
 instrumentation correction passes regression/full-unit checks and local image
 scanning. The `6035239b` identity scheduler passes 66 focused cases, native
 owner/restricted checks and 1,868 unit cases (four conditional skips).
-Current-source CI, final-source capacity and release preparation remain in
-progress. Earlier checkpoint statements below are historical.
+[Current-source CI at `2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json)
+passes all 17 CI jobs and three security workflows. Final-source capacity and
+release preparation remain in progress. The subsequent isolated, profiled
+ingestion run completes 4,158/6,000 heartbeats despite zero late offers;
+API CPU saturation remains unresolved. Earlier checkpoint statements below
+are historical.
 
 The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 separates waiting report requests from other main-pool requests with alternating
