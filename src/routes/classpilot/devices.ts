@@ -4325,303 +4325,331 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       heartbeatTileCacheWritten
     );
     const realtimeSnapshot = realtimeStatusMutation.snapshot;
-    if (!realtimeSnapshot) {
-      if (realtimeStatusMutation.status === "stale") {
-        // A newer heartbeat or a sign-out tombstone already owns the latest
-        // status. Preserve the accepted historical row but never broadcast or
-        // classify this delayed request as current activity.
-        if (fabSyncPending) void markClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
-        return res.json({
-          ok: true,
-          planStatus: school.planStatus || "active",
-          ...protocol,
-        });
+    let finishForegroundTelemetry!: () => void;
+    let foregroundTelemetrySucceeded = false;
+    const foregroundTelemetrySettled = new Promise<void>(resolve => { finishForegroundTelemetry = resolve; });
+    try {
+      const telemetryAuthority = realtimeControlAuthority(controlState);
+      // Historical classification belongs to the already persisted heartbeat.
+      // Register it before a stale snapshot return or optional staff publication
+      // can end this request; current-page effects remain separately fenced.
+      registerHeartbeatClassificationWork();
+      if (!realtimeSnapshot) {
+        if (realtimeStatusMutation.status === "stale") {
+          // A newer heartbeat or a sign-out tombstone already owns the latest
+          // status. Preserve the accepted historical row but never broadcast or
+          // classify this delayed request as current activity.
+          if (fabSyncPending) void markClasspilotFabSyncPending({ schoolId, studentId, studentSessionId, deviceId });
+          return res.json({
+            ok: true,
+            planStatus: school.planStatus || "active",
+            ...protocol,
+          });
+        }
+        throw new Error("Realtime heartbeat snapshot was not created");
       }
-      throw new Error("Realtime heartbeat snapshot was not created");
-    }
-    const nextRestrictionAuthState = realtimeSnapshot.restrictionAuthState || "idle";
-    const previousRestrictionAuthState = restrictionAuthStateByDevice.get(deviceId);
-    const transitionMetric = classpilotRestrictionAuthTransitionMetric(
-      previousRestrictionAuthState?.studentSessionId === studentSessionId
-        ? previousRestrictionAuthState.state
-        : null,
-      nextRestrictionAuthState
-    );
-    if (transitionMetric) recordHeartbeatHotPathCounter(transitionMetric);
-    setBoundedMap(
-      restrictionAuthStateByDevice,
-      deviceId,
-      {
-        studentSessionId,
-        state: nextRestrictionAuthState,
-        observedAt: realtimeSnapshot.observedAt,
-      },
-      MAX_DEVICE_HEARTBEAT_ENTRIES
-    );
-
-    // --- Update in-memory real-time status ---
-    updateDeviceStatus({
-      deviceId,
-      studentId,
-      studentEmail,
-      schoolId,
-      activeTabUrl: activeTabUrl || "",
-      activeTabTitle: activeTabTitle || "",
-      favicon: favicon || undefined,
-      screenLocked: screenLocked || false,
-      flightPathActive: flightPathActive || false,
-      activeFlightPathName: activeFlightPathName || undefined,
-      isSharing: isScreenSharing || isScreenRecording || false,
-      cameraActive: cameraActive || false,
-      lastSeenAt: Date.now(),
-      allOpenTabs: allOpenTabs || undefined,
-      screenshotHealth: screenshotHealth || undefined,
-      extensionVersion: extensionVersion || undefined,
-      chromeVersion: chromeVersion || undefined,
-    });
-
-    // --- Broadcast full student state to teachers (item #1) ---
-    const update: Record<string, unknown> = {
-      type: "student-update",
-      studentId,
-      schoolId,
-      visibilityState,
-      // True only on the heartbeat that re-delivers a FAB state the class-start
-      // push could not reach; the next frame reports false again.
-      fabSyncPending: fabSyncPending === true,
-      isScreenRecording,
-      status: trackingStatus,
-      timestamp: new Date().toISOString(),
-      ...publicRealtimeFields(realtimeSnapshot),
-    };
-
-    const telemetryAuthority = realtimeControlAuthority(controlState);
-    await publishRevisionedRealtimeUpdate(realtimeSnapshot, update, telemetryAuthority);
-
-    // --- AI content classification (item #8) — async, non-blocking ---
-    if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
-      const classificationProducer = classifyUrl(
-        activeTabUrl,
-        activeTabTitle,
-        { schoolDomain: school.domain }
-      ).then(async (classification) => {
-        if (!classification) {
-          await completedHeartbeatTileCacheWrite;
-          const completion = {
-            schoolId,
-            deviceId,
-            heartbeatId: heartbeat.id,
-            aiCategory: null,
-            safetyAlert: null,
-          };
-          if (!(await patchHeartbeatTileCacheClassifications([completion]))) {
-            await invalidateHeartbeatTileCaches([completion]);
-          }
-          const realtimeCompletion = await patchClasspilotRealtimeClassification({
-            schoolId,
-            studentId,
-            studentSessionId,
-            deviceId,
-            heartbeatId: heartbeat.id,
-            classification: null,
-          });
-          if (realtimeCompletion.snapshot) {
-            await publishRevisionedRealtimeUpdate(realtimeCompletion.snapshot, {
-              type: "ai-classification",
-              studentId,
-              schoolId,
-              classification: null,
-              classifiedUrl: realtimeCompletion.snapshot.activeTabUrl,
-              ...publicRealtimeFields(realtimeCompletion.snapshot),
-            }, telemetryAuthority);
-          }
-          return;
-        }
-
-        if (classification.safetyAlert) {
-          const suppressed = await runWithTenantContext({ schoolId }, () => isSafetyUrlSuppressed(schoolId, activeTabUrl));
-          if (suppressed) classification = { ...classification, safetyAlert: null };
-        }
-
-        if (classification.category === "non-educational") {
-          classification = { ...classification, teacherIntentSource: classpilotTeacherIntentForUrl(activeTabUrl, {
-            allowedDomains: await schoolAllowedDomainsForTaskIntent(schoolId),
-            flightPath: classroomState?.restrictions?.flightPath,
-          }) };
-        }
-
-        // Critical classifications persist immediately. Educational/unknown
-        // results retain the same historical fields but share one school-bound
-        // transaction in batches of at most 100 rows / 250 ms.
-        void persistHeartbeatClassification({
-          schoolId,
-          deviceId,
-          heartbeatId: heartbeat.id,
-          aiCategory: classification.category,
-          contentCategory: classification.contentCategory ?? null,
-          teacherIntentSource: classification.teacherIntentSource ?? null,
-          safetyAlert: classification.safetyAlert,
-          cacheWrite: completedHeartbeatTileCacheWrite,
-        }).catch(() => {});
-
-        // Only the classification for the currently stored heartbeat may
-        // mutate or broadcast the latest page. Historical persistence above
-        // remains valid even when this result loses that race.
-        const realtimeClassification = await patchClasspilotRealtimeClassification({
-          schoolId,
-          studentId,
+      const nextRestrictionAuthState = realtimeSnapshot.restrictionAuthState || "idle";
+      const previousRestrictionAuthState = restrictionAuthStateByDevice.get(deviceId);
+      const transitionMetric = classpilotRestrictionAuthTransitionMetric(
+        previousRestrictionAuthState?.studentSessionId === studentSessionId
+          ? previousRestrictionAuthState.state
+          : null,
+        nextRestrictionAuthState
+      );
+      if (transitionMetric) recordHeartbeatHotPathCounter(transitionMetric);
+      setBoundedMap(
+        restrictionAuthStateByDevice,
+        deviceId,
+        {
           studentSessionId,
-          deviceId,
-          heartbeatId: heartbeat.id,
-          classification: {
-            category: classification.category,
-            contentCategory: classification.contentCategory ?? null,
-            teacherIntentSource: classification.teacherIntentSource ?? null,
-            safetyAlert: classification.safetyAlert,
-          },
-        });
-        if (realtimeClassification.snapshot) {
-          updateDeviceClassification(schoolId, deviceId, {
-            category: classification.category,
-            contentCategory: classification.contentCategory ?? null,
-            teacherIntentSource: classification.teacherIntentSource ?? null,
-            safetyAlert: classification.safetyAlert,
-          });
-          await publishRevisionedRealtimeUpdate(realtimeClassification.snapshot, {
-            type: "ai-classification",
-            studentId,
-            schoolId,
-            classification,
-            classifiedUrl: realtimeClassification.snapshot.activeTabUrl,
-            ...publicRealtimeFields(realtimeClassification.snapshot),
-          }, telemetryAuthority);
-        }
+          state: nextRestrictionAuthState,
+          observedAt: realtimeSnapshot.observedAt,
+        },
+        MAX_DEVICE_HEARTBEAT_ENTRIES
+      );
 
-        const safetyAction = resolveCurrentClasspilotSafetyAction({
-          classification,
-          realtimeMutation: realtimeClassification,
-          schoolId,
-          studentId,
-          studentSessionId,
-          deviceId,
-          heartbeatId: heartbeat.id,
-          activeTabUrl,
-          activeTabTitle,
-        });
+      // --- Update in-memory real-time status ---
+      updateDeviceStatus({
+        deviceId,
+        studentId,
+        studentEmail,
+        schoolId,
+        activeTabUrl: activeTabUrl || "",
+        activeTabTitle: activeTabTitle || "",
+        favicon: favicon || undefined,
+        screenLocked: screenLocked || false,
+        flightPathActive: flightPathActive || false,
+        activeFlightPathName: activeFlightPathName || undefined,
+        isSharing: isScreenSharing || isScreenRecording || false,
+        cameraActive: cameraActive || false,
+        lastSeenAt: Date.now(),
+        allOpenTabs: allOpenTabs || undefined,
+        screenshotHealth: screenshotHealth || undefined,
+        extensionVersion: extensionVersion || undefined,
+        chromeVersion: chromeVersion || undefined,
+      });
 
-        // Historical classification persistence above remains valid for a
-        // stale result, but no evidence, staff alert, or email may
-        // escape unless this exact heartbeat still owns the active binding.
-        if (safetyAction) {
-          // Ordinary allowed-site/Flight Path rules express teaching intent.
-          // Only exact administrator Safety URL approvals suppress safety alerts.
-          const safetyContext = await loadClasspilotSafetyContext({ schoolId, studentId });
-          const { studentName } = safetyContext;
-          const safetyReason = describeClasspilotSafetyReason(classification);
+      // --- Broadcast full student state to teachers (item #1) ---
+      const update: Record<string, unknown> = {
+        type: "student-update",
+        studentId,
+        schoolId,
+        visibilityState,
+        // True only on the heartbeat that re-delivers a FAB state the class-start
+        // push could not reach; the next frame reports false again.
+        fabSyncPending: fabSyncPending === true,
+        isScreenRecording,
+        status: trackingStatus,
+        timestamp: new Date().toISOString(),
+        ...publicRealtimeFields(realtimeSnapshot),
+      };
 
-          // The request's original RLS checkout is already released. Rebind
-          // the exact school for the timeline and evidence-request transaction.
-          const safetyRecord = await runWithTenantContext({ schoolId }, async () => {
-            const timelineRecord = await recordBrowserSafetyTimeline({
+      // --- AI content classification (item #8) — async, non-blocking ---
+      function registerHeartbeatClassificationWork(): void {
+        if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
+          const classificationProducer = classifyUrl(
+            activeTabUrl,
+            activeTabTitle,
+            { schoolDomain: school.domain }
+          ).then(async (classification) => {
+            if (!classification) {
+              if (!realtimeSnapshot) return;
+              await foregroundTelemetrySettled;
+              await completedHeartbeatTileCacheWrite;
+              const completion = {
+                schoolId,
+                deviceId,
+                heartbeatId: heartbeat.id,
+                aiCategory: null,
+                safetyAlert: null,
+              };
+              if (!(await patchHeartbeatTileCacheClassifications([completion]))) {
+                await invalidateHeartbeatTileCaches([completion]);
+              }
+              const realtimeCompletion = await patchClasspilotRealtimeClassification({
+                schoolId,
+                studentId,
+                studentSessionId,
+                deviceId,
+                heartbeatId: heartbeat.id,
+                classification: null,
+              });
+              if (realtimeCompletion.snapshot && foregroundTelemetrySucceeded) {
+                await publishRevisionedRealtimeUpdate(realtimeCompletion.snapshot, {
+                  type: "ai-classification",
+                  studentId,
+                  schoolId,
+                  classification: null,
+                  classifiedUrl: realtimeCompletion.snapshot.activeTabUrl,
+                  ...publicRealtimeFields(realtimeCompletion.snapshot),
+                }, telemetryAuthority).catch(() => recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures"));
+              }
+              return;
+            }
+
+            if (classification.safetyAlert) {
+              const suppressed = await runWithTenantContext({ schoolId }, () => isSafetyUrlSuppressed(schoolId, activeTabUrl));
+              if (suppressed) classification = { ...classification, safetyAlert: null };
+            }
+
+            if (classification.category === "non-educational") {
+              classification = { ...classification, teacherIntentSource: classpilotTeacherIntentForUrl(activeTabUrl, {
+                allowedDomains: await schoolAllowedDomainsForTaskIntent(schoolId),
+                flightPath: classroomState?.restrictions?.flightPath,
+              }) };
+            }
+
+            // Critical classifications persist immediately. Educational/unknown
+            // results retain the same historical fields but share one school-bound
+            // transaction in batches of at most 100 rows / 250 ms.
+            void persistHeartbeatClassification({
               schoolId,
-              studentId,
               deviceId,
               heartbeatId: heartbeat.id,
-              url: safetyAction.classifiedUrl,
-              title: safetyAction.classifiedTitle,
-              classification,
-              actionTaken: "alert-only",
-            }).catch(() => null);
-            let captureRequest: {
-              requestId: string;
-              tabRef: string;
-              snapshotRevision: number;
-              expiresAt: string;
-            } | undefined;
-            // Legacy/capture-unavailable compatibility: attach an ambient
-            // image only after exact tuple, URL and freshness validation.
-            if (timelineRecord?.created && timelineRecord.caseId && !captureRequest) {
-              try {
-                const evidenceBinding: ScreenshotBinding = {
-                  schoolId,
-                  deviceId,
-                  studentId,
-                  studentSessionId,
-                };
-                const screenshotRead = await getScreenshot(evidenceBinding);
-                const screenshotStoreUnavailable = screenshotRead.status === "unavailable";
-                const screenshotData = screenshotRead.status === "ok"
-                  ? screenshotRead.screenshot
-                  : null;
-                const evidenceSelection = selectClasspilotSafetyEvidence({
-                  screenshot: screenshotData,
-                  binding: evidenceBinding,
-                  classifiedUrl: safetyAction.classifiedUrl,
-                  observedAt: safetyAction.snapshot.observedAt,
-                });
-                const evidenceScreenshot = evidenceSelection.screenshot;
-                await createEvidenceArtifact({
-                  schoolId,
-                  deviceId,
-                  studentId,
-                  studentSessionId,
-                  bindingVersion: evidenceScreenshot?.bindingVersion
-                    ?? screenshotBindingVersion(evidenceBinding),
-                  caseId: timelineRecord.caseId,
-                  sourceType: "classpilot_screenshot",
-                  sourceId: heartbeat.id,
-                  artifactType: "screenshot",
-                  status: evidenceSelection.available ? "available" : "unavailable",
-                  label: evidenceSelection.available
-                    ? "Recent exact-tab screenshot near safety alert"
-                    : screenshotStoreUnavailable
-                      ? "Screenshot service unavailable at safety alert"
-                      : "Screenshot unavailable at safety alert",
-                  contentType: evidenceSelection.available ? "image/jpeg" : null,
-                  content: evidenceScreenshot?.screenshot ?? null,
-                  capturedAt: evidenceSelection.available
-                    ? new Date(evidenceScreenshot!.timestamp)
-                    : new Date(),
-                  metadata: {
-                    capturedFromExactBinding: evidenceSelection.available,
-                    unavailableReason: screenshotStoreUnavailable
-                      ? "screenshot_store_unavailable"
-                      : evidenceSelection.unavailableReason,
-                  },
-                });
-              } catch {
-                // The safety record remains valid with explicitly unavailable
-                // evidence; failures never substitute another student's image.
-              }
+              aiCategory: classification.category,
+              contentCategory: classification.contentCategory ?? null,
+              teacherIntentSource: classification.teacherIntentSource ?? null,
+              safetyAlert: classification.safetyAlert,
+              cacheWrite: completedHeartbeatTileCacheWrite,
+            }).catch(() => {});
+
+            // A delayed accepted observation remains history only. Its cache
+            // persistence uses the batcher's exact heartbeat-id CAS; never patch
+            // current realtime state or produce safety effects from this branch.
+            if (!realtimeSnapshot) return;
+            await foregroundTelemetrySettled;
+
+            // Only the classification for the currently stored heartbeat may
+            // mutate or broadcast the latest page. Historical persistence above
+            // remains valid even when this result loses that race.
+            const realtimeClassification = await patchClasspilotRealtimeClassification({
+              schoolId,
+              studentId,
+              studentSessionId,
+              deviceId,
+              heartbeatId: heartbeat.id,
+              classification: {
+                category: classification.category,
+                contentCategory: classification.contentCategory ?? null,
+                teacherIntentSource: classification.teacherIntentSource ?? null,
+                safetyAlert: classification.safetyAlert,
+              },
+            });
+            if (realtimeClassification.snapshot) {
+              updateDeviceClassification(schoolId, deviceId, {
+                category: classification.category,
+                contentCategory: classification.contentCategory ?? null,
+                teacherIntentSource: classification.teacherIntentSource ?? null,
+                safetyAlert: classification.safetyAlert,
+              });
+              if (foregroundTelemetrySucceeded) await publishRevisionedRealtimeUpdate(realtimeClassification.snapshot, {
+                type: "ai-classification",
+                studentId,
+                schoolId,
+                classification,
+                classifiedUrl: realtimeClassification.snapshot.activeTabUrl,
+                ...publicRealtimeFields(realtimeClassification.snapshot),
+              }, telemetryAuthority).catch(() => recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures"));
             }
-            return { timelineRecord, captureRequest };
+
+            const safetyAction = resolveCurrentClasspilotSafetyAction({
+              classification,
+              realtimeMutation: realtimeClassification,
+              schoolId,
+              studentId,
+              studentSessionId,
+              deviceId,
+              heartbeatId: heartbeat.id,
+              activeTabUrl,
+              activeTabTitle,
+            });
+
+            // Historical classification persistence above remains valid for a
+            // stale result, but no evidence, staff alert, or email may
+            // escape unless this exact heartbeat still owns the active binding.
+            if (safetyAction) {
+              // Ordinary allowed-site/Flight Path rules express teaching intent.
+              // Only exact administrator Safety URL approvals suppress safety alerts.
+              const safetyContext = await loadClasspilotSafetyContext({ schoolId, studentId });
+              const { studentName } = safetyContext;
+              const safetyReason = describeClasspilotSafetyReason(classification);
+
+              // The request's original RLS checkout is already released. Rebind
+              // the exact school for the timeline and evidence-request transaction.
+              const safetyRecord = await runWithTenantContext({ schoolId }, async () => {
+                const timelineRecord = await recordBrowserSafetyTimeline({
+                  schoolId,
+                  studentId,
+                  deviceId,
+                  heartbeatId: heartbeat.id,
+                  url: safetyAction.classifiedUrl,
+                  title: safetyAction.classifiedTitle,
+                  classification,
+                  actionTaken: "alert-only",
+                }).catch(() => null);
+                let captureRequest: {
+                  requestId: string;
+                  tabRef: string;
+                  snapshotRevision: number;
+                  expiresAt: string;
+                } | undefined;
+                // Legacy/capture-unavailable compatibility: attach an ambient
+                // image only after exact tuple, URL and freshness validation.
+                if (timelineRecord?.created && timelineRecord.caseId && !captureRequest) {
+                  try {
+                    const evidenceBinding: ScreenshotBinding = {
+                      schoolId,
+                      deviceId,
+                      studentId,
+                      studentSessionId,
+                    };
+                    const screenshotRead = await getScreenshot(evidenceBinding);
+                    const screenshotStoreUnavailable = screenshotRead.status === "unavailable";
+                    const screenshotData = screenshotRead.status === "ok"
+                      ? screenshotRead.screenshot
+                      : null;
+                    const evidenceSelection = selectClasspilotSafetyEvidence({
+                      screenshot: screenshotData,
+                      binding: evidenceBinding,
+                      classifiedUrl: safetyAction.classifiedUrl,
+                      observedAt: safetyAction.snapshot.observedAt,
+                    });
+                    const evidenceScreenshot = evidenceSelection.screenshot;
+                    await createEvidenceArtifact({
+                      schoolId,
+                      deviceId,
+                      studentId,
+                      studentSessionId,
+                      bindingVersion: evidenceScreenshot?.bindingVersion
+                        ?? screenshotBindingVersion(evidenceBinding),
+                      caseId: timelineRecord.caseId,
+                      sourceType: "classpilot_screenshot",
+                      sourceId: heartbeat.id,
+                      artifactType: "screenshot",
+                      status: evidenceSelection.available ? "available" : "unavailable",
+                      label: evidenceSelection.available
+                        ? "Recent exact-tab screenshot near safety alert"
+                        : screenshotStoreUnavailable
+                          ? "Screenshot service unavailable at safety alert"
+                          : "Screenshot unavailable at safety alert",
+                      contentType: evidenceSelection.available ? "image/jpeg" : null,
+                      content: evidenceScreenshot?.screenshot ?? null,
+                      capturedAt: evidenceSelection.available
+                        ? new Date(evidenceScreenshot!.timestamp)
+                        : new Date(),
+                      metadata: {
+                        capturedFromExactBinding: evidenceSelection.available,
+                        unavailableReason: screenshotStoreUnavailable
+                          ? "screenshot_store_unavailable"
+                          : evidenceSelection.unavailableReason,
+                      },
+                    });
+                  } catch {
+                    // The safety record remains valid with explicitly unavailable
+                    // evidence; failures never substitute another student's image.
+                  }
+                }
+                return { timelineRecord, captureRequest };
+              });
+              if (!safetyRecord.timelineRecord?.created) return;
+
+              const alert = {
+                type: "safety-alert",
+                studentId,
+                studentEmail,
+                studentName,
+                alert: classification.safetyAlert,
+                title: safetyAction.classifiedTitle,
+                domain: classification.domain,
+                matchedTerm: classification.matchedTerm ?? null,
+                source: classification.source ?? null,
+                reason: safetyReason,
+                actionTaken: "alert-only",
+                timestamp: new Date().toISOString(),
+              };
+              const alertSessionId = safetyAction.teachingSessionId;
+              if (alertSessionId) {
+                broadcastToStaffSessionLocal(schoolId, alertSessionId, alert);
+                void publishWS({ kind: "staff-session", schoolId, sessionId: alertSessionId }, alert);
+              }
+
+            }
           });
-          if (!safetyRecord.timelineRecord?.created) return;
-
-          const alert = {
-            type: "safety-alert",
-            studentId,
-            studentEmail,
-            studentName,
-            alert: classification.safetyAlert,
-            title: safetyAction.classifiedTitle,
-            domain: classification.domain,
-            matchedTerm: classification.matchedTerm ?? null,
-            source: classification.source ?? null,
-            reason: safetyReason,
-            actionTaken: "alert-only",
-            timestamp: new Date().toISOString(),
-          };
-          const alertSessionId = safetyAction.teachingSessionId;
-          if (alertSessionId) {
-            broadcastToStaffSessionLocal(schoolId, alertSessionId, alert);
-            void publishWS({ kind: "staff-session", schoolId, sessionId: alertSessionId }, alert);
-          }
-
+          void trackHeartbeatClassificationProducer(classificationProducer)
+            .catch(() => { /* non-blocking */ });
         }
-      });
-      void trackHeartbeatClassificationProducer(classificationProducer)
-        .catch(() => { /* non-blocking */ });
+      }
+
+      // Optional teacher telemetry must not fail an accepted heartbeat or prevent
+      // its registered historical/safety work. Actual delivery still uses the
+      // unchanged locked authority gate; failed checkouts remain in pool metrics.
+      await publishRevisionedRealtimeUpdate(realtimeSnapshot, update, telemetryAuthority)
+        .then(() => { foregroundTelemetrySucceeded = true; },
+          () => recordHeartbeatHotPathCounter("heartbeatOptionalTelemetryFailures"));
+    } finally {
+      // Release current-effect producers on stale returns, delivery failure or
+      // any earlier synchronous error. Historical persistence never waits here.
+      finishForegroundTelemetry();
     }
 
     // --- Deliver any missed messages (item #3b) ---
