@@ -50,6 +50,15 @@ An unrelated local shard navigation-buffer failure is retained; new-head CI is
 still required. Three consecutive accepted capacity runs and the original
 comparison remain outstanding. No deployment green light is given.
 
+A [subsequent same-source diagnostic](release-evidence/release-297/usage-contention/diagnostic-8148-pressure-01/manifest.json)
+passes all 64 reports and finishes workers in 11.774/29.633 seconds, but only
+4,334/6,000 heartbeats succeed. The classroom lifecycle times out after precise
+acknowledgement; an aborted response fails API drain verification, so post-load
+current-day/CSV correctness is not run. All fixture resources are removed.
+Its extra resource sampler produces no samples due to a separately reproduced
+AWK compatibility error. That diagnostic cannot establish a host cause or count
+as an accepted capacity run. Usage throughput remains unresolved.
+
 The preceding load-tested application is `e95a2b56476b1225434c1b0f3907db46c9d84fe3`.
 Its [exact-URL domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
 normalizes repeated URLs once per student while preserving per-observation
@@ -100,8 +109,9 @@ The [strict candidate harness](release-evidence/release-297/usage-contention/rol
 is committed at `0650decf` with 378 passing guard tests and no skips. It now
 checks modern HTTP-200/capability/persistence agreement and actual preflight
 gauges, and preserves every registered attempt. A three-file EOF-only follow-up
-has separate hash/equivalence evidence. New-head CI and actual candidate-mode
-execution remain pending; these harness checks do not establish capacity.
+has separate hash/equivalence evidence. Candidate-mode execution is now verified
+by the failed 814844f3 attempt above. Three accepted runs remain outstanding;
+these harness checks do not establish capacity.
 
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)

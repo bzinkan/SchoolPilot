@@ -1,0 +1,846 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T22:10:42.406Z",
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "run": "182ac78636d4",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "summarySha256": "8039ce007ec835886eafda32fceaeec7fb5dc78ff622f0acdb984cfb5fb09cab",
+  "privacyReviewSha256": "80ae7c8def86d7aadfc151887cb10ac0b5b10c1fa24c4ff56d24f5466aa54382",
+  "files": [
+    {
+      "path": "diagnostic/all-owned-role-fixtures-cleanup.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/all-owned-role-fixtures-cleanup.json",
+      "originalBytes": 1698,
+      "originalSha256": "ed5d3bde9bb13c35f9cff3f800488129df423c74b149e794c24c04a4a0687f27",
+      "sanitizedSha256": "ed5d3bde9bb13c35f9cff3f800488129df423c74b149e794c24c04a4a0687f27",
+      "gzipSha256": "3b8cf683c256e460047b1f7a1d69f6d4b3bdbd4da3f07d26a07c17cccbcb94ed"
+    },
+    {
+      "path": "diagnostic/analyze.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/analyze.log",
+      "originalBytes": 8,
+      "originalSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "sanitizedSha256": "a4a95b64f48e516ea339667a59a92100290c224f7d5349c7c9aa9f592f184eae",
+      "gzipSha256": "f5bb2863b1faf97a1ac0a70fc16bc5f9efc4db2b2486f321ae9e582dfec71021"
+    },
+    {
+      "path": "diagnostic/api.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/api.log",
+      "originalBytes": 103292,
+      "originalSha256": "8b93c2a0acec3b167bff63b9b912321a3ec39b5b8e55f0b906f94e7fcf32a99b",
+      "sanitizedSha256": "8b93c2a0acec3b167bff63b9b912321a3ec39b5b8e55f0b906f94e7fcf32a99b",
+      "gzipSha256": "4eb797c5e47f8f16d6fdc15096b19ee2f22a07d2f38d59fc2ec6c98489600345"
+    },
+    {
+      "path": "diagnostic/candidate-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/candidate-receipt.json",
+      "originalBytes": 10804,
+      "originalSha256": "bbe25a490bfa83a6171c2758eedda1ad2f3afa7f7b85ddd35cf6f5cc12fb0854",
+      "sanitizedSha256": "a3418330d18ae767bdeba562266c3ce193857558467f9b03a9de7bebf3c23868",
+      "gzipSha256": "2916b617b4de07ace602b43f2946be5c21b94d3620d27094e13f55fd5a89a61b"
+    },
+    {
+      "path": "diagnostic/cleanup.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/cleanup.json",
+      "originalBytes": 422,
+      "originalSha256": "86358c9fb55a3cabdda213ff08d839bfde21e14f5d3e602dd74cf3a1a1c6efe5",
+      "sanitizedSha256": "86358c9fb55a3cabdda213ff08d839bfde21e14f5d3e602dd74cf3a1a1c6efe5",
+      "gzipSha256": "12012aa2817984957ae95adc658e67d0374c0f6ce063f1306453b732561105d6"
+    },
+    {
+      "path": "diagnostic/cold-restart-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/cold-restart-receipt.json",
+      "originalBytes": 1797,
+      "originalSha256": "23cfd3f4cbac3d14471f6f4d193bf91d5b7b3ba1e064d8adac8aec3d5da04f12",
+      "sanitizedSha256": "c85b5475c6cc9f12bfc35ec3f45192d6a22e5b0d6974dc8abce53883a9116d1a",
+      "gzipSha256": "d8d8a7188f6e72fe5a6cc69b06ecaffac9b996ae87bbf12f8a4e735b16e66658"
+    },
+    {
+      "path": "diagnostic/cold-restart.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/cold-restart.log",
+      "originalBytes": 65,
+      "originalSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "sanitizedSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "gzipSha256": "2e69f36930dfb9237d1f8606e09e91f3fdbc67108971aa58e87d0ca7dc752e95"
+    },
+    {
+      "path": "diagnostic/coordinator.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/coordinator.log",
+      "originalBytes": 4655,
+      "originalSha256": "b789ef2ba70daca51f46de48f28f8c36adb5789caa3ff70b361fd028f299d972",
+      "sanitizedSha256": "b789ef2ba70daca51f46de48f28f8c36adb5789caa3ff70b361fd028f299d972",
+      "gzipSha256": "5d9d0bc039c0df69d163c41d1e2a95b28cec94fd5280f10b06cf92c27642ba0b"
+    },
+    {
+      "path": "diagnostic/copy.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/copy.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "diagnostic/create.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/create.log",
+      "originalBytes": 65,
+      "originalSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "sanitizedSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "gzipSha256": "2e69f36930dfb9237d1f8606e09e91f3fdbc67108971aa58e87d0ca7dc752e95"
+    },
+    {
+      "path": "diagnostic/database-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/database-receipt.json",
+      "originalBytes": 10234,
+      "originalSha256": "50f1a77bb4992936cd11c93ecf475f5e3c54bbcd2f6f0f400fcf591d9735832d",
+      "sanitizedSha256": "50f1a77bb4992936cd11c93ecf475f5e3c54bbcd2f6f0f400fcf591d9735832d",
+      "gzipSha256": "16f2c99de6e3d1514929947f23b7a6482719c93a39a3a1b1b8eedf61df3ac9b6"
+    },
+    {
+      "path": "diagnostic/database-validation.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/database-validation.json",
+      "originalBytes": 13257,
+      "originalSha256": "f2e7836933e7b1d1ef37596491fcf177083ac6f8a3b0bdf49e5b0b736c7b3897",
+      "sanitizedSha256": "f2e7836933e7b1d1ef37596491fcf177083ac6f8a3b0bdf49e5b0b736c7b3897",
+      "gzipSha256": "609e056264c2346b76e7375dffde595dc776487a87727aa52fe8c3594787a49b"
+    },
+    {
+      "path": "diagnostic/database-validation.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/database-validation.log",
+      "originalBytes": 88,
+      "originalSha256": "e95df10f27fbd3cb86970052900e28eaa545fe33179ebdb612cbd903e7c7c01b",
+      "sanitizedSha256": "e4171d4f9b4122e2a1e412d3b35fbaa664dfd05873c73d9c3df1f22b68c9454c",
+      "gzipSha256": "2b1fc6c9b1a5a6cefcab8cf132e45a0b90bc79c50f2b3af6588384a373af8b9f"
+    },
+    {
+      "path": "diagnostic/execution.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/execution.json",
+      "originalBytes": 923,
+      "originalSha256": "dbf6041cb61a5cb853de696dd10086c5ce9665ec8c7e0686397e72f741afb457",
+      "sanitizedSha256": "dbf6041cb61a5cb853de696dd10086c5ce9665ec8c7e0686397e72f741afb457",
+      "gzipSha256": "07ed959b34764770b534c36a31dd002f191a56d2fe1bb5d3a337b91a0649d9ae"
+    },
+    {
+      "path": "diagnostic/final-client-drain.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/final-client-drain.json",
+      "originalBytes": 174,
+      "originalSha256": "1e39de2a13756febb692cbf338108f60faa4180d7a2c1e17cf6d59ec2f1de17f",
+      "sanitizedSha256": "1e39de2a13756febb692cbf338108f60faa4180d7a2c1e17cf6d59ec2f1de17f",
+      "gzipSha256": "6cf557b9b313adebe0afd0f119326a093beaf980ccbadd7e8a1d714981a60e95"
+    },
+    {
+      "path": "diagnostic/final-source-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/final-source-receipt.json",
+      "originalBytes": 184,
+      "originalSha256": "90062e14365ace5081a102a9aadbdb4cbbc37e69252a165d5af546c3a279f1a3",
+      "sanitizedSha256": "90062e14365ace5081a102a9aadbdb4cbbc37e69252a165d5af546c3a279f1a3",
+      "gzipSha256": "01b4ab2a0be6b13c266339c09396a8a6fc5f6e8285644a7f420a131d866ac87f"
+    },
+    {
+      "path": "diagnostic/fresh-role.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/fresh-role.log",
+      "originalBytes": 30,
+      "originalSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "bc2e8d3fce7d7509343416f0124ea21ce647ff6197c4b592fdaba5a517505820"
+    },
+    {
+      "path": "diagnostic/function-grant.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/function-grant.json",
+      "originalBytes": 289,
+      "originalSha256": "a7e6f4cce116cb47c784b26a1f7aaf2cfd3bb7f7c9f017a6116127625681d94b",
+      "sanitizedSha256": "a7e6f4cce116cb47c784b26a1f7aaf2cfd3bb7f7c9f017a6116127625681d94b",
+      "gzipSha256": "6beac2e46f547038d27132c2d82c755cfc18166c62752e33541be7b130bd6be7"
+    },
+    {
+      "path": "diagnostic/generator.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/generator.log",
+      "originalBytes": 8930,
+      "originalSha256": "1511c831f1dffbb357ce6e849cc69a4482fa8560547699f7f9fa7213d15da44d",
+      "sanitizedSha256": "1511c831f1dffbb357ce6e849cc69a4482fa8560547699f7f9fa7213d15da44d",
+      "gzipSha256": "426b09a9470a370f26f489da6a2b48b02d229492af7f64ecab05984bbdb68643"
+    },
+    {
+      "path": "diagnostic/measurement-go.c1bc6f69-b1ce-4615-ae8c-d1943827a745.partial.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/measurement-go.c1bc6f69-b1ce-4615-ae8c-d1943827a745.partial",
+      "originalBytes": 666,
+      "originalSha256": "ae6c1710d5706ca8a6ef2f49d1ff8873af94dc81a1086a9979ccffa816f0d643",
+      "sanitizedSha256": "c906035e6400432fdaafe7c86b8a20f7346539026f6759da8f268513f2a61946",
+      "gzipSha256": "22d4b8fe8605db93644631c17bdf77c2829c0ee1e54ff2eff63067ee79293bfc"
+    },
+    {
+      "path": "diagnostic/measurement-go.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/measurement-go.json",
+      "originalBytes": 666,
+      "originalSha256": "ae6c1710d5706ca8a6ef2f49d1ff8873af94dc81a1086a9979ccffa816f0d643",
+      "sanitizedSha256": "c906035e6400432fdaafe7c86b8a20f7346539026f6759da8f268513f2a61946",
+      "gzipSha256": "22d4b8fe8605db93644631c17bdf77c2829c0ee1e54ff2eff63067ee79293bfc"
+    },
+    {
+      "path": "diagnostic/measurement-ready.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/measurement-ready.json",
+      "originalBytes": 626,
+      "originalSha256": "4c4fa30a116bea702dfe1b3f2d267b3e908218bbfdd0baede4d2fef74e728e6f",
+      "sanitizedSha256": "3b55639d96a80b76c26fadd2c15be2a294c3da53b59daad35a4c937cf58d10d8",
+      "gzipSha256": "3c280bf03d30b476baeb055fb12bd72ad44b499a51234bb32528ff21fa7eedcf"
+    },
+    {
+      "path": "diagnostic/measurement-release-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/measurement-release-receipt.json",
+      "originalBytes": 757,
+      "originalSha256": "03d7dc45b9fd99fdd573a3c1c296081ee88dc57ac0d9cf9056a3e7f737cd3c81",
+      "sanitizedSha256": "7dc62750a1ea12401c1715df2943c8a9ae5eed7ebb0dc9e536cb15ce5600ded8",
+      "gzipSha256": "1b7dab59685499233111fb1c738fbebaa5522172f61cef8875609eb6605744a2"
+    },
+    {
+      "path": "diagnostic/owned-pg.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/owned-pg.json",
+      "originalBytes": 620,
+      "originalSha256": "c1a4bb2cc4ff88f5074977172fbe5e2c259e6189918ffd51cbd5488057668ea0",
+      "sanitizedSha256": "c1a4bb2cc4ff88f5074977172fbe5e2c259e6189918ffd51cbd5488057668ea0",
+      "gzipSha256": "e507bcf8c83a8c1fef73edb76c641c4400a92866f483575ed65961a1299029af"
+    },
+    {
+      "path": "diagnostic/pre-cold-validity-horizon.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/pre-cold-validity-horizon.json",
+      "originalBytes": 1003,
+      "originalSha256": "13b0eea02a98e1014bf91b4c63e32fea142733c05ed58384a287b27ca531b209",
+      "sanitizedSha256": "c92f1ce56f683ae11fbeada450b28a21d13b6332cb89b7c163449c16e771c096",
+      "gzipSha256": "86fa8bdd4a329888411847ff6c481556948816da6894c12b500f113d2404d09b"
+    },
+    {
+      "path": "diagnostic/preparation-fixture-contract.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/preparation-fixture-contract.json",
+      "originalBytes": 36097,
+      "originalSha256": "c32dfe3a94f43eb339c7831aa7ad029e385d4d4f38e3fda39fa2f438b08febe7",
+      "sanitizedSha256": "c32dfe3a94f43eb339c7831aa7ad029e385d4d4f38e3fda39fa2f438b08febe7",
+      "gzipSha256": "2ed5de006aacf8640e27ae78deb4ec197bb9f83f0d1e54e7cdfc0de032adf99b"
+    },
+    {
+      "path": "diagnostic/preparation-metrics.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/preparation-metrics.json",
+      "originalBytes": 45218,
+      "originalSha256": "ce713cf0091162a20a72926222effcbf3c00cc72c69c83e136ea64aa12518080",
+      "sanitizedSha256": "70391dbffd0cae0b4cc9a85ca946f1bb36c9dc40ad160a161e9115d086b26176",
+      "gzipSha256": "48fc4660b5e0d5d40d879ed19d760c011b5c38f375e741e1f8dc638c851bbee9"
+    },
+    {
+      "path": "diagnostic/preparation-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/preparation-receipt.json",
+      "originalBytes": 17997,
+      "originalSha256": "0bc3c06087d4fb117628f2267c043722aa27c9ebf734ba21a9fcf19c35cbeae1",
+      "sanitizedSha256": "dc319d9cc0af509e715cf00e19d9cb98e288b3288c9ee1b828766344049fa6c6",
+      "gzipSha256": "5fa8358ccb269058f08af8b1bba7a9e6ae02fd2f3594eca428614647c74e09a2"
+    },
+    {
+      "path": "diagnostic/ready.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/ready.json",
+      "originalBytes": 1051,
+      "originalSha256": "b84df38a3013afbfd583b6d318afad6eb6af474a1820c6dc8978e58a68490fcb",
+      "sanitizedSha256": "3a6f9ec2496cc208788b39560aca5da64e76413746d1e6672b4005b8ddb8fe9a",
+      "gzipSha256": "ddb90d117a343fa768529475761984bb91a9019d8f13842dae2f39ee11dae01e"
+    },
+    {
+      "path": "diagnostic/receipt-manifest.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/receipt-manifest.json",
+      "originalBytes": 1957,
+      "originalSha256": "be04605811a648ec63211d937026df2b73c9d876d3d2bc6f19588bb675646422",
+      "sanitizedSha256": "be04605811a648ec63211d937026df2b73c9d876d3d2bc6f19588bb675646422",
+      "gzipSha256": "284e5ef200d64b7442434780d0c2ad25353ecb8082c0f763919723d365af0668"
+    },
+    {
+      "path": "diagnostic/reference-create.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/reference-create.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "diagnostic/reference-drop.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/reference-drop.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "diagnostic/reference-restore.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/reference-restore.log",
+      "originalBytes": 19415,
+      "originalSha256": "18355fa9dcc55941437bd689a07e1cffbea6fd09066cda6c02cceb4b13c6734a",
+      "sanitizedSha256": "18355fa9dcc55941437bd689a07e1cffbea6fd09066cda6c02cceb4b13c6734a",
+      "gzipSha256": "25b973b11730ba38a32614bb4c10bd29d5a9dc422001e0475c6cae1be1802d68"
+    },
+    {
+      "path": "diagnostic/release-control-preparation.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/release-control-preparation.json",
+      "originalBytes": 804,
+      "originalSha256": "72c820c890303954b447cfc763bd1fa4cfd73bf915efbc3106299ed9ea8b4f09",
+      "sanitizedSha256": "72c820c890303954b447cfc763bd1fa4cfd73bf915efbc3106299ed9ea8b4f09",
+      "gzipSha256": "adf909213a9787d2ae8323addbe0a8c2f589680440c5e88e4871b74aa2f52032"
+    },
+    {
+      "path": "diagnostic/remove.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/remove.log",
+      "originalBytes": 65,
+      "originalSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "sanitizedSha256": "887c48b69edfbaa4a08e7f8bfb0a79b3f156fa8d6cfab90d5f01a11b130b8911",
+      "gzipSha256": "2e69f36930dfb9237d1f8606e09e91f3fdbc67108971aa58e87d0ca7dc752e95"
+    },
+    {
+      "path": "diagnostic/resource-caps.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/resource-caps.json",
+      "originalBytes": 81,
+      "originalSha256": "42d38c37732c6f23cc005a154060ad9dc0807a43ce75d3e42eb223cdfbd378b6",
+      "sanitizedSha256": "42d38c37732c6f23cc005a154060ad9dc0807a43ce75d3e42eb223cdfbd378b6",
+      "gzipSha256": "6883d73470d284402d17e4122f7b916b3e3152cc53961d0e3a58c9643c39dcd5"
+    },
+    {
+      "path": "diagnostic/resource-counter-series.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/resource-counter-series.json",
+      "originalBytes": 7594,
+      "originalSha256": "25f7d75acd99290ce804d29593d500fcf1557383677f448be51a0e58e3592842",
+      "sanitizedSha256": "994dd72ea4a62b75d0f386a3b68389e6cf1071a87fa0e9dbce9ee59d6d13306f",
+      "gzipSha256": "12d0f64f99e05386b101e1957e5e53c5ff749932b259154d75a221ef904616b3"
+    },
+    {
+      "path": "diagnostic/restore-sources.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/restore-sources.json",
+      "originalBytes": 589,
+      "originalSha256": "d826667975c72618eb40e8125d22e1627529cdf935768434ca43c355efc264c2",
+      "sanitizedSha256": "d826667975c72618eb40e8125d22e1627529cdf935768434ca43c355efc264c2",
+      "gzipSha256": "3965a0a050bf4812b5ccea2339d3e2f408ae9e9c4431cce1cc14df3310ac0082"
+    },
+    {
+      "path": "diagnostic/restore.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/restore.log",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "diagnostic/role-host-result.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/role-host-result.json",
+      "originalBytes": 7239,
+      "originalSha256": "28fb62b0ba30911912681b6a9968f3cb7bab7582f2f8a5d8618db4efca9dda8b",
+      "sanitizedSha256": "1477ec758306f5f7f5bf79607ccfe07c5a90b3b9fe2092cdfe4854ae362939a8",
+      "gzipSha256": "e0c8e2551ceb0f3065b32228640d1002c6d92323ffd4996d26b3cd06cc9b0c06"
+    },
+    {
+      "path": "diagnostic/role-runtime-plan.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/role-runtime-plan.json",
+      "originalBytes": 26474,
+      "originalSha256": "9c39dcc5d103639af5eee36e43dd313effb492e4407c12938d9f53a05329b95a",
+      "sanitizedSha256": "beafb8abdcb6087495784b809f4ceb278cea90d3eae573ba38ff8799a8b8cf5b",
+      "gzipSha256": "eb78af964fa3122e067ad143c470e732589bb7dd9318804cadb01923581c9306"
+    },
+    {
+      "path": "diagnostic/run-plan.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/run-plan.json",
+      "originalBytes": 6285,
+      "originalSha256": "908514b5ae4931955aaaff156320b7f4357270fa2c8fead76de1ece2be4b0ffa",
+      "sanitizedSha256": "621ee92b5baba482bf19d1847fcfc0a04f57679abbbbfdb6939480bfd6e6e117",
+      "gzipSha256": "465118afa6d131642c0ae5ee55e600d3a34e606aa399f61698f4a9f539b0537b"
+    },
+    {
+      "path": "diagnostic/runtime-flags.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/runtime-flags.json",
+      "originalBytes": 50386,
+      "originalSha256": "99931d0f0081b8aa19c2497e91b902407e3181a0f996b48d56b91b7db4ee4c14",
+      "sanitizedSha256": "99931d0f0081b8aa19c2497e91b902407e3181a0f996b48d56b91b7db4ee4c14",
+      "gzipSha256": "f194157ce252cc358a8811c88be0b30a98f1fdff9340977a011d0770edab3ba2"
+    },
+    {
+      "path": "diagnostic/runtime-receipt.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/runtime-receipt.json",
+      "originalBytes": 14072,
+      "originalSha256": "2ab7eae4bd1ad10b663162d278e43194e17b427c87d185de2b5b1e95e158199b",
+      "sanitizedSha256": "f7acc871d0c17dfd0d5668c0f4fcb766d04ae027ad91df4c70c78e85d204a3f4",
+      "gzipSha256": "4e172cc88b1ad77be6aceb800f09f5d6934eae859ea5cde280177fa140238bb2"
+    },
+    {
+      "path": "diagnostic/schema-comparison.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/schema-comparison.json",
+      "originalBytes": 908,
+      "originalSha256": "da1f566cd598847ced910167dc06e2e697b6ea575ed4d1f1c189d8d10ed4a986",
+      "sanitizedSha256": "da1f566cd598847ced910167dc06e2e697b6ea575ed4d1f1c189d8d10ed4a986",
+      "gzipSha256": "c0f8574c21830e34bc061933a6ef34c042ae57f13cdfe06cb3b5480f7c7d9b55"
+    },
+    {
+      "path": "diagnostic/snapshot-preparation.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/snapshot-preparation.json",
+      "originalBytes": 16524,
+      "originalSha256": "a140c7204746bf723f926b69841c970a8da7ac0a8f14ceb543214937d2da3777",
+      "sanitizedSha256": "a140c7204746bf723f926b69841c970a8da7ac0a8f14ceb543214937d2da3777",
+      "gzipSha256": "ffe8cffba0dadc68715b4f16ee067e338f1e24e296d33f1261b532453ac84678"
+    },
+    {
+      "path": "diagnostic/usage-scale.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/usage-scale.json",
+      "originalBytes": 580897,
+      "originalSha256": "4c99878998f9006f279fa114b786bcbd7c0db892ccf46d7f83332e3ca5d29d28",
+      "sanitizedSha256": "4c99878998f9006f279fa114b786bcbd7c0db892ccf46d7f83332e3ca5d29d28",
+      "gzipSha256": "1b3f4abaefdb7903a260ba3810e5a2926c965e5d56ef2cf25ac5b70e972afda3"
+    },
+    {
+      "path": "diagnostic/validation-result.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/validation-result.json",
+      "originalBytes": 258,
+      "originalSha256": "6d9170fc0bed018d4745017f6f42eb640f62a689d55f774e1733db01ba6ef685",
+      "sanitizedSha256": "6d9170fc0bed018d4745017f6f42eb640f62a689d55f774e1733db01ba6ef685",
+      "gzipSha256": "f0cca0f2699b69c59eb1536910f18cf44d7b73249afe86e9278ab56157e268ab"
+    },
+    {
+      "path": "diagnostic/validity-horizon.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/validity-horizon.json",
+      "originalBytes": 957,
+      "originalSha256": "f0fde7bca8cedbd776c1c9a4a3f80348693d2b2c8ddb1585a8ad890a4d49b414",
+      "sanitizedSha256": "310fb32f97f2477cc0b5062942666a33d9119606b8d2f1d3238a0c5ec0595613",
+      "gzipSha256": "b62d920e7927ec9aac3bf7936c974b5364aa54be2934486ae7859f8f409fd101"
+    },
+    {
+      "path": "diagnostic/worker.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01/worker.log",
+      "originalBytes": 16378,
+      "originalSha256": "bdee39b8fd77e3d8aef1d1b7c85d3cbafa9c1c410965cc3ded454ece9aa21c6f",
+      "sanitizedSha256": "bdee39b8fd77e3d8aef1d1b7c85d3cbafa9c1c410965cc3ded454ece9aa21c6f",
+      "gzipSha256": "7659f5f5edfd819f0e8be0faf329847e8c8889d977ac3d88c2271aee407b38ce"
+    },
+    {
+      "path": "config/command.ps1.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/command.ps1",
+      "originalBytes": 278,
+      "originalSha256": "9e697e6478d3ba31f7a0541af1d5ef930f887c893d935afa546f9fb855985bf8",
+      "sanitizedSha256": "f67b66e6febc5519e38d07d0d9c221f278ca1776a9104c209e6ff0f818095c85",
+      "gzipSha256": "41b480e4f76aacbdd8d7ea2cd5cf243348d8d4aefe42d56678572304417d084b"
+    },
+    {
+      "path": "config/diagnostic.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/diagnostic.json",
+      "originalBytes": 1606,
+      "originalSha256": "96fa4503b57186da05c2ab7c82a96b3a7c84b7423096628dddbb7db426d5b396",
+      "sanitizedSha256": "dffd86b6bd446fe8d2205552844a8d923a739f6b8dc7e0ae3ab4a29f7508d719",
+      "gzipSha256": "34bb6ca9a00169fd02d06882ac3e77fafec3040a070ef555842881e5a2207c21"
+    },
+    {
+      "path": "config/manifest.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/manifest.json",
+      "originalBytes": 986,
+      "originalSha256": "16fcb9847e9b7a6db2b91e671790373f6c2747a623ce3ffee8f7d4edc6c0d932",
+      "sanitizedSha256": "16fcb9847e9b7a6db2b91e671790373f6c2747a623ce3ffee8f7d4edc6c0d932",
+      "gzipSha256": "7cdd8fe79a23ce7fef55c6396e5d5a8fdf8b7941408a8af5f3e5f943d1a421b9"
+    },
+    {
+      "path": "config/preflight.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/preflight.json",
+      "originalBytes": 2943,
+      "originalSha256": "a7f9fda9ef416a0e18c808c66c1403c5175a5fe63d9ca8787cd63b3b0f8734a4",
+      "sanitizedSha256": "a7f9fda9ef416a0e18c808c66c1403c5175a5fe63d9ca8787cd63b3b0f8734a4",
+      "gzipSha256": "a8eeecb1e0e521573a62af415ded4e2ec33205b4251ca92e0807f9d6f2687ea9"
+    },
+    {
+      "path": "config/prepare.mjs.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/prepare.mjs",
+      "originalBytes": 6524,
+      "originalSha256": "c74cca73d0d9a20df90a71bec6d730da714a135532c676dcfe02c71c4d3d067e",
+      "sanitizedSha256": "8d66cb27fe72235a30989ec997ca3b8e3ee1f62e8a965ad2efeacce5f78e9c08",
+      "gzipSha256": "3521ee1b0b8ba5c97f43d457812829b447ae6729328cb7e2e82775b7e935207e"
+    },
+    {
+      "path": "config/README.md.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-config-01/README.md",
+      "originalBytes": 3041,
+      "originalSha256": "f433360433a39907d6924d9afac82342ebeef35a10f1316e1da3470079eab6e4",
+      "sanitizedSha256": "f433360433a39907d6924d9afac82342ebeef35a10f1316e1da3470079eab6e4",
+      "gzipSha256": "0a8cc07f99602f130e6066b01193a7fe1ef7782ff3e922dba29b264f615d503d"
+    },
+    {
+      "path": "sampler02/manifest.json.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-02/manifest.json",
+      "originalBytes": 871,
+      "originalSha256": "a5de48255eb888f7c353575979f59467a4eb2e510830ade18513dce43b35c9e7",
+      "sanitizedSha256": "a5de48255eb888f7c353575979f59467a4eb2e510830ade18513dce43b35c9e7",
+      "gzipSha256": "717287186f424f5cc3608332c4a00b3fdaa893344531b9745a14517b8dd15824"
+    },
+    {
+      "path": "sampler02/PLAN.md.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-02/PLAN.md",
+      "originalBytes": 5002,
+      "originalSha256": "d518389a61bafa24e42db2691ab0f3c4f8481852ff92ca84b470ae948285186a",
+      "sanitizedSha256": "d518389a61bafa24e42db2691ab0f3c4f8481852ff92ca84b470ae948285186a",
+      "gzipSha256": "8cd683066757bc1655202bb3437eafb8ff4cfaac75ab5326638b7afb36d8aa4d"
+    },
+    {
+      "path": "sampler02/sample.awk.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-02/sample.awk",
+      "originalBytes": 5919,
+      "originalSha256": "97d1a65ee0380053b001e64490e19818d8a8dad375a188b1979cd47c3ea25076",
+      "sanitizedSha256": "97d1a65ee0380053b001e64490e19818d8a8dad375a188b1979cd47c3ea25076",
+      "gzipSha256": "bbeb66fcfb6816d5eef23a2044f5bb82f4e7ff4c4ce79eee745c7dfbea3ec24f"
+    },
+    {
+      "path": "sampler02/sample.mjs.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-02/sample.mjs",
+      "originalBytes": 10772,
+      "originalSha256": "e52177e28b0b96b74517239adf926ae9f68465fce20d40f254c29afa808ced30",
+      "sanitizedSha256": "e52177e28b0b96b74517239adf926ae9f68465fce20d40f254c29afa808ced30",
+      "gzipSha256": "8091009502df11ed2585b14f29981a340294087c75d8ddafdcea10465f2f6dae"
+    },
+    {
+      "path": "commands/release297-publish-diagnostic-8148-pressure-01.mjs.gz",
+      "originalPath": "<TEMP>/release297-publish-diagnostic-8148-pressure-01.mjs",
+      "originalBytes": 5040,
+      "originalSha256": "16e1d780f384b9a1091a8af6302ebbbe24a6938100af152859f839b021596bb4",
+      "sanitizedSha256": "24447a22bd767e10556de47c8321b933979466becf214074ba750f4472b612fb",
+      "gzipSha256": "bb561ee3d5fef9fc97402178805b566b2b3b95e91af4cf25246330e9921d2906"
+    },
+    {
+      "path": "commands/release297-role-diagnostic-8148-pressure-01-console.log.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01-console.log",
+      "originalBytes": 157,
+      "originalSha256": "97b9ae997bfcbf05bb1b626fb6ab83cbefbb875e3c71b35d144abf7a702935b9",
+      "sanitizedSha256": "22549f28c6904c93048baf2f0db3ed327ebd0a8bcb94b50e5b8e494a2914c091",
+      "gzipSha256": "ed8dc64e5ac43656b5f0f09a9f93b690b36b5478476e1e04671b7e1bc8b50a29"
+    },
+    {
+      "path": "commands/release297-role-diagnostic-8148-pressure-01.predeclared-plan.json.gz",
+      "originalPath": "<TEMP>/release297-role-diagnostic-8148-pressure-01.predeclared-plan.json",
+      "originalBytes": 6285,
+      "originalSha256": "908514b5ae4931955aaaff156320b7f4357270fa2c8fead76de1ece2be4b0ffa",
+      "sanitizedSha256": "621ee92b5baba482bf19d1847fcfc0a04f57679abbbbfdb6939480bfd6e6e117",
+      "gzipSha256": "465118afa6d131642c0ae5ee55e600d3a34e606aa399f61698f4a9f539b0537b"
+    },
+    {
+      "path": "commands/release297-role-counter-sampler-182ac78636d4-console.log.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-182ac78636d4-console.log",
+      "originalBytes": 569,
+      "originalSha256": "e860efd638408cc37525a37ed249db51ae7eeeb21eed01929185bd057ec17502",
+      "sanitizedSha256": "0ef467f0ecbcfce1229293ceadd40bd0db5a2bf7d16a8e86733cb42861922d5e",
+      "gzipSha256": "517aa885e9d246f1cee4c549f1257c4f0c9a69f9ec983df20ab48350314e52e6"
+    },
+    {
+      "path": "commands/release297-role-counter-sampler-config-182ac78636d4.json.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-config-182ac78636d4.json",
+      "originalBytes": 1245,
+      "originalSha256": "d33f689874e337b39f6a7287d82351359a5a19844887b3f2801451ae0eefe69c",
+      "sanitizedSha256": "624ff7d12d32efaa2cb84d9c4cff5d4f0ffce33f9cd758d46983e0fed6d46eaa",
+      "gzipSha256": "bd5618ad0d41677d4279edf8cf40b5fc5c803852eb26d05833540653d50be4a4"
+    },
+    {
+      "path": "commands/release297-role-counter-sampler-syntax-failure-01.json.gz",
+      "originalPath": "<TEMP>/release297-role-counter-sampler-syntax-failure-01.json",
+      "originalBytes": 381,
+      "originalSha256": "d5b143b63851acd4189a228b6e9126738c49ab9b737a7d7e03f36078c0d5a5f3",
+      "sanitizedSha256": "d5b143b63851acd4189a228b6e9126738c49ab9b737a7d7e03f36078c0d5a5f3",
+      "gzipSha256": "3dce24f626d8998c6818dd12f453005b2fb27fba4479d1e6338cb48f9d5adcf9"
+    },
+    {
+      "path": "ci-snapshot/stderr.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-status-02/stderr.txt",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "ci-snapshot/stdout.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-status-02/stdout.json",
+      "originalBytes": 1029,
+      "originalSha256": "1ce9da0bb08613aa7e658667071917341ac80342d13b47359948c68d3e634e76",
+      "sanitizedSha256": "9e949e774f743ca9438b95d8dd4106018489a70c8500e21b0ad33b3c539c7fcd",
+      "gzipSha256": "8a470e636297252612813d50dbe5b013e1eadfc7eeabe0963b84dde5a72acfb7"
+    },
+    {
+      "path": "ci-snapshot/summary.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-status-02/summary.json",
+      "originalBytes": 1509,
+      "originalSha256": "dd0e39c98767cff253c97adc8ed5fa71d232cd1c8a078a77e2dc360f322ec18c",
+      "sanitizedSha256": "dd0e39c98767cff253c97adc8ed5fa71d232cd1c8a078a77e2dc360f322ec18c",
+      "gzipSha256": "62ea9affa8053656441f5781fec61280377e6cf451b9a3ce2365508a4c3bd7dc"
+    },
+    {
+      "path": "ci-rerun-request/gitleaks-original.stderr.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/gitleaks-original.stderr.txt",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "ci-rerun-request/gitleaks-original.stdout.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/gitleaks-original.stdout.json",
+      "originalBytes": 1285,
+      "originalSha256": "9177fad086ed439b8e37eb86a76854eacaf97f306a9f85193230cd5cf4e82931",
+      "sanitizedSha256": "27f63f5ad9f02d12b50aae6974575a27d5b4a55efa5650075d45d38af95e8490",
+      "gzipSha256": "669e1cdecbc9595bb8d51449c6c77615e1ed26242d917a0338bd86da3aaafee8"
+    },
+    {
+      "path": "ci-rerun-request/head-status.stderr.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/head-status.stderr.txt",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "ci-rerun-request/head-status.stdout.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/head-status.stdout.json",
+      "originalBytes": 1029,
+      "originalSha256": "1902580a039a5e84ead8ab4fa43dc0ddf6541aea6aefba7833f4a17a1fd550b2",
+      "sanitizedSha256": "1723457f0705235d5700814a3957ee2ce6913ea4b1d54525f08a7b91dee753b6",
+      "gzipSha256": "c85e34f10ca405132f892ca11459296d21669a5fe788bded0f13fd8f024af600"
+    },
+    {
+      "path": "ci-rerun-request/owner-lookup.stderr.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/owner-lookup.stderr.txt",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "ci-rerun-request/owner-lookup.stdout.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/owner-lookup.stdout.json",
+      "originalBytes": 34,
+      "originalSha256": "24508e5a97e05a945989a8b4c3e236479c309c0fd9c19c88a622a6fa1fdda7e1",
+      "sanitizedSha256": "cb8270099e7a33cd9cc47eb7a0cebc147dae4240bd44f8fe958caf0d8f8e7f51",
+      "gzipSha256": "d4f5485a780de37b30e05b12f60ac25133c9fff7708ae636475e237d5ce470e7"
+    },
+    {
+      "path": "ci-rerun-request/request-response.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/request-response.txt",
+      "originalBytes": 1415,
+      "originalSha256": "21f651ac8eb71324fa1ba7337790c47f3eec194c6f5adccff91865a981746116",
+      "sanitizedSha256": "21f651ac8eb71324fa1ba7337790c47f3eec194c6f5adccff91865a981746116",
+      "gzipSha256": "e5cfeef497bb78dcb7db96a14fd5e8299c25d7f22fe6c4fbb39dfb01b14d1c82"
+    },
+    {
+      "path": "ci-rerun-request/request-result.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/request-result.json",
+      "originalBytes": 252,
+      "originalSha256": "6895c3538ab2860431c8d53bf03210fa63ca7191b51a7e4903871a23e03b8843",
+      "sanitizedSha256": "6895c3538ab2860431c8d53bf03210fa63ca7191b51a7e4903871a23e03b8843",
+      "gzipSha256": "05e09ea2055991d80cfce082fb6c3531c2fe99a35efcd1e97474d0df6b035d76"
+    },
+    {
+      "path": "ci-rerun-request/request-stderr.txt.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/request-stderr.txt",
+      "originalBytes": 0,
+      "originalSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "9e72928e7a01615b4cf090daa617b4ca9d68531748f887f323f695eb4ca3ef63"
+    },
+    {
+      "path": "ci-rerun-request/request.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/request.json",
+      "originalBytes": 470,
+      "originalSha256": "5a3eabbddf4256a36a76e6367d66ff9f128cb23e288cce0a27e581f32426ff14",
+      "sanitizedSha256": "5a3eabbddf4256a36a76e6367d66ff9f128cb23e288cce0a27e581f32426ff14",
+      "gzipSha256": "9b391f826673946e4052c4643d50228a2393bc35c93286ba11c951d576261f7a"
+    },
+    {
+      "path": "ci-rerun-request/snapshot.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-rerun-01/snapshot.json",
+      "originalBytes": 4344,
+      "originalSha256": "b1fc5d98f1e14eadc4c3382423de01e01b0ec7e12b2487bc9d9574e8a49d7825",
+      "sanitizedSha256": "b1fc5d98f1e14eadc4c3382423de01e01b0ec7e12b2487bc9d9574e8a49d7825",
+      "gzipSha256": "21d55b7f433c6010c17b85536dfabeb702d4d82e33bb180c2ada76a33b158cb1"
+    },
+    {
+      "path": "ci-original-service-failure.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-private-01/classification.json",
+      "originalBytes": 1060,
+      "originalSha256": "0dfd6fffa0e365b8a7cb87b6d739d38f332e99d39c5711f419c6b0243d945656",
+      "sanitizedSha256": "b460ba2e1becbe09254ab72592a2591a09bea3264b29c9d60cba15649218dee2",
+      "gzipSha256": "65aa89136fa020157be324ee5ffc6e6d6983d534f10e489a40d9eaa589c291b0"
+    },
+    {
+      "path": "ci-original-private-log-binding.json.gz",
+      "originalPath": "<TEMP>/release297-ci-63b2-gitleaks-private-01/fetch-metadata.json",
+      "originalBytes": 480,
+      "originalSha256": "b35f81f0cd0194cb22d8730a3ba3317d4063a1143dee6f95e92e75c0d81f1fcf",
+      "sanitizedSha256": "b35f81f0cd0194cb22d8730a3ba3317d4063a1143dee6f95e92e75c0d81f1fcf",
+      "gzipSha256": "b9550e7e7f3c2007204617953bc8c951c507c6095274f33f83f62f698fbfb4dd"
+    },
+    {
+      "path": "archive-script.mjs.gz",
+      "originalPath": "<TEMP>/release297-archive-diagnostic-8148-pressure-01.mjs",
+      "originalBytes": 10489,
+      "originalSha256": "f133f9c0e9a326b5b360d57442e7a3229bda622a011afcabbee8e38262df4978",
+      "sanitizedSha256": "1bc7fd383bf7319cb0cb7883326d15146e5ae55537409bcdb362da6066f280b9",
+      "gzipSha256": "7b95c5c8112959d0b28211756aa8b35b9a0e9c9d32d6f9deedf1c1d02b309fa4"
+    }
+  ],
+  "hashOnly": [
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-01/cold-fixture-state.json",
+      "bytes": 183029,
+      "sha256": "173e1f01104a09ced7666b9165fe3b9af957dd2932381524d13e806c4612b9a0",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-01/reference-rendered-schema.sql",
+      "bytes": 582599,
+      "sha256": "f7ee6e358f6603bad866aea21827ce9febdf1e0826d635df5b0ff2a2c9a3ebb6",
+      "reason": "Unchanged full schema text omitted from minimal packet; original hash retained and schema comparison receipt included."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-01/restored-schema.sql",
+      "bytes": 582599,
+      "sha256": "21bd880ef6ba1efed536090e24ce9f2cf637506ea66cfce3a42b4a1cdd9dda6a",
+      "reason": "Unchanged full schema text omitted from minimal packet; original hash retained and schema comparison receipt included."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/postgres.env",
+      "bytes": 178,
+      "sha256": "1e556659c65ed728180ed96e7f72fa2a8d430665d58278dcc80e4176b06fe87f",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/api-secrets/binding.json",
+      "bytes": 507,
+      "sha256": "b05c3a9e47cc5b707b0a08681635232d4ed7dbdca68aebd496ebdd42ced73b39",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/coordinator-requests/bridge-ready.json",
+      "bytes": 107,
+      "sha256": "0ce7f57761f8d7b1f1aaa000981e211ca1c8453419c210dad88ed399b521b2c9",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/coordinator-requests/termination-1.json",
+      "bytes": 269,
+      "sha256": "858bb0dd24b0bbc4b650091d2af920a4fbe012cd759b434593f301e60351a081",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/coordinator-secrets/registry.json",
+      "bytes": 2110,
+      "sha256": "b1a67a384aec14a6611e1525260fedbdb8784baca8ecd7052f8954733a91f706",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/generator-secrets/binding.json",
+      "bytes": 513,
+      "sha256": "b3e10c64ad0d756b63667ced0af9864c03676a71ea46079809c5b625ba9abf6c",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/host-receipts/api.json",
+      "bytes": 386,
+      "sha256": "6baecb48e72addcb010e1d7750b36f7127d9f769330696fe37c36af8d13ca91d",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/host-receipts/coordinator.json",
+      "bytes": 391,
+      "sha256": "b6d2799cf90347e05aaeecc0ebeec558bba260c3efb9011de558c9bc163da243",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/host-receipts/generator.json",
+      "bytes": 388,
+      "sha256": "b37048d3a9ce2ae595511f46c34243d9c91735a098ce1ae302e9685c0129af27",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/host-receipts/worker.json",
+      "bytes": 385,
+      "sha256": "defe5748de9635c866860ee75dd69cba02d0ea4675b920ead4baa2cad26c0142",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/role-control/worker-secrets/binding.json",
+      "bytes": 510,
+      "sha256": "2c9d5a82ddcfef9acb8ce446cb077cdc171e2123120fe2f4e1afb597b468e04f",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-role-diagnostic-8148-pressure-private-01/validation.json",
+      "bytes": 757,
+      "sha256": "02e97339088b93e256a94ed8c90cc4bc112dc2cbe700adcd056d0a1ababc192f",
+      "reason": "Private synthetic data/env/credential contents excluded."
+    },
+    {
+      "path": "<TEMP>/release297-ci-63b2-gitleaks-private-01/failed-job.private.log",
+      "bytes": 1709,
+      "sha256": "10a5e7a41da853274751c442bf12f31b203d77d15b5ab629b80680fb75d3fb39",
+      "reason": "Original private failure log retained unchanged; safe classification archived."
+    }
+  ],
+  "emptyPrivateFiles": [],
+  "references": {
+    "existingSourceHelperSnapshotPacket": {
+      "directory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-capacity-8148-attempt-01-evidence",
+      "manifestSha256": "b2524712a34697b906b4efaa36413def9fbc55bc049d36125add55fc5178f3ac"
+    },
+    "sampler03": {
+      "manifestPath": "<TEMP>/release297-role-counter-sampler-03/manifest.json",
+      "manifestSha256": "67230a1c0c7bc0626772992f7545a99b9d4e6d6ca98bf53662a723f578f59f70",
+      "sixOwnerSamplerLaunched": false,
+      "nativeProof": {
+        "directory": "C:/Users/zinka/AppData/Local/Temp/release297-counter-probe-01",
+        "originalExitCode": 1,
+        "originalError": "awk: bad regex '\\/[^': Missing ']'",
+        "fixedSyntaxExitCode": 0,
+        "fixedOneSampleExitCode": 0,
+        "samples": 1,
+        "cleanupPassed": true,
+        "files": [
+          {
+            "name": "cleanup.json",
+            "bytes": 879,
+            "sha256": "0a8e04dfa30393a1e0162435cb2150298c4eeb15cb5d8214342bfccf92cfc072"
+          },
+          {
+            "name": "create.json",
+            "bytes": 344,
+            "sha256": "a5ca9ff89372755dbe8947a1b232184b497419761e0725b477d680819f54e97f"
+          },
+          {
+            "name": "inspect.json",
+            "bytes": 310,
+            "sha256": "deca2e1d02bb87b637b84c893017bf4f2b325ea24e7df66a6aedbb7118912911"
+          },
+          {
+            "name": "owner.json",
+            "bytes": 303,
+            "sha256": "22a5ee9145790870e7bba65e21170db7a02852adb73b408d3a6c2e1a50d545fb"
+          },
+          {
+            "name": "probe-fixed-sample.json",
+            "bytes": 3597,
+            "sha256": "d25b4ff11f631647aa5f0b713858c0bcf6f751d57b506a12c4dfd9d061f5cb49"
+          },
+          {
+            "name": "probe-fixed-syntax.json",
+            "bytes": 85,
+            "sha256": "383a4d2cd2b4f0731635537b5e11659d15072375b1b64f01a89de68725fa6cda"
+          },
+          {
+            "name": "probe-original.json",
+            "bytes": 122,
+            "sha256": "055694a445f557a523e9c366d74587d12644b06de4472d2fb13976b581055a95"
+          },
+          {
+            "name": "start.json",
+            "bytes": 129,
+            "sha256": "236b41b27fc4a1dc7de4595cb6abe52090351915cd1850c690489d65a890e436"
+          }
+        ]
+      },
+      "notRetroactiveEvidenceForThisRun": true
+    }
+  },
+  "limitations": [
+    "Failed diagnostic, permanently ineligible for capacity acceptance; no campaign attempt added.",
+    "API drain was physically idle but unverifiable because one response aborted. Current-day rollup and CSV correctness were not run after that failure.",
+    "API required forced termination (exit143); other owned resources were removed, including recorded PostgreSQL volume. Cleanup success does not imply clean role exit or accepted workload.",
+    "Sampler02 produced zero numeric samples; subsequent tiny sampler03 proof cannot repair the missing counters for this run.",
+    "Synthetic4CPU/4GiB PostgreSQL differs from dated production db.t4g.medium; no production headroom claim.",
+    "Only safe evidence copies are archived; original raw receipt hashes remain binding. No application/source/helper changes, fixture retries or resource adjustments."
+  ]
+}

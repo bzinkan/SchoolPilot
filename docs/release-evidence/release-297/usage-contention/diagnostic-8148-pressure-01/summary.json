@@ -1,0 +1,517 @@
+{
+  "schemaVersion": 1,
+  "source": "814844f344a45159152415b0fb6d7027f05b093e",
+  "run": "182ac78636d4",
+  "mode": "diagnostic",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "receiptManifestSha256": "be04605811a648ec63211d937026df2b73c9d876d3d2bc6f19588bb675646422",
+  "all13OriginalReceiptHashesVerified": true,
+  "startedAt": "2026-10-03T21:58:41.702Z",
+  "cleanupFinishedAt": "2026-10-03T22:00:08.762Z",
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5238,
+    "succeeded": 4334,
+    "failed": 904,
+    "refusedAtInFlightLimit": 762,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 59.96783299999879,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2621,
+        "succeeded": 2170,
+        "failed": 451,
+        "refused": 379
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2617,
+        "succeeded": 2164,
+        "failed": 453,
+        "refused": 383
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 904
+    },
+    "offerWindowMs": 59990.405285,
+    "outstandingAtEndOfOffering": 1000,
+    "totalIncludingDrainMs": 67351.858715,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5238,
+      "minMs": 458.60325700000067,
+      "p50Ms": 11187.349858999994,
+      "p95Ms": 13786.524252,
+      "maxMs": 14864.838565999999
+    }
+  },
+  "heartbeatStatuses": {
+    "200": 4334,
+    "500": 904
+  },
+  "reports": {
+    "actual": 64,
+    "successful": 64
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 11773.549459999998,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 29633.200165,
+      "correct": true
+    }
+  ],
+  "api": {
+    "cpuMicroseconds": {
+      "user": 55610826,
+      "system": 10613974
+    },
+    "eventLoop": {
+      "p50Ms": 23.199743,
+      "p95Ms": 46.006271,
+      "maxMs": 450.625535,
+      "utilization": 0.9781015545700577
+    },
+    "acquisitions": {
+      "count": 15140,
+      "failures": 904,
+      "maxMs": 5212.1910350000035
+    }
+  },
+  "serverDrain": {
+    "api": {
+      "complete": false,
+      "budgetMs": 20000,
+      "elapsedMs": 1.46555900000385,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 1,
+      "failure": "DRAIN_UNVERIFIABLE_ABORT",
+      "stage": "verification"
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.5701869999902556,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "failure": {
+    "name": "AssertionError",
+    "code": "ERR_ASSERTION",
+    "message": "Server work remained active after bounded drain; metrics preserved"
+  },
+  "childCleanupFailure": true,
+  "postLoadCurrentDayCorrectness": "not run",
+  "postLoadCsvCorrectness": "not run",
+  "persistedAfterCount": "not collected",
+  "roleExits": [
+    {
+      "role": "coordinator",
+      "exit": {
+        "containerId": "290230c530e917fceb889ca64a8decac89c6249b929351c4fed40255132d679f",
+        "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+        "run": "182ac78636d4",
+        "source": "814844f344a45159152415b0fb6d7027f05b093e",
+        "role": "coordinator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 1,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 1,
+        "clean": false
+      }
+    },
+    {
+      "role": "api",
+      "exit": {
+        "containerId": "d6775e97e95a77c4bb2c5e94139d976ffd7a9fa5f36ebb326b6979d857d57be8",
+        "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+        "run": "182ac78636d4",
+        "source": "814844f344a45159152415b0fb6d7027f05b093e",
+        "role": "api",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 143,
+        "forced": true,
+        "oomKilled": false,
+        "attachExitCode": 143,
+        "clean": false
+      }
+    },
+    {
+      "role": "worker",
+      "exit": {
+        "containerId": "e3b19ede63b7ff7a7cc8ab7cb8fb3d2a4f0333087125c0dace11087f13b0aae4",
+        "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+        "run": "182ac78636d4",
+        "source": "814844f344a45159152415b0fb6d7027f05b093e",
+        "role": "worker",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    },
+    {
+      "role": "generator",
+      "exit": {
+        "containerId": "f1077d22464bff8933a976cff31b1fa5ecda864e3deea08894d83ffe55eb7885",
+        "imageId": "sha256:98f8bb55fee568d795b6a77cae87e45b0a326f8461cd647b86431331a96b0678",
+        "run": "182ac78636d4",
+        "source": "814844f344a45159152415b0fb6d7027f05b093e",
+        "role": "generator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    }
+  ],
+  "cleanup": {
+    "schemaVersion": 1,
+    "run": "182ac78636d4",
+    "finishedAt": "2026-10-03T22:00:08.762Z",
+    "roles": {
+      "cleanupPassed": true,
+      "roles": [
+        {
+          "role": "generator",
+          "cleanupPassed": true,
+          "id": "f1077d22464bff8933a976cff31b1fa5ecda864e3deea08894d83ffe55eb7885",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "worker",
+          "cleanupPassed": true,
+          "id": "e3b19ede63b7ff7a7cc8ab7cb8fb3d2a4f0333087125c0dace11087f13b0aae4",
+          "forced": false,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "api",
+          "cleanupPassed": true,
+          "id": "d6775e97e95a77c4bb2c5e94139d976ffd7a9fa5f36ebb326b6979d857d57be8",
+          "forced": true,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "coordinator",
+          "cleanupPassed": true,
+          "id": "290230c530e917fceb889ca64a8decac89c6249b929351c4fed40255132d679f",
+          "forced": false,
+          "confirmedAbsent": true
+        }
+      ]
+    },
+    "fixtures": {
+      "resources": [
+        {
+          "id": "2c864de8329879b1abeba904aac208eb77e82b1ef55e65c59429ab27a83f8171",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "volumes": [
+            {
+              "name": "1e546b0102e2611d20510eb76d2e32b3311de691cc10cd8249fdef0acc79b461",
+              "confirmedAbsent": true
+            }
+          ],
+          "role": "postgres"
+        },
+        {
+          "id": "19d9020dedea88201fe2830ba6238873429a5c5b0e0f25eafc67136061dd09f2",
+          "confirmedAbsent": true,
+          "cleanupPassed": true,
+          "role": "redis"
+        }
+      ],
+      "cleanupPassed": true
+    },
+    "cleanupPassed": true,
+    "capacityAccepted": false
+  },
+  "validation": {
+    "runPassed": false,
+    "failures": [
+      "plan",
+      "preparation",
+      "metrics",
+      "ownership"
+    ],
+    "capacityAccepted": false,
+    "diagnosticOnly": true,
+    "receiptManifestSha256": "be04605811a648ec63211d937026df2b73c9d876d3d2bc6f19588bb675646422"
+  },
+  "sampler": {
+    "captureComplete": false,
+    "captures": [
+      {
+        "role": "api",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      },
+      {
+        "role": "worker",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      },
+      {
+        "role": "generator",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      },
+      {
+        "role": "coordinator",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      },
+      {
+        "role": "postgres",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      },
+      {
+        "role": "redis",
+        "samples": 0,
+        "exit": {
+          "code": 1,
+          "signal": null,
+          "stdoutBytes": 0,
+          "stderrBytes": 35,
+          "overLimit": false,
+          "spawnFailed": false,
+          "timedOut": false
+        }
+      }
+    ],
+    "hostObserverActiveChildren": 0,
+    "noCounterEvidence": true
+  },
+  "finalSourceReceipt": {
+    "source": "814844f344a45159152415b0fb6d7027f05b093e",
+    "clean": true,
+    "unchanged": true,
+    "harnessSha256": "f0d4b3d44f686b6f751eafac444ab506f75015fefad463dcf2006d98bd221f38"
+  },
+  "finalCiSnapshot": {
+    "schemaVersion": 1,
+    "head": "63b2e32f08c78d05eee33a589878cfbf492725a9",
+    "capturedAt": "2026-10-03T22:06:57.764Z",
+    "oneInvocation": true,
+    "retried": false,
+    "exitCode": 0,
+    "error": null,
+    "runs": [
+      {
+        "conclusion": "success",
+        "databaseId": 37156280336,
+        "headSha": "63b2e32f08c78d05eee33a589878cfbf492725a9",
+        "status": "completed",
+        "updatedAt": "2026-10-03T21:49:13Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37156280336",
+        "workflowName": "Trivy Container Scan"
+      },
+      {
+        "conclusion": "",
+        "databaseId": 37156280337,
+        "headSha": "63b2e32f08c78d05eee33a589878cfbf492725a9",
+        "status": "in_progress",
+        "updatedAt": "2026-10-03T22:04:11Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37156280337",
+        "workflowName": "CI"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37156280340,
+        "headSha": "63b2e32f08c78d05eee33a589878cfbf492725a9",
+        "status": "completed",
+        "updatedAt": "2026-10-03T22:03:48Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37156280340",
+        "workflowName": "Gitleaks"
+      },
+      {
+        "conclusion": "success",
+        "databaseId": 37156280333,
+        "headSha": "63b2e32f08c78d05eee33a589878cfbf492725a9",
+        "status": "completed",
+        "updatedAt": "2026-10-03T21:55:40Z",
+        "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37156280333",
+        "workflowName": "CodeQL"
+      }
+    ]
+  },
+  "references": {
+    "existingSourceHelperSnapshotPacket": {
+      "directory": "C:\\Users\\zinka\\.codex\\artifacts\\release297-capacity-8148-attempt-01-evidence",
+      "manifestSha256": "b2524712a34697b906b4efaa36413def9fbc55bc049d36125add55fc5178f3ac"
+    },
+    "sampler03": {
+      "manifestPath": "<TEMP>/release297-role-counter-sampler-03/manifest.json",
+      "manifestSha256": "67230a1c0c7bc0626772992f7545a99b9d4e6d6ca98bf53662a723f578f59f70",
+      "sixOwnerSamplerLaunched": false,
+      "nativeProof": {
+        "directory": "<TEMP>/release297-counter-probe-01",
+        "originalExitCode": 1,
+        "originalError": "awk: bad regex '\\/[^': Missing ']'",
+        "fixedSyntaxExitCode": 0,
+        "fixedOneSampleExitCode": 0,
+        "samples": 1,
+        "cleanupPassed": true,
+        "files": [
+          {
+            "name": "cleanup.json",
+            "bytes": 879,
+            "sha256": "0a8e04dfa30393a1e0162435cb2150298c4eeb15cb5d8214342bfccf92cfc072"
+          },
+          {
+            "name": "create.json",
+            "bytes": 344,
+            "sha256": "a5ca9ff89372755dbe8947a1b232184b497419761e0725b477d680819f54e97f"
+          },
+          {
+            "name": "inspect.json",
+            "bytes": 310,
+            "sha256": "deca2e1d02bb87b637b84c893017bf4f2b325ea24e7df66a6aedbb7118912911"
+          },
+          {
+            "name": "owner.json",
+            "bytes": 303,
+            "sha256": "22a5ee9145790870e7bba65e21170db7a02852adb73b408d3a6c2e1a50d545fb"
+          },
+          {
+            "name": "probe-fixed-sample.json",
+            "bytes": 3597,
+            "sha256": "d25b4ff11f631647aa5f0b713858c0bcf6f751d57b506a12c4dfd9d061f5cb49"
+          },
+          {
+            "name": "probe-fixed-syntax.json",
+            "bytes": 85,
+            "sha256": "383a4d2cd2b4f0731635537b5e11659d15072375b1b64f01a89de68725fa6cda"
+          },
+          {
+            "name": "probe-original.json",
+            "bytes": 122,
+            "sha256": "055694a445f557a523e9c366d74587d12644b06de4472d2fb13976b581055a95"
+          },
+          {
+            "name": "start.json",
+            "bytes": 129,
+            "sha256": "236b41b27fc4a1dc7de4595cb6abe52090351915cd1850c690489d65a890e436"
+          }
+        ]
+      },
+      "notRetroactiveEvidenceForThisRun": true
+    }
+  },
+  "limitations": [
+    "Failed diagnostic, permanently ineligible for capacity acceptance; no campaign attempt added.",
+    "API drain was physically idle but unverifiable because one response aborted. Current-day rollup and CSV correctness were not run after that failure.",
+    "API required forced termination (exit143); other owned resources were removed, including recorded PostgreSQL volume. Cleanup success does not imply clean role exit or accepted workload.",
+    "Sampler02 produced zero numeric samples; subsequent tiny sampler03 proof cannot repair the missing counters for this run.",
+    "Synthetic4CPU/4GiB PostgreSQL differs from dated production db.t4g.medium; no production headroom claim.",
+    "Only safe evidence copies are archived; original raw receipt hashes remain binding. No application/source/helper changes, fixture retries or resource adjustments."
+  ]
+}

@@ -61,6 +61,28 @@ A separate local full-shard attempt stops at an unrelated navigation-buffer
 failure before this suite; that failure remains preserved. New-head CI and
 three consecutive cold capacity passes plus the original comparison remain due.
 
+The subsequent [same-source combined diagnostic](diagnostic-8148-pressure-01/manifest.json)
+also fails: 4,334/6,000 heartbeats succeed, 904 return 500, 762 are refused and
+none are late. All 64 reports and both million-observation worker oracles pass;
+workers take 11.774/29.633 seconds. The classroom lifecycle reaches precise
+command acknowledgement, then times out. API drain is physically idle but fails
+verification because one response was aborted; post-load current-day and CSV
+correctness checks do not run. The API needs a forced exit after failed shutdown;
+all six containers and the exact PostgreSQL volume are verified absent.
+
+Its external resource sampler fails immediately on all six containers, producing
+zero samples. A separate isolated probe identifies a BusyBox AWK regex error;
+the corrected syntax and one-sample check pass afterward, but cannot recover
+the missed workload counters. This run does not isolate a host-pressure cause.
+API CPU remains saturated at 66.225 seconds and event-loop utilization 0.978.
+It is permanently diagnostic-only and cannot count toward capacity acceptance.
+The original failed candidate campaign entry is unchanged.
+
+The packet also preserves the next review head's Gitleaks service failure before
+scanning, its one authorized failed-job rerun and subsequent success. CodeQL and
+Trivy pass. The full CI result was still pending at the recorded status read;
+that snapshot must not be represented as final CI success.
+
 Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds the per-student
 exact-URL domain map measured below. [Implementation evidence](domain-map-implementation-e95a2b56/manifest.json)
 preserves all three native attempts and the initial typecheck failure. Final
