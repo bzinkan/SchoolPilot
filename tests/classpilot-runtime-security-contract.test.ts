@@ -75,7 +75,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /req\.body\?\.requestFabState === true/);
     assert.match(
       heartbeat,
-      /withClasspilotStudentControlDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
+      /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
     );
     assert.match(
       heartbeat,

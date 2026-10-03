@@ -81,6 +81,7 @@ import {
   lockClasspilotSsoPolicyDeliveryAuthority,
   getClasspilotScreenshotAuthorityProjection,
   withClasspilotStudentControlDeliveryAuthority,
+  withClasspilotHeartbeatDeliveryAuthority,
   withClasspilotStudentWebSocketBootstrapAuthority,
   withClasspilotScreenshotUploadAuthority,
   acknowledgeClasspilotStudentControlState,
@@ -4813,7 +4814,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     // which a retired binding could otherwise receive the old student's state.
     const finalDelivery = await runWithTenantContext(
       { schoolId },
-      () => withClasspilotStudentControlDeliveryAuthority(
+      () => withClasspilotHeartbeatDeliveryAuthority(
         { schoolId, studentId, studentSessionId, deviceId },
         async (transactionDb) => {
           await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);

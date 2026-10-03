@@ -49,7 +49,7 @@ import {
   isClasspilotReportAuthorizedStaff,
 } from "./classpilotReportAuthorization.js";
 import { isPersistentClasspilotControl } from "./classpilotCommandDelivery.js";
-import { assertClasspilotEntitled } from "./classpilotEntitlement.js";
+import { assertClasspilotEntitled, classpilotEntitledSchoolPredicate } from "./classpilotEntitlement.js";
 import {
   assertClasspilotSynchronousAuthorityResult,
   type ClasspilotSynchronousAuthorityResult,
@@ -20035,7 +20035,7 @@ class ClasspilotTeacherChatBindingLostError extends Error {}
  * materialization and deterministic concurrency tests; delivery is type-bound
  * to remain synchronous while this transaction remains authoritative.
  */
-export async function withClasspilotStudentControlDeliveryAuthority<
+async function withClasspilotStudentControlDeliveryAuthorityCore<
   Prepared,
   T extends ClasspilotSynchronousAuthorityResult,
 >(
@@ -20044,7 +20044,8 @@ export async function withClasspilotStudentControlDeliveryAuthority<
   onAuthorized: (
     claimed: ClasspilotClaimedTeacherChatDelivery[],
     prepared: Prepared
-  ) => T
+  ) => T,
+  heartbeatFinalFence = false,
 ): Promise<{ authorized: true; value: T } | { authorized: false }> {
   if (options.claimTeacherChatDeliveries) await latchPrivateChatLifecycle(options.schoolId);
   const limit = Math.max(1, Math.min(20, options.limit ?? 10));
@@ -20192,7 +20193,9 @@ export async function withClasspilotStudentControlDeliveryAuthority<
       // claimed, roll the claim back instead of committing it for a stale
       // binding.
       const prepared = await prepareAuthorized(transactionDb);
-      if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
+      if (heartbeatFinalFence) {
+        await assertClasspilotHeartbeatDeliveryCurrent(options, transactionDb);
+      } else if (!(await hasExactClasspilotTelemetryBinding(options, transactionDb))) {
         throw new ClasspilotTeacherChatBindingLostError();
       }
       const value = onAuthorized(claimed, prepared);
@@ -20208,6 +20211,68 @@ export async function withClasspilotStudentControlDeliveryAuthority<
     }
     throw error;
   }
+}
+
+/** Final heartbeat-only clock fence. Locks already linearize row mutations,
+ * but school/license and manual-session expiry can cross during asynchronous
+ * preparation. Keep this mandatory check outside every optional savepoint. */
+async function assertClasspilotHeartbeatDeliveryCurrent(
+  options: ClasspilotTeacherChatBinding, transactionDb: typeof db,
+): Promise<void> {
+  const result = await transactionDb.execute<{
+    entitled: boolean; bound: boolean;
+    denialReason: "school_missing" | "school_inactive" | "license_inactive";
+  }>(sql`
+    SELECT ${classpilotEntitledSchoolPredicate(sql`${options.schoolId}`)} AS entitled,
+      EXISTS (SELECT 1 FROM ${studentSessions}
+        INNER JOIN ${students} ON ${students.id}=${studentSessions.studentId}
+          AND ${students.schoolId}=${options.schoolId} AND ${students.status}='active'
+        INNER JOIN ${devices} ON ${devices.deviceId}=${studentSessions.deviceId}
+          AND ${devices.schoolId}=${options.schoolId}
+        WHERE ${studentSessions.id}=${options.studentSessionId}
+          AND ${studentSessions.studentId}=${options.studentId}
+          AND ${studentSessions.deviceId}=${options.deviceId}
+          AND ${currentStudentSessionAuthorityPredicate()}
+        LIMIT 1 FOR SHARE) AS bound,
+      CASE WHEN NOT EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}) THEN 'school_missing'
+        WHEN EXISTS (SELECT 1 FROM ${schools} WHERE ${schools.id}=${options.schoolId}
+          AND ${schools.status}='active' AND ${schools.isActive}=true
+          AND ${schools.disabledAt} IS NULL AND ${schools.deletedAt} IS NULL
+          AND ${schools.planStatus}<>'canceled'
+          AND (${schools.activeUntil} IS NULL OR ${schools.activeUntil}>clock_timestamp())) THEN 'license_inactive'
+        ELSE 'school_inactive' END AS "denialReason"
+  `);
+  const current = result.rows[0];
+  if (!current || current.entitled !== true) {
+    throw Object.assign(new Error("School is not entitled to ClassPilot"), {
+      status: 403, code: "CLASSPILOT_NOT_ENTITLED", reason: current?.denialReason ?? "school_missing",
+    });
+  }
+  if (current.bound !== true) throw new ClasspilotTeacherChatBindingLostError();
+}
+
+export async function withClasspilotStudentControlDeliveryAuthority<
+  Prepared,
+  T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  return withClasspilotStudentControlDeliveryAuthorityCore(options, prepareAuthorized, onAuthorized);
+}
+
+/** Heartbeat-only final clock recheck. Generic and WebSocket delivery retain
+ * their existing linearization; no telemetry transport or projection is fused. */
+export async function withClasspilotHeartbeatDeliveryAuthority<
+  Prepared,
+  T extends ClasspilotSynchronousAuthorityResult,
+>(
+  options: ClasspilotTeacherChatBinding,
+  prepareAuthorized: (transactionDb: typeof db) => Prepared | Promise<Prepared>,
+  onAuthorized: (claimed: ClasspilotClaimedTeacherChatDelivery[], prepared: Prepared) => T,
+): Promise<{ authorized: true; value: T } | { authorized: false }> {
+  return withClasspilotStudentControlDeliveryAuthorityCore({ ...options }, prepareAuthorized, onAuthorized, true);
 }
 
 export async function withClasspilotStudentWebSocketBootstrapAuthority<

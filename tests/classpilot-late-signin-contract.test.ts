@@ -501,7 +501,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   const bootstrapFence = section(
     storage,
-    "export async function withClasspilotStudentControlDeliveryAuthority",
+    "async function withClasspilotStudentControlDeliveryAuthorityCore",
     "export async function withClasspilotStudentWebSocketBootstrapAuthority",
   );
   assert.equal(
@@ -543,7 +543,7 @@ test("deferred command frames and WebSocket auth revalidate exact binding author
   );
   assert.match(
     finalHeartbeat,
-    /withClasspilotStudentControlDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
+    /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*getClasspilotStudentControlState\([\s\S]*transactionDb[\s\S]*\(_claimed, prepared\) => \{[\s\S]*return res\.json\([\s\S]*classroomState: prepared\.classroomState/,
   );
   assert.match(finalHeartbeat, /controlRevision: prepared\.classroomState\?\.revision \?\? prepared\.focusCleanup\?\.exactBinding\.controlRevision \?\? 0/);
   assert.doesNotMatch(finalHeartbeat, /getActiveSessionsForStudents/);

@@ -72,7 +72,7 @@ test("heartbeat, transfer, class/Coverage persistence, and delivery share bindin
   ]);
 
   const delivery = section(
-    "export async function withClasspilotStudentControlDeliveryAuthority",
+    "async function withClasspilotStudentControlDeliveryAuthorityCore",
     "export async function withClasspilotStudentWebSocketBootstrapAuthority"
   );
   assertOrdered("exact-bound delivery", delivery, [
