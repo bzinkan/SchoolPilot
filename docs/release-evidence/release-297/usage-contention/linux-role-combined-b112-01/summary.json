@@ -1,0 +1,875 @@
+{
+  "schemaVersion": 1,
+  "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+  "sourceClean": true,
+  "sourceAtFinish": {
+    "revision": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+    "clean": true
+  },
+  "sourceUnchangedAtFinish": true,
+  "profile": {
+    "name": "release-enabled-linux-role-default-100rps-v1",
+    "students": 500,
+    "classes": 100,
+    "studentsPerClass": 5,
+    "periods": 6,
+    "lessonMinutes": 50,
+    "passingMinutes": 10,
+    "observationsPerStudent": 2000,
+    "cadenceSeconds": 10,
+    "domainDwellSeconds": 200,
+    "domainsPerStudent": 8,
+    "domainsSchoolWide": 200,
+    "rawPerSchool": 1000000,
+    "sourceCadence": "ClassPilot/extension/service-worker.js:605 HEARTBEAT_INTERVAL_MS=10000",
+    "aiDecisionRowsPerSchool": 10000,
+    "aiDecisionsPerStudent": 20,
+    "aiDecisionEveryObservations": 100,
+    "aiDecisionCadenceSeconds": 1000,
+    "aiDecisionCategory": "matches the selected heartbeat",
+    "httpOffering": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "fullWorkerAcceptanceMs": 48000,
+    "classPilot": {
+      "extensionVersion": "2.9.7",
+      "sourceCommit": "065be165b5df704d84eb716e3fb914c1fed17f98",
+      "sourceFile": "extension/service-worker.js",
+      "sourceSha256": "3367a8663abc0d3ba8c661cc90dadc78379fd951e470981462ad1b775bf3ac60",
+      "sourceLfSha256": "3e14a557672f84f60887bcd7943ad77ea8f3092d3a3e39af3fcabc391c9cf7ad",
+      "capabilities": [
+        "helpRequestsV1",
+        "questionParkingV1",
+        "timerControlsV1",
+        "lessonActivitiesV1",
+        "exitTicketsV1",
+        "classroomStateV1",
+        "fabStateRevisionV1",
+        "exactTabCloseV1",
+        "scopedAuthorityChecksV1",
+        "scheduledClassroomV1",
+        "authBoundTelemetryV1",
+        "exactBindingAckV2",
+        "exactTabCloseV2",
+        "studentAuthGatePresenceV1",
+        "lateSignInRestrictionSsoV1",
+        "restrictionAuthPassThroughV1",
+        "preciseRestrictionResourcesV1",
+        "restrictionPortalFirstV1",
+        "afterHoursSafetyOnlyV1",
+        "schoolWebsiteBlockEnforcementV1",
+        "studentChatIdempotencyV1",
+        "screenshotTrackingWindowLeaseV1",
+        "screenshotActiveObservationCadenceV1",
+        "screenshotObservationLeaseV1",
+        "safetyEvidenceCaptureV1",
+        "liveViewIceServersV1",
+        "kioskLaunchTicketV1",
+        "kioskLaunchTicketV2",
+        "managedDeviceContinuityV1",
+        "screenOnlyUnlockV1",
+        "durableChatAckV1",
+        "commandAckReceiptV1",
+        "classroomOverlayRestoreV1",
+        "liveViewNegotiationV1",
+        "domainPreservingRestrictionsV1",
+        "chatPauseV1",
+        "chatSeenAckV1",
+        "focusTabV1",
+        "privateChatLifecycleV1"
+      ]
+    },
+    "coldDefinition": "Fresh owned fixture, seeded and ANALYZEd, all clients closed, owned PostgreSQL restarted before a fresh measurement process. PostgreSQL shared buffers reset; host filesystem caches are not flushed.",
+    "apiTasks": 1,
+    "apiMainPool": 16,
+    "apiSessionPool": 2,
+    "workerPool": 5,
+    "observerPool": 2,
+    "staffAuthentication": "real-password-login-and-session-cookie",
+    "capabilityModes": {
+      "preciseRestrictionResourcesV1": "on",
+      "focusTabV1": "on",
+      "privateChatLifecycleV1": "on"
+    },
+    "reportOffers": {
+      "waves": 4,
+      "maximumParallel": 16,
+      "total": 64,
+      "csvAfterConcurrent": 8,
+      "rangesInDays": [
+        1,
+        7,
+        30,
+        365
+      ]
+    },
+    "publicRequestDeadlineMs": 20000,
+    "preflightDevicesPerSchool": 5,
+    "drainCoverage": "Known Promise-returning API/heartbeat middleware, full heartbeat handlers, scoped operations, raw pool work, classification/WebSocket producers and tenant releases. HTTP response lifetime supplements callback middleware; an aborted pre-handler response is never certified as fully completed.",
+    "reporting": "100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance"
+  },
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "timeline": {
+    "release": {
+      "schemaVersion": 2,
+      "run": "4c037ef4cde5",
+      "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+      "imageId": "sha256:949286506dd548e502aa81e65794a5699e95479d816f60dd057b7a26c17a0de0",
+      "bindingSha256": "f5d6a201a393b2002556faca09a63d7795947cd850b6509e8d0d68ec214a63aa",
+      "profile": "release-enabled-linux-role-default-100rps-v1",
+      "mode": "diagnostic",
+      "phase": "combined",
+      "nonce": "<REDACTED>",
+      "diagnosticOnly": true,
+      "capacityAccepted": false,
+      "preparedAt": "2026-10-03T16:26:48.818Z",
+      "releasedAt": "2026-10-03T16:29:12.872Z",
+      "releaseSha256": "40978e128b2677b5dd63733801831e7a69c85c5f4914b0a97f543d71a6fa733c"
+    },
+    "runStartedAt": "2026-10-03T16:29:28.911Z",
+    "phaseStartedAt": "2026-10-03T16:29:42.493Z",
+    "phaseDurationMs": 62721.425762,
+    "runFinishedAt": "2026-10-03T16:30:54.649Z",
+    "workers": [
+      {
+        "schoolIndex": 0,
+        "wholeOperationDurationMs": 25049.169701000003,
+        "correct": true
+      },
+      {
+        "schoolIndex": 1,
+        "wholeOperationDurationMs": 47560.953817,
+        "correct": true
+      }
+    ],
+    "note": "Worker elapsed includes admission queue; reports overlap heartbeat offers. Event-loop maxima have no timestamp, so coincident maxima are not causal proof."
+  },
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5115,
+    "succeeded": 3020,
+    "failed": 2095,
+    "refusedAtInFlightLimit": 885,
+    "lateOffers": 199,
+    "maxOfferLatenessMs": 1820.521845000003,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2554,
+        "succeeded": 1516,
+        "failed": 1038,
+        "refused": 446
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2561,
+        "succeeded": 1504,
+        "failed": 1057,
+        "refused": 439
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 2095
+    },
+    "offerWindowMs": 59990.06968700001,
+    "outstandingAtEndOfOffering": 377,
+    "totalIncludingDrainMs": 62711.893087000004,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5115,
+      "minMs": 735.3602560000036,
+      "p50Ms": 8472.069961000001,
+      "p95Ms": 13971.000801999995,
+      "maxMs": 14773.038169000003
+    }
+  },
+  "reports": {
+    "total": 64,
+    "passed": 64,
+    "waves": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "error": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "lock-screen HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"63869c0e-b70b-49aa-bdcc-5e6693ef5fca\"}\n\n500 !== 201\n"
+    },
+    "simulatedClientAcknowledgements": true,
+    "browserEnforcementClaimed": false
+  },
+  "correctnessPassed": true,
+  "insertedObservations": 3721,
+  "api": {
+    "httpHeartbeatFailures": 2095,
+    "checkoutFailures": 2096,
+    "acquisitions": {
+      "count": 13866,
+      "failures": 2096,
+      "maxMs": 5319.008667000002
+    },
+    "cpuSeconds": 53.025202,
+    "eventLoop": {
+      "p50Ms": 21.348351,
+      "p95Ms": 40.796159,
+      "maxMs": 1610.612735,
+      "utilization": 0.8513481268660578
+    }
+  },
+  "drains": {
+    "preflight": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.7179959999994026,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "post": {
+      "api": {
+        "complete": true,
+        "budgetMs": 20000,
+        "elapsedMs": 1.0885920000000624,
+        "passes": 2,
+        "gauges": {
+          "activeOperations": 0,
+          "pendingCheckouts": 0,
+          "activeCheckouts": 0,
+          "pendingAcquisitions": 0,
+          "activeQueries": 0,
+          "poolWaiting": 0,
+          "poolHeld": 0,
+          "httpResponses": 0,
+          "pendingTenantReleases": 0
+        },
+        "physicallyIdle": true,
+        "abortedResponses": 0
+      },
+      "worker": {
+        "complete": true,
+        "budgetMs": 20000,
+        "elapsedMs": 1.5364899999985937,
+        "passes": 2,
+        "gauges": {
+          "activeOperations": 0,
+          "pendingCheckouts": 0,
+          "activeCheckouts": 0,
+          "pendingAcquisitions": 0,
+          "activeQueries": 0,
+          "poolWaiting": 0,
+          "poolHeld": 0,
+          "httpResponses": 0,
+          "pendingTenantReleases": 0
+        },
+        "physicallyIdle": true,
+        "abortedResponses": 0
+      }
+    }
+  },
+  "poolReadiness": [
+    {
+      "name": "api",
+      "max": 16,
+      "acquisitionCalls": 1,
+      "queryCalls": 1,
+      "sameRole": true,
+      "databaseSuperuser": false,
+      "databaseBypassRls": false,
+      "neutralSchool": true,
+      "applicationSuperScope": false,
+      "applicationName": "usage_release_api",
+      "checkoutDeadlineMs": 5000,
+      "statementDeadlineMs": 15000
+    },
+    {
+      "name": "session",
+      "max": 2,
+      "acquisitionCalls": 1,
+      "queryCalls": 1,
+      "sameRole": true,
+      "databaseSuperuser": false,
+      "databaseBypassRls": false,
+      "neutralSchool": true,
+      "applicationSuperScope": false,
+      "applicationName": "usage_release_api",
+      "checkoutDeadlineMs": 5000,
+      "statementDeadlineMs": 15000
+    },
+    {
+      "name": "worker",
+      "max": 5,
+      "acquisitionCalls": 1,
+      "queryCalls": 1,
+      "sameRole": true,
+      "databaseSuperuser": false,
+      "databaseBypassRls": false,
+      "neutralSchool": true,
+      "applicationSuperScope": true,
+      "applicationName": "usage_release_worker",
+      "checkoutDeadlineMs": 10000,
+      "statementDeadlineMs": 60000
+    }
+  ],
+  "readiness": true,
+  "prewarmed": 16,
+  "staffAuthenticationVerified": true,
+  "enabledCapabilitiesVerified": true,
+  "cgroups": {
+    "coordinator": {
+      "cpuMax": "50000 100000",
+      "memoryMax": 1073741824,
+      "memorySwapMax": 0,
+      "delta": {
+        "durationMicroseconds": 62769258,
+        "cpu": {
+          "usage_usec": 1962096,
+          "user_usec": 1646029,
+          "system_usec": 316067,
+          "nr_periods": 623,
+          "nr_throttled": 11,
+          "throttled_usec": 532263,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 204115968,
+        "resourceAcceptance": false
+      }
+    },
+    "api": {
+      "cpuMax": "100000 100000",
+      "memoryMax": 2147483648,
+      "memorySwapMax": 0,
+      "delta": {
+        "durationMicroseconds": 62768460,
+        "cpu": {
+          "usage_usec": 53027517,
+          "user_usec": 44209152,
+          "system_usec": 8818366,
+          "nr_periods": 616,
+          "nr_throttled": 431,
+          "throttled_usec": 20112580,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 387366912,
+        "resourceAcceptance": false
+      }
+    },
+    "worker": {
+      "cpuMax": "50000 100000",
+      "memoryMax": 1073741824,
+      "memorySwapMax": 0,
+      "delta": {
+        "durationMicroseconds": 62811790,
+        "cpu": {
+          "usage_usec": 712952,
+          "user_usec": 603488,
+          "system_usec": 109464,
+          "nr_periods": 566,
+          "nr_throttled": 2,
+          "throttled_usec": 460934,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 143208448,
+        "resourceAcceptance": false
+      }
+    },
+    "generator": {
+      "cpuMax": "200000 100000",
+      "memoryMax": 1073741824,
+      "memorySwapMax": 0,
+      "delta": {
+        "durationMicroseconds": 62716732,
+        "cpu": {
+          "usage_usec": 15637317,
+          "user_usec": 13562979,
+          "system_usec": 2074339,
+          "nr_periods": 627,
+          "nr_throttled": 15,
+          "throttled_usec": 3212920,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 143159296,
+        "resourceAcceptance": false
+      }
+    }
+  },
+  "postgresPressure": {
+    "valid": true,
+    "sampleCount": 57,
+    "delta": {
+      "valid": true,
+      "settingsStable": true,
+      "groups": {
+        "wal": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "wal_records": "1127830",
+            "wal_fpi": "17077",
+            "wal_bytes": "314361818",
+            "wal_buffers_full": "314",
+            "wal_write": "3798",
+            "wal_sync": "3429"
+          },
+          "timingsMs": null
+        },
+        "bgwriter": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": true,
+          "counters": {
+            "checkpoints_timed": "0",
+            "checkpoints_req": "0",
+            "buffers_checkpoint": "0",
+            "buffers_clean": "26438",
+            "maxwritten_clean": "258",
+            "buffers_backend": "115180",
+            "buffers_backend_fsync": "0",
+            "buffers_alloc": "278774"
+          },
+          "timingsMs": {
+            "checkpoint_write_time": 0,
+            "checkpoint_sync_time": 0
+          }
+        },
+        "database": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "xact_commit": "31543",
+            "xact_rollback": "4",
+            "blks_read": "535156",
+            "blks_hit": "16039891",
+            "tup_returned": "31593017",
+            "tup_fetched": "7268993",
+            "tup_inserted": "171925",
+            "tup_updated": "2008",
+            "tup_deleted": "18",
+            "temp_files": "38",
+            "temp_bytes": "467852480",
+            "deadlocks": "0"
+          },
+          "timingsMs": null
+        }
+      },
+      "semantics": "Read-only counters from the owned PostgreSQL instance; statistics are asynchronously published and are not exact per-operation attribution. WAL/bgwriter counters are instance-wide; database counters cover this fixture. Timing disabled means unavailable, never a measured zero."
+    }
+  },
+  "runtime": {
+    "api": [
+      {
+        "stage": "startup",
+        "hrtimeMicroseconds": 1443975736951,
+        "node": "22.23.3",
+        "heapLimitBytes": 1098907648,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 55115776,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "phase_reset",
+        "hrtimeMicroseconds": 1443993836131,
+        "node": "22.23.3",
+        "heapLimitBytes": 1098907648,
+        "newSpaceBytes": 16777216,
+        "rssBytes": 253636608,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "phase_snapshot",
+        "hrtimeMicroseconds": 1444056603811,
+        "node": "22.23.3",
+        "heapLimitBytes": 1098907648,
+        "newSpaceBytes": 16777216,
+        "rssBytes": 398553088,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "shutdown",
+        "hrtimeMicroseconds": 1444067191423,
+        "node": "22.23.3",
+        "heapLimitBytes": 1098907648,
+        "newSpaceBytes": 16777216,
+        "rssBytes": 398733312,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "exit",
+        "hrtimeMicroseconds": 1444067208761,
+        "node": "22.23.3",
+        "heapLimitBytes": 1098907648,
+        "newSpaceBytes": 16777216,
+        "rssBytes": 398733312,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      }
+    ],
+    "worker": [
+      {
+        "stage": "startup",
+        "hrtimeMicroseconds": 1443975959270,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 55283712,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "phase_reset",
+        "hrtimeMicroseconds": 1443993836475,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 8388608,
+        "rssBytes": 111296512,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "phase_snapshot",
+        "hrtimeMicroseconds": 1444056649384,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 2097152,
+        "rssBytes": 110546944,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "shutdown",
+        "hrtimeMicroseconds": 1444066829028,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 110678016,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "exit",
+        "hrtimeMicroseconds": 1444066831492,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 110678016,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      }
+    ],
+    "generator": [
+      {
+        "stage": "startup",
+        "hrtimeMicroseconds": 1443976134872,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 55283712,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "phase_start",
+        "hrtimeMicroseconds": 1443993883286,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 4194304,
+        "rssBytes": 101863424,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "shutdown",
+        "hrtimeMicroseconds": 1444066060440,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 84004864,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "exit",
+        "hrtimeMicroseconds": 1444066063708,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 84135936,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      }
+    ],
+    "coordinator": [
+      {
+        "stage": "startup",
+        "hrtimeMicroseconds": 1443970449674,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 1048576,
+        "rssBytes": 55230464,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      },
+      {
+        "stage": "exit",
+        "hrtimeMicroseconds": 1444067656524,
+        "node": "22.23.3",
+        "heapLimitBytes": 549453824,
+        "newSpaceBytes": 8388608,
+        "rssBytes": 103882752,
+        "nodeOptionsPresent": false,
+        "oldSpaceOverrideMiB": null
+      }
+    ]
+  },
+  "roles": [
+    {
+      "role": "coordinator",
+      "caps": {
+        "nanoCpus": 500000000,
+        "memoryBytes": 1073741824,
+        "memorySwapBytes": 1073741824,
+        "heapMiB": null
+      },
+      "exit": {
+        "containerId": "692e1b002a59c7e2dd660375029e7b5323c44f55de0d660551f2a8f677ef88b1",
+        "imageId": "sha256:949286506dd548e502aa81e65794a5699e95479d816f60dd057b7a26c17a0de0",
+        "run": "4c037ef4cde5",
+        "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+        "role": "coordinator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 1,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 1,
+        "clean": false
+      }
+    },
+    {
+      "role": "api",
+      "caps": {
+        "nanoCpus": 1000000000,
+        "memoryBytes": 2147483648,
+        "memorySwapBytes": 2147483648,
+        "heapMiB": null
+      },
+      "exit": {
+        "containerId": "f41b44e6994c74cbd607a82ffebd084a153751d2269b26a4c17c5dcb7d0f447b",
+        "imageId": "sha256:949286506dd548e502aa81e65794a5699e95479d816f60dd057b7a26c17a0de0",
+        "run": "4c037ef4cde5",
+        "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+        "role": "api",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    },
+    {
+      "role": "worker",
+      "caps": {
+        "nanoCpus": 500000000,
+        "memoryBytes": 1073741824,
+        "memorySwapBytes": 1073741824,
+        "heapMiB": null
+      },
+      "exit": {
+        "containerId": "218bcaf01f928145a843e943d9a26efd6929bf240bc285b95abea92949a6a65b",
+        "imageId": "sha256:949286506dd548e502aa81e65794a5699e95479d816f60dd057b7a26c17a0de0",
+        "run": "4c037ef4cde5",
+        "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+        "role": "worker",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    },
+    {
+      "role": "generator",
+      "caps": {
+        "nanoCpus": 2000000000,
+        "memoryBytes": 1073741824,
+        "memorySwapBytes": 1073741824,
+        "heapMiB": null
+      },
+      "exit": {
+        "containerId": "7d6c000ea4238206a52b1235436265a258afd2f8270785f0f7c563891781a66d",
+        "imageId": "sha256:949286506dd548e502aa81e65794a5699e95479d816f60dd057b7a26c17a0de0",
+        "run": "4c037ef4cde5",
+        "source": "b11202fc305198d76e73c5e6d711b7dc9ed2d938",
+        "role": "generator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    }
+  ],
+  "hostPassed": false,
+  "allOwnedCleanup": {
+    "schemaVersion": 1,
+    "run": "4c037ef4cde5",
+    "roles": {
+      "cleanupPassed": true,
+      "roles": [
+        {
+          "role": "generator",
+          "cleanupPassed": true,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "worker",
+          "cleanupPassed": true,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "api",
+          "cleanupPassed": true,
+          "confirmedAbsent": true
+        },
+        {
+          "role": "coordinator",
+          "cleanupPassed": true,
+          "confirmedAbsent": true
+        }
+      ]
+    },
+    "fixtures": {
+      "cleanupPassed": true,
+      "resources": [
+        {
+          "role": "redis",
+          "removed": true,
+          "cleanupPassed": true
+        },
+        {
+          "role": "postgres",
+          "removed": true,
+          "cleanupPassed": true
+        }
+      ]
+    },
+    "cleanupPassed": true,
+    "capacityAccepted": false
+  },
+  "failedChecks": [
+    "acceptanceRun",
+    "allHeartbeats",
+    "heartbeatCompletionDeadline",
+    "observationsRecorded",
+    "lifecycle",
+    "noLateHandlerFailures",
+    "noPoolFailures",
+    "acquisitionDeadlines"
+  ],
+  "limitations": [
+    "Failed diagnostic; no accepted campaign run. 2,095 failed HTTP heartbeats and 2,096 checkout failures are different counters; the latter is not a count of unique failed HTTP requests.",
+    "All64 reports and both workers passed, but heartbeat/lifecycle/offer timing failed. This mixed result does not attribute improvement to the prepared SELECT optimization.",
+    "The stronger campaign/numerical validator is not active in this diagnostic. Per-run capacity acceptance is permanently false.",
+    "Cgroups are role-specific; default V8 startup is recorded. Host caches were not flushed. Private snapshot preservation occurred before cold restart.",
+    "PostgreSQL timing fields unavailable when track_io_timing is off must not be read as zero. No PG container cgroup time series exists in this run beyond declared caps.",
+    "Prepared snapshot is private and not restore-tested."
+  ]
+}

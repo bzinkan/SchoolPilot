@@ -4,7 +4,7 @@ This is an inclusion inventory, not merge, deployment, or activation evidence. T
 
 [Operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) · [Exact commits and proofs](release-evidence/release-2.9.7-pr-inventory.json)
 
-Current October 3 preparation: [CI on `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
+Historical October 3 preparation: [CI on `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
 is fully green, but its [resource-bounded Usage diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)
 fails capacity (2,704/6,000 heartbeats, 34/64 reports, second complete worker
 57.768 seconds including queue wait). The subsequent `5d543f40` instrumentation
@@ -23,9 +23,31 @@ heartbeat SELECT metadata reuse with fresh values and mandatory-work sealing.
 records 1,906 unit passes with no skips, 50 owner and 50 restricted native passes,
 four restricted private-recovery passes, and build/type/cast checks. Its
 [final source binding](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/final-binding.json)
-preserves the post-test whitespace correction and compiled equivalence. New
-CI and full combined capacity remain pending; no accepted
-capacity run or release execution is recorded.
+preserves the post-test whitespace correction and compiled equivalence. At
+review head `a109fd27`, application/browser/database and security checks pass;
+rollout-tool CI remains running. No release execution is recorded.
+
+The [combined b112 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-b112-01/manifest.json) failed: 3,020 of
+6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the
+in-flight ceiling; 199 offers were late. All 64 reports passed. Complete worker
+operations took 25.049 and 47.561 seconds, including admission and cleanup.
+There were 2,096 database acquisition failures: 2,095 on heartbeat paths and
+one on the classroom lifecycle path, which failed before acceptance. Independent
+totals, coverage, tenant isolation and eight audited CSV checks passed. Physical
+owners drained and all six owned containers were removed. This is valid failed
+diagnostic evidence, not an accepted capacity run or a proven connection leak.
+Three consecutive final-source passes and the original comparison remain required.
+
+The [local candidate/fallback recovery proof](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passed
+for b112 candidate → 6e251 fallback → b112 candidate. Actual bundled image
+functions preserved separate thread-close, school-hard-off and activity-hard-off
+expiration, delivered history, and Stop Focus cleanup without removing other
+restrictions. A separate source migration rehearsal retained 53 migration IDs
+and 129 forced-RLS tables through re-entry. Both Usage modes stayed off. These
+checks used synthetic fixtures; they do not establish the actual production
+catalog, service-traffic rollback, Redis/browser behavior or recovery below the
+Usage coverage correction. All failed setup attempts and independent cleanup
+proof remain preserved.
 
 Application `0e427e3c` additionally corrects both Focus ACK wire surfaces and
 JSONB-order-dependent status writes. Its [64 focused and 15 restricted database
@@ -39,10 +61,10 @@ persists; completed drain and cleanup do not establish capacity acceptance.
 
 | Item | Selected source / limitation |
 |---|---|
-| Application | `b11202fc305198d76e73c5e6d711b7dc9ed2d938` in #603; focused/native/full-unit checks pass. CI and combined capacity on these application bytes remain pending. [CI at `5d031512`](release-evidence/release-297/usage-contention/ci-5d031512-final-01/manifest.json) covers the preceding `0e427e3c` application only. |
+| Application | `b11202fc305198d76e73c5e6d711b7dc9ed2d938` in #603; local focused/native/full-unit checks pass. Current review head `a109fd27` has application/browser/database and security checks passing; rollout-tool CI remains running. Combined capacity failed and has zero accepted runs. |
 | Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
-| Local candidate image | [`b11202fc`](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json) passes a fresh uncached build, pinned scan with zero findings, compatibility checks and cleanup. Its Linux/amd64 manifest is `sha256:e2ff94d03e7c35a58d81cc568865ccbec4ac3fc2d6c21d8a4ce2363c2f889f24`. Final release selection still requires accepted capacity and recovery pairing. Earlier images remain historical. |
-| Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. Its [fresh local image and scan](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass with zero findings, verified embedded compatibility and cleanup. Both Usage modes must remain off. Final-candidate recovery pairing remains required. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |
+| Local candidate image | [`b11202fc`](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json) passes a fresh uncached build, pinned scan with zero findings, compatibility checks and cleanup. Its Linux/amd64 manifest is `sha256:e2ff94d03e7c35a58d81cc568865ccbec4ac3fc2d6c21d8a4ce2363c2f889f24`. Local recovery pairing passed within the linked synthetic-fixture scope; final release selection still requires accepted capacity and completed CI. Earlier images remain historical. |
+| Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. Its [fresh local image and scan](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass with zero findings, verified embedded compatibility and cleanup. Both Usage modes must remain off. The [b112/6e251 local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes the recorded source re-entry and adopted-state function checks; production service-traffic rollback is not established. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |
 | Operational readiness | No accepted Usage capacity run and no release execution approved. Follow the [operator checklist](RELEASE_2_9_7_OPERATOR_CHECKLIST.md) for the remaining gates and separate authorizations. |
 
 ## Historical preparation checkpoints

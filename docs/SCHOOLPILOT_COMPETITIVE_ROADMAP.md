@@ -23,10 +23,24 @@ four restricted private-recovery cases, and build/type/cast checks. The
 records the whitespace cleanup and identical compiled output. The
 [fresh candidate image](release-evidence/release-297/usage-contention/candidate-artifact-b11202fc/manifest.json)
 passes an uncached build, a pinned scan with zero findings and compatibility
-checks. CI, recovery pairing and combined capacity remain pending. There are zero accepted capacity
-runs. The preceding candidate-default ingestion diagnostic also failed; a
-larger effective V8 heap did not resolve saturation. No deployment green light
-or change to operational authorization is recorded.
+checks. The [local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes synthetic source
+re-entry and actual-image function checks, including hard-off expiration and
+Focus cleanup. It does not establish production catalog or service-traffic
+rollback. Current-head application/browser/database and security checks pass;
+rollout-tool CI remains running.
+
+The [combined b112 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-b112-01/manifest.json) failed: 3,020 of
+6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the
+in-flight ceiling; 199 offers were late. All 64 reports passed. Complete worker
+operations took 25.049 and 47.561 seconds, including admission and cleanup.
+There were 2,096 database acquisition failures: 2,095 on heartbeat paths and
+one on the classroom lifecycle path, which failed before acceptance. Independent
+totals, coverage, tenant isolation and eight audited CSV checks passed. Physical
+owners drained and all six owned containers were removed. This is valid failed
+diagnostic evidence, not an accepted capacity run or a proven connection leak.
+Three consecutive final-source passes and the original comparison remain required.
+
+No deployment green light or change to operational authorization is recorded.
 
 Earlier October 3 checkpoint: [full CI at `9630c009`](release-evidence/release-297/usage-contention/ci-9630c009-final-01/manifest.json)
 passes, while its [resource-bounded Usage diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-9630-01/manifest.json)

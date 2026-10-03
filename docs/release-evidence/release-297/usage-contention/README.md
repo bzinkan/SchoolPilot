@@ -14,7 +14,7 @@ native tests, four restricted private-recovery tests, and build/type/cast checks
 The initial failing test run and fixture setup failure remain in the packet.
 The [final source binding](heartbeat-prepared-reads-implementation-01/final-binding.json)
 records the trailing-whitespace cleanup and identical rebuilt JavaScript.
-Full combined capacity and CI on this new application remain pending.
+Full combined capacity has failed; zero capacity runs are accepted.
 Its [fresh local candidate image](candidate-artifact-b11202fc/manifest.json)
 passes `--pull --no-cache`, the pinned scan with zero findings, embedded
 129-table/lifecycle compatibility checks and exact-owned cleanup. The permanent
@@ -30,7 +30,44 @@ ordinary database lane that expected the old inline entitlement queries.
 [The follow-up](runtime-entitlement-selector-followup-01/manifest.json) retains
 the failed job, updates the assertion to the canonical same-school shared-lock
 builders and passes all 27 focused tests. Application bytes are unchanged.
-The remaining CI result must be replaced by a successful current-head run.
+At review head `a109fd27`, backend, frontend, browser and both database lanes
+pass, as do all three security workflows. Rollout-tool CI is still running.
+
+The [combined b112 diagnostic](linux-role-combined-b112-01/manifest.json) failed: 3,020 of
+6,000 offered heartbeats succeeded, 2,095 failed and 885 were refused at the
+in-flight ceiling; 199 offers were late. All 64 reports passed. Complete worker
+operations took 25.049 and 47.561 seconds, including admission and cleanup.
+There were 2,096 database acquisition failures: 2,095 on heartbeat paths and
+one on the classroom lifecycle path, which failed before acceptance. Independent
+totals, coverage, tenant isolation and eight audited CSV checks passed. Physical
+owners drained and all six owned containers were removed. This is valid failed
+diagnostic evidence, not an accepted capacity run or a proven connection leak.
+Three consecutive final-source passes and the original comparison remain required.
+
+The same run recorded 314.36 MB of PostgreSQL WAL and 467.85 MB of temporary
+data. Samples show API WAL-write waits during bulk rollups and substantial
+connection hold time. Driver-await durations include database wait, JavaScript
+resumption and decoding; they are not database CPU time. Asynchronous PostgreSQL
+statistics cannot establish exact write timing, and the failed lifecycle HTTP
+500 lacks a retained exact exception. No leak, prepared-read regression or host
+pause cause is established. Exact rollup plan investigation is the next step.
+
+The [local candidate/fallback recovery proof](recovery-pair-b112-6e251/manifest.json) passed
+for b112 candidate → 6e251 fallback → b112 candidate. Actual bundled image
+functions preserved separate thread-close, school-hard-off and activity-hard-off
+expiration, delivered history, and Stop Focus cleanup without removing other
+restrictions. A separate source migration rehearsal retained 53 migration IDs
+and 129 forced-RLS tables through re-entry. Both Usage modes stayed off. These
+checks used synthetic fixtures; they do not establish the actual production
+catalog, service-traffic rollback, Redis/browser behavior or recovery below the
+Usage coverage correction. All failed setup attempts and independent cleanup
+proof remain preserved.
+
+The immutable b112 prepared snapshot remains private. At this checkpoint its
+restoration has not yet been verified. Snapshot reuse requires independent
+source/schema/role/state/count verification, standard ANALYZE and the documented
+PostgreSQL restart; this does not flush the host filesystem cache. The strict
+three-run acceptance validator is still under development.
 
 The [Linux prepared-query component comparison](heartbeat-prepared-linux-prototype-01/manifest.json)
 uses exact `0e427e3c` runtime bytes, one API CPU, 2 GiB container memory and the
