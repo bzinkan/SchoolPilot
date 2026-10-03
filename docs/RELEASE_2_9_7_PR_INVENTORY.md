@@ -25,6 +25,10 @@ The [CI checkpoint at `59f0e431`](release-evidence/release-297/usage-contention/
 
 The [latest combined checks](release-evidence/release-297/usage-contention/combined-checks-attempt-06/manifest.json) passed the production build, cast check and 1,769 unit tests, with four named conditional skips. The attempt retains its native-test typing failure. A [separate test-only repair](release-evidence/release-297/usage-contention/telemetry-owner-projection-type-followup/manifest.json) passes test types/casts and 11 owner plus 11 restricted cases; application bytes and unit-selected tests are unchanged. The [cumulative telemetry acceptance gate](release-evidence/release-297/usage-contention/optional-telemetry-phase-counter/manifest.json) adds 14 focused and 49 load-guard passes, with zero optional publication failures required over the entire phase. Capacity and new-head CI remain pending.
 
+[Combined attempt06 at `25ba8686`](release-evidence/release-297/usage-contention/load-combined-06/manifest.json) remains failed capacity evidence: 3,668/6,000 heartbeat successes, 36/64 reports, 979 API acquisition failures and 144 telemetry failures. Both workers meet 48 seconds; current-day classification/totals, coverage and eight audited CSVs now pass. All tracked leases return to zero after drain. The same-source ingestion CPU diagnostic retains all 6,000 offers and is diagnostic only; it does not replace the required three consecutive combined passes. Final capacity, artifacts and release execution remain incomplete.
+
+The current [live-binding query correction](release-evidence/release-297/usage-contention/live-binding-query/manifest.json) preserves exact predicates and locks, with 15 owner and 15 restricted-role cases passing. [Complete server-drain tracking](release-evidence/release-297/usage-contention/complete-server-drain/manifest.json) retains ownership after HTTP completion and rejects aborted preflight uncertainty. The [latest full unit rerun](release-evidence/release-297/usage-contention/combined-checks-attempt-08/manifest.json) passes 1,775 tests with zero failures and four named conditional skips; preceding build/type/cast checks cover identical application bytes. All 54 workload guards pass. These changes require their own frozen-source capacity run and remote checks.
+
 The separately prepared fallback source at the Stop Focus checkpoint is `ff94f21e6cc91075e7e82f0d28b434ef43f4a118`
 on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
 the private-chat/SSO lock-order correction, monitoring lease-reuse fix and
@@ -39,8 +43,7 @@ Its [classification-delivery backport](release-evidence/release-297/usage-conten
 changes only the historical-classification/publication barrier, its fixed failure
 counter and regression. Five baseline failures are retained; 24 focused cases and
 build/type/cast checks pass. It does not include the performance projections or
-immediate-classification optimization. A new exact image and migration re-entry
-are still required. This fallback is not another merged source PR. Registry publication and production
+immediate-classification optimization. Its [exact uncached image](release-evidence/release-297/usage-contention/rollback-artifact-ed5599de/index.json) now passes the pinned full scan with zero findings and embedded compatibility checks. Final candidate-schema migration re-entry remains required. This fallback is not another merged source PR. Registry publication and production
 task bindings remain separate. Historical artifacts are retained.
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|

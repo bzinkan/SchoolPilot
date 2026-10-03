@@ -120,7 +120,8 @@ try {
   metrics.staffAuthenticationVerified = auth.realSessionCookies; metrics.enabledCapabilitiesVerified = auth.acceptedCapabilities;
   // A shutdown flush permanently disables batching. Preflight must leave the
   // live process's normal batching policy intact for the measured traffic.
-  await api.rpc('quiesce');
+  metrics.preflightDrain = await api.rpc('quiesce');
+  assert.equal(metrics.preflightDrain.complete, true, 'Preflight server work did not drain');
   const phase = { name: phaseName, startedAt: new Date().toISOString(), pgWaitSamples: [], workers: [] }; metrics.phases.push(phase); save();
   const currentCounts = async () => (await observer.query('SELECT school_id,COUNT(*)::int AS count FROM heartbeats WHERE timestamp >= $1::timestamp GROUP BY school_id ORDER BY school_id',
     [time.localDateStartUtc(today, 'America/New_York').toISOString().replace('T', ' ').replace('Z', '')])).rows;
@@ -154,13 +155,17 @@ try {
   const settled = await Promise.allSettled([traffic, ...workers]);
   phase.traffic = settled[0].status === 'fulfilled' ? settled[0].value : { error: { message: settled[0].reason.message } };
   phase.workers = settled.slice(1).map((result, index) => result.status === 'fulfilled' ? result.value : { schoolIndex: index, correct: false, error: { message: result.reason.message } });
+  phase.clientWorkCompletedMs = performance.now() - start;
+  const [apiDrain, workerDrain] = await Promise.all([api.rpc('drain'), worker.rpc('drain')]);
+  phase.serverDrain = { api: apiDrain, worker: workerDrain };
   phase.durationMs = performance.now() - start; clearInterval(sampling); while (samplePending) await new Promise(resolve => setTimeout(resolve, 10));
-  await api.rpc('drain'); phase.api = await api.rpc('snapshot'); phase.worker = await worker.rpc('snapshot');
+  phase.api = await api.rpc('snapshot'); phase.worker = await worker.rpc('snapshot');
   phase.postgresPressure.final = await readPostgresPressure(observer);
   phase.postgresPressure.delta = postgresPressureDelta(phase.postgresPressure.baseline, phase.postgresPressure.final,
     phase.postgresPressure.samples.map(sample => sample.snapshot));
   phase.postgresPressure.valid = !phase.samplingFailure && phase.postgresPressure.delta.valid;
   save();
+  assert.ok(apiDrain.complete && workerDrain.complete, 'Server work remained active after bounded drain; metrics preserved');
   phase.persistedAfter = await currentCounts();
   phase.insertedObservations = phase.persistedAfter.reduce((sum, row) => sum + row.count - (phase.persistedBefore.find(before => before.school_id === row.school_id)?.count || 0), 0);
   const finishSource = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();

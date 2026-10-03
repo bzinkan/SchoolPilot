@@ -14,6 +14,7 @@ import { studentSignInDiagnostics } from "./services/classpilotStudentSignInDiag
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
+import { trackUsageCapacityMiddleware } from "./services/usageCapacityDiagnostics.js";
 import { safeCompare } from "./util/safeCompare.js";
 import routes from "./routes/index.js";
 import monitoringRoutes from "./routes/monitoring.js";
@@ -268,7 +269,7 @@ export function createApp() {
   // Global API rate limit (Redis-backed, falls back to in-memory). The old
   // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
   // above, so req.ip is the real viewer again.
-  app.use("/api", guardClasspilotUsageIngressMiddleware(apiLimiter));
+  app.use("/api", guardClasspilotUsageIngressMiddleware(trackUsageCapacityMiddleware("api_limiter", apiLimiter)));
 
   // Client config for Chrome extension (public, no auth)
   app.get("/client-config.json", (_req, res) => {

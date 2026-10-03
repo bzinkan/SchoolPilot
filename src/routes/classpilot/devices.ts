@@ -199,7 +199,7 @@ import {
   trackHeartbeatClassificationProducer,
 } from "../../services/heartbeatClassificationBatcher.js";
 import { selectRequestSchoolRole } from "../../services/schoolAuthorization.js";
-import { recordUsageCapacityCounter } from "../../services/usageCapacityDiagnostics.js";
+import { recordUsageCapacityCounter, startUsageCapacityOperation, trackUsageCapacityMiddleware } from "../../services/usageCapacityDiagnostics.js";
 import {
   bindHeartbeatHotPathHistoryFallbackSqlIdentity,
   recordHeartbeatHotPathCounter,
@@ -3762,7 +3762,11 @@ router.post(
 );
 
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
-router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspilotEntitlement, deviceHeartbeatLimiter, async (req, res, next) => {
+router.post("/device/heartbeat",
+  trackUsageCapacityMiddleware("heartbeat_middleware", requireCryptographicDeviceAuth),
+  trackUsageCapacityMiddleware("heartbeat_middleware", requireClasspilotEntitlement),
+  trackUsageCapacityMiddleware("heartbeat_middleware", deviceHeartbeatLimiter), async (req, res, next) => {
+  const endHeartbeatHandler = startUsageCapacityOperation("heartbeat_handler");
   try {
     const {
       activeTabUrl: reportedActiveTabUrl,
@@ -4934,7 +4938,12 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
     }
     return finalDelivery.value;
   } catch (err) {
+    recordUsageCapacityCounter("heartbeatHandlerFailures", "heartbeat_handler");
     next(err);
+  } finally {
+    // res.json may precede COMMIT, RESET and Redis settlement. HTTP finish or
+    // disconnect must never report this handler as drained before its work ends.
+    endHeartbeatHandler();
   }
 });
 

@@ -6,6 +6,7 @@ import { measureMethod } from './release-enabled-instrumentation.mjs';
 import { RELEASE_PG_APPLICATION_NAMES, POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, POSTGRES_PRESSURE_MAX_SAMPLES, POSTGRES_PRESSURE_SQL, POSTGRES_ROLE_WAITS_SQL, postgresPressureSnapshot, readPostgresPressure, postgresPressureDelta } from './release-enabled-postgres-pressure.mjs';
 import { canonicalSchemaFingerprint } from './release-schema-fingerprint.mjs';
 import { commandTransportAcknowledgement, assertPrivateLifecycleAdvanced } from './release-enabled-protocol.mjs';
+import { RELEASE_DRAIN_OPERATIONS } from './release-enabled-drain.mjs';
 
 test('schema fingerprint ignores only pg_dump security nonce and newline encoding', () => {
   const a = '\\restrict first123\nCREATE TABLE usage (id text);\n\\unrestrict first123\n';
@@ -63,10 +64,13 @@ test('preflight quiescence preserves normal batching until traffic completes', (
   const coordinator = readFileSync(new URL('./release-enabled-scale.mjs', import.meta.url), 'utf8');
   assert.match(processSource, /quiesce = batch\.drainHeartbeatClassificationBatches/);
   assert.match(processSource, /flush = batch\.flushHeartbeatClassificationBatches/);
-  assert.match(processSource, /request\.operation === 'quiesce'\) await quiesce\(\)/);
+  assert.match(processSource, /drainReleaseServer\(\{ snapshot, drainClassification: quiesce/);
+  const phaseDrain = processSource.slice(processSource.indexOf("request.operation === 'drain'"), processSource.indexOf("request.operation === 'rollup'"));
+  assert.doesNotMatch(phaseDrain, /await flush\(\)/);
+  assert.match(processSource.slice(processSource.indexOf("request.operation === 'shutdown'")), /drained\.complete[\s\S]*await flush\(\)/);
   const preflight = coordinator.indexOf("await api.rpc('quiesce')");
   const measuredTraffic = coordinator.indexOf("generator.rpc('phase'");
-  const terminalDrain = coordinator.indexOf("await api.rpc('drain')");
+  const terminalDrain = coordinator.indexOf("api.rpc('drain')");
   assert.ok(preflight > 0 && preflight < measuredTraffic);
   assert.ok(terminalDrain > measuredTraffic, 'terminal flush cannot precede measured traffic');
 });
@@ -89,11 +93,14 @@ test('lazy worker proxy checkouts preserve the real receiver, both pg overloads 
 });
 
 function accepted() {
-  const database = () => ({ acquisitions: { count: 2, failures: 0, maxMs: 10 }, statements: { select: { failures: 0, maxMs: 10 } } });
+  const database = () => ({ acquisitions: { count: 2, failures: 0, maxMs: 10 }, statements: { select: { failures: 0, maxMs: 10 } },
+    pendingAcquisitions: 0, activeQueries: 0, pools: { owned: { waiting: 0, held: 0 } } });
+  const child = () => ({ database: database(), http: { activeResponses: 0, abortedResponses: 0 }, tenantReleases: { pending: 0 },
+    operations: { schemaVersion: 2, operations: Object.fromEntries(RELEASE_DRAIN_OPERATIONS.map(name =>
+      [name, { activeOperations: 0, pendingCheckouts: 0, activeCheckouts: 0, counters: { heartbeatOptionalTelemetryFailures: 0, heartbeatHandlerFailures: 0 } }])) } });
   return { sourceClean: true, sourceUnchangedAtFinish: true, processes: { api: 1, worker: 2, generator: 3 }, enabledCapabilitiesVerified: true,
     staffAuthenticationVerified: true, pools: { api: 16, session: 2, worker: 5 }, correctness: { passed: true, currentDayWorkers: [{ durationMs: 48_000, correct: true }, { durationMs: 5, correct: true }] },
-    phases: [{ name: 'combined', insertedObservations: 6000, api: { database: database(),
-      operations: { operations: { heartbeat_background: { counters: { heartbeatOptionalTelemetryFailures: 0 } } } } }, worker: { database: database() },
+    phases: [{ name: 'combined', insertedObservations: 6000, api: child(), worker: child(), serverDrain: { api: { complete: true }, worker: { complete: true } },
       workers: [{ durationMs: 48_000, correct: true }, { durationMs: 23_000, correct: true }],
       traffic: { heartbeats: { accepted: true, expected: 6000, timings: { count: 6000, maxMs: 19999 } }, heartbeatStatuses: { 200: 6000 },
         reports: [1, 7, 30, 365].flatMap(days => [0, 1].flatMap(schoolIndex => ['school', 'grade', 'class', 'student'].flatMap(scope => [0, 1].map(() => ({ days, schoolIndex, scope, status: 200, correct: true, durationMs: 100 }))))), lifecycle: { passed: true } } }] };
@@ -113,6 +120,15 @@ test('release-enabled acceptance refuses successful workers masking failed/off/d
     r => r.phases[0].traffic.lifecycle.passed = false, r => r.phases[0].api.database.acquisitions.failures++,
     r => r.phases[0].api.operations.operations.heartbeat_background.counters.heartbeatOptionalTelemetryFailures++,
     r => delete r.phases[0].api.operations,
+    r => delete r.phases[0].serverDrain, r => r.phases[0].serverDrain.api.complete = false,
+    r => r.phases[0].api.operations.operations.heartbeat_handler.activeOperations = 1,
+    r => r.phases[0].api.operations.operations.heartbeat_handler.counters.heartbeatHandlerFailures = 1,
+    r => r.phases[0].api.operations.operations.heartbeat_middleware.activeOperations = 1,
+    r => r.phases[0].api.operations.operations.heartbeat_background.activeCheckouts = 1,
+    r => r.phases[0].worker.operations.operations.heartbeat_background.pendingCheckouts = 1,
+    r => r.phases[0].api.database.pendingAcquisitions = 1, r => r.phases[0].worker.database.activeQueries = 1,
+    r => r.phases[0].api.database.pools.owned.held = 1, r => r.phases[0].api.http.activeResponses = 1,
+    r => r.phases[0].api.http.abortedResponses = 1, r => r.phases[0].api.tenantReleases.pending = 1,
     r => r.phases[0].worker.database.acquisitions.failures++, r => r.phases[0].api.database.acquisitions.maxMs = 5001,
     r => r.phases[0].worker.database.acquisitions.count = 0,
     r => r.phases[0].worker.database.acquisitions.maxMs = 10001, r => r.phases[0].api.database.statements.select.failures++,

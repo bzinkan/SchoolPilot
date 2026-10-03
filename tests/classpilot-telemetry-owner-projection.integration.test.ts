@@ -198,6 +198,101 @@ test("fresh telemetry owner projection preserves discovery, authority and lock b
       assert.equal(await storage.withClasspilotTeachingTelemetryAuthority({ ...authority, allowEndedBinding: true }, () => "forbidden", tx), undefined);
     }));
 
+    await t.test("final delivery retains exact school, student, session and device predicates", async () => {
+      const deliver = (overrides: Partial<typeof authority> = {}) => scoped(overrides.schoolId ?? a.school.id, () =>
+        storage.withClasspilotStudentControlDeliveryAuthority({ ...authority, ...overrides, freezeSsoPolicy: true },
+          () => "prepared", () => true));
+      assert.deepEqual(await deliver(), { authorized: true, value: true });
+      for (const overrides of [{ schoolId: b.school.id }, { studentId: b.student.id },
+        { studentSessionId: b.binding.id }, { deviceId: b.deviceId }]) {
+        assert.deepEqual(await deliver(overrides), { authorized: false });
+      }
+      await scoped(a.school.id, () => db.execute(sql`UPDATE students SET status='inactive' WHERE id=${a.student.id}`));
+      try { assert.deepEqual(await deliver(), { authorized: false }); }
+      finally { await scoped(a.school.id, () => db.execute(sql`UPDATE students SET status='active' WHERE id=${a.student.id}`)); }
+    });
+
+    await t.test("database-clock manual expiry after preparation suppresses final delivery", async () => {
+      const fixture = await createFixture();
+      const manualSession = randomUUID();
+      await scoped(fixture.school.id, async () => {
+        await db.execute(sql`UPDATE student_sessions SET is_active=false,ended_at=now() WHERE id=${fixture.binding.id}`);
+        await db.execute(sql`INSERT INTO student_sessions(id,student_id,device_id,auth_kind,manual_lease_expires_at,session_recovery_token_hash)
+          VALUES(${manualSession},${fixture.student.id},${fixture.deviceId},'manual_shared',clock_timestamp()+interval '2 seconds',${"b".repeat(64)})`);
+        let prepared = false, delivered = false;
+        const result = await storage.withClasspilotStudentControlDeliveryAuthority({ schoolId: fixture.school.id,
+          studentId: fixture.student.id, studentSessionId: manualSession, deviceId: fixture.deviceId, freezeSsoPolicy: true },
+        async transactionDb => {
+          prepared = true;
+          await transactionDb.execute(sql`SELECT pg_sleep(greatest(0,extract(epoch FROM
+            (manual_lease_expires_at-clock_timestamp())))+0.01) FROM student_sessions WHERE id=${manualSession}`);
+          return "prepared before expiry";
+        }, () => { delivered = true; return true; });
+        assert.equal(prepared, true);
+        assert.equal(delivered, false);
+        assert.deepEqual(result, { authorized: false });
+      });
+    });
+
+    await t.test("live final delivery locks every joined binding relation until synchronous delivery", async () => {
+      for (const relation of ["student", "session", "device"] as const) {
+        let prepared!: () => void, release!: () => void;
+        const reached = new Promise<void>(resolve => { prepared = resolve; });
+        const unblock = new Promise<void>(resolve => { release = resolve; });
+        let changed = false, delivered = false;
+        const delivery = scoped(a.school.id, () => storage.withClasspilotStudentControlDeliveryAuthority(authority,
+          async () => { prepared(); await unblock; return relation; }, () => {
+            assert.equal(changed, false); delivered = true; return true;
+          }));
+        await reached;
+        let writerStarted!: (pid: number) => void;
+        const writerPid = new Promise<number>(resolve => { writerStarted = resolve; });
+        const writer = scoped(a.school.id, () => db.transaction(async tx => {
+          writerStarted((await tx.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`)).rows[0]!.pid);
+          await tx.execute(relation === "student" ? sql`UPDATE students SET status=status WHERE id=${a.student.id}`
+            : relation === "session" ? sql`UPDATE student_sessions SET is_active=is_active WHERE id=${a.binding.id}`
+              : sql`UPDATE devices SET device_id=device_id WHERE device_id=${a.deviceId}`);
+          changed = true;
+        }));
+        try { await waitUntilBlocked(await writerPid); assert.equal(changed, false); }
+        finally { release(); }
+        assert.deepEqual(await delivery, { authorized: true, value: true });
+        await writer;
+        assert.equal(delivered, true);
+        assert.equal(changed, true);
+      }
+    });
+
+    await t.test("a committed signout and replacement preceding delivery suppress the old binding and tombstone", async () => {
+      const fixture = await createFixture();
+      const exact = { schoolId: fixture.school.id, studentId: fixture.student.id, studentSessionId: fixture.binding.id,
+        deviceId: fixture.deviceId, teachingSessionId: fixture.session.id, controlRevision: fixture.control.revision };
+      let locked!: () => void, release!: () => void;
+      const reached = new Promise<void>(resolve => { locked = resolve; });
+      const unblock = new Promise<void>(resolve => { release = resolve; });
+      const writer = scoped(fixture.school.id, () => db.transaction(async tx => {
+        await storage.lockClasspilotStudentControlAuthorities(fixture.school.id, [fixture.student.id], tx);
+        await tx.execute(sql`UPDATE student_sessions SET is_active=false,ended_at=now() WHERE id=${fixture.binding.id}`);
+        await tx.execute(sql`INSERT INTO student_sessions(student_id,device_id) VALUES(${fixture.student.id},${fixture.deviceId})`);
+        locked(); await unblock;
+      }));
+      await reached;
+      let readerStarted!: (pid: number) => void;
+      const readerPid = new Promise<number>(resolve => { readerStarted = resolve; });
+      let delivered = false;
+      const reader = scoped(fixture.school.id, async () => {
+        readerStarted((await db.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`)).rows[0]!.pid);
+        return storage.withClasspilotStudentControlDeliveryAuthority(exact, () => true, () => { delivered = true; return true; });
+      });
+      try { await waitUntilBlocked(await readerPid); }
+      finally { release(); }
+      await writer;
+      assert.deepEqual(await reader, { authorized: false });
+      assert.equal(delivered, false);
+      assert.equal(await scoped(fixture.school.id, () => storage.withClasspilotTeachingTelemetryAuthority(
+        { ...exact, allowEndedBinding: true }, () => "forbidden")), undefined);
+    });
+
     await t.test("server classification is atomic with insertion, nullable by default and fenced by exact binding", () => isolated(a.school.id, async tx => {
       const payload = { schoolId: a.school.id, studentId: a.student.id, deviceId: a.deviceId, studentEmail: "ignored@example.invalid",
         activeTabTitle: "Synthetic educational page", activeTabUrl: "https://www.ixl.com/math" };

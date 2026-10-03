@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T04:55:57.593Z",
+  "title": "Compile-only next-query candidate benchmark",
+  "baselineRevision": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+  "scope": "Five alternating rounds of1000compilations per shape after100warmups; no query executes, database, network or capacity run.",
+  "mediansMsPer1000": {
+    "controlSelect": 93.6148,
+    "controlRaw": 3.4278,
+    "ssoSelect": 30.2824,
+    "ssoRaw": 1.0605,
+    "controlAndSsoPair": 120.6041,
+    "rawPair": 4.4461,
+    "joinedRaw": 3.0126,
+    "screenshotCandidate": 185.5311,
+    "screenshotCandidateRaw": 6.5045
+  },
+  "limitations": [
+    "This measures client-side construction only. It does not prove actual query latency, transaction/authority equivalence or total capacity.",
+    "Inclusive CPU profile categories overlap and must not be added; this benchmark is separate from the immutable CPU profile archive.",
+    "The final control+SSO combined-query candidate was not implemented by this benchmark. All fresh authority checks and locks must be preserved if separately approved."
+  ],
+  "sanitization": "Local paths replaced; raw files remain unchanged. Original and sanitized hashes retained.",
+  "artifacts": [
+    {
+      "name": "manifest.json.gz",
+      "rawName": "manifest.json",
+      "rawSha256": "3819b9af4d358681bfd0fc6311e8b5c8d44163820086ab0a84bca9c894633746",
+      "rawBytes": 1489,
+      "sanitizedSha256": "3819b9af4d358681bfd0fc6311e8b5c8d44163820086ab0a84bca9c894633746",
+      "sanitizedBytes": 1489,
+      "gzipSha256": "9f81d6450f57e6e1a153eb68106de36640f5e756ed31d255de5db4bcf9326cc8",
+      "gzipBytes": 831,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-query-compile-25ba-next.log.gz",
+      "rawName": "release297-query-compile-25ba-next.log",
+      "rawSha256": "ca4e8079555c3352ffdfa2d37a616de017c3d35a56d908432ae585adc8f1db7e",
+      "rawBytes": 577,
+      "sanitizedSha256": "ca4e8079555c3352ffdfa2d37a616de017c3d35a56d908432ae585adc8f1db7e",
+      "sanitizedBytes": 577,
+      "gzipSha256": "0953ea9c5decb23b35a91117013bea2e60d5e45e948de99c2fcc1eb2f6fbd804",
+      "gzipBytes": 319,
+      "roundTripVerified": true
+    },
+    {
+      "name": "release297-query-compile-25ba-next.mjs.gz",
+      "rawName": "release297-query-compile-25ba-next.mjs",
+      "rawSha256": "3dcfe3ec9a6380ba99ff561fa70618e238683e5405ef1f7ea3b55fd2f2080796",
+      "rawBytes": 7171,
+      "sanitizedSha256": "3dcfe3ec9a6380ba99ff561fa70618e238683e5405ef1f7ea3b55fd2f2080796",
+      "sanitizedBytes": 7171,
+      "gzipSha256": "e5f7794be61948574317f4bb7383e5695ab370ab40367872be0149eb6d45193c",
+      "gzipBytes": 2615,
+      "roundTripVerified": true
+    },
+    {
+      "name": "result.json.gz",
+      "rawName": "result.json",
+      "rawSha256": "b4201578a110d8c60b874237fdc50017e68aa1358829ec40b80b874c3647ddaf",
+      "rawBytes": 15748,
+      "sanitizedSha256": "b4201578a110d8c60b874237fdc50017e68aa1358829ec40b80b874c3647ddaf",
+      "sanitizedBytes": 15748,
+      "gzipSha256": "a8c59ba0ee2148d91da40cf18bf470be28b850afcd3a194c0c4853e42034074a",
+      "gzipBytes": 2951,
+      "roundTripVerified": true
+    }
+  ]
+}

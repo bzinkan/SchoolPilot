@@ -1,0 +1,191 @@
+{
+  "recordedAtUtc": "2026-10-03T04:38:41.8269094Z",
+  "scope": "Exact25ba8686 review-head CI; capacity remains failed and later source changes require their own checks",
+  "workflows": [
+    {
+      "id": 37095515222,
+      "headSha": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222",
+      "updatedAt": "2026-10-03T04:35:34Z",
+      "jobs": [
+        {
+          "name": "RLS-enabled cross-tenant tests",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510189",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Backend (TypeScript + Build)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510307",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Cross-tenant isolation tests",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510329",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Frontend (Vite Build)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510337",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Frontend release-focused gates (shard 4)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510343",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Detect changed paths",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510347",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Frontend release-focused gates (shard 3)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510356",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Frontend release-focused gates (shard 2)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510362",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "Frontend release-focused gates (shard 1)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124510399",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "AWS rollout safety (PowerShell + Terraform)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111124542774",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 privileged access evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111125299543",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 AI/privacy evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111126394817",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 monitoring evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111126395034",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 incident evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111127076592",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 deployment evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111127076610",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 tenant isolation evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111127076613",
+          "conditionalSkippedSteps": []
+        },
+        {
+          "name": "SOC 2 approval queue",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515222/job/111127106516",
+          "conditionalSkippedSteps": [
+            "Checkout private SOC 2 evidence repo",
+            "Generate private evidence readiness",
+            "Open or update SOC 2 approval issue",
+            "Upload SOC 2 private evidence readiness"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 37095515248,
+      "headSha": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515248",
+      "updatedAt": "2026-10-03T04:13:28Z",
+      "jobs": [
+        {
+          "name": "Analyze (javascript-typescript)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515248/job/111124510235",
+          "conditionalSkippedSteps": []
+        }
+      ]
+    },
+    {
+      "id": 37095515253,
+      "headSha": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515253",
+      "updatedAt": "2026-10-03T04:08:11Z",
+      "jobs": [
+        {
+          "name": "Scan for secrets",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515253/job/111124510247",
+          "conditionalSkippedSteps": []
+        }
+      ]
+    },
+    {
+      "id": 37095515218,
+      "headSha": "25ba868685fa4aa5010023b55f3705a5e525e6fd",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515218",
+      "updatedAt": "2026-10-03T04:09:43Z",
+      "jobs": [
+        {
+          "name": "Scan Docker image",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37095515218/job/111124510263",
+          "conditionalSkippedSteps": []
+        }
+      ]
+    }
+  ]
+}

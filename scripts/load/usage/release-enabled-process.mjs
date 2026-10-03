@@ -6,6 +6,7 @@ import { assertEnabledReleaseRuntime } from './release-enabled-profile.mjs';
 import pg from 'pg';
 import { RELEASE_PG_APPLICATION_NAMES } from './release-enabled-postgres-pressure.mjs';
 import { measureMethod } from './release-enabled-instrumentation.mjs';
+import { drainReleaseServer } from './release-enabled-drain.mjs';
 
 assertLocalScaleFixture(process.env);
 assert.ok(process.send, 'Isolated fixture children require an owning IPC parent');
@@ -20,31 +21,36 @@ let lastUtilization = performance.eventLoopUtilization();
 let cpuStart = process.cpuUsage();
 let measurementStartedHrtimeMicroseconds;
 let metrics;
+let pendingAcquisitions = 0, activeQueries = 0, activeResponses = 0, abortedResponses = 0;
 const fresh = () => ({ acquisitions: { count: 0, failures: 0, maxMs: 0 }, statements: {}, peakWaiting: 0, peakHeld: 0 });
-const reset = () => { metrics = fresh(); delay.reset(); lastUtilization = performance.eventLoopUtilization(); cpuStart = process.cpuUsage(); measurementStartedHrtimeMicroseconds = Number(process.hrtime.bigint() / 1000n); diagnostics.resetUsageCapacityDiagnostics(); };
+const reset = () => { metrics = fresh(); abortedResponses = 0; delay.reset(); lastUtilization = performance.eventLoopUtilization(); cpuStart = process.cpuUsage(); measurementStartedHrtimeMicroseconds = Number(process.hrtime.bigint() / 1000n); diagnostics.resetUsageCapacityDiagnostics(); };
 reset();
 const record = (row, durationMs, error) => { row.count++; row.maxMs = Math.max(row.maxMs, durationMs); if (error) row.failures++; };
 const observed = new WeakSet();
 // Capture ALS attribution before pg can dispatch callbacks in a socket context.
 const instrument = (pool, lazy = false) => {
   const options = pool.options;
-  measureMethod(lazy ? pg.Pool.prototype : pool, 'connect', (duration, error) => record(metrics.acquisitions, duration, error),
-    { appliesTo: receiver => !lazy || receiver.options === options });
+  measureMethod(lazy ? pg.Pool.prototype : pool, 'connect', (duration, error) => { pendingAcquisitions--; record(metrics.acquisitions, duration, error); },
+    { capture: () => { pendingAcquisitions++; }, appliesTo: receiver => !lazy || receiver.options === options });
   pool.on('connect', client => {
     if (observed.has(client)) return; observed.add(client);
     measureMethod(client, 'query', (duration, error, input, operation) => {
+      activeQueries--;
       const kind = apiStatementKind(typeof input === 'string' ? input : input?.text || '');
       const key = `${operation}/${kind}`;
       record(metrics.statements[key] ??= { count: 0, failures: 0, maxMs: 0 }, duration, error);
       diagnostics.recordUsageCapacityTiming('sqlMs', duration, operation);
       if (error) diagnostics.recordUsageCapacityCounter('sqlFailure', operation);
-    }, { capture: diagnostics.getUsageCapacityOperation });
+    }, { capture: () => { activeQueries++; return diagnostics.getUsageCapacityOperation(); } });
   });
 };
 let server, wss, mainPool, sessionPool, schedulerPool, websocket, redis, timer;
 let flush = async () => {};
 let quiesce = async () => {};
 let admission;
+const tenantContext = role === 'api' ? await import('../../../dist/middleware/tenantContext.js') : {
+  getTenantContextReleaseSnapshot: () => ({ pending: 0 }), drainTenantContextReleases: async () => {},
+};
 if (role === 'api') {
   const db = await import('../../../dist/db.js');
   mainPool = db.pool; sessionPool = db.sessionPool;
@@ -58,6 +64,11 @@ if (role === 'api') {
   flush = batch.flushHeartbeatClassificationBatches;
   quiesce = batch.drainHeartbeatClassificationBatches;
   server = createServer(createApp()); wss = websocket.setupWebSocket(server);
+  server.prependListener('request', (_req, response) => {
+    activeResponses++; let ended = false;
+    const end = () => { if (!ended) { ended = true; activeResponses--; if (!response.writableFinished) abortedResponses++; } };
+    response.once('finish', end); response.once('close', end);
+  });
   const prewarmed = await db.prewarmMainPool(); assert.equal(prewarmed, 16);
   for (const pool of [mainPool, sessionPool]) {
     assert.equal((await pool.query("SELECT current_setting('application_name') AS role")).rows[0].role, RELEASE_PG_APPLICATION_NAMES.api);
@@ -80,7 +91,11 @@ if (role === 'api') {
   process.send({ kind: 'ready', pid: process.pid, pools: { worker: 5 }, postgresApplicationName: RELEASE_PG_APPLICATION_NAMES.worker });
 }
 
-const snapshot = () => ({ database: metrics, operations: diagnostics.getUsageCapacityDiagnostics(), measurementStartedHrtimeMicroseconds,
+const snapshot = () => ({ database: { ...metrics, pendingAcquisitions, activeQueries,
+  pools: Object.fromEntries(Object.entries({ api: mainPool, session: sessionPool, worker: schedulerPool }).filter(([, pool]) => pool).map(([name, pool]) =>
+    [name, { waiting: pool.waitingCount, held: pool.totalCount - pool.idleCount }])) },
+  http: { activeResponses, abortedResponses }, tenantReleases: tenantContext.getTenantContextReleaseSnapshot(),
+  operations: diagnostics.getUsageCapacityDiagnostics(), measurementStartedHrtimeMicroseconds,
   snapshotHrtimeMicroseconds: Number(process.hrtime.bigint() / 1000n),
   ...(admission ? { reportAdmission: admission.diagnostics() } : {}), cpuMicroseconds: process.cpuUsage(cpuStart),
   eventLoop: { p50Ms: delay.percentile(50) / 1e6, p95Ms: delay.percentile(95) / 1e6, maxMs: delay.max / 1e6,
@@ -92,10 +107,11 @@ process.on('message', async request => {
     if (request.operation === 'reset') { reset(); admission?.resetDiagnostics(); value = true; }
     else if (request.operation === 'snapshot') value = snapshot();
     else if (request.operation === 'drain' || request.operation === 'quiesce') {
-      if (request.operation === 'quiesce') await quiesce();
-      else await flush();
-      if (role === 'api') await (await import('../../../dist/middleware/tenantContext.js')).drainTenantContextReleases();
-      value = true;
+      // Both phase boundaries preserve live batching. Only actual shutdown can
+      // permanently flush it, after every handler and pre-handler has settled.
+      value = await drainReleaseServer({ snapshot, drainClassification: quiesce,
+        drainWebSocket: () => websocket?.drainWebSocketWork(),
+        drainTenantReleases: tenantContext.drainTenantContextReleases });
     }
     else if (request.operation === 'rollup' && role === 'worker') {
       const rollup = await import('../../../dist/services/classpilotUsageRollup.js');
@@ -110,7 +126,10 @@ process.on('message', async request => {
       if (role === 'api') {
         websocket.stopWebSocketWork(); for (const client of wss.clients) client.terminate();
         server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-        await websocket.drainWebSocketWork(); await flush();
+        const drained = await drainReleaseServer({ snapshot, drainClassification: quiesce,
+          drainWebSocket: websocket.drainWebSocketWork, drainTenantReleases: tenantContext.drainTenantContextReleases });
+        assert.equal(drained.complete, true, 'Owned server work did not drain before shutdown');
+        await flush();
         const db = await import('../../../dist/db.js'); db.stopApiPoolReadiness(); await db.drainApiPoolReadiness();
         await (await import('../../../dist/middleware/tenantContext.js')).drainTenantContextReleases();
         await (await import('../../../dist/services/errorMonitor.js')).default.disposeAndWait();

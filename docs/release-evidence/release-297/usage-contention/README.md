@@ -3,6 +3,73 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+The [live-binding query correction](live-binding-query/manifest.json) preserves
+the exact parameterized predicates, database-clock lease checks and shared locks
+on all three joined tables. It removes query-builder compilation from the hot
+live branch; historical/tombstone paths and both delivery fences are unchanged.
+SQL equivalence checks pass 2/2, with 15 native owner and 15 restricted-role
+cases passing, including actual competing writers and expiry after preparation.
+The isolated compilation benchmark is not a capacity result.
+
+The [exact compatible fallback image](rollback-artifact-ed5599de/index.json)
+is built from clean `ed5599de0191b4b9961ed907586e1fc153ebd63b`. The uncached
+build and pinned Trivy scan pass with zero findings at every severity. Embedded
+129-table admission, lifecycle writer/bridge/relay, SSO, monitoring lease,
+Stop Focus and classification-ordering checks pass. Both Usage modes remain
+off. The first external inspector's regex failure and its repair are retained;
+this local artifact does not establish production compatibility or replace
+the final candidate → fallback → candidate migration rehearsal.
+
+The [complete-server-drain correction](complete-server-drain/manifest.json)
+retains a baseline false-pass regression. Full heartbeat handlers and known
+Promise-returning middleware remain owned through Redis waits, queued checkouts,
+COMMIT and RESET, even after HTTP completion or disconnect. Reset preserves
+outstanding operations and leases. Acceptance requires two yielded zero-owner
+observations, complete fixed-label diagnostics and no late handler failures.
+The [preflight follow-up](complete-server-drain/preflight-abort-followup/manifest.json)
+also rejects missing or nonzero abort evidence before reset; physical idle alone
+does not establish completion of untracked callback work after an abort.
+Twelve focused checks and all 54 workload guards pass. The initial type-check
+failures and stale source-layout assertion are preserved separately. Offered
+traffic, pool ceilings, database deadlines and the 48-second worker gate remain
+unchanged.
+
+[Combined checks attempt07](combined-checks-attempt-07/manifest.json) passed
+build, test-type and cast checks but retained one stale limiter-layout assertion
+failure. The [full unit rerun](combined-checks-attempt-08/manifest.json) passes
+1,775 cases with zero failures and four documented conditional skips. Application
+bytes are unchanged from the passing build/type checks; only the limiter test
+and two drain harness files changed. The source hashes remain identical across
+each run. New-head CI and concurrent capacity remain separate requirements.
+
+[Combined attempt 06](load-combined-06/manifest.json), on clean unchanged
+`25ba868685fa4aa5010023b55f3705a5e525e6fd`, remains failed capacity evidence:
+3,668/6,000 heartbeats succeeded, 749 failed, 1,583 were refused at the in-flight
+limit, and 69 offers were late. Reports passed 36/64. The API recorded 979
+checkout failures and 144 optional telemetry failures; all tracked leases were
+released after drain. Final delivery accounted for 585.6 aggregate lease-seconds,
+foreground telemetry 329.1, persistence 169.6 and reports 12.8. These show
+saturation without establishing a leaked connection. Large pauses occurred in
+both API and generator processes; causation between them is not established.
+Both bulk workers returned correct totals in 17.603/39.566 seconds including
+queueing. Current-day totals/classifications, unavailable coverage and eight
+audited CSV exports now pass the independent checks. There were 4,073 persisted
+observations, a separate count from acknowledged requests. The first classroom
+command returned 503. No result from this run counts toward the three passes.
+
+The [same-source CPU diagnostic](ingest-cpu-25ba8686-01/manifest.json) preserves
+all 6,000 offers: 4,382 succeeded, 162 failed, 1,456 were refused and none were
+late. It is failed diagnostic evidence, with original dirty-source flags intact;
+the application files matched `25ba8686`, while archived evidence was untracked.
+Within the measured 70.041-second sample window, Drizzle accounts for 18.123
+seconds exclusive (25.9%), the PostgreSQL driver 6.391 seconds, native socket
+writev 6.160 seconds and harness instrumentation 1.434 seconds. Inclusive stack
+totals overlap these figures and must not be added. Three final-delivery leases
+were still active at the phase snapshot even though later shutdown completed.
+The next acceptance harness must verify server work through commit and cleanup.
+The [CI record at `25ba8686`](ci-25ba8686.json) passed all four required workflows;
+it does not supersede either failed workload or cover subsequent source edits.
+
 [Combined attempt 05](load-combined-05/manifest.json), on clean source
 `59f0e43110779b298df51cdba9ef7ff3de22e6a4`, failed: 1,592 of 6,000 heartbeat
 offers succeeded, 2,534 started requests failed and 1,874 offers reached the
@@ -58,7 +125,7 @@ passes the type/cast checks and repeats all 11 owner and 11 restricted cases.
 Its source comparison confirms only that RLS-lane test changed; application
 bytes and every unit-selected test are identical to the passing build/unit run.
 
-The [latest combined unit and TypeScript checks](combined-checks-attempt-05/manifest.json)
+The [earlier combined unit and TypeScript checks](combined-checks-attempt-05/manifest.json)
 follow the Stop Focus transport correction: 1,752 passes, zero failures and four
 named conditional skips, with all 1,152 source files unchanged during the run.
 The [compatible rollback backport](rollback-stop-focus/manifest.json) is committed

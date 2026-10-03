@@ -24806,21 +24806,21 @@ async function hasExactClasspilotTelemetryBinding(
       .where(and(...bindingConditions))
       .limit(1)
       .for("share")
-    : await dbInstance
-      .select({ id: studentSessions.id })
-      .from(studentSessions)
-      .innerJoin(students, and(
-        eq(students.id, studentSessions.studentId),
-        eq(students.schoolId, options.schoolId),
-        eq(students.status, "active")
-      ))
-      .innerJoin(devices, and(
-        eq(devices.deviceId, studentSessions.deviceId),
-        eq(devices.schoolId, options.schoolId)
-      ))
-      .where(and(...bindingConditions))
-      .limit(1)
-      .for("share");
+    : (await dbInstance.execute<{ id: string }>(sql`
+      SELECT "student_sessions"."id"
+      FROM "student_sessions"
+      INNER JOIN "students" ON (
+        "students"."id" = "student_sessions"."student_id"
+        AND "students"."school_id" = ${options.schoolId}
+        AND "students"."status" = ${"active"}
+      )
+      INNER JOIN "devices" ON (
+        "devices"."device_id" = "student_sessions"."device_id"
+        AND "devices"."school_id" = ${options.schoolId}
+      )
+      WHERE ${and(...bindingConditions)}
+      LIMIT ${1} FOR SHARE
+    `)).rows;
   if (!binding) return false;
   if (!options.allowEndedBinding) return true;
 

@@ -131,8 +131,8 @@ describe("student sign-in ingress diagnostics", () => {
     const install = source.indexOf("app.use(studentSignInDiagnostics)");
     assert.ok(install > source.indexOf("app.use(requestId)"));
     assert.ok(install < source.indexOf("express.json("));
-    const limiter = source.indexOf('app.use("/api", guardClasspilotUsageIngressMiddleware(apiLimiter))');
-    assert.ok(limiter >= 0, "global API limiter must remain installed through the Usage continuation guard");
+    const limiter = source.indexOf('app.use("/api", guardClasspilotUsageIngressMiddleware(trackUsageCapacityMiddleware("api_limiter", apiLimiter)))');
+    assert.ok(limiter >= 0, "global API limiter must retain the outer Usage continuation guard and fixed-label Promise lifetime tracker");
     assert.ok(install < limiter);
     const errorSource = readFileSync(new URL("../src/middleware/errorHandler.ts", import.meta.url), "utf8");
     assert.ok(errorSource.indexOf("markStudentSignInError(req, err)") < errorSource.indexOf('errorMonitor.trackError("api_error"'));

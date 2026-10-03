@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { COLD_OPEN_LOOP_PROFILE } from './cold-open-loop-profile.mjs';
+import { releaseServerIsIdle } from './release-enabled-drain.mjs';
 
 // Separate from the historical cold/off profile. Never reinterpret its failures.
 export const RELEASE_ENABLED_PROFILE = Object.freeze({
@@ -11,6 +12,7 @@ export const RELEASE_ENABLED_PROFILE = Object.freeze({
   reportOffers: Object.freeze({ waves: 4, maximumParallel: 16, total: 64, csvAfterConcurrent: 8, rangesInDays: Object.freeze([1, 7, 30, 365]) }),
   publicRequestDeadlineMs: 20_000,
   preflightDevicesPerSchool: 5,
+  drainCoverage: 'Known Promise-returning API/heartbeat middleware, full heartbeat handlers, scoped operations, raw pool work, classification/WebSocket producers and tenant releases. HTTP response lifetime supplements callback middleware; an aborted pre-handler response is never certified as fully completed.',
   reporting: '100% offered heartbeats and reports; errors, overload rejections, aborted requests and late offers fail acceptance',
 });
 
@@ -69,6 +71,9 @@ export function capacityAcceptance(result) {
     currentDayWorkerHeadroom: result.correctness?.currentDayWorkers?.length === 2
       && result.correctness.currentDayWorkers.every(row => row.correct === true && row.durationMs <= 48_000),
     lifecycle: combined?.traffic?.lifecycle?.passed === true,
+    serverDrained: ['api', 'worker'].every(role => combined?.serverDrain?.[role]?.complete === true
+      && releaseServerIsIdle(combined?.[role]) && combined[role].http?.abortedResponses === 0),
+    noLateHandlerFailures: combined?.api?.operations?.operations?.heartbeat_handler?.counters?.heartbeatHandlerFailures === 0,
     // This is reset only at phase start, unlike the minute-summary hotpath
     // counters. The API snapshot is taken after all offers and producer drain.
     noOptionalTelemetryFailures: combined?.api?.operations?.operations?.heartbeat_background?.counters?.heartbeatOptionalTelemetryFailures === 0,

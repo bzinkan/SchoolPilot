@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-03T04:57:22.062Z",
+  "title": "Fail-closed preflight abort uncertainty and ingress wiring follow-up",
+  "baselineEvidence": "../manifest.json",
+  "combinedChecksFailureEvidence": "../../combined-checks-attempt-07/manifest.json",
+  "scope": "Approved two-file harness correction plus exact static ingress assertion update after checks07 snapshot completed. No production bytes changed after passing checks07 build/types/casts.",
+  "outcomes": {
+    "ingressAndLifetime": {
+      "pass": 12,
+      "fail": 0,
+      "skip": 0,
+      "exitCode": 0
+    },
+    "allHarnessGuards": {
+      "pass": 54,
+      "fail": 0,
+      "skip": 0,
+      "exitCode": 0
+    },
+    "sourceUnchanged": true
+  },
+  "behavior": "The drain still waits until actual tracked owners settle. physicallyIdle is separate from complete. Nonzero or missing abortedResponses yields DRAIN_UNVERIFIABLE_ABORT, so preflight cannot erase callback-middleware uncertainty during the next reset. Neither HTTP close nor drain timeout releases ownership.",
+  "verification": "Three changed source/test files were SHA256-snapshotted before and after the focused run and matched. Parent full unit repeat08 remains authoritative for aggregate coverage.",
+  "sanitization": "Local paths only; original external artifacts unchanged, raw and sanitized hashes retained.",
+  "artifacts": [
+    {
+      "name": "all-harness-guards.log.gz",
+      "rawName": "all-harness-guards.log",
+      "rawSha256": "64101c82b575218fd986e1bd265b4f9e8948fdfa7b95db45f9468d7269ac2b62",
+      "rawBytes": 13491,
+      "sanitizedSha256": "64101c82b575218fd986e1bd265b4f9e8948fdfa7b95db45f9468d7269ac2b62",
+      "sanitizedBytes": 13491,
+      "gzipSha256": "a92951bc6ee84d8c305f5025765e44507a6d7bef17ef1e347382934825ad8db4",
+      "gzipBytes": 3062,
+      "roundTripVerified": true
+    },
+    {
+      "name": "applied-preflight-abort.patch.gz",
+      "rawName": "applied-preflight-abort.patch",
+      "rawSha256": "cbad3b0b1c1795afebbbd94d1f6991d40bf51a74ad3ecb6b6d16ab4e6125be74",
+      "rawBytes": 3022,
+      "sanitizedSha256": "cbad3b0b1c1795afebbbd94d1f6991d40bf51a74ad3ecb6b6d16ab4e6125be74",
+      "sanitizedBytes": 3022,
+      "gzipSha256": "f26f084efd83fefd750b726b40b45a62104570a88402663b20ce93d64ff09198",
+      "gzipBytes": 1083,
+      "roundTripVerified": true
+    },
+    {
+      "name": "ingress-and-lifetime.log.gz",
+      "rawName": "ingress-and-lifetime.log",
+      "rawSha256": "03b54baa017410910d9295a32a6390148891548089d292bd73810c8027932aa0",
+      "rawBytes": 3564,
+      "sanitizedSha256": "03b54baa017410910d9295a32a6390148891548089d292bd73810c8027932aa0",
+      "sanitizedBytes": 3564,
+      "gzipSha256": "9566d20e43dadd1ab1a83b0dd1c89a988eac6cd628aa64d3e0c2737743d50808",
+      "gzipBytes": 970,
+      "roundTripVerified": true
+    },
+    {
+      "name": "result.json.gz",
+      "rawName": "result.json",
+      "rawSha256": "51c47f10a8e6da9585327b161d1b26c7757da3fbbdd79a47d06a8da4559215f3",
+      "rawBytes": 86,
+      "sanitizedSha256": "51c47f10a8e6da9585327b161d1b26c7757da3fbbdd79a47d06a8da4559215f3",
+      "sanitizedBytes": 86,
+      "gzipSha256": "2026e8c1665a0bf6e47a8ba288bec7d1d2cc279f82093707d51c4d32a4adfd72",
+      "gzipBytes": 91,
+      "roundTripVerified": true
+    },
+    {
+      "name": "source-after.json.gz",
+      "rawName": "source-after.json",
+      "rawSha256": "fb7648e748e88add99cc87c9c346b1bdcb44f1a2f0c6ed4b8ed2758696f536ec",
+      "rawBytes": 374,
+      "sanitizedSha256": "fb7648e748e88add99cc87c9c346b1bdcb44f1a2f0c6ed4b8ed2758696f536ec",
+      "sanitizedBytes": 374,
+      "gzipSha256": "d7b455e3678031c24a52e5ef3fcac9a99b855445514bd4fd928c4ae6f305bba9",
+      "gzipBytes": 251,
+      "roundTripVerified": true
+    },
+    {
+      "name": "source-before.json.gz",
+      "rawName": "source-before.json",
+      "rawSha256": "fb7648e748e88add99cc87c9c346b1bdcb44f1a2f0c6ed4b8ed2758696f536ec",
+      "rawBytes": 374,
+      "sanitizedSha256": "fb7648e748e88add99cc87c9c346b1bdcb44f1a2f0c6ed4b8ed2758696f536ec",
+      "sanitizedBytes": 374,
+      "gzipSha256": "d7b455e3678031c24a52e5ef3fcac9a99b855445514bd4fd928c4ae6f305bba9",
+      "gzipBytes": 251,
+      "roundTripVerified": true
+    }
+  ]
+}
