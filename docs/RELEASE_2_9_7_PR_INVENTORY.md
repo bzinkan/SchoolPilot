@@ -37,7 +37,12 @@ refused and none were late. All 64 reports and independent correctness/CSV check
 pass; whole workers take 12.284/30.984 seconds. API CPU is nearly saturated,
 950 acquisitions fail and the first classroom command returns 500. All owners
 drain and exact fixture cleanup is retained. No passing capacity run is accepted.
-Current-source CPU attribution is required before selecting another correction.
+The [current-source ingestion CPU diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-cpu-e95-01/manifest.json)
+also fails: 5,081/6,000 offers succeed, 478 fail and 441 are refused; none are
+late. Its clipped profile identifies bounded construction and row-processing
+costs, without proving a sufficient capacity correction. All owners and fixture
+resources are cleaned up; both this failure and the preceding zero-offer setup
+failure are retained. Narrow metadata/projection experiments are next.
 
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` adds owned
 heartbeat SELECT metadata reuse with fresh values and mandatory-work sealing.

@@ -51,10 +51,31 @@ with its cause, but no per-request exception or stack proves that attribution.
 Final delivery retains 4,413 leases with 96,089 statements; driver-timed SQL
 includes network/server/event-loop delays and cannot identify server CPU.
 PostgreSQL records 317.283 MB WAL and 502.213 MB temporary data; no exact-operation
-attribution follows from those instance counters. A bounded current-source API
-CPU profile is next. Earlier b112 results are descriptive comparisons, not
+attribution follows from those instance counters. The bounded current-source API
+CPU profile below follows this run. Earlier b112 results are descriptive comparisons, not
 repeated controlled attribution. The same-source premeasurement snapshot is
 private; its later restore proof is separate from this immutable failed packet.
+
+The [exact e95 ingestion CPU packet](linux-role-ingest-cpu-e95-01/manifest.json)
+retains the zero-offer startup failure and the corrected ingestion run separately.
+The first attached Redis to PostgreSQL's pre-restart network namespace. A native
+zero-traffic proof reproduced that change; the corrected adapter starts Redis
+after the cold database restart, preserving the original runner's order.
+Its workload has 6,000 offers, 5,081 successes, 478 failures, 441 in-flight refusals
+and zero late offers. API CPU is 68.140 seconds over 68.523 elapsed seconds;
+478 acquisitions fail. Both drains finish with no owners or aborted responses,
+children exit zero unforced, and the coordinator exits one. All six containers
+and the recorded database volume are verified absent.
+
+The clipped profile covers exactly 50,582 samples over 68.523272 seconds,
+excluding startup/shutdown. Sampled elapsed intervals are not a partition of
+process CPU seconds. Drizzle self time is 8.183 seconds, but all identified
+compilation is only 3.682 seconds. The three raw authority fences account for
+1.905 seconds of disjoint nearest-caller construction work. PostgreSQL field
+metadata processing has 1.669 seconds of sampled self time. Inclusive categories
+overlap and must not be added or presented as expected savings. Narrow metadata
+reuse and result projections need separate parity and benefit checks. This
+profile includes sampling overhead and makes no report/worker capacity claim.
 
 The [e95 restored-owner proof](restored-owner-e95-01/manifest.json) validates the
 same-source snapshot under fresh restricted credentials, full native schema

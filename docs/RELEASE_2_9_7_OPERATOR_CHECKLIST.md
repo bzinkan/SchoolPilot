@@ -44,7 +44,16 @@ coverage, tenant isolation and eight audited CSV checks passed. API CPU used
 Its generic error log and one tenant-request acquisition failure are consistent
 with contention, but do not prove that request's exact cause. Both owners drained,
 all six containers were removed, and the recorded PostgreSQL volume was verified
-absent. CPU attribution is the next investigation; zero capacity runs are accepted.
+absent. Zero capacity runs are accepted.
+
+The [subsequent ingestion-only CPU diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-cpu-e95-01/manifest.json)
+fails at 5,081/6,000 successful offers, 478 failures, 441 in-flight refusals and
+zero late offers. API CPU is 68.140 seconds over a 68.523-second measurement
+window. All owners drain and all six containers plus the recorded PostgreSQL
+volume are removed. Three raw authority fences account for 1.905 seconds of
+sampled construction work; that is not a throughput forecast. Bounded metadata
+reuse and narrower heartbeat projections are under investigation. The earlier
+zero-offer Redis namespace startup failure remains preserved separately.
 
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
@@ -128,7 +137,7 @@ and accepted capacity before the separately authorized release steps below.
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |
 | Frontend aggregate | [Frontend source binding to e95](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json) verifies all 632 input blobs and the retained artifact hash against the prior 739 passing Node cases, direct browser scripts, build and lint (29 existing warnings). Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Follow-up CI at `97dad081` also passes. This is not live acceptance. |
 | Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
-| Usage capacity | **Zero accepted runs; Usage remains off.** The [e95 combined diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json) has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals, zero late offers and 950 acquisition failures. All 64 reports and independent numeric/coverage/CSV checks pass; classroom lifecycle fails. Whole workers take 12.284/30.984 seconds. CPU attribution is pending; neither worker speed nor reports establish full readiness. Three consecutive final-source full passes and the original comparison remain required. Both load schools are synthetic; DeSales is the sole live school. |
+| Usage capacity | **Zero accepted runs; Usage remains off.** The [e95 combined diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json) has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals, zero late offers and 950 acquisition failures. All 64 reports and independent numeric/coverage/CSV checks pass; classroom lifecycle fails. Whole workers take 12.284/30.984 seconds. The [ingestion-only CPU diagnostic](release-evidence/release-297/usage-contention/linux-role-ingest-cpu-e95-01/manifest.json) also fails at 5,081/6,000 successful offers. Attribution supports bounded follow-up experiments, not a proven capacity fix. Three consecutive final-source full passes and the original comparison remain required. Both load schools are synthetic; DeSales is the sole live school. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)
