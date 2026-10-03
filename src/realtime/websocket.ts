@@ -8,6 +8,7 @@ import { getClasspilotMonitoringPolicy, resolveClasspilotMonitoringPolicy, class
 import { getSchoolWebsitePolicy } from "../services/classpilotSchoolWebsitePolicy.js";
 import {
   focusStatusChanged,
+  readClasspilotFocusStatusEnvelope,
   readFocusOpenIntent,
 } from "../services/classpilotFocus.js";
 import {
@@ -1912,6 +1913,7 @@ export function setupWebSocket(
           && message.type === "classroom-state-ack"
         ) {
           const appliedRevision = Number(message.appliedRevision);
+          const reportedFocusStatus = readClasspilotFocusStatusEnvelope(message);
           const appliedAuthPolicyRevision = (
             typeof message.appliedAuthPolicyRevision === "number"
             && Number.isSafeInteger(message.appliedAuthPolicyRevision)
@@ -1962,7 +1964,7 @@ export function setupWebSocket(
                   lateSignInOriginPending: !deferredBindingAlreadyApplied
                     && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
                   restrictionAuthRevisionMismatch,
-                  focusStatusChanged: focusStatusChanged(controlState.desiredState, message.focus),
+                  focusStatusChanged: focusStatusChanged(controlState.desiredState, reportedFocusStatus),
                 });
                 if (!ackRequired) return undefined;
               }
@@ -1976,7 +1978,7 @@ export function setupWebSocket(
                 outcome,
                 error: message.error ? String(message.error) : null,
                 acceptedCapabilities: client.acceptedCapabilities,
-                focusStatus: message.focus,
+                focusStatus: reportedFocusStatus,
               });
             });
             if (acknowledgedState?.sourceCommandId) {

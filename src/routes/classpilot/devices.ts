@@ -11,6 +11,7 @@ import {
   focusStatusChanged,
   focusRecord,
   focusStatusSchema,
+  readClasspilotFocusStatusEnvelope,
   readFocusOpenIntent,
 } from "../../services/classpilotFocus.js";
 import {
@@ -3974,6 +3975,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
         && Number(appliedClassroomStateRevision) === controlState.revision
       ) {
         const outcome = String(classroomStateOutcome || "").toLowerCase();
+        const reportedFocusStatus = readClasspilotFocusStatusEnvelope(req.body);
         const ackOutcome = outcome === "applied" || outcome === "success"
           ? "applied"
           : outcome === "failed"
@@ -4009,7 +4011,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             lateSignInOriginPending: !deferredBindingAlreadyApplied
               && classpilotControlStateHasLateSignInOrigin(controlState.desiredState),
             restrictionAuthRevisionMismatch,
-            focusStatusChanged: focusStatusChanged(controlState.desiredState, req.body.focus),
+            focusStatusChanged: focusStatusChanged(controlState.desiredState, reportedFocusStatus),
           })
         ) {
           const acknowledgedState = await acknowledgeClasspilotStudentControlState({
@@ -4021,7 +4023,7 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
             appliedAuthPolicyRevision,
             outcome: ackOutcome,
             acceptedCapabilities: protocol.acceptedCapabilities,
-            focusStatus: req.body.focus,
+            focusStatus: reportedFocusStatus,
           });
           if (acknowledgedState) controlState = acknowledgedState;
           if (acknowledgedState?.sourceCommandId) {

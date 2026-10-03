@@ -41,6 +41,33 @@ export const focusStatusSchema = z.union([
     reason: z.enum(["focus_tab_closed", "focus_tab_missing", "focus_tab_off_policy"]) }).strict(),
 ]);
 export type ClasspilotFocusStatus = z.infer<typeof focusStatusSchema>;
+
+function sameFocusStatus(left: ClasspilotFocusStatus, right: ClasspilotFocusStatus): boolean {
+  if (left.state !== right.state) return false;
+  if (left.state === "inactive" || right.state === "inactive") return true;
+  return left.assignmentId === right.assignmentId
+    && ("reason" in left ? left.reason : undefined) === ("reason" in right ? right.reason : undefined);
+}
+
+/**
+ * ClassPilot 2.9.7 sends focusStatus on heartbeat and classroom-state ACKs.
+ * Retain the provisional focus alias only when it is unambiguous. Invalid
+ * canonical input never falls back to the alias; optional malformed status is
+ * ignored while the ordinary ACK and its locked authority checks continue.
+ */
+export function readClasspilotFocusStatusEnvelope(value: unknown): ClasspilotFocusStatus | undefined {
+  const envelope = focusRecord(value);
+  const canonicalPresent = Object.hasOwn(envelope, "focusStatus");
+  const aliasPresent = Object.hasOwn(envelope, "focus");
+  if (!canonicalPresent && !aliasPresent) return undefined;
+  const parsed = focusStatusSchema.safeParse(canonicalPresent ? envelope.focusStatus : envelope.focus);
+  if (!parsed.success) return undefined;
+  if (canonicalPresent && aliasPresent) {
+    const alias = focusStatusSchema.safeParse(envelope.focus);
+    if (!alias.success || !sameFocusStatus(alias.data, parsed.data)) return undefined;
+  }
+  return parsed.data;
+}
 export const focusOpenReceiptSchema = z.object({
   tabReceiptVersion: z.literal(1), tabRef: boundedId,
   tabSnapshotRevision: z.number().int().positive().safe(),
@@ -119,8 +146,9 @@ export function withoutClasspilotFocus(value: unknown): Record<string, unknown> 
 
 export function focusStatusChanged(desiredState: unknown, statusValue: unknown): boolean {
   const status = focusStatusSchema.safeParse(statusValue);
-  return status.success && JSON.stringify(status.data)
-    !== JSON.stringify(focusRecord(desiredState).focusStatusV1);
+  if (!status.success) return false;
+  const previous = focusStatusSchema.safeParse(focusRecord(desiredState).focusStatusV1);
+  return !previous.success || !sameFocusStatus(status.data, previous.data);
 }
 
 /** Exact commands never expand a class/subgroup and never accept receipt proof. */
