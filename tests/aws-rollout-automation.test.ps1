@@ -3,6 +3,8 @@
 [CmdletBinding()]
 param(
     [switch]$AtomicJsonRaceOnly,
+    [switch]$FailureDiagnosticsOnly,
+    [switch]$StartGateCasesOnly,
     [ValidateRange(1, 20)]
     [int]$FiveMinuteTelemetryRepeatCount = 1
 )
@@ -30,6 +32,93 @@ function Assert-Condition {
     param([bool]$Condition, [string]$Message)
     $script:AssertionCount++
     if (-not $Condition) { throw $Message }
+}
+
+function Protect-MockDiagnosticText {
+    param([AllowEmptyString()][string]$Text)
+    $value = $Text -replace '\x1b\[[0-9;]*[A-Za-z]', ''
+    $value = $value -replace '(?i)(?:postgres(?:ql)?|redis|https?)://[^\s"''<>]+', '<redacted-url>'
+    $value = $value -replace '(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+', '$1<redacted>'
+    $value = $value -replace '(?i)((?:password|secret|token|access[_-]?key|authorization)["'']?\s*[:=]\s*["'']?)[^\s,"''}]+', '$1<redacted>'
+    return $value -replace '\b(?:AKIA|ASIA)[A-Z0-9]{16}\b', '<redacted-access-key>'
+}
+
+function Save-MockMonitorFailureEvidence {
+    param([string]$FixtureRoot, [string]$OutputRoot, [string]$FailureMessage, [string[]]$SourcePaths)
+    # Only mock monitor output is copied. Never copy configs, environment,
+    # Terraform state, fixture secrets, or encrypted backup material.
+    $destination = Join-Path $OutputRoot ('rollout-failure-' + [Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($destination)
+    $files = @(Get-ChildItem -LiteralPath $FixtureRoot -Recurse -File -ErrorAction Stop |
+        Where-Object { $_.Name -match '(?:-aws-monitor\.jsonl|-monitor-result\.json|\.err)$' } |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 12)
+    $records = @()
+    foreach ($file in $files) {
+        $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $length = $stream.Length
+            $count = [int][Math]::Min(16384, $length)
+            [void]$stream.Seek(-$count, [IO.SeekOrigin]::End)
+            $bytes = [byte[]]::new($count)
+            $offset = 0
+            while ($offset -lt $count) {
+                $read = $stream.Read($bytes, $offset, $count - $offset)
+                if ($read -eq 0) { break }
+                $offset += $read
+            }
+        }
+        finally { $stream.Dispose() }
+        $records += [ordered]@{
+            relativePath = [IO.Path]::GetRelativePath($FixtureRoot, $file.FullName)
+            originalBytes = $length
+            tailBytes = $offset
+            truncated = $length -gt $offset
+            text = Protect-MockDiagnosticText ([Text.Encoding]::UTF8.GetString($bytes, 0, $offset))
+        }
+    }
+    $receipt = [ordered]@{
+        schemaVersion = 1
+        mockOnly = $true
+        createdAt = [DateTimeOffset]::UtcNow.ToString('o')
+        failure = Protect-MockDiagnosticText $FailureMessage.Substring(0, [Math]::Min(4096, $FailureMessage.Length))
+        bounds = @{ maximumFiles = 12; maximumTailBytesPerFile = 16384 }
+        sourceHashes = @($SourcePaths | ForEach-Object {
+            [ordered]@{ name = [IO.Path]::GetFileName($_); sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
+        files = $records
+    }
+    $path = Join-Path $destination 'mock-monitor-failure.json'
+    [IO.File]::WriteAllText($path, ($receipt | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    return $path
+}
+
+if ($FailureDiagnosticsOnly) {
+    $probeRoot = Join-Path ([IO.Path]::GetTempPath()) ('rollout-diagnostics-proof-' + [Guid]::NewGuid().ToString('N'))
+    $probeFixture = Join-Path $probeRoot 'fixture'
+    [void][IO.Directory]::CreateDirectory($probeFixture)
+    try {
+        [IO.File]::WriteAllText((Join-Path $probeFixture 'case-aws-monitor.jsonl'), '{"error":"The property could not be found.","token":"never-retain-token"}')
+        [IO.File]::WriteAllText((Join-Path $probeFixture 'case-monitor-result.json'), '{"failures":["monitor_exception"]}')
+        [IO.File]::WriteAllText((Join-Path $probeFixture 'case.err'), ('x' * 20000) + ' Bearer never-retain-bearer')
+        [IO.File]::WriteAllText((Join-Path $probeFixture 'config.json'), 'never-copy-config-secret')
+        $saved = Save-MockMonitorFailureEvidence -FixtureRoot $probeFixture -OutputRoot $probeRoot -FailureMessage 'original assertion' -SourcePaths @($PSCommandPath)
+        $raw = Get-Content -LiteralPath $saved -Raw
+        $proof = $raw | ConvertFrom-Json -DateKind String
+        Assert-Condition ($proof.mockOnly -and $proof.files.Count -eq 3) 'Only selected mock result/sample/stderr files must be retained.'
+        Assert-Condition ($raw -match 'property could not be found' -and $raw -match 'monitor_exception') 'Monitor exception details must survive.'
+        Assert-Condition ($raw -notmatch 'never-retain|never-copy') 'Fixture credentials and configs must not be retained.'
+        Assert-Condition (@($proof.files | Where-Object tailBytes -gt 16384).Count -eq 0 -and @($proof.files | Where-Object truncated).Count -eq 1) 'Evidence tails must remain bounded and report truncation.'
+        Assert-Condition ($proof.sourceHashes[0].sha256 -ceq (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Evidence must bind the exact tested source.'
+        Write-Host "Rollout failure diagnostics: PASS ($script:AssertionCount assertions)"
+    }
+    finally {
+        $resolvedProbe = [IO.Path]::GetFullPath($probeRoot)
+        $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedProbe.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected diagnostic proof cleanup path.' }
+        Remove-Item -LiteralPath $resolvedProbe -Recurse -Force
+        if ($null -ne $previousRolloutTestSentinel) { $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = $previousRolloutTestSentinel } else { Remove-Item Env:SCHOOLPILOT_ROLLOUT_TEST_MODE -ErrorAction SilentlyContinue }
+    }
+    return
 }
 
 function Close-OwnedTestProcessForDiagnostics {
@@ -2458,6 +2547,11 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             else { $env:SCHOOLPILOT_TEST_FATAL_REASON = $oldImmediateFatalReason }
             if ($null -eq $oldImmediateObservedPath) { Remove-Item Env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH -ErrorAction SilentlyContinue }
             else { $env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH = $oldImmediateObservedPath }
+        }
+
+        if ($StartGateCasesOnly) {
+            Write-Host ("Rollout startup prerequisites and start-gate cases: PASS ({0} assertions, {1:N1}s)" -f $script:AssertionCount,$testClock.Elapsed.TotalSeconds)
+            return
         }
 
         $slowRollbackConfig = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -5760,6 +5854,20 @@ finally {
                 "Final owned process drain failed.",
                 $_.Exception
             ))
+        }
+    }
+    if ($null -ne $topLevelFailure -and (Test-Path -LiteralPath $tempRoot)) {
+        try {
+            $failureOutput = if ($env:SCHOOLPILOT_ROLLOUT_TEST_EVIDENCE_DIRECTORY) {
+                $env:SCHOOLPILOT_ROLLOUT_TEST_EVIDENCE_DIRECTORY
+            } else { Join-Path ([IO.Path]::GetTempPath()) 'schoolpilot-rollout-test-failures' }
+            $failureReceipt = Save-MockMonitorFailureEvidence -FixtureRoot $tempRoot -OutputRoot $failureOutput `
+                -FailureMessage $topLevelFailure.Exception.Message `
+                -SourcePaths @($PSCommandPath, $monitorScript, $rollbackScript, $supervisorScript)
+            Write-Host "Preserved bounded mock monitor failure evidence: $failureReceipt"
+        }
+        catch {
+            $topLevelCleanupFailures.Add([InvalidOperationException]::new('Mock monitor failure evidence preservation failed.', $_.Exception))
         }
     }
     if ($null -ne $previousRolloutTestSentinel) { $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = $previousRolloutTestSentinel } else { Remove-Item Env:SCHOOLPILOT_ROLLOUT_TEST_MODE -ErrorAction SilentlyContinue }

@@ -3,6 +3,18 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+[CI at `204ae93d`](ci-204ae93d.json) passes all three security workflows and
+16 CI jobs. The rollout-safety job fails because the startup-probe test records
+`monitor_exception` instead of its expected specific fatal reason. Investigation
+is ongoing; the failing run is retained and is not classified as a flake.
+
+The [test-only failure-evidence follow-up](rollout-failure-diagnostics/manifest.json)
+retains bounded, redacted mock logs before cleanup and uploads them on CI failure.
+Five diagnostics assertions and 169 targeted startup/start-gate assertions pass;
+the original exception did not reproduce and remains unidentified. CI now checks
+the capture contract before running the full existing suite, with all original
+assertions. The production monitor is unchanged. Fresh full CI remains required.
+
 The [inbox owner projection](inbox-projection/manifest.json) reduces the teaching
 inbox authority reads from five to two while retaining the fresh control-row
 lock, current database clock, canonical roster ranking and every delivery fence.
@@ -32,6 +44,36 @@ not isolate a causal performance improvement. The [helper preparation record](li
 retains exact runtime/source bindings, failed preparation attempts and cleanup
 proof. Its external-only fields describe creation before this verified archive
 copy; no helper image was published.
+
+The [Linux ingestion CPU diagnostic](linux-ingest-cpu-01/manifest.json) also
+fails its full 6,000-offer traffic requirement: 5,832 requests succeeded and
+168 offers were refused, with zero failed requests, late offers or acquisition
+failures. Both drains completed without aborts, child shutdown was clean, the
+CPU profile was flushed and all owned containers were removed. Source `d6492333`
+remained clean and unchanged. Ingestion ran without concurrent reports or
+rollups, so this cannot establish combined capacity. API CPU use was 80.288
+seconds and event-loop utilization 0.9781.
+
+The [clipped profile analysis](linux-ingest-cpu-analysis/manifest.json) covers
+66.807 seconds from API reset through drained snapshot. Disjoint sampled-wall
+categories include Drizzle 17.15%, application 12.08%, PostgreSQL driver 8.88%,
+GC 4.84% and harness 2.05%; these are not CPU-time percentages or savings
+forecasts. Inclusive SELECT preparation overlaps other stacks and must not be
+added to them. Most query preparation loses its application caller across async
+boundaries, so no specific additional application rewrite is justified by this
+profile alone. Analysis01 is retained but superseded by analysis02's harness-path
+classification correction. The next diagnostic measures synchronous query
+construction by bounded, content-free shape without changing application logic.
+
+That subsequent SQL-shape diagnostic on `d6492333` delivered 6,000 of 6,000
+heartbeats, with zero refused, failed or late offers and zero acquisition
+failures. Maximum heartbeat duration was 8.487 seconds. Attribution was complete
+across 31 shapes, with no collector or original-method errors. SQL construction
+took 4.681 seconds of synchronous elapsed time and SELECT preparation 5.284
+seconds; these measurements overlap and must not be added. Collector bookkeeping
+took 1.298 seconds. This ingestion-only result used no CPU profiler, reports or
+rollups and remains diagnostic-only, with capacity explicitly unaccepted. Source
+cleanliness, unchanged source, physical drain and owned-container cleanup passed.
 
 [Combined09](load-combined-09/manifest.json), on clean `d6492333`, remains failed:
 3,677 of 6,000 offers succeeded, 1,911 started requests failed and 412 offers were

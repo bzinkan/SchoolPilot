@@ -505,8 +505,22 @@ jobs:
       - name: Rollout owned-process lifecycle tests
         run: pwsh -NoProfile -File tests/aws-rollout-process-lifecycle.test.ps1
 
+      - name: Rollout mock failure evidence contract
+        run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1 -FailureDiagnosticsOnly
+
       - name: Rollout monitor and rollback tests
+        env:
+          SCHOOLPILOT_ROLLOUT_TEST_EVIDENCE_DIRECTORY: ${{ runner.temp }}/schoolpilot-rollout-test-failures
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
+
+      - name: Upload bounded mock rollout failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rollout-monitor-failure-evidence
+          path: ${{ runner.temp }}/schoolpilot-rollout-test-failures/**/mock-monitor-failure.json
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Rollout plan-validator tests
         run: pwsh -NoProfile -File tests/aws-rollout-plan-validator.test.ps1

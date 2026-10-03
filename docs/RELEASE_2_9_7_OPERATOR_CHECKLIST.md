@@ -17,6 +17,28 @@ have separate [incremental evidence](release-evidence/release-297/usage-contenti
 and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
+The later [204ae93d CI checkpoint](release-evidence/release-297/usage-contention/ci-204ae93d.json)
+passes security workflows and 16 CI jobs but fails the rollout-safety startup-probe
+test: the monitor records a generic exception instead of the expected fatal
+reason. Root cause and a verified correction remain pending.
+The [test-only diagnostic follow-up](release-evidence/release-297/usage-contention/rollout-failure-diagnostics/manifest.json)
+preserves bounded, redacted mock failure output before cleanup and uploads it in
+CI. Five evidence assertions and 169 targeted rollout assertions pass locally;
+the original exception did not reproduce. The full CI suite remains unchanged
+and must pass on the new head. Production monitor behavior is unchanged.
+
+The subsequent [Linux ingestion CPU diagnostic](release-evidence/release-297/usage-contention/linux-ingest-cpu-01/manifest.json)
+fails with 5,832 successful offers and 168 refused offers out of 6,000, despite
+zero request/acquisition failures and clean drain/cleanup. It omits concurrent
+reports and rollups, so it cannot count as combined capacity. Its [clipped CPU
+analysis](release-evidence/release-297/usage-contention/linux-ingest-cpu-analysis/manifest.json)
+guides further measurement; no deployment recommendation follows from it.
+
+A later ingestion-only SQL-shape diagnostic delivered all 6,000 heartbeats with
+no refused, failed or late offers and no acquisition failures. The source was
+still the historical `d6492333`, and reports and rollups were absent. It improves
+attribution without establishing combined capacity or a deployment green light.
+
 The preceding [owned inbox correction](release-evidence/release-297/usage-contention/heartbeat-owned-inbox/manifest.json)
 reuses the final heartbeat tenant connection without removing the locked inbox
 eligibility check. Expiry uses the database's current clock after foreground
