@@ -144,6 +144,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Complete current fixture grants failed.' }
     $env:DATABASE_URL = $applicationUrl; $env:DATABASE_URL_PRIVILEGED = $applicationUrl
   }
+  # Exact signature only: pg_dump --no-privileges omits function ACLs.
+  # Bootstrap-only delta; workload, offers, heaps and deadlines are unchanged.
+  node dist/cli/prepareClasspilotHeartbeatScreenshotEvidence.js *> (Join-Path $output 'fixture-screenshot-execute.log')
+  if ($LASTEXITCODE -ne 0) { throw 'Exact screenshot function/runtime grant verification failed.' }
   # Preserve the actual post-convergence contract separately from the input
   # schema export. This empty-fixture snapshot is UTF8/LF before any traffic.
   $convergedSchema = Join-Path $output 'post-convergence-schema.sql'

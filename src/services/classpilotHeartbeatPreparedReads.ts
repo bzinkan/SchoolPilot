@@ -6,6 +6,9 @@ import {
   heartbeatSchoolQuery, heartbeatLicenseQuery, heartbeatSessionQuery,
   heartbeatControlQuery, heartbeatCandidateQuery,
 } from "./classpilotHeartbeatReadQueries.js";
+import {
+  heartbeatScreenshotEvidenceQuery, decodeHeartbeatScreenshotEvidence, type HeartbeatScreenshotEvidence,
+} from "./classpilotHeartbeatScreenshotEvidence.js";
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type SelectDatabase = Pick<typeof db, "select">;
@@ -17,13 +20,14 @@ type PreparedCache = {
   session?: ReturnType<ReturnType<typeof heartbeatSessionQuery>["prepare"]>;
   control?: ReturnType<ReturnType<typeof heartbeatControlQuery>["prepare"]>;
   candidate?: ReturnType<ReturnType<typeof heartbeatCandidateQuery>["prepare"]>;
+  screenshot?: ReturnType<ReturnType<typeof heartbeatScreenshotEvidenceQuery>["prepare"]>;
 };
 type Token = {
   store: TenantStore; client: TenantStore["client"]; database: TenantStore["db"]; schoolId: string;
   state: "preparing" | "sealed" | "closed";
   pending: Set<Promise<unknown>>; failed: boolean; failure?: unknown;
 };
-// Weak keys retain only five immutable query/mapping definitions per physical
+// Weak keys retain only bounded immutable query/mapping definitions per physical
 // client/database. Empty names deliberately leave PostgreSQL plans unnamed.
 const caches = new WeakMap<TenantStore["client"], PreparedCache>();
 // Closed tokens remain recognizable while a retained transaction is reachable.
@@ -164,5 +168,25 @@ export function readHeartbeatCandidate(database: SelectDatabase, options: Pick<B
     if (!cache) return heartbeatCandidateQuery(database, values).execute();
     cache.candidate ??= heartbeatCandidateQuery(cache.database, { schoolId: sql.placeholder("schoolId"), studentId: sql.placeholder("studentId"), teachingSessionId: sql.placeholder("teachingSessionId") }).prepare("");
     return cache.candidate.execute(values);
+  });
+}
+
+/** Undefined means this is an unregistered reference transaction, never an
+ * optimization failure. Recognized tombstones must enter the mandatory guard. */
+export function readHeartbeatScreenshotEvidenceIfOwned(
+  database: SelectDatabase, options: Binding,
+): Promise<HeartbeatScreenshotEvidence> | undefined {
+  if (!tokens.has(database)) return undefined;
+  const values = { schoolId: options.schoolId, studentId: options.studentId,
+    studentSessionId: options.studentSessionId, deviceId: options.deviceId };
+  return read(database, values.schoolId, async cache => {
+    if (!cache) throw new Error("Heartbeat screenshot evidence requires an owned transaction");
+    cache.screenshot ??= heartbeatScreenshotEvidenceQuery(cache.database, {
+      schoolId: sql.placeholder("schoolId"), studentId: sql.placeholder("studentId"),
+      studentSessionId: sql.placeholder("studentSessionId"), deviceId: sql.placeholder("deviceId"),
+    }).prepare("");
+    const rows = await cache.screenshot.execute(values);
+    if (rows.length !== 1) throw new TypeError("Invalid heartbeat screenshot evidence row count");
+    return decodeHeartbeatScreenshotEvidence(rows[0]?.evidence);
   });
 }

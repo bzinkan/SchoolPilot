@@ -40,7 +40,7 @@ function resource(role, containerId, identity, after) {
 }
 function fixture(index=1) {
   const run=index.toString(16).padStart(12,'0'), pgContainerId=hash(`pg-${index}`),redisContainerId=hash(`redis-${index}`);
-  const migrations=Array.from({length:53},(_,i)=>({id:`migration-${i}`,checksum:sha('7'),status:'complete'}));
+  const migrations=Array.from({length:54},(_,i)=>({id:`migration-${i}`,checksum:sha('7'),status:'complete'}));
   const files={'profile.mjs':sha('1'),'campaign-validation.mjs':sha('2'),'runtime-facts.mjs':sha('3')};
   const executed=Object.fromEntries(roles.map((r,i)=>[r,sha(String(i+4))]));
   const scan={passed:true,sourceSha:source,imageId:digest('1'),configDigest:digest('3'),os:'linux',architecture:'amd64',counts:{HIGH:0,CRITICAL:0}},scanRaw=JSON.stringify(scan);
@@ -58,7 +58,8 @@ function fixture(index=1) {
   const state=second=>({Running:true,Paused:false,Restarting:false,OOMKilled:false,Dead:false,Error:'',StartedAt:timestamp(second)});
   const preparation={run,source,startedAt:timestamp(2),finishedAt:timestamp(4),mode:'capacity-candidate',profile:PROFILE,pgContainerId,redisContainerId,fresh:true,redis:{containerId:redisContainerId,pgContainerId,createdAt:timestamp(7),readyAt:timestamp(7),afterColdRestart:true},
     restore:{source,snapshotManifestSha256:sha('d'),analyze:true,clientsClosed:true,validityHorizon:timestamp(600),
-      databaseValidation:{source,seedSource:source,snapshotManifestSha256:sha('d'),passed:true,clientsClosed:true,measurementStarted:false,admittedTables:129,migrations:53,migrationsSha256:identity.migrationSha256,
+      databaseValidation:{source,seedSource:source,snapshotManifestSha256:sha('d'),passed:true,clientsClosed:true,measurementStarted:false,admittedTables:129,migrations:54,migrationsSha256:identity.migrationSha256,
+        screenshotEvidence:{signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',runtimeExecute:true,publicExecute:false,exactDefinition:true},
         role:{sameUser:true,superuser:false,bypassRls:false,freshCredentialRole:true},schools,finishedAt:timestamp(3)},
       schemaComparison:{passed:true,originalSha256:sha('a'),referenceSha256:sha('b'),restoredSha256:sha('c'),originalCanonicalSha256:sha('8'),referenceCanonicalSha256:sha('6'),restoredCanonicalSha256:sha('6'),referenceNormalizedSha256:sha('5'),restoredNormalizedSha256:sha('5')}}};
   const cold={run,pgContainerId,before:state(2),after:state(7),clientsClosed:true,restarted:true,startedAfterValidation:true,validatedAt:timestamp(4),restartedAt:timestamp(6)};

@@ -63,7 +63,7 @@ node scripts/load/usage/roles/run-campaign.mjs close closure-config.json
 
 The declaration contains `campaignDirectory` and `declaration`: exact source,
 profile, candidate image/scan, helper/runtime, complete executed harness,
-validator, canonical schema, registry and 53-entry migration identities, plus
+validator, canonical schema, registry and 54-entry migration identities, plus
 the unchanged native comparison's source/schema/profile/script constraints.
 It contains no predicted comparison result or receipt hash. Retain the returned
 trusted campaign hash independently. Attempt configuration contains that hash,
@@ -104,3 +104,29 @@ The original scripts and previous failure artifacts remain unchanged. Cold
 means fresh processes and PostgreSQL shared buffers, not flushed host caches.
 Synthetic protocol acknowledgements do not establish managed-browser behavior,
 production RDS capacity or the separate deployed Usage observation days.
+
+The screenshot evidence function adds migration 54 without adding a table.
+New-source campaigns require a new same-source 54-entry snapshot; prior 53-entry
+snapshots and their immutable driver copies remain historical evidence. Fixture
+bootstrap now explicitly revokes PUBLIC execution and grants only the exact
+four-text-argument function to its actual restricted role, including after a
+no-privileges restore. The real API startup separately verifies the catalog and
+its own EXECUTE permission before serving. This is also a bootstrap-only delta
+to the original Windows/native comparison script and its hash declaration; its
+traffic, 512 MiB heaps, deadlines and historical numerical criteria are unchanged.
+Production migration uses the supported API secret and creator permission; it
+never discovers or auto-grants a different production login. A different runtime
+role without an explicit compatible grant fails startup. The compatible fallback
+keeps its own reader and tolerates the additive function/54th ledger entry.
+
+A new-source snapshot can be captured at the seeded diagnostic ready gate without
+running traffic. After verifying the private read-only snapshot and all hashes,
+the operator may exclusively create `measurement-abort.json` beside the ready
+receipt. Copy the ready fields exactly (including `harnessSha256`), set
+`action` to `abort-before-measurement`, and `intent` to
+`preserve-prepared-snapshot`; retain `capacityAccepted:false` and the ready
+`diagnosticOnly` value. `measurement-go.json` must be absent. The gate preserves
+`measurement-abort-receipt.json`, throws `ABORTED_BEFORE_MEASUREMENT`, and the
+existing owning runner performs exact cleanup. Both markers together fail
+closed. This is a failed/aborted preparation, never a successful workload or
+capacity pass; a registered campaign abort remains in its attempt journal.

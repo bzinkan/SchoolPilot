@@ -1,0 +1,35 @@
+{
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "capacityAccepted": false,
+  "productionChanges": false,
+  "attempts": [
+    {
+      "attempt": 1,
+      "outcome": "Fixture staff-email domain failure before tests"
+    },
+    {
+      "attempt": 2,
+      "outcome": "Fixture manual-session update failed before tests; wrapped error did not identify exact cause"
+    },
+    {
+      "attempt": 3,
+      "outcome": "23 passed and 2 invalid-fixture CHECK failures; no timing"
+    },
+    {
+      "attempt": 4,
+      "outcome": "25 native subtests plus parent passed; four alternating 1000-read rounds per mode; exact-owned API/PG/volume removed"
+    }
+  ],
+  "timing": {
+    "boundary": "Warm repeated-tuple reader plus decoder, one long restricted transaction; excludes correctness-only projection adapter",
+    "sequentialMedianWallMsPer1000": 3445.9770675,
+    "functionMedianWallMsPer1000": 681.638685,
+    "sequentialMedianApiCpuMsPer1000": 1058.6995,
+    "functionMedianApiCpuMsPer1000": 223.064,
+    "limitations": [
+      "Not whole route/capacity evidence",
+      "Cumulative function timeout remains 15s, stricter than separate command budgets",
+      "No PostgreSQL CPU or isolated SPI/plan-cache attribution"
+    ]
+  }
+}

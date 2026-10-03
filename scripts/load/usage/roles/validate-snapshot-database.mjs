@@ -35,10 +35,13 @@ export async function validateSnapshotDatabase(config) {
     const role=(await app.query("SELECT current_user,session_user,rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user")).rows[0];
     assert.equal(role.current_user,role.session_user);assert.equal(role.rolsuper,false);assert.equal(role.rolbypassrls,false);assert.notEqual(role.current_user,bundle.manifest.credentials.restrictedRole);
     result.role={sameUser:true,superuser:false,bypassRls:false,freshCredentialRole:true};
+    const {assertClasspilotHeartbeatScreenshotEvidence}=await import(pathToFileURL(resolve(root,'dist/db/classpilotHeartbeatScreenshotEvidenceInstallation.js')));
+    await assertClasspilotHeartbeatScreenshotEvidence(app);
+    result.screenshotEvidence={signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',runtimeExecute:true,publicExecute:false,exactDefinition:true};
     const catalog=(await app.query("SELECT relname,relrowsecurity,relforcerowsecurity,relowner=(SELECT oid FROM pg_roles WHERE rolname=current_user) AS owns_table FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname",[contract.rlsContract.tables])).rows;
     assert.equal(contract.rlsContract.tables.length,129);assertCompleteFixtureCatalog(contract.rlsContract,catalog);result.admittedTables=catalog.length;
     const migrations=(await admin.query('SELECT id,checksum,status FROM schema_migrations ORDER BY id')).rows;
-    assert.deepEqual(migrations,contract.migrations);assert.equal(migrations.length,53);assert.ok(migrations.every(r=>r.status==='complete'));result.migrationsSha256=snapshotHash(JSON.stringify(migrations));result.migrations=53;
+    assert.deepEqual(migrations,contract.migrations);assert.equal(migrations.length,54);assert.ok(migrations.every(r=>r.status==='complete'));result.migrationsSha256=snapshotHash(JSON.stringify(migrations));result.migrations=54;
     result.migrationRows=migrations;result.registrySha256=snapshotHash(registry);
     result.admission={inventory:'classpilotPrivateChatLifecyclePostExpand',tables:129,forced:true,restrictedNonOwnerRole:true};
     result.stage='fixture-counts';

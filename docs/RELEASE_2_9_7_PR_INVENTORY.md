@@ -17,7 +17,14 @@ development checkpoints below are historical and do not establish current readin
 
 ## Current preparation selections
 
-Current application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds an exact-URL
+The latest [screenshot-reader correction in #603](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
+passes 2,012 unit cases, 190 owner/restricted database cases, four private-chat
+cases and build/type/cast checks. Its immutable 54th migration and startup
+permission checks retain the existing 129-table RLS inventory. Failed attempts
+remain preserved. A new image, current-head CI, three cold capacity passes and
+updated recovery evidence are still required; zero capacity runs are accepted.
+
+Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds an exact-URL
 domain map per student, preserving classification, timing, tenant scope and
 atomic coverage. Its [local evidence](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
 passes 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
@@ -97,7 +104,7 @@ persists; completed drain and cleanup do not establish capacity acceptance.
 
 | Item | Selected source / limitation |
 |---|---|
-| Application | `e95a2b56476b1225434c1b0f3907db46c9d84fe3` in #603; local full-unit/native/build/type/cast checks pass. [Review head `97dad081`](release-evidence/release-297/usage-contention/ci-97dad081-final-01/manifest.json) passes all 17 CI jobs and three security workflows for these application bytes. The subsequently committed role harness has 378 passing local guards and remains outside this CI source. Combined capacity has zero accepted runs. |
+| Application | The [screenshot-reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json) in #603 passes local full-unit/native/build/type/cast checks. [Baseline `0915dd93`](release-evidence/release-297/usage-contention/ci-0915dd93-final-01/manifest.json) passes all 17 CI jobs and three security workflows, including the strict role harness; it excludes this new reader and migration. Current-source CI and capacity remain pending. |
 | Earlier completed full CI | [`2378e04e`](release-evidence/release-297/usage-contention/ci-2378e04e-final-01/manifest.json); all 17 CI jobs and three security workflows pass for the preceding `6035239b` application, without the later Focus correction. |
 | Local candidate image | [`e95a2b56`](release-evidence/release-297/usage-contention/candidate-artifact-e95a2b56/manifest.json) passes a fresh uncached build, pinned scan with zero findings, compatibility checks and cleanup. Its Linux/amd64 manifest is `sha256:3b0816f59a00612b0bfb41e2b45e4767dbac2f7eba873d6354035cb24e523593`. Completed actual-image recovery used the preceding b112 candidate; final release selection requires capacity, follow-up CI and a current recovery binding. Earlier images remain historical. |
 | Compatible fallback | Source [`6e251f2d1eece2b98fa2325e1fa46bd2b8553420`](release-evidence/release-297/usage-contention/rollback-focus-wire-01/manifest.json) includes the tested Focus backport and retains the compatibility floor. Its [fresh local image and scan](release-evidence/release-297/usage-contention/rollback-artifact-6e251f2d/manifest.json) pass with zero findings, verified embedded compatibility and cleanup. Both Usage modes must remain off. The [b112/6e251 local recovery pair](release-evidence/release-297/usage-contention/recovery-pair-b112-6e251/manifest.json) passes the recorded source re-entry and adopted-state function checks; production service-traffic rollback is not established. The `5c01944e`, `ed5599de` and `351422d7` image artifacts remain historical. |

@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import test from 'node:test';
+import { types } from 'node:util';
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
 const source = readFileSync(new URL('../src/services/classpilotHeartbeatPreparedReads.ts', import.meta.url), 'utf8');
 function fixture() {
-  let owned; let rls = true; let rejectQuery;
+  let owned; let rls = true; let rejectQuery, decodeFailure, queryGate;
+  let screenshotRows = [{ evidence: { stage: 'session_missing' } }];
   const calls = [], prepares = [];
   const client = { status: 'I', getTransactionStatus() { return this.status; } };
   const database = {
@@ -22,7 +24,11 @@ function fixture() {
     execute: async () => { calls.push([name, values, db]); if (rejectQuery) throw rejectQuery; return [{ ...values }]; },
     prepare(preparedName) {
       assert.equal(preparedName, ''); prepares.push([name, db]);
-      return { execute: async bindings => { calls.push([name, bindings, db]); if (rejectQuery) throw rejectQuery; return [{ ...bindings }]; } };
+      return { execute: async bindings => {
+        calls.push([name, bindings, db]); if (queryGate) await queryGate;
+        if (rejectQuery) throw rejectQuery;
+        return name === 'Screenshot' ? screenshotRows : [{ ...bindings }];
+      } };
     },
   });
   const builders = Object.fromEntries(['School', 'License', 'Session', 'Control', 'Candidate'].map(name => ['heartbeat' + name + 'Query', builder(name)]));
@@ -33,12 +39,17 @@ function fixture() {
     if (name.endsWith('/tenantContext.js') && name.includes('/db/')) return { rlsGucEnabled: () => rls };
     if (name.endsWith('/tenantContext.js')) return { getOwnedTenantStore: () => owned };
     if (name.endsWith('classpilotHeartbeatReadQueries.js')) return builders;
+    if (name.endsWith('classpilotHeartbeatScreenshotEvidence.js')) return {
+      heartbeatScreenshotEvidenceQuery: builder('Screenshot'),
+      decodeHeartbeatScreenshotEvidence(value) { if (decodeFailure) throw decodeFailure; return structuredClone(value); },
+    };
     throw Error(name);
   } });
   const setSchool = schoolId => owned = { schoolId, client, db: database, isSuper: false };
   setSchool('school-a');
   return { api: exports, client, database, calls, prepares, setSchool,
-    get store() { return owned; }, setRls(value) { rls = value; }, reject(error) { rejectQuery = error; } };
+    get store() { return owned; }, setRls(value) { rls = value; }, reject(error) { rejectQuery = error; },
+    rows(value) { screenshotRows = value; }, decodeReject(error) { decodeFailure = error; }, gate(value) { queryGate = value; } };
 }
 
 test('prepared metadata is client/database scoped while every lease gets fresh values', async () => {
@@ -132,4 +143,91 @@ test('unregistered and RLS-off callers retain fresh reference builders', async (
     await f.api.readHeartbeatSchool(tx, 'school-a'); await f.api.sealHeartbeatPreparedReads(tx);
   });
   assert.equal(f.prepares.length, 0);
+});
+
+const screenshotBinding = schoolId => ({ schoolId, studentId: schoolId + '-student',
+  studentSessionId: schoolId + '-session', deviceId: schoolId + '-device' });
+
+test('screenshot reader returns synchronous undefined only for genuine reference callers', async () => {
+  for (const mode of ['unregistered', 'RLS-off', 'super']) {
+    const f = fixture();
+    if (mode === 'unregistered') {
+      assert.equal(f.api.readHeartbeatScreenshotEvidenceIfOwned({ select() {} }, screenshotBinding('school-a')), undefined);
+    } else {
+      if (mode === 'RLS-off') f.setRls(false); else f.store.isSuper = true;
+      await f.api.withHeartbeatPreparedReadTransaction(f.database, 'school-a', async tx => {
+        assert.equal(f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-a')), undefined);
+      });
+    }
+    assert.equal(f.prepares.length, 0); assert.equal(f.calls.some(call => Array.isArray(call)), false);
+  }
+});
+
+test('screenshot query metadata is reused but caller tuples and decoded values stay fresh across A-B-A', async () => {
+  const f = fixture(); const results = [];
+  for (const school of ['school-a', 'school-b', 'school-a']) {
+    f.setSchool(school);
+    await f.api.withHeartbeatPreparedReadTransaction(f.database, school, async tx => {
+      const input = screenshotBinding(school), expected = { ...input };
+      const result = f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, input);
+      assert.ok(types.isPromise(result)); input.studentId = 'mutated-after-call';
+      results.push(await result); await f.api.sealHeartbeatPreparedReads(tx);
+      const calls = f.calls.filter(call => Array.isArray(call) && call[0] === 'Screenshot');
+      assert.deepEqual({ ...calls.at(-1)[1] }, expected);
+    });
+  }
+  assert.equal(f.prepares.length, 1); assert.equal(f.prepares[0][0], 'Screenshot');
+  assert.notStrictEqual(results[0], results[2]);
+  assert.equal(f.calls.filter(call => call === 'COMMIT').length, 3);
+});
+
+test('caught screenshot tenant mismatch is sticky, executes no SQL and never becomes reference fallback', async () => {
+  const f = fixture();
+  await assert.rejects(f.api.withHeartbeatPreparedReadTransaction(f.database, 'school-a', async tx => {
+    assert.throws(() => f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-b')), /tenant mismatch/);
+    await f.api.sealHeartbeatPreparedReads(tx);
+  }), /tenant mismatch/);
+  assert.equal(f.prepares.length, 0); assert.deepEqual(f.calls, ['BEGIN', 'ROLLBACK']);
+});
+
+test('recognized sealed and closed screenshot readers stay poisoned before any additional query', async () => {
+  const f = fixture(); let retained;
+  await assert.rejects(f.api.withHeartbeatPreparedReadTransaction(f.database, 'school-a', async tx => {
+    retained = tx; await f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-a'));
+    await f.api.sealHeartbeatPreparedReads(tx);
+    assert.throws(() => f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-a')), /phase is closed/);
+    f.api.assertHeartbeatPreparedReadsSettled(tx);
+  }), /phase is closed/);
+  const before = f.calls.length;
+  assert.throws(() => f.api.readHeartbeatScreenshotEvidenceIfOwned(retained, screenshotBinding('school-a')), /no longer owned/);
+  assert.equal(f.calls.length, before); assert.equal(f.calls.filter(call => Array.isArray(call)).length, 1);
+});
+
+for (const cause of ['SQL', 'decoder', 'zero rows', 'two rows']) test(`caught screenshot ${cause} failure remains sticky before delivery`, async () => {
+  const f = fixture(), error = new Error('mandatory_' + cause); let delivered = false;
+  if (cause === 'SQL') f.reject(error);
+  if (cause === 'decoder') f.decodeReject(error);
+  if (cause === 'zero rows') f.rows([]);
+  if (cause === 'two rows') f.rows([{ evidence: {} }, { evidence: {} }]);
+  await assert.rejects(f.api.withHeartbeatPreparedReadTransaction(f.database, 'school-a', async tx => {
+    try { await f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-a')); } catch {}
+    await f.api.sealHeartbeatPreparedReads(tx); delivered = true;
+  }), cause === 'zero rows' || cause === 'two rows' ? /row count/ : candidate => candidate === error);
+  assert.equal(delivered, false); assert.equal(f.calls.includes('COMMIT'), false);
+});
+
+test('unawaited screenshot function retains ownership through settlement and caller rollback', async () => {
+  const f = fixture(); let release; const gate = new Promise(resolve => { release = resolve; }); f.gate(gate);
+  let completed = false;
+  const operation = f.api.withHeartbeatPreparedReadTransaction(f.database, 'school-a', async tx => {
+    void f.api.readHeartbeatScreenshotEvidenceIfOwned(tx, screenshotBinding('school-a'));
+    throw new Error('caller_abort');
+  }).finally(() => { completed = true; });
+  void operation.catch(() => {});
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(completed, false); assert.equal(f.calls.includes('ROLLBACK'), false);
+    release(); await assert.rejects(operation, /caller_abort/);
+    assert.equal(f.calls.at(-1), 'ROLLBACK'); assert.equal(f.client.status, 'I');
+  } finally { release(); await Promise.allSettled([operation]); }
 });

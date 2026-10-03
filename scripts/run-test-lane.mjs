@@ -11,6 +11,8 @@ const RLS_SERIAL = new Set([
   "fair-main-pool.integration.test.mjs",
   "classpilot-final-delivery-context.integration.test.ts",
   "classpilot-heartbeat-foreground-authority.integration.test.ts",
+  "classpilot-heartbeat-screenshot-evidence.integration.test.ts",
+  "classpilot-heartbeat-screenshot-installation.integration.test.ts",
   "classpilot-heartbeat-inbox-authority.integration.test.ts",
   "classpilot-telemetry-owner-projection.integration.test.ts",
   "classpilot-heartbeat-persistence-context.integration.test.ts",

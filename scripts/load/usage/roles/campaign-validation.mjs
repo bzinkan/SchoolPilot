@@ -35,6 +35,7 @@ export const CAMPAIGN_CONTRACT_SHA256 = canonicalHash({
   profile: PROFILE, roles: ROLE_LIMITS, pools: POOL_LIMITS, fixtures: FIXTURE_LIMITS,
   offering: OPEN_LOOP_HEARTBEATS, reports: RELEASE_ENABLED_PROFILE.reportOffers,
   fullWorkerAcceptanceMs: 48_000, publicRequestDeadlineMs: 20_000,
+  migrations:54, screenshotEvidenceSignature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',
   lifecycleEvents: LIFECYCLE_EVENTS, originalComparison: RELEASE_ENABLED_PROFILE.name,
   modernHeartbeats: { http200:6000, http204:0, initialObservationsPerSchool:6, finalObservationsPerSchool:3006, requiredCapabilities:modernHeartbeatCapabilities },
 });
@@ -103,8 +104,9 @@ function preparationCheck(b, trustedPlanSha256) {
   assert.equal(validation.source, p.source); assert.equal(validation.seedSource, p.source);
   assert.equal(validation.snapshotManifestSha256, restore.snapshotManifestSha256);
   assert.equal(validation.passed, true); assert.equal(validation.clientsClosed, true); assert.equal(validation.measurementStarted, false);
-  assert.equal(validation.admittedTables, 129); assert.equal(validation.migrations, 53);
+  assert.equal(validation.admittedTables, 129); assert.equal(validation.migrations, 54);
   assert.equal(validation.migrationsSha256, p.identity.migrationSha256);
+  assert.deepEqual(validation.screenshotEvidence,{signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',runtimeExecute:true,publicExecute:false,exactDefinition:true});
   assert.deepEqual(validation.role, {sameUser:true, superuser:false, bypassRls:false, freshCredentialRole:true});
   for (const row of exact(validation.schools, 'index', [0, 1])) {
     for (const [key, value] of Object.entries({raw:1000001,aggregates:541500,currentSessions:100,rosterRows:500,staffBindings:100,staffIdentities:101,controls:500,exactLiveBindings:500})) assert.equal(row[key], value);
@@ -119,7 +121,7 @@ function preparationCheck(b, trustedPlanSha256) {
   sha(schema.referenceCanonicalSha256); assert.equal(schema.restoredCanonicalSha256, schema.referenceCanonicalSha256);
   assert.equal(db.schemaSha256, p.identity.schemaSha256); assert.equal(db.registrySha256, p.identity.registrySha256);
   assert.equal(db.nativeRenderedSchemaSha256, schema.restoredNormalizedSha256);
-  assert.equal(db.migrations.length, 53); assert.equal(new Set(db.migrations.map(row => row.id)).size, 53);
+  assert.equal(db.migrations.length, 54); assert.equal(new Set(db.migrations.map(row => row.id)).size, 54);
   assert.ok(db.migrations.every(row => typeof row.id === 'string' && row.id && row.status === 'complete'));
   db.migrations.forEach(row => sha(row.checksum)); assert.equal(hash(JSON.stringify(db.migrations)), p.identity.migrationSha256);
   assert.deepEqual(db.admission, {inventory:'classpilotPrivateChatLifecyclePostExpand',tables:129,forced:true,restrictedNonOwnerRole:true});

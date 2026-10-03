@@ -18,7 +18,18 @@ and still require frozen-source acceptance. Earlier CI does not cover them.
 A conditional skip is not a passed test.
 
 Current October 3 checkpoint: **Usage capacity has no accepted passing run**.
-The current application is `e95a2b56476b1225434c1b0f3907db46c9d84fe3`.
+The new [screenshot-reader implementation](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
+passes 2,012 unit tests, 95 owner-role and 95 restricted-role database tests,
+four private-chat checks, and build/type/cast checks. The initial full-unit
+failure and its test-only Windows newline correction remain preserved. All
+application and native-test inputs are identical between the passing database
+run and final unit run. The reader retains tenant isolation, separate database
+snapshots, locks and final authority checks while reducing client round trips.
+Its additive 54th migration requires a fresh image, final-source CI, a new
+schema-bound fixture, three accepted cold capacity runs and updated recovery
+evidence. None of these functional results establishes capacity acceptance.
+
+The preceding load-tested application is `e95a2b56476b1225434c1b0f3907db46c9d84fe3`.
 Its [exact-URL domain-map correction](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
 normalizes repeated URLs once per student while preserving per-observation
 classification, timing, tenant scope and atomic writes. Final local checks pass
@@ -322,6 +333,18 @@ contain the compatible writer, bridge and relay. The final admission is
 API and worker before capability activation. Run additive migrations using the
 candidate's exact image before service rollout. Verify health and admission before
 publishing the frontend. Do not shrink admission on rollback.
+
+The screenshot-reader candidate adds the immutable
+`classpilot-heartbeat-screenshot-evidence-v1-20261003` migration, bringing its full
+ledger to 54 entries without changing the 129-table inventory. The API verifies
+the exact `public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)`
+body, invoker execution, volatility, search path and scoped EXECUTE permission
+through its actual runtime credential before serving. PUBLIC EXECUTE must remain
+revoked. The supported migration task uses the API credential; a distinct
+runtime role must have its exact grant verified rather than inferred. The local
+fixture CLI is prohibited in production. Preserve this additive function and
+the historical migration during compatible rollback; the final candidate/image
+recovery rehearsal must include the 54-entry schema.
 
 Private lifecycle adoption is a durable compatibility floor. Once admitted,
 capability off does not permit a legacy writer or removal of its migration/table.

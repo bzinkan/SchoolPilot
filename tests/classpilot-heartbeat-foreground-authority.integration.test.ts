@@ -59,7 +59,7 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
     const binding = { schoolId: a.school.id, studentId: a.student.id, studentSessionId: a.binding.id, deviceId: a.deviceId, freezeSsoPolicy: true };
     const restricted = !(await pool.query<{ bypass: boolean }>("SELECT rolsuper OR rolbypassrls AS bypass FROM pg_roles WHERE rolname=current_user")).rows[0]!.bypass;
     t.diagnostic(restricted ? "Restricted role with forced RLS" : "Owner role; explicit tenant predicates exercised");
-    if (process.env.RLS_TEST_ROLE === "true") {
+    if (process.env.RLS_TEST_ROLE && process.env.RLS_TEST_ROLE !== "false") {
       assert.equal(restricted, true, "restricted lane must never execute as a bypass owner");
       const policies = (await pool.query<{ enabled: boolean; forced: boolean }>(`SELECT relrowsecurity AS enabled,relforcerowsecurity AS forced
         FROM pg_class WHERE oid=ANY(ARRAY['classpilot_student_control_states'::regclass,'teaching_sessions'::regclass,
@@ -119,11 +119,15 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
       } finally { spy.mock.restore(); }
     });
 
-    await t.test("prepared SELECT metadata preserves reference projections on the same physical client across schools", async () => {
+    await t.test("owned screenshot function and prepared entitlement reads preserve reference projections across school leases", async () => {
       await begin();
       const original = pg.Client.prototype.query; const configs: Array<{ text: string; name: unknown; values: unknown[] }> = [];
+      const functions: Array<{ text: string; values: unknown[] }> = [];
       const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
         const request = args[0];
+        if (request && typeof request === "object" && "text" in request && String(request.text).includes("classpilot_heartbeat_screenshot_evidence_v1")) {
+          functions.push({ text: String(request.text), values: Array.isArray(args[1]) ? [...args[1]] : [] });
+        }
         if (request && typeof request === "object" && "text" in request && "name" in request && request.name === "") {
           configs.push({ text: String(request.text), name: request.name, values: Array.isArray(args[1]) ? [...args[1]] : [] });
         }
@@ -136,14 +140,20 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
           await scoped(fixture.school.id, async () => {
             const client = getTenantStore()?.client; assert.ok(client);
             if (firstClient) assert.equal(client, firstClient, "prove physical client reuse across school GUCs"); else firstClient = client;
+            const referenceFunctions = functions.length;
             const reference = await storage.withClasspilotStudentControlDeliveryAuthority(exact,
               tx => storage.getClasspilotScreenshotAuthorityProjection(exact, tx), (_rows, projection) => projection);
-            const before = configs.length;
+            assert.equal(functions.length, referenceFunctions, "generic delivery keeps the reference queries");
+            const before = configs.length, beforeFunctions = functions.length;
             const prepared = await storage.withClasspilotHeartbeatDeliveryAuthority(exact, async (_tx, read) => read(), (_rows, projection) => projection);
             assert.deepEqual(prepared.authorized && prepared.value, reference.authorized && reference.value);
             const selected = configs.slice(before);
-            assert.equal(selected.length, 5, "exactly the five eligible SELECTs use unnamed prepared metadata");
+            assert.equal(selected.length, 3, "two entitlement reads and one function use unnamed prepared metadata");
+            assert.equal(selected.filter(row => !row.text.includes("classpilot_heartbeat_screenshot_evidence_v1")).length, 2);
             assert.ok(selected.every(row => row.name === "" && row.values.includes(fixture.school.id)));
+            const screenshot = functions.slice(beforeFunctions);
+            assert.equal(screenshot.length, 1, "one owned function executes the four sequential screenshot reads");
+            assert.deepEqual(screenshot[0]!.values, [fixture.school.id, fixture.student.id, fixture.binding.id, fixture.deviceId]);
           });
         }
       } finally { spy.mock.restore(); }
@@ -156,7 +166,7 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
       const original = pg.Client.prototype.query; let held = false;
       const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
         const request = args[0], text = typeof request === "string" ? request : request && typeof request === "object" && "text" in request ? String(request.text) : "";
-        if (!held && text.startsWith('select "student_sessions"."id", "student_sessions"."started_at"')) {
+        if (!held && text.includes('classpilot_heartbeat_screenshot_evidence_v1')) {
           held = true; reached(); return gate.then(() => Reflect.apply(original, this, args));
         }
         return Reflect.apply(original, this, args);
@@ -172,23 +182,27 @@ test("heartbeat foreground reuses owned proof with fresh clock and retained fina
       finally { release(); await Promise.allSettled([operation]); spy.mock.restore(); }
     });
 
-    await t.test("an optional foreground catch cannot clear a sealed prepared-read ownership failure", async t => {
+    for (const attemptedRead of ["school", "screenshot"] as const) await t.test(`an optional foreground catch cannot clear a sealed ${attemptedRead} ownership failure`, async t => {
       await begin();
-      const { readHeartbeatSchool } = await import("../src/services/classpilotHeartbeatPreparedReads.js");
-      let captured: typeof db | undefined, poisoned = false, schoolSelects = 0;
+      const { readHeartbeatSchool, readHeartbeatScreenshotEvidenceIfOwned } = await import("../src/services/classpilotHeartbeatPreparedReads.js");
+      let captured: typeof db | undefined, poisoned = false, schoolSelects = 0, screenshotReads = 0;
       const original = pg.Client.prototype.query;
       const spy = t.mock.method(pg.Client.prototype, "query", function(this: pg.Client, ...args: unknown[]) {
         const request = args[0], text = typeof request === "string" ? request : request && typeof request === "object" && "text" in request ? String(request.text) : "";
         if (text.startsWith("select ") && text.includes('from "schools"')) schoolSelects++;
+        if (text.includes("classpilot_heartbeat_screenshot_evidence_v1")) screenshotReads++;
         if (!poisoned && text.includes("SELECT 1 AS allowed")) {
           poisoned = true; assert.ok(captured);
-          assert.throws(() => readHeartbeatSchool(captured!, a.school.id), /phase is closed/);
+          assert.throws(() => attemptedRead === "school"
+            ? readHeartbeatSchool(captured!, a.school.id)
+            : readHeartbeatScreenshotEvidenceIfOwned(captured!, binding), /phase is closed/);
         }
         return Reflect.apply(original, this, args);
       });
       try {
         await assert.rejects(invoke(async (tx, read) => { captured = tx; await read(); }), /phase is closed/);
         assert.equal(poisoned, true); assert.equal(schoolSelects, 1, "sealed read must issue no additional school SQL");
+        assert.equal(screenshotReads, 1, "sealed reader must issue no additional function SQL");
         assert.deepEqual({ published, http, failed }, { published: 0, http: 0, failed: 1 });
       } finally { spy.mock.restore(); }
     });

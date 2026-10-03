@@ -112,6 +112,19 @@ export async function withRestoredSnapshot(rawOptions,useFixture){
     stage='restore';call(['cp',join(snapshotDirectory,'prepared-database.private.dump'),`${name}:/tmp/prepared.private.dump`],{log:'copy.log'});
     call(['exec',name,'pg_restore','--exit-on-error','--no-owner','--no-privileges','-U',owner,'-d',database,'/tmp/prepared.private.dump'],{log:'restore.log',timeout:300000});
     stage='fresh-role';call(['exec','-i',name,'psql','-U',owner,'-d',database,'-v','ON_ERROR_STOP=1'],{input:`CREATE ROLE ${role} LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT PASSWORD '${appPassword}'; GRANT USAGE ON SCHEMA public TO ${role}; GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ${role}; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role};`,log:'fresh-role.log'});
+    // --no-privileges restores default PUBLIC EXECUTE. Repair only the exact
+    // installed signature, then prove it through the newly created app role.
+    stage='function-grant';
+    const {grantClasspilotHeartbeatScreenshotEvidence,assertClasspilotHeartbeatScreenshotEvidence}=await import(pathToFileURL(join(sourceDirectory,'dist/db/classpilotHeartbeatScreenshotEvidenceInstallation.js')));
+    const functionOwner=new Client({connectionString:adminUrl}),functionRuntime=new Client({connectionString:appUrl});
+    try{await functionOwner.connect();await functionRuntime.connect();await functionOwner.query('BEGIN');
+      try{await grantClasspilotHeartbeatScreenshotEvidence(functionOwner,role);await functionOwner.query('COMMIT');}catch(error){await functionOwner.query('ROLLBACK');throw error;}
+      await assertClasspilotHeartbeatScreenshotEvidence(functionRuntime);
+    }finally{
+      const closed=await Promise.allSettled([functionRuntime.end(),functionOwner.end()]);
+      assert.ok(closed.every(result=>result.status==='fulfilled'),'Function grant clients did not close');
+    }
+    save(output,'function-grant.json',{run,source,signature:'public.classpilot_heartbeat_screenshot_evidence_v1(text,text,text,text)',publicExecute:false,runtimeExecute:true,actualRestrictedConnection:true,clientsClosed:true});
     stage='schema';const original=readFileSync(join(snapshotDirectory,'post-convergence-schema.sql'),'utf8');
     const restored=call(['exec',name,'pg_dump','-U',owner,'-d',database,'--schema-only','--no-owner','--no-privileges']);writeFileSync(join(output,'restored-schema.sql'),restored,{flag:'wx'});
     const referenceDatabase='schoolpilot_snapshot_reference_'+run;call(['exec',name,'createdb','-U',owner,referenceDatabase],{log:'reference-create.log'});

@@ -7,7 +7,7 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { classpilotStudentControlStates } from '../src/schema/classpilot.ts';
 import { classpilotSsoPolicyFromSettings } from '../src/services/classpilotSsoPolicy.ts';
 
-const source = readFileSync(new URL('../src/services/storage.ts', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../src/services/storage.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const decoder = source.slice(source.indexOf('function decodeHeartbeatControlTimestamp('), source.indexOf('/**\n * Fresh initial heartbeat navigation/privacy projection'));
 const helper = source.slice(source.indexOf('export async function getClasspilotStudentControlDeliveryContext('), source.indexOf('export async function getClasspilotStudentControlStates(')).replace('export async', 'async');
 const executable = ts.transpileModule(decoder + helper, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;

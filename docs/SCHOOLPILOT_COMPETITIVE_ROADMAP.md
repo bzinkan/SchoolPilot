@@ -14,7 +14,14 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
-Latest October 3 application `e95a2b56476b1225434c1b0f3907db46c9d84fe3`
+The latest October 3 [heartbeat reader correction](release-evidence/release-297/usage-contention/heartbeat-screenshot-reader-implementation-01/manifest.json)
+passes 2,012 unit tests, 190 owner/restricted database checks, four private-chat
+checks and build/type/cast checks. It reduces client/database round trips while
+preserving authority, locks and tenant isolation. The additive 54th migration
+requires a new source-bound image, CI, capacity and recovery evidence. No full
+capacity run is accepted, and deployment and activation remain unapproved.
+
+Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3`
 normalizes exact repeated URLs once per student's rollup. Its [local checks](release-evidence/release-297/usage-contention/domain-map-implementation-e95a2b56/manifest.json)
 pass 1,906 unit tests, 25 owner and 12 restricted database tests without skips,
 and build/type/cast checks. All nine semantic grain columns match immutable

@@ -3,7 +3,31 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
-Latest application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds the per-student
+The [screenshot-reader prototype](screenshot-reader-prototype-01/manifest.json)
+preserves four attempts, including three fixture failures. The fourth passes 25
+native subtests plus their parent under restricted RLS. A volatile invoker
+function retains four separate internal statements, fresh snapshots after lock
+waits and the original JavaScript owner ranking. It reduces four client commands
+to one without changing the 15-second statement deadline. Four alternating warm
+rounds measure median reader wall time of 3,445.977 to 681.639 ms and API CPU of
+1,058.700 to 223.064 ms per 1,000 reads. This repeated-tuple microbenchmark is
+neither whole-route throughput nor capacity acceptance. The integrated reader,
+immutable migration and runtime permission checks have separate evidence below;
+the e95 diagnostics remain failed. All archived hashes
+and gzip contents were verified; eight private configuration files are hash-only.
+
+The [integrated reader](heartbeat-screenshot-reader-implementation-01/manifest.json)
+passes 2,012 unit cases, 95 owner-role and 95 restricted-role database cases,
+four private-chat cases, and build/type/cast checks. The first full-unit run's
+Windows newline selector failure is retained alongside the one-line test-only
+correction and passing rerun. Application and native-test inputs stayed identical.
+The append-only 54th migration installs an invoker function with PUBLIC execution
+revoked; startup checks its definition and the actual runtime user's permission.
+Local fixture setup grants only the explicit fixture role. No production role
+is guessed. Updated source/image, schema-bound capacity and recovery acceptance
+remain pending; the accepted capacity-run count is zero.
+
+Preceding load-tested application `e95a2b56476b1225434c1b0f3907db46c9d84fe3` adds the per-student
 exact-URL domain map measured below. [Implementation evidence](domain-map-implementation-e95a2b56/manifest.json)
 preserves all three native attempts and the initial typecheck failure. Final
 checks pass 1,906 unit cases, 25 owner and 12 restricted native cases with zero
@@ -34,6 +58,9 @@ CI source, and no capacity or release-execution gate is implied.
 [The later documentation head `f58f84bb`](ci-f58f84bb-final-01/manifest.json)
 also passes all 17 CI jobs and three security workflows on the same application.
 It likewise excludes the subsequent role-harness changes.
+[CI at `0915dd93`](ci-0915dd93-final-01/manifest.json) passes all 17 CI jobs
+and three security workflows including the strict role harness. It excludes
+the subsequent screenshot-reader implementation and its 54th migration.
 
 The [combined e95 diagnostic](linux-role-combined-e95-01/manifest.json) fails
 capacity at 4,413/6,000 successful heartbeats, 949 failures, 638 in-flight refusals

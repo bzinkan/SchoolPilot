@@ -55,6 +55,8 @@ if (role === 'api') {
   const db = await import('../../../dist/db.js');
   mainPool = db.pool; sessionPool = db.sessionPool;
   instrument(mainPool); instrument(sessionPool);
+  const { assertClasspilotHeartbeatScreenshotEvidence } = await import('../../../dist/db/classpilotHeartbeatScreenshotEvidenceInstallation.js');
+  await assertClasspilotHeartbeatScreenshotEvidence(mainPool);
   assert.equal(mainPool.options.max, 16); assert.equal(sessionPool.options.max, 2);
   const { createApp } = await import('../../../dist/app.js');
   ({ classpilotUsageAdmission: admission } = await import('../../../dist/services/classpilotUsageAdmission.js'));

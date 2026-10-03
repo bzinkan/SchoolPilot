@@ -259,6 +259,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install screenshot evidence migration-owned test contract
+        run: node dist/cli/prepareClasspilotHeartbeatScreenshotEvidence.js --install
+
       - name: Install appointment migration-owned test contract
         run: node --import tsx tests/setup-passpilot-appointments-ci.ts
 
@@ -379,6 +382,9 @@ jobs:
         env:
           DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
         run: node --import tsx tests/setup-rls-ci.ts
+
+      - name: Verify screenshot evidence as the actual restricted runtime
+        run: node dist/cli/prepareClasspilotHeartbeatScreenshotEvidence.js
 
       - name: RLS-enabled cross-tenant and tile-read isolation tests (serial)
         run: npm run test:rls-serial

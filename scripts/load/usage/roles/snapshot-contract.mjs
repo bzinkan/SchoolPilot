@@ -14,7 +14,7 @@ export function assertSnapshotManifest(manifest,{source,today}) {
   assert.equal(manifest.measurementGoAbsent,true); assert.equal(manifest.readOnlyExport,true);
   assert.equal(manifest.otherClientsBefore,0); assert.equal(manifest.otherClientsAfter,0);
   assert.equal(manifest.timezone,'UTC'); assert.equal(manifest.databaseEncoding,'UTF8'); assert.equal(manifest.serverVersion,'16.15');
-  assert.equal(manifest.heartbeatRows,2_000_002); assert.equal(manifest.migrations,53);
+  assert.equal(manifest.heartbeatRows,2_000_002); assert.equal(manifest.migrations,54);
   assert.deepEqual(manifest.schoolCounts,[{schoolIndex:0,observations:1_000_001},{schoolIndex:1,observations:1_000_001}]);
   assert.deepEqual(manifest.records.map(r=>r.file).sort(),[...records].sort());
   for(const row of manifest.records){assert.match(row.sha256,/^[a-f0-9]{64}$/);assert.ok(Number.isSafeInteger(row.bytes)&&row.bytes>0);}

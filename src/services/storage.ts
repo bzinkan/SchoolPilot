@@ -1,7 +1,8 @@
 import { withHeartbeatPreparedReadTransaction, trackHeartbeatPreparedReadTask, sealHeartbeatPreparedReads,
-  assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate,
+  assertHeartbeatPreparedReadsSettled, readHeartbeatSession, readHeartbeatControl, readHeartbeatCandidate, readHeartbeatScreenshotEvidenceIfOwned,
 } from "./classpilotHeartbeatPreparedReads.js";
-import { LIVE_TEACHING_SESSION_MODE } from "./classpilotHeartbeatReadQueries.js";
+import { LIVE_TEACHING_SESSION_MODE, heartbeatTelemetryOwnerQuery } from "./classpilotHeartbeatReadQueries.js";
+import type { HeartbeatScreenshotOwnerRow } from "./classpilotHeartbeatScreenshotEvidence.js";
 import { recordUsageCapacityCounter } from "./usageCapacityDiagnostics.js";
 import { announceSharedRecordAccessChanged } from "../realtime/sharedRecordAccess.js";
 import { finalizeClassTools } from "./classpilotToolsLifecycle.js";
@@ -16243,45 +16244,16 @@ async function getClasspilotTelemetryOwnerProjectionAtClock(
   dbInstance: Pick<typeof db, "execute">,
   clock: ClasspilotAuthorityClock,
 ): Promise<{ hasActiveSupervision: boolean; teachingSessionId: string | undefined }> {
-  const result = await dbInstance.execute<{
-    hasActiveSupervision: boolean;
-    id: string | null;
-    controlUpdatedAt: string | null;
-    startTime: string | null;
-    createdAt: string | null;
-  }>(sql`
-    WITH owner_candidates AS (
-      SELECT session.id, session.control_updated_at, session.start_time, session.created_at
-      FROM ${classpilotSessionStudents} roster
-      INNER JOIN ${teachingSessions} session ON session.id=roster.teaching_session_id
-        AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
-        AND session.roster_snapshot_completed_at IS NOT NULL AND session.end_time IS NULL
-      INNER JOIN ${groups} owner_group ON owner_group.id=session.group_id
-      WHERE roster.school_id=${schoolId} AND roster.student_id=${studentId}
-        AND owner_group.school_id=${schoolId}
-      UNION ALL
-      SELECT session.id, session.control_updated_at, session.start_time, session.created_at
-      FROM ${groupStudents} roster
-      INNER JOIN ${groups} owner_group ON owner_group.id=roster.group_id
-      INNER JOIN ${teachingSessions} session ON session.group_id=owner_group.id
-        AND session.session_mode=${LIVE_TEACHING_SESSION_MODE}
-        AND session.roster_snapshot_completed_at IS NULL AND session.end_time IS NULL
-      WHERE owner_group.school_id=${schoolId} AND roster.student_id=${studentId}
-    )
-    SELECT EXISTS (
-      SELECT 1 FROM ${classpilotSupervisionStudents} assignment
-      INNER JOIN ${classpilotSupervisionContexts} context ON context.id=assignment.context_id
-      INNER JOIN ${students} student ON student.id=assignment.student_id
-        AND student.school_id=${schoolId} AND student.status='active'
-      WHERE assignment.school_id=${schoolId} AND assignment.student_id=${studentId}
-        AND assignment.released_at IS NULL AND context.school_id=${schoolId}
-        AND context.status='active' AND context.starts_at<=${classpilotAuthorityClockSql(clock)}
-        AND context.ends_at>${classpilotAuthorityClockSql(clock)}
-    ) AS "hasActiveSupervision", owner.id, owner.control_updated_at AS "controlUpdatedAt",
-      owner.start_time AS "startTime", owner.created_at AS "createdAt"
-    FROM (SELECT 1) anchor LEFT JOIN owner_candidates owner ON true
-  `);
-  const candidates = result.rows.flatMap(row => {
+  const result = await dbInstance.execute<HeartbeatScreenshotOwnerRow>(
+    heartbeatTelemetryOwnerQuery(schoolId, studentId, clock)
+  );
+  return classpilotTelemetryOwnerFromRows(result.rows);
+}
+
+function classpilotTelemetryOwnerFromRows(rows: HeartbeatScreenshotOwnerRow[]): {
+  hasActiveSupervision: boolean; teachingSessionId: string | undefined;
+} {
+  const candidates = rows.flatMap(row => {
     if (row.id === null) return [];
     if (row.startTime === null || row.createdAt === null) {
       throw new TypeError("Telemetry owner candidate is missing required timestamps");
@@ -16302,7 +16274,7 @@ async function getClasspilotTelemetryOwnerProjectionAtClock(
     || b.id.localeCompare(a.id)
   );
   return {
-    hasActiveSupervision: result.rows[0]?.hasActiveSupervision === true,
+    hasActiveSupervision: rows[0]?.hasActiveSupervision === true,
     teachingSessionId: candidates[0]?.id,
   };
 }
@@ -25339,10 +25311,17 @@ async function getClasspilotScreenshotAuthorityProjectionWithReads(options: {
   studentSessionId: string;
   deviceId: string;
 }, dbInstance: typeof db = db): Promise<ClasspilotScreenshotAuthorityProjection | undefined> {
-  const [session] = await readHeartbeatSession(dbInstance, options);
+  // Only the private owned heartbeat root offers this reader. Its four internal
+  // VOLATILE statements retain their fresh snapshots and lock order; every JS
+  // authority/retention decision below remains in its original branch.
+  const evidenceRead = readHeartbeatScreenshotEvidenceIfOwned(dbInstance, options);
+  const evidence = evidenceRead === undefined ? undefined : await evidenceRead;
+  const session = evidence ? (evidence.stage === "session_missing" ? undefined : evidence.session)
+    : (await readHeartbeatSession(dbInstance, options))[0];
   if (!session) return undefined;
 
-  const [controlState] = await readHeartbeatControl(dbInstance, options);
+  const controlState = evidence && evidence.stage !== "session_missing" ? evidence.control ?? undefined
+    : (await readHeartbeatControl(dbInstance, options))[0];
 
   const controlRevision = controlState?.revision ?? 0;
   const studentAuthorityStart = latestLabeledClasspilotAuthorityStart(
@@ -25424,15 +25403,13 @@ async function getClasspilotScreenshotAuthorityProjectionWithReads(options: {
       teachingSessionId: !controlState?.supervisionContextId ? controlState?.teachingSessionId : null }, studentAuthority, dbInstance);
   }
 
-  const [candidate] = await readHeartbeatCandidate(dbInstance, { ...options, teachingSessionId: controlState.teachingSessionId });
+  const candidate = evidence ? (evidence.stage === "owner" ? evidence.candidate : undefined)
+    : (await readHeartbeatCandidate(dbInstance, { ...options, teachingSessionId: controlState.teachingSessionId }))[0];
   if (!candidate) return withReportingObservationRetention({ ...options,
     teachingSessionId: controlState.teachingSessionId }, studentAuthority, dbInstance);
 
-  const owner = await getClasspilotTelemetryOwnerProjection(
-    options.schoolId,
-    options.studentId,
-    dbInstance
-  );
+  const owner = evidence?.stage === "owner" ? classpilotTelemetryOwnerFromRows(evidence.owners)
+    : await getClasspilotTelemetryOwnerProjection(options.schoolId, options.studentId, dbInstance);
   if (
     owner.hasActiveSupervision
     || owner.teachingSessionId !== candidate.teachingSessionId

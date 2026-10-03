@@ -3,6 +3,7 @@ import './prototype.test.mjs';
 import './adapters.test.mjs';
 import './orchestrator.test.mjs';
 import './runtime-contract.test.mjs';
+import './measurement-abort.test.mjs';
 import './image-probe.test.mjs';
 import './snapshot-contract.test.mjs';
 import './numerical-checks.test.mjs';
