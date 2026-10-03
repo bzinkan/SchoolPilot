@@ -292,3 +292,57 @@ test('public connection wrappers observe each logical Promise/callback acquisiti
   assert.equal(observations.filter(Boolean).length, 1); assert.equal(pending, 0);
   assert.equal(f.pool.schedulingSnapshot().ownedSlots, 0);
 });
+
+test('three continuously pending lanes retain FIFO and bounded turns at every supported pool size', async t => {
+  for (const max of [1, 2, 16]) {
+    const f = fixture(t, { max }), held = await f.occupy(), order = [];
+    const lanes = ['default', 'usage_report', 'user_identity'];
+    const jobs = lanes.flatMap(lane => Array.from({ length: 20 }, (_, i) =>
+      f.connect(lane).then(client => { order.push(`${lane}:${i}`); client.release(); })));
+    assert.equal(f.pool.waitingCount, 60);
+    assert.equal(f.pool.schedulingSnapshot().queuedUserIdentities, 20);
+    held[0].release(); await Promise.all(jobs);
+    assert.deepEqual(order, Array.from({ length: 20 }, (_, i) =>
+      [`usage_report:${i}`, `user_identity:${i}`, `default:${i}`]).flat());
+    held.slice(1).forEach(client => client.release()); await f.cleanup();
+  }
+});
+
+test('each two-lane subset alternates and empty identity lanes reserve no native capacity', async t => {
+  for (const lanes of [['default', 'user_identity'], ['usage_report', 'user_identity'], ['default', 'usage_report']]) {
+    const f = fixture(t, { max: 1 }), held = await f.occupy(), order = [];
+    const jobs = lanes.flatMap(lane => Array.from({ length: 4 }, (_, i) =>
+      f.connect(lane).then(client => { order.push(`${lane}:${i}`); client.release(); })));
+    held[0].release(); await Promise.all(jobs);
+    const expectedLanes = lanes.includes('usage_report') ? ['usage_report', lanes.find(lane => lane !== 'usage_report')] : ['user_identity', 'default'];
+    assert.deepEqual(order, Array.from({ length: 4 }, (_, i) => expectedLanes.map(lane => `${lane}:${i}`)).flat());
+    await f.cleanup();
+  }
+  const f = fixture(t), pending = Array.from({ length: 16 }, () => f.connect('user_identity'));
+  f.clients.forEach(client => client.succeed()); const clients = await Promise.all(pending);
+  assert.equal(f.pool.schedulingSnapshot().leased, 16);
+  clients.forEach(client => client.release());
+});
+
+test('auth entitlement and label lookalikes remain default while identity gets one bounded turn', async t => {
+  const f = fixture(t, { max: 1 }), held = await f.occupy(), order = [];
+  const labels = ['auth', 'user_identity_untrusted', 'USER_IDENTITY', 'heartbeat_middleware', 'user_identity', 'usage_report'];
+  const jobs = labels.map(label => f.connect(label).then(client => { order.push(label); client.release(); }));
+  assert.equal(f.pool.schedulingSnapshot().queuedDefault, 4);
+  assert.equal(f.pool.schedulingSnapshot().queuedUserIdentities, 1);
+  held[0].release(); await Promise.all(jobs);
+  assert.deepEqual(order, ['usage_report', 'user_identity', 'auth', 'user_identity_untrusted', 'USER_IDENTITY', 'heartbeat_middleware']);
+});
+
+test('expired identity work consumes no turn or connection and new work keeps its absolute deadline', async t => {
+  const f = fixture(t, { max: 1 }), held = await f.occupy(), order = [];
+  const stale = f.connect('user_identity'); const expired = assert.rejects(stale, /timeout exceeded/);
+  f.clock.advance(4000);
+  const jobs = ['default', 'user_identity', 'usage_report'].map(lane =>
+    f.connect(lane).then(client => { order.push(lane); client.release(); }));
+  f.clock.advance(1000); await expired;
+  assert.equal(f.pool.schedulingSnapshot().queuedUserIdentities, 1);
+  held[0].release(); await Promise.all(jobs);
+  assert.deepEqual(order, ['usage_report', 'user_identity', 'default']);
+  assert.equal(f.clients.length, 1); assert.equal(f.clock.timers.size, 0);
+});

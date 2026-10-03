@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 // statement or worker acceptance limit, or cancel/release an owner on expiry.
 export const RELEASE_SERVER_DRAIN_MS = 20_000;
 export const RELEASE_DRAIN_OPERATIONS = Object.freeze([
-  'auth', 'heartbeat_persistence', 'heartbeat_final_delivery', 'heartbeat_background',
+  'auth', 'user_identity', 'heartbeat_persistence', 'heartbeat_final_delivery', 'heartbeat_background',
   'api_limiter', 'heartbeat_middleware', 'heartbeat_handler', 'usage_report_admission',
   'usage_report', 'usage_worker', 'tenant_request', 'tenant_background', 'unclassified',
 ]);

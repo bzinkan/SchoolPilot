@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { getTableColumns, sql } from 'drizzle-orm';
+import { users } from '../src/schema/core.ts';
 
 test('admitted API fair pool preserves native RLS/reset, FIFO and report cancellation ownership', { timeout: 25_000 }, async t => {
   assert.ok(process.env.DATABASE_URL, 'native lane requires its owned database');
@@ -30,7 +31,7 @@ test('admitted API fair pool preserves native RLS/reset, FIFO and report cancell
     await initial.query("CREATE POLICY tenant ON fair_pool_tenant_fixture USING (school_id=current_setting('app.school_id',true))");
     initial.release(); initial = undefined;
     await Promise.all(Array.from({ length: 64 }, (_, i) => runWithTenantContext({ schoolId: schools[i % 2],
-      operation: i % 3 ? 'heartbeat_background' : 'usage_report' }, async () => {
+      operation: i % 3 === 0 ? 'usage_report' : i % 3 === 1 ? 'user_identity' : 'heartbeat_background' }, async () => {
       assert.equal(getTenantStore().schoolId, schools[i % 2]);
       const rows = await db.execute(sql`SELECT school_id,payload FROM fair_pool_tenant_fixture ORDER BY school_id`);
       if (restricted) assert.deepEqual(rows.rows, [{ school_id: schools[i % 2], payload: schools[i % 2] }]);
@@ -43,12 +44,32 @@ test('admitted API fair pool preserves native RLS/reset, FIFO and report cancell
 
     held = await pool.connect();
     const order = [];
-    const pending = ['d0','d1','d2','r0','r1'].map(id => runWithUsageCapacityOperation(id[0] === 'r' ? 'usage_report' : 'auth', async () => {
+    const pending = ['d0','d1','d2','r0','r1','i0','i1'].map(id => runWithUsageCapacityOperation(id[0] === 'r' ? 'usage_report' : id[0] === 'i' ? 'user_identity' : 'auth', async () => {
       await pool.query('SELECT 1'); order.push(id);
     }));
-    assert.equal(pool.waitingCount, 5);
+    assert.equal(pool.waitingCount, 7);
     held.release(); held = undefined; await Promise.all(pending);
-    assert.deepEqual(order, ['r0','d0','r1','d1','d2']);
+    assert.deepEqual(order, ['r0','i0','d0','r1','i1','d1','d2']);
+
+    // The actual middleware must read the current row after scheduler waiting;
+    // a preferred identity lane is never an authority cache or auth bypass.
+    const { authenticate } = await import('../src/middleware/authenticate.ts');
+    const { signUserToken } = await import('../src/services/jwt.ts');
+    held = await pool.connect();
+    const columns = Object.values(getTableColumns(users));
+    await held.query(`CREATE TEMP TABLE users (${columns.map(column => `"${column.name.replaceAll('"', '""')}" ${column.getSQLType()}`).join(',')})`);
+    await held.query('INSERT INTO users(id,email,auth_version) VALUES ($1,$2,1)', ['fair-identity', 'fair-identity@example.invalid']);
+    const token = signUserToken({ userId: 'fair-identity', email: 'fair-identity@example.invalid', authVersion: 1 });
+    const request = { headers: { authorization: `Bearer ${token}` }, session: {} };
+    const response = { statusCode: 200, body: undefined, status(value) { this.statusCode = value; return this; }, json(value) { this.body = value; return this; } };
+    let nextCalled = false;
+    const authentication = Promise.resolve(authenticate(request, response, () => { nextCalled = true; }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(pool.schedulingSnapshot().queuedUserIdentities, 1);
+    await held.query('UPDATE users SET auth_version=2 WHERE id=$1', ['fair-identity']);
+    held.release(); held = undefined; await authentication;
+    assert.equal(response.statusCode, 401); assert.equal(nextCalled, false); assert.equal(request.authUser, undefined);
+    assert.equal(response.body.code, 'CREDENTIAL_INVALIDATED');
 
     const controller = new AbortController(), reason = new Error('synthetic report cancellation');
     let signalStarted, signalQueryEnded;

@@ -53,6 +53,10 @@ test('late cleanup failure stays a failure and diagnostics require complete nonn
   assert.doesNotMatch(JSON.stringify(result), /private detail/);
   for (const mutate of [s => delete s.operations, s => delete s.operations.operations.heartbeat_handler,
     s => delete s.operations.operations.heartbeat_final_delivery,
+    s => delete s.operations.operations.user_identity,
+    s => s.operations.operations.user_identity.activeOperations = 1,
+    s => s.operations.operations.user_identity.pendingCheckouts = 1,
+    s => s.operations.operations.user_identity.activeCheckouts = 1,
     s => delete s.database.pendingAcquisitions, s => s.database.pools.api.held = -1,
     s => s.operations.operations.heartbeat_handler.activeOperations = 1,
     s => s.database.pendingAcquisitions = 1, s => s.database.activeQueries = 1,

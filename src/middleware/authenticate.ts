@@ -13,7 +13,7 @@ const loadUserSingleFlight = createSingleFlight<
 >({ maxPendingKeys: 2_048 });
 
 function loadUserById(userId: string): Promise<typeof users.$inferSelect | undefined> {
-  return loadUserSingleFlight(userId, () => runWithUsageCapacityOperation("auth", async () => {
+  return loadUserSingleFlight(userId, () => runWithUsageCapacityOperation("user_identity", async () => {
     const [user] = await db
       .select()
       .from(users)

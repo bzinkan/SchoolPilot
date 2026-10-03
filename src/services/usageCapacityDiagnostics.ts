@@ -3,7 +3,7 @@ import type { RequestHandler } from "express";
 
 // Fixed labels only: no school, student, device, SQL, URL or message content.
 export const USAGE_CAPACITY_OPERATIONS = [
-  "auth", "heartbeat_persistence", "heartbeat_final_delivery", "heartbeat_background",
+  "auth", "user_identity", "heartbeat_persistence", "heartbeat_final_delivery", "heartbeat_background",
   "api_limiter", "heartbeat_middleware", "heartbeat_handler",
   "usage_report_admission", "usage_report", "usage_worker", "tenant_request", "tenant_background", "unclassified",
 ] as const;

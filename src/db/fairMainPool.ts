@@ -4,7 +4,8 @@ import pg from 'pg';
 import { readClasspilotDigitalUsageMode } from '../config/classpilotUsageModes.js';
 import type { DatabaseProcessRole } from '../config/databasePools.js';
 
-type Lane = 'default' | 'usage_report';
+const LANES = ['default', 'usage_report', 'user_identity'] as const;
+type Lane = typeof LANES[number];
 type Release = (error?: Error | boolean) => void;
 type ConnectCallback = (error: Error | undefined, client: pg.PoolClient | undefined, release: Release) => void;
 export interface FairPoolRuntime {
@@ -32,7 +33,7 @@ export function shouldScheduleUsagePool(role: DatabaseProcessRole, env: NodeJS.P
 
 export interface FairMainPoolInstance extends pg.Pool {
   schedulingSnapshot(): {
-    max: number; callerBudgetMs: number; queuedDefault: number; queuedUsageReports: number;
+    max: number; callerBudgetMs: number; queuedDefault: number; queuedUsageReports: number; queuedUserIdentities: number;
     ownedSlots: number; nativeInFlight: number; leased: number; closing: number;
     unendedClients: number; ending: boolean; waitingCount: number;
   };
@@ -47,7 +48,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
   clearTimer: timer => clearTimeout(timer),
 } }: { readOperation: () => string | undefined; NativeClient?: typeof pg.Client; runtime?: FairPoolRuntime }): new (options: FairPoolOptions) => FairMainPoolInstance {
   return class FairMainPool extends NativePool {
-    #queues = { default: new Fifo(), usage_report: new Fifo() };
+    #queues = { default: new Fifo(), usage_report: new Fifo(), user_identity: new Fifo() };
     #entries = new Set<Entry>();
     #clients = new WeakMap<pg.Client, ClientState>();
     #unendedClients = new Set<pg.Client>();
@@ -79,7 +80,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
       this.#promise = options.Promise ?? Promise;
       // pg declares this readonly property but implements a public getter.
       Object.defineProperty(this, 'waitingCount', { configurable: true, get: () =>
-        this.#queues.default.size + this.#queues.usage_report.size +
+        this.#queues.default.size + this.#queues.usage_report.size + this.#queues.user_identity.size +
         Reflect.get(NativePool.prototype, 'waitingCount', this) });
       hooks.created = client => this.#observeClient(client);
       this.#ownershipDrained = new Promise(resolve => { this.#resolveOwnershipDrained = resolve; });
@@ -126,6 +127,7 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
     schedulingSnapshot() {
       return { max: this.options.max, callerBudgetMs: 5000,
         queuedDefault: this.#queues.default.size, queuedUsageReports: this.#queues.usage_report.size,
+        queuedUserIdentities: this.#queues.user_identity.size,
         ownedSlots: this.#slots, nativeInFlight: this.#native, leased: this.#leased,
         closing: this.#closing, unendedClients: this.#unendedClients.size,
         ending: this.#endRequested, waitingCount: this.waitingCount };
@@ -151,8 +153,9 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
         Reflect.apply(callback, undefined, [new Error('Cannot use a pool after calling end on the pool')]);
         return;
       }
+      const operation = readOperation();
       const entry: Entry = {
-        kind: readOperation() === 'usage_report' ? 'usage_report' : 'default',
+        kind: operation === 'usage_report' || operation === 'user_identity' ? operation : 'default',
         deadline: runtime.now() + 5000, callback, resource: new AsyncResource('fair-main-pool-checkout'),
         state: 'queued', callerSettled: false, timer: undefined, previous: null, next: null,
       };
@@ -207,9 +210,16 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
       this.#pumping = true;
       try {
         while (this.#slots < this.options.max) {
-          const a = this.#queues.default.size, b = this.#queues.usage_report.size;
-          if (!a && !b) break;
-          const kind = a && b ? (this.#last === 'default' ? 'usage_report' : 'default') : b ? 'usage_report' : 'default';
+          // One turn per pending lane, without reserving idle capacity. A
+          // credential-backed identity lookup cannot crowd admitted reports
+          // out of their FIFO or prevent ordinary traffic from taking a turn.
+          let kind: Lane | undefined;
+          const last = LANES.indexOf(this.#last);
+          for (let offset = 1; offset <= LANES.length; offset++) {
+            const candidate = LANES[(last + offset) % LANES.length]!;
+            if (this.#queues[candidate].size) { kind = candidate; break; }
+          }
+          if (!kind) break;
           const entry = this.#queues[kind].shift();
           if (!entry) break;
           if (runtime.now() >= entry.deadline) {

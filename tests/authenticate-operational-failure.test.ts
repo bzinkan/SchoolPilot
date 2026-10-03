@@ -11,6 +11,10 @@ import {
 } from "../src/middleware/authenticate.ts";
 import errorMonitor from "../src/services/errorMonitor.ts";
 import { signUserToken } from "../src/services/jwt.ts";
+import { getTableColumns } from "drizzle-orm";
+import { users } from "../src/schema/core.ts";
+import { getUsageCapacityOperation, runWithUsageCapacityOperation } from "../src/services/usageCapacityDiagnostics.ts";
+import { createRequireClasspilotEntitlement } from "../src/middleware/requireClasspilotEntitlement.ts";
 
 type CapturedResponse = {
   statusCode: number;
@@ -18,6 +22,7 @@ type CapturedResponse = {
   locals: Record<string, unknown>;
   status(code: number): CapturedResponse;
   json(body: unknown): CapturedResponse;
+  clearCookie(): CapturedResponse;
 };
 
 type MiddlewareResult = {
@@ -39,6 +44,7 @@ function responseStub(): CapturedResponse {
       this.body = body;
       return this;
     },
+    clearCookie() { return this; },
   };
 }
 
@@ -362,5 +368,90 @@ describe("authentication operational failures", () => {
       }),
       new RegExp(secret, "i")
     );
+  });
+});
+
+function identityQueryResult(user: Record<string, unknown>) {
+  return { ...emptyQueryResult(), rowCount: 1,
+    rows: [Object.keys(getTableColumns(users)).map(key => user[key] ?? null)] };
+}
+
+describe("fresh identity scheduling", () => {
+  it("coalesces only pending user reads in the identity lane and restores the caller label", async t => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const labels: string[] = [];
+    const query = t.mock.method(pool, "query", async () => {
+      labels.push(getUsageCapacityOperation()); await gate;
+      return identityQueryResult({ id: "identity-coalesced", email: "identity@example.invalid", authVersion: 1 });
+    });
+    const token = signUserToken({ userId: "identity-coalesced", email: "identity@example.invalid", authVersion: 1 });
+    const sessionRequest: Record<string, unknown> = { headers: {}, session: { userId: "identity-coalesced", authVersion: 1 } };
+    const bearerRequest: Record<string, unknown> = { headers: { authorization: `Bearer ${token}` }, session: {} };
+    const first = runWithUsageCapacityOperation("tenant_request", () => invoke(optionalAuth, sessionRequest));
+    const second = runWithUsageCapacityOperation("usage_report_admission", () => invoke(authenticate, bearerRequest));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(query.mock.callCount(), 1, "the first route must not choose a different lane for a shared identity read");
+    finish(); const results = await Promise.all([first, second]);
+    assert.deepEqual(labels, ["user_identity"]);
+    assert.ok(results.every(result => result.nextCalled && !result.nextError));
+    assert.ok(sessionRequest.authUser); assert.ok(bearerRequest.authUser);
+    assert.equal(getUsageCapacityOperation(), "unclassified");
+    await runWithUsageCapacityOperation("tenant_request", async () => {
+      await invoke(authenticate, { headers: {}, session: { userId: "identity-coalesced", authVersion: 1 } });
+      assert.equal(getUsageCapacityOperation(), "tenant_request", "membership/command work must not inherit identity priority");
+    });
+    assert.equal(query.mock.callCount(), 2, "completed identities are not cached");
+  });
+
+  it("uses the current user row after a queued lookup and rejects revoked JWT and session versions", async t => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    let authVersion = 1;
+    const labels: string[] = [];
+    const query = t.mock.method(pool, "query", async () => {
+      labels.push(getUsageCapacityOperation()); await gate;
+      return identityQueryResult({ id: "identity-revoked", email: "revoked@example.invalid", authVersion });
+    });
+    const token = signUserToken({ userId: "identity-revoked", email: "revoked@example.invalid", authVersion: 1 });
+    const request: Record<string, unknown> = { headers: { authorization: `Bearer ${token}` }, session: {} };
+    const pending = invoke(authenticate, request);
+    await new Promise(resolve => setImmediate(resolve));
+    authVersion = 2; finish();
+    const result = await pending;
+    assert.equal(result.response.statusCode, 401); assert.equal(result.nextCalled, false);
+    assert.equal(request.authUser, undefined);
+    assert.deepEqual(result.response.body, { error: "Credentials have changed. Sign in again.", code: "CREDENTIAL_INVALIDATED" });
+    let destroyed = false;
+    const session = await invoke(authenticate, { headers: {}, session: { userId: "identity-revoked", authVersion: 1,
+      destroy(callback: (error?: Error) => void) { destroyed = true; callback(); } } });
+    assert.equal(session.response.statusCode, 401); assert.equal(destroyed, true);
+    assert.equal(query.mock.callCount(), 2, "a later session rereads the database");
+    assert.deepEqual(labels, ["user_identity", "user_identity"]);
+  });
+
+  it("invalid JWTs cannot issue preferred identity work, including optional authentication", async t => {
+    captureExpectedLogs(t);
+    const query = t.mock.method(pool, "query", async () => { assert.fail("invalid token must not query identity"); });
+    for (const middleware of [authenticate, optionalAuth]) {
+      const request: Record<string, unknown> = { headers: { authorization: "Bearer invalid-user-identity-claim" }, session: {} };
+      const result = await invoke(middleware, request);
+      assert.equal(request.authUser, undefined); assert.equal(query.mock.callCount(), 0);
+      if (middleware === authenticate) assert.equal(result.response.statusCode, 401);
+      else assert.equal(result.nextCalled, true);
+    }
+  });
+
+  it("heartbeat entitlement resolution keeps its existing auth label and cannot obtain the identity lane", async () => {
+    const labels: string[] = [];
+    const middleware = createRequireClasspilotEntitlement(async () => {
+      labels.push(getUsageCapacityOperation());
+      return { schoolId: "synthetic-school", entitled: true, reason: "active" };
+    });
+    const response = responseStub(); response.locals.schoolId = "synthetic-school";
+    let nextCalled = false;
+    await Promise.resolve(middleware({} as never, response as never, () => { nextCalled = true; }));
+    assert.equal(nextCalled, true); assert.deepEqual(labels, ["auth"]);
+    assert.equal(getUsageCapacityOperation(), "unclassified");
   });
 });
