@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "createdAtUtc": "2026-10-03T13:50:09.652Z",
+  "sourceBase": "b6dc88c5358a5339067d0b255c9cffabfd91fc52",
+  "sourceBindings": [
+    {
+      "path": "scripts/load/usage/release-enabled-generator.mjs",
+      "bytes": 21519,
+      "sha256": "9cedb026ba30cf8ab1b481e33a8ef556f64cde5529f3bf79697984600a37a33c",
+      "normalizedLfSha256": "9f791d25d5fcb742d172b3101d4a2a3433d33489d2e27e673e25560d11f10487"
+    },
+    {
+      "path": "scripts/load/usage/release-enabled-protocol.mjs",
+      "bytes": 4355,
+      "sha256": "74fb61a7ad7d1065f576568137f49c87d88b988a73c8c26b254177ea04a2bf35",
+      "normalizedLfSha256": "77664ddc78cf97c42e2b5e364ad2b2d7c802405d67b5c73e1c60b070a598fd1f"
+    },
+    {
+      "path": "scripts/load/usage/release-enabled-focus-protocol.test.mjs",
+      "bytes": 5307,
+      "sha256": "bb40edc321a003542fb3a669dffb27efb5d29dc188673d35bce2306832261b1c",
+      "normalizedLfSha256": "8558db37ce8395063906de9704ef256190a7d35aef36705dbf452d688f398743"
+    },
+    {
+      "path": "tests/private-load-usage-profiles.test.mjs",
+      "bytes": 735,
+      "sha256": "e5bac67182f934db7cd75505ead0a9bcdc3e698c1d2cfd84c56c07a225eb83db",
+      "normalizedLfSha256": "40500fb842613287af33882ed131be725c8da5327d489e794546ba39d6704948"
+    }
+  ],
+  "scope": "Synthetic Focus/Stop Focus lifecycle: actual packaged wire field and exact authorized public projection before command-completion acknowledgement",
+  "extensionZipSha256": "82352b04020b5fefdee06aa46cc3ba963ddac0d6c7eab4e241fca2cf6ca61575",
+  "ordinaryHeartbeatUnchanged": true,
+  "ordinaryHeartbeatNormalizedLfSha256": "1af83496287f99f236ff80ab4c7e3bcad68ba16d69bee1ef27bed0169a94fb8c",
+  "passingTests": 61,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "capacityAccepted": false,
+  "browserEnforcementClaimed": false,
+  "rootFollowups": [
+    "Each public-state polling request is bounded by the remaining overall ten-second deadline.",
+    "The new six-case protocol suite is imported by the existing CI infrastructure lane."
+  ],
+  "sanitization": "No credentials or user content present; synthetic fixture names only. Originals preserved without redaction.",
+  "files": [
+    {
+      "path": "usage-profile-tests.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-lifecycle-harness-checks-01\\usage-profile-tests.log",
+      "originalBytes": 15200,
+      "originalSha256": "14cf38a3a8373144f0cb61596d112e6c9d61505e721f626a2ea477f1efa36545",
+      "gzipSha256": "680822060d106276c3045aa4bf3bbd7ca8962a2fd757aa24fecb55c289789bc3"
+    },
+    {
+      "path": "local-check-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-lifecycle-harness-checks-01\\receipt.json",
+      "originalBytes": 283,
+      "originalSha256": "a74f01c37ce75aedb775a395b2e4c4900b87fb809235956add86b5d58995d4ac",
+      "gzipSha256": "d9d19d646c0b1af485d11c91101e6cf01ded01e5b4c608ac25be63109edd496b"
+    },
+    {
+      "path": "reviewed-proposal.patch.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-lifecycle-harness-proposal-01\\proposal.patch",
+      "originalBytes": 15795,
+      "originalSha256": "63f38ab06f47938ad53c9ff80f3e22c772c533e94528e3a41b4cd65129de83f4",
+      "gzipSha256": "e4ede6404a8a19eac5ce8088455dfe83437ae3ca43c1dea98f30745af381ecad"
+    },
+    {
+      "path": "proposal-receipt.json.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-focus-lifecycle-harness-proposal-01\\receipt.json",
+      "originalBytes": 1543,
+      "originalSha256": "8c717610427290c204e5b3927d4b4cb97f24e9b5762714acc8cc2328aa6aebe6",
+      "gzipSha256": "6a16dc0b41d400ed643852407763bf43485a6c41f1ef745c86d0418a36c68e99"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ import { COLD_OPEN_LOOP_PROFILE } from './cold-open-loop-profile.mjs';
 import { RELEASE_ENABLED_PROFILE, releaseRangeFixture } from './release-enabled-profile.mjs';
 import { schoolDayOracle, schoolDayRangeDomains } from './school-day-profile.mjs';
 import { summarize } from './local-usage-benchmark.mjs';
-import { commandTransportAcknowledgement, assertPrivateLifecycleAdvanced, lifecycleToken } from './release-enabled-protocol.mjs';
+import { commandTransportAcknowledgement, focusClassroomAcknowledgement, publicFocusProjectionMatches, assertPrivateLifecycleAdvanced, lifecycleToken } from './release-enabled-protocol.mjs';
 
 assert.ok(process.send, 'Generator requires an owning IPC parent');
 const { createStudentToken } = await import('../../../dist/services/deviceJwt.js');
@@ -111,6 +111,23 @@ async function waitFrame(connection, predicate) {
   while (!connection.frames.some(predicate) && Date.now() < until) await sleep(10);
   const frame = connection.frames.find(predicate); assert.ok(frame, 'Expected exact student transport frame did not arrive'); return frame;
 }
+async function assertPublicFocusApplied(school, index, expected) {
+  const deadline = Date.now() + 10_000;
+  do {
+    const result = await request('/api/students-aggregated?teachingSessionId=' + encodeURIComponent(school.currentSession), {
+      cookie: school.teacherCookie, schoolId: school.id,
+      signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+    });
+    assert.equal(result.status, 200, 'Authorized Focus state lookup must succeed');
+    assert.ok(Array.isArray(result.body), 'Expected the authorized classroom roster');
+    const row = result.body.find(student => student.studentId === school.students[index]);
+    assert.ok(row, 'Exact selected student is missing from the authorized classroom roster');
+    if (publicFocusProjectionMatches(row, expected)) return;
+    await sleep(250);
+  } while (Date.now() < deadline);
+  assert.fail('Exact public Focus revision did not reach synced state after its classroom acknowledgement');
+}
+
 async function command(school, type, payload, index, connection) {
   const issued = await staffRequest(school, '/commands', { method: 'POST', body: { teachingSessionId: school.currentSession,
     targetScope: 'students', targetStudentIds: [school.students[index]], commandType: type, commandPayload: payload } }, true);
@@ -121,10 +138,19 @@ async function command(school, type, payload, index, connection) {
   assert.ok(!['unavailable', 'failed'].includes(targets[0].status), `${type} unavailable: ${targets[0].errorMessage || targets[0].status}`);
   const frame = await waitFrame(connection, message => message.commandId === issued.body.command.id && message.type === 'remote-control');
   const transportAck = commandTransportAcknowledgement(frame, school, index, type, issued.body.command.id);
+  const focusProof = ['focus-tab', 'stop-focus'].includes(type)
+    ? focusClassroomAcknowledgement(frame, school, index, type, issued.body.command.id) : null;
+  if (focusProof) {
+    // The packaged extension sends this distinct state ACK after applying state.
+    // Verify canonical public state before a command-completion receipt can mask it.
+    connection.socket.send(JSON.stringify(focusProof.classroomAck));
+    await assertPublicFocusApplied(school, index, focusProof);
+  }
   const ack = await request('/api/classpilot/device/command-acks', { method: 'POST', token: school.tokens[index], body: { acks: [{
     ackId: randomUUID(), commandId: issued.body.command.id, ackState: 'completed', ...transportAck,
     schoolId: school.id, studentId: school.students[index], studentSessionId: school.studentSessions[index], deviceId: school.devices[index],
-    result: { syntheticClient: true },
+    result: { syntheticClient: true, ...(focusProof ? { focusStatus: focusProof.focusStatus,
+      stateReconciled: true, appliedRevision: focusProof.classroomAck.appliedRevision, outcome: 'applied' } : {}) },
   }] } });
   assert.equal(ack.status, 200); assert.equal(ack.body.receipts[0].accepted, true, `${type} acknowledgement rejected: ${JSON.stringify(ack.body)}`);
   return issued.body.command.id;
@@ -139,7 +165,7 @@ async function lifecycle() {
       for (const index of [0, 1, 2]) { const connection = await connectStudent(school, index); sockets.push(connection); controlSockets.push(connection); }
       const socket = controlSockets[2]; events.push('websocket_authenticated');
       await command(school, 'lock-screen', { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', boundary: 'resource' }, 0, controlSockets[0]); events.push('precise_command_ack');
-      await command(school, 'focus-tab', { tabTargets: [{ studentId: school.students[1], tabRef: 'synthetic-tab-1', observedRevision: 9 }] }, 1, controlSockets[1]); events.push('focus_command_ack');
+      await command(school, 'focus-tab', { tabTargets: [{ studentId: school.students[1], tabRef: 'synthetic-tab-1', observedRevision: 9 }] }, 1, controlSockets[1]); events.push('focus_command_ack', 'focus_classroom_ack_and_public_state');
       const inbox = await staffRequest(school, `/teacher/messages?sessionId=${school.currentSession}`, {}, true); assert.equal(inbox.status, 200);
       const token = inbox.body.privateChatLifecycles.find(row => row.studentId === school.students[2])?.privateChatLifecycle; assert.ok(token);
       const send = () => staffRequest(school, '/teacher/reply', { method: 'POST', body: { sessionId: school.currentSession, studentId: school.students[2], message: 'Synthetic lifecycle probe', expectedPrivateChatLifecycle: token } }, true);
@@ -162,7 +188,7 @@ async function lifecycle() {
       const thread = reconnected.auth.settings?.fab?.privateChatLifecycleState?.threads?.find(row => row.teachingSessionId === school.currentSession);
       assert.ok(thread); assert.deepEqual(lifecycleToken(thread), lifecycleToken(closed.body.privateChatLifecycle));
       assert.equal(reconnected.frames.some(frame => frame.chatMessageId === pending.body.message.id), false); events.push('expired_reply_absent_after_reconnect');
-      await command(school, 'stop-focus', {}, 1, controlSockets[1]); events.push('stop_focus_ack');
+      await command(school, 'stop-focus', {}, 1, controlSockets[1]); events.push('stop_focus_ack', 'stop_focus_classroom_ack_and_public_state');
       await command(school, 'unlock-screen', { screenOnly: true }, 0, controlSockets[0]); events.push('precise_cleanup_ack');
     }
     return { passed: true, events, simulatedClientAcknowledgements: true, browserEnforcementClaimed: false };
