@@ -65,11 +65,44 @@ catalog, service-traffic rollback, Redis/browser behavior or recovery below the
 Usage coverage correction. All failed setup attempts and independent cleanup
 proof remain preserved.
 
-The immutable b112 prepared snapshot remains private. At this checkpoint its
-restoration has not yet been verified. Snapshot reuse requires independent
-source/schema/role/state/count verification, standard ANALYZE and the documented
-PostgreSQL restart; this does not flush the host filesystem cache. The strict
-three-run acceptance validator is still under development.
+The immutable b112 prepared snapshot remains private. Its separate
+[native restore proof](snapshot-restore-b112-01/manifest.json) now verifies the
+full schema after native PostgreSQL rendering, 53 migration entries, 129 forced
+RLS tables, exact data/control/identity bindings, standard ANALYZE, closed
+clients and a 16-minute authority-expiry horizon without refreshing timestamps
+or credentials. Both failed validation attempts remain preserved. The restored
+fixture was consumed by an isolated query diagnostic and removed; it cannot
+qualify as a capacity run. Future restores require their own proof and fresh
+password login/session prewarm, followed by the documented PostgreSQL restart.
+This does not flush the host filesystem cache. The strict three-run acceptance
+validator and its native receipt producers remain under development.
+
+The [b112 rollup plan and URL-map experiment](rollup-domain-prototype-b112-01/manifest.json)
+records an isolated actual-image rewrite in 13.443 seconds, with 84,000 stored
+grains, 10,002,500 seconds and one million observations matching the independent
+oracle. PostgreSQL execution was 13.366 seconds. Grain computation consumed
+9.246 seconds inclusive; the WindowAgg's elapsed residual after its child sort
+was about 4.524 seconds, which is not a regex-only CPU measurement. Roster winner
+computation was about 119 ms. Writes generated 171.88 MB of WAL; the plan does
+not partition heap, index and foreign-key WAL. No constraint/index change was
+selected.
+
+A separate rollback-only component comparison evaluates the unchanged domain
+expression once per distinct exact URL per student. All nine semantic columns
+match in both directions for all 84,000 grains; exclusion boundaries, 63 URL/
+classification edge rows and 6,000 all-distinct URL rows also match. Warm grain
+query times are 5.555/5.827 seconds for the prototype versus 9.050 seconds for
+the warmed baseline (35.6–38.6% lower). The first baseline took 20.553 seconds;
+its cause is not established and it is not used to claim the gain. These are
+component timings, not a full writer or combined-capacity result.
+
+The all-distinct normalization kernel regresses from 28.022 to 41.495 ms,
+an increase of 13.473 ms (about 48%) across 6,000 rows. The selected implementation
+therefore targets repeated URLs and is not a universal speedup. Production
+integration, native regression checks and new full combined capacity evidence
+remain required. Timeline/AI/roster semantics, writes, schema, RLS, cutoffs and
+resource limits must remain unchanged. Both diagnostic fixtures were consumed
+and removed; neither is reusable as a cold capacity run.
 
 The [Linux prepared-query component comparison](heartbeat-prepared-linux-prototype-01/manifest.json)
 uses exact `0e427e3c` runtime bytes, one API CPU, 2 GiB container memory and the
