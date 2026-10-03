@@ -80,6 +80,16 @@ overlap and must not be added or presented as expected savings. Narrow metadata
 reuse and result projections need separate parity and benefit checks. This
 profile includes sampling overhead and makes no report/worker capacity claim.
 
+A [separate compile-only experiment](deferred-fence-compilation-e95-01/manifest.json)
+passes 18 SQL/parameter/type parity cases under the exact e95 Node/dependency
+runtime. Across five alternating rounds per query/mode, flattening three raw
+fences saves an estimated 0.942 CPU seconds per 6,000 normal heartbeat paths.
+That arithmetic excludes integration guards and all database work. It does
+not establish sufficient capacity benefit, and the production change is
+deferred. Application bytes, authority queries, clocks and locks are unchanged.
+The packet retains the initial archive-script failure separately from the
+successful experiment; no database or workload acceptance is implied.
+
 The [restored-fixture combined e95 diagnostic](restored-combined-e95-01/manifest.json)
 also fails: 4,730 of 6,000 heartbeats succeed, 976 fail, 294 are refused and
 seven offers exceed the lateness bound. All 64 reports pass; whole workers take

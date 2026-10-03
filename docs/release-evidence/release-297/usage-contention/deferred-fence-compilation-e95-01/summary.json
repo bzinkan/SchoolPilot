@@ -1,0 +1,90 @@
+{
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "node": "v22.23.3",
+  "v8": "12.4.254.21-node.57",
+  "defaultHeapLimitBytes": 1098907648,
+  "compileOnly": true,
+  "realDatabaseCalls": 0,
+  "capacityAccepted": false,
+  "parityCases": 18,
+  "rounds": 30,
+  "summary": {
+    "live_binding": {
+      "canonical": {
+        "medianMsPer1000": 61.28073299999996,
+        "medianCpuMsPer1000": 57.283,
+        "minMsPer1000": 59.45551640000012,
+        "maxMsPer1000": 72.4295195999999,
+        "totalObservedGcMs": 147.25759649276733,
+        "totalObservedGcCount": 131,
+        "medianHeapUsedGrowth": 7692464
+      },
+      "flat": {
+        "medianMsPer1000": 36.57645540000012,
+        "medianCpuMsPer1000": 32.4742,
+        "minMsPer1000": 32.31768780000002,
+        "maxMsPer1000": 42.37625579999999,
+        "totalObservedGcMs": 74.64786100387573,
+        "totalObservedGcCount": 21,
+        "medianHeapUsedGrowth": 7648168
+      }
+    },
+    "final_fence": {
+      "canonical": {
+        "medianMsPer1000": 107.15583699999988,
+        "medianCpuMsPer1000": 102.4232,
+        "minMsPer1000": 102.55597800000014,
+        "maxMsPer1000": 117.58240380000002,
+        "totalObservedGcMs": 124.92880463600159,
+        "totalObservedGcCount": 215,
+        "medianHeapUsedGrowth": 4172680
+      },
+      "flat": {
+        "medianMsPer1000": 42.19475200000015,
+        "medianCpuMsPer1000": 37.8206,
+        "minMsPer1000": 32.074502399999986,
+        "maxMsPer1000": 44.69880580000004,
+        "totalObservedGcMs": 13.421351432800293,
+        "totalObservedGcCount": 25,
+        "medianHeapUsedGrowth": 3933480
+      }
+    },
+    "foreground_fence": {
+      "canonical": {
+        "medianMsPer1000": 89.08926839999985,
+        "medianCpuMsPer1000": 85.5142,
+        "minMsPer1000": 86.27050120000004,
+        "maxMsPer1000": 101.7715612,
+        "totalObservedGcMs": 98.02280759811401,
+        "totalObservedGcCount": 180,
+        "medianHeapUsedGrowth": 2371080
+      },
+      "flat": {
+        "medianMsPer1000": 47.80662459999985,
+        "medianCpuMsPer1000": 42.7558,
+        "minMsPer1000": 43.936296799999944,
+        "maxMsPer1000": 53.31180500000009,
+        "totalObservedGcMs": 63.824706077575684,
+        "totalObservedGcCount": 34,
+        "medianHeapUsedGrowth": 2118392
+      }
+    }
+  },
+  "weights": {
+    "live_binding": 2,
+    "final_fence": 1,
+    "foreground_fence": 1
+  },
+  "arithmetic6000": {
+    "elapsedSavingsMs": 933.9137039999964,
+    "cpuSavingsMs": 941.8716,
+    "observedGcPauseDifferenceMs": 69.82200616836548
+  },
+  "limitations": [
+    "Weights assume two live-binding checks plus one final and one foreground fence per normal successful heartbeat, not exact observed per-shape counts.",
+    "Observed profiler construction1.904538s is sampledwall; do not sum with GC or assume complete eliminability.",
+    "Arithmetic extrapolations omit production ownership guards and actual pg execution; no capacity claim.",
+    "Net heap growth is not total allocation; observedGC is only this compile-only run under explicit outside-round gc().",
+    "All application and SQL state, authority/clock/freshness and transaction behavior remain unmodified. No production executor integration tested."
+  ]
+}
