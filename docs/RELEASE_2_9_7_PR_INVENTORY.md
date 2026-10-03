@@ -15,13 +15,18 @@ proofs; this observation does not independently refresh every source PR's state.
 
 Subsequent stabilization remains inside #603. The [0431f043 CI checkpoint](release-evidence/release-297/usage-contention/ci-0431f043.json) passed all four required workflows. Later corrections reuse only currently owned monitoring leases, consolidate optional heartbeat reply recovery under final authority, and admit one bulk Usage writer per worker pool. [Current combined local checks](release-evidence/release-297/usage-contention/combined-checks-attempt-02/manifest.json) passed 1,744 unit cases with four explicit conditional skips; the preceding build/type/cast checks passed. Failed load runs and the failed static-assertion run remain preserved. Final combined capacity and new-head CI are still pending.
 
-The separately prepared local fallback source is `2bbcdb370eeeb182553097a2bd049e32bec93f9b`
+The later [8069560d CI checkpoint](release-evidence/release-297/usage-contention/ci-8069560d.json) failed on a newly disclosed development dependency advisory and one stale screenshot-authority static assertion; 15 jobs passed. [Combined load attempt 04](release-evidence/release-297/usage-contention/load-combined-04/manifest.json) also failed. Follow-up work narrows fresh heartbeat reads, prepares canonical class ownership before the cold restart, and preserves PostgreSQL microseconds in the independent current-day oracle. Each failure and its repair has separate evidence; these changes do not certify capacity or a later source automatically.
+
+[Local checks after these changes](release-evidence/release-297/usage-contention/combined-checks-attempt-04/manifest.json) passed 1,752 unit cases and all 48 load guards. Clean install, build, test-type and cast checks passed on identical source bytes; four conditional unit skips remain explicit. The six narrow production dependency updates cleared all production audit findings. The original unit environment failure and its separate native index-parser verification are retained. Remote CI and measured capacity still require this final source.
+
+The separately prepared fallback source is now `351422d75a1aefd428e79d0c0d290b2171776f2e`
 on `codex/release297-compatible-rollback-sso`: the reviewed `08802d02` floor plus
-only the private-chat/SSO lock-order correction and monitoring lease-reuse fix.
-[Its source/image evidence](release-evidence/release-297/usage-contention/rollback-artifact-2bbcdb37/index.json)
-records both Usage modes off. This fallback is not another merged source PR;
-registry publication, final-schema re-entry and production task bindings remain
-separate. Historical fallback artifacts are retained.
+the private-chat/SSO lock-order correction, monitoring lease-reuse fix and
+[six narrow production dependency updates](release-evidence/release-297/usage-contention/production-dependency-audit/rollback-followup-manifest.json).
+Both Usage modes stay off. The [preceding source/image evidence](release-evidence/release-297/usage-contention/rollback-artifact-2bbcdb37/index.json)
+is historical; a rebuilt image and final-schema re-entry are still required for
+the new source. This fallback is not another merged source PR. Registry publication
+and production task bindings remain separate. Historical artifacts are retained.
 | PR | Disposition | Exact reviewed head | Dependency base | Scope |
 |---|---|---|---|---|
 | [SchoolPilot #547](https://github.com/bzinkan/SchoolPilot/pull/547) | already merged | `45dd3333ffb043c797ac095387c0c87e5d31a238` | main | Keep the AI assistant's Flight Path list to the teacher's own paths |

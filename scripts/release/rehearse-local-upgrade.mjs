@@ -7,6 +7,7 @@ import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import pg from 'pg';
+import { rehearsalBuildSteps } from './rehearsal-build-steps.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [baselineArg, baselineSha, outputArg, rollbackArg, rollbackSha] = process.argv.slice(2);
@@ -72,6 +73,13 @@ async function command(executable, args, { cwd = root, env = baseEnv, log, allow
   return result;
 }
 
+async function compileTarget(cwd, env, prefix) {
+  const manifest = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8'));
+  for (const step of rehearsalBuildSteps(manifest)) {
+    await command(process.execPath, [step.entrypoint], { cwd, env, log: `${prefix}-${step.name}.log` });
+  }
+}
+
 try {
   assert.equal((await command('git', ['rev-parse', 'HEAD'], { cwd: baseline })).stdout.trim(), baselineSha);
   assert.equal((await command('git', ['status', '--porcelain'], { cwd: baseline })).stdout.trim(), '');
@@ -128,8 +136,7 @@ try {
     JWT_SECRET: secret, SESSION_SECRET: secret, STUDENT_TOKEN_SECRET: secret,
     NODE_ENV: 'test', REDIS_URL: '', SCHEDULER_ENABLED: 'false', RUN_MIGRATIONS_ON_STARTUP: 'false',
     RLS_GUC_ENABLED: 'true', RLS_ENABLED_TABLES: oldTables.join(','), DOTENV_CONFIG_PATH: path.join(output, 'absent.env') };
-  await command(process.execPath, ['node_modules/typescript/bin/tsc'], { cwd: baseline, env, log: 'baseline-typescript.log' });
-  await command(process.execPath, ['node_modules/tsc-alias/dist/bin/index.js'], { cwd: baseline, env, log: 'baseline-aliases.log' });
+  await compileTarget(baseline, env, 'baseline');
   await command(process.execPath, ['node_modules/drizzle-kit/bin.cjs', 'push', '--force'], { cwd: baseline, env, log: 'baseline-schema.log' });
   await command(process.execPath, ['dist/index.js'], { cwd: baseline, env: { ...env, RUN_LEGACY_MIGRATIONS_ONLY: 'true' }, log: 'baseline-legacy.log' });
   // The disposable legacy bootstrap also runs its versioned migrations and may
@@ -153,8 +160,7 @@ try {
     RLS_ENABLED_TABLES: currentTables.join(',') };
   // dist is ignored and may belong to an older build even on a clean checkout.
   // Compile the candidate within this run before certifying its source binding.
-  await command(process.execPath, ['node_modules/typescript/bin/tsc'], { env, log: 'candidate-typescript.log' });
-  await command(process.execPath, ['node_modules/tsc-alias/dist/bin/index.js'], { env, log: 'candidate-aliases.log' });
+  await compileTarget(root, env, 'candidate');
   await command(process.execPath, ['dist/index.js'], { env: currentEnv, log: 'candidate-versioned.log' });
   const after = await snapshot('candidate-contract');
   for (const original of before.ledger) assert.deepEqual(after.ledger.find(row => row.id === original.id), original);
@@ -185,8 +191,7 @@ try {
   await command(process.execPath, ['dist/index.js'], { env: currentEnv, log: 'candidate-retained-contract.log' });
   assert.deepEqual((await snapshot('candidate-retained-contract')).ledger, adopted.ledger);
   if (rollback) {
-    await command(process.execPath, ['node_modules/typescript/bin/tsc'], { cwd: rollback, env, log: 'rollback-typescript.log' });
-    await command(process.execPath, ['node_modules/tsc-alias/dist/bin/index.js'], { cwd: rollback, env, log: 'rollback-aliases.log' });
+    await compileTarget(rollback, env, 'rollback');
     await command(process.execPath, ['dist/index.js'], { cwd: rollback, env: { ...currentEnv, GIT_SHA: rollbackSha }, log: 'compatible-rollback-migrations.log' });
     assert.deepEqual((await snapshot('compatible-rollback-contract')).ledger, adopted.ledger, 'Compatible rollback must retain every migration record');
     assert.ok((await readRlsCatalog(owner, currentTables)).every(hasCanonicalTenantPolicy));

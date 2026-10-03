@@ -202,6 +202,56 @@ directory above and are not replaced by these focused tests.
   that failure from the completed passing test suite. This does not establish
   load capacity or final-head CI.
 
+- [Combined attempt at `8069560d`](load-combined-04/manifest.json) retains the
+  failed complete workload: 4,696 of 6,000 heartbeats and 36 of 64 reports
+  passed, with 716 API checkout failures. Both workers met 48 seconds including
+  admission queueing. API CPU remained high while SQL and WAL waits improved.
+  Separate follow-up investigations found an oracle timestamp-precision defect
+  and missing canonical control initialization in the lifecycle fixture; neither
+  excuses the independent capacity failures. The original one-second mismatch
+  cannot be conclusively attributed because its raw timestamps were not retained.
+- [Heartbeat query construction benchmarks](heartbeat-context-compile-benchmarks/manifest.json)
+  compare narrow projections and fixed parameterized SQL without executing
+  database queries. These support a focused optimization trial, not a capacity
+  claim; timestamp decoding and authority checks still require native validation.
+- [Joined heartbeat persistence context](heartbeat-persistence-context/manifest.json)
+  records 15 passing owner cases and eight passing restricted-role cases, with
+  no skips. One fresh query matches the previous three reads, including all
+  control fields, timestamp decoding, caller-transaction changes, tenant
+  isolation and navigation privacy. Two invalid fixture attempts are preserved;
+  neither changed database constraints. Separate plans over 2,001 control rows
+  use the school/student index and do not establish full-load capacity. Final
+  combined build/type checks and capacity acceptance remain required.
+
+- [Current-day oracle precision](oracle-microseconds/manifest.json) preserves
+  the failing boundary regression and six native PostgreSQL numeric parity
+  cases. Exact microsecond text and integer arithmetic replace lossy Date
+  parsing, with aggregate equality unchanged. The [fixture invariant checks](oracle-microseconds/invariants-manifest.json)
+  add 34 passing focused checks and 12 native synthetic SQL cases, rejecting
+  changed classification or frozen membership before applying the one-grain
+  oracle. Original combined04 remains failed: its raw failing observation was
+  not retained, so this proof does not retrospectively validate that aggregate.
+
+- [CI at `8069560d`](ci-8069560d.json) completed with 15 successful jobs and
+  two failures. The [runtime-security follow-up](runtime-security-static-followup/manifest.json)
+  preserves the ordinary database lane's 1,400 passes, one outdated static
+  assertion failure and eight skips. The corrected assertion checks the shared
+  SSO lock before screenshot preparation; all 27 local follow-up cases pass.
+  Its first failed local invocation, which omitted required environment, is
+  retained. The independent dependency audit failure is recorded separately.
+  These repairs still require fresh final-source CI.
+
+- [Combined checks, third attempt](combined-checks-attempt-03/manifest.json)
+  preserves successful clean install, build, type/cast checks and both audit
+  gates, plus a failed unit run caused by an inappropriate dummy database URL
+  enabling an optional native case. The [fourth attempt](combined-checks-attempt-04/manifest.json)
+  removes that environment mistake and records 1,752 passes, zero failures and
+  four conditional skips. All 1,151 source-file hashes match across both runs.
+  It also retains all 48 passing load-guard checks. Production dependency audit
+  found no vulnerabilities; the full audit retained four moderate findings and
+  no high or critical findings. These remain local checks, with final-source CI
+  and capacity acceptance separate.
+
 Release acceptance additionally requires three consecutive successful combined
 release-enabled capacity runs on unchanged application source/schema, the
 retained comparison profile, final combined CI, local artifacts and migration/

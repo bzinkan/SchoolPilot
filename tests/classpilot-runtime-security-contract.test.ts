@@ -164,7 +164,10 @@ describe("ClassPilot tracking-window screenshot authority", () => {
   });
 
   it("never short-circuits a tracking-window transition heartbeat before issuing policy", async () => {
-    const devices = await source("src/routes/classpilot/devices.ts");
+    const [devices, storage] = await Promise.all([
+      source("src/routes/classpilot/devices.ts"),
+      source("src/services/storage.ts"),
+    ]);
     const heartbeat = devices.slice(
       devices.indexOf('router.post("/device/heartbeat"'),
       devices.indexOf('router.post("/device/screenshot"')
@@ -181,7 +184,15 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       "negotiated heartbeat authority must be computed once at locked delivery, never in the earlier persistence lease");
     assert.match(heartbeat, /const screenshotPolicyPromise = trackingWindowScreenshotLeaseNegotiated\s*\? Promise\.resolve\(undefined\)\s*:\s*resolveClasspilotScreenshotPolicy/);
     const delivery = heartbeat.slice(heartbeat.indexOf("const finalDelivery ="));
-    assert.match(delivery, /withClasspilotStudentControlDeliveryAuthority[\s\S]*lockClasspilotSsoPolicyDeliveryAuthority[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*getClasspilotScreenshotAuthorityProjection\([\s\S]*?\}, transactionDb\)/);
+    assert.match(delivery, /withClasspilotStudentControlDeliveryAuthority[\s\S]*freezeSsoPolicy: true[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*getClasspilotScreenshotAuthorityProjection\([\s\S]*?\}, transactionDb\)/);
+    const authority = storage.slice(
+      storage.indexOf("export async function withClasspilotStudentControlDeliveryAuthority"),
+      storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+    );
+    assert.match(authority, /if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority\(options\.schoolId, transactionDb\);/);
+    const policyLock = authority.indexOf("await lockClasspilotSsoPolicyDeliveryAuthority(");
+    assert.ok(policyLock >= 0 && policyLock < authority.indexOf("await prepareAuthorized(transactionDb)"),
+      "shared delivery authority must freeze SSO policy before preparing the screenshot projection");
     assert.match(delivery, /deliveredControlRevision: finalClassroomState\?\.revision \?\? 0/);
     assert.match(delivery, /: screenshotPolicy/);
   });

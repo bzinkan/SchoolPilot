@@ -176,6 +176,11 @@ try {
       node scripts/load/usage/bounded-fixture-step.mjs 900000 --max-old-space-size=512 --import ./tests/test-environment.mjs $harness *> (Join-Path $output 'preparation.log')
       if ($LASTEXITCODE -ne 0) { throw 'Cold fixture preparation failed; measurement did not begin.' }
       $env:USAGE_SCALE_COLD_STATE_SHA256 = (Get-FileHash -LiteralPath $env:USAGE_SCALE_COLD_STATE -Algorithm SHA256).Hash.ToLower()
+      # The legacy comparison seeder is immutable. Prepare release-only current
+      # control/staff ownership through the canonical production backfill, then
+      # close every preparation pool before resetting PostgreSQL shared buffers.
+      node scripts/load/usage/bounded-fixture-step.mjs 120000 --max-old-space-size=512 scripts/load/usage/prepare-release-control-ownership.mjs *> (Join-Path $output 'release-control-preparation.log')
+      if ($LASTEXITCODE -ne 0) { throw 'Canonical release control preparation failed; cold measurement did not begin.' }
       if ($container -cnotmatch '^schoolpilot-usage-scale-[a-f0-9]{12}$' -or $container.Substring($container.Length-12) -cne $run -or
           $database -cne ('schoolpilot_redesign_usage_scale_' + $run)) { throw 'Cold restart target guard failed.' }
       $coldLabels = & $dockerExecutable --host $pinnedDockerHost inspect $container --format '{{json .Config.Labels}}' | ConvertFrom-Json -DateKind String

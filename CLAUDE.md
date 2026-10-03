@@ -79,7 +79,7 @@ npm run dev              # Start Vite on :5173, proxies /api to :4000
 ```bash
 # Backend
 npm run check            # TypeScript type check (tsc --noEmit)
-npm run build            # Compile to dist/ (tsc + tsc-alias)
+npm run build            # Compile to dist/ (tsc)
 npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
 npm run soc2:ai-privacy-evidence  # Generate non-sensitive AI/privacy evidence for SOC2-002
 npm run soc2:ai-private-evidence-kit  # Create private SOC2-002 AI data-flow review drafts

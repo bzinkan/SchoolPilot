@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:25:28.694Z",
+  "scope": "Validate the fixed current-day fixture has one grain per student before the independent exact-microsecond oracle is used.",
+  "source": {
+    "baseCommit": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+    "state": "uncommitted incremental shared worktree; not final capacity acceptance",
+    "archiveTimeFiles": {
+      "scripts/load/usage/local-usage-scale.mjs": "e5facfc76ee7db4777a9f13c0851609dd501a58e87a33e9bce8eb5b10b8d23cd",
+      "scripts/load/usage/local-usage-scale.test.mjs": "2158dcf9e2154946370f1e2ccead70d169931d311c0ebd8df125864c24c7c5c5",
+      "scripts/load/usage/local-school-day-scale.mjs": "9bb94199db7cfbff7ac897b4952ff14a1b3b79beb651c0d9eeda1d350ea0caf7",
+      "scripts/load/usage/release-enabled-scale.mjs": "7b8d1d9bd5e9edf592d89ec9ed551be6acf3af606b995d85b43fa01508b604ab"
+    }
+  },
+  "priorManifest": {
+    "file": "manifest.json",
+    "sha256": "660750f67b455436aacf0464c3b6efd1151df5b91ca74a1d1b8e243afac450a5"
+  },
+  "checks": {
+    "focused": {
+      "command": "node --test scripts/load/usage/local-usage-scale.test.mjs scripts/load/usage/school-day-profile.test.mjs scripts/load/usage/release-enabled-profile.test.mjs",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    "native": {
+      "command": "node <TEMP>/release297-oracle-microseconds-validation-01/native-invariant-parity.mjs",
+      "passed": 12,
+      "failed": 0,
+      "queryExtractedFromActualCoordinator": true,
+      "readOnlySyntheticCtes": true,
+      "applicationTablesRead": 0,
+      "applicationWrites": 0
+    }
+  },
+  "behavior": "Post-drain raw observations must belong to fixture students, use the exact educational IXL page without teacher intent, have no current-day AI decisions and fit exactly one school-bound frozen session/expected class for their full observation range. Any violation is recorded as a fixed count and fails before the oracle or final worker. No actual aggregate is used to determine expected grains.",
+  "grainRationale": "The generator always reports ixl.com/lesson, the classifier resolves it through the educational known list, SSO projection leaves it unchanged, and teacher intent is only added to non-educational results. The lifecycle sends Attention/Focus/cleanup commands but neither changes the frozen session nor the generated URL. Canonical preparation preserves existing captured_at values.",
+  "limits": [
+    "Original combined04 failure is not reclassified as passed; exact raw observations were not retained.",
+    "This deliberately narrow fixture invariant is not a general multi-grain rollup oracle and cannot establish the correctness of every classification or roster case.",
+    "No product semantics, numeric tolerance, infrastructure or timeout changed. Capacity still requires fresh passing runs."
+  ],
+  "sanitation": "User home paths, connection URLs and JWT-shaped values redacted. Output contains only fixed violation counts and synthetic case names.",
+  "files": [
+    {
+      "file": "green-with-invariants.log.gz",
+      "originalSha256": "b94c1c0061a644c5f0700a6b2a4af0a49643de9cf39cce2c1a64e9ac97ebd111",
+      "sanitizedSha256": "b94c1c0061a644c5f0700a6b2a4af0a49643de9cf39cce2c1a64e9ac97ebd111",
+      "archiveSha256": "dad9086f9a82c4491bbb65d777e425d71e74e2ae4292d51a6d0c79c2dec8f652",
+      "sourceBytes": 8633,
+      "archiveBytes": 2062
+    },
+    {
+      "file": "native-invariant-parity.mjs.gz",
+      "originalSha256": "498515d57fef8cbc70796277eafdc7c002854785f3401d4e31d5297148bc0022",
+      "sanitizedSha256": "f84129be6b6b59b474c0501ae880ec73765f48c73f1a4e132fceb2e1df81e62a",
+      "archiveSha256": "22bb1091c5e748f12884a6b6b7ca8ddb26ffadddd728fa43926d188e4624a5cd",
+      "sourceBytes": 4085,
+      "archiveBytes": 1714
+    },
+    {
+      "file": "native-invariant-parity.json.gz",
+      "originalSha256": "d31a46d0f40f3850e5d9db7947ca7550877552557603f7f66bed6cf803709c0f",
+      "sanitizedSha256": "d31a46d0f40f3850e5d9db7947ca7550877552557603f7f66bed6cf803709c0f",
+      "archiveSha256": "bb8b9cbbbdb8d4ba1b59ecb9f58f38e8b66f0c6a515dac26f3adfb162e6e4651",
+      "sourceBytes": 2033,
+      "archiveBytes": 514
+    },
+    {
+      "file": "native-invariant-parity.log.gz",
+      "originalSha256": "4f717099621d043bd4c7d99d2b7237052917440d18da634b030022f0b0c8d90f",
+      "sanitizedSha256": "4f717099621d043bd4c7d99d2b7237052917440d18da634b030022f0b0c8d90f",
+      "archiveSha256": "02634830b0408e185b2d4b29855693d884ec2e0e38739ecb2273b6488085c753",
+      "sourceBytes": 1498,
+      "archiveBytes": 492
+    }
+  ]
+}

@@ -706,6 +706,96 @@ export async function getSchoolById(
   return school;
 }
 
+type HeartbeatControlTimestamp = "scheduledEndAt" | "hardExpiresAt"
+  | "lastAcknowledgedAt" | "createdAt" | "updatedAt";
+type HeartbeatPersistenceContextRow = Omit<ClasspilotStudentControlState,
+  HeartbeatControlTimestamp | "id"> & {
+  id: string | null;
+  scheduledEndAt: string | null;
+  hardExpiresAt: string | null;
+  lastAcknowledgedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  heartbeatSchoolStatus: School["status"];
+  heartbeatSchoolPlanStatus: School["planStatus"];
+  heartbeatSchoolDomain: School["domain"];
+  classpilotSsoPolicy: unknown;
+  classpilotSsoPolicyRevision: number | null;
+};
+
+function decodeHeartbeatControlTimestamp(
+  column: { mapFromDriverValue(value: string): unknown },
+  value: string,
+): Date {
+  const decoded = column.mapFromDriverValue(value);
+  if (!(decoded instanceof Date)) throw new TypeError("Control timestamp decoder did not return a Date");
+  return decoded;
+}
+
+/**
+ * Fresh initial heartbeat navigation/privacy projection on the caller's DB.
+ * The joined rows are unique within this school/student scope. This read does
+ * not replace persistence or final-delivery authority checks and caches no
+ * school, policy, control state, transaction, or connection.
+ */
+export async function getClasspilotHeartbeatPersistenceContext(
+  schoolId: string,
+  studentId: string,
+  dbInstance: Pick<typeof db, "execute"> = db
+): Promise<{
+  school: Pick<School, "status" | "planStatus" | "domain"> | undefined;
+  ssoPolicy: ClasspilotSsoPolicyRecord;
+  privacyControlState: ClasspilotStudentControlState | undefined;
+}> {
+  const result = await dbInstance.execute<HeartbeatPersistenceContextRow>(sql`
+    SELECT school.status AS "heartbeatSchoolStatus",
+      school.plan_status AS "heartbeatSchoolPlanStatus",
+      school.domain AS "heartbeatSchoolDomain",
+      policy.classpilot_sso_policy AS "classpilotSsoPolicy",
+      policy.classpilot_sso_policy_revision AS "classpilotSsoPolicyRevision",
+      control.id, control.school_id AS "schoolId", control.student_id AS "studentId",
+      control.teaching_session_id AS "teachingSessionId",
+      control.supervision_context_id AS "supervisionContextId", control.revision,
+      control.desired_state AS "desiredState", control.source_command_id AS "sourceCommandId",
+      control.scheduled_end_at AS "scheduledEndAt", control.hard_expires_at AS "hardExpiresAt",
+      control.enforcement_health AS "enforcementHealth", control.applied_revision AS "appliedRevision",
+      control.last_outcome AS "lastOutcome", control.last_error AS "lastError",
+      control.last_acknowledged_at AS "lastAcknowledgedAt",
+      control.created_at AS "createdAt", control.updated_at AS "updatedAt"
+    FROM schools AS school
+    LEFT JOIN settings AS policy ON policy.school_id = school.id
+    LEFT JOIN classpilot_student_control_states AS control
+      ON control.school_id = school.id AND control.student_id = ${studentId}
+    WHERE school.id = ${schoolId}
+    LIMIT 1
+  `);
+  const row = result.rows[0];
+  // Drizzle's raw execute path returns timestamps as strings. Reuse the
+  // schema's decoders so this is identical to the ordinary select() result.
+  const control = classpilotStudentControlStates;
+  const privacyControlState = row && row.id !== null ? {
+    id: row.id, schoolId: row.schoolId, studentId: row.studentId,
+    teachingSessionId: row.teachingSessionId, supervisionContextId: row.supervisionContextId,
+    revision: row.revision, desiredState: row.desiredState, sourceCommandId: row.sourceCommandId,
+    scheduledEndAt: row.scheduledEndAt === null ? null : decodeHeartbeatControlTimestamp(control.scheduledEndAt, row.scheduledEndAt),
+    hardExpiresAt: row.hardExpiresAt === null ? null : decodeHeartbeatControlTimestamp(control.hardExpiresAt, row.hardExpiresAt),
+    enforcementHealth: row.enforcementHealth, appliedRevision: row.appliedRevision,
+    lastOutcome: row.lastOutcome, lastError: row.lastError,
+    lastAcknowledgedAt: row.lastAcknowledgedAt === null ? null : decodeHeartbeatControlTimestamp(control.lastAcknowledgedAt, row.lastAcknowledgedAt),
+    createdAt: decodeHeartbeatControlTimestamp(control.createdAt, row.createdAt),
+    updatedAt: decodeHeartbeatControlTimestamp(control.updatedAt, row.updatedAt),
+  } : undefined;
+  return {
+    school: row ? {
+      status: row.heartbeatSchoolStatus,
+      planStatus: row.heartbeatSchoolPlanStatus,
+      domain: row.heartbeatSchoolDomain,
+    } : undefined,
+    ssoPolicy: classpilotSsoPolicyFromSettings(row),
+    privacyControlState,
+  };
+}
+
 /**
  * The live schools that own a student email domain. Soft-deleted schools hold
  * no domain claim. Suspended schools do: they still resolve and then fail at

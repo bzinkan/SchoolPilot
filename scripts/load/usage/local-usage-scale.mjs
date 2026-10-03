@@ -57,24 +57,84 @@ export function apiStatementKind(text) {
   return 'other';
 }
 
-// A separate small oracle over raw current-day observations. It intentionally
-// does not use the application's SQL, classifications or aggregate rows.
-export function currentObservationSeconds(rows, cutoff) {
+// Independent raw-timeline oracle. PostgreSQL timestamps have microseconds;
+// pg Date parsing discards three digits and can change a half-second rounding
+// decision. Require integer microseconds as text, never a lossy Date fallback.
+function currentObservationSummary(rows, cutoff) {
+  assert.ok(cutoff instanceof Date && Number.isSafeInteger(cutoff.getTime()), 'Valid oracle cutoff required');
+  const cutoffMicros = BigInt(cutoff.getTime()) * 1000n;
   const timelines = new Map();
+  let submillisecondObservations = 0, includedObservations = 0;
   for (const row of rows) {
-    const at = new Date(row.timestamp).getTime();
-    if (at >= cutoff.getTime()) continue;
+    assert.equal(typeof row.timestamp_microseconds, 'string', 'Oracle requires raw timestamp_microseconds text');
+    assert.match(row.timestamp_microseconds, /^-?\d{1,20}$/);
+    const at = BigInt(row.timestamp_microseconds);
+    if (at >= cutoffMicros) continue;
+    includedObservations++;
+    if (at % 1000n !== 0n) submillisecondObservations++;
+    const second = at >= 0n ? at / 1_000_000n : (at - 999_999n) / 1_000_000n;
     const timeline = timelines.get(row.student_id) || new Map();
-    timeline.set(Math.floor(at / 1000), Math.min(at, timeline.get(Math.floor(at / 1000)) ?? Infinity));
+    const previous = timeline.get(second);
+    if (previous === undefined || at < previous) timeline.set(second, at);
     timelines.set(row.student_id, timeline);
   }
-  return new Map([...timelines].map(([student, timeline]) => {
-    const times = [...timeline.values()].sort((a, b) => a - b);
-    const seconds = times.reduce((sum, at, index) => sum + Math.max(0, Math.min(15, ((times[index + 1] ?? cutoff.getTime()) - at) / 1000)), 0);
-    return [student, Math.round(seconds)];
-  }));
+  const secondsByStudent = new Map();
+  let deduplicatedObservations = 0, exactRoundedSeconds = 0, legacyRoundedSeconds = 0, roundingSensitiveStudents = 0;
+  for (const [student, timeline] of timelines) {
+    const times = [...timeline.values()].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+    let microseconds = 0n;
+    for (let index = 0; index < times.length; index++) {
+      const gap = (times[index + 1] ?? cutoffMicros) - times[index];
+      microseconds += gap > 15_000_000n ? 15_000_000n : gap > 0n ? gap : 0n;
+    }
+    // Attribution is nonnegative; this exactly rounds halves upward once per
+    // student, without converting any fractional duration to binary floats.
+    const seconds = Number((microseconds + 500_000n) / 1_000_000n);
+    assert.ok(Number.isSafeInteger(seconds));
+    secondsByStudent.set(student, seconds);
+    deduplicatedObservations += times.length;
+    exactRoundedSeconds += seconds;
+    // Diagnostic only: reproduce the previous lossy Date/floating-sum oracle.
+    // None of these values influence the exact acceptance result.
+    const oldTimes = times.map(at => Number(at / 1000n));
+    const oldSeconds = Math.round(oldTimes.reduce((sum, at, index) => sum
+      + Math.max(0, Math.min(15, ((oldTimes[index + 1] ?? cutoff.getTime()) - at) / 1000)), 0));
+    legacyRoundedSeconds += oldSeconds;
+    if (oldSeconds !== seconds) roundingSensitiveStudents++;
+  }
+  return { secondsByStudent, diagnostics: {
+    precision: 'integer_microseconds_text', rawObservations: rows.length, includedObservations,
+    submillisecondObservations, deduplicatedObservations, students: timelines.size,
+    exactRoundedSeconds, legacyRoundedSeconds, roundingSensitiveStudents,
+  } };
 }
 
+export function currentObservationSeconds(rows, cutoff) {
+  return currentObservationSummary(rows, cutoff).secondsByStudent;
+}
+
+// Fixed-size content-free failure evidence: no student IDs, URLs or raw times.
+export function currentObservationDiagnostics(rows, cutoff) {
+  return currentObservationSummary(rows, cutoff).diagnostics;
+}
+
+// The current-day traffic deliberately uses one educational IXL page inside
+// one fixed class session per student. Validate that fixture before using its
+// one-grain/student oracle; never infer the expected grain from stored rollups.
+export function currentObservationFixtureViolations(rows, studentIds, databaseCounts) {
+  const expected = new Set(studentIds);
+  const result = {
+    unexpectedStudents: new Set(rows.filter(row => !expected.has(row.student_id)).map(row => row.student_id)).size,
+    unexpectedUrlObservations: rows.filter(row => row.expected_url !== true).length,
+    unexpectedClassificationObservations: rows.filter(row => row.expected_classification !== true).length,
+    unexpectedTeacherIntentObservations: rows.filter(row => row.expected_teacher_intent !== true).length,
+  };
+  for (const name of ['currentAiDecisionRows', 'invalidRosterStudents']) {
+    assert.ok(Number.isSafeInteger(databaseCounts[name]) && databaseCounts[name] >= 0, 'Invalid fixture violation count');
+    result[name] = databaseCounts[name];
+  }
+  return result;
+}
 // Preserve pg's callback and Promise overloads while measuring actual API SQL
 // and checkout time. Never retain statement text, parameters or credentials.
 export function measureCall(target, name, record) {
@@ -365,7 +425,7 @@ export async function runLocalScale() {
       if (!heavySucceeded) assert.equal(heavyRows, 0, 'A timed-out insertion must roll back aggregate rows and completion');
       metrics.heavyDayAtomicity.push({ schoolIndex: school.index, writerCommitted: heavySucceeded, aggregateRows: heavyRows, completionRows: heavyCoverage });
       for (const scope of ['school', 'grade', 'class', 'student']) checkReport(await get(school, scope), scope, !heavySucceeded);
-      const raw = (await admin.query('SELECT student_id,timestamp AT TIME ZONE \'UTC\' AS timestamp FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id', [school.id, wall(currentDay.dayStartUtc), wall(cutoff)])).rows;
+      const raw = (await admin.query('SELECT student_id,(EXTRACT(EPOCH FROM timestamp)*1000000)::bigint::text AS timestamp_microseconds FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id', [school.id, wall(currentDay.dayStartUtc), wall(cutoff)])).rows;
       metrics.ingest.insertedHeartbeats += raw.length;
       metrics.ingest.bySchoolInserted ??= {}; metrics.ingest.bySchoolInserted[school.index] = raw.length;
       assert.ok(raw.length > 2, 'Both schools must contain real concurrently ingested observations beyond their preflights');

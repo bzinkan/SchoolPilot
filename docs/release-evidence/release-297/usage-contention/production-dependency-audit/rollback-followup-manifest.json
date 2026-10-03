@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T02:37:08.897Z",
+  "source": {
+    "baseCommit": "2bbcdb370eeeb182553097a2bd049e32bec93f9b",
+    "commit": "351422d75a1aefd428e79d0c0d290b2171776f2e",
+    "branch": "codex/release297-compatible-rollback-sso",
+    "pushed": true,
+    "clean": true,
+    "lockSha256": "1225cab8fcd31ac11b49ad5cf3dc199a4d090b12f6c4f5cd6f0496fd85f3b2cc"
+  },
+  "change": "Exactly six production dependency lock entries and required metadata patched identically to primary release; original manifest, build sequence, dev dependency graph and application source retained.",
+  "validation": {
+    "productionAuditAdvisories": 0,
+    "dependencyRangesSatisfied": true,
+    "addedPackages": 0,
+    "removedPackages": 0,
+    "updatedPackages": 6
+  },
+  "limitations": [
+    "No new rollback image, image scan, build or native test is claimed here; the separate readiness lane must rebuild/scan/rehearse this exact source.",
+    "Historical build dependency graph remains; this proof covers production dependencies only."
+  ],
+  "commands": [
+    "npm audit --omit=dev --json --package-lock-only",
+    "Compare six package entries and validate every declared dependency range against resolved lock versions",
+    "git commit -m \"fix: patch production parser and IP dependencies\"",
+    "git push origin HEAD"
+  ],
+  "files": [
+    {
+      "file": "rollback-production-audit.json.gz",
+      "originalSha256": "e14d6cfed1655a97f259ce1c6443a6238285acbb7783dee65594497ee42c921b",
+      "archiveSha256": "d51d385a104faa24392c2b1c3c9cf9e790f245d1e07cf643c7f3a4a65110e042"
+    },
+    {
+      "file": "rollback-lock-consistency.json.gz",
+      "originalSha256": "97440c12fa53362b0e7f6b94c63f3f806d7e87409d00b367459deca4cfdaae55",
+      "archiveSha256": "90dfcdb9c10a072ae2b2be4bc543109527743f2ece88dd288258b4c5b7c666c0"
+    }
+  ]
+}

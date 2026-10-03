@@ -52,6 +52,7 @@ import {
   createStudent,
   resolveSchoolForStudent,
   getSchoolById,
+  getClasspilotHeartbeatPersistenceContext,
   getSchoolBySlug,
   getHeartbeatTrackingSettingsForSchool,
   getSettingsForSchool,
@@ -3912,11 +3913,8 @@ router.post("/device/heartbeat", requireCryptographicDeviceAuth, requireClasspil
       // lifecycle/license check. Load the school projection directly for the
       // classification domain and response without using it as cached
       // authorization state.
-      const [school, ssoPolicy, privacyControlState] = await Promise.all([
-        getSchoolById(schoolId),
-        getClasspilotSsoPolicyForSchool(schoolId),
-        getClasspilotStudentControlState(schoolId, studentId),
-      ]);
+      const { school, ssoPolicy, privacyControlState } =
+        await getClasspilotHeartbeatPersistenceContext(schoolId, studentId);
       if (!school || school.status !== "active") {
         return { outcome: "inactive_school" } as const;
       }

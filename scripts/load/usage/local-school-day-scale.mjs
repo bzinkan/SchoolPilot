@@ -405,7 +405,7 @@ export async function runSchoolDayScale({ aiScenario = false, openLoop = false, 
       if (!heavySucceeded) assert.equal(heavyRows, 0, 'A timed-out insertion must roll back aggregate rows and completion');
       metrics.heavyDayAtomicity.push({ schoolIndex: school.index, writerCommitted: heavySucceeded, aggregateRows: heavyRows, completionRows: heavyCoverage });
       for (const scope of ['school', 'grade', 'class', 'student']) checkReport(await get(school, scope), scope, !heavySucceeded);
-      const raw = (await admin.query('SELECT student_id,timestamp AT TIME ZONE \'UTC\' AS timestamp FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id', [school.id, wall(currentDay.dayStartUtc), wall(cutoff)])).rows;
+      const raw = (await admin.query('SELECT student_id,(EXTRACT(EPOCH FROM timestamp)*1000000)::bigint::text AS timestamp_microseconds FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id', [school.id, wall(currentDay.dayStartUtc), wall(cutoff)])).rows;
       metrics.ingest.insertedHeartbeats += raw.length;
       metrics.ingest.bySchoolInserted ??= {}; metrics.ingest.bySchoolInserted[school.index] = raw.length;
       assert.ok(raw.length > 2, 'Both schools must contain real concurrently ingested observations beyond their preflights');

@@ -1,0 +1,637 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T02:33:37.009Z",
+  "status": "focused_behavior_passed_capacity_unproven",
+  "sourceRevision": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+  "worktreeDirty": true,
+  "productionMutations": 0,
+  "capacityAccepted": false,
+  "sharedDistRebuilt": false,
+  "changes": "Only initial heartbeat persistence projection joins fresh school status/planStatus/domain, SSO policy and exact school/student control row. Caller transaction/RLS and all persistence/final authority checks remain; five timestamps use existing schema decoders, no result or client caching.",
+  "tests": {
+    "finalOwner": {
+      "pass": 15,
+      "fail": 0,
+      "skip": 0
+    },
+    "finalRestricted": {
+      "pass": 8,
+      "fail": 0,
+      "skip": 0
+    },
+    "coverage": [
+      "one actual SQL call",
+      "deep equivalence to three existing helpers across every control field and five valid timestamp fields",
+      "null control fields and absent settings",
+      "missing and cross-school/student isolation including forced restricted RLS",
+      "current uncommitted caller transaction updates",
+      "modern and legacy navigation privacy",
+      "malformed policy fallback and subsequently absent settings"
+    ],
+    "productionTypecheckPassed": true,
+    "testCastBudget": {
+      "asAny": 689,
+      "asUnknownAs": 7
+    }
+  },
+  "retainedFailures": [
+    "Production typecheck01 caught unknown schema decoder return typing; implementation now checks Date without a cast.",
+    "Native01 tried SQL NULL and native02 tried JSON null against the existing NOT NULL/object policy constraints. All other cases passed; neither invalid fixture write was permitted. Native03 tests supported absent-row defaults and malformed object fallback without relaxing constraints.",
+    "Test-type01 retained one fixed intercept this annotation plus two stale-dist/source namespace mismatches after adding a source export. Final combined rebuild/types belongs to the parent; this manifest does not claim the stale-dist run passed."
+  ],
+  "pointPlan": {
+    "schools": 2,
+    "students": 2001,
+    "controlRows": 2001,
+    "ownerExecutionMs": 0.107,
+    "restrictedExecutionMs": 0.092,
+    "controlIndex": "cp_student_control_states_school_student_unique",
+    "notes": "Exact helper SELECT, actual ANALYZE/BUFFERS plans with statistics prepared in the owned fixture. School/settings have two rows and use sequential scans. Point-read timing is not load capacity proof; all fixture writes rolled back."
+  },
+  "cleanup": "All four exact-owned containers removed by label-checked finally blocks; cleanup logs retained.",
+  "attempts": [
+    {
+      "label": "native-attempt-01",
+      "sourceUnchangedWithinRun": true,
+      "execution": {
+        "ownerExit": 1,
+        "restrictedExit": 1,
+        "source": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+        "worktreeDirty": true,
+        "container": "schoolpilot-heartbeat-context-23d42c49af3c",
+        "database": "heartbeat_context_23d42c49af3c",
+        "schemaSource": "Combined04 exact post-convergence schema-only dump",
+        "schemaRawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+        "productionMutations": 0,
+        "sourceExecution": "tsx",
+        "sharedDistRebuilt": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "f4ba65eb55c20093270853c7d8f0c97de39e44b58f3803c7f8c0923ac9e27f5e"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0"
+        },
+        {
+          "file": "tests/classpilot-heartbeat-persistence-context.integration.test.ts",
+          "sha256": "e2cec6e932dff8aed5d78e5394932582bbcc6cb2fd9606f73b38233b6c0b1833"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "55c07ba35ef16396ab18d73d62b902740523d50bae7b6904eb78e0009dd5cc69"
+        }
+      ]
+    },
+    {
+      "label": "native-attempt-02",
+      "sourceUnchangedWithinRun": true,
+      "execution": {
+        "ownerExit": 1,
+        "restrictedExit": 1,
+        "source": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+        "worktreeDirty": true,
+        "container": "schoolpilot-heartbeat-context-d7f9aa50c15e",
+        "database": "heartbeat_context_d7f9aa50c15e",
+        "schemaSource": "Combined04 exact post-convergence schema-only dump",
+        "schemaRawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+        "productionMutations": 0,
+        "sourceExecution": "tsx",
+        "sharedDistRebuilt": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "f4ba65eb55c20093270853c7d8f0c97de39e44b58f3803c7f8c0923ac9e27f5e"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0"
+        },
+        {
+          "file": "tests/classpilot-heartbeat-persistence-context.integration.test.ts",
+          "sha256": "8434ced60ca0adf7928535094ba0040422584213101b0e54bc7183df9f51b4cb"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "55c07ba35ef16396ab18d73d62b902740523d50bae7b6904eb78e0009dd5cc69"
+        }
+      ]
+    },
+    {
+      "label": "native-attempt-03",
+      "sourceUnchangedWithinRun": true,
+      "execution": {
+        "ownerExit": 0,
+        "restrictedExit": 0,
+        "source": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+        "worktreeDirty": true,
+        "container": "schoolpilot-heartbeat-context-dbb80a0a737e",
+        "database": "heartbeat_context_dbb80a0a737e",
+        "schemaSource": "Combined04 exact post-convergence schema-only dump",
+        "schemaRawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+        "productionMutations": 0,
+        "sourceExecution": "tsx",
+        "sharedDistRebuilt": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "f4ba65eb55c20093270853c7d8f0c97de39e44b58f3803c7f8c0923ac9e27f5e"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0"
+        },
+        {
+          "file": "tests/classpilot-heartbeat-persistence-context.integration.test.ts",
+          "sha256": "947759398fd9d0bae8af1f4f61827600e615da78d09de18c33971e2509323efd"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "55c07ba35ef16396ab18d73d62b902740523d50bae7b6904eb78e0009dd5cc69"
+        }
+      ]
+    },
+    {
+      "label": "point-plan",
+      "sourceUnchangedWithinRun": true,
+      "execution": {
+        "source": "8069560dcd94187d29f4bddbbd6e0df4c2239391",
+        "worktreeDirty": true,
+        "container": "schoolpilot-heartbeat-context-23c017133c2c",
+        "database": "heartbeat_context_23c017133c2c",
+        "schemaSource": "Combined04 post-convergence",
+        "schemaRawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+        "studentCount": 2001,
+        "schoolCount": 2,
+        "controlRowCount": 2001,
+        "explain": "ANALYZE,BUFFERS,FORMAT JSON",
+        "query": "exact new helper SQL with only literal placeholders converted to prepared parameters",
+        "productionMutations": 0,
+        "roles": [
+          "owner",
+          "restricted nonowner"
+        ],
+        "capacityClaimed": false,
+        "fixtureTransactionRolledBack": true,
+        "sharedModulesUsed": false
+      },
+      "sourceFiles": [
+        {
+          "file": "src/services/storage.ts",
+          "sha256": "f4ba65eb55c20093270853c7d8f0c97de39e44b58f3803c7f8c0923ac9e27f5e"
+        },
+        {
+          "file": "src/routes/classpilot/devices.ts",
+          "sha256": "c7f2a2bd7ce2f493ccd2328aa83ed94a4702e4e84b45c9e3c2509f081c1432d0"
+        },
+        {
+          "file": "tests/classpilot-heartbeat-persistence-context.integration.test.ts",
+          "sha256": "947759398fd9d0bae8af1f4f61827600e615da78d09de18c33971e2509323efd"
+        },
+        {
+          "file": "scripts/run-test-lane.mjs",
+          "sha256": "55c07ba35ef16396ab18d73d62b902740523d50bae7b6904eb78e0009dd5cc69"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "file": "native-attempt-01-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 44,
+      "rawSha256": "3b897c1ff7f4177555ff288825bc510e7271c81903ae05f8dfdd59986ae7cfb8",
+      "sanitizedBytes": 43,
+      "sanitizedSha256": "791c00c7980e1255425cf921e1290dec25252c74ca27f16aa152e815a7d9d2b5",
+      "gzipSha256": "6cd71249d9920993f747dbd9410eb48e8fc8c2825b173f218e2ffab93e672426"
+    },
+    {
+      "file": "native-attempt-01-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "b3b326272118f135590c5ae57db18ef5a3d2b853d3872612a8ec6d2bb59c296c",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "bf7121fa81921f65a3b0a19e4e6982831d92e0bb766c6c6cfe6a608e60be1f2e",
+      "gzipSha256": "6ce7eae216467272a554468209285843897d84179b1d3c03850a585aea4e31e8"
+    },
+    {
+      "file": "native-attempt-01-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 494,
+      "rawSha256": "c30fa3c30bd1ba07b6dfec473b375bd08c73ee067d7f6ceca948401fc30bb5b7",
+      "sanitizedBytes": 481,
+      "sanitizedSha256": "e26f7f76616f7ac456b8083badbacded4f22de3d5be7ac23d3075dd9983e644f",
+      "gzipSha256": "2a3432df5685fa327581955ecf40fec4ba7e85dde2eb3f979362e671e374668e"
+    },
+    {
+      "file": "native-attempt-01-owner.log.gz",
+      "originalFile": "owner.log",
+      "rawBytes": 8493,
+      "rawSha256": "2cd1176b6ca0ac031a0d40fe558393827405805398f481630f25bc632490fc1e",
+      "sanitizedBytes": 7838,
+      "sanitizedSha256": "614259ae679112d188e86211f1ca8428062f77b03ad8e281c63fc0f3d3f208ac",
+      "gzipSha256": "9e40d1791e49e71b04cb0e039b8c62c4f0766d6db829af9482aef50d5b7f5f15"
+    },
+    {
+      "file": "native-attempt-01-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-attempt-01-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "native-attempt-01-restricted.log.gz",
+      "originalFile": "restricted.log",
+      "rawBytes": 6983,
+      "rawSha256": "6881d2f0f6956ea1f5e22e31d9b17c4269c06d39292d58c791aaeb7021ab803b",
+      "sanitizedBytes": 6370,
+      "sanitizedSha256": "43892847ea0bbb638c92616c4d87a865a459e8ce2fa9121a245f2c27e16ebe26",
+      "gzipSha256": "3f324d0faa26f3bce1899816e0fae3ba8613a15ae12f02fd5d0a2c7f610a3dc8"
+    },
+    {
+      "file": "native-attempt-01-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "gzipSha256": "22cd5be5108a609cbdf192f11534a627b1bc23291ddc4ac550fe2992e07a2972"
+    },
+    {
+      "file": "native-attempt-01-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 591,
+      "rawSha256": "74c16e007492c1e8e78bb6b0fcdb7a35eef0d23722ac08f1d0b887a1cca2b7fd",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "02ac6e58e3d468aa11d9af5019d998499bd246b9089e37482e6a4aae59626a00",
+      "gzipSha256": "9ed77fb0c2ead8601987cfb9ad06890b783f8bc5618d521ff643bd1e8f6e4aa9"
+    },
+    {
+      "file": "native-attempt-01-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 591,
+      "rawSha256": "74c16e007492c1e8e78bb6b0fcdb7a35eef0d23722ac08f1d0b887a1cca2b7fd",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "02ac6e58e3d468aa11d9af5019d998499bd246b9089e37482e6a4aae59626a00",
+      "gzipSha256": "9ed77fb0c2ead8601987cfb9ad06890b783f8bc5618d521ff643bd1e8f6e4aa9"
+    },
+    {
+      "file": "native-attempt-02-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 44,
+      "rawSha256": "9a805a053a436972971c5389a50a0e20afbc741c055b6547ad7ec0c175c4f094",
+      "sanitizedBytes": 43,
+      "sanitizedSha256": "76c68ccc83cf0fe8745c8868968a741fed6d19104f7ec0e2ec6e014dce7d97cc",
+      "gzipSha256": "61da0e88385ef9a7609ea56528eebc76e87d4f64cfffa593f66a8ecd60a71f30"
+    },
+    {
+      "file": "native-attempt-02-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "0045f965f3fe88ed8a204949ac1bc751d172dacfa63810d76ec3c90044f82044",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "27bdcf468ef875aa6f1dea3de199af6c4b0fb987d17480f5079915bd4273f9da",
+      "gzipSha256": "07dbcba88d7bcafc8f4dc84da5d13300b3b6cb3901b710f4ed1660fd2a3b5652"
+    },
+    {
+      "file": "native-attempt-02-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 494,
+      "rawSha256": "e551a4570ccfc68f518851cb8e3f2698915d5d84f8370d61112ed9365deb232c",
+      "sanitizedBytes": 481,
+      "sanitizedSha256": "732b772578f8cacad13f95be1804b0e9f4025258421156e917a96c2574c7eac1",
+      "gzipSha256": "23a17640eca81599ea31348f6a0f5f68b19752c28cf28725616b43c187ad0be7"
+    },
+    {
+      "file": "native-attempt-02-owner.log.gz",
+      "originalFile": "owner.log",
+      "rawBytes": 8502,
+      "rawSha256": "58a3fcecddb992aa9b2f93327b032de62f48a308751756c6e7076e2f4cce2572",
+      "sanitizedBytes": 7847,
+      "sanitizedSha256": "0b762bbfd342510c33af369779d5497375ab4148f7494c8cc06a86b18dbffcef",
+      "gzipSha256": "db6d931f2d6b72df8e7dc37eca61f8a30aa0530e252ca3b138d6175c86111b19"
+    },
+    {
+      "file": "native-attempt-02-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-attempt-02-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "native-attempt-02-restricted.log.gz",
+      "originalFile": "restricted.log",
+      "rawBytes": 6990,
+      "rawSha256": "f812565cdc719c3d320c857fd37281f6e1083818a443c0fb90db13c9ed6e439d",
+      "sanitizedBytes": 6377,
+      "sanitizedSha256": "f4d26dfd01f0200fbaac32bd0d1ae5698edd3f65d042e7058ddcee5b21cab8d5",
+      "gzipSha256": "d2f5e3edbc6eac54e6812aa3ad539e4220b43e16ff376eb2a7a3e461b577a681"
+    },
+    {
+      "file": "native-attempt-02-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "gzipSha256": "22cd5be5108a609cbdf192f11534a627b1bc23291ddc4ac550fe2992e07a2972"
+    },
+    {
+      "file": "native-attempt-02-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 591,
+      "rawSha256": "1ceabc549f00ca17a0c478bec304c445923451182f0389ff388956e1e5355294",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "4a4c357f6938e63b4b1c05d7f0b6f811dea52be08da042720e9455317422092b",
+      "gzipSha256": "84880467378f370b7322d251070afcb5c3c429135938078b7de2ba14eb01acd0"
+    },
+    {
+      "file": "native-attempt-02-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 591,
+      "rawSha256": "1ceabc549f00ca17a0c478bec304c445923451182f0389ff388956e1e5355294",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "4a4c357f6938e63b4b1c05d7f0b6f811dea52be08da042720e9455317422092b",
+      "gzipSha256": "84880467378f370b7322d251070afcb5c3c429135938078b7de2ba14eb01acd0"
+    },
+    {
+      "file": "native-attempt-03-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 44,
+      "rawSha256": "8a4a88ff2518a392a0ff18d39239a35a8232f05066093c623c677edca8b08112",
+      "sanitizedBytes": 43,
+      "sanitizedSha256": "dd0f24f65b0ce911978235518666a019501d4ffc1f6a47c436c14e68e0b1adf2",
+      "gzipSha256": "6b53b4a85e8c6062c4733aae6c1fc55e2203b4acfcdd96aad27ded398ae6bdd5"
+    },
+    {
+      "file": "native-attempt-03-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "199e5ef5e5a74a6a6c3b62e2c536bd6d873ed8e4142c1e0785b5cfeb6a5c5e8a",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "2af9e5756e8cccf1aa68e8bb4c3fae9a91b6b94696246e6236b250e30694c7c1",
+      "gzipSha256": "77878085ed92e2d5963167fa337bce4bd7aac1fdab93aa2bc72f5a3944006be9"
+    },
+    {
+      "file": "native-attempt-03-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 494,
+      "rawSha256": "4ef9d9ecd5043a6ea838a0488aafdb9bc5437cf1bf7c4fa7fe40044dfccc3e91",
+      "sanitizedBytes": 481,
+      "sanitizedSha256": "50949f2a90ead4406649a8df03b00edf7291f39bb10482aa0ba79ad633638c3e",
+      "gzipSha256": "8aa2755b423f88d014311978a4f093d82e6208aa7ff921b640c9df76e1a244bf"
+    },
+    {
+      "file": "native-attempt-03-owner.log.gz",
+      "originalFile": "owner.log",
+      "rawBytes": 6612,
+      "rawSha256": "b6057f8e16dd16ca606750155faf9cea31a85fc7f39f58db70350fb87bf47b0a",
+      "sanitizedBytes": 6484,
+      "sanitizedSha256": "acf76a6a40ebf6165fd1f817f41e54d42a96c1aa376bec5b3be249484f070200",
+      "gzipSha256": "700509b7807c22ba250425af1831042c655785f54380029463f0181e8bf4c19c"
+    },
+    {
+      "file": "native-attempt-03-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "native-attempt-03-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "native-attempt-03-restricted.log.gz",
+      "originalFile": "restricted.log",
+      "rawBytes": 5099,
+      "rawSha256": "dd12992aa4e474c89b4481a507fb9e1d0e8949fe91ce9fb190269b0ea657c1e0",
+      "sanitizedBytes": 5013,
+      "sanitizedSha256": "5e3c78fa0161742f8a117cd3b169d9e1fa0e0a6ec7a511492d9ccfda2fd13360",
+      "gzipSha256": "ce643035339dad154bbad3f0fec7afbbd4e40db160beb1f05a627b7396e387a2"
+    },
+    {
+      "file": "native-attempt-03-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "gzipSha256": "22cd5be5108a609cbdf192f11534a627b1bc23291ddc4ac550fe2992e07a2972"
+    },
+    {
+      "file": "native-attempt-03-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 591,
+      "rawSha256": "b7a4f23d3ccc0c556d371a013d8c2e29b3000b48b913a21ade9b49924824e2cf",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "31baafc0dffae1b0bb4f8d8b43f4717f8545eb0fae07fd4b7bbae3edf50a47d6",
+      "gzipSha256": "352fd85a5bdca47fa4c45a8ca8870e4eb44b39eb0ea6cf4c384d9382d67c5674"
+    },
+    {
+      "file": "native-attempt-03-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 591,
+      "rawSha256": "b7a4f23d3ccc0c556d371a013d8c2e29b3000b48b913a21ade9b49924824e2cf",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "31baafc0dffae1b0bb4f8d8b43f4717f8545eb0fae07fd4b7bbae3edf50a47d6",
+      "gzipSha256": "352fd85a5bdca47fa4c45a8ca8870e4eb44b39eb0ea6cf4c384d9382d67c5674"
+    },
+    {
+      "file": "point-plan-cleanup.log.gz",
+      "originalFile": "cleanup.log",
+      "rawBytes": 44,
+      "rawSha256": "bac8e5eee8086f5d062b8bff8906464bf4c80846ac84e2fd34c9c6165b7ec0e8",
+      "sanitizedBytes": 43,
+      "sanitizedSha256": "27417f0c5d61cc0a0518d606ca381cb0d68b0e85b995b35a72d4fc1a2489ed65",
+      "gzipSha256": "4a8b2379b2eae4113c7684e2a7bd8930e54ca8ee396b648106a6f10a9e1d1eb2"
+    },
+    {
+      "file": "point-plan-container-create.log.gz",
+      "originalFile": "container-create.log",
+      "rawBytes": 66,
+      "rawSha256": "7d9d6d8f51dd45a0d8420d44f9bb05940b4f4b5b766eaf3dd690986b9be11b67",
+      "sanitizedBytes": 65,
+      "sanitizedSha256": "f8e4fa3e72dd320095dd0fb269f2dc3c4c45619fb8bdbc8c9bba52f5ade21e30",
+      "gzipSha256": "14150a820ddb9e50f0f6847dde0d556a109bb4dba40bcfaa0251aa210de82d3a"
+    },
+    {
+      "file": "point-plan-execution.json.gz",
+      "originalFile": "execution.json",
+      "rawBytes": 749,
+      "rawSha256": "ae12dc3f5b41198e9226be8083e0185b77561c99faf616d07feb2be05467a889",
+      "sanitizedBytes": 728,
+      "sanitizedSha256": "7d209a7daafa969c059486178497188e635f288ed516712c948ad411416f5aaf",
+      "gzipSha256": "ef6c2f76da104e245c785d02f33aac89926e6586b373357180cdfca41596d1c5"
+    },
+    {
+      "file": "point-plan-explain-run.log.gz",
+      "originalFile": "explain-run.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "point-plan-joined-query.sql.gz",
+      "originalFile": "joined-query.sql",
+      "rawBytes": 1293,
+      "rawSha256": "f7173e35280a34468007b620a00130818b75f2d128b9e75d662c6a4670a5eca9",
+      "sanitizedBytes": 1292,
+      "sanitizedSha256": "d0050b17bf2617865655eae4d4a5f2b87db343257eae8f805ab33fcdbe0e8a9e",
+      "gzipSha256": "41946e0a808c2831c3da9c485be8b1d0b6ddeee2d551b5d6911b63e4536c7936"
+    },
+    {
+      "file": "point-plan-owner-plan.json.gz",
+      "originalFile": "owner-plan.json",
+      "rawBytes": 6633,
+      "rawSha256": "65f122f469ed6529ab1c75aa2c3e279e5bb45e8d3bcd15f6040659dd963f776f",
+      "sanitizedBytes": 6545,
+      "sanitizedSha256": "f6cffc661dee30ebb86cc3d76e4fabda96a4eb62a9f9de92433691281f5cd085",
+      "gzipSha256": "a4fa4e9d0356105d695b694b841662516bd734e70222c04039a24707410ae460"
+    },
+    {
+      "file": "point-plan-restore.log.gz",
+      "originalFile": "restore.log",
+      "rawBytes": 20912,
+      "rawSha256": "27df2bde4789e59d068ac4efba8330f941c1aa31247e9a2aacea0c00200c9321",
+      "sanitizedBytes": 19399,
+      "sanitizedSha256": "0de555196fd1167a8fe02305c9cacc5960fdb7388b9d3f010228dd80028b09a1",
+      "gzipSha256": "8b443fa9644ca88a52c70faa4e08510193b8248ac089d1ab6d722e7f913021ed"
+    },
+    {
+      "file": "point-plan-restricted-plan.json.gz",
+      "originalFile": "restricted-plan.json",
+      "rawBytes": 6953,
+      "rawSha256": "1fc4c9febac1c499c2b8877c627035732fefcce36aed4ce5fdd806043ee3c08c",
+      "sanitizedBytes": 6865,
+      "sanitizedSha256": "2c22518c2d7a6fcd0201f39efb8a48b4f6252ea762ebc6b01fd1af80649341bc",
+      "gzipSha256": "7d60a5ac9ce674a2612dbb04ebfaebee7c5bec874a5d6e0d60ef114c330ebddb"
+    },
+    {
+      "file": "point-plan-restricted-role.log.gz",
+      "originalFile": "restricted-role.log",
+      "rawBytes": 34,
+      "rawSha256": "4ae8f15f87fd570d8a073fdff2d9d3c3b3b4c70205a393816b2e9ff4084e073e",
+      "sanitizedBytes": 30,
+      "sanitizedSha256": "0a70ea89576785dee313559a5d27da0d078b5fda8aa410a48cb0ba08d0dcc25d",
+      "gzipSha256": "67374066fb9b0ec7e5b9b0d4ff8be4ad073af75e2b544dfe27bc2d7f08043128"
+    },
+    {
+      "file": "point-plan-schema.sql.gz",
+      "originalFile": "schema.sql",
+      "rawBytes": 575957,
+      "rawSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "sanitizedBytes": 575957,
+      "sanitizedSha256": "94c46ba5437871810b3e72f9d8ff11630673917ca2ca3145a348eecb45046b76",
+      "gzipSha256": "22cd5be5108a609cbdf192f11534a627b1bc23291ddc4ac550fe2992e07a2972"
+    },
+    {
+      "file": "point-plan-source-after.json.gz",
+      "originalFile": "source-after.json",
+      "rawBytes": 591,
+      "rawSha256": "b7a4f23d3ccc0c556d371a013d8c2e29b3000b48b913a21ade9b49924824e2cf",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "31baafc0dffae1b0bb4f8d8b43f4717f8545eb0fae07fd4b7bbae3edf50a47d6",
+      "gzipSha256": "352fd85a5bdca47fa4c45a8ca8870e4eb44b39eb0ea6cf4c384d9382d67c5674"
+    },
+    {
+      "file": "point-plan-source-before.json.gz",
+      "originalFile": "source-before.json",
+      "rawBytes": 591,
+      "rawSha256": "b7a4f23d3ccc0c556d371a013d8c2e29b3000b48b913a21ade9b49924824e2cf",
+      "sanitizedBytes": 573,
+      "sanitizedSha256": "31baafc0dffae1b0bb4f8d8b43f4717f8545eb0fae07fd4b7bbae3edf50a47d6",
+      "gzipSha256": "352fd85a5bdca47fa4c45a8ca8870e4eb44b39eb0ea6cf4c384d9382d67c5674"
+    },
+    {
+      "file": "release297-heartbeat-context-native.ps1.gz",
+      "originalFile": "release297-heartbeat-context-native.ps1",
+      "rawBytes": 5462,
+      "rawSha256": "c96e4cda079289cf0d370bc5d35208ecbf69feb3a29736a526a415c7c35e4dc6",
+      "sanitizedBytes": 5327,
+      "sanitizedSha256": "ccb9f5679b6ce55192282fe667ddead3a257360ce6ce158e9086fe7b8e496383",
+      "gzipSha256": "093aeba689c103b31f22d2f9666d31c9e574d1ad4c229be4e5c3875b00d9e0af"
+    },
+    {
+      "file": "release297-heartbeat-context-plan.ps1.gz",
+      "originalFile": "release297-heartbeat-context-plan.ps1",
+      "rawBytes": 7082,
+      "rawSha256": "6bcfc064c307bfceb21a1c859de747290c07a35616c17c28c9c81564bcd58faf",
+      "sanitizedBytes": 7019,
+      "sanitizedSha256": "9c6926a1e244d647e3bf952b4e3c982da1d16bcfdcd8850508d06def575f5055",
+      "gzipSha256": "2dea31264e555465f40bc16e547a1e63e3634602e0bd1c5741a4b01efda8b335"
+    },
+    {
+      "file": "release297-heartbeat-context-types-01.log.gz",
+      "originalFile": "release297-heartbeat-context-types-01.log",
+      "rawBytes": 1161,
+      "rawSha256": "896a7048e82ba73b1c3c3f5cfe1553c0e80c7e508da4bb4bf8686e167337879b",
+      "sanitizedBytes": 1157,
+      "sanitizedSha256": "e1763092481ad79d1b77e423f2767c47284ea416582aade2859aca8bd8d84a22",
+      "gzipSha256": "6e07f7f67a1fc9880f75d5e977093f15cffaa2eb7b67277e6058217453f2e07f"
+    },
+    {
+      "file": "release297-heartbeat-context-types-02.log.gz",
+      "originalFile": "release297-heartbeat-context-types-02.log",
+      "rawBytes": 0,
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitizedBytes": 0,
+      "sanitizedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipSha256": "46b50c321b39e89a491b6727a01628c34245605a30beb3e7414c5e01cff90e6e"
+    },
+    {
+      "file": "release297-heartbeat-context-test-types-01.log.gz",
+      "originalFile": "release297-heartbeat-context-test-types-01.log",
+      "rawBytes": 308,
+      "rawSha256": "ec4c841148a38ad9df254924c10acf1d37fe7a55e7e207011b00e3d0c4f9732c",
+      "sanitizedBytes": 300,
+      "sanitizedSha256": "6923e93bafb10d8d3e5411d6657d76da648c1fb4903953fd8c7d00b46cfff379",
+      "gzipSha256": "36689c0eb027026d04bd6cfb01a9ad866e4746d6f33d4ef070f9a7afc899aced"
+    },
+    {
+      "file": "release297-heartbeat-context-casts-01.log.gz",
+      "originalFile": "release297-heartbeat-context-casts-01.log",
+      "rawBytes": 181,
+      "rawSha256": "7d0f6038c3adb07137a7414bb1a5e5f2bbad7443d7fc50ef26f3513d52d86104",
+      "sanitizedBytes": 176,
+      "sanitizedSha256": "12775ad46d81f75d0d61e869a9009ffc486786de0dbea3d623909efcbd0342ce",
+      "gzipSha256": "e146758497dc12c56ae73a46a51b7ccbb934ecd1078ea7fcb109a2f6dbb35099"
+    }
+  ],
+  "sanitation": "UTF8/LF; paths, URLs, JWTs, cookies, email addresses, UUIDs and SQL passwords redacted; original logs unchanged."
+}

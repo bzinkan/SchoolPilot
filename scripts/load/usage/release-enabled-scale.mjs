@@ -9,7 +9,7 @@ import { finished } from 'node:stream/promises';
 import pg from 'pg';
 import { RELEASE_PG_APPLICATION_NAMES, POSTGRES_PRESSURE_SAMPLE_INTERVAL_MS, POSTGRES_PRESSURE_MAX_SAMPLES, POSTGRES_ROLE_WAITS_SQL, readPostgresPressure, postgresPressureDelta } from './release-enabled-postgres-pressure.mjs';
 import { hash } from 'bcryptjs';
-import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, currentObservationDiagnostics, currentObservationFixtureViolations, currentObservationCutoff } from './local-usage-scale.mjs';
 import { schoolDayOracle } from './school-day-profile.mjs';
 import { RELEASE_ENABLED_PROFILE, enabledReleaseEnvironment, capacityAcceptance, releaseTrafficOptions } from './release-enabled-profile.mjs';
 
@@ -26,7 +26,7 @@ const sourceClean = execFileSync('git', ['status', '--porcelain'], { cwd: root, 
 assert.ok(sourceClean || process.env.USAGE_RELEASE_DIAGNOSTIC === 'true', 'Capacity evidence requires clean source');
 const source = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 assert.equal(source, process.env.USAGE_SOURCE_REVISION);
-const files = readdirSync(resolve(root, 'scripts/load/usage')).filter(name => name.startsWith('release-enabled-') || name === 'run-release-enabled-scale.ps1');
+const files = readdirSync(resolve(root, 'scripts/load/usage')).filter(name => name.startsWith('release-enabled-') || name === 'run-release-enabled-scale.ps1' || name === 'prepare-release-control-ownership.mjs' || name === 'local-usage-scale.mjs');
 const sourceHashes = Object.fromEntries(files.map(name => [name, digest(readFileSync(resolve(root, 'scripts/load/usage', name)))]));
 const metrics = { schemaVersion: 1, profile: RELEASE_ENABLED_PROFILE, sourceRevision: source, sourceClean, sourceHashes,
   startedAt: new Date().toISOString(), productionReadiness: false, capacityAccepted: false, diagnosticOnly: process.env.USAGE_RELEASE_DIAGNOSTIC === 'true', phases: [],
@@ -65,6 +65,22 @@ try {
   const snapshot = JSON.parse(readFileSync(process.env.USAGE_SCALE_COLD_STATE, 'utf8'));
   assert.equal(digest(readFileSync(process.env.USAGE_SCALE_COLD_STATE)), process.env.USAGE_SCALE_COLD_STATE_SHA256);
   assert.equal(snapshot.sourceRevision, source); assert.equal(snapshot.schools.length, 2);
+  // Canonical class ownership is prepared and verified before the cold restart,
+  // rather than invented by transport probes or patched after measuring begins.
+  const controlPreparation = JSON.parse(readFileSync(resolve(directory, 'release-control-preparation.json'), 'utf8'));
+  assert.equal(controlPreparation.passed, true); assert.equal(controlPreparation.poolsClosed, true);
+  assert.equal(controlPreparation.sourceRevision, source);
+  assert.equal(controlPreparation.coldFixtureSha256, process.env.USAGE_SCALE_COLD_STATE_SHA256);
+  assert.equal(controlPreparation.scriptSha256, sourceHashes['prepare-release-control-ownership.mjs']);
+  assert.equal(controlPreparation.schools.length, snapshot.schools.length);
+  for (const school of snapshot.schools) {
+    const prepared = controlPreparation.schools.filter(row => row.schoolIndex === school.index);
+    assert.equal(prepared.length, 1);
+    assert.deepEqual(prepared[0], { schoolIndex: school.index, currentSessions: school.groups.length,
+      rosterRows: school.students.length, staffBindings: school.groups.length, controlRows: school.students.length,
+      invalidBindings: 0, nonemptyRestrictions: 0, backfilledSessions: school.groups.length });
+  }
+  metrics.canonicalActiveControlPreparation = controlPreparation;
   // These counts were collected and independently checked before PostgreSQL's
   // cold restart. Re-scanning raw tables here would warm the worker workload.
   assert.equal(snapshot.preparation?.fixtureCounts?.length, 2);
@@ -85,9 +101,8 @@ try {
     await observer.query('UPDATE users SET password=$1 WHERE id=ANY($2::text[])', [passwordHash, [school.staff, school.teachers[0]]]);
     const sessions = (await observer.query('SELECT id FROM teaching_sessions WHERE school_id=$1 AND group_id=$2 AND end_time IS NULL', [school.id, school.groups[0]])).rows;
     assert.equal(sessions.length, 1); school.currentSession = sessions[0].id;
-    // The historical usage seeder captures pupils only. Live classroom commands
-    // require the actual current session's frozen staff authority as well.
-    await observer.query("INSERT INTO classpilot_session_staff(school_id,teaching_session_id,staff_id,role) VALUES($1,$2,$3,'primary') ON CONFLICT(teaching_session_id,staff_id) DO NOTHING", [school.id, school.currentSession, school.teachers[0]]);
+    // The before-restart canonical preparation already captured staff and
+    // initialized every current class's revisioned student control ownership.
   }
   const catalog = (await observer.query("SELECT relname,relrowsecurity,relforcerowsecurity FROM pg_class WHERE relnamespace='public'::regnamespace AND relname=ANY($1::text[]) ORDER BY relname", [env.RLS_ENABLED_TABLES.split(',')])).rows;
   assert.equal(catalog.length, 129); assert.ok(catalog.every(row => row.relrowsecurity && row.relforcerowsecurity));
@@ -164,12 +179,46 @@ try {
     const cutoff = currentObservationCutoff(), liveBySchool = new Map(), currentDayWorkers = [];
     metrics.correctness = { passed: false, currentObservationCutoff: cutoff.toISOString(), currentDayWorkers };
     for (const school of fixture.schools) {
-      const raw = (await observer.query("SELECT student_id,timestamp AT TIME ZONE 'UTC' AS timestamp FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id", [school.id,
-        time.localDateStartUtc(today, 'America/New_York').toISOString().replace('T', ' ').replace('Z', ''), cutoff.toISOString().replace('T', ' ').replace('Z', '')])).rows;
+      const observationBounds = [school.id, time.localDateStartUtc(today, 'America/New_York').toISOString().replace('T', ' ').replace('Z', ''), cutoff.toISOString().replace('T', ' ').replace('Z', '')];
+      const raw = (await observer.query(`SELECT student_id,(EXTRACT(EPOCH FROM timestamp)*1000000)::bigint::text AS timestamp_microseconds,
+        active_tab_url IS NOT DISTINCT FROM 'https://ixl.com/lesson' AS expected_url,
+        ai_category IS NOT DISTINCT FROM 'educational' AS expected_classification,
+        NULLIF(teacher_intent_source,'') IS NULL AS expected_teacher_intent
+        FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp ORDER BY student_id,timestamp,id`, observationBounds)).rows;
+      // Reject fixture drift instead of rounding across multiple real grains.
+      // These checks read raw observations and frozen membership, not rollups.
+      const fixtureCounts = (await observer.query(`WITH observed AS (
+        SELECT student_id,MIN(timestamp) AS first_at,MAX(timestamp) AS last_at
+        FROM heartbeats WHERE school_id=$1 AND timestamp >= $2::timestamp AND timestamp < $3::timestamp GROUP BY student_id
+      ), expected AS (
+        SELECT student_id,group_id FROM jsonb_to_recordset($4::jsonb) AS item(student_id text,group_id text)
+      ), roster AS (
+        SELECT member.student_id,member.group_id,member.captured_at,session.start_time,session.end_time,session.scheduled_end_at
+        FROM classpilot_session_students member JOIN teaching_sessions session
+          ON session.id=member.teaching_session_id AND session.school_id=member.school_id
+        JOIN groups class ON class.id=member.group_id AND class.school_id=member.school_id
+        WHERE member.school_id=$1 AND session.start_time >= $2::timestamp-interval '12 hours'
+          AND session.start_time < $3::timestamp AND (session.end_time IS NULL OR session.end_time >= $2::timestamp)
+      ), checked AS (
+        SELECT observed.student_id,COUNT(roster.student_id) AS memberships,
+          BOOL_AND(roster.group_id=expected.group_id AND roster.start_time <= observed.first_at
+            AND roster.captured_at AT TIME ZONE 'UTC' <= observed.first_at
+            AND (roster.end_time IS NULL OR roster.end_time > observed.last_at)
+            AND (roster.scheduled_end_at IS NULL OR roster.scheduled_end_at AT TIME ZONE 'UTC' > observed.last_at)
+            AND roster.start_time+interval '12 hours' > observed.last_at) AS covers_observations
+        FROM observed LEFT JOIN expected USING(student_id) LEFT JOIN roster USING(student_id) GROUP BY observed.student_id
+      ) SELECT (SELECT COUNT(*)::int FROM classpilot_ai_decisions WHERE school_id=$1 AND created_at >= $2::timestamp) AS "currentAiDecisionRows",
+        (SELECT COUNT(*)::int FROM checked WHERE memberships<>1 OR covers_observations IS DISTINCT FROM true) AS "invalidRosterStudents"`,
+      [...observationBounds, JSON.stringify(school.students.map((student_id, index) => ({ student_id, group_id: school.groups[Math.floor(index / 5)] })))])).rows[0];
+      const fixtureViolations = currentObservationFixtureViolations(raw, school.students, fixtureCounts);
+      const verification = { schoolIndex: school.index, fixtureViolations, correct: false };
+      currentDayWorkers.push(verification); save();
+      assert.ok(Object.values(fixtureViolations).every(count => count === 0), 'Current-day one-grain fixture invariant failed');
       const observed = currentObservationSeconds(raw, cutoff); liveBySchool.set(school.index, observed);
-      const result = await worker.rpc('rollup', { schoolId: school.id, date: today, cutoff: cutoff.toISOString() });
       const expectedSeconds = [...observed.values()].reduce((sum, value) => sum + value, 0);
-      currentDayWorkers.push({ schoolIndex: school.index, ...result, correct: result.seconds === expectedSeconds }); save();
+      Object.assign(verification, { expectedSeconds, timestampPrecision: currentObservationDiagnostics(raw, cutoff) }); save();
+      const result = await worker.rpc('rollup', { schoolId: school.id, date: today, cutoff: cutoff.toISOString() });
+      Object.assign(verification, result, { correct: result.seconds === expectedSeconds }); save();
       assert.equal(result.seconds, expectedSeconds);
       assert.ok(result.durationMs <= RELEASE_ENABLED_PROFILE.fullWorkerAcceptanceMs, 'Current-day complete rollup exceeded48seconds');
     }

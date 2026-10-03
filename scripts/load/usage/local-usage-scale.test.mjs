@@ -6,7 +6,7 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { assertFreshEvidenceDirectory } from './assert-fresh-evidence-directory.mjs';
-import { assertLocalScaleFixture, currentObservationSeconds, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql, apiStatementKind } from './local-usage-scale.mjs';
+import { assertLocalScaleFixture, currentObservationSeconds, currentObservationDiagnostics, currentObservationFixtureViolations, currentObservationCutoff, measureCall, usageAttributionDiagnosticSql, apiStatementKind } from './local-usage-scale.mjs';
 
 const run = '012345abcdef';
 const local = { USAGE_LOCAL_SCALE: '1', NODE_ENV: 'test', USAGE_SCALE_CONTAINER: `schoolpilot-usage-scale-${run}`,
@@ -22,8 +22,8 @@ test('scale fixture rejects other databases, ports, ownership names and missing 
 });
 test('current-day oracle independently deduplicates and bounds gap and cutoff attribution', () => {
   const base = Date.parse('2026-09-30T12:00:00Z'), cutoff = new Date(base + 50_000);
-  const rows = [0, 20, 20, 40, 55].map(second => ({ student_id: 'a', timestamp: new Date(base + second * 1000) }));
-  rows.push({ student_id: 'b', timestamp: new Date(base + 48_000) });
+  const rows = [0, 20, 20, 40, 55].map(second => ({ student_id: 'a', timestamp_microseconds: (BigInt(base + second * 1000) * 1000n).toString() }));
+  rows.push({ student_id: 'b', timestamp_microseconds: (BigInt(base + 48_000) * 1000n).toString() });
   assert.deepEqual([...currentObservationSeconds(rows.reverse(), cutoff)], [['b', 2], ['a', 40]]);
 });
 test('dedicated runner verifies exact loopback port, caps and cleanup ownership without changing shared quotas', () => {
@@ -41,8 +41,8 @@ test('current-day oracle does not grant fractional tail time beyond the establis
   const now = Date.parse('2026-09-30T12:00:50.999Z'), cutoff = currentObservationCutoff(now);
   assert.equal(cutoff.toISOString(), '2026-09-30T12:00:50.000Z');
   assert.deepEqual([...currentObservationSeconds([
-    { student_id: 'a', timestamp: '2026-09-30T12:00:49.400Z' },
-    { student_id: 'b', timestamp: '2026-09-30T12:00:50.200Z' },
+    { student_id: 'a', timestamp_microseconds: (BigInt(Date.parse('2026-09-30T12:00:49.400Z')) * 1000n).toString() },
+    { student_id: 'b', timestamp_microseconds: (BigInt(Date.parse('2026-09-30T12:00:50.200Z')) * 1000n).toString() },
   ], cutoff)], [['a', 1]]);
 });
 
@@ -105,4 +105,81 @@ test('fresh output guard preserves existing failure artifacts and refuses files 
     assert.ok(basename(absolute).startsWith('schoolpilot-evidence-guard-'));
     rmSync(absolute,{recursive:true,force:true});
   }
+});
+
+test('current-day oracle preserves microseconds below a half-second rounding boundary', () => {
+  const cutoff = new Date('2026-10-03T02:02:33Z');
+  const rows = [{ student_id: 'synthetic', timestamp: new Date('2026-10-03T02:02:32.500001Z'), timestamp_microseconds: '1790992952500001' }];
+  assert.deepEqual([...currentObservationSeconds(rows, cutoff)], [['synthetic', 0]]);
+});
+
+test('exact oracle rounds both sides of a half-second and retains an exact half', () => {
+  const cutoff = new Date('2026-10-03T02:02:33Z');
+  const rows = [
+    { student_id: 'below', timestamp_microseconds: '1790992952500001' },
+    { student_id: 'half', timestamp_microseconds: '1790992952500000' },
+    { student_id: 'above', timestamp_microseconds: '1790992952499999' },
+  ];
+  assert.deepEqual([...currentObservationSeconds(rows, cutoff)], [['below', 0], ['half', 1], ['above', 1]]);
+});
+
+test('exact oracle deduplicates by second and sums microsecond gaps before rounding', () => {
+  const cutoff = new Date('2026-10-03T02:02:33Z');
+  const rows = [
+    { student_id: 'synthetic', timestamp_microseconds: '1790992951500002' },
+    { student_id: 'synthetic', timestamp_microseconds: '1790992951500001' },
+    { student_id: 'synthetic', timestamp_microseconds: '1790992952000001' },
+    { student_id: 'synthetic', timestamp_microseconds: '1790992953000000' },
+  ];
+  assert.deepEqual([...currentObservationSeconds(rows, cutoff)], [['synthetic', 1]]);
+  const diagnostics = currentObservationDiagnostics(rows, cutoff);
+  assert.equal(diagnostics.includedObservations, 3);
+  assert.equal(diagnostics.deduplicatedObservations, 2);
+  assert.equal(diagnostics.exactRoundedSeconds, 1);
+  assert.equal(diagnostics.legacyRoundedSeconds, 2);
+});
+
+test('oracle precision diagnostics remain bounded and contain no identity or raw timestamp', () => {
+  const rows = [{ student_id: 'private-synthetic-identifier', timestamp_microseconds: '1790992952500001' }];
+  const result = currentObservationDiagnostics(rows, new Date('2026-10-03T02:02:33Z'));
+  assert.deepEqual(result, { precision: 'integer_microseconds_text', rawObservations: 1, includedObservations: 1,
+    submillisecondObservations: 1, deduplicatedObservations: 1, students: 1,
+    exactRoundedSeconds: 0, legacyRoundedSeconds: 1, roundingSensitiveStudents: 1 });
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /private-synthetic-identifier|1790992952500001|02:02:32/);
+  assert.ok(serialized.length < 400);
+});
+
+test('oracle refuses lossy Date inputs and every raw-query caller requests exact text', () => {
+  const cutoff = new Date('2026-10-03T02:02:33Z');
+  assert.throws(() => currentObservationSeconds([{ student_id: 'a', timestamp: new Date() }], cutoff), /timestamp_microseconds/);
+  for (const value of [1790992952500001, '1.2', '1e6', 'not-a-time']) {
+    assert.throws(() => currentObservationSeconds([{ student_id: 'a', timestamp_microseconds: value }], cutoff));
+  }
+  for (const name of ['local-usage-scale.mjs', 'local-school-day-scale.mjs', 'release-enabled-scale.mjs']) {
+    const source = readFileSync(new URL(name, import.meta.url), 'utf8');
+    assert.match(source, /EXTRACT\(EPOCH FROM timestamp\)\*1000000\)::bigint::text AS timestamp_microseconds/);
+    assert.doesNotMatch(source, /timestamp AT TIME ZONE.*AS timestamp FROM heartbeats/);
+  }
+  const release = readFileSync(new URL('release-enabled-scale.mjs', import.meta.url), 'utf8');
+  assert.match(release, /assert\.equal\(result\.seconds, expectedSeconds\)/);
+  assert.match(release, /timestampPrecision: currentObservationDiagnostics\(raw, cutoff\)/);
+});
+
+test('current-day fixture refuses nonconstant grains and emits only fixed violation counts', () => {
+  const valid = { student_id: 'synthetic-private-id', expected_url: true, expected_classification: true, expected_teacher_intent: true };
+  const counts = { currentAiDecisionRows: 0, invalidRosterStudents: 0 };
+  const check = (rows, db = counts) => currentObservationFixtureViolations(rows, [valid.student_id], db);
+  assert.ok(Object.values(check([valid])).every(value => value === 0));
+  for (const [field, counter] of [['expected_url', 'unexpectedUrlObservations'], ['expected_classification', 'unexpectedClassificationObservations'], ['expected_teacher_intent', 'unexpectedTeacherIntentObservations']]) {
+    assert.equal(check([{ ...valid, [field]: false }])[counter], 1);
+    assert.equal(check([{ ...valid, [field]: undefined }])[counter], 1);
+  }
+  const result = check([valid, { ...valid, student_id: 'foreign-id' }], { currentAiDecisionRows: 1, invalidRosterStudents: 2 });
+  assert.equal(result.unexpectedStudents, 1); assert.equal(result.currentAiDecisionRows, 1); assert.equal(result.invalidRosterStudents, 2);
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-private-id|foreign-id|https?:/);
+  assert.equal(Object.keys(result).length, 6);
+  assert.throws(() => check([valid], { ...counts, invalidRosterStudents: '0' }), /Invalid fixture violation count/);
+  const source = readFileSync(new URL('./release-enabled-scale.mjs', import.meta.url), 'utf8');
+  assert.ok(source.indexOf("'Current-day one-grain fixture invariant failed'") < source.indexOf('const observed = currentObservationSeconds(raw, cutoff)'));
 });
