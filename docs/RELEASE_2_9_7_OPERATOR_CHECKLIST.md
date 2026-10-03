@@ -31,8 +31,19 @@ The [fresh e95 image](release-evidence/release-297/usage-contention/candidate-ar
 passes its uncached build, pinned scan with zero findings and compatibility
 checks. The e95 CI rollout clock probe failed; its [test-only correction](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json)
 passes local real-clock and deterministic boundary checks without changing
-production deployment code. Full follow-up CI and combined load verification
-remain pending.
+production deployment code. Full follow-up CI remains pending.
+
+The [combined e95 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
+still fails capacity: 4,413 of 6,000 heartbeats succeeded, 949 failed and 638
+were refused at the in-flight ceiling, with zero late offers. All 64 reports
+passed; whole workers took 12.284 and 30.984 seconds. Independent totals,
+coverage, tenant isolation and eight audited CSV checks passed. API CPU used
+65.736 seconds over 67.377 elapsed seconds, with event-loop utilization 0.973;
+950 acquisitions failed. The first classroom lock-screen request returned 500.
+Its generic error log and one tenant-request acquisition failure are consistent
+with contention, but do not prove that request's exact cause. Both owners drained,
+all six containers were removed, and the recorded PostgreSQL volume was verified
+absent. CPU attribution is the next investigation; zero capacity runs are accepted.
 
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
@@ -116,7 +127,7 @@ and accepted capacity before the separately authorized release steps below.
 | Extension review-head CI | Documentation-only head `8069a9c9bd50352e187847158b356a69edc4e45d`: [reconciled read-only check](release-evidence/release-297/usage-contention/extension-ci-reconciled-20261003.json) records all 10 checks successful and GitHub `CLEAN`. The [previously cancelled sibling run](https://github.com/bzinkan/ClassPilot/actions/runs/37048477885) passed on rerun, including Chrome 120, 133, 152 and stable. The PR remains open/draft. [Source/ZIP reverification](release-evidence/release-297/usage-contention/extension-reverification.json) confirms unchanged packaged bytes; CI is not publication or live acceptance. |
 | Frontend aggregate | [Frontend source binding to e95](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json) verifies all 632 input blobs and the retained artifact hash against the prior 739 passing Node cases, direct browser scripts, build and lint (29 existing warnings). Artifact SHA-256 `7fc1c93fc9b861cb4db299c6bbf5686f7cd4e71dc9689e2327983c172c41110f`. Fresh e95 CI is pending. This is not live acceptance. |
 | Live pilot / validation | User confirmed St. Francis DeSales, Cincinnati (`desalescincy.org`), with 133 students, three administrators and nine teachers shown in the supplied screenshot. Production school UUID and current eligibility remain unverified. Live validation has not started; minimum 30 minutes with nonzero samples for every required lifecycle category. |
-| Usage capacity | **Zero accepted runs; Usage remains off.** The [b112 combined diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-b112-01/manifest.json) has 3,020/6,000 successful heartbeats, 2,095 failures, 885 refusals, 199 late offers and 2,096 total acquisitions that failed. All 64 reports and independent numeric/coverage/CSV checks pass; the classroom lifecycle fails. Whole workers take 25.049/47.561 seconds. Drains and all six container removals pass. Three consecutive final-source full passes and the original comparison remain required. Both load schools are synthetic; DeSales is the sole live school. |
+| Usage capacity | **Zero accepted runs; Usage remains off.** The [e95 combined diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json) has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals, zero late offers and 950 acquisition failures. All 64 reports and independent numeric/coverage/CSV checks pass; classroom lifecycle fails. Whole workers take 12.284/30.984 seconds. CPU attribution is pending; neither worker speed nor reports establish full readiness. Three consecutive final-source full passes and the original comparison remain required. Both load schools are synthetic; DeSales is the sole live school. |
 | Deployed / activated | No changes performed by this release preparation |
 
 The [structured PR inventory](release-evidence/release-2.9.7-pr-inventory.json)

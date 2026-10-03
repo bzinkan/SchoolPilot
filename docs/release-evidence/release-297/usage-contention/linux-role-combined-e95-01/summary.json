@@ -1,0 +1,727 @@
+{
+  "schemaVersion": 1,
+  "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "diagnosticOnly": true,
+  "capacityAccepted": false,
+  "acceptedRunCount": 0,
+  "rawMetricsSha256": "861bc97b804da5e169ff6bbcab895cb8abce4622550c00078ffd4eba3bccae0d",
+  "sourceUnchanged": true,
+  "phase": {
+    "startedAt": "2026-10-03T18:15:14.125Z",
+    "durationMs": 67376.856153,
+    "finishedAt": "2026-10-03T18:16:31.539Z"
+  },
+  "heartbeats": {
+    "configured": {
+      "requestsPerSecond": 100,
+      "durationMs": 60000,
+      "schools": 2,
+      "devicesPerSchool": 500,
+      "deviceCadenceMs": 10000,
+      "maxInFlight": 1000,
+      "requestTimeoutMs": 20000,
+      "maxOfferLatenessMs": 100
+    },
+    "expected": 6000,
+    "offered": 6000,
+    "started": 5362,
+    "succeeded": 4413,
+    "failed": 949,
+    "refusedAtInFlightLimit": 638,
+    "lateOffers": 0,
+    "maxOfferLatenessMs": 44.38931699999739,
+    "peakInFlight": 1000,
+    "bySchool": {
+      "0": {
+        "offered": 3000,
+        "started": 2668,
+        "succeeded": 2198,
+        "failed": 470,
+        "refused": 332
+      },
+      "1": {
+        "offered": 3000,
+        "started": 2694,
+        "succeeded": 2215,
+        "failed": 479,
+        "refused": 306
+      }
+    },
+    "failureCodes": {
+      "ERR_ASSERTION": 949
+    },
+    "offerWindowMs": 59989.984313999994,
+    "outstandingAtEndOfOffering": 992,
+    "totalIncludingDrainMs": 67368.850567,
+    "outstandingAfterDrain": 0,
+    "accepted": false,
+    "timings": {
+      "count": 5362,
+      "minMs": 413.61572400000114,
+      "p50Ms": 10996.709600000002,
+      "p95Ms": 12893.205656000002,
+      "maxMs": 14406.975434
+    }
+  },
+  "reports": {
+    "count": 64,
+    "correct": 64,
+    "maxMs": 11470.821528999997
+  },
+  "workers": [
+    {
+      "schoolIndex": 0,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 12284.157942000002,
+      "correct": true
+    },
+    {
+      "schoolIndex": 1,
+      "rowCount": 84000,
+      "seconds": 10002500,
+      "heartbeatCount": 1000000,
+      "durationMs": 30983.832636000003,
+      "correct": true
+    }
+  ],
+  "insertedObservations": 4741,
+  "correctness": {
+    "passed": true,
+    "csvAuditCount": 8
+  },
+  "lifecycle": {
+    "passed": false,
+    "events": [
+      "websocket_authenticated"
+    ],
+    "clientError": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "lock-screen HTTP 500: {\"error\":\"Internal server error\",\"requestId\":\"11978353-00c0-4c7a-937e-f0cb9c526115\"}\n\n500 !== 201\n"
+    },
+    "matchingServerLogLines": [
+      "Error [req:11978353-00c0-4c7a-937e-f0cb9c526115]: { errorType: 'Error' }"
+    ],
+    "causeProven": false
+  },
+  "api": {
+    "cpuSeconds": 65.735933,
+    "eventLoop": {
+      "p50Ms": 22.642687,
+      "p95Ms": 41.451519,
+      "maxMs": 597.164031,
+      "utilization": 0.9725327091418137
+    },
+    "acquisitions": {
+      "count": 15442,
+      "failures": 950,
+      "maxMs": 5551.888570000003
+    },
+    "peakWaiting": 993,
+    "peakHeld": 16,
+    "operations": {
+      "auth": {
+        "counters": {},
+        "timings": {
+          "operationMs": {
+            "count": 5362,
+            "totalMs": 18696637.883121997,
+            "maxMs": 5523.117790000004,
+            "meanMs": 3486.8776357929873
+          },
+          "sqlMs": {
+            "count": 5063,
+            "totalMs": 42226.77360800006,
+            "maxMs": 193.35397999999986,
+            "meanMs": 8.340267352952807
+          }
+        }
+      },
+      "user_identity": {
+        "counters": {},
+        "timings": {
+          "operationMs": {
+            "count": 27,
+            "totalMs": 561.6154639999986,
+            "maxMs": 48.18287000000055,
+            "meanMs": 20.80057274074069
+          },
+          "sqlMs": {
+            "count": 27,
+            "totalMs": 291.9868839999963,
+            "maxMs": 32.89952000000085,
+            "meanMs": 10.814329037036899
+          }
+        }
+      },
+      "heartbeat_persistence": {
+        "counters": {
+          "checkoutAttempts": 5063,
+          "checkoutSuccess": 4741,
+          "checkoutFailure": 322
+        },
+        "timings": {
+          "operationMs": {
+            "count": 5063,
+            "totalMs": 17270362.403342016,
+            "maxMs": 5539.004611000004,
+            "meanMs": 3411.0927124910163
+          },
+          "checkoutMs": {
+            "count": 5063,
+            "totalMs": 17087314.774419986,
+            "maxMs": 5538.760095999998,
+            "meanMs": 3374.9387269247454
+          },
+          "holdMs": {
+            "count": 4741,
+            "totalMs": 182554.26479000007,
+            "maxMs": 691.4189840000035,
+            "meanMs": 38.50543446319343
+          },
+          "sqlMs": {
+            "count": 18990,
+            "totalMs": 179804.68618199855,
+            "maxMs": 662.3252609999981,
+            "meanMs": 9.468387897946211
+          }
+        }
+      },
+      "heartbeat_final_delivery": {
+        "counters": {
+          "checkoutAttempts": 4741,
+          "checkoutSuccess": 4413,
+          "checkoutFailure": 328,
+          "heartbeatInboxChecks": 990
+        },
+        "timings": {
+          "operationMs": {
+            "count": 4741,
+            "totalMs": 17892932.687645983,
+            "maxMs": 6382.071606999998,
+            "meanMs": 3774.0840935764572
+          },
+          "checkoutMs": {
+            "count": 4741,
+            "totalMs": 17072500.14427101,
+            "maxMs": 5551.914503,
+            "meanMs": 3601.0335676589343
+          },
+          "holdMs": {
+            "count": 4413,
+            "totalMs": 819883.3847440016,
+            "maxMs": 1385.8618160000042,
+            "meanMs": 185.78821317561784
+          },
+          "sqlMs": {
+            "count": 96089,
+            "totalMs": 750215.8493370074,
+            "maxMs": 652.0237039999993,
+            "meanMs": 7.807510217995893
+          }
+        }
+      },
+      "api_limiter": {
+        "counters": {},
+        "timings": {
+          "operationMs": {
+            "count": 5427,
+            "totalMs": 82294.69245900029,
+            "maxMs": 563.6369020000056,
+            "meanMs": 15.16393817191824
+          }
+        }
+      },
+      "heartbeat_middleware": {
+        "counters": {},
+        "timings": {
+          "operationMs": {
+            "count": 15787,
+            "totalMs": 18783418.27171999,
+            "maxMs": 5523.160131999997,
+            "meanMs": 1189.802892995502
+          }
+        }
+      },
+      "heartbeat_handler": {
+        "counters": {
+          "heartbeatHandlerFailures": 650
+        },
+        "timings": {
+          "operationMs": {
+            "count": 5063,
+            "totalMs": 35241451.37197906,
+            "maxMs": 10636.838976,
+            "meanMs": 6960.586879711447
+          }
+        }
+      },
+      "usage_report_admission": {
+        "counters": {
+          "admissionAdmitted": 64
+        },
+        "timings": {
+          "operationMs": {
+            "count": 64,
+            "totalMs": 110164.864468,
+            "maxMs": 7147.416583000002,
+            "meanMs": 1721.3260073125
+          }
+        }
+      },
+      "usage_report": {
+        "counters": {
+          "checkoutAttempts": 64,
+          "checkoutSuccess": 64
+        },
+        "timings": {
+          "operationMs": {
+            "count": 64,
+            "totalMs": 22756.699683999985,
+            "maxMs": 2713.362312999998,
+            "meanMs": 355.57343256249976
+          },
+          "checkoutMs": {
+            "count": 64,
+            "totalMs": 443.8446489999842,
+            "maxMs": 43.47339699999793,
+            "meanMs": 6.935072640624753
+          },
+          "holdMs": {
+            "count": 64,
+            "totalMs": 22310.338363999996,
+            "maxMs": 2695.757089999999,
+            "meanMs": 348.59903693749993
+          },
+          "sqlMs": {
+            "count": 688,
+            "totalMs": 21816.238346000013,
+            "maxMs": 2558.749132000001,
+            "meanMs": 31.70964875872095
+          }
+        }
+      },
+      "tenant_request": {
+        "counters": {
+          "checkoutAttempts": 1,
+          "checkoutFailure": 1
+        },
+        "timings": {
+          "operationMs": {
+            "count": 1,
+            "totalMs": 5008.589221999999,
+            "maxMs": 5008.589221999999,
+            "meanMs": 5008.589221999999
+          },
+          "checkoutMs": {
+            "count": 1,
+            "totalMs": 5007.696217000001,
+            "maxMs": 5007.696217000001,
+            "meanMs": 5007.696217000001
+          }
+        }
+      },
+      "tenant_background": {
+        "counters": {
+          "checkoutAttempts": 107,
+          "checkoutSuccess": 107
+        },
+        "timings": {
+          "operationMs": {
+            "count": 107,
+            "totalMs": 416581.25792199984,
+            "maxMs": 4979.993933999998,
+            "meanMs": 3893.2827843177556
+          },
+          "checkoutMs": {
+            "count": 107,
+            "totalMs": 412002.4053870002,
+            "maxMs": 4935.8168890000015,
+            "meanMs": 3850.4897699719645
+          },
+          "holdMs": {
+            "count": 107,
+            "totalMs": 4577.361243999967,
+            "maxMs": 663.2517540000008,
+            "meanMs": 42.779077046728666
+          },
+          "sqlMs": {
+            "count": 449,
+            "totalMs": 4470.834354999955,
+            "maxMs": 63.11479900000268,
+            "meanMs": 9.95731482182618
+          }
+        }
+      },
+      "unclassified": {
+        "counters": {},
+        "timings": {
+          "sqlMs": {
+            "count": 77,
+            "totalMs": 1167.791213999999,
+            "maxMs": 47.6883799999996,
+            "meanMs": 15.166119662337648
+          }
+        }
+      }
+    }
+  },
+  "resources": {
+    "coordinator": {
+      "cpuMax": "50000 100000",
+      "memoryMax": 1073741824,
+      "delta": {
+        "durationMicroseconds": 67421312,
+        "cpu": {
+          "usage_usec": 2388701,
+          "user_usec": 1972388,
+          "system_usec": 416313,
+          "nr_periods": 675,
+          "nr_throttled": 11,
+          "throttled_usec": 569324,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 209436672,
+        "resourceAcceptance": false
+      }
+    },
+    "api": {
+      "cpuMax": "100000 100000",
+      "memoryMax": 2147483648,
+      "delta": {
+        "durationMicroseconds": 67422514,
+        "cpu": {
+          "usage_usec": 65737750,
+          "user_usec": 54256077,
+          "system_usec": 11481673,
+          "nr_periods": 674,
+          "nr_throttled": 626,
+          "throttled_usec": 21786613,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 392216576,
+        "resourceAcceptance": false
+      }
+    },
+    "worker": {
+      "cpuMax": "50000 100000",
+      "memoryMax": 1073741824,
+      "delta": {
+        "durationMicroseconds": 67464000,
+        "cpu": {
+          "usage_usec": 875011,
+          "user_usec": 783637,
+          "system_usec": 91375,
+          "nr_periods": 637,
+          "nr_throttled": 3,
+          "throttled_usec": 965099,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 142442496,
+        "resourceAcceptance": false
+      }
+    },
+    "generator": {
+      "cpuMax": "200000 100000",
+      "memoryMax": 1073741824,
+      "delta": {
+        "durationMicroseconds": 67372330,
+        "cpu": {
+          "usage_usec": 16767208,
+          "user_usec": 14650387,
+          "system_usec": 2116821,
+          "nr_periods": 674,
+          "nr_throttled": 0,
+          "throttled_usec": 0,
+          "nr_bursts": 0,
+          "burst_usec": 0
+        },
+        "memoryEvents": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        },
+        "memoryPeakBytes": 143196160,
+        "resourceAcceptance": false
+      }
+    }
+  },
+  "postgres": {
+    "samples": 265,
+    "summedSampledConnections": {
+      "api/active/Client/ClientRead": 27,
+      "api/idle/Client/ClientRead": 1376,
+      "api/idle in transaction/Client/ClientRead": 2431,
+      "worker/idle/Client/ClientRead": 41,
+      "worker/active/IO/DataFileRead": 4,
+      "api/active/none/none": 416,
+      "worker/active/none/none": 112,
+      "worker/active/IO/DataFileExtend": 2,
+      "api/active/IO/DataFileRead": 9,
+      "api/idle/none/none": 7,
+      "api/active/IO/WALSync": 45,
+      "api/idle in transaction/none/none": 30,
+      "worker/active/IO/DataFilePrefetch": 1,
+      "worker/active/IO/BufFileWrite": 1,
+      "api/active/IO/WALWrite": 2,
+      "api/active/LWLock/WALWrite": 73,
+      "worker/active/IO/BufFileRead": 1,
+      "api/active/IO/BufFileWrite": 15,
+      "other/active/none/none": 3,
+      "api/active/IPC/MessageQueueSend": 35,
+      "other/active/IO/DataFilePrefetch": 1,
+      "other/active/Timeout/VacuumDelay": 3,
+      "worker/active/IO/DataFileWrite": 1,
+      "api/active/LWLock/WALInsert": 1,
+      "worker/active/LWLock/WALWrite": 1
+    },
+    "delta": {
+      "valid": true,
+      "settingsStable": true,
+      "groups": {
+        "wal": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "wal_records": "1157501",
+            "wal_fpi": "17179",
+            "wal_bytes": "317282949",
+            "wal_buffers_full": "0",
+            "wal_write": "8169",
+            "wal_sync": "8113"
+          },
+          "timingsMs": null
+        },
+        "bgwriter": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": true,
+          "counters": {
+            "checkpoints_timed": "0",
+            "checkpoints_req": "0",
+            "buffers_checkpoint": "0",
+            "buffers_clean": "29935",
+            "maxwritten_clean": "283",
+            "buffers_backend": "115661",
+            "buffers_backend_fsync": "0",
+            "buffers_alloc": "282790"
+          },
+          "timingsMs": {
+            "checkpoint_write_time": 0,
+            "checkpoint_sync_time": 0
+          }
+        },
+        "database": {
+          "valid": true,
+          "resetConsistent": true,
+          "countersMonotonic": true,
+          "timingsMonotonic": true,
+          "timingAvailable": false,
+          "counters": {
+            "xact_commit": "40151",
+            "xact_rollback": "4",
+            "blks_read": "572803",
+            "blks_hit": "19391415",
+            "tup_returned": "33850430",
+            "tup_fetched": "8819720",
+            "tup_inserted": "172889",
+            "tup_updated": "2023",
+            "tup_deleted": "30",
+            "temp_files": "42",
+            "temp_bytes": "502213088",
+            "deadlocks": "0"
+          },
+          "timingsMs": null
+        }
+      },
+      "semantics": "Read-only counters from the owned PostgreSQL instance; statistics are asynchronously published and are not exact per-operation attribution. WAL/bgwriter counters are instance-wide; database counters cover this fixture. Timing disabled means unavailable, never a measured zero."
+    }
+  },
+  "drains": {
+    "api": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.4185620000062045,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    },
+    "worker": {
+      "complete": true,
+      "budgetMs": 20000,
+      "elapsedMs": 1.7118259999988368,
+      "passes": 2,
+      "gauges": {
+        "activeOperations": 0,
+        "pendingCheckouts": 0,
+        "activeCheckouts": 0,
+        "pendingAcquisitions": 0,
+        "activeQueries": 0,
+        "poolWaiting": 0,
+        "poolHeld": 0,
+        "httpResponses": 0,
+        "pendingTenantReleases": 0
+      },
+      "physicallyIdle": true,
+      "abortedResponses": 0
+    }
+  },
+  "exits": [
+    {
+      "role": "coordinator",
+      "exit": {
+        "containerId": "c2edcc46d92eecb04b725bf39000d25912d69e6cb59e28cd66e385088164f81a",
+        "imageId": "sha256:7ad778311e0e3bef006ff27fce75c1ac32dd9f5ed07705343340b3b556633ef1",
+        "run": "75d8f6205c5c",
+        "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+        "role": "coordinator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 1,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 1,
+        "clean": false
+      }
+    },
+    {
+      "role": "api",
+      "exit": {
+        "containerId": "2761053df32104f7751b2531b4f6dd06d8909843c52d369fce35e0bd5eea64c6",
+        "imageId": "sha256:7ad778311e0e3bef006ff27fce75c1ac32dd9f5ed07705343340b3b556633ef1",
+        "run": "75d8f6205c5c",
+        "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+        "role": "api",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    },
+    {
+      "role": "worker",
+      "exit": {
+        "containerId": "272898f698fce6b87b9ff7a6d3d4bfdd8dd88a9c7773fb718d2d296e391c7988",
+        "imageId": "sha256:7ad778311e0e3bef006ff27fce75c1ac32dd9f5ed07705343340b3b556633ef1",
+        "run": "75d8f6205c5c",
+        "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+        "role": "worker",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    },
+    {
+      "role": "generator",
+      "exit": {
+        "containerId": "547e4d0cedd87079b44aedb77467ac8b602a13a6f04f3f9589fd4127e851758b",
+        "imageId": "sha256:7ad778311e0e3bef006ff27fce75c1ac32dd9f5ed07705343340b3b556633ef1",
+        "run": "75d8f6205c5c",
+        "source": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+        "role": "generator",
+        "inspected": true,
+        "running": false,
+        "logsClosed": true,
+        "exitCode": 0,
+        "forced": false,
+        "oomKilled": false,
+        "attachExitCode": 0,
+        "clean": true
+      }
+    }
+  ],
+  "cleanupPassed": true,
+  "volumeAbsence": {
+    "schemaVersion": 1,
+    "run": "75d8f6205c5c",
+    "sourceReceiptSha256": "b6b3cc4b924b102bd1e44316ddd19f7b910f0cd3621f083d8bee0d5057d2384c",
+    "volumes": [
+      {
+        "confirmedAbsent": true,
+        "successfulList": true,
+        "destination": "/var/lib/postgresql/data",
+        "name": "f3a8f8e4037dd34a9af06965e497431d13a8d6fcaa932902d8c9fccdeda9a230"
+      }
+    ],
+    "capturedAt": "2026-10-03T18:18:40.1960164Z",
+    "containerId": "f8a5ada598dc0b47533f82d0dfd34fed7d6050575a2b0e7af119c01c8dc22d07",
+    "passed": true
+  },
+  "failedChecks": [
+    "acceptanceRun",
+    "allHeartbeats",
+    "heartbeatCompletionDeadline",
+    "observationsRecorded",
+    "lifecycle",
+    "noLateHandlerFailures",
+    "noPoolFailures",
+    "acquisitionDeadlines"
+  ],
+  "limitations": [
+    "Failed diagnostic, never accepted capacity. No automatic retry.",
+    "No CPU profiler. Aggregate driver SQL elapsed includes server/network/event-loop scheduling; not server CPU. Inclusive operation counters overlap and are not additive.",
+    "First lock-screen HTTP500 correlates with generic errorType Error log only; no exact exception stack/code retained. One tenant_request checkout failure is consistent with, but does not prove, its cause.",
+    "PG waits are sampled concurrent connection states, not wait seconds; asynchronous instance WAL cannot identify operation/index contribution. PG I/O/WAL timing is disabled, unavailable not zero.",
+    "Historical b112 same-role run is a descriptive comparison, not repeated controlled attribution.",
+    "Exact PG volume absence was separately verified; other cleanup is exact-container removal with --volumes, not separately enumerated volume absence.",
+    "Premeasurement e95 snapshot remains private and has not yet passed restore validation."
+  ]
+}

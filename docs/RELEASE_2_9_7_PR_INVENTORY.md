@@ -29,6 +29,14 @@ CI remain pending after a [test-only rollout clock correction](release-evidence/
 [Frontend equivalence](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json)
 confirms the retained artifact and all 632 input blobs are unchanged.
 
+The [new combined e95 run](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
+still fails capacity: 4,413/6,000 heartbeats succeeded, 949 failed, 638 were
+refused and none were late. All 64 reports and independent correctness/CSV checks
+pass; whole workers take 12.284/30.984 seconds. API CPU is nearly saturated,
+950 acquisitions fail and the first classroom command returns 500. All owners
+drain and exact fixture cleanup is retained. No passing capacity run is accepted.
+Current-source CPU attribution is required before selecting another correction.
+
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` adds owned
 heartbeat SELECT metadata reuse with fresh values and mandatory-work sealing.
 [Regression evidence](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)

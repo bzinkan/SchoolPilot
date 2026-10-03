@@ -14,8 +14,8 @@ and restricted tenant isolation. PostgreSQL/Redis container removal passed;
 the runner requested exact-owner `--volumes` removal, but did not independently
 enumerate anonymous-volume absence. The [fresh e95 image](candidate-artifact-e95a2b56/manifest.json)
 passes an uncached build, a pinned scan with zero findings and embedded
-compatibility checks. Its permanent export and identities are hash-verified;
-combined load results remain pending. No capacity run is accepted. The [e95 frontend binding](frontend-e95-binding-01/receipt.json)
+compatibility checks. Its permanent export and identities are hash-verified.
+No capacity run is accepted. The [e95 frontend binding](frontend-e95-binding-01/receipt.json)
 verifies unchanged source blobs and retained artifact bytes.
 
 The e95 CI rollout lane failed its live Eastern-clock equality probe across a
@@ -27,6 +27,30 @@ minute transition, and an incorrect clock result is still rejected. Production
 `deploy.sh` is unchanged. Because the original failure did not log its two
 values, its precise minute-boundary cause remains an inference. Complete CI
 after this test correction is still required.
+
+The [combined e95 diagnostic](linux-role-combined-e95-01/manifest.json) fails
+capacity at 4,413/6,000 successful heartbeats, 949 failures, 638 in-flight refusals
+and zero late offers (maximum offer lateness 44.39 ms). All 64 reports pass,
+with maximum request duration 11.47 seconds. Whole worker operations take
+12.284/30.984 seconds and each preserves the independent 84,000 grains,
+10,002,500 seconds and one million observations. Current observations, coverage,
+tenant isolation and eight audited exports agree with the independent checks.
+Both drains complete with zero remaining owners or aborted responses; all six
+containers and the recorded PostgreSQL anonymous volume are verified absent.
+The coordinator exits 1 unforced for the failed run; other roles exit 0 unforced.
+
+API CPU uses 65.736 seconds over 67.377 elapsed seconds; event-loop utilization
+is 0.9725. Acquisitions fail 950 times, including 949 heartbeat paths and one
+tenant-request path. The lock-screen HTTP 500 has only a matching generic
+`errorType: Error` log. The one tenant-request checkout failure is consistent
+with its cause, but no per-request exception or stack proves that attribution.
+Final delivery retains 4,413 leases with 96,089 statements; driver-timed SQL
+includes network/server/event-loop delays and cannot identify server CPU.
+PostgreSQL records 317.283 MB WAL and 502.213 MB temporary data; no exact-operation
+attribution follows from those instance counters. A bounded current-source API
+CPU profile is next. Earlier b112 results are descriptive comparisons, not
+repeated controlled attribution. The same-source premeasurement snapshot is
+private; its later restore proof is separate from this immutable failed packet.
 
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five
 public Drizzle SELECT definitions on an exclusively owned heartbeat connection.

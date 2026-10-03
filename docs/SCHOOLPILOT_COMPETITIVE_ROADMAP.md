@@ -24,6 +24,13 @@ passes build/scan/compatibility checks. Final-source capacity and complete
 follow-up CI remain pending after a [test-only rollout clock fix](release-evidence/release-297/usage-contention/clock-minute-boundary-01/manifest.json);
 there is still no deployment green light.
 
+The [subsequent full e95 diagnostic](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
+has 4,413/6,000 successful heartbeats, 949 failures, 638 refusals and zero late
+offers. Reports pass 64/64 and whole workers finish in 12.284/30.984 seconds,
+but API CPU pressure and 950 acquisition failures persist; the classroom
+lifecycle fails. Correctness and cleanup pass within their recorded scope.
+Zero capacity runs are accepted; current-source CPU attribution is next.
+
 Preceding October 3 application `b11202fc305198d76e73c5e6d711b7dc9ed2d938`
 reuses heartbeat query definitions while retaining fresh authority, tenant
 bindings and mandatory-work sealing. [Checks](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
