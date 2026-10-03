@@ -9,7 +9,9 @@ is fully green, but its [resource-bounded Usage diagnostic](release-evidence/rel
 fails capacity (2,704/6,000 heartbeats, 34/64 reports, second complete worker
 57.768 seconds including queue wait). The subsequent `5d543f40` instrumentation
 correction has focused/native/full-unit evidence and a scanned local image.
-Identity scheduling and final-source acceptance remain in progress. No release
+The `6035239b` identity scheduling correction now passes focused/native checks
+and 1,868 unit cases (four conditional skips); new-source CI and final-source
+capacity acceptance remain pending. No release
 execution is approved. The source-PR inclusion table is unchanged; the older
 development checkpoints below are historical and do not establish current readiness.
 

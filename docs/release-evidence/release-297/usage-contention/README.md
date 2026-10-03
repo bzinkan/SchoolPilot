@@ -28,6 +28,17 @@ artifacts establish accepted capacity, registry publication or deployment.
 
 Earlier checkpoints below preserve their source-specific results and failures.
 
+The [identity scheduling correction](fair-main-pool-user-identity-01/manifest.json)
+at `6035239b` adds a third fair lane only for fresh user identity lookups.
+Reports retain their own lane, heartbeat entitlement remains ordinary work,
+and limits/deadlines/ownership are unchanged. Regression results are red on
+the previous scheduler, then 66 focused passes, eight native driver cases,
+owner/restricted application passes and 1,868 unit passes with four conditional
+skips. Build/type/cast checks pass. This corrects the observed pre-admission
+identity starvation; it does not establish heartbeat throughput or remove
+other authorization work from the ordinary queue. New-source CI and full
+capacity acceptance remain required.
+
 The [fair main-pool scheduler](fair-main-pool-scheduler-01/manifest.json) preserves
 the complete prototype failure history and final typed integration proof.
 Report and other acquisitions use alternating FIFO queues in the existing API

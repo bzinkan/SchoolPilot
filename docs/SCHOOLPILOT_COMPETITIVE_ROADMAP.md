@@ -20,8 +20,10 @@ fails at 2,704/6,000 heartbeats and 34/64 reports, with the second complete
 rollup taking 57.768 seconds including admission wait. Independent correctness
 checks pass, but the capacity gate does not. The subsequent `5d543f40` checkout
 instrumentation correction passes regression/full-unit checks and local image
-scanning. Identity scheduling, final-source capacity and release preparation
-remain in progress. Earlier checkpoint statements below are historical.
+scanning. The `6035239b` identity scheduler passes 66 focused cases, native
+owner/restricted checks and 1,868 unit cases (four conditional skips).
+Current-source CI, final-source capacity and release preparation remain in
+progress. Earlier checkpoint statements below are historical.
 
 The subsequent [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
 separates waiting report requests from other main-pool requests with alternating

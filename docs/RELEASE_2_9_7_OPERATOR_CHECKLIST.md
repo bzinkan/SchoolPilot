@@ -42,9 +42,14 @@ archive SHA-256:
 `9adb8d976bae3c513ebaced258b9b4dc68f1cc338a6ecd73682666c81766efae`.
 The permanent packet is
 `C:/Users/zinka/.codex/artifacts/release297-candidate-5d543f40-01`.
-These local artifacts are not pushed or deployed. New identity-queue work,
-calibrated traffic generation, final-source acceptance and recovery rehearsal
-remain pending. The following development checkpoints retain their original
+These local artifacts are not pushed or deployed. The subsequent
+[identity scheduling correction](release-evidence/release-297/usage-contention/fair-main-pool-user-identity-01/manifest.json)
+at `6035239b` gives fresh credential-backed user lookups a separate fair turn,
+alongside ordinary work and admitted reports, in the same pool. Identity is
+rechecked after waiting; heartbeat entitlement retains its ordinary lane.
+All 66 focused cases, native owner/restricted cases, build/type/cast checks and
+1,868 unit cases pass (four conditional skips). Current-source CI, actual-workload
+capacity, final images and recovery rehearsal remain pending. The following development checkpoints retain their original
 source-specific results; they do not supersede this current status.
 
 The [API connection scheduler correction](release-evidence/release-297/usage-contention/fair-main-pool-scheduler-01/manifest.json)
