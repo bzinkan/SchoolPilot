@@ -268,3 +268,27 @@ test('queued idle disappearance with mixed native errors cannot attach failure c
 test('existing lower main-pool limits1,2,8,16 are retained exactly', async t => {
   for(const max of [1,2,8,16]){const f=fixture(t,{max}),held=await f.occupy();assert.equal(f.pool.totalCount,max);assert.equal(f.pool.options.max,max);const extra=f.connect();assert.equal(f.pool.waitingCount,1);held[0].release();(await extra).release();held.slice(1).forEach(c=>c.release());await f.cleanup();}
 });
+
+test('public connection wrappers observe each logical Promise/callback acquisition exactly once', async t => {
+  const { measureMethod } = await import('../scripts/load/usage/release-enabled-instrumentation.mjs');
+  const f = fixture(t), observations = [];
+  let captured = 0, pending = 0;
+  measureMethod(f.pool, 'connect', (_duration, error) => { pending--; observations.push(error); },
+    { capture: () => { captured++; pending++; } });
+  const promise = f.connect(); f.clients[0].succeed();
+  const first = await promise; first.release();
+  assert.equal(captured, 1, 'one public Promise checkout must not re-enter the observed public method');
+  assert.equal(observations.length, 1); assert.equal(pending, 0);
+  await new Promise((resolve, reject) => f.pool.connect((error, client, release) => {
+    if (error) { reject(error); return; }
+    assert.equal(release, client.release); release(); resolve();
+  }));
+  assert.equal(captured, 2); assert.equal(observations.length, 2); assert.equal(pending, 0);
+  const held = await f.connect(); held.release(new Error('synthetic discard')); await tick();
+  const failure = new Error('synthetic connection refusal');
+  const rejected = f.connect(); const checked = assert.rejects(rejected, error => error === failure);
+  f.clients.at(-1).fail(failure); await checked;
+  assert.equal(captured, 4); assert.equal(observations.length, 4);
+  assert.equal(observations.filter(Boolean).length, 1); assert.equal(pending, 0);
+  assert.equal(f.pool.schedulingSnapshot().ownedSlots, 0);
+});

@@ -138,8 +138,18 @@ export function createFairMainPoolClass(NativePool: typeof pg.Pool, { readOperat
         ? Reflect.apply(callback, undefined, [new Error('Cannot use a pool after calling end on the pool')])
         : this.#promise.reject(new Error('Cannot use a pool after calling end on the pool'));
       if (!callback) {
-        return new this.#promise<pg.PoolClient>((resolve, reject) => this.connect((error, client) => error || !client ? reject(error ?? new Error('Native pool returned no client')) : resolve(client)))
+        return new this.#promise<pg.PoolClient>((resolve, reject) => this.#enqueue((error, client) => error || !client ? reject(error ?? new Error('Native pool returned no client')) : resolve(client)))
           .catch(error => { Error.captureStackTrace(error); throw error; });
+      }
+      return this.#enqueue(callback);
+    }
+
+    // Promise adaptation must not re-enter the public method: callers may
+    // instrument that boundary and each acquisition owns exactly one record.
+    #enqueue(callback: ConnectCallback): void {
+      if (this.#endRequested) {
+        Reflect.apply(callback, undefined, [new Error('Cannot use a pool after calling end on the pool')]);
+        return;
       }
       const entry: Entry = {
         kind: readOperation() === 'usage_report' ? 'usage_report' : 'default',
