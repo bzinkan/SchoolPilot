@@ -31,6 +31,9 @@ jobs and three security workflows for the e95 application, including both
 database lanes, backend, frontend/browser and rollout safety. Conditional
 step-level skips remain skips. The uncommitted role harness is outside this
 CI source, and no capacity or release-execution gate is implied.
+[The later documentation head `f58f84bb`](ci-f58f84bb-final-01/manifest.json)
+also passes all 17 CI jobs and three security workflows on the same application.
+It likewise excludes the uncommitted role-harness changes.
 
 The [combined e95 diagnostic](linux-role-combined-e95-01/manifest.json) fails
 capacity at 4,413/6,000 successful heartbeats, 949 failures, 638 in-flight refusals
@@ -77,6 +80,22 @@ overlap and must not be added or presented as expected savings. Narrow metadata
 reuse and result projections need separate parity and benefit checks. This
 profile includes sampling overhead and makes no report/worker capacity claim.
 
+The [restored-fixture combined e95 diagnostic](restored-combined-e95-01/manifest.json)
+also fails: 4,730 of 6,000 heartbeats succeed, 976 fail, 294 are refused and
+seven offers exceed the lateness bound. All 64 reports pass; whole workers take
+13.987/30.616 seconds. Independent totals, coverage, tenant isolation and eight
+audited CSVs agree. The first classroom command fails with HTTP 500. API CPU
+uses 67.198 seconds and 977 acquisitions fail. Both drains finish with no
+owners or aborted responses; all six containers and the recorded database
+volume are verified absent. The original 13 owner receipts are sealed and
+read back, including the coordinator's unforced failure. This proves the
+actual receipt-producing path, not candidate acceptance. Validation also
+exposed a preflight-drain shape mismatch: preflight returns one API receipt,
+whereas the draft validator expected an API/worker pair. The raw evidence is
+unchanged; candidate validation must correct that shape and require all
+6,000 modern heartbeats to return HTTP 200 with matching persisted and rollup
+counts. Historical legacy-204 allowances cannot qualify a candidate run.
+
 The [e95 restored-owner proof](restored-owner-e95-01/manifest.json) validates the
 same-source snapshot under fresh restricted credentials, full native schema
 comparison, 53 migrations, 129 forced-RLS tables, data/control/clock checks and
@@ -85,8 +104,9 @@ restart. Clients close and the exact container and recorded anonymous volume
 are verified absent. The packet includes 308 passing harness guards and the
 chronology follow-up checks. No workload was offered: this proves fixture
 ownership and restoration, not the full workload's 13-receipt producer or
-capacity. Candidate mode stays disabled until that actual execution path is
-verified. Later schema-binding changes must preserve both the original
+capacity. At that checkpoint candidate mode stayed disabled pending actual
+execution; the later diagnostic above exercises that path and identifies
+remaining validator work. Later schema-binding changes must preserve both the original
 canonical fingerprint and complete native reference/restored equality.
 
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` reuses five

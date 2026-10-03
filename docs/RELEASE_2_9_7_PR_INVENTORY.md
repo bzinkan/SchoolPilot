@@ -31,7 +31,7 @@ Combined capacity remains unaccepted.
 [Frontend equivalence](release-evidence/release-297/usage-contention/frontend-e95-binding-01/receipt.json)
 confirms the retained artifact and all 632 input blobs are unchanged.
 
-The [new combined e95 run](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
+The [first combined e95 run](release-evidence/release-297/usage-contention/linux-role-combined-e95-01/manifest.json)
 still fails capacity: 4,413/6,000 heartbeats succeeded, 949 failed, 638 were
 refused and none were late. All 64 reports and independent correctness/CSV checks
 pass; whole workers take 12.284/30.984 seconds. API CPU is nearly saturated,
@@ -43,6 +43,16 @@ late. Its clipped profile identifies bounded construction and row-processing
 costs, without proving a sufficient capacity correction. All owners and fixture
 resources are cleaned up; both this failure and the preceding zero-offer setup
 failure are retained. Narrow metadata/projection experiments are next.
+
+The [later restored-fixture combined run](release-evidence/release-297/usage-contention/restored-combined-e95-01/manifest.json)
+retains all 13 actual owner receipts and verified fixture cleanup. It still
+fails capacity: 4,730/6,000 heartbeats succeed, 976 fail, 294 are refused and
+seven offers are late. All 64 reports pass; whole workers finish in
+13.987/30.616 seconds. Correctness checks pass; the classroom lifecycle fails.
+The candidate validator is being corrected to accept the actual single-API
+preflight-drain shape and require 6,000 HTTP-200 results with matching raw,
+persisted and rollup counts. Neither that correction nor receipt completeness
+turns this failed diagnostic into an accepted run.
 
 Preceding application `b11202fc305198d76e73c5e6d711b7dc9ed2d938` adds owned
 heartbeat SELECT metadata reuse with fresh values and mandatory-work sealing.

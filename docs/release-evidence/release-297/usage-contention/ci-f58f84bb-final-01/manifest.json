@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T19:38:02.902Z",
+  "head": "f58f84bba469442654f6a01fe9c7aeb2c4b3e10a",
+  "applicationCommit": "e95a2b56476b1225434c1b0f3907db46c9d84fe3",
+  "status": "ALL_FOUR_WORKFLOWS_SUCCESS",
+  "ciSuccessfulJobs": 17,
+  "securitySuccessfulJobs": 3,
+  "workflows": [
+    {
+      "id": 37145824313,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37145824313",
+      "updatedAt": "2026-10-03T19:22:02Z"
+    },
+    {
+      "id": 37145824319,
+      "name": "CodeQL",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37145824319",
+      "updatedAt": "2026-10-03T18:57:01Z"
+    },
+    {
+      "id": 37145824318,
+      "name": "Trivy Container Scan",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37145824318",
+      "updatedAt": "2026-10-03T18:54:00Z"
+    },
+    {
+      "id": 37145824320,
+      "name": "Gitleaks",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bzinkan/SchoolPilot/actions/runs/37145824320",
+      "updatedAt": "2026-10-03T18:52:39Z"
+    }
+  ],
+  "limitation": "Exact-head CI success does not establish synthetic Usage capacity, live validation, production admission, deployment or activation. Conditional test-level skips remain skips. The uncommitted new role harness is outside this exact-head CI source.",
+  "commands": [
+    {
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37145824313",
+        "--repo",
+        "bzinkan/SchoolPilot",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "file": "run-37145824313.json",
+      "sha256": "46c6641eaa374db7a626228f03ab522f163c76a8e7e3a1f85c871be0156cd7a3"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37145824319",
+        "--repo",
+        "bzinkan/SchoolPilot",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "file": "run-37145824319.json",
+      "sha256": "eb3addc8cbebd04bb921a7331b81c938fe0e2bfd671565c680a4d0b11f46cd04"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37145824318",
+        "--repo",
+        "bzinkan/SchoolPilot",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "file": "run-37145824318.json",
+      "sha256": "f8ffe8f91a641c933274d70c148e8adef68d04c6c9b71d9176c7034bc3d7552e"
+    },
+    {
+      "command": [
+        "gh",
+        "run",
+        "view",
+        "37145824320",
+        "--repo",
+        "bzinkan/SchoolPilot",
+        "--json",
+        "databaseId,headSha,name,status,conclusion,createdAt,updatedAt,url,jobs"
+      ],
+      "file": "run-37145824320.json",
+      "sha256": "4d7adfcbf0ad49fbc01246db0d3fbd93d12aebae94f62c9943516708bb3510a5"
+    }
+  ],
+  "records": [
+    {
+      "original": "run-37145824313.json",
+      "archive": "run-37145824313.json.gz",
+      "rawSha256": "46c6641eaa374db7a626228f03ab522f163c76a8e7e3a1f85c871be0156cd7a3",
+      "sanitizedSha256": "46c6641eaa374db7a626228f03ab522f163c76a8e7e3a1f85c871be0156cd7a3",
+      "archiveSha256": "7b61b22b22d2f5fa63b943c84b71933b081c0cf668326d32e87f229baa6da669",
+      "bytes": 48851,
+      "sanitization": "Read-only public workflow metadata, retained exactly."
+    },
+    {
+      "original": "run-37145824319.json",
+      "archive": "run-37145824319.json.gz",
+      "rawSha256": "eb3addc8cbebd04bb921a7331b81c938fe0e2bfd671565c680a4d0b11f46cd04",
+      "sanitizedSha256": "eb3addc8cbebd04bb921a7331b81c938fe0e2bfd671565c680a4d0b11f46cd04",
+      "archiveSha256": "5cef36fa57abecf9ddea1f337a481cb59822117da80cba75b5ec927f12b72783",
+      "bytes": 1999,
+      "sanitization": "Read-only public workflow metadata, retained exactly."
+    },
+    {
+      "original": "run-37145824318.json",
+      "archive": "run-37145824318.json.gz",
+      "rawSha256": "f8ffe8f91a641c933274d70c148e8adef68d04c6c9b71d9176c7034bc3d7552e",
+      "sanitizedSha256": "f8ffe8f91a641c933274d70c148e8adef68d04c6c9b71d9176c7034bc3d7552e",
+      "archiveSha256": "e49b5e8e2d12c51ba793699576fe7a4b20fea4f845c11414fbf97373435cf5da",
+      "bytes": 1655,
+      "sanitization": "Read-only public workflow metadata, retained exactly."
+    },
+    {
+      "original": "run-37145824320.json",
+      "archive": "run-37145824320.json.gz",
+      "rawSha256": "4d7adfcbf0ad49fbc01246db0d3fbd93d12aebae94f62c9943516708bb3510a5",
+      "sanitizedSha256": "4d7adfcbf0ad49fbc01246db0d3fbd93d12aebae94f62c9943516708bb3510a5",
+      "archiveSha256": "fa9be3beff62381f10eb44746dcd0bca21fd8efd0b94237f3b0bcb7ef65d97b5",
+      "bytes": 1361,
+      "sanitization": "Read-only public workflow metadata, retained exactly."
+    },
+    {
+      "original": "summary.json",
+      "archive": "summary.json.gz",
+      "rawSha256": "a9be2039adff986e5765754123384e1bab7815d3178b6b6bae333c69c99323fb",
+      "sanitizedSha256": "a9be2039adff986e5765754123384e1bab7815d3178b6b6bae333c69c99323fb",
+      "archiveSha256": "4f091a5d6c6c6f015caac971d6495f53abbf14afc0677ca3de88da875c246e0c",
+      "bytes": 1497,
+      "sanitization": "Read-only public workflow metadata, retained exactly."
+    }
+  ]
+}

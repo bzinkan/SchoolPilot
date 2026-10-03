@@ -55,6 +55,15 @@ sampled construction work; that is not a throughput forecast. Bounded metadata
 reuse and narrower heartbeat projections are under investigation. The earlier
 zero-offer Redis namespace startup failure remains preserved separately.
 
+The later [restored-fixture combined diagnostic](release-evidence/release-297/usage-contention/restored-combined-e95-01/manifest.json)
+also fails: 4,730/6,000 successful heartbeats, 976 failures, 294 refusals, seven
+late offers and 977 acquisition failures. All 64 reports pass; whole workers
+take 13.987/30.616 seconds. Numeric/coverage/CSV checks pass but the classroom
+lifecycle fails. Its actual 13 owner receipts and complete cleanup are retained.
+The candidate validator needs the observed single-API preflight-drain shape
+and strict 6,000 HTTP-200/persisted-observation agreement; the diagnostic is
+not relabeled as accepted. The required passing-run count remains zero.
+
 The preceding application was `b11202fc305198d76e73c5e6d711b7dc9ed2d938`.
 Its [owned heartbeat SELECT preparation](release-evidence/release-297/usage-contention/heartbeat-prepared-reads-implementation-01/manifest.json)
 passes 1,906 unit tests without skips, 50 owner and 50 restricted native tests,
