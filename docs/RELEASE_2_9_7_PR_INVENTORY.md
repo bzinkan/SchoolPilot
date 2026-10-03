@@ -15,6 +15,14 @@ new-head CI remain required. The exact compatible fallback is now
 [local image and scan evidence](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json).
 Neither candidate nor fallback has been deployed by this preparation work.
 
+[Combined09 at d6492333](release-evidence/release-297/usage-contention/load-combined-09/manifest.json)
+is later failed capacity evidence (3,677/6,000 heartbeat offers, 30/64 reports).
+Its [exact local candidate image](release-evidence/release-297/usage-contention/candidate-artifact-d6492333/manifest.json)
+passes the full pinned scan and compatibility checks, and the
+[d649/5c01 rehearsal](release-evidence/release-297/usage-contention/rehearsal-d649-5c01/manifest.json)
+passes local migration re-entry. Production catalog verification, capacity and
+fresh final-source CI remain separate requirements.
+
 The [October 2, 22:59 UTC review-container observation](release-evidence/release-297/usage-contention/pr-review-checkpoint.json)
 records SchoolPilot #603 open/draft at `08802d020a3c51beea504140f923126ab518aac6`
 with 20 successful reported checks. That source predates the current Usage

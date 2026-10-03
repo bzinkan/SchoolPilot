@@ -14,6 +14,16 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
+The latest [combined attempt09 at d6492333](release-evidence/release-297/usage-contention/load-combined-09/manifest.json)
+also fails: 3,677 of 6,000 heartbeat offers and 30 of 64 reports succeeded,
+with 1,957 acquisition failures. Workers returned correct historical totals in
+17.983/38.501 seconds, and both optional failure counters were zero. Seventeen
+aborted responses prevented drain certification despite zero physical owners.
+The exact local candidate image passes its vulnerability and compatibility checks;
+baseline/candidate/compatible-fallback migration re-entry passes locally. Those
+results do not establish Usage capacity or production readiness. A separately
+identified Linux comparison remains diagnostic only.
+
 The October 3 [combined attempt08](release-evidence/release-297/usage-contention/load-combined-08/manifest.json)
 remains failed capacity evidence: 2,692 of 6,000 heartbeat offers and 26 of 64
 reports succeeded, with 3,008 API connection-acquisition failures. Both historical

@@ -725,7 +725,14 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
       storage.indexOf("// ClassPilot - Check-ins")
     );
     assert.match(inbox, /inbox_target\.status IN \('unavailable', 'requested', 'sent', 'received'\)/);
-    assert.match(inbox, /inbox_command\.expires_at IS NULL OR inbox_command\.expires_at > now\(\)/);
+    assert.match(inbox, /inbox_command\.expires_at IS NULL OR inbox_command\.expires_at > \$\{classpilotAuthorityClockSql\(clock\)\}/);
+    assert.match(inbox, /return getPendingMessagesForStudentWithAuthorityLocked\(options, transactionDb, "transaction"\)/);
+    const heartbeatDelivery = storage.slice(
+      storage.indexOf("export async function withClasspilotHeartbeatDeliveryAuthority"),
+      storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+    );
+    assert.match(heartbeatDelivery, /getPendingMessagesForStudentWithAuthorityLocked\(\s*\{ \.\.\.options, excludeMessageIds: inboxExclusions \}, transactionDb, "current",\s*\)/);
+    assert.match(storage, /function classpilotAuthorityClockSql\(clock: ClasspilotAuthorityClock\): SQL \{\s*return clock === "current" \? sql`clock_timestamp\(\)` : sql`now\(\)`;\s*\}/);
     assert.match(inbox, /durableAuthorityRevision[\s\S]*controlState\?\.revision/);
     assert.match(inbox, /hasCurrentClasspilotStudentControlAuthority/);
     assert.doesNotMatch(inbox, /inbox_target\.status IN \([^)]*'failed'/);
@@ -735,7 +742,7 @@ describe("ClassPilot canonical entitlement and FAB mutation safety", () => {
     );
     assert.match(heartbeat, /deliveryState\.hasUnacknowledgedCommandMessages/);
     assert.match(heartbeat, /recent\.some\([\s\S]*message\.commandId/);
-    assert.match(heartbeat, /filter\(\(message\) => !message\.commandId\)/);
+    assert.match(heartbeat, /const legacyDeliveredIds = recent\.filter\(message => !message\.commandId\)\.map\(message => message\.id\)/);
     assert.doesNotMatch(heartbeat, /pendingMessages\.map\(\(message\) => message\.id\)/);
 
     const ack = storage.slice(

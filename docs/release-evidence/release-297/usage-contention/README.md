@@ -3,6 +3,33 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+[Combined09](load-combined-09/manifest.json), on clean `d6492333`, remains failed:
+3,677 of 6,000 offers succeeded, 1,911 started requests failed and 412 offers were
+refused, with zero late offers. Thirty of 64 reports succeeded; six returned 500
+and 28 timed out. There were 1,957 connection-acquisition failures. Both historical
+workers returned correct totals in 17.983/38.501 seconds. Telemetry and inbox
+failure counters were zero, but 17 aborted responses prevented drain certification
+despite all physical ownership gauges returning to zero. Current-day and audited
+CSV checks did not run. Owned containers and children are independently absent.
+This is saturation evidence, not proof of a lease leak or accepted capacity.
+
+The [exact local d649 candidate artifact](candidate-artifact-d6492333/manifest.json)
+passes an uncached build, all-severity pinned scan with zero findings, and embedded
+129-table/lifecycle compatibility checks. The [local migration rehearsal](rehearsal-d649-5c01/manifest.json)
+passes reconstructed baseline → d649 → compatible 5c01 fallback → d649, retaining
+53 migration IDs and 129 tenant tables. Its empty baseline already adopted the
+staff identity contract; this proves idempotent re-entry, not the live catalog or
+an unadopted production transition. Neither artifact preparation nor rehearsal
+establishes capacity or authorizes deployment.
+
+The [d649 CI assertion follow-up](runtime-security-clock-followup/manifest.json)
+retains the ordinary isolation job's 1,478 passes, one failure and eight skips.
+The failure asserted the old literal clock and callback formatting. Its narrow
+test-only correction verifies both transaction/current entry points and their
+clock mapping; the full 27-case suite passes. All 904 captured application/build
+inputs remain unchanged. A fresh CI run is required; the failed job is not
+relabeled as passing.
+
 The latest [combined checks, attempt11](combined-checks-attempt-11/manifest.json),
 pass the application build, type/cast checks and all 699 infrastructure tests.
 Its four unit VM-context failures remain recorded. The [test-only follow-up,
@@ -70,7 +97,8 @@ retained. No native or capacity result is attributed to that experiment.
 The [latest fallback image](rollback-artifact-5c01944e/index.json) is built from
 clean `5c01944e`, including the final heartbeat expiry fence. Its uncached build,
 full pinned scan and embedded compatibility checks pass, with zero findings.
-Registry publication and final migration re-entry remain unperformed.
+Registry publication remains unperformed. The local d649/5c01 migration re-entry
+is recorded above; actual production task bindings remain unverified.
 
 The [foreground/final-delivery correction](heartbeat-foreground-fusion/manifest.json)
 reuses the owned authority proof for eligible teaching-session updates and adds
