@@ -48,6 +48,19 @@ test("policy PATCH does not invert SSO and student-control lock order", () => {
   );
 });
 
+test("SSO-bearing bootstrap freezes policy before private chat settings without adding a fence to other deliveries", () => {
+  const storage = source("../src/services/storage.ts");
+  const delivery = section(storage, "export async function withClasspilotStudentControlDeliveryAuthority",
+    "export async function withClasspilotStudentWebSocketBootstrapAuthority");
+  assert.ok(delivery.indexOf("latchPrivateChatLifecycle") < delivery.indexOf("db.transaction"));
+  assert.match(delivery, /hasExactClasspilotTelemetryBinding[\s\S]*if \(options\.freezeSsoPolicy\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority/);
+  assert.ok(delivery.indexOf("lockClasspilotSsoPolicyDeliveryAuthority") < delivery.indexOf("lockPrivateChatChannel"));
+  const websocket = source("../src/realtime/websocket.ts");
+  const bootstrap = section(websocket, "const authority = await withClasspilotStudentWebSocketBootstrapAuthority", "const fab = await buildStudentFabState");
+  assert.match(bootstrap, /freezeSsoPolicy: true/);
+  assert.doesNotMatch(bootstrap, /lockClasspilotSsoPolicyDeliveryAuthority/, "the old later duplicate fence must be removed");
+});
+
 test("classroom ACKs validate the policy fence under a shared school lock", () => {
   const storage = source("../src/services/storage.ts");
   const acknowledge = section(

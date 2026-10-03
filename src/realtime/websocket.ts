@@ -1260,10 +1260,10 @@ export function setupWebSocket(
                       studentId: payload.studentId,
                       studentSessionId: activeSession.id,
                       deviceId,
+                      freezeSsoPolicy: true,
                     },
                     async (transactionDb) => {
                       authStage = "bootstrap_projection";
-                      await lockClasspilotSsoPolicyDeliveryAuthority(schoolId, transactionDb);
                       // Read state only after taking the same student-control
                       // lock used by command persistence and session transfer.
                       // A push committed before this socket was registered can
