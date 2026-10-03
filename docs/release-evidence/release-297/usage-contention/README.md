@@ -41,6 +41,14 @@ source binding and do not turn a failed launch into measured capacity.
   or proof of a product-only bottleneck. Both harness defects require correction
   and a fresh run; original logs, metrics and hash records remain unchanged.
 
+- [Full-traffic ingestion CPU diagnostic](load-ingest-cpu-01/manifest.json)
+  retains the failed `3624196c` run, complete sanitized V8 profile, selected
+  stacks, analysis script and exact hashes. Normal classification batching was
+  restored, but only 4,522 of 6,000 offers succeeded; 362 started requests failed
+  and 1,116 offers reached the in-flight limit. The API remained CPU-saturated,
+  with 282 pool acquisition failures and no SQL statement failures. This
+  profiled ingestion-only run is diagnostic: reports, heavy workers and the
+  classroom lifecycle were not exercised, and it cannot establish capacity.
 - [Batching preflight correction](batching-preflight-fix/manifest.json) preserves
   two failing-before regressions, all 60 passing focused checks with no skips,
   the successful type check, and exact dirty-source byte hashes. The full suite
@@ -63,10 +71,35 @@ source binding and do not turn a failed launch into measured capacity.
   #603/#123 heads and all reported check entries. The earlier green SchoolPilot
   head does not certify the uncommitted contention corrections; ClassPilot's
   successful run and cancelled sibling-run entries remain separately visible.
-- [Local rollback artifact](rollback-artifact/index.json) binds the preserved
+- [Historical rollback artifact](rollback-artifact/index.json) binds the preserved
   external image archive, source, scan and synthetic compatibility proof. Both
   Usage modes must remain off on that pre-correction source. No registry upload
-  or production task-definition binding is implied.
+  or production task-definition binding is implied. It is superseded for normal
+  rollback by the SSO lock-order correction below; disabling Usage does not
+  prevent the pending-private-reply bootstrap deadlock.
+- [Patched rollback artifact](rollback-artifact-faf5275c/index.json) binds exact
+  source `faf5275ccf422dda602b2238c247a306c28ba508`, its local image, scan and
+  17 focused plus 9 owner and 9 restricted-role native test results. It retains
+  writer/bridge/relay version 1 and all 129 admission entries. Both Usage modes
+  stay off. Final candidate-schema re-entry and deployable bindings remain
+  separate gates; historical images are retained unchanged.
+- [Status/configuration hot-path checks](hot-path-root/manifest.json) record 24
+  passing checks for exact status expiration/capacity and immediate configuration
+  revocation. The configuration optimization caches only parsing of identical
+  bytes, never school/client authorization. These are focused checks, not load
+  acceptance.
+- [JWT and optional Focus CPU correction](jwt-focus-cpu/manifest.json) retains
+  failing-before evidence, fixture/type repairs and 41 passing focused tests.
+  Key material is parsed once; every JWT signature, algorithm and time claim is
+  still checked. Present Focus data remains validated on all three paths.
+- [Combined unit checks](hot-path-unit/manifest.json) record 1,721 passes and four
+  named conditional skips. The first run saw a test edit and is not frozen-source
+  evidence; the second verified all 1,141 recorded source files unchanged.
+  Later type-only test assertions have their focused rerun above and require
+  final-head CI. Neither run establishes synthetic capacity.
+- [Complete CI at `3624196c`](ci-3624196c.json) passed before these CPU changes.
+  The next corrected head requires its own checks; this earlier success is not
+  transferred to changed application bytes.
 - [Extension reverification](extension-reverification.json) verifies unchanged
   source and exact 2.9.7 ZIP without rebuilding or claiming a fresh browser run.
 - [Ingress deadline follow-up](reports-ingress-manifest.json) retains the real

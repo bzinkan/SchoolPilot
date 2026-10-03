@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T00:43:23.859Z",
+  "attempts": [
+    {
+      "log": "release297-hot-path-unit.log",
+      "passed": 1721,
+      "failed": 0,
+      "skipped": 4,
+      "sourceUnchanged": false,
+      "changedFiles": [
+        "tests/device-jwt.test.ts"
+      ],
+      "acceptedAsFrozenEvidence": false
+    },
+    {
+      "log": "release297-hot-path-unit-02.log",
+      "passed": 1721,
+      "failed": 0,
+      "skipped": 4,
+      "sourceUnchanged": true,
+      "sourceFiles": 1141,
+      "applicationBytesCovered": true
+    }
+  ],
+  "scope": "Full unit suite on recorded source bytes. Subsequent type-only new-test repairs need focused rerun and final-head CI; this record does not establish load or DB integration acceptance.",
+  "entries": [
+    {
+      "name": "release297-hot-path-unit.log",
+      "sha256": "596a94c3fd1318ec2b56f4a3605c27da891424488cb2d0024a1f5924e4831303",
+      "archiveSha256": "f0e6efc020e1d84d25e0e391902ea452907e2e9c8b76dcf7cef95dd2d8388d5c"
+    },
+    {
+      "name": "release297-hot-path-unit-source.json",
+      "sha256": "dbc828818119a63d791d6bcf556c8e9945a08ffcb352ae6a3739690862083f57",
+      "archiveSha256": "a7b1a84a05dd7f72b7f335cdccce6fa36856b3af3dd94144b34bedbca8f23b5d"
+    },
+    {
+      "name": "release297-hot-path-unit-02.log",
+      "sha256": "6c89732adbafd1e47db93b6dc79b49a91c084981c3c35c56735c80e35a67389c",
+      "archiveSha256": "be974d2063c3a7ffa2599dde3a01a337b4ca075ce031c04d936ae6eaa0e5fd74"
+    },
+    {
+      "name": "release297-hot-path-unit-source-02.json",
+      "sha256": "d531636316da3969d8b11089628f1c6abcf4592a16108fcbc770975703806f3d",
+      "archiveSha256": "fed601c00eac5c701586ba825e3e8e65bfd8b3b18cba1ba39eaa644eb6e4bbe0"
+    }
+  ],
+  "conditionalSkips": [
+    "ok 10 - ignores pre-existing Redis PIN keys across two app instances and leaves another student unaffected # SKIP",
+    "ok 2 - delivers a duplicate message ID exactly once across two relay instances # SKIP",
+    "ok 3 - parses inspected index key columns as a text array # SKIP",
+    "ok 1 - retains the newest attempted revision across a subscriber reconnect # SKIP"
+  ]
+}

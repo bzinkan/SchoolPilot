@@ -28,6 +28,34 @@ const binding = {
 };
 
 describe("ClassPilot bounded process state", () => {
+  it("expires quiet schools on writes and keeps refreshed bindings through the exact TTL boundary", (context) => {
+    context.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+    resetDeviceStatusesForTests();
+    const status = {
+      schoolId: "quiet", deviceId: "device-a", studentId: "student-a",
+      activeTabUrl: "https://example.test", activeTabTitle: "Example",
+      screenLocked: false, flightPathActive: false, isSharing: false,
+      cameraActive: false, lastSeenAt: 0,
+    };
+    try {
+      updateDeviceStatus(status);
+      updateDeviceStatus({ ...status, schoolId: "active" });
+      context.mock.timers.tick(DEVICE_STATUS_TTL_MS);
+      assert.equal(getSchoolDeviceStatuses("quiet").length, 1);
+      updateDeviceStatus({ ...status, schoolId: "active" });
+      context.mock.timers.tick(1);
+      updateDeviceClassification("active", "device-a", { category: "educational", safetyAlert: null });
+      assert.deepEqual(getSchoolDeviceStatuses("quiet"), []);
+      assert.equal(getSchoolDeviceStatuses("active").length, 1);
+      context.mock.timers.tick(DEVICE_STATUS_TTL_MS);
+      assert.deepEqual(getSchoolDeviceStatuses("active"), []);
+      assert.deepEqual(deviceStatusCacheMetrics(), { entries: 0, bytes: 0, schools: 0 });
+    } finally {
+      resetDeviceStatusesForTests();
+      context.mock.timers.reset();
+    }
+  });
+
   it("caps local Live View negotiation state", () => {
     assert.equal(CLASSPILOT_LIVE_VIEW_MAX_LOCAL_CLAIMS, 4_096);
   });

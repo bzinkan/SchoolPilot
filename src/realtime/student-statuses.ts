@@ -47,6 +47,9 @@ const statusMap = new Map<string, Map<string, DeviceRealtimeStatus>>();
 const statusBytes = new WeakMap<DeviceRealtimeStatus, number>();
 let totalEntries = 0;
 let totalBytes = 0;
+// Writes cannot expire an entry before the earliest recorded deadline. Avoid
+// scanning every device on every heartbeat; capacity limits still run below.
+let nextExpiryAt = Number.POSITIVE_INFINITY;
 
 function estimatedBytes(status: DeviceRealtimeStatus): number {
   try {
@@ -71,11 +74,16 @@ function deleteSchool(schoolId: string): void {
   statusMap.delete(schoolId);
 }
 
-function pruneStatuses(now = Date.now()): void {
+function pruneStatuses(now = Date.now(), inspectAll = false): void {
   const cutoff = now - DEVICE_STATUS_TTL_MS;
+  const inspectExpiry = inspectAll || now > nextExpiryAt;
+  if (inspectExpiry) nextExpiryAt = Number.POSITIVE_INFINITY;
   for (const [schoolId, schoolMap] of statusMap) {
-    for (const [deviceId, status] of schoolMap) {
-      if (status.lastSeenAt < cutoff) deleteStatus(schoolMap, deviceId);
+    if (inspectExpiry) {
+      for (const [deviceId, status] of schoolMap) {
+        if (status.lastSeenAt < cutoff) deleteStatus(schoolMap, deviceId);
+        else nextExpiryAt = Math.min(nextExpiryAt, status.lastSeenAt + DEVICE_STATUS_TTL_MS);
+      }
     }
     while (schoolMap.size > DEVICE_STATUS_MAX_PER_SCHOOL) {
       const oldestDeviceId = schoolMap.keys().next().value as string | undefined;
@@ -118,6 +126,7 @@ export function updateDeviceClassification(
     const bytes = estimatedBytes(status);
     statusBytes.set(status, bytes);
     totalBytes += bytes;
+    nextExpiryAt = Math.min(nextExpiryAt, status.lastSeenAt + DEVICE_STATUS_TTL_MS);
     pruneStatuses();
   }
 }
@@ -131,6 +140,7 @@ export function updateDeviceStatus(data: DeviceRealtimeStatus): void {
   }
   deleteStatus(schoolMap, data.deviceId);
   const status = { ...data, lastSeenAt: Date.now() };
+  nextExpiryAt = Math.min(nextExpiryAt, status.lastSeenAt + DEVICE_STATUS_TTL_MS);
   const bytes = estimatedBytes(status);
   statusBytes.set(status, bytes);
   schoolMap.set(data.deviceId, status);
@@ -144,7 +154,9 @@ export function updateDeviceStatus(data: DeviceRealtimeStatus): void {
 export function getSchoolDeviceStatuses(
   schoolId: string
 ): DeviceRealtimeStatus[] {
-  pruneStatuses();
+  // Readers retain exact expiration semantics, including references returned
+  // to legacy callers that may have updated display metadata in place.
+  pruneStatuses(Date.now(), true);
   const schoolMap = statusMap.get(schoolId);
   if (!schoolMap) return [];
   return Array.from(schoolMap.values());
@@ -162,10 +174,11 @@ export function removeDeviceStatus(
 }
 
 export function deviceStatusCacheMetrics(): { entries: number; bytes: number; schools: number } {
-  pruneStatuses();
+  pruneStatuses(Date.now(), true);
   return { entries: totalEntries, bytes: totalBytes, schools: statusMap.size };
 }
 
 export function resetDeviceStatusesForTests(): void {
   for (const schoolId of [...statusMap.keys()]) deleteSchool(schoolId);
+  nextExpiryAt = Number.POSITIVE_INFINITY;
 }

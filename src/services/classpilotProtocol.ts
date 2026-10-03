@@ -3,6 +3,21 @@ import { isScheduledClassroomEnabled } from "../config/classpilotScheduledClassr
 import { classpilotSupervisionPreviewObserved } from "../config/classpilotSupervisionPreviewRollout.js";
 import { parseRlsEnabledTables } from "../db/rlsPolicies.js";
 
+// Parse configuration only when its exact bytes change. Never cache a school
+// or client authorization decision; rollout and dependency checks remain live.
+let privateChatAdmissionSource = "";
+let privateChatAdmissionPresent = false;
+function hasPrivateChatAdmission(raw: string | undefined): boolean {
+  // Match parseRlsEnabledTables' existing default for callers supplying an
+  // alternate environment without this property, including later env changes.
+  const source = raw ?? process.env.RLS_ENABLED_TABLES ?? "";
+  if (source !== privateChatAdmissionSource) {
+    privateChatAdmissionSource = source;
+    privateChatAdmissionPresent = parseRlsEnabledTables(source).has("classpilot_private_chat_threads");
+  }
+  return privateChatAdmissionPresent;
+}
+
 export const CLASSPILOT_SERVER_PROTOCOL_VERSION = 3 as const;
 
 export const CLASSPILOT_PROTOCOL_V3_CAPABILITIES = [
@@ -221,7 +236,7 @@ function parseCapabilityRollouts(source: string | undefined): ParsedRollouts {
  */
 export function assertClasspilotCapabilityRolloutsEnv(env: NodeJS.ProcessEnv = process.env): void {
   if (enabled(env.CLASSPILOT_CAP_PRIVATE_CHAT_LIFECYCLE_V1) &&
-    (!enabled(env.RLS_GUC_ENABLED) || !parseRlsEnabledTables(env.RLS_ENABLED_TABLES).has("classpilot_private_chat_threads"))) {
+    (!enabled(env.RLS_GUC_ENABLED) || !hasPrivateChatAdmission(env.RLS_ENABLED_TABLES))) {
     throw new Error("FATAL: privateChatLifecycleV1 requires tenant GUC and the reviewed classpilotPrivateChatLifecycle RLS admission on API and worker.");
   }
   const parsed = parseCapabilityRollouts(env.CLASSPILOT_CAPABILITY_ROLLOUTS_JSON);
@@ -319,7 +334,7 @@ export function isClasspilotCapabilityActive(
   env: NodeJS.ProcessEnv = process.env
 ): boolean {
   if (capability === "privateChatLifecycleV1" &&
-    (!enabled(env.RLS_GUC_ENABLED) || !parseRlsEnabledTables(env.RLS_ENABLED_TABLES).has("classpilot_private_chat_threads")
+    (!enabled(env.RLS_GUC_ENABLED) || !hasPrivateChatAdmission(env.RLS_ENABLED_TABLES)
       || !isClasspilotCapabilityActive("scopedAuthorityChecksV1",scope,env)
       || !isClasspilotCapabilityActive("studentChatIdempotencyV1",scope,env))) return false;
   if (capability === "scheduledClassroomV1"

@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { createPrivateKey, createPublicKey, createSecretKey } from "node:crypto";
 
 if (!process.env.STUDENT_TOKEN_SECRET && process.env.NODE_ENV === "production") {
   throw new Error("FATAL: STUDENT_TOKEN_SECRET must be set in production");
@@ -6,6 +7,19 @@ if (!process.env.STUDENT_TOKEN_SECRET && process.env.NODE_ENV === "production") 
 const STUDENT_TOKEN_SECRET =
   process.env.STUDENT_TOKEN_SECRET || "schoolpilot-dev-student-token-secret-32";
 const TOKEN_EXPIRY = "7d";
+
+// jsonwebtoken otherwise reparses the same process-start key on every heartbeat.
+// Preserve its separate sign/verify conversions, including rejecting asymmetric
+// PEM material for HS256, while reusing only immutable key material (never claims).
+const studentTokenSecretKey = createSecretKey(Buffer.from(STUDENT_TOKEN_SECRET));
+const studentTokenSigningKey = (() => {
+  try { return createPrivateKey(STUDENT_TOKEN_SECRET); }
+  catch { return studentTokenSecretKey; }
+})();
+const studentTokenVerificationKey = (() => {
+  try { return createPublicKey(STUDENT_TOKEN_SECRET); }
+  catch { return studentTokenSecretKey; }
+})();
 
 export interface StudentTokenPayload {
   studentId: string;
@@ -32,14 +46,14 @@ export function createStudentToken(payload: {
       sessionId: payload.sessionId,
       studentEmail: payload.studentEmail,
     },
-    STUDENT_TOKEN_SECRET,
+    studentTokenSigningKey,
     { algorithm: "HS256", expiresIn: TOKEN_EXPIRY }
   );
 }
 
 export function verifyStudentToken(token: string): StudentTokenPayload {
   try {
-    return jwt.verify(token, STUDENT_TOKEN_SECRET, {
+    return jwt.verify(token, studentTokenVerificationKey, {
       algorithms: ["HS256"],
     }) as StudentTokenPayload;
   } catch (error) {

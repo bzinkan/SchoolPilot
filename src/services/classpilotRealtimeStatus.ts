@@ -778,8 +778,10 @@ function decodeSnapshot(raw: unknown): ClasspilotRealtimeStatus | undefined {
   ) {
     snapshot.classroomState = row.classroomState as ClasspilotClassroomStateSnapshot;
   }
-  const focus = focusStatusSchema.safeParse(row.focus);
-  if (focus.success) snapshot.focus = focus.data;
+  if (row.focus !== undefined) {
+    const focus = focusStatusSchema.safeParse(row.focus);
+    if (focus.success) snapshot.focus = focus.data;
+  }
   if (["synced", "pending", "failed", "unsupported", "expired"].includes(String(row.enforcementHealth))) {
     snapshot.enforcementHealth = row.enforcementHealth as ClasspilotRealtimeStatus["enforcementHealth"];
   }
@@ -890,8 +892,10 @@ function activeSnapshot(input: ClasspilotRealtimeWriteInput, now: number): Class
   if (extensionCapabilities.length > 0) snapshot.extensionCapabilities = extensionCapabilities;
   if (chromeVersion) snapshot.chromeVersion = chromeVersion;
   if (input.classroomState) snapshot.classroomState = input.classroomState;
-  const focus = focusStatusSchema.safeParse(input.focus);
-  if (focus.success) snapshot.focus = focus.data;
+  if (input.focus !== undefined) {
+    const focus = focusStatusSchema.safeParse(input.focus);
+    if (focus.success) snapshot.focus = focus.data;
+  }
   if (input.enforcementHealth) snapshot.enforcementHealth = input.enforcementHealth;
   if (["idle", "in_progress", "returning", "complete", "timed_out"].includes(
     String(input.restrictionAuthState)

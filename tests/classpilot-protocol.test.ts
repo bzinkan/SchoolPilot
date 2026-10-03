@@ -46,6 +46,19 @@ test("private chat requires reviewed tenancy admission and both advertised paren
   }).acceptedCapabilities.includes("privateChatLifecycleV1");
   assert.equal(accepted(env),true);
   assert.doesNotThrow(()=>assertClasspilotCapabilityRolloutsEnv(env));
+  // Reusing one environment object must not retain admission after revocation,
+  // nor confuse a similarly named table with the exact admission token.
+  for (const [tables, expected] of [
+    ["other, classpilot_private_chat_threads ,another", true],
+    ["classpilot_private_chat_threads_archive", false],
+    ["", false],
+    ["classpilot_private_chat_threads", true],
+  ] as const) {
+    env.RLS_ENABLED_TABLES = tables;
+    assert.equal(accepted(env), expected);
+    if (expected) assert.doesNotThrow(() => assertClasspilotCapabilityRolloutsEnv(env));
+    else assert.throws(() => assertClasspilotCapabilityRolloutsEnv(env), /RLS admission/);
+  }
   for(const parent of ["scopedAuthorityChecksV1","studentChatIdempotencyV1"]) {
     assert.equal(accepted(env,advertisedCapabilities.filter(value=>value!==parent)),false);
   }
@@ -53,6 +66,21 @@ test("private chat requires reviewed tenancy admission and both advertised paren
     const candidate={...env,[missing]:""};
     assert.equal(accepted(candidate),false);
     assert.throws(()=>assertClasspilotCapabilityRolloutsEnv(candidate),/RLS admission/);
+  }
+  const withoutAdmission = { ...env };
+  delete withoutAdmission.RLS_ENABLED_TABLES;
+  const previousAdmission = process.env.RLS_ENABLED_TABLES;
+  try {
+    process.env.RLS_ENABLED_TABLES = "classpilot_private_chat_threads";
+    assert.equal(accepted(withoutAdmission), true);
+    process.env.RLS_ENABLED_TABLES = "other";
+    assert.equal(accepted(withoutAdmission), false);
+    delete process.env.RLS_ENABLED_TABLES;
+    assert.equal(accepted(withoutAdmission), false);
+    assert.equal(accepted(env), true);
+  } finally {
+    if (previousAdmission === undefined) delete process.env.RLS_ENABLED_TABLES;
+    else process.env.RLS_ENABLED_TABLES = previousAdmission;
   }
   assert.equal(accepted({...env,CLASSPILOT_CAP_STUDENT_CHAT_IDEMPOTENCY_V1:"false"}),false);
   assert.equal(accepted({...env,CLASSPILOT_CAPABILITY_ROLLOUTS_JSON:JSON.stringify({

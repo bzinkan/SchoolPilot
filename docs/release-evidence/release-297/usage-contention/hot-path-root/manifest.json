@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-03T00:35:55.969Z",
+  "latestResult": {
+    "passed": 24,
+    "failed": 0,
+    "skipped": 0
+  },
+  "scope": "TTL and protocol configuration parsing focused checks only; file hashes bind final attempt03. Attempts01/02 precede fallback-equivalence review.",
+  "sources": {
+    "src/realtime/student-statuses.ts": "d85125afd94ef18f998fcbc7a4863fccd606f9f784729e0e083e91fe0625ebbb",
+    "src/services/classpilotProtocol.ts": "21cb8afa6ee0d9dac8283f36d90a3932d444ebc941a59e767eff4afb648db508",
+    "tests/classpilot-bounded-state.test.ts": "79e1e6e252fe40810701b16658e7ab272806084bfd21999d4baa3482302d767f",
+    "tests/classpilot-protocol.test.ts": "1c2ddcca6cf61e3be369086d396fa29426037fecd83d137bb8fc8ce9ee5b432a"
+  },
+  "entries": [
+    {
+      "name": "release297-hot-path-root-tests.log",
+      "sha256": "e2c53569a15f041560fbe7969df0a48799b9433f4d33e7c7a8d0f65e1d1d0d57",
+      "archiveSha256": "e992975b5a56f53cdc2b161c22783297a0f17e3ce3e0bafeeddb70cd8492bc19"
+    },
+    {
+      "name": "release297-hot-path-root-tests-02.log",
+      "sha256": "144238b51fb6db53f2d6c5d2a1f8f223a2f5e4744b33530ecf2c6825df65a285",
+      "archiveSha256": "74ae02fd21bfa05fa82798da2da01ee2c73a5b8e98558148b9078c580b51a16f"
+    },
+    {
+      "name": "release297-hot-path-root-tests-03.log",
+      "sha256": "21e8e2c9db469906b7c7cc58a37451525272861e49eef2dea4890e5a067535e6",
+      "archiveSha256": "8664a116d086df8a1ec352df8f2a9889c8d8f2d37b21ff7957930c455153a3b0"
+    }
+  ]
+}

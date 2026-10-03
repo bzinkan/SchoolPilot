@@ -1068,7 +1068,7 @@ function publicRealtimeFields(snapshot: ClasspilotRealtimeStatus) {
     aiClassification: snapshot.aiClassification ?? null,
     screenshotHealth: snapshot.screenshotHealth,
     classroomState: snapshot.classroomState,
-    focus: focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
+    focus: snapshot.focus !== undefined && focusStatusSchema.safeParse(snapshot.focus).success ? snapshot.focus : undefined,
     enforcementHealth: snapshot.enforcementHealth,
     appliedFabRevision: snapshot.appliedFabRevision ?? null,
   };
