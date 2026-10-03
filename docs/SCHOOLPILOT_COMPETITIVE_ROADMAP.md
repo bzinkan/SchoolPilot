@@ -14,11 +14,11 @@ development and synthetic capacity acceptance before requesting coordinated
 release execution. Usage's deployed observation remains a later activation
 gate. SFU implementation and legacy media changes remain excluded.
 
-The October 3 [combined attempt07](release-evidence/release-297/usage-contention/load-combined-07/manifest.json)
-remains failed capacity evidence: 3,268 of 6,000 heartbeat offers and 32 of 64
-reports succeeded, with 1,679 API connection-acquisition failures. Both historical
+The October 3 [combined attempt08](release-evidence/release-297/usage-contention/load-combined-08/manifest.json)
+remains failed capacity evidence: 2,692 of 6,000 heartbeat offers and 26 of 64
+reports succeeded, with 3,008 API connection-acquisition failures. Both historical
 workers finished below 48 seconds. Physical ownership counters reached zero,
-but 66 aborted responses prevented drain certification; current-day and audited
+but 11 aborted responses prevented drain certification; current-day and audited
 CSV checks did not run. Usage remains off; neither three passing cold runs nor a
 supported 100-request/second envelope is established. Earlier failures retain
 their own source, measurements and correctness results. The correction adds bounded fair report
@@ -39,9 +39,9 @@ for eligible foreground updates, and checks school/license/session expiry again
 before the HTTP response. Its [native proof](release-evidence/release-297/usage-contention/heartbeat-foreground-fusion/manifest.json)
 passes 23 owner and 23 restricted-role cases; this is not capacity acceptance.
 The compatible fallback advances to `5c01944e` with the same final expiry fence
-and both Usage modes required off. Its predecessor `ed5599de` has a retained
-[scanned local image](release-evidence/release-297/usage-contention/rollback-artifact-ed5599de/index.json);
-the new fallback image, final candidate artifacts and migration
+and both Usage modes required off. Its [exact local image](release-evidence/release-297/usage-contention/rollback-artifact-5c01944e/index.json)
+passes the pinned full scan with zero findings and embedded compatibility checks;
+final candidate artifacts and migration
 re-entry remain pending; local preparation does not establish registry publication
 or deployment.
 

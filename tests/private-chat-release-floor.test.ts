@@ -141,7 +141,9 @@ it('deploy guard runs before build and checks rendered candidates before migrati
   const source = readFileSync('scripts/deploy.sh', 'utf8').replace(/\r\n/g, '\n');
   const preflight = source.indexOf('\n  preflight_private_chat_release_floor\n');
   const candidates = source.indexOf('\n  verify_private_chat_release_floor_candidates\n');
-  assert.ok(preflight >= 0 && preflight < source.indexOf('    docker build -t'));
+  const build = source.search(/^    docker build(?:[ \t]|$)/m);
+  assert.ok(build >= 0, 'Expected the actual legacy Docker build command');
+  assert.ok(preflight >= 0 && preflight < build);
   assert.ok(candidates >= 0 && candidates < source.indexOf('\n  MIGRATION_OVERRIDES=$(ENABLE_RLS_TABLE='));
   assert.match(source, /--repository-root "\$PROJECT_ROOT" --app-sha "\$LOCAL_SHA"/);
 });

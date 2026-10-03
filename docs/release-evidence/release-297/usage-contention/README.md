@@ -3,6 +3,22 @@
 These records preserve development checks and failures before the final source
 freeze. They do not establish capacity acceptance or authorize deployment.
 
+[Combined08](load-combined-08/manifest.json) on clean `ff6b4c96` also failed:
+2,692/6,000 heartbeat successes, 26/64 reports, 3,008 acquisition failures, no
+late offers and no optional telemetry failures. Workers returned correct totals
+in 17.881/41.721 seconds. Eleven aborted responses prevented drain certification
+despite zero remaining physical owners; forced child termination and the absent
+current-day/CSV checks are retained. All owned containers/processes are absent.
+The lease-sharing correction reduced SQL/secondary checkouts but has not met
+capacity acceptance. A full 6,000-offer ingestion-only CPU diagnostic will
+separate remaining heartbeat cost from concurrent worker/report interference.
+It cannot replace the three required passing combined runs.
+
+The [latest fallback image](rollback-artifact-5c01944e/index.json) is built from
+clean `5c01944e`, including the final heartbeat expiry fence. Its uncached build,
+full pinned scan and embedded compatibility checks pass, with zero findings.
+Registry publication and final migration re-entry remain unperformed.
+
 The [foreground/final-delivery correction](heartbeat-foreground-fusion/manifest.json)
 reuses the owned authority proof for eligible teaching-session updates and adds
 a mandatory final school/license/session clock check. Forty focused tests and

@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-03T06:47:01.383Z",
+  "sourceBase": "ff6b4c96d9b2db7fe11514d7dcd63bea36bdd32f",
+  "sourceStatus": "Uncommitted test-only selector correction on frozen application/deployment source; not final release acceptance",
+  "command": {
+    "cwd": "C:/Users/zinka/.codex/worktrees/release-stabilization-297/SchoolPilot",
+    "shell": "PowerShell",
+    "command": "node --import ./tests/test-environment.mjs --import tsx --test tests/private-chat-release-floor.test.ts",
+    "output": "$env:TEMP/release297-private-chat-floor-detector-01.log",
+    "exitCode": 0
+  },
+  "results": {
+    "tests": 25,
+    "pass": 25,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "failure": "CI static selector assumed docker build -t. Reviewed deployment gate adds --label and --iidfile before -t, so indexOf returned -1 although preflight ordering remained intact.",
+  "correction": "Locate the actual indented docker build command independently of option ordering; explicitly require its presence, preserve preflight-before-build, candidate-before-migration and exact repository/source binding assertions.",
+  "unchangedScope": {
+    "gitDiffQuietHeadExitCode": 0,
+    "paths": [
+      "src",
+      "shared",
+      "migrations",
+      "schoolpilot-app/src",
+      "scripts/deploy.sh",
+      "scripts/verify-legacy-deploy-image.mjs",
+      "Dockerfile",
+      "package.json",
+      "package-lock.json"
+    ]
+  },
+  "fileBindings": [
+    {
+      "file": "scripts/deploy.sh",
+      "workingBytesSha256": "01f3b57f8b5d1981335fb66f3e028d7875e8aca9ec859596d002884deb7059e2",
+      "workingNormalizedLfSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "headBlobSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "headNormalizedLfSha256": "ec4888e381bf1a31682535529c1b11dc806de570342283c738168887c4eee9b2",
+      "matchesHeadIgnoringLineEndings": true
+    },
+    {
+      "file": "scripts/verify-legacy-deploy-image.mjs",
+      "workingBytesSha256": "8746f73e61d28510fbf2b333f14d7376d88c8a762c06dc001f1e3eaed6370c5a",
+      "workingNormalizedLfSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "headBlobSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "headNormalizedLfSha256": "962c003f391fe734b4ba45e6af4e4040811f5e9c3498d3cc9ee0bcd01e7a7b54",
+      "matchesHeadIgnoringLineEndings": true
+    },
+    {
+      "file": "src/services/storage.ts",
+      "workingBytesSha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105",
+      "workingNormalizedLfSha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105",
+      "headBlobSha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105",
+      "headNormalizedLfSha256": "f8e5db75cb7009fd006bb07ea32e647f9ab49625a7f368b3dff76c60606fe105",
+      "matchesHeadIgnoringLineEndings": true
+    },
+    {
+      "file": "src/routes/classpilot/devices.ts",
+      "workingBytesSha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193",
+      "workingNormalizedLfSha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193",
+      "headBlobSha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193",
+      "headNormalizedLfSha256": "254983ba8f732690c5adb61b26db305c492694ce20bda2b77a5608b419e0b193",
+      "matchesHeadIgnoringLineEndings": true
+    },
+    {
+      "file": "tests/private-chat-release-floor.test.ts",
+      "workingBytesSha256": "c7c4f801679998d28d5c1612b1c0c151a44e6cf2d1b463112eb22c13ee65babf",
+      "workingNormalizedLfSha256": "8bdb9bcdd441fbdc1cdbcef26c3f3b4a4e2a14df0cf5eced57762e8b14719868",
+      "headBlobSha256": "892e920fc571ff2f94c16713c1b729b9f154d421cdbacf3b2a02e7014eaa023f",
+      "headNormalizedLfSha256": "892e920fc571ff2f94c16713c1b729b9f154d421cdbacf3b2a02e7014eaa023f",
+      "matchesHeadIgnoringLineEndings": false
+    }
+  ],
+  "notRerun": "The 24 image-gate and 22 neighboring deployment tests were not repeated for this test-only selector change. Their previous evidence is retained under ../legacy-image-scan-gate/. No deployment/helper/application bytes changed.",
+  "sanitization": "Credential-bearing URL userinfo, AWS access keys, bearer tokens and named secret assignment values redacted when present. Original files remain external and unchanged; raw hashes retained.",
+  "limitations": [
+    "No deployment execution, image build/push, cloud mutation or runtime activation occurred.",
+    "Other agents own unrelated current test/evidence edits. This receipt binds only the listed source scope and changed test.",
+    "Combined08 capacity remains failed; this test repair does not change that outcome."
+  ],
+  "records": [
+    {
+      "name": "ci-ff6-backend-job.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-ci-ff6b4c96-backend-job.log",
+      "rawSha256": "832d1fa7be9fc62000d81a4ce58382913db6edf92084540220d6f01021715ee1",
+      "sanitizedSha256": "832d1fa7be9fc62000d81a4ce58382913db6edf92084540220d6f01021715ee1",
+      "archiveSha256": "75912779a97e741c0951f479ae1cc94f47ab5e45036111a9d481a4b3cd1814cc",
+      "rawBytes": 864445,
+      "sanitizedBytes": 864445,
+      "sanitized": false
+    },
+    {
+      "name": "approved-selector.patch.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-private-chat-floor-build-detector.patch",
+      "rawSha256": "e819f1834aa7a2acec88d00bcda03fe9ae29bf3cd88b3bdcf5e6f5d250f6ad24",
+      "sanitizedSha256": "e819f1834aa7a2acec88d00bcda03fe9ae29bf3cd88b3bdcf5e6f5d250f6ad24",
+      "archiveSha256": "dd09c94d494c4c26e7e1df397b9c82f240f2daeb067f02456c7c8632f7d2d3f2",
+      "rawBytes": 613,
+      "sanitizedBytes": 613,
+      "sanitized": false
+    },
+    {
+      "name": "private-chat-release-floor-25-pass.log.gz",
+      "originalPath": "C:\\Users\\zinka\\AppData\\Local\\Temp\\release297-private-chat-floor-detector-01.log",
+      "rawSha256": "79710eb364a96fc8ad378e8895a6ae230d297ca82dab24043dfd1e56f84044d0",
+      "sanitizedSha256": "79710eb364a96fc8ad378e8895a6ae230d297ca82dab24043dfd1e56f84044d0",
+      "archiveSha256": "e4e2a02fbc91f085180eaff5681ad0c6e2bd68779ba84ac5f29ececa055583ea",
+      "rawBytes": 5535,
+      "sanitizedBytes": 5535,
+      "sanitized": false
+    },
+    {
+      "name": "applied-selector.patch.gz",
+      "originalPath": "git diff -- tests/private-chat-release-floor.test.ts",
+      "rawSha256": "5f617c7c90811f9213b9cc342b93444adc2acd23f494e5b1464170c1b7fd71e3",
+      "sanitizedSha256": "5f617c7c90811f9213b9cc342b93444adc2acd23f494e5b1464170c1b7fd71e3",
+      "archiveSha256": "857e9831f1d5325d818738294cdff54ebbe0f533eaa5a03b01cd2d7f656e1f7b",
+      "rawBytes": 1060,
+      "sanitizedBytes": 1060,
+      "sanitized": false
+    }
+  ]
+}

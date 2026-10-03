@@ -75,7 +75,7 @@ describe("ClassPilot authenticated HTTP recovery and rate limits", () => {
     assert.match(heartbeat, /req\.body\?\.requestFabState === true/);
     assert.match(
       heartbeat,
-      /withClasspilotStudentControlDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
+      /withClasspilotHeartbeatDeliveryAuthority\([\s\S]*?buildStudentFabState\(schoolId, studentId, \{[\s\S]*?studentSessionId,[\s\S]*?dbInstance: transactionDb/
     );
     assert.match(
       heartbeat,
@@ -180,14 +180,23 @@ describe("ClassPilot tracking-window screenshot authority", () => {
       heartbeat,
       /canShortCircuitAcceptedHeartbeat\(\{[\s\S]*?acceptedCapabilities: protocol\.acceptedCapabilities,[\s\S]*?\}\)/
     );
-    assert.equal((heartbeat.match(/getClasspilotScreenshotAuthorityProjection\(/g) ?? []).length, 1,
-      "negotiated heartbeat authority must be computed once at locked delivery, never in the earlier persistence lease");
+    assert.equal((heartbeat.match(/readScreenshotAuthority\(\)/g) ?? []).length, 1,
+      "negotiated heartbeat authority must be requested once from the owned delivery reader");
+    assert.doesNotMatch(heartbeat, /getClasspilotScreenshotAuthorityProjection\(/,
+      "the route must not compute negotiated authority in the earlier persistence lease");
     assert.match(heartbeat, /const screenshotPolicyPromise = trackingWindowScreenshotLeaseNegotiated\s*\? Promise\.resolve\(undefined\)\s*:\s*resolveClasspilotScreenshotPolicy/);
     const delivery = heartbeat.slice(heartbeat.indexOf("const finalDelivery ="));
-    assert.match(delivery, /withClasspilotStudentControlDeliveryAuthority[\s\S]*freezeSsoPolicy: true[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*getClasspilotScreenshotAuthorityProjection\([\s\S]*?\}, transactionDb\)/);
-    const authority = storage.slice(
-      storage.indexOf("export async function withClasspilotStudentControlDeliveryAuthority"),
+    assert.match(delivery, /withClasspilotHeartbeatDeliveryAuthority[\s\S]*freezeSsoPolicy: true[\s\S]*async \(transactionDb, readScreenshotAuthority\)[\s\S]*const finalScreenshotPolicy = trackingWindowScreenshotLeaseNegotiated[\s\S]*projection: await readScreenshotAuthority\(\)/);
+    const heartbeatAuthority = storage.slice(
+      storage.indexOf("export async function withClasspilotHeartbeatDeliveryAuthority"),
       storage.indexOf("export async function withClasspilotStudentWebSocketBootstrapAuthority")
+    );
+    assert.equal((heartbeatAuthority.match(/getClasspilotScreenshotAuthorityProjection\(/g) ?? []).length, 1,
+      "the owned reader must compute the projection once on its exact delivery transaction");
+    assert.match(heartbeatAuthority, /withClasspilotStudentControlDeliveryAuthorityCore\(options,[\s\S]*async transactionDb =>[\s\S]*prepareAuthorized\(transactionDb, \(\) =>[\s\S]*getClasspilotScreenshotAuthorityProjection\(options, transactionDb\)/);
+    const authority = storage.slice(
+      storage.indexOf("async function withClasspilotStudentControlDeliveryAuthorityCore"),
+      storage.indexOf("async function assertClasspilotHeartbeatDeliveryCurrent")
     );
     assert.match(authority, /if \(options\.freezeSsoPolicy \|\| recoverTeacherReplies\) \{\s*await lockClasspilotSsoPolicyDeliveryAuthority\(options\.schoolId, transactionDb\);/);
     const policyLock = authority.indexOf("await lockClasspilotSsoPolicyDeliveryAuthority(");
